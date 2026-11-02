@@ -15,6 +15,7 @@ from PySide6.QtCore import QEvent  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableWidget  # type: ignore
 
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit.tab_base import fit_results_snapshot
 from asymmetry.gui.styles import tokens
@@ -31,14 +32,6 @@ from asymmetry.gui.windows.fit_results_window import (
 )
 
 _GOOD = (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, tokens.OK)
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _range(
@@ -221,6 +214,7 @@ def _fit_result(*, chi_squared: float = 595.0, dof: int = 595) -> FitResult:
         ]
     )
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=chi_squared,
         reduced_chi_squared=chi_squared / dof if dof else 0.0,
@@ -307,3 +301,14 @@ def test_window_omits_the_footer_segments_a_run_fit_has_none_of(qapp: QApplicati
     assert not any(text.startswith("x: ") for text in texts)
     assert not any("errors:" in text for text in texts)
     window.deleteLater()
+
+
+def test_poisson_snapshot_names_its_deviance_and_sparse_quality_reason():
+    from dataclasses import replace
+
+    from asymmetry.core.fitting.likelihood import Objective
+
+    result = replace(_fit_result(), objective=Objective.POISSON, minimum_expected_count=1.0)
+    solved = _snapshot(result).ranges[0]
+    assert solved.chi_squared == "Poisson deviance/ν 1"
+    assert "expected count is below 5" in solved.verdict

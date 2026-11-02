@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import struct
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from itertools import chain, islice
 from pathlib import Path
@@ -24,15 +24,16 @@ from asymmetry.core.instrument import (
     get_instrument_layout,
     preset_grouping_for_run,
 )
-from asymmetry.core.io.base import BaseLoader, field_direction_from_text
+from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
+from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.transform import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
+    align_forward_backward,
     common_t0_time_us,
     compute_asymmetry,
     good_window_for_groups,
     run_t0_time_us,
 )
+from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -82,26 +83,6 @@ _PSI_MONTHS = {
     "NOV": "11",
     "DEC": "12",
 }
-
-
-def _extract_field_from_comment(comment: str) -> float | None:
-    """Extract magnetic field in Gauss from comment text."""
-    if not comment:
-        return None
-
-    patterns = [
-        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-        r"(?i)\b([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, comment)
-        if match is None:
-            continue
-        try:
-            return float(match.group(1))
-        except ValueError:
-            continue
-    return None
 
 
 def header_sensor_rejection(setpoint: float, mean: float, deviation: float) -> str:
@@ -158,6 +139,7 @@ class _PsiRawRun:
     instrument: str
     beamline: str
     muon_source: str
+    declared_units: dict = field(default_factory=dict)
     temperature_logs: _PsiTemperatureLogs | None = None
     temperature_log_rejections: list[dict[str, str]] = field(default_factory=list)
     #: PSI-BIN header sensor means and deviations in K, four each; MDU has none.
@@ -282,6 +264,7 @@ class PsiLoader(BaseLoader):
         instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temp_text = self._text(header[148:158])
         field_text = self._text(header[158:168])
+        quantities = read_header_quantities(str(path), temp_text, field_text)
         started = self._date_time(self._text(header[218:227]), self._text(header[236:244]))
         stopped = self._date_time(self._text(header[227:236]), self._text(header[244:252]))
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
@@ -297,8 +280,9 @@ class PsiLoader(BaseLoader):
             run_number=int(run_number),
             title=self._text(header[860:922]),
             sample=self._text(header[138:148]),
-            temperature=self._parse_temperature(temp_text),
-            field=self._parse_field_gauss(field_text),
+            temperature=quantities.temperature,
+            field=quantities.field,
+            declared_units=quantities.declarations,
             orientation=self._text(header[168:178]),
             setup=self._text(header[178:188]),
             comment=self._text(header[860:922]),
@@ -411,10 +395,12 @@ class PsiLoader(BaseLoader):
 
         started = self._date_time(header.start_date, header.start_time)
         stopped = self._date_time(header.end_date, header.end_time)
-        temperature = self._parse_temperature(header.mean_temp)
-        title_temperature = self._parse_temperature(header.run_title[10:20])
-        if not header.mean_temp or (temperature == 0 and title_temperature != 0):
-            temperature = title_temperature
+        quantities = read_header_quantities(
+            str(path),
+            header.run_title[10:20],
+            header.run_title[20:30],
+            mean_temperature=header.mean_temp,
+        )
         instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
             path, header.run_number, started=started, stopped=stopped
@@ -425,8 +411,9 @@ class PsiLoader(BaseLoader):
             run_number=header.run_number,
             title=header.run_subtitle,
             sample=header.run_title[:10].strip(),
-            temperature=temperature,
-            field=self._parse_field_gauss(header.run_title[20:30]),
+            temperature=quantities.temperature,
+            field=quantities.field,
+            declared_units=quantities.declarations,
             orientation=header.run_title[30:40].strip(),
             setup="",
             comment=header.run_subtitle,
@@ -1014,7 +1001,8 @@ class PsiLoader(BaseLoader):
         if n_hist == 0:
             raise ValueError("PSI file does not contain any histograms")
 
-        n_bins = min(len(arr) for arr in raw.counts)
+        counts = validated_count_arrays(*raw.counts)
+        n_bins = counts[0].size
         max_bin = max(0, n_bins - 1)
         t0_bins = self._resize_ints(raw.t0_bins, n_hist, 0, max_value=max_bin)
         first_good_bins = self._resize_ints(
@@ -1032,7 +1020,7 @@ class PsiLoader(BaseLoader):
 
         histograms = [
             Histogram(
-                counts=np.asarray(raw.counts[i][:n_bins], dtype=np.float64),
+                counts=counts[i],
                 bin_width=float(raw.bin_width_us),
                 t0_bin=int(t0_bins[i]),
                 good_bin_start=int(first_good_bins[i]),
@@ -1062,13 +1050,8 @@ class PsiLoader(BaseLoader):
         # ones, matching how the grouping-window Apply path drops absentees.
         forward_idx = [det - 1 for det in groups[forward_gid] if 1 <= det <= n_hist]
         backward_idx = [det - 1 for det in groups[backward_gid] if 1 <= det <= n_hist]
-        common_t0 = common_t0_for_groups(histograms, forward_idx, backward_idx)
-
-        forward = apply_grouping_aligned(histograms, forward_idx, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(histograms, backward_idx, common_t0_bin=common_t0)
-        n = min(len(forward), len(backward))
-        forward = forward[:n]
-        backward = backward[:n]
+        forward, backward, alignment = align_forward_backward(histograms, forward_idx, backward_idx)
+        common_t0, n = alignment.common_t0_bin, alignment.length
         alpha = 1.0
         asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
         asymmetry = asymmetry * 100.0
@@ -1100,12 +1083,14 @@ class PsiLoader(BaseLoader):
 
         metadata = {
             "run_number": raw.run_number,
+            "grouped_alignment": asdict(alignment),
             "title": raw.title,
             "sample": raw.sample,
             "temperature": raw.temperature,
+            "declared_units": raw.declared_units,
             "field": raw.field,
             "field_header": raw.field,
-            "field_comment_candidate": _extract_field_from_comment(raw.comment),
+            "field_comment_candidate": comment_field_gauss(raw.comment),
             "orientation": raw.orientation,
             "setup": raw.setup,
             "comment": raw.comment,
@@ -1176,6 +1161,8 @@ class PsiLoader(BaseLoader):
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
+            # Whole-run acquisition: τ must be calibrated in this normalisation.
+            "good_frames": 1.0,
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],
@@ -1185,10 +1172,7 @@ class PsiLoader(BaseLoader):
             # recorded one — D7 searches for it at resolve time.
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
-            # Stamp the canonical registry identity (e.g. "HAL") so fingerprinting
-            # and the stale-identity heal do not mistake the raw PSI "HIFI" string
-            # for the ISIS HiFi spectrometer and discard the loader grouping. The
-            # raw string is kept in metadata["instrument"] for provenance.
+            # The registry identity and the raw header name have separate provenance.
             "instrument": canonical_instrument or raw.instrument,
         }
         t0_time_us = run_t0_time_us(histograms, common_t0)
@@ -1530,21 +1514,6 @@ class PsiLoader(BaseLoader):
         if date and time:
             return f"{date} {time}"
         return date or time
-
-    def _parse_temperature(self, text: str) -> float:
-        match = re.search(r"([+-]?\d+(?:\.\d+)?)", str(text))
-        return float(match.group(1)) if match else 0.0
-
-    def _parse_field_gauss(self, text: str) -> float:
-        raw = str(text).strip()
-        match = re.search(r"([+-]?\d+(?:\.\d+)?)", raw)
-        if not match:
-            return 0.0
-        value = float(match.group(1))
-        token = raw.lower()
-        if "t" in token and "g" not in token:
-            return value * 1.0e4
-        return value
 
     def _resize_ints(
         self,

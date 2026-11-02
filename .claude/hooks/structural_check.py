@@ -23,14 +23,16 @@ import sys
 from pathlib import Path
 
 # Editing a file under one of these prefixes (or one of the named files) can
-# change a structural invariant: the core import boundary, the core dependency
-# boundary, or the porting-study layout. Edits anywhere else cannot break
-# `harness.py structural`, so the hook stays silent and fast for them.
+# affect the core import/dependency boundaries or the retired-docs baseline.
 RELEVANT_PREFIXES = (
     "src/asymmetry/core/",
     "docs/porting/",
+    "docs/plans/",
+    "docs/studies/",
+    "docs/audit/",
+    "docs/investigations/",
 )
-RELEVANT_FILES = ("pyproject.toml",)
+RELEVANT_FILES = ("pyproject.toml", "docs/PLANS.md", "tools/baselines/retired_docs.txt")
 
 
 def main() -> int:

@@ -71,18 +71,28 @@ Gaussian
 
    A(t) = A\,e^{-(\sigma t)^2}
 
-The natural relaxation envelope when the muon ensemble experiences a *static*
-Gaussian distribution of local fields and the experimental time window is
-short compared with :math:`1/\sigma`. Expanding the static Gaussian
-Kubo–Toyabe function (:ref:`fit-static-gkt-zf`) for :math:`\Delta t \ll 1`
-gives :math:`1 - \tfrac{1}{2}\Delta^2 t^2`, which matches
-:math:`e^{-(\sigma t)^2}` to leading order with
-:math:`\sigma = \Delta/\sqrt{2}` — note the convention, since rates quoted
-for the :math:`e^{-\Delta^2 t^2/2}` form differ by :math:`\sqrt{2}`. The rate
-is set by the second moment of the field distribution at the muon site,
-:math:`\sigma = \gamma_\mu\sqrt{\langle B^2\rangle}\,/\sqrt{2}` in this
-convention, and the same form describes the Gaussian damping envelope of a
-TF precession line.
+For static Gaussian frequency broadening of a transverse-field precession line,
+the envelope is :math:`\exp(-\Delta^2t^2/2)`, so this component uses
+:math:`\sigma=\Delta/\sqrt{2}`. Here :math:`\Delta=\gamma_\mu B_c`, where
+:math:`B_c` is the standard deviation of the field component parallel to the
+applied field and :math:`\gamma_\mu` is the angular gyromagnetic ratio. For an
+isotropic field distribution this is the high-field envelope, with transverse
+field components small compared with the applied field.
+
+In **zero field**, the static Gaussian Kubo–Toyabe function
+(:ref:`fit-static-gkt-zf`) instead has the short-time expansion
+
+.. math::
+
+   G_{\mathrm{KT}}(t)=1-\Delta^2t^2+\frac{5}{12}\Delta^4t^4+O(t^6).
+
+Its early-time match to :math:`e^{-(\sigma t)^2}` is therefore
+:math:`\sigma=\Delta`. The finite-time difference is
+:math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`;
+the Gaussian does not reproduce the full dip and recovery. In this isotropic
+zero-field model, :math:`B_c=\Delta/\gamma_\mu` is the width of **one Cartesian
+component**, and :math:`\langle|\mathbf B|^2\rangle=3B_c^2`. See
+:ref:`gaussian-width-conventions` for the conventions across related models.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -94,13 +104,12 @@ Name       Symbol           Unit   Description
 For polycrystalline samples with only nuclear moments, typical values lie in
 the range :math:`\sigma \sim 0.1{-}0.5\;\mu s^{-1}`, up to about
 :math:`1\;\mu s^{-1}` when light, high-moment nuclei such as :sup:`1`\ H or
-:sup:`19`\ F are dense at the muon site. Values substantially larger than
-this almost always signal that a coupled F–μ–F (or similar) entangled state
-is being mis-fitted as a Gaussian envelope; use the dedicated components in
-:doc:`nuclear_dipolar` instead. If the data reach
-:math:`t \gtrsim 1/\sigma` without flattening onto a :math:`1/3` tail,
-the relaxation is not purely static-Gaussian — try ``StretchedExponential``
-or the full ``StaticGKT_ZF``.
+:sup:`19`\ F are dense at the muon site. Larger widths can reflect short muon–nucleus distances, several inequivalent
+sites, or electronic moments. Resolved coupled F–μ–F oscillations call for the
+dedicated components in :doc:`nuclear_dipolar`. The :math:`1/3` tail is a feature
+of the full static isotropic **zero-field** response, not of a transverse-field
+envelope. Use ``StaticGKT_ZF`` when the time window includes its dip and
+recovery; additional relaxation channels can modify the tail.
 
 A standalone ``GaussianRelaxation`` model is available in the ``MODELS``
 registry.
@@ -171,12 +180,19 @@ Abragam
 
 The Gaussian-to-exponential crossover function: a Gaussian static width
 :math:`\Delta` fluctuating at rate :math:`\nu`, with the limits
-:math:`\nu \to 0:\ \exp(-\Delta^2 t^2/2)` (static Gaussian) and
+:math:`\nu \to 0:\ \exp(-\Delta^2 t^2/2)` (static transverse-field Gaussian, equal to ``Gaussian`` at
+:math:`\sigma=\Delta/\sqrt{2}`) and
 :math:`\nu \gg \Delta:\ \exp(-(\Delta^2/\nu)\,t)` (motionally narrowed
 exponential). It is the classic model for extracting a hop or correlation
 rate from a transverse-field line shape — the textbook example being the
 Gaussian-to-Lorentzian change of the Cu line shape as muon diffusion sets in
-on warming. Evaluated in closed form (machine precision).
+on warming. Numerically, the exponent is evaluated as
+:math:`\Delta^2|t|^2\varphi_2(-\nu|t|)`, where
+:math:`\varphi_2(z)=(e^z-1-z)/z^2` and :math:`\varphi_2(0)=1/2`
+(Hochbruck and Ostermann, 2010). A Taylor expansion around the origin avoids
+cancellation without substituting a static function below an absolute rate.
+The rate must be finite and non-negative; negative or non-finite values raise
+``ValueError``.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -190,6 +206,8 @@ Name       Symbol           Unit   Description
 
 - A. Abragam, *The Principles of Nuclear Magnetism* (Oxford University
   Press, Oxford, 1961), Ch. X.
+- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+  https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-keren:
 
@@ -204,15 +222,30 @@ Keren
    +(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)
    -2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\Big]
 
-with :math:`\omega_0 = \gamma_\mu B_L`. Keren's analytic generalisation of
-the Abragam function to a longitudinal field: an accurate strong-collision
-result in the fast/intermediate fluctuation regime (:math:`\nu \gtrsim
-\Delta`) that avoids the numerical convolution of the full dynamic
-Kubo–Toyabe. It is the standard model for longitudinal-field decoupling
-analyses (e.g. ionic diffusion) and reduces to the Abragam function at
-:math:`B_L = 0`. Prefer the full :ref:`fit-dynamic-gaussian-kt` when
-fluctuations are slow (:math:`\nu \lesssim \Delta`) or the static :math:`1/3`
-tail matters. Evaluated in closed form (machine precision).
+with :math:`\omega_0 = \gamma_\mu B_L`. This is the exponent
+:math:`\Gamma(t)t` in Keren's Eq. (4). His perturbative generalisation of the
+Abragam function is an expansion in :math:`\Delta/\nu`, expected to approximate
+the dynamic result when :math:`\Delta/\nu<1`, or at sufficiently early times.
+It does not reproduce the static Kubo–Toyabe recovery. Prefer the full
+:ref:`fit-dynamic-gaussian-kt` for slow fluctuations or a static :math:`1/3` tail.
+At :math:`B_L=0`, its exponent is **twice** the transverse-field Abragam
+exponent, because both transverse field components contribute in longitudinal
+geometry.
+
+The numerically equivalent expression is
+:math:`\Gamma(t)=2\Delta^2|t|^2\operatorname{Re}\varphi_2[-(\nu+i\omega_0)|t|]`.
+It remains continuous at zero rate and field and is even in time and field.
+At :math:`\nu=B_L=0` it gives :math:`\exp(-\Delta^2t^2)`; at zero rate with
+finite field it gives
+:math:`\exp[-2\Delta^2(1-\cos\omega_0t)/\omega_0^2]`.
+These numerical limits do not extend the perturbative model's physical validity.
+Negative or non-finite rates raise ``ValueError``.
+
+For unit amplitude, independent 70-digit exponential/trigonometric checks give
+absolute polarisation differences below :math:`10^{-14}` on a grid spanning rates from zero
+to :math:`10^4` μs⁻¹, widths 0.04–4 μs⁻¹, fields from zero to 100 G, and times
+0–8 μs, including rates immediately around :math:`10^{-9}` μs⁻¹. These are
+analytic checks, rather than measured agreement with another program.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -225,7 +258,10 @@ Name       Symbol           Unit   Description
 
 **References**
 
-- A. Keren, Phys. Rev. B **50**, 10039 (1994).
+- A. Keren, Phys. Rev. B **50**, 10039 (1994), Eq. (4),
+  https://doi.org/10.1103/PhysRevB.50.10039.
+- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+  https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-risch-kehr:
 

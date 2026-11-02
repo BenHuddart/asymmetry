@@ -25,18 +25,14 @@ class LfKtSeriesPlotScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = make_ag_lf_decoupling()
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="LF decoupling — Ag"
-        )
+        window._data_browser.create_data_group(run_numbers, name="LF decoupling — Ag")
 
         # Enable Overlay before selecting so all five LF runs render together.
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)

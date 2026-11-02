@@ -593,6 +593,13 @@ The scripted grouped-spectrum API uses the same settings and checks:
    report = spectrum.metadata["fourier_phase_fit"]
 
 The run supplies the current grouping, timing, and background assumptions.
+All FFT display modes preserve the same resolved good-time interval. The
+inclusive good-bin bounds are indices on the aligned counts at the run's
+declared t0. Grouped FFTs align all named groups to one reference; if that
+reference differs, the bounds and exact t0 move together by the reference
+offset. The selected detector samples and their physical times are preserved,
+including with a manual timing override. **Auto Phase** uses this shared
+preparation, so changing the display mode preserves its input window.
 The report retains the actual populated sample count, first sample time,
 sample interval, component and observation bands, and each accepted estimate.
 
@@ -1812,6 +1819,17 @@ is on screen rather than the time-domain idiom:
   spectrum is always recoverable. A ``START OF FOURIER INFORMATION`` block
   records the display mode, apodisation and zero-pad settings, the axis mode, and
   each spectrum's own reference field.
+
+Deadtime calibration tasks
+--------------------------
+
+The MaxEnt deadtime calibration fits a signed rational coefficient for each
+detector in a background task. While it runs, the panel displays
+"Fitting deadtime…". A finite positive good-frame count is required. Applying
+a calibration writes its total table in Manual mode with the ``maxent_fit``
+method and source run. A result for another run, or an obsolete fit request,
+cannot replace the active calibration. See :doc:`detector_grouping` for the
+mean model and its domain.
 
 References
 ----------

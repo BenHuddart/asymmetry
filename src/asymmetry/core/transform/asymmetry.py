@@ -26,6 +26,14 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import minimize_scalar
 
+from asymmetry.core.transform.fb_counts import (
+    BinWindow,
+    GroupCounts,
+    count_timing,
+    good_window,
+    linear_combination_variance,
+    validated_count_arrays,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -69,8 +77,7 @@ def compute_asymmetry(
         :class:`~asymmetry.core.data.dataset.MuonDataset`, a fit model's ``A0``,
         :meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`.
     """
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
+    f, b = validated_count_arrays(forward, backward)
 
     numerator = f - alpha * b
     denominator = beta * f + alpha * b
@@ -143,16 +150,9 @@ def compute_asymmetry_with_count_errors(
         **As a fraction** (``A ∈ [-1, 1]``), exactly as
         :func:`compute_asymmetry` — *not* percent.
     """
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
-    ef = np.asarray(forward_error, dtype=np.float64)
-    eb = np.asarray(backward_error, dtype=np.float64)
-
-    n = min(f.size, b.size, ef.size, eb.size)
-    f = f[:n]
-    b = b[:n]
-    ef = ef[:n]
-    eb = eb[:n]
+    f, b, ef, eb = validated_count_arrays(forward, backward, forward_error, backward_error)
+    if np.any(ef < 0) or np.any(eb < 0):
+        raise ValueError("count errors must be non-negative.")
 
     numerator = f - alpha * b
     denominator = beta * f + alpha * b
@@ -161,11 +161,12 @@ def compute_asymmetry_with_count_errors(
     err = np.ones_like(f)
 
     asym[safe] = numerator[safe] / denominator[safe]
-    if np.any(safe):
-        den_safe = denominator[safe]
-        variance_term = (b[safe] * ef[safe]) ** 2 + (f[safe] * eb[safe]) ** 2
+    variance_term = (b * ef) ** 2 + (f * eb) ** 2
+    informative = safe & (variance_term > 0.0)
+    if np.any(informative):
+        den_safe = denominator[informative]
         scale = abs(float(alpha)) * (1.0 + float(beta))
-        err[safe] = scale * np.sqrt(np.maximum(variance_term, 0.0)) / (den_safe * den_safe)
+        err[informative] = scale * np.sqrt(variance_term[informative]) / (den_safe * den_safe)
 
     return asym, err
 
@@ -173,47 +174,22 @@ def compute_asymmetry_with_count_errors(
 def slice_to_good_window(
     asymmetry: NDArray[np.float64],
     error: NDArray[np.float64],
-    grouping: dict,
+    window: BinWindow,
     *,
     common_t0: int,
     bin_width: float,
     t0_time_us: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Slice reduced arrays to the grouping's good-bin window and build the axis.
+    """Slice reduced arrays to a validated inclusive aligned-bin window.
 
-    The shared tail of every F-B reduction: clip ``asymmetry``/``error`` to the
-    inclusive ``[first_good_bin, last_good_bin]`` window (falling back to the
-    full range when the window is degenerate) and form the time axis in
-    microseconds, measured from ``common_t0``. Used by both the loader-style
-    reduction (:func:`asymmetry.core.simulate._reduce_histograms`) and the
-    run-arithmetic subtraction reduction so the two agree by construction.
-
-    Bin ``k`` is stamped at its centre relative to the run's exact t0,
-    ``(k + 0.5)·w − t0_time_us`` (D4); the default is the centre of
-    ``common_t0``, which reproduces the integer-bin axis exactly.
+    Bin k is stamped at its centre relative to exact t0, (k + 0.5)·w − t0.
+    The bin-centre default preserves the integer-bin axis exactly.
     """
-    size = int(asymmetry.size)
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", size - 1))
-    except (TypeError, ValueError):
-        last_good = size - 1
-    last_good = min(last_good, size - 1)
-    if first_good > last_good:
-        first_good, last_good = 0, size - 1
-
-    asymmetry = asymmetry[first_good : last_good + 1]
-    error = error[first_good : last_good + 1]
-    residual = (
-        0.0 if t0_time_us is None else (int(common_t0) + 0.5) * float(bin_width) - float(t0_time_us)
-    )
-    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(
-        bin_width
-    ) + residual
-    return time, asymmetry, error
+    width, t0 = count_timing(bin_width, common_t0, t0_time_us)
+    residual = (common_t0 + 0.5) * width - t0
+    selected = asymmetry[window.slice]
+    time = (np.arange(selected.size, dtype=float) + window.first - common_t0) * width + residual
+    return time, selected, error[window.slice]
 
 
 def estimate_alpha(
@@ -240,7 +216,7 @@ def estimate_alpha(
         Forward and backward grouped count arrays.
     first_good_bin, last_good_bin
         Optional inclusive bin range for integration. If omitted, the full
-        overlap of the two arrays is used.
+        length of the arrays is used.
 
     Returns
     -------
@@ -248,19 +224,19 @@ def estimate_alpha(
         Estimated alpha value. Returns ``1.0`` when the backward integral is
         not positive or when no valid bins are available.
     """
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
-    n = min(len(f), len(b))
-    if n <= 0:
+    f, b = validated_count_arrays(forward, backward)
+    if f.size == 0:
         return 1.0
-
-    lo = 0 if first_good_bin is None else max(0, int(first_good_bin))
-    hi = n - 1 if last_good_bin is None else min(n - 1, int(last_good_bin))
-    if lo > hi:
-        return 1.0
-
-    fs = float(np.sum(f[lo : hi + 1]))
-    bs = float(np.sum(b[lo : hi + 1]))
+    window = good_window(
+        {
+            key: value
+            for key, value in (("first_good_bin", first_good_bin), ("last_good_bin", last_good_bin))
+            if value is not None
+        },
+        f.size,
+    )
+    fs = float(np.sum(f[window.slice]))
+    bs = float(np.sum(b[window.slice]))
     if bs <= 0.0:
         return 1.0
     return fs / bs
@@ -278,65 +254,6 @@ _LN_ALPHA_BOUNDS = (float(np.log(0.01)), float(np.log(100.0)))
 # — far cheaper than a full bounded minimisation per replica (~200×).
 _BOOTSTRAP_LN_WINDOW = 1.0
 _BOOTSTRAP_XATOL = 1e-4
-
-
-@dataclass(frozen=True)
-class SubtractedBackground:
-    """A constant background *already removed* from counts fed to the estimator.
-
-    Background-subtracted counts do not carry the information needed to
-    propagate their own uncertainty: the subtracted level is gone from the
-    Poisson variance, and the single estimated baseline's own error is shared by
-    every bin in the window rather than averaging away. Both are recoverable
-    only if the caller says what was subtracted, which is what this carries.
-
-    ``forward``/``backward`` are the per-bin levels that were subtracted from
-    each group; ``forward_error``/``backward_error`` their standard errors (for
-    a mean of ``n`` Poisson bins, ``√(total)/n``). Build it from a reduction
-    result with
-    :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`
-    rather than by hand.
-    """
-
-    forward: float
-    backward: float
-    forward_error: float
-    backward_error: float
-
-
-def windowed_count_variance(
-    counts: tuple[NDArray[np.float64], NDArray[np.float64]],
-    window: NDArray[np.bool_] | slice,
-    background: SubtractedBackground | None,
-) -> tuple[float, float]:
-    r"""Variances of the forward and backward window sums of ``counts``.
-
-    ``counts`` are the forward/backward counts as handed in, with
-    ``background`` (``None``: nothing) already subtracted; ``window`` selects
-    the ``n`` summed bins. With ``S = Σ`` the window sum, ``k`` the subtracted
-    level and ``σ_k`` its standard error, each group's variance is
-
-        ``var = (S + n·k) + (n·σ_k)²``.
-
-    The first term is Poisson: subtracting a constant shifts the mean without
-    changing the variance, so the window sum carries the **raw** total's
-    variance. The second is the baseline: one estimated level is removed from
-    all ``n`` bins, so its error is fully correlated across the window and
-    enters linearly in ``n``, not as ``√n``.
-    """
-    forward = np.asarray(counts[0], dtype=np.float64)[window]
-    backward = np.asarray(counts[1], dtype=np.float64)[window]
-    n_bins = float(forward.size)
-    if background is None:
-        return float(np.sum(forward)), float(np.sum(backward))
-    return (
-        float(np.sum(forward))
-        + n_bins * background.forward
-        + (n_bins * background.forward_error) ** 2,
-        float(np.sum(backward))
-        + n_bins * background.backward
-        + (n_bins * background.backward_error) ** 2,
-    )
 
 
 @dataclass(frozen=True)
@@ -619,23 +536,23 @@ def _alpha_window(
     last_good_bin: int | None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
     """Slice counts (and optional times) to the good-bin window."""
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
-    n = min(f.size, b.size)
-    if time_us is not None:
-        t = np.asarray(time_us, dtype=np.float64)
-        n = min(n, t.size)
-    lo = 0 if first_good_bin is None else max(0, int(first_good_bin))
-    hi = n - 1 if last_good_bin is None else min(n - 1, int(last_good_bin))
-    if n <= 0 or lo > hi:
-        empty = np.empty(0, dtype=np.float64)
-        return empty, empty, (empty if time_us is not None else None)
-    f = f[lo : hi + 1]
-    b = b[lo : hi + 1]
-    t_sel = None
-    if time_us is not None:
-        t_sel = np.asarray(time_us, dtype=np.float64)[lo : hi + 1]
-    return f, b, t_sel
+    arrays = (forward, backward) if time_us is None else (forward, backward, time_us)
+    values = validated_count_arrays(*arrays)
+    if values[0].size == 0:
+        return values[0], values[1], None if time_us is None else values[2]
+    window = good_window(
+        {
+            key: value
+            for key, value in (("first_good_bin", first_good_bin), ("last_good_bin", last_good_bin))
+            if value is not None
+        },
+        values[0].size,
+    )
+    return (
+        values[0][window.slice],
+        values[1][window.slice],
+        (None if time_us is None else values[2][window.slice]),
+    )
 
 
 # The optimising estimators run on internally packed bins so the objective's
@@ -761,41 +678,24 @@ def _single_alpha_estimate(
 
 def _ratio_alpha_error(
     alpha: float,
-    f: NDArray[np.float64],
-    b: NDArray[np.float64],
-    background: SubtractedBackground | None,
+    forward: GroupCounts,
+    backward: GroupCounts,
+    edges: NDArray[np.intp],
 ) -> float | None:
-    r"""Closed-form σ on the windowed count ratio α = ΣF/ΣB.
-
-    Numerator and denominator come from different detectors and are
-    independent, so the ratio's relative variance is the sum of theirs,
-    ``(σ/α)² = var_F/S_F² + var_B/S_B²``, with ``var_F``/``var_B`` the window
-    sums' variances from :func:`windowed_count_variance` — which carry both the
-    subtracted level's Poisson variance and the baseline's correlated error.
-
-    Resampling the *subtracted* counts — the obvious bootstrap — reproduces
-    neither term: it uses ``S_F`` where the variance is ``S_F + n·k_F``, and it
-    has no way to see the baseline term at all. In a late, low-counts window
-    where the background is a sizeable fraction of the signal that under-states
-    σ by roughly a factor of two.
-
-    Returns ``None`` when either window sum is non-positive (the ratio itself is
-    then degenerate).
-    """
-    sum_f = float(np.sum(f))
-    sum_b = float(np.sum(b))
+    """Propagate the ratio of independent detector-group sums, including shared noise."""
+    window = slice(int(edges[0]), int(edges[-1]))
+    sum_f = float(np.sum(forward.counts[window]))
+    sum_b = float(np.sum(backward.counts[window]))
     if sum_f <= 0.0 or sum_b <= 0.0:
         return None
-    var_f, var_b = windowed_count_variance((f, b), slice(None), background)
-    relative_variance = var_f / sum_f**2 + var_b / sum_b**2
-    if not np.isfinite(relative_variance) or relative_variance < 0.0:
-        return None
-    return float(alpha * np.sqrt(relative_variance))
+    var_f = linear_combination_variance(forward, edges)[0]
+    var_b = linear_combination_variance(backward, edges)[0]
+    return float(alpha * np.sqrt(var_f / sum_f**2 + var_b / sum_b**2))
 
 
 def estimate_alpha_detailed(
-    forward: NDArray[np.float64],
-    backward: NDArray[np.float64],
+    forward: GroupCounts,
+    backward: GroupCounts,
     *,
     method: str = "diamagnetic",
     time_us: NDArray[np.float64] | None = None,
@@ -803,7 +703,6 @@ def estimate_alpha_detailed(
     last_good_bin: int | None = None,
     n_bootstrap: int = 200,
     seed: int = 0,
-    subtracted_background: SubtractedBackground | None = None,
 ) -> AlphaEstimate:
     """Estimate alpha with an uncertainty, by one of three methods.
 
@@ -832,7 +731,7 @@ def estimate_alpha_detailed(
     uncertainty is an Asymmetry improvement (study divergence D2).
 
     Goodness gate (``general`` only)
-    -------------------------------
+    --------------------------------
     The closed-form solution equates the balanced count between two windows,
     which is one equation for one unknown: a *residual trend* in that count —
     counts decaying with an effective lifetime slightly different from τ_μ
@@ -852,20 +751,14 @@ def estimate_alpha_detailed(
     reported ``alpha`` is unchanged either way — only ``ok``, ``message`` and
     ``objective_value`` react.
 
-    ``ratio`` instead propagates in closed form (see :func:`_ratio_alpha_error`),
-    which is exact for a ratio of window sums and, unlike a bootstrap, can
-    account for a background that was subtracted *before* the counts arrived.
-    Pass ``subtracted_background`` whenever the counts came from
-    :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts` with
-    ``use_background=True`` — get it from
-    :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`.
-    Without it the reported σ omits both the subtracted level's Poisson
-    variance and the baseline estimate's own (window-wide correlated)
-    uncertainty, and under-states σ by roughly a factor of two in a late,
-    low-counts window. ``n_bootstrap=0`` still suppresses ``alpha_error``
-    entirely, for callers that only want the value.
+    ``ratio`` propagates the two window sums through
+    :func:`~asymmetry.core.transform.fb_counts.linear_combination_variance`,
+    including shared background uncertainty and estimation-window overlap.
+    The optimising methods use their seeded Poisson bootstrap and do not carry
+    shared components into the resampling. ``n_bootstrap=0`` suppresses errors.
 
-    Parameters mirror :func:`estimate_alpha`.
+    Counts are :class:`~asymmetry.core.transform.fb_counts.GroupCounts` values;
+    the other parameters mirror :func:`estimate_alpha`.
     """
     if method not in ALPHA_ESTIMATION_METHODS:
         raise ValueError(
@@ -874,15 +767,7 @@ def estimate_alpha_detailed(
         )
     if method == "general" and time_us is None:
         raise ValueError("The 'general' method requires time_us (bin centres in µs)")
-    if subtracted_background is not None and method != "ratio":
-        # The optimising objectives are non-linear in the counts, so a constant
-        # offset cannot be propagated this way — and they are run on packed,
-        # positive-masked bins where "the window sum" is not even well defined.
-        raise ValueError(
-            f"subtracted_background only applies to the 'ratio' method; got method={method!r}"
-        )
-
-    f, b, t = _alpha_window(forward, backward, time_us, first_good_bin, last_good_bin)
+    f, b, t = _alpha_window(forward.counts, backward.counts, time_us, first_good_bin, last_good_bin)
     if method == "diamagnetic":
         # The diamagnetic objective runs on packed, positive-masked bins;
         # ratio and general are linear in counts and use the raw window.
@@ -950,10 +835,14 @@ def estimate_alpha_detailed(
                 "fully-depolarized window"
             )
     if n_bootstrap > 0 and method == "ratio":
-        # Closed form, not a bootstrap: the ratio is an explicit function of the
-        # two window sums, so the propagation is exact — and it is the only
-        # route that can carry a background subtracted upstream of this call.
-        alpha_error = _ratio_alpha_error(alpha, f, b, subtracted_background)
+        edges = np.array(
+            [
+                0 if first_good_bin is None else first_good_bin,
+                forward.counts.size if last_good_bin is None else last_good_bin + 1,
+            ],
+            dtype=np.intp,
+        )
+        alpha_error = _ratio_alpha_error(alpha, forward, backward, edges)
     elif n_bootstrap > 0:
         rng = np.random.default_rng(seed)
         f_lam = np.clip(f, 0.0, None)

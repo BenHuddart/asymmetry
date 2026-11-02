@@ -21,14 +21,6 @@ from asymmetry.gui.utils.latex_renderer import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def test_render_latex_to_pixmap(qapp: QApplication) -> None:
     pixmap = render_latex_to_pixmap(r"\lambda(B)=\frac{A}{1+(B/B_0)^2}")
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting import CompositeModel, FitEngine, Parameter, ParameterSet
@@ -11,14 +10,6 @@ from asymmetry.core.fitting.spectral import (
     default_frequency_model,
     frequency_mhz_to_field_gauss,
 )
-
-
-@pytest.fixture
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _frequency_dataset(

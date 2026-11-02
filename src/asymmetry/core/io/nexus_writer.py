@@ -170,10 +170,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
     if dead_time.size != n_det:
         dead_time = np.zeros(n_det, dtype=np.float64)
 
-    try:
-        good_frames = float(grouping.get("good_frames", 1.0))
-    except (TypeError, ValueError):
-        good_frames = 1.0
+    good_frames = grouping.get("good_frames")
 
     with h5py.File(str(path), "w") as handle:
         entry = handle.create_group("run")
@@ -186,7 +183,8 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
             value = metadata.get(key)
             if value:
                 _write_str(entry, name, str(value))
-        entry.create_dataset("good_frames", data=np.float64(good_frames))
+        if good_frames is not None:
+            entry.create_dataset("good_frames", data=np.float64(good_frames))
 
         instrument = entry.create_group("instrument")
         _write_str(instrument, "name", metadata.get("instrument", ""))
@@ -196,8 +194,12 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
             _write_str(detector, "orientation", str(orientation))
 
         sample = entry.create_group("sample")
-        sample.create_dataset("temperature", data=np.float64(metadata.get("temperature", 0.0)))
-        sample.create_dataset("magnetic_field", data=np.float64(metadata.get("field", 0.0)))
+        sample.create_dataset(
+            "temperature", data=np.float64(metadata.get("temperature", 0.0))
+        ).attrs["units"] = np.bytes_("kelvin")
+        sample.create_dataset("magnetic_field", data=np.float64(metadata.get("field", 0.0))).attrs[
+            "units"
+        ] = np.bytes_("gauss")
         field_state = metadata.get("field_state")
         if field_state:
             _write_str(sample, "magnetic_field_state", str(field_state))
@@ -212,9 +214,14 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
         h_data.create_dataset(
             "corrected_time",
             data=(np.arange(n_bins, dtype=np.float64) + 0.5) * bin_width - common_time_zero,
+        ).attrs["units"] = np.bytes_("microseconds")
+        h_data.create_dataset("resolution", data=bin_width * 1e6).attrs["units"] = np.bytes_(
+            "picoseconds"
         )
         h_data.create_dataset("grouping", data=_detector_group_ids(grouping, n_det))
-        h_data.create_dataset("dead_time", data=dead_time)
+        h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
+            "microseconds"
+        )
         # time_zero is the exact t0 in µs from the start of acquisition, one
         # value per detector (WiMDA quantised a single value to whole µs here).
         time_zero_ds = h_data.create_dataset("time_zero", data=time_zero)

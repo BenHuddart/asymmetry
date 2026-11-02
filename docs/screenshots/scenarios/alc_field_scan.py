@@ -26,9 +26,7 @@ class AlcFieldScanScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = make_alc_field_scan()
         for dataset in datasets:
@@ -71,6 +69,9 @@ class AlcFieldScanScenario(Scenario):
         _process_events_for(milliseconds=120)
         view.peaks_fit_requested.emit()
         _process_events_for(milliseconds=300)
+        summary = view._peaks_results.text()
+        assert summary.count("±") == 3
+        assert "Uncertainties include the fitted baseline." in summary
         return window
 
 

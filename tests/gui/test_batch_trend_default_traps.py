@@ -29,7 +29,6 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.data_browser import (
@@ -37,11 +36,6 @@ from asymmetry.gui.panels.data_browser import (
     DataBrowserPanel,
 )
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _row(run_number: int, values: dict[str, float], custom: dict[str, str]) -> _FitRow:

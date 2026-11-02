@@ -267,12 +267,8 @@ class TestSchemaMigration:
             validate({"datasets": []})
 
     def test_unknown_top_level_fields_are_allowed(self):
-        """Future-proofing: unknown fields must not break validation."""
         state = {"schema_version": 5, "datasets": [], "future_field": "keep me"}
         validate(state)  # must not raise
-
-    def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 26
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode
@@ -486,7 +482,8 @@ class TestSchemaMigrationV5toV6:
         fit_100 = open_fit(by_run[100]["representations"]["time_fb_asymmetry"])
         assert fit_100["model"]["component_names"] == ["Exponential"]
         assert fit_100["provenance"] == "single"
-        assert fit_100["result"] == {"result_html": "<b>chi2 = 2.0</b>"}
+        assert fit_100["result"]["result_html"] == "<b>chi2 = 2.0</b>"
+        assert fit_100["result"]["objective"] == "gaussian"
 
     def test_bare_active_single_state_maps_to_active_run_only(self):
         result = migrate_to_current(self._v5_state())
@@ -1005,14 +1002,6 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QWidget
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture(autouse=True)
@@ -1618,6 +1607,9 @@ class _StubFitParamsWithCrossGroup(_StubFitParamsClear):
 
 
 class _StubPlotPanelWithState(_StubPlotPanel):
+    def get_bunch_factor(self):
+        return self.get_state()["bunch_factor"]
+
     def get_state(self):
         return {
             "current_run_number": None,
@@ -3094,13 +3086,7 @@ class TestNonFiniteJsonSafety:
 
 
 class TestRestoreChunkedProgress:
-    """Project restore re-applies groupings via the chunked progress runner (E4).
-
-    The per-dataset loop in ``_restore_project_state_impl`` runs one item per
-    event-loop turn behind a cancellable ``QProgressDialog`` instead of
-    freezing the window for the whole project; these pin the item order and
-    the cancel-at-an-item-boundary contract.
-    """
+    """Project restore re-applies groupings via the chunked progress runner (E4)."""
 
     @staticmethod
     def _two_run_project(tmp_path, monkeypatch, qapp):

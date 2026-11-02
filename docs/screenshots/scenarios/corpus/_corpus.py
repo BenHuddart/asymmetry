@@ -18,6 +18,7 @@ from typing import ClassVar
 
 from .._base import Scenario, _process_events_for, register  # noqa: F401  (re-exported)
 
+
 def corpus_root() -> Path:
     """Return the corpus root named by ``ASYMMETRY_CORPUS_ROOT``."""
     if "ASYMMETRY_CORPUS_ROOT" not in os.environ:

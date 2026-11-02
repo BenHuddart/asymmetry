@@ -27,8 +27,8 @@ from asymmetry.gui.panels.plot_panel import PlotPanel  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def app() -> QApplication:
-    return QApplication.instance() or QApplication([])
+def app(qapp) -> QApplication:
+    return qapp
 
 
 def _frequency_dataset(run_number: int = 1, center: float = 3.2) -> MuonDataset:

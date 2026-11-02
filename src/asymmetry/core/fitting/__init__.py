@@ -41,10 +41,12 @@ from asymmetry.core.fitting.engine import (
 )
 from asymmetry.core.fitting.field_scan import (
     ScanBaselineResult,
+    ScanPeakFit,
     as_composite_model,
     fit_rf_resonance,
     fit_scan_baseline,
     fit_scan_model,
+    fit_scan_peaks,
     parameter_set_for_model,
 )
 from asymmetry.core.fitting.fit_log import FitLog, enrich_summary_provenance
@@ -53,12 +55,10 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
-    SelectionMetric,
     SpectrumFingerprint,
     assessment_with_curves,
     build_candidate_templates,
     build_fit_wizard_recommendation,
-    compute_information_criteria,
     fingerprint_spectrum,
     rerank_fit_wizard_recommendation,
 )
@@ -94,6 +94,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     grouped_time_domain_available,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
 from asymmetry.core.fitting.joint import (
     JointFitResult,
     JointSeriesProblem,
@@ -196,6 +197,7 @@ __all__ = [
     "rrf_frequency_offsets",
     "rrf_offset_model",
     "SelectionMetric",
+    "InformationCriteria",
     "SelectionObjective",
     "SpectrumFingerprint",
     "CandidateTemplate",
@@ -250,7 +252,6 @@ __all__ = [
     "fit_bimolecular_rate",
     "fit_arrhenius",
     "mu_relaxation_from_amplitude",
-    "compute_information_criteria",
     "fingerprint_spectrum",
     "build_candidate_templates",
     "assessment_with_curves",
@@ -307,11 +308,13 @@ __all__ = [
     "evaluate_parameter_model_fit",
     "component_names_for_x",
     "fit_scan_baseline",
+    "fit_scan_peaks",
     "fit_scan_model",
     "fit_rf_resonance",
     "parameter_set_for_model",
     "as_composite_model",
     "ScanBaselineResult",
+    "ScanPeakFit",
     "ParamInfo",
     "get_param_info",
     "Parameter",

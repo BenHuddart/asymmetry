@@ -52,7 +52,8 @@ Each detector in the forward group accumulates expected counts
 
 with the backward group seeing :math:`1 - a(t)`, where :math:`a(t)` is the
 chosen model (the dialog works in percent, matching the fit panel),
-:math:`\tau_\mu = 2.1969811` μs, and :math:`b` is an optional flat
+:math:`\tau_\mu = 2.1969811` μs (PDG 2024; see
+:ref:`physical-constants-api`), and :math:`b` is an optional flat
 background per bin. The α balance enters as the relative efficiency of the
 two groups — forward detectors are weighted by :math:`2\alpha/(1+\alpha)`
 and backward by :math:`2/(1+\alpha)` — so the reduction
@@ -68,7 +69,8 @@ The result appears in the Data Browser as ``SIM 90001`` (and counting),
 tinted and carrying a tooltip with its provenance: the generating model,
 parameter values, seed, event budget and template run. The run's metadata
 records the same information permanently. **Save as NeXus…** writes the run
-as a standard ISIS muon NeXus file that reloads through *Open Data
+as a standard ISIS muon NeXus file with explicit temperature, field, and
+timing units that reloads through *Open Data
 File(s)…* with identical counts — this is also how a synthetic run persists
 across sessions, since project files reference data files rather than
 storing histograms. A synthetic run that has not been saved this way is held

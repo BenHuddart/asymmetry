@@ -19,10 +19,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
+from PySide6.QtWidgets import QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.member_quality import member_quality_flags  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit.global_tab import (  # noqa: E402
@@ -38,11 +39,6 @@ from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E
 
 #: The inspector dock the Fit tabs are designed against, in characters (~320 px).
 _DOCK_CHARS = 46
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
@@ -67,6 +63,7 @@ def _dataset(run_number: int) -> MuonDataset:
 
 def _result(chi2: float, *, success: bool = True, error: float = 0.01) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         chi_squared=chi2 * 30.0,
         reduced_chi_squared=chi2,

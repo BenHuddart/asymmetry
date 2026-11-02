@@ -13,6 +13,7 @@ import pytest
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import CandidateAssessment, CandidateTemplate
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import (
     SeedContext,
@@ -44,11 +45,8 @@ def _assessment() -> CandidateAssessment:
             rationale="baseline",
             model=model,
         ),
-        fit_result=FitResult(success=True, parameters=parameters),
-        aic=10.0,
-        aicc=10.5,
-        bic=12.0,
-        selected_score=10.5,
+        fit_result=FitResult(objective=Objective.GAUSSIAN, success=True, parameters=parameters),
+        sample_count=1000,
         residual_rms=0.1,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.05,
@@ -83,7 +81,7 @@ def _oscillatory_assessment() -> CandidateAssessment:
     return replace(
         base,
         template=replace(base.template, key="oscillatory_exp_constant", model=model),
-        fit_result=FitResult(success=True, parameters=parameters),
+        fit_result=FitResult(objective=Objective.GAUSSIAN, success=True, parameters=parameters),
     )
 
 
@@ -92,6 +90,7 @@ def _oscillatory_assessment() -> CandidateAssessment:
 
 def test_from_expression_seeds_every_parameter_of_the_model() -> None:
     recipe = FitRecipe.from_expression(_EXPRESSION)
+    assert recipe.to_dict()["rebin_operation"] == "merge_curve_bins"
     assert recipe.expression == _EXPRESSION
     assert recipe.parameter_names == recipe.model().param_names
     assert recipe.source == {"user": True}
@@ -178,7 +177,7 @@ def test_recipe_reports_actual_bin_centres_after_rebin_and_window(
     recipe = FitRecipe.from_expression(_EXPRESSION)
     assert recipe.time_window(data) == (data.time[0], data.time[-1])
     cut = replace(recipe, rebin=2, t_min=0.23, t_max=4.91)
-    time = data.rebin(2).time
+    time = data.merge_curve_bins(2).time
     selected = time[(time >= 0.23) & (time <= 4.91)]
     assert cut.time_window(data) == (selected[0], selected[-1])
 

@@ -26,6 +26,7 @@ from asymmetry.core.fitting.engine import (
     FitCancelledError,
     FitResult,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.series import fit_asymmetry_series
 
@@ -79,12 +80,19 @@ class _BistableEngine:
             fitted.add(Parameter(name="A_1", value=20.0))
             fitted.add(Parameter(name="frequency", value=real))
             fitted.add(Parameter(name="lambda", value=0.1))
-            return FitResult(success=True, reduced_chi_squared=1.0, parameters=fitted)
+            return FitResult(
+                objective=Objective.GAUSSIAN,
+                success=True,
+                reduced_chi_squared=1.0,
+                parameters=fitted,
+            )
         # Spurious branch: high frequency, amplitude collapsed to ~0.
         fitted.add(Parameter(name="A_1", value=0.05))
         fitted.add(Parameter(name="frequency", value=_SPURIOUS_FREQ))
         fitted.add(Parameter(name="lambda", value=0.1))
-        return FitResult(success=True, reduced_chi_squared=3.0, parameters=fitted)
+        return FitResult(
+            objective=Objective.GAUSSIAN, success=True, reduced_chi_squared=3.0, parameters=fitted
+        )
 
 
 def _run(seeding: str, engine=None):
@@ -145,7 +153,9 @@ def test_reseed_only_fires_for_converged_spurious_not_hard_failure():
             if int(dataset.run_number) == 2950:
                 ps = ParameterSet()
                 ps.add(Parameter(name="frequency", value=0.0))
-                return FitResult(success=False, parameters=ps, message="diverged")
+                return FitResult(
+                    objective=Objective.GAUSSIAN, success=False, parameters=ps, message="diverged"
+                )
             return super().fit(dataset, model_fn, parameters, **kwargs)
 
     result, _ = _run("chain", engine=_FailingEngine())
@@ -482,13 +492,11 @@ def test_gaussian_cost_batch_payloads_also_carry_no_histograms(monkeypatch):
     assert all(payload[1].run.histograms == [] for payload in payloads)
 
 
-def test_count_domain_batch_payloads_keep_the_counts(monkeypatch):
-    # The Poisson cost declares needs_histograms=True: the count-domain setup behind it
-    # reads run.histograms, so the full record has to cross the boundary.
-    payloads = _payloads_for_cost(monkeypatch, POISSON_COST)
+def test_asymmetry_series_rejects_a_poisson_cost(monkeypatch):
+    from asymmetry.core.fitting.likelihood import FitInputError
 
-    assert len(payloads) == 3
-    assert all(len(payload[1].run.histograms) == 15 for payload in payloads)
+    with pytest.raises(FitInputError, match="requires Gaussian observations"):
+        _payloads_for_cost(monkeypatch, POISSON_COST)
 
 
 def test_every_cost_factory_declares_whether_it_reads_counts():

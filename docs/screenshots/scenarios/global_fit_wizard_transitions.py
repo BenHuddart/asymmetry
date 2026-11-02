@@ -14,6 +14,8 @@ fully deterministic while still exercising the real ``TransitionsCard`` and
 ``GlobalFitWizardWindow`` rendering code — nothing about the *display* is
 faked, only the (expensive) search that would normally produce its input.
 
+Screen and Compare use the shared criterion cells: defined numbers sort
+numerically and unavailable entries show a dash with their recorded reason.
 The cached state lands on Screen, so the scenario opens Phases and picks the
 second phase's row: the overlay is coloured by phase and draws that phase's
 coupled fit over its runs, and the trace strip below it follows the precession
@@ -27,6 +29,8 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtWidgets import QWidget
+
+from asymmetry.core.fitting.likelihood import Objective
 
 from ..data import make_two_phase_zf_tscan
 from ._base import Scenario, _process_events_for, register
@@ -99,6 +103,7 @@ def _assessment(
         params = param_values_for_run(run_number, float(dataset.metadata["temperature"]))
         curve = template.model.function(dataset.time, **params)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=48.0,
             reduced_chi_squared=1.03,
@@ -149,10 +154,7 @@ def _assessment(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=90.0,
-        aicc=92.0,
-        bic=105.0,
-        selected_score=92.0,
+        sample_count=sum(dataset.n_points for dataset in datasets),
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
         rung=CandidateRung(

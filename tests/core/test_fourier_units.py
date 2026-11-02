@@ -21,23 +21,20 @@ from asymmetry.core.fourier.units import (
     shift_from_reference,
     tesla_to_mhz,
 )
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-)
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA
 
 
-def test_mhz_tesla_uses_codata_gyromagnetic_ratio() -> None:
-    # ν = γ_μ B / 2π with γ_μ/2π = 135.538817 MHz/T.
-    assert mhz_to_tesla(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T) == pytest.approx(1.0)
-    assert tesla_to_mhz(1.0) == pytest.approx(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T)
+def test_mhz_tesla_matches_codata_2018_with_documented_precision() -> None:
+    # CODATA 2018: ν/B = 2|μ_μ|/h; rounded conversion is within 1e-9.
+    assert mhz_to_tesla(135.5388095) == pytest.approx(1.0, rel=1e-9)
+    assert tesla_to_mhz(1.0) == pytest.approx(135.5388095, rel=1e-9)
 
 
 def test_mhz_gauss_round_trip() -> None:
     values = np.array([0.0, 1.5, 13.55, 135.5])
     np.testing.assert_allclose(gauss_to_mhz(mhz_to_gauss(values)), values, atol=1e-12)
     # 1 T = 1e4 G, so 1 G ↔ γ·1e-4 MHz.
-    assert gauss_to_mhz(1.0) == pytest.approx(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)
+    assert gauss_to_mhz(1.0) == pytest.approx(0.01355388095, rel=1e-9)
 
 
 def test_gauss_tesla_scale() -> None:
@@ -130,3 +127,7 @@ def test_gyromagnetic_ratio_override_rejects_non_positive_or_non_finite(bad_rati
             converter(1.0, gyromagnetic_ratio_mhz_per_t=bad_ratio)
     with pytest.raises(ValueError, match="positive and finite"):
         convert(1.0, "mhz", "gauss", gyromagnetic_ratio_mhz_per_t=bad_ratio)
+
+
+def test_documented_200_gauss_larmor_example() -> None:
+    assert gauss_to_mhz(200.0) == pytest.approx(2.71077619, rel=1e-9)

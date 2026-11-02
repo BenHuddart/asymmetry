@@ -112,7 +112,7 @@ def _batch_project() -> dict:
 
 def test_batch_series_seeds_recipe_from_the_member_template():
     result = migrate_to_current(_batch_project())
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 26
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION
     recipe = result["batches"][0]["recipe"]
     assert recipe["parameters"] == [
         {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 1", "seeded": False},
@@ -210,7 +210,11 @@ def test_single_fit_slot_keeps_ui_state_and_loses_only_the_moved_fields():
     assert slot["provenance"] == "single"
     assert slot["model"] == _MODEL
     assert slot["parameters"] == _TEMPLATE
-    assert slot["result"] == {"success": True}
+    assert slot["result"] == {
+        "success": True,
+        "objective": "gaussian",
+        "minimum_expected_count": None,
+    }
     assert slot["ui_state"] == {"composite_model": _MODEL, "result_html": "<p>ok</p>"}
     assert "batch_id" not in slot
     assert "diverged" not in slot
@@ -337,7 +341,7 @@ def test_project_with_no_batches_migrates_clean():
     assert "batches" not in state
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 26
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION
     assert "active_series" not in result
     model = ProjectModel.from_project_state(result)
     assert model.batches == {}

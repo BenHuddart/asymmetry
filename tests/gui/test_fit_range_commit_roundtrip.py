@@ -29,14 +29,6 @@ from asymmetry.gui.panels.fit_panel import GlobalFitTab
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def tab(qapp: QApplication) -> GlobalFitTab:
     return GlobalFitTab()

@@ -9,11 +9,11 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
-    has_file_deadtime,
-    has_resolved_deadtime,
     parse_deadtime_calibration_text,
     prepare_histograms_with_deadtime,
+    resolve_deadtime,
 )
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
 def test_prepare_deadtime_uses_file_values_only() -> None:
@@ -26,26 +26,16 @@ def test_prepare_deadtime_uses_file_values_only() -> None:
         use_deadtime=True,
     )
 
-    assert applied is True
-    assert grouping["deadtime_method"] == "file"
-    assert corrected[0].counts[0] == pytest.approx(100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0))))
-    assert has_file_deadtime(grouping, 1) is True
-
-
-def test_prepare_deadtime_without_file_values_is_noop() -> None:
-    histogram = Histogram(np.array([100.0, 200.0]), bin_width=0.02)
-    grouping = {}
-
-    corrected, applied = prepare_histograms_with_deadtime(
-        [histogram],
-        grouping,
-        use_deadtime=True,
-    )
-
-    assert applied is False
+    assert applied.status == "applied"
     assert "deadtime_method" not in grouping
-    np.testing.assert_allclose(corrected[0].counts, histogram.counts)
-    assert has_file_deadtime(grouping, 1) is False
+    assert corrected[0].counts[0] == pytest.approx(100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0))))
+    assert resolve_deadtime(grouping, 1, True, "from_file").status == "applied"
+
+
+def test_prepare_deadtime_without_file_values_refuses_final_analysis() -> None:
+    histogram = Histogram(np.array([100.0, 200.0]), bin_width=0.02)
+    with pytest.raises(ValueError, match="table"):
+        prepare_histograms_with_deadtime([histogram], {}, use_deadtime=True)
 
 
 def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> None:
@@ -62,10 +52,10 @@ def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> No
         use_deadtime=True,
     )
 
-    assert applied is True
+    assert applied.status == "applied"
     assert grouping["deadtime_method"] == "estimate"
-    assert has_resolved_deadtime(grouping, 1) is True
-    assert has_file_deadtime(grouping, 1) is False
+    assert resolve_deadtime(grouping, 1, True, "manual").status == "applied"
+    assert resolve_deadtime(grouping, 1, True, "from_file").status == "unavailable"
     assert corrected[0].counts[0] > histogram.counts[0]
 
 
@@ -76,10 +66,8 @@ def test_estimate_deadtime_from_histograms_recovers_uniform_tau() -> None:
     num_good_frames = 1000.0
     times = (np.arange(12, dtype=float) + 1.0) * bin_width
     frame_scale = num_good_frames * bin_width
-    true_counts = amplitude * np.exp(-times / 2.1969811)
-    observed = true_counts * (
-        1.0 - (true_counts / frame_scale) * 2.1969811 * (1.0 - np.exp(-tau_us / 2.1969811))
-    )
+    true_counts = amplitude * np.exp(-times / MUON_LIFETIME_US)
+    observed = true_counts / (1 + true_counts * tau_us / frame_scale)
     histograms = [Histogram(observed.copy(), bin_width=bin_width) for _ in range(4)]
 
     estimated = estimate_deadtime_from_histograms(
@@ -97,16 +85,14 @@ def test_estimate_deadtime_from_histograms_recovers_uniform_tau() -> None:
 def test_calibrate_deadtime_from_histograms_recovers_per_detector_tau() -> None:
     bin_width = 0.01
     num_good_frames = 1000.0
-    lifetime_us = 2.1969811
+    lifetime_us = MUON_LIFETIME_US
     times = (np.arange(12, dtype=float) + 1.0) * bin_width
     taus = [0.01, 0.02, 0.03]
     histograms: list[Histogram] = []
     for amplitude, tau_us in zip((120.0, 105.0, 90.0), taus, strict=True):
         frame_scale = num_good_frames * bin_width
         true_counts = amplitude * np.exp(-times / lifetime_us)
-        observed = true_counts * (
-            1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
-        )
+        observed = true_counts / (1 + true_counts * tau_us / frame_scale)
         histograms.append(Histogram(observed.copy(), bin_width=bin_width))
 
     calibrated = calibrate_deadtime_from_histograms(
@@ -122,20 +108,17 @@ def test_calibrate_deadtime_from_histograms_recovers_per_detector_tau() -> None:
 
 
 def test_calibrate_deadtime_from_histograms_uses_detector_t0_bins_override() -> None:
-    """The calibration window starts from the resolver's t0 override (D10),
-    not the histogram's file `t0_bin`, when one is supplied (plan phase 4)."""
+    """The t0 policy moves the calibration window past the prompt bins."""
     bin_width = 0.01
     num_good_frames = 1000.0
-    lifetime_us = 2.1969811
+    lifetime_us = MUON_LIFETIME_US
     tau_us = 0.02
     amplitude = 120.0
     n_fit = 12
     times = (np.arange(n_fit, dtype=float) + 1.0) * bin_width
     frame_scale = num_good_frames * bin_width
     true_counts = amplitude * np.exp(-times / lifetime_us)
-    clean = true_counts * (
-        1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
-    )
+    clean = true_counts / (1 + true_counts * tau_us / frame_scale)
     # Two prompt-spike bins ahead of the clean early-time decay: a calibration
     # window that starts at the file `t0_bin` (0) would fit through them, but
     # a policy-resolved t0 override of 2 must move the window past them.

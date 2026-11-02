@@ -41,7 +41,7 @@ from asymmetry.core.transform.grouping import (
     group_names,
     resolve_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.coerce import optional_float
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
@@ -555,9 +555,8 @@ def _run_with_maxent_binning(run: Run, config: MaxEntConfig) -> Run:
     factor = _parse_positive_int(config.time_binning_factor)
     if factor <= 1:
         return run
-    grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
-    existing = _parse_positive_int(grouping.get("bunching_factor", 1))
-    grouping["bunching_factor"] = int(existing * factor)
+    grouping = dict(run.grouping)
+    grouping["bunching_factor"] = binning_spec(grouping).factor * factor
     return replace(run, grouping=grouping)
 
 
@@ -603,7 +602,7 @@ def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | No
     # Bin centres from the run's exact t0 (D4); 0.0 residual without one.
     residual_us = t0_stamp_residual_us(histograms, grouping, reference_t0)
     time_us = (bins - float(reference_t0)) * bin_width + residual_us
-    base_bunch = _parse_positive_int(grouping.get("bunching_factor", 1))
+    base_bunch = binning_spec(grouping).factor
     return time_us, bin_width, base_bunch
 
 

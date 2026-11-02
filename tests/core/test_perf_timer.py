@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
 from asymmetry.core.utils import perf as perf_module
 from asymmetry.core.utils.perf import perf_logging_enabled, perf_timer, set_perf_logging
@@ -169,6 +170,7 @@ def test_reduce_grouped_asymmetry_emits_perf_record_when_enabled(
     histograms, grouping = _tiny_run_histograms()
     result = reduce_grouped_asymmetry(
         histograms=histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=[0],
         backward_idx=[1],
@@ -196,6 +198,7 @@ def test_reduce_grouped_asymmetry_emits_nothing_when_disabled(
     histograms, grouping = _tiny_run_histograms()
     reduce_grouped_asymmetry(
         histograms=histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=[0],
         backward_idx=[1],

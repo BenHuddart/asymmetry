@@ -18,6 +18,7 @@ from asymmetry.core.fitting.field_scan import (
     as_composite_model,
     fit_scan_baseline,
     fit_scan_model,
+    fit_scan_peaks,
     parameter_set_for_model,
 )
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_model_seeds
@@ -292,6 +293,7 @@ def fit_integral_scan(
         scan = _cropped(scan, x_min, x_max)
     fitted_scan = scan
     baseline_payload = None
+    baseline = None
     if baseline_model is not None:
         _baseline_composite, baseline_parameters = _parameters(
             scan,
@@ -329,15 +331,31 @@ def fit_integral_scan(
         )
     # One extra start is the scan's own data seed (fixed values alone known),
     # which rescues a hand-given start the fit cannot converge from.
-    result = fit_scan_model(fitted_scan, model, parameters=parameters, extra_starts=1)
+    if baseline is None:
+        result = fit_scan_model(fitted_scan, model, parameters=parameters, extra_starts=1)
+        uncertainties = result.uncertainties
+        covariance = result.covariance
+        reduced_chi_squared = result.reduced_chi_squared
+        effective_dof = float(result.n_points - free)
+    else:
+        peaks = fit_scan_peaks(baseline, model, parameters=parameters, extra_starts=1)
+        result = peaks.fit
+        uncertainties = peaks.uncertainties
+        covariance = peaks.covariance
+        reduced_chi_squared = peaks.reduced_chi_squared
+        effective_dof = peaks.effective_dof
     fit_payload = {
         "success": bool(result.success),
         "message": str(result.message),
         "expression": expression,
         "parameters": _parameter_values(result.parameters),
-        "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
+        "uncertainties": {name: float(value) for name, value in uncertainties.items()},
+        "uncertainty_basis": "joint_fit" if baseline is None else "baseline_propagated",
+        "conditional_uncertainties": dict(result.uncertainties) if baseline is not None else None,
+        "covariance": covariance,
+        "effective_dof": effective_dof,
         "chi_squared": float(result.chi_squared),
-        "reduced_chi_squared": float(result.reduced_chi_squared),
+        "reduced_chi_squared": float(reduced_chi_squared),
         "n_points": int(result.n_points),
         "params_at_bound": list(result.params_at_bound),
         "initial": {str(name): float(value) for name, value in (initial or {}).items()},

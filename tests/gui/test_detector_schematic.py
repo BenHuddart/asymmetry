@@ -10,18 +10,9 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.instrument import get_instrument_layout
 from asymmetry.gui.widgets.detector_schematic import DetectorSchematicWidget
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture(params=["HiFi", "MuSR", "EMU", "FLAME", "GPS", "GPS-RD"])

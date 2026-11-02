@@ -18,15 +18,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox
+from PySide6.QtWidgets import QCheckBox
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.gui.panels.fit_panel import FitParameterTable, GlobalFitTab
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _grouped_single_tab(qapp) -> GlobalFitTab:

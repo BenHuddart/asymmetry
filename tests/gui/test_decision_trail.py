@@ -17,14 +17,6 @@ from asymmetry.core.fitting.wizard_narrative import TrailStep
 from asymmetry.gui.widgets.decision_trail import DecisionTrail
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _steps() -> tuple[TrailStep, ...]:
     return (
         TrailStep("conditions", "Run conditions read.", "conditions", ("cond detail",)),

@@ -19,6 +19,8 @@ import asymmetry.core.fourier.spectrum as spectrum_module
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import CompositeModel
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -29,6 +31,7 @@ from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
@@ -61,15 +64,6 @@ def _wait_frequency_idle(window: MainWindow, timeout_s: float = 15.0) -> None:
         QApplication.instance(),
         timeout_s=timeout_s,
     )
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture
@@ -2918,27 +2912,7 @@ class TestApodisationSuggestion:
     def _make_damped_fourier_ready_dataset(
         self, run_number: int, *, with_grouping: bool = True
     ) -> MuonDataset:
-        """A damped variant of ``_make_fourier_ready_dataset`` (rate 0.5 us^-1).
-
-        The plain helper's undamped cosines are resolution-limited (no physical
-        linewidth to match), so the estimator correctly returns None for them.
-        This variant multiplies the oscillating term by exp(-0.5 * t) so the
-        dominant line has a real Lorentzian width to recover (expected tau ~ 2
-        us, loosely — the grouped pipeline's own decay correction and noise make
-        the recovered value approximate).
-
-        Unlike the plain helper, the counts here also carry the real muon-decay
-        envelope exp(-t / MUON_LIFETIME_US): ``build_group_signal_dataset``
-        (the actual pipeline ``_on_suggest_apodisation`` runs through) always
-        applies a lifetime correction ``exp(t / tau_mu)`` before the FFT. Without
-        a matching decay baked into the counts, that correction amplifies the
-        plain helper's already-flat baseline into a huge low-frequency leakage
-        that swamps the injected line — fine for the other Fourier tests (which
-        never inspect the line shape), but it leaves nothing for a matched-filter
-        estimator to find. Baking in the real decay cancels the correction and
-        leaves a clean baseline + damped-cosine signal, as real detector counts
-        would.
-        """
+        """A damped variant of ``_make_fourier_ready_dataset`` (rate 0.5 us^-1)."""
         time = np.arange(256, dtype=float) * 0.05
         frequency = 12.0 / (time.size * 0.05)
         phase_a = np.deg2rad(32.0)
@@ -3732,18 +3706,16 @@ class TestMainWindowBasic:
         assert mainwindow._view_bunch_spin.value() == 3
         assert mainwindow._plot_panel.get_view_limits() == pytest.approx((0.5, 8.0, -5.0, 12.0))
 
-    def test_main_window_bunch_control_updates_grouping_bunch_factor(
-        self, mainwindow: MainWindow
-    ) -> None:
-        """Toolbar bunch changes should stay synchronized with grouping metadata."""
+    def test_toolbar_bunch_merges_recorded_bins(self, mainwindow: MainWindow) -> None:
+        """Toolbar bunching composes with the recorded grouping factor."""
         dataset = _make_dataset(4101, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(int(dataset.run_number))
 
         mainwindow._view_bunch_spin.setValue(4)
 
-        assert dataset.run is not None
-        assert int(dataset.run.grouping.get("bunching_factor", 1)) == 4
+        assert dataset.run.grouping["bunching_factor"] == 1
+        assert mainwindow._plot_panel.get_bunch_factor() == 4
 
     def test_collect_project_state_includes_view_modes(self, mainwindow: MainWindow) -> None:
         """Project state should persist saved view modes and the active mode index."""
@@ -3812,18 +3784,6 @@ class TestMainWindowBasic:
         assert buttons["fb_asymmetry"].isChecked()
         assert not buttons["frequency"].isChecked()
 
-    def test_deadtime_correction_uses_good_frames(self, mainwindow: MainWindow) -> None:
-        """Deadtime correction should include good-frame normalization (Mantid-style)."""
-        counts = np.array([100.0], dtype=float)
-        corrected = mainwindow._apply_deadtime_correction(
-            counts,
-            tau_us=0.01,
-            bin_width_us=0.02,
-            num_good_frames=1000.0,
-        )
-        expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
-        assert corrected[0] == pytest.approx(expected)
-
     def test_background_correction_subtracts_grouped_mean_before_asymmetry(
         self,
         mainwindow: MainWindow,
@@ -3853,10 +3813,11 @@ class TestMainWindowBasic:
         applied, dt_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        assert dt_applied is False
+        assert all(item.deadtime.status == "off" for item in dt_applied.values())
         assert dataset.run.grouping["background_method"] == "estimated"
         assert dataset.run.grouping["background_values"] == pytest.approx([10.0, 20.0])
-        assert dataset.run.grouping["background_ranges"] == [[0, 1], [0, 1]]
+        assert dataset.run.grouping["background_range"] == [0, 1]
+        assert "background_ranges" not in dataset.run.grouping
         np.testing.assert_allclose(dataset.asymmetry, [20.0, 20.0])
         expected_error = (
             2.0
@@ -4827,7 +4788,7 @@ class TestMainWindowBasic:
         applied, deadtime_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        assert deadtime_applied is True
+        assert all(item.deadtime.status == "applied" for item in deadtime_applied.values())
         assert dataset.run is not None
         assert dataset.run.grouping["deadtime_correction"] is True
         assert dataset.run.grouping["deadtime_mode"] == "manual"
@@ -5025,7 +4986,7 @@ class TestMainWindowBasic:
 
         def _unexpected_apply(*_args, **_kwargs):
             calls["apply"] += 1
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _unexpected_apply)
 
@@ -5037,13 +4998,12 @@ class TestMainWindowBasic:
     # ── per-projection single-fit storage (Step 3 part 2) ─────────────────
 
     @staticmethod
-    def _single_fit_result() -> SimpleNamespace:
-        return SimpleNamespace(
+    def _single_fit_result() -> FitResult:
+        return FitResult(
             success=True,
+            objective=Objective.GAUSSIAN,
             chi_squared=10.0,
             reduced_chi_squared=0.5,
-            parameters=None,
-            uncertainties={},
         )
 
     def test_single_fit_slot_recorded_under_active_projection(
@@ -5682,7 +5642,7 @@ class TestMainWindowBasic:
         def _stub_apply(dataset, payload):
             assert int(dataset.run_number) == 7002
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5719,7 +5679,7 @@ class TestMainWindowBasic:
         def _stub_apply(dataset, payload):
             assert int(dataset.run_number) == 7004
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5770,7 +5730,7 @@ class TestMainWindowBasic:
 
         def _stub_apply(dataset, payload):
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5796,7 +5756,7 @@ class TestMainWindowBasic:
 
         def _stub_apply(_dataset, _payload):
             call_count["n"] += 1
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5976,10 +5936,8 @@ class TestMainWindowBasic:
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
         mainwindow._current_dataset = ds1
-        if hasattr(mainwindow._plot_panel, "is_overlay_enabled"):
-            mainwindow._plot_panel.is_overlay_enabled = lambda: True
-        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
-            mainwindow._plot_panel.get_current_polarization_axis = lambda: None
+        mainwindow._plot_panel.is_overlay_enabled = lambda: True
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: None
 
         class _StubGroupingDialog:
             class DialogCode:
@@ -6009,7 +5967,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_apply_grouping_settings_to_dataset",
-            lambda _dataset, _payload: (True, False),
+            lambda _dataset, _payload: (True, {"red": CorrectionOutcomes()}),
         )
         monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
@@ -6514,7 +6472,7 @@ class TestPerRunGoodFramesNormaliser:
         )
 
         assert applied is True
-        assert deadtime_applied is True
+        assert all(item.deadtime.status == "applied" for item in deadtime_applied.values())
         assert dataset.run is not None
         # The run keeps its own normaliser, not the template's.
         assert dataset.run.grouping["good_frames"] == pytest.approx(1_395_561.0)
@@ -6816,18 +6774,14 @@ class TestPlotWorkspaceDomainPhase7:
         assert domain_emissions == []
 
     def test_state_round_trip(self, mainwindow: MainWindow) -> None:
-        """Workspace state serialises and restores correctly for each view."""
+        """Each workspace owns its panels during state restoration."""
         from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 
         for view in ("fb_asymmetry", "frequency"):
             mainwindow._plot_workspace.set_active_view(view)
             state = mainwindow._plot_workspace.get_state()
             assert state["active_view"] == view
-
-            dummy_workspace = PlotWorkspacePanel(
-                time_panel=mainwindow._plot_panel,
-                frequency_panel=mainwindow._frequency_plot_panel,
-            )
+            dummy_workspace = PlotWorkspacePanel(time_panel=QWidget(), frequency_panel=QWidget())
             dummy_workspace.restore_state(state)
             assert dummy_workspace.active_view() == view
 
@@ -6928,7 +6882,7 @@ class TestBackgroundModesReduction:
         good = slice(8, 600)
         np.testing.assert_allclose(sample.asymmetry[good], 0.0)
 
-    def test_reference_run_mode_without_resolvable_reference_skips(
+    def test_reference_run_mode_without_resolvable_reference_refuses_apply(
         self, mainwindow: MainWindow
     ) -> None:
         dataset = self._long_run_dataset(8104)
@@ -6937,16 +6891,12 @@ class TestBackgroundModesReduction:
             background_run={"run_number": 999999, "source_file": ""},
         )
 
-        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
-
-        assert applied is True
-        # Reduction proceeds without subtraction; method records the miss.
-        assert dataset.run.grouping.get("background_method") == "missing_reference"
+        with pytest.raises(ValueError, match="reference is not loaded"):
+            mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
 
 class TestReductionSettingsPersistence:
-    """Review fix: the new grouping keys survive non-dialog apply flows and
-    round-trip through the project extractor."""
+    """Reduction requests survive non-dialog apply and project extraction."""
 
     NEW_KEYS = {
         "background_mode": "tail_fit",
@@ -6965,7 +6915,7 @@ class TestReductionSettingsPersistence:
         dataset.run.histograms = [Histogram(counts=counts.copy(), bin_width=0.01) for _ in range(4)]
         dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
         dataset.run.grouping.update(self.NEW_KEYS)
-        dataset.run.grouping["background_correction"] = True
+        dataset.run.grouping["background_correction"] = False
         dataset.run.grouping["background_run"] = {"run_number": 9002, "source_file": "/x.nxs"}
         dataset.run.grouping["period_mapping"] = {"1": "red", "2": "green"}
         return dataset

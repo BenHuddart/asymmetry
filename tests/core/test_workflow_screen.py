@@ -12,6 +12,7 @@ import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass
+from asymmetry.core.fitting.information_criteria import SelectionMetric
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.screen import (
     RUNNER_UP_AICC,
@@ -229,7 +230,7 @@ def _assessment(category: str, aicc: float, expression: str, parameters: int = 4
         template=SimpleNamespace(category=category, model=model),
         aicc=aicc,
         parameter_count=parameters,
-        selected_score=aicc,
+        metric_value=lambda metric: aicc,
         is_successful=True,
         is_disqualified=False,
     )
@@ -243,7 +244,9 @@ def test_a_precession_model_with_no_spectral_line_gets_the_best_relaxation_besid
     bessel = _assessment("Oscillatory", 2249.1, "Bessel * Exponential + Constant", 5)
     kubo_toyabe = _assessment("KT-like", 2260.6, "DynamicGaussianKT + Constant")
     recommendation = SimpleNamespace(
-        recommended_assessment=bessel, assessments=[bessel, kubo_toyabe]
+        metric=SelectionMetric.AICC,
+        recommended_assessment=bessel,
+        assessments=[bessel, kubo_toyabe],
     )
     # However far behind: the precession model fits a relaxation's shape.
     assert _runner_up(recommendation, lined=False) is kubo_toyabe
@@ -262,6 +265,7 @@ def test_a_close_nested_precession_model_is_a_portable_scan_alternative() -> Non
     simple = _assessment("Oscillatory", 103.0, "Oscillatory * Gaussian + Constant", 5)
     relaxation = _assessment("General", 104.0, "Exponential + Constant", 3)
     recommendation = SimpleNamespace(
+        metric=SelectionMetric.AICC,
         recommended_assessment=complex_model,
         assessments=[complex_model, simple, relaxation],
     )

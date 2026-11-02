@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
 
@@ -20,7 +21,11 @@ pytestmark = [pytest.mark.gui]
 def _result(*, success=True, value=20.0, err=0.4) -> FitResult:
     ps = ParameterSet([Parameter("A_1", value=value)])
     return FitResult(
-        success=success, reduced_chi_squared=1.0, parameters=ps, uncertainties={"A_1": err}
+        objective=Objective.GAUSSIAN,
+        success=success,
+        reduced_chi_squared=1.0,
+        parameters=ps,
+        uncertainties={"A_1": err},
     )
 
 

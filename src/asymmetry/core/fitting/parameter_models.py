@@ -33,11 +33,7 @@ from asymmetry.core.fitting.latex_preview import (
 )
 from asymmetry.core.fitting.member_quality import parameters_at_bound
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup, rf_transition_freqs
-from asymmetry.core.fitting.muonium import (
-    G_E_MHZ_PER_G,
-    G_MU_MHZ_PER_G,
-    VACUUM_MUONIUM_A_HF_MHZ,
-)
+from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.parameter_carry import ComponentParameter, ParameterIdentity
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -48,9 +44,11 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.utils.constants import (
+    BOLTZMANN_CONSTANT_MEV_PER_K,
     ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUONIUM_VACUUM_HYPERFINE_MHZ,
 )
 
 
@@ -216,10 +214,9 @@ def _exp_decay(x: NDArray, a: float, tau: float, c: float = 0.0) -> NDArray[np.f
 
 def _arrhenius(x: NDArray, a: float, Ea: float) -> NDArray[np.float64]:
     # x is T (K), k_B in meV/K to keep Ea in meV-scale units.
-    kb_mev = 8.617333262e-2
     tt = np.asarray(x, dtype=float)
     safe_t = np.maximum(np.abs(tt), 1e-9)
-    exponent = np.clip(-Ea / (kb_mev * safe_t), -700, 700)
+    exponent = np.clip(-Ea / (BOLTZMANN_CONSTANT_MEV_PER_K * safe_t), -700, 700)
     return a * np.exp(exponent)
 
 
@@ -750,7 +747,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         description="a_Mu*(1/2 + (B/B0)^2)/(1 + (B/B0)^2) + a_Dia, B0 = A_hf/(γₑ+γµ)",
         function=_mu_repolarisation,
         param_names=["a_Mu", "A_hf", "a_Dia"],
-        param_defaults={"a_Mu": 15.0, "A_hf": VACUUM_MUONIUM_A_HF_MHZ, "a_Dia": 5.0},
+        param_defaults={"a_Mu": 15.0, "A_hf": MUONIUM_VACUUM_HYPERFINE_MHZ, "a_Dia": 5.0},
         param_info={
             "a_Mu": get_param_info("a_Mu"),
             "A_hf": get_param_info("A_hf"),
@@ -1320,10 +1317,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_Brandt_VortexLattice": ParameterModelComponentDefinition(
                 name="SC_Brandt_VortexLattice",
-                description=(
-                    "Brandt field-dependent vortex-lattice line width (single crystal): "
-                    "sigma(B0; lambda_ab, Bc2) for a type-II superconductor"
-                ),
+                description="Brandt second-moment σ(B0): single crystal",
                 function=sc_models.brandt_field_width_sigma,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},
@@ -1345,10 +1339,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_Brandt_VortexLattice_Powder": ParameterModelComponentDefinition(
                 name="SC_Brandt_VortexLattice_Powder",
-                description=(
-                    "Brandt field-dependent vortex-lattice line width (polycrystalline): "
-                    "sigma(B0; lambda_ab, Bc2) with the 3^(1/4) ab-plane powder average"
-                ),
+                description="Brandt second-moment σ(B0): ab-plane powder average",
                 function=sc_models.brandt_field_width_sigma_powder,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},
@@ -2361,7 +2352,6 @@ def _estimate_arrhenius(
     ``−Ea/k_B`` ⇒ ``Ea = −slope·k_B`` and the intercept is ``ln a``. Only
     positive-y, positive-T points enter the regression.
     """
-    kb_mev = 8.617333262e-2
     mask = (x > 0.0) & (y > 0.0)
     if int(np.count_nonzero(mask)) < 2:
         return {}
@@ -2370,7 +2360,7 @@ def _estimate_arrhenius(
     if line is None:
         return {}
     slope, intercept = line
-    ea = -float(slope) * kb_mev
+    ea = -float(slope) * BOLTZMANN_CONSTANT_MEV_PER_K
     a = float(np.exp(intercept))
     out: dict[str, float] = {}
     if np.isfinite(ea):
@@ -3318,12 +3308,9 @@ class CrossGroupFitResult:
     error_mode: str = ErrorMode.COLUMN.value
     #: Number of points that entered the fit across all groups (0 if unknown).
     n_points: int = 0
-    #: Per-group χ², keyed by ``group_id``. Computed from the same masked/
-    #: windowed residuals (and xerr effective-variance term, when active) that
-    #: the joint cost function used, so ``sum(per_group_chi_squared.values())
-    #: == chi_squared``. Under SCATTER error mode this is reported on the
-    #: *pre-rescale* basis — the same basis ``chi_squared`` itself uses (the
-    #: rescale only touches parameter uncertainties, never the fitted χ²).
+    uses_effective_variance: bool = False
+    #: Per-group costs use the same mask and weighting as the joint objective.
+    #: SCATTER rescales uncertainties, leaving these unit-weight RSS values unchanged.
     per_group_chi_squared: dict[str, float] = field(default_factory=dict)
     #: Number of points that entered the fit for each group (post mask/window).
     per_group_n_points: dict[str, int] = field(default_factory=dict)
@@ -3358,6 +3345,7 @@ class CrossGroupFitResult:
             },
             "message": self.message,
             "error_mode": self.error_mode,
+            "uses_effective_variance": self.uses_effective_variance,
             "n_points": int(self.n_points),
             "per_group_chi_squared": {
                 gid: float(val) for gid, val in self.per_group_chi_squared.items()
@@ -3375,10 +3363,7 @@ class CrossGroupFitResult:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> CrossGroupFitResult:
-        """Tolerant deserialization: missing/malformed keys fall back to
-        empty defaults rather than raising, so a legacy payload (recorded
-        before these fields existed) still loads.
-        """
+        """Read the optional recorded diagnostics alongside the fitted parameters."""
         local_parameters: dict[str, ParameterSet] = {}
         raw_local_parameters = data.get("local_parameters", {})
         if isinstance(raw_local_parameters, Mapping):
@@ -3467,6 +3452,7 @@ class CrossGroupFitResult:
             local_uncertainties=local_uncertainties,
             message=str(data.get("message", "")),
             error_mode=str(data.get("error_mode", ErrorMode.COLUMN.value)),
+            uses_effective_variance=bool(data.get("uses_effective_variance", False)),
             n_points=n_points,
             per_group_chi_squared=per_group_chi_squared,
             per_group_n_points=per_group_n_points,
@@ -3496,7 +3482,8 @@ def _parameter_values_by_name(parameters: ParameterSet) -> dict[str, float]:
     return {parameter.name: float(parameter.value) for parameter in parameters}
 
 
-def _stabilize_parameter_model_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
+def stabilized_point_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Apply the column-error floor used by parameter-model least squares."""
     positive_errors = np.asarray(errors, dtype=float)
     positive_errors = positive_errors[np.isfinite(positive_errors) & (positive_errors > 0.0)]
     if positive_errors.size == 0:
@@ -3939,9 +3926,7 @@ def fit_parameter_model(
     y_fit = yy[mask]
     e_fit = ee[mask]
     if error_mode is ErrorMode.COLUMN:
-        # The stabilisation floor exists to tame near-zero propagated errors;
-        # explicit Percent/Absolute/unit weights are honoured verbatim.
-        e_fit = _stabilize_parameter_model_errors(e_fit)
+        e_fit = stabilized_point_errors(e_fit)
 
     # Effective-variance weighting only when x carries usable uncertainty;
     # otherwise stay on the ordinary least-squares path (byte-identical).
@@ -4408,6 +4393,7 @@ def global_fit_parameter_model(
         message=message,
         error_mode=error_mode.value,
         n_points=int(total_points),
+        uses_effective_variance=any(arrays[3] is not None for arrays in group_fit_arrays),
         per_group_chi_squared=per_group_chi_squared,
         per_group_n_points=per_group_n_points,
         global_correlations=global_correlations,

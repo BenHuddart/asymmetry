@@ -53,8 +53,8 @@ def _settle(app: QApplication, times: int = 6) -> None:
 
 
 @pytest.fixture
-def app() -> QApplication:
-    return QApplication.instance() or QApplication([])
+def app(qapp) -> QApplication:
+    return qapp
 
 
 @pytest.fixture

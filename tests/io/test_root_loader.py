@@ -163,7 +163,6 @@ def _write_flame_root_directory(path: Path) -> None:
 
 def _write_gps_subdetector_root_directory(path: Path) -> None:
     edges = np.arange(-0.5, 5.5, 1.0)
-    # GPS MusrRoot exposes the raw split sub-detectors (verified histogram order).
     labels = [
         "Forw",
         "Back",
@@ -414,9 +413,9 @@ def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) 
 
     ds = RootLoader().load(str(path))
 
-    assert ds.run is not None
     assert ds.run_number == 2468
     assert ds.metadata["root_format"] == "musr-root-directory"
+    assert ds.run.grouping["good_frames"] == 1.0
     assert ds.metadata["facility"] == "PSI"
     assert ds.metadata["instrument"] == "LEM"
     assert ds.metadata["temperature"] == pytest.approx(12.5)
@@ -801,9 +800,7 @@ def test_primary_sample_temperature_selection_masks_zero_padding() -> None:
     offset = {"role": "sample_temperature", "primary": False, "values": [80.0, 80.0]}
     series = {"musrroot_slow_control/padded": padded, "musrroot_slow_control/offset": offset}
 
-    loader._resolve_primary_sample_temperature(
-        series, {"RunInfo/Sample Temperature": "150.15 +- 0.01 K"}
-    )
+    loader._resolve_primary_sample_temperature(series, 150.15)
 
     assert padded["primary"] is True
     assert offset["primary"] is False
@@ -816,7 +813,7 @@ def test_primary_sample_temperature_promotes_lone_candidate() -> None:
     lone = {"role": "sample_temperature", "primary": False, "values": [150.1, 150.2]}
     series = {"musrroot_slow_control/Cryostat Sample Temperature": lone}
 
-    loader._resolve_primary_sample_temperature(series, {})
+    loader._resolve_primary_sample_temperature(series, 0.0)
 
     assert lone["primary"] is True
 
@@ -832,7 +829,7 @@ def test_primary_sample_temperature_keeps_sensor_primary_without_scalar() -> Non
         "musrroot_slow_control/b_designated": designated,
     }
 
-    loader._resolve_primary_sample_temperature(series, {})
+    loader._resolve_primary_sample_temperature(series, 0.0)
 
     assert designated["primary"] is True
     assert first["primary"] is False

@@ -39,6 +39,7 @@ from asymmetry.core.fitting.fit_wizard import (  # noqa: E402
     SpectrumFingerprint,
     serialize_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.fit.panel import FitPanel  # noqa: E402
@@ -126,6 +127,7 @@ def _recommendation_for(dataset: MuonDataset, *, candidates: int = 1) -> FitWiza
             model=model,
         )
         result = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=5.0,
             reduced_chi_squared=0.1,
@@ -144,10 +146,7 @@ def _recommendation_for(dataset: MuonDataset, *, candidates: int = 1) -> FitWiza
             CandidateAssessment(
                 template=template,
                 fit_result=result,
-                aic=8.0,
-                aicc=8.2,
-                bic=10.0,
-                selected_score=8.2,
+                sample_count=1000,
                 residual_rms=0.9,
                 runs_z_score=0.2,
                 max_abs_autocorrelation=0.1,
@@ -358,7 +357,9 @@ class TestPersistenceBoundary:
 
         counter = _SerialisationCounter(monkeypatch)
         mainwindow._record_single_fit_slot(
-            FitResult(success=True, chi_squared=1.0, reduced_chi_squared=0.5)
+            FitResult(
+                objective=Objective.GAUSSIAN, success=True, chi_squared=1.0, reduced_chi_squared=0.5
+            )
         )
         # Exactly one serialisation, at the boundary — and this is also what
         # proves the counter used by the run-switch pins above is wired to the

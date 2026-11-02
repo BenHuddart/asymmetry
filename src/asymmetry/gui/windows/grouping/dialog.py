@@ -81,20 +81,21 @@ from asymmetry.core.transform import (
     T0Assessment,
     assess_t0,
     available_background_modes,
-    calibrate_deadtime_from_histograms,
+    binning_spec,
     common_t0_for_groups,
     detected_detector_t0_bins,
-    estimate_deadtime_from_histograms,
+    effective_detector_t0_bins,
     excluded_detector_indices,
     filter_excluded_indices,
     find_t0_for_run,
     format_detector_list,
+    good_frames,
     parse_detector_list,
     parse_group_detectors,
     resolve_background_mode,
-    resolve_binning_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -311,6 +312,7 @@ class GroupingDialog(QDialog):
     ) -> None:
         """Create a grouping profile editor for project datasets."""
         super().__init__(parent)
+        self._background_run_cache: dict[str, object] = {}
         self._datasets = [ds for ds in datasets if ds.run is not None]
         self._project_profiles = list(profiles or [])
         self._overridden_run_numbers = {int(v) for v in (overridden_run_numbers or [])}
@@ -793,8 +795,7 @@ class GroupingDialog(QDialog):
 
         self._bunch_spin = NoScrollSpinBox()
         self._bunch_spin.setRange(1, 10000)
-        requested_bunching = int(grouping.get("bunching_factor", 1))
-        self._bunch_spin.setValue(requested_bunching)
+        self._bunch_spin.setValue(binning_spec(grouping).factor)
         self._bunch_spin.setMaximumWidth(metrics.spin_width_for(5, self._bunch_spin))
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
@@ -831,10 +832,10 @@ class GroupingDialog(QDialog):
         # setup, before the layout row that positions them is built).
         self._bin0_label = QLabel("Initial bin")
         self._bin10_label = QLabel("Bin at 10 µs")
-        initial_mode, initial_bin0, initial_bin10 = resolve_binning_mode(grouping)
-        self._bin0_spin.setValue(initial_bin0)
-        self._bin10_spin.setValue(initial_bin10)
-        self._set_binning_mode(initial_mode)
+        initial_binning = binning_spec(grouping)
+        self._bin0_spin.setValue(initial_binning.bin0_us)
+        self._bin10_spin.setValue(initial_binning.bin10_us)
+        self._set_binning_mode(initial_binning.mode)
         self._binning_mode_combo.currentIndexChanged.connect(self._on_binning_mode_changed)
         self._on_binning_mode_changed()
 
@@ -1341,6 +1342,7 @@ class GroupingDialog(QDialog):
         self._apply_btn.setAutoDefault(False)
         self._apply_btn.setDefault(False)
         self._apply_btn.clicked.connect(self._on_apply)
+        self._preview_pane.preview_changed.connect(self._update_apply_enabled)
 
         bottom_bar = QHBoxLayout()
         bottom_bar.addStretch()
@@ -2911,20 +2913,10 @@ class GroupingDialog(QDialog):
         return self._preferred_window_size
 
     def _measure_preferred_window_size(self) -> tuple[int, int]:
-        """Derive the default size from the panes' measured minimums.
+        """Give the grouping and Corrections panes equal spare width.
 
-        Width: the dialog's own minimum (every pane at its measured content
-        minimum, which is where the platform's fonts enter) plus the room the
-        grouping column needs to grow from that minimum to its t0-line cap.
-        The two right-hand columns share spare width equally, so the column
-        reaches the cap only when the same amount has also gone to
-        Corrections — hence twice the difference. Height: the design floor
-        that keeps both columns' default (deadtime-off) state free of a
-        vertical scrollbar above the fixed-height preview pinned under them,
-        so it moves with ``preview_pane._PANE_HEIGHT``. The window opens at
-        ``resize_to_available`` of this, which is smaller on a small display;
-        tests that pin the budget resize to this value rather than reading
-        the window back.
+        The t0 provenance line determines that width; the preview sets the
+        height floor. Platform screen bounds constrain the initial window.
         """
         self.layout().activate()
         grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
@@ -3311,8 +3303,7 @@ class GroupingDialog(QDialog):
         if default_last_good < default_first_good:
             default_last_good = default_first_good
         self._last_good_spin.setValue(default_last_good + index_base)
-        requested_bunching = int(grouping.get("bunching_factor", 1))
-        self._bunch_spin.setValue(requested_bunching)
+        self._bunch_spin.setValue(binning_spec(grouping).factor)
         self._deadtime_manual_values_us = self._initial_manual_deadtime_values(grouping)
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
         self._deadtime_mode = (
@@ -3341,10 +3332,10 @@ class GroupingDialog(QDialog):
         self._update_background_status()
         self._update_alpha_section()
         self._update_beta_section()
-        mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
-        self._bin0_spin.setValue(bin0_us)
-        self._bin10_spin.setValue(bin10_us)
-        self._set_binning_mode(mode)
+        binning = binning_spec(grouping)
+        self._bin0_spin.setValue(binning.bin0_us)
+        self._bin10_spin.setValue(binning.bin10_us)
+        self._set_binning_mode(binning.mode)
         self._on_binning_mode_changed()
         self._set_excluded_detectors_text(grouping)
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
@@ -3433,7 +3424,7 @@ class GroupingDialog(QDialog):
                 return []
             if not np.isfinite(tau_us):
                 return []
-            normalized.append(max(0.0, tau_us))
+            normalized.append(tau_us)
         return normalized
 
     def _reference_file_deadtime_values(
@@ -3459,27 +3450,9 @@ class GroupingDialog(QDialog):
         if file_values:
             return file_values
         n_histograms = self._histogram_deadtime_count()
-        default_tau = float(grouping.get("deadtime_manual_us", 0.01) or 0.01)
+        manual_tau = grouping.get("deadtime_manual_us")
+        default_tau = 0.01 if manual_tau is None else float(manual_tau)
         return [default_tau] * n_histograms
-
-    def _estimate_deadtime_us_from_reference(self) -> float | None:
-        """Estimate a uniform deadtime value from the current reference run."""
-        if self._run is None or not self._run.histograms:
-            return None
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        _t0_bin, t_good_offset, _first_good_bin, last_good_bin = (
-            self._resolve_good_bin_limits_from_controls()
-        )
-        try:
-            good_frames = float(grouping.get("good_frames", 1.0))
-        except (TypeError, ValueError):
-            good_frames = 1.0
-        return estimate_deadtime_from_histograms(
-            self._run.histograms,
-            t_good_offset=t_good_offset,
-            last_good_bin=last_good_bin,
-            num_good_frames=good_frames,
-        )
 
     def _resolve_deadtime_payload(self, *, show_warnings: bool = False) -> dict[str, Any] | None:
         """Return resolved deadtime payload for the current dialog state."""
@@ -3505,12 +3478,12 @@ class GroupingDialog(QDialog):
 
         if mode == "manual":
             values_us = list(self._deadtime_manual_values_us)
-            if not values_us or any(value <= 0.0 for value in values_us):
+            if not values_us or any(not np.isfinite(value) for value in values_us):
                 if show_warnings:
                     QMessageBox.warning(
                         self,
                         "Invalid Deadtime",
-                        "Manual deadtime values must be greater than zero for every detector.",
+                        "Manual deadtime values must be finite for every detector.",
                     )
                 return None
             payload.update(
@@ -3525,56 +3498,26 @@ class GroupingDialog(QDialog):
             return payload
 
         if mode == "estimate":
-            tau_us = self._estimate_deadtime_us_from_reference()
-            if tau_us is None or tau_us <= 0.0:
+            tau_us = self._deadtime_estimated_us
+            if tau_us is None or not np.isfinite(tau_us):
                 if show_warnings:
                     QMessageBox.warning(
                         self,
                         "Deadtime Estimate Failed",
                         "The reference run did not provide enough valid early-time counts to estimate deadtime.",
                     )
-                return None
+                    return None
             payload.update(
                 {
                     "deadtime_method": "estimate",
                     "deadtime_estimated_us": tau_us,
                     "deadtime_reference_run": int(self._reference_dataset.run_number),
-                    "dead_time_us": [tau_us] * n_histograms,
+                    "dead_time_us": [] if tau_us is None else [tau_us] * n_histograms,
                 }
             )
             return payload
 
         return None
-
-    def _calibrate_deadtime_from_reference(self) -> None:
-        """Calibrate a per-detector deadtime table from the reference run."""
-        if self._run is None or not self._run.histograms:
-            return
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        _t0_bin, t_good_offset, _first_good_bin, last_good_bin = (
-            self._resolve_good_bin_limits_from_controls()
-        )
-        try:
-            good_frames = float(grouping.get("good_frames", 1.0))
-        except (TypeError, ValueError):
-            good_frames = 1.0
-        values = calibrate_deadtime_from_histograms(
-            self._run.histograms,
-            t_good_offset=t_good_offset,
-            last_good_bin=last_good_bin,
-            num_good_frames=good_frames,
-        )
-        if not values:
-            QMessageBox.warning(
-                self,
-                "Deadtime Calibration Failed",
-                "The reference run did not provide enough valid early-time counts to calibrate per-detector deadtime values.",
-            )
-            return
-        self._deadtime_manual_values_us = list(values)
-        self._deadtime_manual_method = "calibrate"
-        self._set_deadtime_mode("manual")
-        self._update_deadtime_status()
 
     def _update_deadtime_status(self) -> None:
         """Re-seed the inline deadtime section from the current draft state."""
@@ -3609,36 +3552,34 @@ class GroupingDialog(QDialog):
             if ds.run is None or not ds.run.histograms:
                 continue
             run_grouping = ds.run.grouping if isinstance(ds.run.grouping, dict) else {}
-            try:
-                good_frames = float(run_grouping.get("good_frames", 1.0))
-            except (TypeError, ValueError):
-                good_frames = 1.0
+            frames = run_grouping.get("good_frames")
             source_runs.append(
                 DeadtimeSourceRun(
                     run_number=int(ds.run_number),
                     label=f"{ds.run_label} (run {ds.run_number})",
                     histograms=ds.run.histograms,
-                    good_frames=good_frames,
+                    good_frames=frames,
                 )
             )
         return source_runs
 
-    def _deadtime_peak_rates(self, grouping: dict[str, Any]) -> tuple[list[float], float, float]:
-        """Per-detector peak early-time rate, bin width and good frames (summary line)."""
+    def _deadtime_peak_rates(
+        self, grouping: dict[str, Any]
+    ) -> tuple[list[float], float, float | None]:
+        """First-good-bin detector rates, bin width and frame normalisation."""
         peak_rates: list[float] = []
         bin_width_us = 0.0
-        good_frames = 1.0
+        frames = good_frames(grouping, default=0.0) or None
         if self._run is not None and self._run.histograms:
             bin_width_us = float(self._run.histograms[0].bin_width)
-            try:
-                good_frames = float(grouping.get("good_frames", 1.0))
-            except (TypeError, ValueError):
-                good_frames = 1.0
-            for hist in self._run.histograms:
+            t0_bins = effective_detector_t0_bins(self._run.histograms, grouping)
+            offset = int(grouping.get("t_good_offset", 0))
+            for hist, t0 in zip(self._run.histograms, t0_bins, strict=True):
                 counts = np.asarray(hist.counts, dtype=np.float64)
-                peak = float(np.max(counts)) if counts.size else 0.0
+                index = int(t0) + offset
+                peak = float(counts[index]) if 0 <= index < counts.size else 0.0
                 peak_rates.append(peak / bin_width_us if bin_width_us > 0.0 else 0.0)
-        return peak_rates, bin_width_us, good_frames
+        return peak_rates, bin_width_us, frames
 
     def _on_deadtime_changed(self) -> None:
         """Fold an inline deadtime-section edit back into the draft + preview."""
@@ -3741,6 +3682,11 @@ class GroupingDialog(QDialog):
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
+        if not self._preview_pane.corrections_complete:
+            QMessageBox.warning(
+                self, "Corrections incomplete", self._preview_pane._incomplete_banner.text()
+            )
+            return
         t0_bin, t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
@@ -4245,26 +4191,8 @@ class GroupingDialog(QDialog):
         return False
 
     def _refresh_preview(self, *args: object) -> None:
-        """Recompute the live asymmetry preview for the draft + preview run.
-
-        Builds a throwaway draft profile from the live form payload (cheap
-        widget reads, without mutating ``self._draft`` or its dirty state) and
-        hands it to the pane, which debounces, then resolves it against the
-        preview run AND reduces on its worker thread. Resolution — a full
-        per-detector t0 scan under an ``auto_detect`` policy, group sums under a
-        per-run alpha estimate — must never run here: this slot fires per
-        keystroke/click from nearly every form control. Any error is swallowed
-        or surfaced as a muted status message rather than a popup — the preview
-        is advisory. Datasets without raw histograms (co-added curves) make the
-        pane hide itself with a note.
-        """
-        # The detected line reads the live analysis groups (its file baseline
-        # moves with them), so it rides the same per-edit seam. It is a cache
-        # read plus an O(detectors) assessment — the scan itself is debounced
-        # onto a worker.
+        """Snapshot form inputs; profile resolution and reduction run on the worker."""
         self._refresh_t0_line()
-        # Same seam, same cost class: the good-window line reads the two spins
-        # and the run's good-bin tables.
         self._refresh_good_window_line()
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
@@ -4280,8 +4208,18 @@ class GroupingDialog(QDialog):
             profile = profile_from_form_payload(
                 payload, name=self._draft_name, fingerprint=self._fingerprint, active=True
             )
-        except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
-            pane.show_unavailable()
+            reference = None
+            if payload.get("background_mode") == "reference_run" and isinstance(
+                payload.get("background_run"), dict
+            ):
+                reference = resolve_background_reference(
+                    payload["background_run"],
+                    sample_good_frames=good_frames(run.grouping, default=0.0) or None,
+                    datasets=self._fingerprint_datasets(),
+                    allow_file=False,
+                )
+        except (ValueError, OSError) as exc:
+            pane.show_error(str(exc))
             return
         metadata: dict[str, Any] = {}
         metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
@@ -4301,6 +4239,7 @@ class GroupingDialog(QDialog):
             facility=facility,
             facts=self._preview_facts(payload),
             compare_stage=self._compare_stage,
+            resolved_reference=reference,
         )
 
     def _preview_facts(self, payload: dict[str, Any]) -> PreviewFacts:
@@ -4353,24 +4292,23 @@ class GroupingDialog(QDialog):
         return self._current_default_name() != self._stored_default_name()
 
     def _update_apply_enabled(self) -> None:
-        """Enable/label Apply, showing the blast radius of everything dirty.
-
-        Apply commits the profile to every run following it plus each dirty
-        override to its own run. The label shows the pending override count when
-        any override is dirty ("Apply (profile + 2 overrides)"). Apply is
-        disabled only when there is nothing to commit: no run follows the
-        profile, no override has pending edits, and no structural change
-        (reassignment, rename, deletion, new profile, moved default) waits.
-        """
+        """Apply requires pending changes and a complete preview."""
         followers = self._scope_panel.runs_following(self._draft_name)
         pending = self._pending_override_runs()
-        enabled = bool(followers) or bool(pending) or self._has_structural_changes()
+        enabled = (
+            bool(followers) or bool(pending) or self._has_structural_changes()
+        ) and self._preview_pane.corrections_complete
         self._apply_btn.setEnabled(enabled)
         if pending:
             noun = "override" if len(pending) == 1 else "overrides"
             self._apply_btn.setText(f"Apply (profile + {len(pending)} {noun})")
         else:
             self._apply_btn.setText("Apply")
+        if not self._preview_pane.corrections_complete:
+            self._apply_btn.setToolTip(
+                "Corrections incomplete: resolve the preview error before applying."
+            )
+            return
         if not enabled:
             self._apply_btn.setToolTip(
                 "No run of this instrument follows this profile (all released "
@@ -4471,6 +4409,7 @@ class GroupingDialog(QDialog):
         alpha_section = getattr(self, "_alpha_section", None)
         if alpha_section is not None:
             alpha_section.shutdown()
+        self._deadtime_section.shutdown()
         beta_section = getattr(self, "_beta_section", None)
         if beta_section is not None:
             beta_section.shutdown()
@@ -5242,35 +5181,24 @@ class GroupingDialog(QDialog):
 
     def _calibration_reference_resolver(
         self, grouping: dict[str, Any]
-    ) -> tuple[list, float] | None:
-        """Resolve a ``reference_run`` background for the alpha calibration.
+    ) -> BackgroundReference | None:
+        """Resolve calibration reference counts and their frame exposure.
 
-        Reuses an already-loaded reference run from the fingerprint's datasets (or
-        loads the recorded source file, cached per path), returning the reference
-        histograms and the good-frame scale. ``None`` on any failure, so the
-        estimate degrades to no reference subtraction (and the dialog says so).
+        Input and I/O failures propagate to the calibration error display.
         """
         payload = grouping.get("background_run")
         if not isinstance(payload, dict):
             return None
-        cache = getattr(self, "_background_run_cache", None)
-        if cache is None:
-            cache = {}
-            self._background_run_cache = cache
         try:
             sample_frames = float(grouping.get("good_frames", 0.0)) or None
         except (TypeError, ValueError):
             sample_frames = None
-        try:
-            reference = resolve_background_reference(
-                payload,
-                sample_good_frames=sample_frames,
-                datasets=self._fingerprint_datasets(),
-                cache=cache,
-            )
-        except (ValueError, OSError):
-            return None
-        return reference.histograms, reference.scale
+        return resolve_background_reference(
+            payload,
+            sample_good_frames=sample_frames,
+            datasets=self._fingerprint_datasets(),
+            cache=self._background_run_cache,
+        )
 
     def _calibration_facility(self) -> str:
         """Facility label for the alpha dialog's background tail-fit shortening."""

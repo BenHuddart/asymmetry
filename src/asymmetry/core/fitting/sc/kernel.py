@@ -14,9 +14,8 @@ with :math:`\Delta(T,k)=\Delta_0\,\delta(T/T_c)\,g(k)`.
 Numerical strategy
 ------------------
 
-- Energy and angular integrals use Gauss-Legendre quadrature.
-- The lower-bound singularity in the energy integral is handled by variable
-    substitution and finite-precision safeguards.
+- The thermal integral uses a nonsingular momentum variable in units of k_B T.
+- Angular averages refine a periodic azimuthal trapezoid and a polar Gauss rule.
 - Limiting values are imposed for stability: ``rho_s(0)=1`` and ``rho_s(T>=Tc)=0``.
 """
 
@@ -26,324 +25,147 @@ from collections.abc import Callable
 from functools import lru_cache
 
 import numpy as np
-from numpy.polynomial.legendre import leggauss
 from numpy.typing import NDArray
+from scipy.interpolate import CubicHermiteSpline
+from scipy.special import expit, roots_legendre
 
 from asymmetry.core.fitting.sc.bcs import delta_bcs
+from asymmetry.core.fitting.sc.gaps import GapForm
 
 ArrayLikeFloat = NDArray[np.float64]
 ReducedGapFunction = Callable[[ArrayLikeFloat], ArrayLikeFloat]
 
 
-@lru_cache(maxsize=16)
-def _energy_nodes(n_energy: int) -> tuple[ArrayLikeFloat, ArrayLikeFloat]:
-    """Return transformed quadrature nodes for x in [0, 1)."""
-    n = max(int(n_energy), 8)
-    nodes, weights = leggauss(n)
-    # Map from [-1, 1] to [0, 1]. Endpoints are excluded by Gauss-Legendre.
-    x = 0.5 * (nodes + 1.0)
-    w = 0.5 * weights
-    return np.asarray(x, dtype=float), np.asarray(w, dtype=float)
+# u = sqrt(E²-Delta²)/(k_B T) is dimensionless. Analyticity up to |Im u| = π
+# gives trapezoid error < 2e-15 at h=1/2; truncating at u=36 adds < 2.4e-16.
+_THERMAL_STEP = 0.5
+_THERMAL_NODES = np.arange(0.0, 36.0 + _THERMAL_STEP, _THERMAL_STEP)
+_THERMAL_NODES.setflags(write=False)
+
+
+def thermal_integral(
+    gap_over_temperature: NDArray[np.float64] | list[float] | float,
+) -> ArrayLikeFloat:
+    r"""Evaluate I(d) = -∫ f(sqrt(u²+d²)) [1-f(sqrt(u²+d²))] du.
+
+    Here d = Delta/(k_B T), u = sqrt(E²-Delta²)/(k_B T), and f(x) = expit(-x).
+    The substitution removes the density-of-states endpoint singularity from
+    the thermal response (Prozorov & Giannetta, SST 19, R41, 2006, Eq. (16)).
+    The fixed trapezoid is exponentially convergent; I(0) = -1/2 follows without
+    a zero-gap branch. Scalar, empty, and N-dimensional shapes are preserved.
+    """
+    d = np.asarray(gap_over_temperature, dtype=float)
+    occupation = expit(-np.hypot(d[..., None], _THERMAL_NODES))
+    integrand = occupation * (1.0 - occupation)
+    return np.asarray(
+        -_THERMAL_STEP
+        * (np.sum(integrand, axis=-1) - 0.5 * (integrand[..., 0] + integrand[..., -1])),
+        dtype=float,
+    )
+
+
+@lru_cache(maxsize=1)
+def _thermal_spline() -> CubicHermiteSpline:
+    """Hermite table of I(d), with the derivative integrated analytically."""
+    d = np.linspace(0, 80, 16001)
+    energy = np.hypot(d[:, None], _THERMAL_NODES)
+    occupation = expit(-energy)
+    integrand = occupation * (1 - occupation) * (1 - 2 * occupation)
+    integrand *= np.divide(d[:, None], energy, out=np.zeros_like(energy), where=energy > 0)
+    derivative = _THERMAL_STEP * (
+        np.sum(integrand, axis=-1) - 0.5 * (integrand[:, 0] + integrand[:, -1])
+    )
+    return CubicHermiteSpline(d, thermal_integral(d), derivative, extrapolate=False)
+
+
+def _angular_thermal_integral(d: ArrayLikeFloat) -> ArrayLikeFloat:
+    """Interpolate I with absolute error < 1e-11 on the certified gap range."""
+    argument = np.abs(d)
+    # For d > 80, |I(d)| <= d K_1(d) < 3e-33 from f(1-f) <= exp(-E).
+    return np.where(argument > 80, 0.0, _thermal_spline()(np.minimum(argument, 80)))
+
+
+_ANGULAR_TOLERANCE = 1e-7
+_MAX_ANGULAR_NODES = 1 << 14
+_MIN_REDUCED_TEMPERATURE = 0.005
 
 
 @lru_cache(maxsize=32)
-def _angular_grid_2d(n_phi: int) -> tuple[ArrayLikeFloat, ArrayLikeFloat]:
-    """Return phi grid and normalized weights for <f> = (1/2pi) int f(phi) dphi."""
-    n = max(int(n_phi), 8)
-    nodes, weights = leggauss(n)
-    phi = np.pi * (nodes + 1.0)
-    avg_weights = 0.5 * weights
-    return np.asarray(phi, dtype=float), np.asarray(avg_weights, dtype=float)
+def _polar_grid(n: int, mirror: bool) -> tuple[ArrayLikeFloat, ArrayLikeFloat]:
+    """Normalised cos(theta) quadrature, reduced to one hemisphere when symmetric."""
+    u, weights = roots_legendre(n)
+    if mirror:
+        u = (u + 1) / 2
+    weights = weights / 2
+    theta = np.arccos(u)
+    theta.setflags(write=False)
+    weights.setflags(write=False)
+    return theta, weights
 
 
-@lru_cache(maxsize=16)
-def _angular_grid_3d(
-    n_theta: int,
-    n_phi: int,
-) -> tuple[ArrayLikeFloat, ArrayLikeFloat, ArrayLikeFloat]:
-    """Return theta, phi mesh and normalized sphere weights."""
-    n_t = max(int(n_theta), 6)
-    n_p = max(int(n_phi), 8)
-
-    u_nodes, u_weights = leggauss(n_t)  # u = cos(theta) in [-1, 1]
-    theta = np.arccos(np.clip(u_nodes, -1.0, 1.0))
-
-    phi_nodes, phi_weights = leggauss(n_p)
-    phi = np.pi * (phi_nodes + 1.0)
-
-    theta_mesh, phi_mesh = np.meshgrid(theta, phi, indexing="ij")
-    weight_mesh = 0.25 * np.outer(u_weights, phi_weights)
-
-    return (
-        np.asarray(theta_mesh, dtype=float),
-        np.asarray(phi_mesh, dtype=float),
-        np.asarray(weight_mesh, dtype=float),
-    )
+@lru_cache(maxsize=64)
+def _azimuthal_grid(n: int, period: float | None) -> ArrayLikeFloat:
+    """Nested periodic nodes on one declared |g| period."""
+    phi = np.zeros(1) if period is None else np.arange(n) * (period / n)
+    phi.setflags(write=False)
+    return phi
 
 
-def _fermi_derivative(e_reduced: ArrayLikeFloat, t_reduced: float) -> ArrayLikeFloat:
-    """Return d f / dE in reduced units with E normalized by k_B Tc."""
-    t = max(float(t_reduced), 1e-12)
-    arg = np.clip(e_reduced / (2.0 * t), -80.0, 80.0)
-    sech2 = 1.0 / np.cosh(arg) ** 2
-    return np.asarray(-0.25 * sech2 / t, dtype=float)
-
-
-def energy_integral(
-    delta_reduced: NDArray[np.float64] | list[float] | float,
-    t_reduced: float,
-    *,
-    n_energy: int = 96,
-) -> ArrayLikeFloat:
-    r"""Evaluate the reduced thermal integral for one temperature.
-
-    .. math::
-
-       I(\Delta,t)=\int_{\Delta}^{\infty}
-       \frac{\partial f}{\partial E}
-       \frac{E\,dE}{\sqrt{E^2-\Delta^2}}
-
-    where energies are expressed in units of :math:`k_B T_c`.
-
-    The integral is transformed to x in [0, 1) via E = delta + x/(1-x).
-    """
-    deltas = np.maximum(np.asarray(delta_reduced, dtype=float), 0.0)
-    t = float(t_reduced)
-
-    out = np.zeros_like(deltas, dtype=float)
-    if t <= 0.0:
-        return out
-
-    zero_mask = deltas <= 1e-12
-    out[zero_mask] = -0.5
-
-    nonzero = ~zero_mask
-    if not np.any(nonzero):
-        return out
-
-    x, w = _energy_nodes(int(n_energy))
-    tail = x / np.maximum(1.0 - x, 1e-15)
-    jac = 1.0 / np.maximum((1.0 - x) ** 2, 1e-30)
-
-    delta_nz = deltas[nonzero]
-    e = delta_nz[:, None] + tail[None, :]
-    denom = np.sqrt(np.maximum(e * e - delta_nz[:, None] ** 2, 1e-300))
-    dfd_e = _fermi_derivative(e, t)
-
-    integrand = dfd_e * e / denom * jac[None, :]
-    out[nonzero] = np.sum(integrand * w[None, :], axis=1)
-    return np.asarray(out, dtype=float)
-
-
-def average_2d(
-    func: Callable[[ArrayLikeFloat], ArrayLikeFloat],
-    *,
-    n_phi: int = 128,
-) -> float:
-    r"""Return normalized 2D angular average over :math:`\phi\in[0,2\pi)`."""
-    phi, w = _angular_grid_2d(int(n_phi))
-    values = np.asarray(func(phi), dtype=float)
-    return float(np.sum(w * values))
-
-
-def average_3d(
-    func: Callable[[ArrayLikeFloat, ArrayLikeFloat], ArrayLikeFloat],
-    *,
-    n_theta: int = 32,
-    n_phi: int = 64,
-) -> float:
-    r"""Return normalized 3D spherical average over :math:`(\theta,\phi)`."""
-    theta_mesh, phi_mesh, w = _angular_grid_3d(int(n_theta), int(n_phi))
-    values = np.asarray(func(theta_mesh, phi_mesh), dtype=float)
-    return float(np.sum(w * values))
-
-
-def _normalize_gap_form_factor(
-    g_abs: ArrayLikeFloat,
-    w: ArrayLikeFloat,
-    *,
-    normalize_g: bool,
-    normalization: str,
-) -> ArrayLikeFloat:
-    if not normalize_g:
-        return g_abs
-
-    mode = normalization.lower().strip()
-    if mode == "rms":
-        scale = np.sqrt(float(np.sum(w * np.square(g_abs))))
-    elif mode in {"mean_abs", "mean"}:
-        scale = float(np.sum(w * g_abs))
+def _surface_average(scale, gap, gap_params, n_theta, n_phi):
+    phi = _azimuthal_grid(n_phi, gap.period)
+    if gap.surface == "sphere":
+        theta, weights = _polar_grid(n_theta, gap.equator_mirror)
+        values = gap.function(theta[:, None], phi[None, :], **gap_params)
     else:
-        raise ValueError("normalization must be 'rms' or 'mean_abs'")
-
-    scale_safe = max(abs(scale), 1e-12)
-    return np.asarray(g_abs / scale_safe, dtype=float)
-
-
-def superfluid_density_2d(
-    t_values: NDArray[np.float64] | list[float] | float,
-    *,
-    tc: float,
-    gap_ratio: float,
-    gap_function: Callable[..., ArrayLikeFloat],
-    gap_params: dict[str, float] | None = None,
-    n_phi: int = 128,
-    n_energy: int = 96,
-    reduced_gap_function: ReducedGapFunction | None = None,
-    normalize_g: bool = False,
-    normalization: str = "rms",
-) -> ArrayLikeFloat:
-    r"""Compute :math:`\rho_s(T)` for a quasi-2D gap function ``g(phi)``.
-
-    Parameters
-    ----------
-    t_values
-        Temperature values in K.
-    tc
-        Critical temperature in K.
-    gap_ratio
-        Dimensionless gap ratio :math:`\Delta_0/(k_B T_c)`.
-    gap_function
-        Callable returning angular form factor ``g(phi, **gap_params)``.
-    reduced_gap_function
-        Optional helper returning the reduced temperature dependence
-        :math:`\delta(T/T_c)`. Defaults to :func:`asymmetry.core.fitting.sc.bcs.delta_bcs`.
-    normalize_g
-        If True, normalize ``|g|`` before integration.
-    normalization
-        ``"rms"`` or ``"mean_abs"`` normalization mode.
-    """
-    tc_value = float(tc)
-    if tc_value <= 0.0:
-        raise ValueError("Tc must be > 0")
-
-    temps = np.asarray(t_values, dtype=float)
-    rho = np.zeros_like(temps, dtype=float)
-    t_reduced = temps / tc_value
-
-    rho[t_reduced <= 0.0] = 1.0
-    rho[t_reduced >= 1.0] = 0.0
-
-    mask = (t_reduced > 0.0) & (t_reduced < 1.0)
-    if not np.any(mask):
-        return rho
-
-    phi, w_phi = _angular_grid_2d(int(n_phi))
-    gap_kwargs = gap_params or {}
-    gap_scale = delta_bcs if reduced_gap_function is None else reduced_gap_function
-
-    g_raw = np.asarray(gap_function(phi, **gap_kwargs), dtype=float)
-    g_abs = np.asarray(np.abs(g_raw), dtype=float)
-    g_eff = _normalize_gap_form_factor(
-        g_abs,
-        w_phi,
-        normalize_g=normalize_g,
-        normalization=normalization,
-    )
-
-    delta_t = np.abs(float(gap_ratio)) * np.asarray(gap_scale(t_reduced[mask]), dtype=float)
-
-    rho_vals: list[float] = []
-    for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
-        delta_angles = dt * g_eff
-        integral_vals = energy_integral(delta_angles, float(tt), n_energy=int(n_energy))
-        fs_avg = float(np.sum(w_phi * integral_vals))
-        rho_vals.append(1.0 + 2.0 * fs_avg)
-
-    rho_mask = np.asarray(rho_vals, dtype=float)
-    rho[mask] = np.clip(rho_mask, 0.0, 1.0)
-    return rho
+        weights = np.ones(1)
+        values = gap.function(phi, **gap_params)
+    evaluate = thermal_integral if n_theta == n_phi == 1 else _angular_thermal_integral
+    integrals = evaluate(scale * np.atleast_2d(values))
+    value = 1 + 2 * float(np.sum(weights * np.mean(integrals, axis=-1)))
+    if not np.isfinite(value):
+        raise ValueError(f"{gap.name}: surface average must be finite")
+    return value
 
 
-def superfluid_density_3d(
-    t_values: NDArray[np.float64] | list[float] | float,
-    *,
-    tc: float,
-    gap_ratio: float,
-    gap_function: Callable[..., ArrayLikeFloat],
-    gap_params: dict[str, float] | None = None,
-    n_theta: int = 32,
-    n_phi: int = 64,
-    n_energy: int = 96,
-    reduced_gap_function: ReducedGapFunction | None = None,
-    normalize_g: bool = False,
-    normalization: str = "rms",
-) -> ArrayLikeFloat:
-    r"""Compute :math:`\rho_s(T)` for a 3D gap function ``g(theta, phi)``.
+def _converged_surface_average(scale, gap, gap_params, temperature):
+    polar = gap.surface == "sphere"
+    azimuthal = gap.period is not None
+    if not (polar or azimuthal):
+        return _surface_average(scale, gap, gap_params, 1, 1)
+    if temperature < _MIN_REDUCED_TEMPERATURE:
+        raise ValueError(
+            f"{gap.name}: angular average requires T/Tc >= {_MIN_REDUCED_TEMPERATURE}; got {temperature:g}."
+        )
+    n_theta, n_phi = (8 if polar else 1), (16 if azimuthal else 1)
+    cache = {}
+    angular_scale = scale * (1 + sum(abs(value) for value in gap_params.values()))
 
-    Parameters
-    ----------
-    t_values
-        Temperature values in K.
-    tc
-        Critical temperature in K.
-    gap_ratio
-        Dimensionless gap ratio :math:`\Delta_0/(k_B T_c)`.
-    gap_function
-        Callable returning angular form factor ``g(theta, phi, **gap_params)``.
-    gap_params
-        Optional keyword arguments forwarded to ``gap_function``.
-    n_theta
-        Number of Gauss-Legendre nodes in polar angle.
-    n_phi
-        Number of Gauss-Legendre nodes in azimuthal angle.
-    n_energy
-        Number of Gauss-Legendre nodes used in the thermal energy integral.
-    reduced_gap_function
-        Optional helper returning the reduced temperature dependence
-        :math:`\delta(T/T_c)`. Defaults to :func:`asymmetry.core.fitting.sc.bcs.delta_bcs`.
-    normalize_g
-        If ``True``, normalize :math:`|g|` before integration.
-    normalization
-        Either ``"rms"`` or ``"mean_abs"``.
+    def average(nt, np_):
+        if max(nt, np_) > _MAX_ANGULAR_NODES:
+            raise ValueError(
+                f"{gap.name}: angular average at T/Tc={temperature:g} did not converge within the {_MAX_ANGULAR_NODES}-node cap."
+            )
+        key = nt, np_
+        if key not in cache:
+            cache[key] = _surface_average(scale, gap, gap_params, nt, np_)
+        return cache[key]
 
-    Returns
-    -------
-    numpy.ndarray
-        Normalized superfluid density clipped to ``[0, 1]`` with limiting values
-        ``rho_s(0)=1`` and ``rho_s(T>=Tc)=0`` imposed for numerical stability.
-    """
-    tc_value = float(tc)
-    if tc_value <= 0.0:
-        raise ValueError("Tc must be > 0")
-
-    temps = np.asarray(t_values, dtype=float)
-    rho = np.zeros_like(temps, dtype=float)
-    t_reduced = temps / tc_value
-
-    rho[t_reduced <= 0.0] = 1.0
-    rho[t_reduced >= 1.0] = 0.0
-
-    mask = (t_reduced > 0.0) & (t_reduced < 1.0)
-    if not np.any(mask):
-        return rho
-
-    theta_mesh, phi_mesh, w_mesh = _angular_grid_3d(int(n_theta), int(n_phi))
-    w_flat = np.asarray(w_mesh.ravel(), dtype=float)
-
-    gap_kwargs = gap_params or {}
-    gap_scale = delta_bcs if reduced_gap_function is None else reduced_gap_function
-    g_raw = np.asarray(gap_function(theta_mesh, phi_mesh, **gap_kwargs), dtype=float)
-    g_abs = np.asarray(np.abs(g_raw).ravel(), dtype=float)
-    g_eff = _normalize_gap_form_factor(
-        g_abs,
-        w_flat,
-        normalize_g=normalize_g,
-        normalization=normalization,
-    )
-
-    delta_t = np.abs(float(gap_ratio)) * np.asarray(gap_scale(t_reduced[mask]), dtype=float)
-
-    rho_vals: list[float] = []
-    for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
-        delta_angles = dt * g_eff
-        integral_vals = energy_integral(delta_angles, float(tt), n_energy=int(n_energy))
-        fs_avg = float(np.sum(w_flat * integral_vals))
-        rho_vals.append(1.0 + 2.0 * fs_avg)
-
-    rho_mask = np.asarray(rho_vals, dtype=float)
-    rho[mask] = np.clip(rho_mask, 0.0, 1.0)
-    return rho
+    while True:
+        nt = 2 * n_theta if polar else 1
+        np_ = 2 * n_phi if azimuthal else 1
+        fine = average(nt, np_)
+        polar_error = 2 * abs(fine - average(n_theta, np_)) if polar else 0.0
+        azimuthal_error = 2 * abs(fine - average(nt, n_phi)) if azimuthal else 0.0
+        # Nodal thermal features narrow as T/Delta in azimuth and sqrt(T/Delta)
+        # in cos(theta) near a polar endpoint; coarse grids must resolve them.
+        resolved_phi = not azimuthal or np_ >= angular_scale
+        resolved_theta = not polar or nt >= 4 * np.sqrt(angular_scale)
+        if resolved_phi and resolved_theta and polar_error + azimuthal_error <= _ANGULAR_TOLERANCE:
+            return fine
+        if not resolved_theta or polar_error > _ANGULAR_TOLERANCE / 2:
+            n_theta = nt
+        if not resolved_phi or azimuthal_error > _ANGULAR_TOLERANCE / 2:
+            n_phi = np_
 
 
 def superfluid_density(
@@ -351,28 +173,34 @@ def superfluid_density(
     *,
     tc: float,
     gap_ratio: float,
-    gap_function: Callable[..., ArrayLikeFloat],
+    gap: GapForm,
     gap_params: dict[str, float] | None = None,
-    n_phi: int = 128,
-    n_energy: int = 96,
     reduced_gap_function: ReducedGapFunction | None = None,
-    normalize_g: bool = False,
-    normalization: str = "rms",
 ) -> ArrayLikeFloat:
-    """Alias for :func:`superfluid_density_2d` with identical semantics.
+    r"""Normalised density with a controlled Fermi-surface average.
 
-    This convenience wrapper keeps older call sites concise when only quasi-2D
-    angular averaging is required.
+    ``gap`` declares the function, surface and angular symmetries. Both angular
+    coordinates refine until their combined error estimate is <= 1e-7, with a
+    16384-node cap per coordinate and explicit failure. Nonconstant angular gaps require
+    T/Tc >= .005; zero temperature is analytic. Azimuth-independent cylindrical
+    gaps need no angular quadrature and retain the full thermal-kernel domain.
     """
-    return superfluid_density_2d(
-        t_values,
-        tc=tc,
-        gap_ratio=gap_ratio,
-        gap_function=gap_function,
-        gap_params=gap_params,
-        n_phi=n_phi,
-        n_energy=n_energy,
-        reduced_gap_function=reduced_gap_function,
-        normalize_g=normalize_g,
-        normalization=normalization,
-    )
+    if not np.isfinite(tc) or tc <= 0:
+        raise ValueError("Tc must be finite and > 0")
+    temperatures = np.asarray(t_values, dtype=float)
+    if not np.all(np.isfinite(temperatures)) or np.any(temperatures < 0):
+        raise ValueError("Temperatures must be finite and >= 0")
+    kwargs = gap_params or {}
+    if not np.isfinite(gap_ratio) or any(not np.isfinite(value) for value in kwargs.values()):
+        raise ValueError("Gap ratio and parameters must be finite")
+    reduced = temperatures / float(tc)
+    density = np.zeros_like(reduced)
+    density[reduced == 0] = 1.0
+    mask = (reduced > 0) & (reduced < 1)
+    gap_scale = delta_bcs if reduced_gap_function is None else reduced_gap_function
+    gaps = abs(float(gap_ratio)) * gap_scale(reduced[mask])
+    for index, temperature, delta in zip(np.flatnonzero(mask), reduced[mask], gaps, strict=True):
+        density.flat[index] = _converged_surface_average(
+            delta / temperature, gap, kwargs, temperature
+        )
+    return density

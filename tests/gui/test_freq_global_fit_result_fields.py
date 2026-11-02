@@ -26,9 +26,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.fit.global_tab import FitLaunch
@@ -36,8 +36,8 @@ from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture
@@ -50,6 +50,7 @@ def _freq_result() -> FitResult:
     # A frequency-domain spectral fit carrying both fields the rebuild drops, plus
     # a spread of other non-overridden fields used by the carry-through guard.
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=10.0,
         reduced_chi_squared=1.05,

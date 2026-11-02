@@ -11,6 +11,10 @@ beneath it, with the recommendation as candidate A. The wizard typically
 recommends ``StaticGKT_ZF + Constant`` for an Ag ZF dataset: the canonical
 nuclear-dipolar fingerprint (Blundell et al. Ch 5.2).
 
+All rows derive their criteria from their fitted objective, free columns and
+sample count. This scenario checks that the displayed AICc comes from the
+recorded criteria; unavailable values use the same cells with a reason tooltip.
+
 The candidates just behind it on this record are the same function reached
 through a nested model (a rate or width fitted at zero), so their curves would
 hide under A's. B is therefore the best candidate at least
@@ -62,6 +66,7 @@ class FitWizardResultScenario(Scenario):
         recommendation = build_fit_wizard_recommendation(
             dataset, current_model=None, metric=SelectionMetric.AICC
         )
+        assert recommendation.recommended_assessment.aicc is not None
         window.set_cached_recommendation(recommendation)
         _process_events_for(milliseconds=150)
 

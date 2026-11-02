@@ -118,3 +118,12 @@ analysis chain's error bars are calibrated (pulls ~ :math:`N(0, 1)`).
 .. automodule:: asymmetry.core.pull_diagnostic
    :members:
    :undoc-members:
+
+.. _physical-constants-api:
+
+Physical constants
+------------------
+
+.. automodule:: asymmetry.core.utils.constants
+   :members:
+   :member-order: bysource

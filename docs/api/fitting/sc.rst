@@ -17,11 +17,12 @@ Kernel and gap helpers
 
 Thermal kernel and angular averaging:
 
-.. autofunction:: asymmetry.core.fitting.sc.kernel.energy_integral
+.. autofunction:: asymmetry.core.fitting.sc.kernel.thermal_integral
 
-.. autofunction:: asymmetry.core.fitting.sc.kernel.superfluid_density_2d
+.. autofunction:: asymmetry.core.fitting.sc.kernel.superfluid_density
 
-.. autofunction:: asymmetry.core.fitting.sc.kernel.superfluid_density_3d
+.. autoclass:: asymmetry.core.fitting.sc.gaps.GapForm
+   :members:
 
 Gap-amplitude approximations and convention helpers:
 
@@ -121,6 +122,9 @@ contributions added in quadrature.
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g_q
 
 lambda and sigma conversion helpers:
+
+.. autoclass:: asymmetry.core.fitting.sc.GaussianWidth
+   :members:
 
 .. autofunction:: asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm
 

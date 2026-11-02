@@ -90,7 +90,7 @@ a dataset's default reduction goes through ``FitEngine.fit_arrays`` instead:
        t_min=0.1, t_max=8.0,
    )
 
-``fit_arrays`` accepts exactly the keyword arguments ``fit`` does — ``t_min`` /
+``fit_arrays`` accepts the fitting options ``fit`` does — ``t_min`` /
 ``t_max``, ``method``, ``minos``, ``cost_factory``, ``migrad_kwargs``,
 ``frequency_offsets``, ``error_oversampling``, ``cancel_callback`` — and runs the
 same internal engine, so the two paths cannot drift: fitting a dataset's own arrays
@@ -106,10 +106,38 @@ fixed-frequency guard — which compares a pinned frequency to :math:`\gamma_\mu
 from the run's ``field`` — cannot run on this path, although the
 percent-versus-fraction scale guard does.
 
-``fit_arrays`` also validates its input, which ``fit`` does not: it raises
-``ValueError`` for arrays that are not one-dimensional, of unequal length, empty, or
-non-finite, and for a ``t_min`` / ``t_max`` window that leaves no points — the
-checks a dataset would otherwise have carried implicitly.
+Input requirements
+------------------
+
+Single, array, global and joint Gaussian fits use the same observation boundary.
+It selects the requested fit window and requires non-empty, equally sized,
+one-dimensional arrays. Times and values must be finite; stated uncertainties
+must be finite and strictly positive. These Gaussian objectives treat the stated errors as independent and known; a
+shared background contributes its marginal variance. Invalid points raise ``FitInputError``
+(a ``ValueError``) before minimization; no replacement weight is inserted.
+
+.. list-table:: Likelihood inputs
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Input
+     - Requirements
+   * - ``GaussianObservations``
+     - Finite times and values; finite positive stated standard deviations.
+   * - ``PoissonCounts``
+     - Finite times; finite, non-negative integer counts with ``CountSource.RAW``.
+
+The error identifies the run, zero-based point index and time. A zero error at
+point 3 of run 7 produces: "run 7, point 3 (t = 0.300 µs): uncertainty 0 is not
+finite and positive; Gaussian fits need finite positive errors".
+``fit_arrays(..., run_number=7)`` supplies this context for bare arrays.
+
+``fit(dataset, ...)`` and ``fit_arrays`` are Gaussian entry points. For a
+Poisson fit, construct ``PoissonCounts`` and pass it to
+``FitEngine.fit_observations``. These values own read-only array copies, so
+caller buffer changes cannot alter a fit's checked observations. Every
+in-memory ``FitResult`` records its ``objective`` as ``Objective.GAUSSIAN`` or
+``Objective.POISSON``. See :doc:`count_domain_fitting` for count eligibility.
 
 Parameter control
 -----------------

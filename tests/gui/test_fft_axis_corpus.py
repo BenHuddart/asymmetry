@@ -104,7 +104,7 @@ _RENDER_CASES = [
 
 @pytest.mark.gui
 @pytest.mark.parametrize("run_path, expected_mhz", _RENDER_CASES)
-def test_fft_spectrum_renders_in_gui(run_path: Path, expected_mhz: float) -> None:
+def test_fft_spectrum_renders_in_gui(qapp, run_path: Path, expected_mhz: float) -> None:
     """The GUI FFT must draw the physical line for ISIS NeXus data (EMU + MUSR).
 
     Round-2 acceptance gate. Drives the *real* render entry point — the
@@ -120,13 +120,12 @@ def test_fft_spectrum_renders_in_gui(run_path: Path, expected_mhz: float) -> Non
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
-    from PySide6.QtWidgets import QApplication
 
     from asymmetry.core.io import load
     from asymmetry.gui.mainwindow import MainWindow
     from tests._qt_helpers import wait_for
 
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     window = MainWindow()
     try:
         dataset = load(str(run_path))
@@ -187,7 +186,7 @@ def test_fft_spectrum_renders_in_gui(run_path: Path, expected_mhz: float) -> Non
 
 
 @pytest.mark.gui
-def test_fourier_tail_exclusion_heuristic() -> None:
+def test_fourier_tail_exclusion_heuristic(qapp) -> None:
     """Unit-cover the saturated-tail window cap (runs in CI, no corpus needed).
 
     Exercises the worker helpers directly with synthetic count profiles: an
@@ -199,16 +198,12 @@ def test_fourier_tail_exclusion_heuristic() -> None:
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from PySide6.QtWidgets import QApplication
-
     from asymmetry.gui.mainwindow import MainWindow
 
     def _dataset(counts: np.ndarray, time_axis: np.ndarray) -> object:
         hist = SimpleNamespace(counts=counts, time_axis=time_axis)
         return SimpleNamespace(run=SimpleNamespace(histograms=[hist]))
 
-    if QApplication.instance() is None:
-        QApplication([])
     window = MainWindow()
     try:
         time_axis = np.linspace(0.0, 32.0, 2000)

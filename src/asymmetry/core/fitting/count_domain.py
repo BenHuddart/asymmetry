@@ -1,24 +1,8 @@
-"""Raw-count-domain fitting: single-histogram and forward/backward (alpha-free).
+"""Fit raw single-group or forward/backward counts with Gaussian or Cash costs.
 
-These are WiMDA's ``fgForward``/``fgBackward``/``fgSelected`` (single histogram)
-and ``fgFB`` (simultaneous forward+backward with the detector balance ``alpha``
-free) modes. Both fit **raw** detector counts to
-
-    N(t) = N0 * exp(-t / tau_mu) * (1 + s * A * P(t)) + bg
-
-with a selectable cost:
-
-- ``"poisson"`` (default) — the Cash statistic C = 2*sum(mu - n + n*ln(n/mu)),
-  the correct treatment for the low-count late-time and continuous-source bins
-  these modes target;
-- ``"gaussian"`` — sqrt(N) least squares, matching WiMDA's weighting, for parity
-  and speed.
-
-The model is reused, not rebuilt: the raw count model is the existing
-lifetime-corrected builder (:func:`build_grouped_count_model` /
-:func:`build_fb_count_model`) multiplied by ``exp(-t / tau_mu)``. This module
-owns only the count-space statistics and a small iminuit driver. The multi-group
-``fgAll`` path stays on :meth:`FitEngine.global_fit`.
+The mean is N₀ exp(-t/τμ) (1 + s A P(t)) + background; times are in µs,
+physics asymmetries are percent. DT₀ is a rational count-loss increment on the
+applied correction. Detector shares are inferred at each trial coefficient.
 """
 
 from __future__ import annotations
@@ -37,7 +21,6 @@ from asymmetry.core.fitting.engine import (
     _minuit_status_message,
     _reject_affine_ties,
     drive_minuit,
-    poisson_cash,
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
@@ -45,19 +28,24 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_count_groups,
     build_fb_count_model,
     build_grouped_count_model,
+    group_observations,
+)
+from asymmetry.core.fitting.likelihood import (
+    GaussianObservations,
+    Objective,
+    PoissonCounts,
+    gaussian_chi2,
+    poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.deadtime import DeadtimeCalibration, _deadtime_number
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
 COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
 
 #: Optional count-loss (deadtime) parameters, applied when present in the fit set.
-DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "DT1", "C2", "C3", "C4")
-
-#: Selectable count-loss models (WiMDA ``CountLossModelling``).
-DEADTIME_MODELS: tuple[str, ...] = ("simple", "linear", "polynomial", "power")
+DEADTIME_PARAMS: tuple[str, ...] = ("DT0",)
 
 #: Seed sentinel: give this as a parameter's ``value`` and the count-fit driver
 #: computes the seed from the data instead. Supported for ``N0``, whose right
@@ -147,18 +135,12 @@ def _guard_beta_collision(model_fn: Callable[..., NDArray]) -> None:
 # --- cost functions ---------------------------------------------------------
 
 
-def _gaussian_chi2(counts: NDArray[np.float64], model: NDArray[np.float64]) -> float:
-    """sqrt(N) Gaussian least-squares cost (WiMDA weighting)."""
-    sigma = np.sqrt(np.clip(counts, 1.0, None))
-    return float(np.sum(((counts - model) / sigma) ** 2))
-
-
-def _cost_value(counts: NDArray[np.float64], model: NDArray[np.float64], cost: str) -> float:
-    if cost == "gaussian":
-        return _gaussian_chi2(counts, model)
-    # Cash statistic — the single primitive shared with the grouped/global
-    # driver (factored into engine.poisson_cash).
-    return poisson_cash(counts, model)
+def _cost_value(observations, model: NDArray[np.float64]) -> float:
+    if not np.all(np.isfinite(model)):
+        return _INF
+    if isinstance(observations, GaussianObservations):
+        return gaussian_chi2(observations.values, model, observations.sigma)
+    return poisson_deviance(observations.counts, model)
 
 
 def _validate_cost(cost: str) -> str:
@@ -230,116 +212,36 @@ def _split_lifetime(kw: dict, default: float) -> float:
 # --- count loss (deadtime) --------------------------------------------------
 
 
-def _pop_deadtime(kw: dict) -> tuple[float, float, float, float, float]:
-    """Pop the deadtime parameters ``(DT0, DT1, C2, C3, C4)`` (all default 0)."""
-    return (
-        float(kw.pop("DT0", 0.0)),
-        float(kw.pop("DT1", 0.0)),
-        float(kw.pop("C2", 0.0)),
-        float(kw.pop("C3", 0.0)),
-        float(kw.pop("C4", 0.0)),
-    )
+def _deadtime_frame_norm(dataset: MuonDataset, group) -> float:
+    """Exposure Δt·F per detector, with Δt the bunched bin width in µs."""
+    frames = _deadtime_number(dataset.run.grouping.get("good_frames"), "good frames", positive=True)
+    width = _deadtime_number(dataset.run.histograms[0].bin_width, "bin width (µs)", positive=True)
+    return width * group.metadata["grouped_time_domain_bunch_factor"] * frames
 
 
-def _validate_deadtime_model(model: str) -> str:
-    if model not in DEADTIME_MODELS:
-        raise ValueError(f"Unknown deadtime model {model!r}; expected one of {DEADTIME_MODELS}")
-    return model
+def _apply_deadtime(counts, tau_us, *, frame_norm, detector_counts):
+    """Non-paralysable mean Σᵢ wᵢN/(1 + τwᵢN/(Δt·F)).
 
-
-def _deadtime_frame_norm(dataset: MuonDataset, group_id: int) -> float:
-    """Per-frame, per-detector, per-bin count-rate normalization for deadtime.
-
-    Matches the convention of :func:`apply_deadtime_correction`
-    (``loss = N*tau/(bin_width*n_frames)`` per detector). The grouped count sums
-    ``n_det`` detectors, so the per-detector rate divides the group count by
-    ``n_det``. Returns ``n_det * bin_width_us * n_frames``; the loss term is then
-    ``DT0 * N_group / frame_norm``.
+    Knoll, Radiation Detection and Measurement, 4th ed., ch. 4, Dead Time.
+    Detector shares are inferred by inverting the observed per-detector traces
+    at the trial coefficient; all detectors must share their time dependence.
+    Undefined trial means return NaNs for the objective to reject with +∞.
     """
-    grouping = (
-        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
-    )
-    n_det = max(1, len(effective_group_indices(grouping, int(group_id))))
-    try:
-        n_frames = float(grouping.get("good_frames", 1.0)) or 1.0
-    except (TypeError, ValueError):
-        n_frames = 1.0
-    bin_width = float(dataset.run.histograms[0].bin_width) if dataset.run.histograms else 1.0
-    return max(n_det * bin_width * n_frames, 1e-30)
-
-
-def _deadtime_event_fraction(dataset: MuonDataset, group_id: int) -> float:
-    """Per-group event fraction ``evfr`` for the linear / power-law loss forms.
-
-    WiMDA's ``evfr`` is the fraction of the run's events landing in this group.
-    The loaders do not carry an ISIS event-fraction block, so this reads an
-    optional ``event_fractions`` (per group id) or scalar ``event_fraction`` from
-    the grouping and **falls back to 1.0** (the whole event budget) for
-    PSI/synthetic runs that lack it. With ``evfr = 1`` the linear form reduces to
-    ``(DT0 + DT1)·qq`` and the power-law base to ``DT0``.
-    """
-    grouping = (
-        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
-    )
-    fractions = grouping.get("event_fractions")
-    if isinstance(fractions, dict):
-        try:
-            return float(fractions[int(group_id)])
-        except (KeyError, TypeError, ValueError):
-            pass
-    try:
-        value = float(grouping.get("event_fraction", 1.0))
-    except (TypeError, ValueError):
-        return 1.0
-    return value if np.isfinite(value) else 1.0
-
-
-def _apply_deadtime(
-    counts: NDArray[np.float64],
-    dt_terms: tuple[float, float, float, float, float],
-    *,
-    frame_norm: float,
-    time: NDArray[np.float64],
-    evfr: float,
-    model: str,
-) -> NDArray[np.float64]:
-    """Multiply true counts by the non-paralyzable count-loss factor ``1 - L``.
-
-    Follows WiMDA's ``ArrayMusrFunc`` with
-    ``qq = counts / frame_norm`` the per-frame, per-detector rate and ``evfr`` the
-    group event fraction. An exact no-op when every coefficient is zero; the
-    factor is clipped at 0 so a runaway trial cannot make counts negative.
-
-    - ``"simple"``: ``L = DT0·qq``.
-    - ``"linear"``: ``L = (DT0 + DT1·evfr)·qq``.
-    - ``"polynomial"``: ``L = DT0·qq + C2·10³·qq² + C3·10⁶·qq³ + C4·10⁹·qq⁴``.
-    - ``"power"``: ``L = (evfr·DT0)^C2 · exp(-(C4·λ_μ·t)^C3)`` (rate-independent;
-      ``λ_μ = 1/τ_μ``).
-    """
-    dt0, dt1, c2, c3, c4 = dt_terms
-    if dt0 == 0.0 and dt1 == 0.0 and c2 == 0.0 and c3 == 0.0 and c4 == 0.0:
+    if tau_us == 0.0:
         return counts
-    counts = np.asarray(counts, dtype=float)
-    if model == "power":
-        base = np.float64(max(float(evfr) * dt0, 0.0))
-        decay_arg = np.maximum(c4 * np.asarray(time, dtype=float) / float(MUON_LIFETIME_US), 0.0)
-        # base/decay_arg are clamped >= 0, but a degenerate exponent (e.g. a
-        # fitted C2 <= 0 with base -> 0, giving 0**negative) can still make the
-        # loss non-finite. Use numpy power (yields inf, not a ZeroDivisionError)
-        # and map non-finite to a full loss (factor 0) so the Cash / least-squares
-        # cost stays finite rather than derailing migrad.
-        with np.errstate(divide="ignore", invalid="ignore"):
-            loss = np.power(base, c2) * np.exp(-np.power(decay_arg, c3))
-        loss = np.nan_to_num(loss, nan=1.0, posinf=1.0, neginf=1.0)
-    else:
-        qq = counts / frame_norm
-        if model == "simple":
-            loss = dt0 * qq
-        elif model == "linear":
-            loss = (dt0 + dt1 * float(evfr)) * qq
-        else:  # polynomial
-            loss = dt0 * qq + c2 * 1.0e3 * qq**2 + c3 * 1.0e6 * qq**3 + c4 * 1.0e9 * qq**4
-    return counts * np.clip(1.0 - loss, 0.0, None)
+    a = tau_us / frame_norm
+    inverse_denominator = 1.0 - a * detector_counts
+    if not np.all(np.isfinite(inverse_denominator) & (inverse_denominator > 0)):
+        return np.full_like(counts, np.nan)
+    totals = np.sum(detector_counts / inverse_denominator, axis=1)
+    if not np.isfinite(totals.sum()) or totals.sum() <= 0:
+        return np.full_like(counts, np.nan)
+    shares = totals / totals.sum()
+    true_counts = shares[:, None] * counts
+    denominator = 1.0 + a * true_counts
+    if not np.all(np.isfinite(denominator) & (denominator > 0)):
+        return np.full_like(counts, np.nan)
+    return np.sum(true_counts / denominator, axis=0)
 
 
 # --- double pulse -----------------------------------------------------------
@@ -440,16 +342,7 @@ def _solve(
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ):
-    """Minimise ``total_cost`` over the free parameters and return the Minuit object.
-
-    When ``minos`` is true, the shared :func:`drive_minuit` seam runs ``m.minos()``
-    after migrad + explicit HESSE; the asymmetric intervals live on ``m.merrors`` and
-    are read back by :func:`_result_from_minuit`. This is the count-domain end of the
-    one-helper-three-sites MINOS contract (α especially, with its α–amplitude
-    correlation context). A ``cancel_callback`` aborts the fit cooperatively from the
-    cost function (raising :class:`FitCancelledError`); a cancelled fit returns no
-    result, so callers must let it propagate.
-    """
+    """Minimise with cooperative cancellation and optional MINOS intervals."""
     from iminuit import Minuit
 
     guard = _make_cancel_guard(cancel_callback)
@@ -475,8 +368,7 @@ def _result_from_minuit(
     params: ParameterSet,
     free_names: list[str],
     *,
-    time: NDArray[np.float64],
-    counts: NDArray[np.float64],
+    observations: GaussianObservations | PoissonCounts,
     model_values: NDArray[np.float64],
     keep_params: list[str] | None = None,
     chi_squared: float | None = None,
@@ -484,19 +376,13 @@ def _result_from_minuit(
     success_message: str = "Count fit successful",
     failure_prefix: str = "Count fit failed",
 ) -> FitResult:
-    """Pack a :class:`FitResult` for one count-domain (or one F/B side).
+    """Record one bank, with its own cost and equality-linked parameter values.
 
-    ``chi_squared`` overrides the reported cost; pass the per-side cost for a
-    joint forward/backward fit (``m.fval`` is the combined cost). Defaults to
-    ``m.fval`` (correct for a single-domain fit). ``followers`` (``{follower:
-    main}``) maps equality-link followers to their group main so a tied parameter
-    is reported at the main's *fitted* value, not its pre-fit seed.
+    Expected-count minima and residuals refer to this bank's observations.
     """
     keep = set(keep_params) if keep_params is not None else None
     link_followers = followers or {}
-    # MINOS intervals (when run) live on m.merrors keyed by the free parameter name;
-    # empty when MINOS was not requested. A display-only overlay — the symmetric
-    # HESSE errors below are unchanged.
+    # MINOS stores signed interval offsets; the symmetric HESSE errors stay unchanged.
     merrors = getattr(m, "merrors", None)
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
@@ -504,7 +390,6 @@ def _result_from_minuit(
     for p in params:
         if keep is not None and p.name not in keep:
             continue
-        # A link-follower mirrors its group main: report the main's fitted value.
         source = link_followers.get(p.name, p.name)
         if source in free_names:
             idx = free_names.index(source)
@@ -531,12 +416,29 @@ def _result_from_minuit(
             covariance = cov[np.ix_(cov_idx, cov_idx)]
             covariance_order = cov_names
 
+    counts = (
+        observations.values
+        if isinstance(observations, GaussianObservations)
+        else observations.counts
+    )
+    objective = (
+        Objective.GAUSSIAN if isinstance(observations, GaussianObservations) else Objective.POISSON
+    )
+    invalid_model = (
+        observations.invalid_model_reason(model_values)
+        if isinstance(observations, PoissonCounts)
+        else None
+    )
     ndata = int(np.size(counts))
     nfree = len(free_names if keep is None else covariance_order)
     residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
     chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
     return FitResult(
-        success=bool(m.valid),
+        objective=objective,
+        success=bool(m.valid) and invalid_model is None,
+        minimum_expected_count=float(np.min(model_values))
+        if isinstance(observations, PoissonCounts) and invalid_model is None
+        else None,
         chi_squared=chi2,
         reduced_chi_squared=chi2 / max(ndata - nfree, 1),
         parameters=result_params,
@@ -544,13 +446,27 @@ def _result_from_minuit(
         covariance=covariance,
         covariance_parameters=covariance_order,
         residuals=residuals,
-        message=_minuit_status_message(
+        message=invalid_model
+        or _minuit_status_message(
             m, success_message=success_message, failure_prefix=failure_prefix
         ),
         function_calls=int(getattr(m, "nfcn", 0) or 0),
         dof=ndata - nfree,
         minos_errors=minos_errors or None,
     )
+
+
+def _record_deadtime_calibration(result, dataset, groups):
+    """Capture the applied base and fitted detectors before mutable GUI edits."""
+    if result.success and "DT0" in result.parameters:
+        result.deadtime_calibration = DeadtimeCalibration.from_increment(
+            groups[0].deadtime,
+            result.parameters["DT0"].value,
+            n_histograms=len(dataset.run.histograms),
+            detector_indices=sorted({i for group in groups for i in group.detector_indices}),
+            error_us=result.uncertainties.get("DT0"),
+            source_run=dataset.run_number,
+        )
 
 
 # --- dpsep refinement -------------------------------------------------------
@@ -648,7 +564,6 @@ def fit_single_histogram(
     *,
     side: str = "forward",
     cost: str = "poisson",
-    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -673,9 +588,8 @@ def fit_single_histogram(
     ``exclude`` drops an interior time window from the fit; a free ``t0``
     parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
     parameters add a stretched-exponential baseline drift; the deadtime
-    parameters (``DT0``, ``DT1``, ``C2``, ``C3``, ``C4``) add a count-loss term
-    whose form is set by ``deadtime_model`` (``"simple"`` / ``"linear"`` /
-    ``"polynomial"`` / ``"power"`` — see :func:`_apply_deadtime`); a ``dpsep``
+    parameter ``DT0`` adds a rational non-paralysable count-loss term;
+    a ``dpsep``
     parameter switches on the ISIS double-pulse count model — fixed by default,
     or located by a coarse->fine grid scan when supplied free (the non-smooth
     pulse-onset gate defeats gradient fitting). A ``tau`` parameter frees the muon
@@ -683,7 +597,6 @@ def fit_single_histogram(
     supported together with the double-pulse model.
     """
     _validate_cost(cost)
-    _validate_deadtime_model(deadtime_model)
     _guard_model_param_collisions(model_fn)
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
@@ -697,7 +610,6 @@ def fit_single_histogram(
                 _with_fixed_dpsep(params, value),
                 side=side,
                 cost=cost,
-                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -707,8 +619,8 @@ def fit_single_histogram(
     group = build_count_group(
         dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
-    time = np.asarray(group.time, dtype=float)
-    counts = np.asarray(group.counts, dtype=float)
+    observations = group_observations(group, Objective(cost))
+    time = observations.time
 
     tau = float(MUON_LIFETIME_US)
     base_decay = np.exp(-time / tau)  # hoisted: loop-invariant unless t0 is free
@@ -717,8 +629,7 @@ def fit_single_histogram(
     free_lifetime = "tau" in params  # fit (or fix at a non-physical value) the lifetime
     dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
     corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
-    frame_norm = _deadtime_frame_norm(dataset, group_id)
-    evfr = _deadtime_event_fraction(dataset, group_id)
+    frame_norm = _deadtime_frame_norm(dataset, group) if "DT0" in params else 1.0
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
     # forward/backward orientation and the physics model owns the real amplitude.
@@ -738,7 +649,7 @@ def fit_single_histogram(
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
-        dt_terms = _pop_deadtime(kw)
+        dt0 = float(kw.pop("DT0", 0.0))
         tau_eval = _split_lifetime(kw, tau)
         if free_lifetime or t0:
             t_eval = time + t0 if t0 else time
@@ -759,25 +670,26 @@ def fit_single_histogram(
             # decay avoids re-exponentiating the invariant time axis each call.
             model = decay * np.asarray(corrected_model(t_eval, **kw), dtype=float)
         return _apply_deadtime(
-            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+            model, dt0, frame_norm=frame_norm, detector_counts=group.detector_counts
         )
 
     def total_cost(*args) -> float:
-        return _cost_value(counts, predict(args), cost)
+        return _cost_value(observations, predict(args))
 
     m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     model_values = predict([m.values[i] for i in range(len(free_names))])
-    return _result_from_minuit(
+    result = _result_from_minuit(
         m,
         params,
         free_names,
-        time=time,
-        counts=counts,
+        observations=observations,
         model_values=model_values,
         followers=followers,
         success_message="Single-histogram count fit successful",
         failure_prefix="Single-histogram count fit failed",
     )
+    _record_deadtime_calibration(result, dataset, [group])
+    return result
 
 
 # --- forward/backward with free alpha --------------------------------------
@@ -791,7 +703,6 @@ def fit_fb_alpha(
     params: ParameterSet,
     *,
     cost: str = "poisson",
-    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -814,35 +725,16 @@ def fit_fb_alpha(
     ``shared_parameters`` hold the fitted ``alpha``/``N0``/physics. The (alpha,
     amplitude) covariance is available on either group result.
 
-    Seeding ``N0``
-    --------------
-    ``N0`` may be **omitted**, or supplied with the value
-    :data:`SEED_FROM_DATA` (or any non-positive / non-finite value), in which
-    case it is seeded from the data: the forward window's first positive bin
-    lifted back to ``t = 0`` by ``exp(t/tau_mu)``. This is the default because the
-    right ``N0`` is a per-run count level no caller can know in advance, and a
-    generically scaled seed does not merely converge slowly — it converges
-    *cleanly* on a spurious minimum, with a tiny ``alpha`` and a compensating
-    amplitude balance. An explicit positive ``N0`` is used as given, and a fixed
-    ``N0`` is never overruled.
-
-    Scale sanity check
-    ------------------
-    Because that spurious minimum is a valid minimum as far as Migrad is
-    concerned, a converged fit is additionally checked against the counts: the
-    fitted ``alpha`` must sit within :data:`_FB_ALPHA_SCALE_FACTOR` of the
-    window's observed forward/backward count ratio, and the fitted forward scale
-    ``N0·√alpha`` within :data:`_FB_N0_SCALE_FACTOR` of the observed count level
-    at ``t = 0``. A violation returns ``success=False`` with a message naming the
-    discrepancy (and the same text appended to each group result's ``warnings``)
-    rather than presenting the walk-off as a clean convergence. Neither check
-    applies to a parameter the caller fixed.
+    An omitted or invalid ``N0`` seed comes from the first positive forward
+    bin, lifted to t=0 by exp(t/τμ); fixed or positive explicit seeds are retained.
+    Fitted α and N₀√α must agree with the observed bank ratio and count scale
+    within the documented factors. Violations fail the result and retain warnings.
 
     The same optional nuisances as :func:`fit_single_histogram` apply, all
     no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
     shifts the model time axis; free ``lambda_base`` / ``beta_base`` add a
-    baseline drift; the deadtime parameters add a count-loss term (form set by
-    ``deadtime_model``); a ``dpsep`` parameter switches on the ISIS double-pulse
+    baseline drift; ``DT0`` adds rational non-paralysable count loss;
+    a ``dpsep`` parameter switches on the ISIS double-pulse
     model (the √α-tied model evaluated at ``t ± dpsep/2``); a ``tau`` parameter
     frees the shared muon lifetime (reported in ``shared_parameters``; not
     supported with the double-pulse model).
@@ -858,7 +750,6 @@ def fit_fb_alpha(
     ``estimate_beta=False`` callers are unaffected.
     """
     _validate_cost(cost)
-    _validate_deadtime_model(deadtime_model)
     _guard_model_param_collisions(model_fn)
     if estimate_beta:
         _guard_beta_collision(model_fn)
@@ -890,7 +781,6 @@ def fit_fb_alpha(
                 model_fn,
                 _with_fixed_dpsep(params, value),
                 cost=cost,
-                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -912,6 +802,9 @@ def fit_fb_alpha(
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)
     counts_b = np.asarray(g_bwd.counts, dtype=float)
+    observations_f = group_observations(g_fwd, Objective(cost))
+    observations_b = group_observations(g_bwd, Objective(cost))
+    time_f, time_b = observations_f.time, observations_b.time
 
     # Seed N0 from the data unless the caller supplied a usable value. The count
     # scale is a per-run fact; a caller who does not know it lands in a spurious
@@ -932,10 +825,8 @@ def fit_fb_alpha(
         None if double_pulse else build_fb_count_model(fraction_fn, with_beta=estimate_beta)
     )
 
-    frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
-    frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
-    evfr_f = _deadtime_event_fraction(dataset, forward_group)
-    evfr_b = _deadtime_event_fraction(dataset, backward_group)
+    frame_norm_f = _deadtime_frame_norm(dataset, g_fwd) if "DT0" in params else 1.0
+    frame_norm_b = _deadtime_frame_norm(dataset, g_bwd) if "DT0" in params else 1.0
 
     _reject_affine_ties([params], "Count-domain fitting")
     free = params.free_parameters
@@ -949,12 +840,12 @@ def fit_fb_alpha(
     shared_keys = [n for n in free_names if n not in _per_eval]
     shared_fixed = {k: v for k, v in fixed_kw.items() if k not in _per_eval}  # hoisted
 
-    def _eval(args, time, base_decay, counts_key, sign, frame_norm, evfr) -> NDArray[np.float64]:
+    def _eval(args, time, base_decay, counts_key, sign, frame_norm, group) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
-        dt_terms = _pop_deadtime(kw)
+        dt0 = float(kw.pop("DT0", 0.0))
         tau_eval = _split_lifetime(kw, tau)
         if free_lifetime or t0:
             t_eval = time + t0 if t0 else time
@@ -981,18 +872,18 @@ def fit_fb_alpha(
                 fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
             )
         return _apply_deadtime(
-            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+            model, dt0, frame_norm=frame_norm, detector_counts=group.detector_counts
         )
 
     def predict_f(args):
-        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f, evfr_f)
+        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f, g_fwd)
 
     def predict_b(args):
-        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, evfr_b)
+        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, g_bwd)
 
     def total_cost(*args) -> float:
-        return _cost_value(counts_f, predict_f(args), cost) + _cost_value(
-            counts_b, predict_b(args), cost
+        return _cost_value(observations_f, predict_f(args)) + _cost_value(
+            observations_b, predict_b(args)
         )
 
     # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
@@ -1002,20 +893,17 @@ def fit_fb_alpha(
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)
-    # Each side reports its OWN cost, not the joint m.fval (which is cost_f + cost_b).
-    chi2_f = _cost_value(counts_f, model_f, cost)
-    chi2_b = _cost_value(counts_b, model_b, cost)
+    chi2_f = _cost_value(observations_f, model_f)
+    chi2_b = _cost_value(observations_b, model_b)
 
-    # Forward result keeps the shared params + the forward background; backward
-    # keeps the shared params + its own background. alpha (shared) appears in both.
-    fwd_keep = shared_keys + ["background"]
-    bwd_keep = shared_keys + ["background_b"]
+    # Both sides retain shared parameters and their own background.
+    fwd_keep = [p.name for p in params if p.name != "background_b"]
+    bwd_keep = [p.name for p in params if p.name != "background"]
     result_f = _result_from_minuit(
         m,
         params,
         free_names,
-        time=time_f,
-        counts=counts_f,
+        observations=observations_f,
         model_values=model_f,
         keep_params=fwd_keep,
         chi_squared=chi2_f,
@@ -1027,8 +915,7 @@ def fit_fb_alpha(
         m,
         params,
         free_names,
-        time=time_b,
-        counts=counts_b,
+        observations=observations_b,
         model_values=model_b,
         keep_params=bwd_keep,
         chi_squared=chi2_b,
@@ -1036,6 +923,12 @@ def fit_fb_alpha(
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
+
+    minima = (result_f.minimum_expected_count, result_b.minimum_expected_count)
+    minimum = min(minima) if all(value is not None for value in minima) else None
+    for result in (result_f, result_b):
+        result.minimum_expected_count = minimum
+        _record_deadtime_calibration(result, dataset, [g_fwd, g_bwd])
 
     shared_parameters = ParameterSet()
     # Every free parameter except the two per-side backgrounds is shared: the

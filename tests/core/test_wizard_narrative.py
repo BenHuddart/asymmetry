@@ -25,6 +25,7 @@ from asymmetry.core.fitting.fit_wizard import (
     deserialize_fit_wizard_recommendation,
     serialize_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import DetectedPeak, MultipletMatch, PeakAnalysis
 from asymmetry.core.fitting.wizard_narrative import (
@@ -81,15 +82,16 @@ def _assessment(
     )
     parameters = ParameterSet([Parameter(name=f"p{i}", value=1.0) for i in range(free_param_count)])
     fit_result = FitResult(
-        success=success, chi_squared=aicc, reduced_chi_squared=1.0, parameters=parameters
+        objective=Objective.GAUSSIAN,
+        success=success,
+        chi_squared=aicc,
+        reduced_chi_squared=1.0,
+        parameters=parameters,
     )
     return CandidateAssessment(
         template=template,
         fit_result=fit_result,
-        aic=aicc,
-        aicc=aicc,
-        bic=aicc,
-        selected_score=aicc,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,

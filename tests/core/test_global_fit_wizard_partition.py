@@ -51,6 +51,7 @@ from asymmetry.core.fitting.global_search.partition import (
     Segment,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 
 # --------------------------------------------------------------------------- #
 # The planted two-phase series
@@ -445,14 +446,7 @@ def test_an_excluded_end_stub_carries_no_phase_assessment(planted_series):
 def test_partition_k_none_runs_the_series_wide_search_and_carries_no_partition(
     planted_series,
 ):
-    """The existing contract: without a ``partition_k`` nothing here applies.
-
-    On *this* series the statistical series-wide answer is that there isn't one — no single
-    template describes runs on both sides of the transition well enough to pass
-    the residual gate, which is exactly the failure the partitioned path exists to
-    replace. What matters here is that the coupled search still ran and that none
-    of the partition fields were touched.
-    """
+    """The existing contract: without a ``partition_k`` nothing here applies."""
     datasets, table, _screening, _optimised = planted_series
 
     with pytest.MonkeyPatch.context() as patch:
@@ -708,7 +702,11 @@ def _gated_assessment(
             rationale="test",
             model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
-        fit_results_by_run={1: FitResult(success=True, chi_squared=aicc, parameters=parameters)},
+        fit_results_by_run={
+            1: FitResult(
+                objective=Objective.GAUSSIAN, success=True, chi_squared=aicc, parameters=parameters
+            )
+        },
         global_parameters=parameters,
         global_param_names=("A_1",),
         local_param_names=(),
@@ -716,10 +714,7 @@ def _gated_assessment(
         parameter_recommendations=(),
         run_diagnostics=(diagnostic,),
         series_warnings=(),
-        aic=aicc,
-        aicc=aicc,
-        bic=aicc,
-        selected_score=aicc,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -753,7 +748,11 @@ def test_a_phase_with_no_converged_fit_has_no_answer():
     failed = _gated_assessment(key="damped", aicc=100.0, gate_passed=True)
     failed = dc_replace(
         failed,
-        fit_results_by_run={1: FitResult(success=False, parameters=failed.global_parameters)},
+        fit_results_by_run={
+            1: FitResult(
+                objective=Objective.GAUSSIAN, success=False, parameters=failed.global_parameters
+            )
+        },
     )
     assert global_fit_wizard_module._recommended_segment_assessment([failed], {1: 1000}) is None
 
@@ -843,6 +842,7 @@ def _multiplet_fit_result(
     uncertainties = {name: 0.001 for name in template.model.param_names}
     uncertainties.update(sigma)
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=float(chi_squared),
         parameters=ParameterSet(
@@ -857,6 +857,7 @@ def _relaxation_fit_result(chi_squared):
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=float(chi_squared),
         parameters=ParameterSet(
@@ -880,25 +881,14 @@ def _prescreen_assessment(template, results_by_run):
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=0.0,
-        aicc=0.0,
-        bic=0.0,
-        selected_score=0.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
 
 
 def _oscillation_that_stops_series(*, line_vanishes: bool):
-    """A ten-run series whose oscillation dies halfway, and its screening rows.
-
-    The multiplet is given the *better* per-run cost on every run of the series,
-    including the ones where its line has collapsed — so on the criterion alone
-    it describes the whole series and there is no break to find. The only thing
-    that can separate the phases is the rule: past the transition its lines are
-    consistent with zero, so it is not a candidate for the oscillatory family
-    there and the relaxation template is all that is left.
-    """
+    """A ten-run series whose oscillation dies halfway, and its screening rows."""
     datasets = _two_phase_series()
     multiplet_results = {}
     relaxation_results = {}
@@ -1060,10 +1050,7 @@ def _multiplet_phase_assessment(*, key, chi_squared, vanished_runs=()):
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=chi_squared,
-        aicc=chi_squared,
-        bic=chi_squared,
-        selected_score=chi_squared,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )

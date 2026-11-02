@@ -15,7 +15,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 pytest.importorskip("iminuit")
 
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -30,14 +29,6 @@ from asymmetry.gui.panels.fit.single_tab import DIAGNOSTIC_ACTION
 from asymmetry.gui.windows import pull_diagnostic_window as pull_diagnostic_window_module
 from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow, make_engine_refit
 from tests._qt_helpers import wait_for
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _exp_composite() -> CompositeModel:

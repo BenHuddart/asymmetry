@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.core.criteria_fixtures import with_aicc
+
 pytestmark = [pytest.mark.integration]
 
 import threading
@@ -56,6 +58,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     single_fit_table_covers_portfolio,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 
@@ -155,6 +158,7 @@ def _assessment_with_diagnostics(
     )
     fit_results = {
         int(dataset.run_number): FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -179,10 +183,7 @@ def _assessment_with_diagnostics(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -1280,16 +1281,14 @@ def _scored_assessment(
     return CandidateAssessment(
         template=template,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=chi_squared,
             reduced_chi_squared=chi_squared / 10.0,
             parameters=ParameterSet([Parameter("A_1", value=0.2)]),
             message="ok",
         ),
-        aic=criterion,
-        aicc=criterion,
-        bic=criterion,
-        selected_score=criterion,
+        sample_count=1000,
         residual_rms=0.001,
         runs_z_score=0.1,
         max_abs_autocorrelation=0.1,
@@ -1495,6 +1494,7 @@ def test_filtered_gate_reasons_drops_bound_hit_when_fit_is_good() -> None:
     relaxation rate -> 0) when the fit is otherwise good, so it is not a gate
     failure; it only vetoes when the fit is also poor."""
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -1617,25 +1617,23 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         prescreen_only=True,
         global_parameters=ParameterSet(),
     )
-    local_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "A_bg"),
-        local_param_names=("Lambda",),
-        aic=8.0,
-        aicc=8.0,
-        bic=10.0,
-        selected_score=8.0,
-        assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+    local_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "A_bg"),
+            local_param_names=("Lambda",),
+            assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+        ),
+        108.0,
     )
-    shared_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        aic=9.0,
-        aicc=9.0,
-        bic=11.0,
-        selected_score=9.0,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+    shared_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        ),
+        109.0,
     )
     screening = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1706,25 +1704,23 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         prescreen_only=True,
         global_parameters=ParameterSet(),
     )
-    local_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "A_bg"),
-        local_param_names=("Lambda",),
-        aic=8.0,
-        aicc=8.0,
-        bic=10.0,
-        selected_score=8.0,
-        assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+    local_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "A_bg"),
+            local_param_names=("Lambda",),
+            assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+        ),
+        108.0,
     )
-    shared_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        aic=9.0,
-        aicc=9.0,
-        bic=11.0,
-        selected_score=9.0,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+    shared_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        ),
+        109.0,
     )
     screening = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1861,16 +1857,13 @@ def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
                 replace(
                     assessment,
                     fit_result=FitResult(
+                        objective=Objective.GAUSSIAN,
                         success=False,
                         chi_squared=float("inf"),
                         reduced_chi_squared=float("inf"),
                         parameters=assessment.fit_result.parameters,
                         message="forced single-fit failure",
                     ),
-                    aic=float("inf"),
-                    aicc=None,
-                    bic=float("inf"),
-                    selected_score=float("inf"),
                 )
                 if assessment.template.key == "exp_constant"
                 else assessment
@@ -1960,6 +1953,7 @@ def test_single_run_prefit_parameter_sets_reuses_cache() -> None:
             ]
         )
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2024,6 +2018,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
     }
     fit_results = {
         int(dataset.run_number): FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2048,10 +2043,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=10.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -2067,6 +2059,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
             ]
         )
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2141,6 +2134,7 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
     def _make_assessment(*, local: tuple[str, ...], score: float) -> GlobalCandidateAssessment:
         fit_results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=score / len(datasets),
                 reduced_chi_squared=0.1,
@@ -2160,28 +2154,28 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
             )
             for idx, dataset in enumerate(datasets, start=1)
         }
-        return GlobalCandidateAssessment(
-            template=template,
-            fit_results_by_run=fit_results,
-            global_parameters=next(iter(fit_results.values())).parameters,
-            global_param_names=tuple(
-                name for name in template.model.param_names if name not in set(local)
+        return with_aicc(
+            GlobalCandidateAssessment(
+                template=template,
+                fit_results_by_run=fit_results,
+                global_parameters=next(iter(fit_results.values())).parameters,
+                global_param_names=tuple(
+                    name for name in template.model.param_names if name not in set(local)
+                ),
+                local_param_names=local,
+                fixed_param_names=(),
+                parameter_recommendations=(),
+                run_diagnostics=diagnostics,
+                series_warnings=(),
+                sample_count=1000,
+                fitted_curves_by_run={},
+                component_curves_by_run={},
             ),
-            local_param_names=local,
-            fixed_param_names=(),
-            parameter_recommendations=(),
-            run_diagnostics=diagnostics,
-            series_warnings=(),
-            aic=score,
-            aicc=score,
-            bic=score,
-            selected_score=score,
-            fitted_curves_by_run={},
-            component_curves_by_run={},
+            score,
         )
 
-    local_assessment = _make_assessment(local=("Lambda",), score=10.0)
-    shared_assessment = _make_assessment(local=(), score=16.0)
+    local_assessment = _make_assessment(local=("Lambda",), score=110.0)
+    shared_assessment = _make_assessment(local=(), score=116.0)
     recommendations = _build_parameter_recommendations_from_exact_cache(
         local_assessment,
         template=template,
@@ -2202,8 +2196,8 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
 
     by_name = {recommendation.name: recommendation for recommendation in recommendations}
     assert by_name["Lambda"].recommended_role == "Local"
-    assert by_name["Lambda"].local_score == pytest.approx(10.0)
-    assert by_name["Lambda"].global_score == pytest.approx(16.0)
+    assert by_name["Lambda"].local_score == pytest.approx(110.0)
+    assert by_name["Lambda"].global_score == pytest.approx(116.0)
     assert "penalized score" in by_name["Lambda"].rationale
 
 
@@ -2434,20 +2428,7 @@ def test_component_canonicalization_orders_biexponential_components_by_rate() ->
 
 
 def test_staged_assignment_seed_completes_when_local_only_pinned_on_one_run() -> None:
-    """A stage must not hand Minuit a run with zero free parameters.
-
-    Regression for the docs-build crash traced to 45e5110 (PR #301, "pin B_L
-    from run metadata"): on a longitudinal-field Kubo-Toyabe series, B_L
-    legitimately gets a Local role (it varies run to run) even though it is
-    *not* uniformly free -- a ZF run pins B_L at 0 (measured, not fitted)
-    while an LF run fits it. The local-only refinement half of the staged
-    seed holds every Global parameter fixed for *every* run while unlocking
-    only the Local names; for the ZF run that left B_L (already pinned) as
-    the sole "active" name fixed too, so every parameter of that run's
-    ``ParameterSet`` came out fixed and Minuit raised "starting value(s) are
-    required". The fix (``FitEngine._fit_core``) treats a fully-fixed
-    parameter set as a valid degenerate fit rather than an error.
-    """
+    """A stage must not hand Minuit a run with zero free parameters."""
     model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
     template = CandidateTemplate(
         key="lf_kt_constant",
@@ -2806,23 +2787,12 @@ def test_staged_multi_local_assignment_succeeds_for_large_exp_double_gaussian_se
     [SelectionMetric.AIC, SelectionMetric.AICC, SelectionMetric.BIC],
 )
 def test_metric_penalty_matches_information_criteria(metric) -> None:
-    """The layer-bound penalty (technique A/B) must equal IC - chi2 exactly.
-
-    The bound's admissibility rests on penalty(k) being the *same* additive term
-    the winning assessment's IC uses. Verify _metric_penalty reproduces
-    compute_information_criteria's penalty for a range of (k, n), including the
-    AICc small-sample-correction boundary (n <= k + 1 falls back to AIC).
-    """
-    from asymmetry.core.fitting.fit_wizard import compute_information_criteria
+    """Unavailable layer scores have infinite bounds, never another criterion's penalty."""
+    from asymmetry.core.fitting.information_criteria import InformationCriteria, ranking_value
 
     for k in (1, 2, 5, 12, 40):
         for n in (3, 6, 50, 500):
-            aic, aicc, bic = compute_information_criteria(0.0, k, n)
-            expected = {
-                SelectionMetric.AIC: aic,
-                SelectionMetric.BIC: bic,
-                SelectionMetric.AICC: aicc if aicc is not None else aic,
-            }[metric]
+            expected = ranking_value(InformationCriteria(0.0, k, n), metric)
             assert _metric_penalty(k, sample_count=n, metric=metric) == pytest.approx(expected)
 
 
@@ -3366,6 +3336,7 @@ def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
     )
     covariance = np.array([[1.0, 0.999], [0.999, 1.0]])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         parameters=ParameterSet(
@@ -3385,10 +3356,7 @@ def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -3410,6 +3378,7 @@ def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
     )
     covariance = np.array([[1.0, 0.05], [0.05, 1.0]])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         parameters=ParameterSet(
@@ -3429,10 +3398,7 @@ def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )

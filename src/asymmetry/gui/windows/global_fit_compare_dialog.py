@@ -8,7 +8,7 @@ of the *same* parameter next to each other:
 - a grid of per-group panels overlaying both studies' total model curves on the
   shared data points (study A solid, study B dashed), matched by ``group_id``;
 - a side-by-side statistics block (χ², χ²ᵣ, n, k, AIC, AICc, BIC via
-  :func:`~asymmetry.gui.windows.global_fit_window_helpers.information_criteria`)
+  :func:`~asymmetry.core.fitting.cross_group_roles.cross_group_information_criteria`)
   with a ``Δ (B − A)`` sub-block that bolds the better (lower) side; and
 - a two-column global-parameter table (union of names) that highlights any
   parameter whose two values disagree by more than ``2σ``.
@@ -38,12 +38,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.cross_group_roles import (
+    cross_group_criteria_unavailable_reason,
+    cross_group_information_criteria,
+)
+from asymmetry.core.fitting.information_criteria import SelectionMetric
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.gui.styles.widgets import make_warning_banner
+from asymmetry.gui.utils.information_criteria import criterion_item
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
     format_value_with_error,
-    information_criteria,
 )
 
 __all__ = ["GlobalFitCompareDialog"]
@@ -196,18 +201,11 @@ class GlobalFitCompareDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # ── Comparability caveats ───────────────────────────────────────────
-        mode_a = str(getattr(study_a.result, "error_mode", "") or "")
-        mode_b = str(getattr(study_b.result, "error_mode", "") or "")
-        n_a = int(getattr(study_a.result, "n_points", 0) or 0)
-        n_b = int(getattr(study_b.result, "n_points", 0) or 0)
+        mode_a, mode_b = study_a.result.error_mode, study_b.result.error_mode
+        n_a, n_b = study_a.result.n_points, study_b.result.n_points
         same_mode_and_n = (mode_a == mode_b) and (n_a == n_b)
         same_snapshot = str(study_a.input_digest) == str(study_b.input_digest)
-        #: Criteria differences are only meaningful with matching data + error
-        #: mode. "Matching data" includes the input digest: two studies fit to
-        #: different data snapshots (e.g. one refit after a trend edit) must not
-        #: have their Δ column bolded even when the error mode and point count
-        #: coincide. When any of these differ we show a caveat and suppress the
-        #: Δ bolding.
+        # Likelihood differences require the same data snapshot and error model.
         self._criteria_comparable = same_mode_and_n and same_snapshot
 
         if not same_mode_and_n:
@@ -362,23 +360,28 @@ class GlobalFitCompareDialog(QDialog):
         """A (metric × [A, B, Δ]) table of χ²/χ²ᵣ/n/k/AIC/AICc/BIC."""
         ra = self._study_a.result
         rb = self._study_b.result
-        ic_a = information_criteria(ra) or {}
-        ic_b = information_criteria(rb) or {}
-
-        def _g(mapping, key):
-            v = mapping.get(key)
-            return None if v is None else float(v)
-
-        metrics: list[tuple[str, float | None, float | None, bool]] = [
-            ("χ²", float(ra.chi_squared), float(rb.chi_squared), False),
-            ("χ²ᵣ", float(ra.reduced_chi_squared), float(rb.reduced_chi_squared), True),
-            ("n", float(ra.n_points), float(rb.n_points), False),
-            ("k", _g(ic_a, "k"), _g(ic_b, "k"), False),
-            ("AIC", _g(ic_a, "aic"), _g(ic_b, "aic"), True),
-            ("AICc", _g(ic_a, "aicc"), _g(ic_b, "aicc"), True),
-            ("BIC", _g(ic_a, "bic"), _g(ic_b, "bic"), True),
+        ic_a = cross_group_information_criteria(ra)
+        ic_b = cross_group_information_criteria(rb)
+        metrics = [
+            ("χ²", ra.chi_squared, rb.chi_squared, False),
+            ("χ²ᵣ", ra.reduced_chi_squared, rb.reduced_chi_squared, True),
+            ("n", ra.n_points, rb.n_points, False),
+            (
+                "k",
+                None if ic_a is None else ic_a.parameter_count,
+                None if ic_b is None else ic_b.parameter_count,
+                False,
+            ),
         ]
-        # ``delta_metric`` flags rows carrying a Δ (B − A) with better-side bolding.
+        for metric in SelectionMetric:
+            metrics.append(
+                (
+                    metric.value,
+                    None if ic_a is None else ic_a.value(metric),
+                    None if ic_b is None else ic_b.value(metric),
+                    True,
+                )
+            )
 
         table = QTableWidget(len(metrics), 4, self)
         table.setHorizontalHeaderLabels(["", self._study_a.name, self._study_b.name, "Δ (B − A)"])
@@ -390,16 +393,35 @@ class GlobalFitCompareDialog(QDialog):
 
         for row, (label, va, vb, is_delta) in enumerate(metrics):
             table.setItem(row, 0, QTableWidgetItem(label))
-            item_a = QTableWidgetItem(_fmt(va))
-            item_b = QTableWidgetItem(_fmt(vb))
+            if row >= 4:
+                metric = SelectionMetric.from_value(label)
+                item_a = criterion_item(
+                    ic_a,
+                    metric,
+                    unavailable_reason=cross_group_criteria_unavailable_reason(ra, metric),
+                )
+                item_b = criterion_item(
+                    ic_b,
+                    metric,
+                    unavailable_reason=cross_group_criteria_unavailable_reason(rb, metric),
+                )
+            else:
+                item_a = QTableWidgetItem(_fmt(va))
+                item_b = QTableWidgetItem(_fmt(vb))
             table.setItem(row, 1, item_a)
             table.setItem(row, 2, item_b)
-            if is_delta and va is not None and vb is not None:
+            if (
+                is_delta
+                and self._criteria_comparable
+                and va is not None
+                and vb is not None
+                and math.isfinite(va)
+                and math.isfinite(vb)
+            ):
                 delta = vb - va
                 delta_item = QTableWidgetItem(f"{delta:+.6g}")
                 table.setItem(row, 3, delta_item)
-                # Bold the better (lower) side — only when criteria comparable.
-                if self._criteria_comparable and math.isfinite(delta) and delta != 0.0:
+                if delta != 0.0:
                     better = item_b if delta < 0 else item_a
                     font = better.font()
                     font.setBold(True)

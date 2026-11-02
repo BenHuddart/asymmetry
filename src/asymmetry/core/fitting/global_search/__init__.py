@@ -30,7 +30,6 @@ from asymmetry.core.fitting.global_search.partition import (
 )
 from asymmetry.core.fitting.global_search.proposal import extract_discrete_candidates
 from asymmetry.core.fitting.global_search.relaxed import RelaxedOptimizer, SciPyRelaxedOptimizer
-from asymmetry.core.fitting.global_search.score import score_exact_candidate
 from asymmetry.core.fitting.global_search.surrogate import (
     CollapseResult,
     RunEstimate,
@@ -94,7 +93,6 @@ __all__ = [
     "partition_series",
     "rank_assignments",
     "run_estimate_from_fit_result",
-    "score_exact_candidate",
     "surrogate_ic",
     "tier1_segment_cost",
     "tier2_segment_cost",

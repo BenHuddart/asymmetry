@@ -28,11 +28,51 @@ used in asymmetry models for :math:`A(t)`.
 
 The superconducting workflow is:
 
-1. Fit each TF-muSR run in the time domain to extract a Gaussian rate
-   :math:`\sigma(T_i)`.
+1. Fit each TF-muSR run in the time domain to extract the ``Gaussian`` width
+   :math:`\sigma_G(T_i)` in :math:`\exp(-\sigma_G^2t^2)`.
 2. Fit the resulting :math:`\sigma(T)` trend with superconducting gap models.
 3. Interpret the fitted model in terms of :math:`\rho_s(T)` and optionally
    convert to :math:`\lambda_L(T)`.
+
+.. _sc-width-convention:
+
+Gaussian width convention
+-------------------------
+
+The field-distribution second-moment width is
+:math:`\sigma_2=\gamma_\mu\langle\Delta B^2\rangle^{1/2}`. Its Gaussian
+transverse-field envelope is :math:`\exp(-\sigma_2^2t^2/2)`, whereas the
+``Gaussian`` component uses :math:`\exp(-\sigma_G^2t^2)`. Therefore
+:math:`\sigma_2=\sqrt{2}\sigma_G`.
+
+The temperature-dependent ``SC_*`` laws inherit the convention of the trended
+width: their fitted ``sigma_0``, ``sigma_bg``, ``sigma_sc``, and ``sigma_nm``
+use that same convention. The normalised density :math:`\rho_s(T)` is unchanged
+by a constant rescaling of every width and its uncertainty.
+
+The ``SC_Brandt_*`` field models and the penetration-depth conversion scale use
+:math:`\sigma_2`. A ``Gaussian`` width must be converted before fitting these
+field models. In the **Fit Parameters** card, click **ƒ** → **Custom…**; in
+**Custom Y transform**, enter ``sqrt(2)*x`` beside **Expression in x:**.
+This transforms the values and their errors. The expression variable remains
+``x`` for a Y transform.
+
+The conversion helpers require a :class:`~asymmetry.core.fitting.sc.GaussianWidth`
+argument; select the convention of the supplied or requested width explicitly:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.sc import GaussianWidth, sigma_to_lambda_nm
+
+   lambda_nm = sigma_to_lambda_nm(
+       sigma_gaussian, width=GaussianWidth.GAUSSIAN_COMPONENT
+   )
+
+Use ``GaussianWidth.SECOND_MOMENT`` for :math:`\sigma_2`. The reverse helper
+``lambda_nm_to_sigma_us`` requires the same ``width=`` choice for its output.
+Subtract the non-superconducting contribution before converting to penetration
+depth. A width-convention conversion does not account for vortex-lattice
+asymmetry, disorder, or anisotropic powder geometry.
 
 Core equations
 --------------
@@ -141,9 +181,9 @@ Model selection at a glance
       \frac{E\,dE}{\sqrt{E^2-\Delta^2(T,\mathbf{k})}}
       \right\rangle_{FS}.
 
-   The implementation evaluates the energy and angular integrals with
-   Gauss-Legendre quadrature and enforces stable limits
-   :math:`\rho_s(0)=1`, :math:`\rho_s(T\ge T_c)=0`.
+   The :ref:`thermal kernel <sc-kernel-accuracy>` uses a nonsingular
+   dimensionless integration variable. The limits are :math:`\rho_s(0)=1`
+   and :math:`\rho_s(T\ge T_c)=0`.
 
 .. dropdown:: Mathematical detail: gap-amplitude approximations per symmetry
 
@@ -367,8 +407,8 @@ field-distribution second moment depends on field through Brandt's
 Ginzburg-Landau result [5], and fitting it yields the absolute penetration
 depth :math:`\lambda` and the upper critical field :math:`B_{c2}` directly.
 
-For an ideal triangular flux-line lattice (:math:`\kappa \gg 1`) the Gaussian
-muon depolarisation rate is
+For an ideal triangular flux-line lattice (:math:`\kappa \gg 1`) the
+second-moment width is
 
 .. math::
 
@@ -383,10 +423,11 @@ field factor is normalised so that :math:`\sigma(b\to0)=\sigma_0(\lambda)` and
 form, :math:`\sigma\,[\mu s^{-1}] \approx 4.85\times10^{4}\,(1-b)[1+1.21
 (1-\sqrt{b})^3]\,\lambda^{-2}\,[\mathrm{nm}^{-2}]` [6].
 
-The field width is what the literature often reports as
-:math:`B_{\mathrm{rms}} = \sigma/\gamma_\mu`; fitting in :math:`\sigma`
-(:math:`\mu s^{-1}`) keeps the workflow identical to the time-domain Gaussian
-rate. An optional field-independent nuclear/background channel ``sigma_bg``
+Here :math:`\sigma=\sigma_2`, so the field width is
+:math:`B_{\mathrm{rms}}=\sigma_2/\gamma_\mu=\sqrt{2}\sigma_G/\gamma_\mu`.
+Convert a time-domain ``Gaussian`` width using the :ref:`width convention
+<sc-width-convention>` before fitting a Brandt field model. An optional
+field-independent nuclear/background channel ``sigma_bg``
 adds in quadrature, :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt
 *et al.* Eq. (2) [6]).
 
@@ -422,7 +463,7 @@ a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
    from asymmetry.core.fitting import Parameter, ParameterSet, ParameterCompositeModel
    from asymmetry.core.fitting.parameter_models import fit_parameter_model
 
-   # Applied transverse field in gauss; sigma in us^-1 (one point per run).
+   # Applied field in gauss; second-moment sigma in us^-1 (one point per run).
    B0 = np.array([100.0, 200.0, 800.0, 1600.0, 3200.0, 4000.0, 6000.0])
    model = ParameterCompositeModel(["SC_Brandt_VortexLattice_Powder"])
 
@@ -439,6 +480,9 @@ a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
 
 Shared parameter semantics
 --------------------------
+
+For temperature laws the width parameters below inherit the convention of the
+input trend. For ``SC_Brandt_*``, ``sigma_bg`` is a second-moment width.
 
 ``sigma_0``
    Additive superconducting scale in :math:`\mu s^{-1}`.
@@ -490,6 +534,76 @@ physics summary in
 :mod:`asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` via
 the ``description`` field. Parameter-level helper text is provided by
 :func:`asymmetry.core.fitting.get_param_info`.
+
+.. _sc-kernel-accuracy:
+
+Numerical evaluation of the thermal kernel
+-----------------------------------------
+
+The thermal response in Prozorov and Giannetta [1], Eq. (16), can be evaluated
+without the density-of-states endpoint singularity. With
+:math:`u=\sqrt{E^2-\Delta^2}/(k_BT)` and :math:`d=\Delta/(k_BT)`, its integral
+is
+
+.. math::
+
+   I(d)=-\int_0^\infty
+   \frac{du}{4\cosh^2(\sqrt{u^2+d^2}/2)},
+   \qquad \rho_s=1+2\langle I(d)\rangle_{FS}.
+
+The integrand is even and smooth through a gap node. A fixed trapezoid rule
+uses 73 nodes, spacing :math:`1/2`, and upper bound 36, with half weight at each
+endpoint. The nearest complex poles are at
+:math:`u=\pm i\sqrt{\pi^2+d^2}`; the corresponding trapezoid error is below
+:math:`2\times10^{-15}` and the truncated tail contributes less than
+:math:`2.4\times10^{-16}`. Floating-point round-off remains in addition to
+these discretisation bounds.
+
+.. dropdown:: Bound on the thermal quadrature error
+
+   Writing :math:`\psi(z)=[4\cosh^2(z/2)]^{-1}`, for real :math:`d` and
+   strip height :math:`a<\pi` the complex integrand obeys
+   :math:`|\psi(\sqrt{(x+ia)^2+d^2})|\le[2(\cosh x+\cos a)]^{-1}`.
+   The integral of this bound over the real line is :math:`a/\sin a`.
+   Evenness then bounds the half-line trapezoid error by
+   :math:`(a/\sin a)/(e^{2\pi a/h}-1)`; taking :math:`a=3` and :math:`h=1/2`
+   gives less than :math:`10^{-15}`. The omitted trapezoid tail is bounded by
+   :math:`(h/2)\coth(h/2)e^{-U}`, below :math:`2.4\times10^{-16}` at
+   :math:`U=36`. These follow from the dimensionless thermal response, without
+   a small-gap substitution or a fitted numerical cutoff.
+
+Independent adaptive integration and a modified-Bessel series verify the
+thermal kernel across :math:`0\le d\le80`. The zero-gap value is
+:math:`I(0)=-1/2`. The small-gap limit is
+:math:`\rho_s/d^2\to7\zeta(3)/(4\pi^2)`; the low-temperature leading term is
+:math:`1-\rho_s\sim\sqrt{2\pi d}e^{-d}` [1], Eq. (20).
+The default s-wave curve agrees with independent integration of its stated
+Carrington–Manzano gap interpolation to :math:`10^{-10}` on the tested grid.
+This verifies evaluation of the interpolation; its physical approximation is
+separate from numerical quadrature accuracy.
+
+Angular averages use each gap form's declared period of :math:`|g|` and
+mirror symmetry about the equator. A nested periodic trapezoid integrates the
+azimuth; Gauss–Legendre quadrature integrates :math:`\cos\theta` on a sphere.
+Both coordinates refine until the sum of twice their successive differences
+is at most :math:`10^{-7}`. A thermal-scale resolution requirement prevents
+coarse grids from accepting an unresolved nodal contribution. Independent
+angular integration checks the registered models to :math:`10^{-8}` on the
+reference grid, including :math:`T/T_c=0.005`.
+
+Angular quadrature supports :math:`T/T_c\ge0.005`. Lower positive temperatures,
+or failure to converge within 16,384 nodes per coordinate, raise ``ValueError``
+naming the gap form and reduced temperature. Azimuth-independent cylindrical
+gaps require no angular quadrature and support every positive temperature.
+Zero temperature and :math:`T\ge T_c` use analytic limits. Values are not clipped.
+The density helpers choose their resolution; they have no ``n_phi`` or
+``n_theta`` arguments.
+
+For angular integration, a cached cubic Hermite table of :math:`I(d)` uses
+analytically integrated derivatives, with absolute interpolation error below
+:math:`10^{-11}` on :math:`0\le d\le80`. Beyond 80 the bound
+:math:`|I(d)|\le dK_1(d)<3\times10^{-33}` permits zero. The isotropic
+cylindrical calculation uses the thermal quadrature directly.
 
 Assumptions and limitations
 ---------------------------

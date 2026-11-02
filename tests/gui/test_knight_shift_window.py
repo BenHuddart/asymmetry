@@ -26,11 +26,6 @@ from asymmetry.gui.windows.knight_shift_window import KnightShiftWindow
 from tests._qt_helpers import wait_for
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _snapshot(n_points: int = 10) -> KnightAnalysisInput:
     """A 2-component field-kind snapshot spanning angles 0..90 degrees."""
     points = tuple(

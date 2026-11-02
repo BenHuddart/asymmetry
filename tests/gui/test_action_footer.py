@@ -11,14 +11,9 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
+from PySide6.QtWidgets import QLabel, QPushButton  # noqa: E402
 
 from asymmetry.gui.widgets.action_footer import ActionFooter  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def test_add_primary_returns_styled_button(qapp) -> None:

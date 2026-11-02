@@ -1,10 +1,4 @@
-"""GUI wiring for the count-domain fit-target selector in the Multi-Group window.
-
-These tests exercise the routing only — the count-fit numerics are covered by
-``tests/test_count_domain_fits.py``. The detector-balance α is recovered here
-even with the default model because it is fixed by the forward/backward count
-ratio, independent of the oscillation model.
-"""
+"""Count fitting, calibration promotion, and grouped-fit panel controls."""
 
 from __future__ import annotations
 
@@ -41,6 +35,7 @@ def fb_dataset() -> MuonDataset:
     run = simulate_run(
         template, _tf, {"A": 20.0, "f": 1.5, "phi": 0.3}, total_events=40e6, alpha=1.25, seed=1
     )
+    run.grouping["good_frames"] = 1.0e6
     return MuonDataset(
         time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
     )
@@ -99,10 +94,11 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     assert result.success
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
-    # The χ² band behind the read-out's verdict chip hovers over the body line.
+    # Sparse tail bins suppress the χ² verdict without hiding the deviance.
     card = window._single_fit_tab._results_card
     assert card.tag_text() == "Fit ✓"
-    assert "band" in card._detail.toolTip()
+    assert "Poisson deviance/ν" in card._detail.text()
+    assert "fitted expected count is below 5" in card._detail.toolTip()
 
 
 def test_fb_count_fit_recovers_realistic_amplitude(qapp, fb_dataset):
@@ -280,7 +276,7 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
     assert tab.wait_for_fit()
-    assert tab._last_count_dt0 is not None
+    assert tab._last_count_deadtime is not None
     window._on_promote_deadtime()
     grouping = fb_dataset.run.grouping
     assert grouping.get("deadtime_correction") is True

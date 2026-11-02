@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -42,7 +42,7 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     group_names,
 )
-from asymmetry.core.transform.rebin import resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides, effective_detector_t0_bins
 from asymmetry.core.utils.coerce import optional_float
 
@@ -446,11 +446,11 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         overrides = detector_t0_overrides(grouping, len(run.histograms))
         if overrides is not None:
             payload["fb_detector_t0_bins"] = overrides
-        binning_mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
-        payload["fb_binning_mode"] = binning_mode
-        if binning_mode != "fixed":
-            payload["fb_bin0_us"] = bin0_us
-            payload["fb_bin10_us"] = bin10_us
+        binning = binning_spec(grouping)
+        payload["fb_binning_mode"] = binning.mode
+        if binning.mode != "fixed":
+            payload["fb_bin0_us"] = binning.bin0_us
+            payload["fb_bin10_us"] = binning.bin10_us
         # Two-period selection: only live when a valid two-period payload
         # exists (mirrors reduce_run_to_dataset's has_periods gate).
         period_lists = grouping.get("period_histograms")
@@ -836,30 +836,12 @@ def compute_average_group_spectrum(
             return None
         signal_inputs.append((None, fb_dataset))
     else:
-        input_run = run
-        declared_t0 = run.grouping.get("t0_bin")
-        if (
-            is_auto_phase
-            and isinstance(declared_t0, (int, np.integer))
-            and reference_t0_bin is not None
-        ):
-            # Good bins describe (bin - declared_t0)*dt; aligned histograms use
-            # the shared reference, so endpoints and exact t0 translate together.
-            offset = reference_t0_bin - int(declared_t0)
-            grouping = dict(run.grouping)
-            for key in ("first_good_bin", "last_good_bin"):
-                bound = grouping.get(key)
-                if isinstance(bound, (int, np.integer)) and bound >= 0:
-                    grouping[key] = int(bound) + offset
-            exact_t0_us = grouping.get("t0_time_us")
-            if exact_t0_us is not None:
-                grouping["t0_time_us"] = float(exact_t0_us) + offset * run.histograms[0].bin_width
-            input_run = replace(run, grouping=grouping)
+        # Every display shares the same aligned good window and timing origin.
         signal_inputs = [
             (
                 group_id,
                 build_group_signal_dataset(
-                    input_run,
+                    run,
                     group_id,
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,

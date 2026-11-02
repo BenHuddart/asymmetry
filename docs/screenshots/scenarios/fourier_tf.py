@@ -152,7 +152,9 @@ class FourierAutoPhaseScenario(FourierTfScenario):
 
         window = MainWindow()
         window._on_fourier()
-        time = np.arange(512) * 0.025
+        t0_bin, first_good_bin, bin_width = 8, 16, 0.025
+        t0_time_us = (t0_bin + 0.75) * bin_width
+        time = (np.arange(512) + 0.5) * bin_width - t0_time_us
         counts = (
             1e6
             * np.exp(-time / MUON_LIFETIME_US)
@@ -165,11 +167,20 @@ class FourierAutoPhaseScenario(FourierTfScenario):
         )
         run = Run(
             run_number=701,
-            histograms=[Histogram(counts=counts, bin_width=0.025, t0_bin=0)],
+            histograms=[
+                Histogram(
+                    counts=counts,
+                    bin_width=bin_width,
+                    t0_bin=t0_bin,
+                    t0_time_us=t0_time_us,
+                )
+            ],
             grouping={
                 "groups": {1: [1]},
                 "group_names": {1: "Forward"},
-                "first_good_bin": 0,
+                "t0_bin": t0_bin,
+                "t0_time_us": t0_time_us,
+                "first_good_bin": first_good_bin,
                 "last_good_bin": len(time) - 1,
                 "deadtime_correction": False,
             },

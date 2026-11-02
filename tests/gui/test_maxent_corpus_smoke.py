@@ -45,14 +45,6 @@ _TF_RUN = corpus_path("Magnetism/AFM transition in high TF/data/tdc_hifi_2020_00
 _ZF_RUN = corpus_path("Magnetism/Ferromagnetic nickel/Data/emu00124218.nxs")
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _load_run(path: Path):
     from asymmetry.core.io import load
 

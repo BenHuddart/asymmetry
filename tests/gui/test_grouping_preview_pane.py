@@ -1,19 +1,4 @@
-"""Live asymmetry preview pane for the grouping editor.
-
-Covers the pane's behaviour end-to-end: it populates for a synthetic run, an
-edit (and specifically an alpha change) recomputes and visibly changes the curve
-data, the reduction error path is muted rather than crashing, and a
-histogram-less dataset hides the pane with a note. Also pins that the core
-reduction the pane shares with MainWindow (:func:`reduce_grouped_asymmetry`) is
-bit-identical to a from-scratch replay of the documented counts-then-ratio
-pipeline, so the extraction never forks the numerics.
-
-The TaskRunner-based flow is driven deterministically the same way
-``test_gui_tasks.py`` does: a real nested event loop is pumped until the
-background reduction lands (``QTest.qWait`` / a ``QEventLoop`` guarded by a
-timeout, both fine offscreen). The pane's ``flush()`` bypasses the 300 ms
-debounce so tests do not wait on wall-clock.
-"""
+"""Preview numerics, worker isolation, and interactive view preservation."""
 
 from __future__ import annotations
 
@@ -33,13 +18,9 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
 from asymmetry.core.transform import (
-    apply_grouped_background_correction,
-    apply_grouping_aligned,
-    binned_fb_asymmetry,
-    common_t0_for_groups,
-    prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
 )
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.utils.plot_decimation import preview_stride
 from asymmetry.gui.windows.grouping import preview_pane as preview_pane_module
@@ -51,14 +32,6 @@ from asymmetry.gui.windows.grouping.preview_pane import (
     PreviewFacts,
     _decimate_for_preview,
 )
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
@@ -389,74 +362,16 @@ def test_dialog_hides_preview_for_histogramless_dataset(qapp: QApplication) -> N
     dialog.close()
 
 
-# --------------------------------------------------------------------------- #
-# Core-reduction pin: MainWindow reduction unchanged by the extraction
-# --------------------------------------------------------------------------- #
-
-
-def _replay_reduction(
-    histograms,
-    grouping,
-    forward_idx,
-    backward_idx,
-    alpha,
-    *,
-    use_deadtime,
-    use_background,
-    facility,
-):
-    """From-scratch replay of the documented counts-then-ratio pipeline."""
-    working = list(histograms)
-    if use_deadtime:
-        working, _ = prepare_histograms_with_deadtime(histograms, grouping, True)
-    common_t0 = common_t0_for_groups(working, forward_idx, backward_idx)
-    forward = apply_grouping_aligned(working, forward_idx, common_t0_bin=common_t0)
-    backward = apply_grouping_aligned(working, backward_idx, common_t0_bin=common_t0)
-    n = min(len(forward), len(backward))
-    forward, backward = forward[:n], backward[:n]
-    f_err = b_err = None
-    if use_background:
-        bw = float(working[0].bin_width)
-        last_good = int(grouping.get("last_good_bin", n - 1))
-        res = apply_grouped_background_correction(
-            forward,
-            backward,
-            grouping=grouping,
-            t0_bin=common_t0,
-            bin_width_us=bw,
-            facility=facility,
-            last_good_bin=last_good,
-        )
-        forward, backward = res.forward, res.backward
-        if res.applied and res.forward_error is not None and res.backward_error is not None:
-            f_err, b_err = res.forward_error, res.backward_error
-    bw = float(working[0].bin_width)
-    first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    last_good = int(grouping.get("last_good_bin", n - 1))
-    t, a, e = binned_fb_asymmetry(
-        forward,
-        backward,
-        grouping=grouping,
-        common_t0=common_t0,
-        bin_width_us=bw,
-        alpha=alpha,
-        first_good_bin=first_good,
-        last_good_bin=last_good,
-        forward_error=f_err,
-        backward_error=b_err,
-    )
-    return t, a * 100.0, e * 100.0
-
-
 @pytest.mark.parametrize("bunch", [1, 2])
 @pytest.mark.parametrize("alpha", [1.0, 1.7])
-def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> None:
+def test_reduce_grouped_asymmetry_matches_hand_sums(bunch: int, alpha: float) -> None:
     dataset = _histogram_dataset(grouping_extra={"bunching_factor": bunch})
     grouping = dataset.run.grouping
     forward_idx = [0]
     backward_idx = [1]
     result = reduce_grouped_asymmetry(
         histograms=dataset.run.histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
@@ -466,24 +381,18 @@ def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> 
         use_background=False,
         facility="TESTINST",
     )
-    exp_t, exp_a, exp_e = _replay_reduction(
-        dataset.run.histograms,
-        grouping,
-        forward_idx,
-        backward_idx,
-        alpha,
-        use_deadtime=False,
-        use_background=False,
-        facility="TESTINST",
-    )
-    np.testing.assert_array_equal(result.time, exp_t)
-    np.testing.assert_array_equal(result.asymmetry, exp_a)
-    np.testing.assert_array_equal(result.error, exp_e)
-    assert result.deadtime_applied is False
+    f, b = [hist.counts.reshape(-1, bunch).sum(axis=1) for hist in dataset.run.histograms]
+    denominator = f + alpha * b
+    expected_a = 100 * (f - alpha * b) / denominator
+    expected_error = 200 * alpha * np.sqrt(b * b * f + f * f * b) / denominator**2
+    expected_time = dataset.time.reshape(-1, bunch).mean(axis=1)
+    np.testing.assert_allclose(result.time, expected_time, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(result.asymmetry, expected_a, rtol=1e-13)
+    np.testing.assert_allclose(result.error, expected_error, rtol=1e-13)
+    assert result.corrections.deadtime.status == "off"
 
 
-def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication) -> None:
-    """The MainWindow method now delegates; pin that it returns core's arrays."""
+def test_grouping_apply_matches_the_core_reducer(qapp: QApplication) -> None:
     from PySide6.QtCore import QSettings
 
     import asymmetry.gui.mainwindow as mw_module
@@ -494,21 +403,10 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
     window = MainWindow()
     try:
         dataset = _histogram_dataset()
-        grouping = dataset.run.grouping
-        mw_time, mw_asym, mw_err, mw_dt, _bkg = window._reduce_grouped_histograms_to_asymmetry(
-            histograms=dataset.run.histograms,
-            grouping=grouping,
-            dataset=dataset,
-            run=dataset.run,
-            forward_idx=[0],
-            backward_idx=[1],
-            alpha=1.3,
-            use_deadtime=False,
-            deadtime_mode="off",
-            use_background=False,
-        )
+        grouping = dict(dataset.run.grouping, alpha=1.3)
         core = reduce_grouped_asymmetry(
             histograms=dataset.run.histograms,
+            binning=binning_spec(grouping),
             grouping=grouping,
             forward_idx=[0],
             backward_idx=[1],
@@ -518,10 +416,11 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
             use_background=False,
             facility="TESTINST",
         )
-        np.testing.assert_array_equal(mw_time, core.time)
-        np.testing.assert_array_equal(mw_asym, core.asymmetry)
-        np.testing.assert_array_equal(mw_err, core.error)
-        assert mw_dt == core.deadtime_applied
+        applied, _ = window._apply_grouping_settings_to_dataset(dataset, grouping)
+        assert applied
+        np.testing.assert_array_equal(dataset.time, core.time)
+        np.testing.assert_array_equal(dataset.asymmetry, core.asymmetry)
+        np.testing.assert_array_equal(dataset.error, core.error)
     finally:
         window.close()
 
@@ -557,9 +456,9 @@ def test_profile_request_resolves_on_worker_thread_only(
         call_threads: list[int] = []
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             call_threads.append(threading.get_ident())
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         pane.request_preview_from_profile(profile=_draft_profile(), run=dataset.run, facts=_facts())
@@ -583,9 +482,9 @@ def test_profile_is_snapshotted_against_later_edits(
         seen_profiles: list[GroupingProfile] = []
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             seen_profiles.append(profile)
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         draft = _draft_profile()
@@ -612,10 +511,10 @@ def test_profile_request_burst_coalesces_resolves(
         call_count = 0
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             nonlocal call_count
             call_count += 1
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         for _ in range(10):
@@ -1178,7 +1077,7 @@ def test_view_switch_redraws_without_dispatching_the_worker(
     pane = GroupingPreviewPane()
     try:
         result = _draw_result(pane)
-        pane._last_result = result
+        pane._state = result
         started: list[object] = []
         monkeypatch.setattr(pane._tasks, "start", lambda *a, **k: started.append(a))
 
@@ -1199,7 +1098,7 @@ def test_view_switch_drops_the_user_view(qapp: QApplication) -> None:
     pane = GroupingPreviewPane()
     try:
         result = _draw_result(pane)
-        pane._last_result = result
+        pane._state = result
         pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
 
         pane.set_view("counts")
@@ -1518,7 +1417,7 @@ def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
         assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
         assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
 
-        pane._last_result = result
+        pane._state = result
         pane._on_home_triggered()
         assert pane._user_view is None
         assert pane._axes.get_ylim() == pytest.approx(auto_ylim)
@@ -1627,6 +1526,7 @@ def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
 
     expected = reduce_grouped_asymmetry(
         histograms=dataset.run.histograms,
+        binning=binning_spec(dataset.run.grouping),
         grouping=dataset.run.grouping,
         forward_idx=[0],
         backward_idx=[1],

@@ -68,6 +68,8 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.fit_wizard import (
     PERSISTED_CURVE_MAX_POINTS as _PERSISTED_CURVE_MAX_POINTS,
 )
+from asymmetry.core.fitting.information_criteria import InformationCriteria
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -296,15 +298,14 @@ def _dummy_assessment(key: str, *, stage: int = 2) -> CandidateAssessment:
         rationale="",
         model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
     )
-    fit_result = FitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+    fit_result = FitResult(
+        objective=Objective.GAUSSIAN, success=True, chi_squared=1.0, reduced_chi_squared=1.0
+    )
     empty = np.array([], dtype=float)
     return CandidateAssessment(
         template=template,
         fit_result=fit_result,
-        aic=1.0,
-        aicc=1.0,
-        bic=1.0,
-        selected_score=1.0,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -415,6 +416,7 @@ def _dense_assessment(key: str, n_points: int) -> CandidateAssessment:
     return replace(
         base,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=1.0,
@@ -544,17 +546,7 @@ def _order_preserving_tasks() -> tuple[list[_AssessmentTask], list[str]]:
 
 
 class _FakeProcessPool:
-    """A stand-in for a spawn ``ProcessPoolExecutor`` that runs tasks inline.
-
-    Mirrors the pattern in ``test_global_fit_wizard.py``: submitting a task
-    just calls it synchronously. Real :class:`concurrent.futures.Future`
-    objects are used (not a bespoke fake) because ``_run_template_assessments``
-    drives completion through ``concurrent.futures.as_completed``, which
-    reaches into a future's internal condition/state — a duck-typed fake with
-    only ``.result()`` cannot satisfy it. Running synchronously (rather than on
-    a real process) keeps the test deterministic and keeps test-only
-    monkeypatches visible (a real ``spawn`` worker cannot see them).
-    """
+    """A stand-in for a spawn ``ProcessPoolExecutor`` that runs tasks inline."""
 
     def __init__(self) -> None:
         self.shutdown_calls: list[dict] = []
@@ -572,15 +564,7 @@ class _FakeProcessPool:
 
 
 def _monkeypatch_dummy_worker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the real fit worker with one that maps a task to ``_dummy_assessment``.
-
-    ``_execute_assessment_task`` normally drives a real fit; these tests only
-    care about fan-out mechanics (ordering, cancellation, pool lifecycle), so a
-    fake keeps them fast and deterministic on both the serial and process-pool
-    paths (a monkeypatch on the plain function is visible to
-    ``_FakeProcessPool.submit`` because it calls it in-process, unlike a real
-    spawned worker).
-    """
+    """Replace the real fit worker with one that maps a task to ``_dummy_assessment``."""
 
     def _fake_execute(task, cancel_callback=None):
         return _dummy_assessment(task.template.key, stage=task.stage)
@@ -977,8 +961,8 @@ def test_run_template_assessments_process_path_matches_serial() -> None:
     assert process_keys == serial_keys
 
     for serial_assessment, process_assessment in zip(serial_results, process_results):
-        assert process_assessment.selected_score == pytest.approx(
-            serial_assessment.selected_score, abs=1e-6
+        assert process_assessment.metric_value(SelectionMetric.AICC) == pytest.approx(
+            serial_assessment.metric_value(SelectionMetric.AICC), abs=1e-6
         )
         assert process_assessment.fit_result.chi_squared == pytest.approx(
             serial_assessment.fit_result.chi_squared, abs=1e-6
@@ -1500,7 +1484,11 @@ def _assessment_with_frequency(frequency: float) -> CandidateAssessment:
     return replace(
         base,
         fit_result=FitResult(
-            success=True, chi_squared=1.0, reduced_chi_squared=1.0, parameters=params
+            objective=Objective.GAUSSIAN,
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            parameters=params,
         ),
     )
 
@@ -1636,7 +1624,7 @@ def test_rebinning_lengthens_the_informative_window_of_a_counting_error_record()
     dataset = _counting_error_tf_record()
 
     raw = _effective_window_us(dataset)
-    rebinned = _effective_window_us(dataset.rebin(6))
+    rebinned = _effective_window_us(dataset.merge_curve_bins(6))
 
     assert rebinned > 1.15 * raw
     # ...and the 0.69 MHz line straddles the two-cycle floor because of it.
@@ -1650,7 +1638,7 @@ def test_frequency_support_verdict_differs_between_the_record_and_its_rebinned_c
 
     (raw,) = _apply_frequency_support_disqualifiers(dataset, (assessment,), _peaks_at(0.69))
     (rebinned,) = _apply_frequency_support_disqualifiers(
-        dataset.rebin(6), (assessment,), _peaks_at(0.69)
+        dataset.merge_curve_bins(6), (assessment,), _peaks_at(0.69)
     )
 
     assert any("informative window" in reason for reason in raw.disqualification_reasons)
@@ -1764,15 +1752,14 @@ def _scored_assessment(
         rationale="",
         model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
     )
-    fit_result = FitResult(success=success, chi_squared=value, reduced_chi_squared=1.0)
+    fit_result = FitResult(
+        objective=Objective.GAUSSIAN, success=success, chi_squared=value, reduced_chi_squared=1.0
+    )
     empty = np.array([], dtype=float)
     return CandidateAssessment(
         template=template,
         fit_result=fit_result,
-        aic=value,
-        aicc=value,
-        bic=value,
-        selected_score=value,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -1986,7 +1973,7 @@ def _policy_assessment(
 ) -> CandidateAssessment:
     """Build a fully-formed assessment for policy-engine tests.
 
-    ``value`` is used as the AICc/AIC/BIC so metric ranking is deterministic.
+    ``value`` sets AICc through a coherent non-negative objective.
     ``param_count`` (via a padded ParameterSet) drives the strictly-simpler null
     comparison; ``gate`` maps to ``residual_gate_passed`` (High vs Medium tier).
     """
@@ -1995,8 +1982,12 @@ def _policy_assessment(
         for i in range(param_count if param_count is not None else 1):
             parameters.add(Parameter(name=f"p{i}", value=1.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
-        chi_squared=value,
+        chi_squared=value
+        - InformationCriteria(0.0, len(parameters.free_parameters), 1000).value(
+            SelectionMetric.AICC
+        ),
         reduced_chi_squared=1.0,
         parameters=parameters,
         uncertainties=uncertainties or {},
@@ -2011,10 +2002,7 @@ def _policy_assessment(
             model=model or CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
         fit_result=fit_result,
-        aic=value,
-        aicc=value,
-        bic=value,
-        selected_score=value,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0 if gate else 5.0,
         max_abs_autocorrelation=0.0,
@@ -2282,12 +2270,11 @@ def test_tie_break_cross_family_keeps_metric_winner_primary() -> None:
     assert out.recommended_key == "stretched_constant"
     assert set(out.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
 
-    # (h, tie-break half) Reranking the same payload by BIC must not change
-    # the cross-family behavior — the metric winner (by BIC score) still
-    # stays primary rather than flipping to the simpler template.
+    # BIC's stronger complexity penalty changes the metric winner; family
+    # preference must not override that winner.
     out_bic = rerank_fit_wizard_recommendation(rec, SelectionMetric.BIC)
-    assert out_bic.recommended_key == "stretched_constant"
-    assert set(out_bic.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
+    assert out_bic.recommended_key == "risch_kehr_constant"
+    assert out_bic.comparable_keys == ()
 
 
 def test_tie_break_old_payload_without_family_reports_does_not_flip() -> None:
@@ -2459,6 +2446,7 @@ def test_disqualifier_flags_frequency_at_resolution_floor() -> None:
     params.add(Parameter(name="frequency", value=0.05))
     params.add(Parameter(name="phase", value=0.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2486,6 +2474,7 @@ def test_disqualifier_flags_zero_consistent_amplitude() -> None:
     params.add(Parameter(name="frequency", value=1.5))  # well above the floor
     params.add(Parameter(name="phase", value=0.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2512,6 +2501,7 @@ def test_disqualifier_skips_amplitude_when_error_missing() -> None:
     params.add(Parameter(name="A", value=0.01))
     params.add(Parameter(name="frequency", value=1.5))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2538,6 +2528,7 @@ def test_disqualifier_ignores_non_oscillatory_templates() -> None:
     params.add(Parameter(name="A_1", value=0.001))  # tiny, but no frequency here
     params.add(Parameter(name="Lambda", value=0.4))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2719,7 +2710,7 @@ def test_rebin_factor_is_capped_so_the_fastest_seeded_line_stays_sampled() -> No
     factor = analysis_rebin_factor(dataset, analysis)
 
     assert factor == 5
-    rebinned = dataset.rebin(factor)
+    rebinned = dataset.merge_curve_bins(factor)
     period_us = 1.0 / 240.0
     assert period_us / float(np.median(np.diff(rebinned.time))) >= 8.0
 
@@ -2981,7 +2972,7 @@ def test_rebuilt_curves_are_identical_to_the_eagerly_built_ones(
     assert filled.fitted_curve.size == filled.fitted_time.size
     # Everything but the curves is the row itself, untouched.
     assert filled.fit_result is bare.fit_result
-    assert filled.selected_score == bare.selected_score
+    assert filled.metric_value(SelectionMetric.AICC) == bare.metric_value(SelectionMetric.AICC)
 
 
 def test_assessment_with_curves_rebins_by_the_recommendations_own_factor() -> None:
@@ -3005,7 +2996,7 @@ def test_assessment_with_curves_rebins_by_the_recommendations_own_factor() -> No
     )
 
     rebuilt = assessment_with_curves(recommendation, "exp_constant", dataset)
-    against_rebinned = _with_dense_curves(assessment, dataset.rebin(factor))
+    against_rebinned = _with_dense_curves(assessment, dataset.merge_curve_bins(factor))
     against_raw = _with_dense_curves(assessment, dataset)
 
     assert np.array_equal(rebuilt.fitted_time, against_rebinned.fitted_time)
@@ -3090,7 +3081,7 @@ def test_peaks_above_the_analysed_record_nyquist_are_dropped() -> None:
     # residual-FFT spike at 4.9 GHz cannot be represented on that record and
     # must never be seeded (its frequency bounds would invert on the clamp).
     dataset = _rebin_dataset(90_000)
-    analysed = dataset.rebin(11)
+    analysed = dataset.merge_curve_bins(11)
     spike = DetectedPeak(
         frequency_mhz=4907.0,
         amplitude=1.0,
@@ -3141,6 +3132,7 @@ def _ladder_template() -> CandidateTemplate:
 
 def _ladder_fit_result(*, success: bool, chi_squared: float) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         chi_squared=chi_squared,
         parameters=ParameterSet(

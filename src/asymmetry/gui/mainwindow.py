@@ -16,62 +16,7 @@ Layout overview (mirroring WiMDA):
     │  Log / message panel  (bottom dock)              │
     └──────────────────────────────────────────────────┘
 
-Navigation map
---------------
-This module is ~13k lines and one dominant class (``MainWindow``); it is a
-known decomposition target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``)
-but is not being split in this pass. Module-level helpers (``_safe_float``,
-``_normalise_source_path``, ``_format_bytes``, ``_write_text_file``,
-``_load_window_icon``, ``_coerce_bool``, ``_sync_grouping_keys``,
-``_run_number_gap_ranges``, ``_format_gap_ranges``) sit before the class;
-``_InspectorStack`` and ``_inspector_scroll_area`` support the right-dock
-inspector deck. Two free functions after the class
-(``_has_saved_fit_results``, ``_has_saved_fit_parameters_results``) are
-project-restore predicates.
-
-``MainWindow.__init__`` wires menus, toolbars, and docks
-(``_setup_menus`` → ``_create_toolbars`` / ``_setup_toolbar`` →
-``_create_docks`` → ``_setup_panels`` → ``_connect_actions``), then the class
-body proceeds roughly in this order, grouped by feature area rather than by
-fixed line ranges (the file will reflow as sections are extracted):
-
-1. **View-mode / bunch-factor / plot-viewport state** — ``_apply_view_mode``,
-   ``_apply_bunch_factor_to_context``, ``_on_plot_view_limits_changed``.
-2. **Vector-axis / projection selection and rendering** —
-   ``_refresh_vector_axis_selector``, ``_build_vector_axis_datasets``,
-   ``_render_current_selection_plot`` (the main plot-refresh entry point).
-3. **File loading and dataset lifecycle** — ``_on_open``, ``_load_files``,
-   ``_load_file``, dataset overwrite/removal helpers.
-4. **Detector grouping** — ``_open_shared_grouping_dialog`` through
-   ``_apply_grouping_settings_to_dataset`` and the histogram-reduction helpers
-   (``_reduce_grouped_histograms_to_asymmetry``, ``_apply_deadtime_correction``).
-5. **Fit orchestration and fit-result recording** — ``_on_fit``,
-   ``_on_fit_completed``, ``_record_fit_series``, ``_record_global_fit_batch``,
-   ``_record_grouped_fit_series``, and the various
-   ``_on_*_fit_completed``/``_on_*_fit_started`` slots that bridge worker
-   signals back into ``FitSeries``/``ProjectModel`` state.
-6. **Fourier / MaxEnt** — ``_on_fourier``, ``_on_compute_fourier`` and the
-   frequency-recompute cache/async machinery (``_ensure_frequency_spectra_for_run``,
-   ``_start_async_frequency_recompute``), then the MaxEnt worker lifecycle
-   (``_launch_maxent_worker`` → ``_on_maxent_worker_finished``/``_error``/
-   ``_cancelled``) and spectral moments (``_refresh_spectral_moments``,
-   ``_on_moments_send_to_trend``).
-7. **ALC / field-scan** — ``_on_scan_requested``, ``_render_alc_scan``,
-   ``_on_fit_baseline``/``_on_fit_peaks``/``_on_fit_rf``.
-8. **Trend panel bridging** — ``_refresh_trend_panel``, ``_build_series_rows``,
-   the ``_on_series_*`` slots.
-9. **Project persistence** — ``collect_project_state`` /
-   ``restore_project_state`` (the serialize/deserialize round trip),
-   ``_write_project``, ``_open_project_file``, ``_clear_all_state``.
-10. **Window lifecycle** — ``_update_window_title``, ``_mark_dirty``/
-    ``_clear_dirty``, ``_maybe_save``, ``closeEvent``.
-
-Signal flow entry points: dataset selection changes arrive via
-``_on_dataset_selected``/``_update_selected_datasets`` and fan out to plot
-refresh, fit-panel rebinding, and Fourier/MaxEnt panel sync. Fit completion
-signals from panel workers arrive via the ``_on_*_fit_completed`` slots and
-fan out to plotting (``PlotPanel.plot_fit``/``set_global_fits``), trend
-recording, and the Fit Parameters panel.
+The shell routes analysis through the pure core and owns GUI task lifetimes.
 """
 
 from __future__ import annotations
@@ -86,8 +31,9 @@ import time
 import weakref
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import CancelledError
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,7 +45,6 @@ from PySide6.QtCore import (
     QEventLoop,
     QObject,
     QSettings,
-    QStandardPaths,
     Qt,
     QThread,
     QTimer,
@@ -143,13 +88,14 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
+    ScanBaselineResult,
     as_composite_model,
     build_grouped_time_domain_datasets,
     enrich_summary_provenance,
     fit_result_summary,
     fit_rf_resonance,
     fit_scan_baseline,
-    fit_scan_model,
+    fit_scan_peaks,
     grouped_time_domain_available,
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
@@ -165,6 +111,7 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.result_summary import reduced_statistic_summary
 from asymmetry.core.fitting.wizard_scope import (
     restore_user_field_direction,
     set_user_field_direction,
@@ -203,7 +150,6 @@ from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
-    combine_period_asymmetry,
     held_period_count,
     select_period_histograms,
 )
@@ -269,7 +215,6 @@ from asymmetry.core.transform import (
     ASYMMETRY_PERCENT,
     EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
-    apply_deadtime_correction,
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
@@ -280,19 +225,27 @@ from asymmetry.core.transform import (
     format_detector_list,
     good_frames,
     group_detectors_outside_run,
-    has_file_deadtime,
     prepare_histograms_with_deadtime,
-    reduce_grouped_asymmetry,
+    reduce_period_asymmetry,
     resolve_background_mode,
+    resolve_deadtime,
     resolve_facility,
     run_t0_time_us,
 )
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionOutcomes,
+    CorrectionStatus,
+    background_grouping_metadata,
+)
 from asymmetry.core.transform.deadtime import (
-    calibrate_deadtime_from_histograms,
+    DeadtimeCalibration,
+    fit_deadtime_calibration,
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
-from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
     ROTATED_PROJECTIONS,
@@ -357,6 +310,7 @@ from asymmetry.gui.ui_manager import (
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.utils import app_data
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
@@ -724,7 +678,7 @@ def _period_histograms_key(period_histograms: object) -> tuple:
 
 def _rebunch_nbytes(result: tuple[np.ndarray, np.ndarray, np.ndarray]) -> int:
     """Approximate byte size of a cached ``(time, asymmetry, error)`` triple."""
-    return sum(int(getattr(arr, "nbytes", 0)) for arr in result)
+    return sum(arr.nbytes for arr in result)
 
 
 def _grouped_time_domain_nbytes(datasets: list[MuonDataset]) -> int:
@@ -867,6 +821,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._background_run_cache: dict[str, object] = {}
         # QMainWindow forces the Window flag on. A hosted page must lose it
         # before the native (macOS) menu bar built below hands the page its own
         # native window, which would survive into the shell and mis-map every
@@ -994,10 +949,8 @@ class MainWindow(QMainWindow):
         self._alc_rf_mode = False
         #: True once an RF-resonance fit has been applied to the current scan.
         self._alc_rf_fitted = False
-        #: Baseline-corrected scan from the last baseline fit (basis for peaks).
-        self._alc_corrected_scan: FieldScan | None = None
-        #: The fitted baseline curve (display units), for the total-fit overlay.
-        self._alc_baseline_curve: object | None = None
+        #: Source snapshot and fitted baseline used for propagated peak errors.
+        self._alc_baseline: ScanBaselineResult | None = None
         #: True while restoring a project, to silence ALC fit dialogs.
         self._alc_loading = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
@@ -1017,7 +970,8 @@ class MainWindow(QMainWindow):
         # The most recent full result + config per run, for spectrum/log export.
         self._maxent_result_by_run: dict[int, tuple] = {}
         # The last fitted per-detector deadtime (run_number, [µs per detector]).
-        self._maxent_fitted_deadtime: tuple[int, list[float]] | None = None
+        self._maxent_fitted_deadtime: DeadtimeCalibration | None = None
+        self._maxent_deadtime_generation = 0
         self._maxent_panel_state_by_run: dict[int, dict] = {}
         # MaxEnt runs on the shared TaskRunner (self._tasks); _maxent_worker is
         # the live TaskWorker handle (for the Stop button), and _maxent_active
@@ -1095,7 +1049,6 @@ class MainWindow(QMainWindow):
         self._active_view_mode_index = 0
         self._syncing_view_mode_ui = False
         self._applying_view_mode = False
-        self._syncing_bunch_context = False
         self._applying_inspector_domain = False
         # Per-representation memory of inspector tabs the user closed: view
         # token → dock keys. Closed tabs stay closed when the user returns to
@@ -1579,6 +1532,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addWidget(QLabel("Bunch:"))
         self._view_bunch_spin = QSpinBox()
         self._view_bunch_spin.setRange(1, 1000)
+        self._view_bunch_spin.setToolTip("Merge this many recorded output bins.")
         self._view_bunch_spin.setMaximumWidth(metrics.spin_width_for(4, self._view_bunch_spin))
         self._view_bunch_spin.valueChanged.connect(self._on_main_bunch_factor_changed)
         self._main_toolbar.addWidget(self._view_bunch_spin)
@@ -1677,109 +1631,13 @@ class MainWindow(QMainWindow):
             self._view_modes[self._active_view_mode_index]["bunch_factor"]
         )
 
-    def _resolve_view_bunch_targets(self) -> tuple[list[MuonDataset], set[int]]:
-        """Return datasets that should receive a bunch-factor update."""
-        resolved: list[MuonDataset] = []
-        seen_run_numbers: set[int] = set()
-        combined_targets: set[int] = set()
-
-        for dataset in self._selected_or_current_datasets():
-            try:
-                run_number = int(dataset.run_number)
-            except (TypeError, ValueError):
-                continue
-
-            if (
-                hasattr(self._data_browser, "is_combined_dataset")
-                and self._data_browser.is_combined_dataset(run_number)
-                and hasattr(self._data_browser, "get_combined_source_datasets")
-            ):
-                combined_targets.add(run_number)
-                for source_dataset in self._data_browser.get_combined_source_datasets(run_number):
-                    try:
-                        source_run = int(source_dataset.run_number)
-                    except (TypeError, ValueError):
-                        continue
-                    if source_run in seen_run_numbers:
-                        continue
-                    seen_run_numbers.add(source_run)
-                    resolved.append(source_dataset)
-                continue
-
-            if run_number in seen_run_numbers:
-                continue
-            seen_run_numbers.add(run_number)
-            resolved.append(dataset)
-
-        return resolved, combined_targets
-
-    def _apply_bunch_factor_to_context(self, bunch_factor: int) -> None:
-        """Apply the visible bunch factor using grouping where possible."""
-        bunch_factor = max(1, int(bunch_factor))
-        if self._syncing_bunch_context:
-            return
-
-        self._syncing_bunch_context = True
-        try:
-            targets, combined_targets = self._resolve_view_bunch_targets()
-            grouping_targets: list[tuple[MuonDataset, dict]] = []
-            for dataset in targets:
-                payload = self._extract_grouping_overrides(dataset)
-                if isinstance(payload, dict):
-                    payload["bunching_factor"] = bunch_factor
-                    grouping_targets.append((dataset, payload))
-                    continue
-
-                run = getattr(dataset, "run", None)
-                grouping = getattr(run, "grouping", None)
-                if isinstance(grouping, dict):
-                    grouping["bunching_factor"] = bunch_factor
-
-            if grouping_targets:
-                updated = 0
-                for dataset, payload in grouping_targets:
-                    applied, _dt_applied = self._apply_grouping_settings_to_dataset(
-                        dataset, payload
-                    )
-                    if applied:
-                        updated += 1
-
-                if hasattr(self._plot_panel, "set_bunch_factor"):
-                    self._plot_panel.set_bunch_factor(1, emit_signal=False)
-
-                if updated > 0:
-                    for combined_run_number in combined_targets:
-                        if not hasattr(self._data_browser, "rebuild_combined_dataset"):
-                            continue
-                        rebuilt_combined_dataset = self._data_browser.rebuild_combined_dataset(
-                            combined_run_number
-                        )
-                        if (
-                            rebuilt_combined_dataset is not None
-                            and self._current_dataset is not None
-                            and int(self._current_dataset.run_number) == int(combined_run_number)
-                        ):
-                            self._current_dataset = rebuilt_combined_dataset
-
-                    if hasattr(self._data_browser, "_rebuild_table"):
-                        self._data_browser._rebuild_table()
-                    if self._current_dataset is not None:
-                        self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
-                    self._render_current_selection_plot()
-                    self._refresh_vector_axis_selector()
-                    self._update_fit_block_state()
-                    self._update_selected_datasets()
-                return
-
-            if hasattr(self._plot_panel, "set_bunch_factor"):
-                self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
-            if self._current_dataset is not None:
-                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
-            if targets:
-                self._render_current_selection_plot()
-            self._update_selected_datasets()
-        finally:
-            self._syncing_bunch_context = False
+    def _apply_display_bunch_factor(self, bunch_factor: int) -> None:
+        """Merge recorded output bins for display and its fit input."""
+        self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
+        if self._current_dataset is not None:
+            self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
+        self._render_current_selection_plot()
+        self._update_selected_datasets()
 
     def _apply_view_mode(self, mode_index: int) -> None:
         """Activate one saved view mode and redraw the current view."""
@@ -1787,7 +1645,7 @@ class MainWindow(QMainWindow):
         self._applying_view_mode = True
         try:
             self._set_view_bunch_spin_value(int(mode["bunch_factor"]))
-            self._apply_bunch_factor_to_context(int(mode["bunch_factor"]))
+            self._apply_display_bunch_factor(int(mode["bunch_factor"]))
             self._plot_panel.set_view_limits(
                 float(mode["x_min"]),
                 float(mode["x_max"]),
@@ -1812,7 +1670,7 @@ class MainWindow(QMainWindow):
         self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
         if self._applying_view_mode:
             return
-        self._apply_bunch_factor_to_context(bunch_factor)
+        self._apply_display_bunch_factor(bunch_factor)
 
     def _on_plot_view_limits_changed(
         self,
@@ -4733,7 +4591,14 @@ class MainWindow(QMainWindow):
         for dataset in dialog_datasets:
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
                 continue
-            applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
+            try:
+                applied, outcomes = self._apply_grouping_settings_to_dataset(
+                    dataset, grouping_result
+                )
+            except (ValueError, OSError) as exc:
+                skipped += 1
+                skip_reasons.append(f"run {int(dataset.run_number)}: {exc}")
+                continue
             if not applied:
                 skipped += 1
                 reason = self._describe_grouping_skip(dataset, grouping_result)
@@ -4746,21 +4611,16 @@ class MainWindow(QMainWindow):
             if profile_result is not None:
                 # The run follows the profile just saved: record the assignment.
                 self._assign_dataset_profile(dataset, profile_result["profile"].name)
-            if use_deadtime and not dt_applied:
-                deadtime_missing += 1
-            if dt_applied:
-                deadtime_applied += 1
-            if use_background:
-                grouping = dataset.run.grouping if dataset.run is not None else {}
-                if isinstance(grouping, dict) and grouping.get("background_method") in {
-                    "estimated",
-                    "fixed",
-                    "tail_fit",
-                    "reference_run",
-                }:
-                    background_applied += 1
-                else:
-                    background_missing += 1
+            dt_applied = all(
+                item.deadtime.status == CorrectionStatus.APPLIED for item in outcomes.values()
+            )
+            deadtime_applied += int(dt_applied)
+            deadtime_missing += int(use_deadtime and not dt_applied)
+            bg_applied = all(
+                item.background.status == CorrectionStatus.APPLIED for item in outcomes.values()
+            )
+            background_applied += int(use_background and bg_applied)
+            background_missing += int(use_background and not bg_applied)
 
             if dataset is self._current_dataset:
                 self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
@@ -4802,11 +4662,6 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
         if updated > 0 or override_updated_runs or reassigned_runs:
             self._mark_dirty()
-            bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
-            self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
-            self._set_view_bunch_spin_value(bunch_factor)
-            if hasattr(self._plot_panel, "set_bunch_factor"):
-                self._plot_panel.set_bunch_factor(1, emit_signal=False)
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
@@ -5328,7 +5183,7 @@ class MainWindow(QMainWindow):
             "first_good_bin": first_good_bin,
             "last_good_bin": last_good_bin,
             "bin_index_base": bin_index_base,
-            "bunching_factor": int(grouping.get("bunching_factor", 1)),
+            "bunching_factor": binning_spec(grouping).factor,
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "background_correction": bool(grouping.get("background_correction", False)),
         }
@@ -5349,6 +5204,7 @@ class MainWindow(QMainWindow):
             "deadtime_manual_us",
             "deadtime_estimated_us",
             "deadtime_reference_run",
+            "deadtime_errors_us",
         ):
             if key in grouping:
                 payload[key] = grouping.get(key)
@@ -5463,13 +5319,8 @@ class MainWindow(QMainWindow):
         setattr(dataset, "_grouping_source_arrays_cache", cached)
         return cached
 
-    # Strictly per-run normalisers. ``good_frames`` is the universal dead-time
-    # normaliser: ``apply_deadtime_correction`` divides the loss term by
-    # ``dt * good_frames``, so a wrong (another run's) or missing value makes the
-    # denominator clip and the asymmetry saturate at +-100%. The ``period_*``
-    # companions let per-period selection re-resolve it. None of these may be
-    # inherited from another run's grouping template — they belong to the run
-    # whose DAQ produced them and must be re-resolved per dataset.
+    # Frame counts normalise raw N·τ/(Δt·F); they and their period companions
+    # belong to the acquisition and cannot be inherited from a grouping template.
     _PER_RUN_NORMALISER_KEYS = (
         "good_frames",
         "period_good_frames",
@@ -5608,17 +5459,11 @@ class MainWindow(QMainWindow):
 
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
-    ) -> tuple[bool, bool]:
-        """Apply grouping settings to one dataset and recompute asymmetry.
-
-        Returns
-        -------
-        tuple[bool, bool]
-            ``(applied, deadtime_applied)``.
-        """
+    ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
+        """Apply atomically, returning success and each period's correction outcomes."""
         run = dataset.run
         if run is None:
-            return False, False
+            return False, {}
         # Grouping is about to be (re)written for this run; drop its cached
         # reductions up front. The recipe key already embeds the digest (so a
         # stale entry can never hit), but this removes the dead entries early —
@@ -5645,7 +5490,7 @@ class MainWindow(QMainWindow):
             forward_gid = int(grouping_result.get("forward_group", 1))
             backward_gid = int(grouping_result.get("backward_group", 2))
         except (TypeError, ValueError):
-            return False, False
+            return False, {}
 
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
@@ -5781,14 +5626,13 @@ class MainWindow(QMainWindow):
                 alpha = float(grouping_result.get("alpha", existing_grouping.get("alpha", 1.0)))
             except (TypeError, ValueError):
                 alpha = 1.0
-        bunch_factor = int(grouping_result.get("bunching_factor", 1))
+        bunch_factor = binning_spec(existing_grouping | grouping_result).factor
         period_mode = str(
             grouping_result.get(
                 "period_mode",
                 existing_grouping.get("period_mode", PeriodMode.RED),
             )
         )
-        bunch_factor = max(1, bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
         deadtime_mode = (
             str(
@@ -5823,7 +5667,7 @@ class MainWindow(QMainWindow):
                 asym_out = source_asymmetry[lo : hi + 1].copy()
                 err_out = source_error[lo : hi + 1].copy()
                 if bunch_factor > 1:
-                    time_out, asym_out, err_out = rebin(
+                    time_out, asym_out, err_out = merge_curve_bins(
                         time_out,
                         asym_out,
                         err_out,
@@ -5896,34 +5740,34 @@ class MainWindow(QMainWindow):
             else:
                 run.grouping.pop("instrument", None)
             self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
-            return True, False
+            dataset.metadata.pop("correction_error", None)
+            return True, {str(period_mode): CorrectionOutcomes()}
 
         if not groups:
-            return False, False
+            return False, {}
         # Empty after filtering to present, non-excluded detectors: the group
         # contributes no counts, so an F-B asymmetry cannot be formed (e.g. a
         # Longitudinal preset's backward ring on a forward-ring-only file).
         if not forward_idx or not backward_idx:
-            return False, False
+            return False, {}
 
-        if not isinstance(run.grouping, dict):
-            run.grouping = {}
+        grouping = dict(existing_grouping)
 
         # Keep histogram time-zero consistent with grouping metadata. PSI files
         # can have per-detector t0 values, so preserve relative detector
         # offsets when the user edits the common t0 control.
         if isinstance(grouping_result.get("detector_t0_bins"), list):
-            run.grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
+            grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
         if isinstance(grouping_result.get("detector_first_good_bins"), list):
-            run.grouping["detector_first_good_bins"] = list(
+            grouping["detector_first_good_bins"] = list(
                 grouping_result.get("detector_first_good_bins", [])
             )
         if isinstance(grouping_result.get("detector_last_good_bins"), list):
-            run.grouping["detector_last_good_bins"] = list(
+            grouping["detector_last_good_bins"] = list(
                 grouping_result.get("detector_last_good_bins", [])
             )
         if isinstance(grouping_result.get("histogram_labels"), list):
-            run.grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
+            grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
         # A user t0 edit is applied NON-DESTRUCTIVELY (T0Policy semantics): the
         # run's histograms keep their file-derived t0_bin values, and the effective
@@ -5941,47 +5785,45 @@ class MainWindow(QMainWindow):
         )
         delta = int(t0_bin) - int(file_common_t0)
         if run.histograms and delta != 0:
-            run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+            grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
                 max(0, int(hist.t0_bin) + delta) for hist in run.histograms
             ]
         else:
-            run.grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
-        # The exact t0 moves with the same whole-bin delta (D4), exactly as
-        # ``_apply_t0_policy`` moves it — otherwise the per-run override would
-        # shift the alignment but leave the time stamps on the file's t0.
-        # Re-derived from the FILE baseline (not from the stored value) for the
-        # same reason as the override list above: this path mutates
-        # ``run.grouping`` in place and runs again on every apply, so reading
-        # back its own output would compound the shift.
+            grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        # Exact t0 carries the alignment's whole-bin delta. Derive it from file
+        # coordinates so repeated applies cannot compound the shift.
         if run.histograms:
             file_t0_time_us = run_t0_time_us(run.histograms, file_common_t0)
             if file_t0_time_us is not None:
-                run.grouping["t0_time_us"] = file_t0_time_us + delta * float(
+                grouping["t0_time_us"] = file_t0_time_us + delta * float(
                     run.histograms[0].bin_width
                 )
 
-        if has_file_deadtime(existing_grouping, len(run.histograms)):
-            run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
+        if (
+            resolve_deadtime(existing_grouping, len(run.histograms), True, "from_file").status
+            == CorrectionStatus.APPLIED
+        ):
+            grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
         elif isinstance(existing_grouping.get("deadtime_file_us"), list):
-            run.grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
+            grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
 
-        run.grouping["deadtime_mode"] = deadtime_mode
+        grouping["deadtime_mode"] = deadtime_mode
         if grouping_result.get("deadtime_method"):
-            run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
+            grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
         else:
-            run.grouping.pop("deadtime_method", None)
-        _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
-        run.grouping.pop("deadtime_source_path", None)
-        run.grouping.pop("deadtime_loaded_us", None)
+            grouping.pop("deadtime_method", None)
+        _sync_grouping_keys(grouping, grouping_result, DEADTIME_SETTING_KEYS)
+        grouping.pop("deadtime_source_path", None)
+        grouping.pop("deadtime_loaded_us", None)
 
         if deadtime_mode == "file":
-            if isinstance(run.grouping.get("deadtime_file_us"), list):
-                run.grouping["dead_time_us"] = list(run.grouping.get("deadtime_file_us", []))
+            if isinstance(grouping.get("deadtime_file_us"), list):
+                grouping["dead_time_us"] = list(grouping.get("deadtime_file_us", []))
         elif isinstance(grouping_result.get("dead_time_us"), list):
-            run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+            grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
         elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
-            run.grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
-        self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
+            grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
+        self._preserve_per_run_normalisers(grouping, existing_grouping, grouping_result)
         for key in (
             "background_ranges",
             "background_range",
@@ -5992,10 +5834,10 @@ class MainWindow(QMainWindow):
             "bkg_fix",
         ):
             if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-        _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
+                grouping[key] = grouping_result.get(key)
+        _sync_grouping_keys(grouping, grouping_result, REDUCTION_SETTING_KEYS)
 
-        reduction_grouping = dict(run.grouping)
+        reduction_grouping = dict(grouping)
         reduction_grouping.update(
             {
                 "groups": groups,
@@ -6020,7 +5862,7 @@ class MainWindow(QMainWindow):
             reduction_grouping["alpha_z"] = float(vector_alphas.get("P_z", alpha))
 
         if not use_deadtime:
-            run.grouping.pop("deadtime_method", None)
+            grouping.pop("deadtime_method", None)
 
         run_alpha = alpha if alpha > 0 else 1.0
         has_two_period_histograms = bool(
@@ -6028,153 +5870,43 @@ class MainWindow(QMainWindow):
             and len(reduction_grouping.get("period_histograms", [])) == 2
         )
 
-        background_state: dict[str, object] | None = None
-        dt_applied = False
-        time_axis: np.ndarray
-        asymmetry: np.ndarray
-        error: np.ndarray
-
+        outcomes: dict[str, CorrectionOutcomes] = {}
+        facility = resolve_facility(
+            metadata=run.metadata, grouping=reduction_grouping
+        ) or resolve_facility(metadata=dataset.metadata)
+        reduced = reduce_period_asymmetry(
+            run.histograms,
+            reduction_grouping,
+            period_mode,
+            binning=binning_spec(reduction_grouping),
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            alpha=run_alpha,
+            beta=float(reduction_grouping.get("beta", 1.0)),
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            facility=facility,
+            metadata=run.metadata,
+            reference_resolver=lambda g: self._resolve_background_reference(g, run),
+        )
+        time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
+        outcomes = reduced.corrections
         if has_two_period_histograms and period_mode in {
-            str(PeriodMode.GREEN_MINUS_RED),
-            str(PeriodMode.GREEN_PLUS_RED),
+            str(PeriodMode.RED),
+            str(PeriodMode.GREEN),
         }:
-            red_histograms, red_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=0,
+            _, selected_grouping = select_period_histograms(
+                run.histograms, reduction_grouping, int(period_mode == str(PeriodMode.GREEN))
             )
-            green_histograms, green_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=1,
-            )
-            red_time, red_asym, red_err, red_dt, red_background = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=red_histograms,
-                    grouping=red_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
-            )
-            green_time, green_asym, green_err, green_dt, green_background = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=green_histograms,
-                    grouping=green_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
-            )
-            time_axis, asymmetry, error = combine_period_asymmetry(
-                red_time,
-                red_asym,
-                red_err,
-                green_time,
-                green_asym,
-                green_err,
-                period_mode,
-            )
-            if len(time_axis) == 0:
-                return False, bool(red_dt or green_dt)
-            dt_applied = bool(red_dt or green_dt)
-            if use_background:
-                if red_background == green_background:
-                    background_state = red_background
-                else:
-                    method = None
-                    for state in (green_background, red_background):
-                        if isinstance(state, dict) and isinstance(state.get("method"), str):
-                            method = str(state.get("method"))
-                            break
-                    if method:
-                        background_state = {"method": method}
-        else:
-            period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
-            selected_histograms, selected_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=period_index,
-            )
-            time_axis, asymmetry, error, dt_applied, background_state = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=selected_histograms,
-                    grouping=selected_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
-            )
-            if has_two_period_histograms and period_mode in {
-                str(PeriodMode.RED),
-                str(PeriodMode.GREEN),
-            }:
-                if "good_frames" in selected_grouping:
-                    run.grouping["good_frames"] = selected_grouping.get("good_frames")
-                if isinstance(selected_grouping.get("dead_time_us"), list):
-                    run.grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
+            if "good_frames" in selected_grouping:
+                grouping["good_frames"] = selected_grouping["good_frames"]
+            if "dead_time_us" in selected_grouping:
+                grouping["dead_time_us"] = selected_grouping["dead_time_us"]
 
-        if use_background:
-            if isinstance(background_state, dict) and isinstance(
-                background_state.get("method"), str
-            ):
-                run.grouping["background_method"] = str(background_state.get("method"))
-            else:
-                run.grouping.pop("background_method", None)
-            values = background_state.get("values") if isinstance(background_state, dict) else None
-            if isinstance(values, list) and len(values) == 2:
-                run.grouping["background_values"] = [float(values[0]), float(values[1])]
-            else:
-                run.grouping.pop("background_values", None)
-            ranges = background_state.get("ranges") if isinstance(background_state, dict) else None
-            if isinstance(ranges, list) and len(ranges) == 2:
-                run.grouping["background_ranges"] = [
-                    [int(v) for v in ranges[0]],
-                    [int(v) for v in ranges[1]],
-                ]
-            details = (
-                background_state.get("details") if isinstance(background_state, dict) else None
-            )
-            if isinstance(details, dict) and details:
-                run.grouping["background_details"] = dict(details)
-            else:
-                run.grouping.pop("background_details", None)
-            method = (
-                str(background_state.get("method", ""))
-                if isinstance(background_state, dict)
-                else ""
-            )
-            if method in {
-                "missing_reference",
-                "missing_fixed_values",
-                "tail_fit_failed",
-                "invalid_range",
-                "none",
-            }:
-                self.statusBar().showMessage(
-                    f"Background correction NOT applied to run {run.run_number} "
-                    f"({method.replace('_', ' ')}).",
-                    8000,
-                )
-        else:
-            run.grouping.pop("background_method", None)
-            run.grouping.pop("background_values", None)
-            run.grouping.pop("background_details", None)
+        for key in ("background_method", "background_values", "background_details"):
+            grouping.pop(key, None)
+        grouping.update(background_grouping_metadata(outcomes))
 
         # binned_fb_asymmetry already applied the good window and the
         # binning (fixed bunching included) inside the reduction.
@@ -6182,7 +5914,7 @@ class MainWindow(QMainWindow):
         dataset.asymmetry = asymmetry.copy()
         dataset.error = error.copy()
 
-        run.grouping.update(
+        grouping.update(
             {
                 "groups": groups,
                 "forward_group": forward_gid,
@@ -6200,280 +5932,114 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
-        _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
+        _sync_grouping_keys(grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
         if axis_pairs:
-            run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
-            run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
-            run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
+            grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
+            grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
+            grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
         # Keep the file-derived per-detector t0 table in sync with the (unmutated)
         # histograms; a manual t0 shift is carried non-destructively via the
         # effective-t0 override, never by rewriting these file values.
-        existing_detector_t0 = run.grouping.get("detector_t0_bins")
+        existing_detector_t0 = grouping.get("detector_t0_bins")
         if isinstance(existing_detector_t0, list) and len(existing_detector_t0) == len(
             run.histograms
         ):
-            run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
+            grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         # Persist group names if provided
         group_names = grouping_result.get("group_names")
         if isinstance(group_names, dict) and group_names:
-            run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
+            grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
         included_groups = grouping_result.get("included_groups")
         if isinstance(included_groups, dict):
-            run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
-        self._store_vector_axis(run.grouping, vector_axis if axis_pairs else None)
-        self._store_projections(run.grouping, projections_to_store)
+            grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
+        self._store_vector_axis(grouping, vector_axis if axis_pairs else None)
+        self._store_projections(grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
-            run.grouping["grouping_preset"] = str(preset_name)
+            grouping["grouping_preset"] = str(preset_name)
         else:
-            run.grouping.pop("grouping_preset", None)
+            grouping.pop("grouping_preset", None)
         instrument_name = grouping_result.get("instrument")
         if instrument_name:
-            run.grouping["instrument"] = str(instrument_name)
+            grouping["instrument"] = str(instrument_name)
         else:
-            run.grouping.pop("instrument", None)
-        return True, dt_applied
+            grouping.pop("instrument", None)
+        run.grouping = grouping
+        dataset.metadata.pop("correction_error", None)
+        return True, outcomes
 
-    def _period_histograms_for_mode(
-        self,
-        histograms: list[Histogram],
-        grouping: dict,
-        *,
-        period_index: int,
-    ) -> tuple[list[Histogram], dict]:
-        """Return period-specific histograms plus effective grouping metadata.
-
-        Thin wrapper over :func:`asymmetry.core.io.periods.select_period_histograms`
-        so the GUI and the scriptable core API share one implementation of the
-        red/green period-selection rule.
-        """
-        return select_period_histograms(histograms, grouping, period_index)
-
-    def _reduce_grouped_histograms_to_asymmetry(
-        self,
-        *,
-        histograms: list[Histogram],
-        grouping: dict,
-        dataset,
-        run,
-        forward_idx: list[int],
-        backward_idx: list[int],
-        alpha: float,
-        use_deadtime: bool,
-        deadtime_mode: str,
-        use_background: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, dict[str, object] | None]:
-        """Return reduced grouped asymmetry arrays for one histogram source.
-
-        Thin GUI wrapper over the Qt-free
-        :func:`asymmetry.core.transform.reduce_grouped_asymmetry` chokepoint: it
-        resolves the facility string off the run/dataset metadata (the core can
-        derive it from a single metadata dict, but only the GUI knows to prefer
-        the run's over the dataset's) and binds the
-        ``reference_run`` background resolver to the loaded-dataset registry, so
-        the numerics stay shared with the grouping window's preview pane.
-
-        ``alpha`` is explicit because the vector-projection paths substitute a
-        per-axis value; ``beta`` is scalar-only and is read leniently from the
-        grouping payload here (matching ``group_forward_backward``).
-        """
+    def _counts_first_rebunched_arrays(
+        self, dataset: MuonDataset, extra_bunch_factor: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Replay recorded binning and corrections, merging output bins counts-first."""
+        run = dataset.run
+        if run is None or not run.histograms:
+            raise ValueError("Counts-first display bunching requires raw histograms.")
+        grouping = run.grouping
+        binning = replace(binning_spec(grouping), merge=extra_bunch_factor)
+        forward_gid, backward_gid = (
+            int(grouping.get("forward_group", 1)),
+            int(grouping.get("backward_group", 2)),
+        )
+        forward_idx = effective_group_indices(
+            grouping, forward_gid, n_histograms=len(run.histograms)
+        )
+        backward_idx = effective_group_indices(
+            grouping, backward_gid, n_histograms=len(run.histograms)
+        )
+        if not forward_idx or not backward_idx:
+            raise ValueError(
+                "Counts-first display bunching requires a nonempty forward/backward pair."
+            )
+        alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
+        flags = correction_flags_from_grouping(grouping)
+        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
         facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
             metadata=dataset.metadata
         )
-        try:
-            beta = float(grouping.get("beta", 1.0))
-        except (TypeError, ValueError):
-            beta = 1.0
-        if not np.isfinite(beta) or beta <= 0.0:
-            beta = 1.0
-        result = reduce_grouped_asymmetry(
-            histograms=histograms,
-            grouping=grouping,
-            forward_idx=forward_idx,
-            backward_idx=backward_idx,
-            alpha=alpha,
-            use_deadtime=use_deadtime,
-            deadtime_mode=deadtime_mode,
-            use_background=use_background,
-            facility=facility,
-            reference_resolver=lambda g: self._resolve_background_reference(g, run),
-            beta=beta,
-        )
-        return (
-            result.time,
-            result.asymmetry,
-            result.error,
-            result.deadtime_applied,
-            result.background_state,
-        )
-
-    def _counts_first_rebunched_arrays(
-        self, dataset, extra_bunch_factor: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        """Re-run *dataset*'s recorded reduction with extra display bunching.
-
-        The plot panel's bunch control multiplies the grouping
-        ``bunching_factor``, so the merged bins are packed from the corrected
-        counts (deadtime/background as recorded in ``run.grouping``) and the
-        asymmetry formed once per output bin — instead of value-domain
-        rebinning the reduced curve, where one-sided raw bins' σ sentinels
-        inflate every merged bin's quadrature on sparse data. Returns
-        ``None`` when the recorded reduction cannot be replayed as a wider
-        fixed packing (no histograms or groups, non-fixed binning modes,
-        G±R period-combined curves); the panel then keeps the curve-level
-        :func:`rebin`.
-        """
-        extra = int(extra_bunch_factor)
-        run = getattr(dataset, "run", None)
-        if extra <= 1 or run is None or not getattr(run, "histograms", None):
-            return None
-        grouping = run.grouping if isinstance(run.grouping, dict) else {}
-
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
-            return None
-
-        groups_raw = grouping.get("groups")
-        if not isinstance(groups_raw, dict):
-            return None
-        groups: dict[int, list[object]] = {}
-        for key, values in groups_raw.items():
-            try:
-                gid = int(key)
-            except (TypeError, ValueError):
-                continue
-            entries = self._normalize_group_entries(values)
-            if entries:
-                groups[gid] = entries
-        if not groups:
-            return None
-        try:
-            forward_gid = int(grouping.get("forward_group", 1))
-            backward_gid = int(grouping.get("backward_group", 2))
-        except (TypeError, ValueError):
-            return None
-        resolution_grouping = {
-            "groups": groups,
-            "excluded_detectors": grouping.get("excluded_detectors"),
-        }
-        # Same present-detector filtering as the apply path: a grouping naming
-        # detectors this run lacks reduces over the ones present.
-        n_hist = len(run.histograms)
-        forward_idx = effective_group_indices(resolution_grouping, forward_gid, n_histograms=n_hist)
-        backward_idx = effective_group_indices(
-            resolution_grouping, backward_gid, n_histograms=n_hist
-        )
-        if not forward_idx or not backward_idx:
-            return None
-
-        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
-        has_two_period_histograms = bool(
-            isinstance(grouping.get("period_histograms"), list)
-            and len(grouping.get("period_histograms", [])) == 2
-        )
-        if has_two_period_histograms and period_mode in {
-            str(PeriodMode.GREEN_MINUS_RED),
-            str(PeriodMode.GREEN_PLUS_RED),
-        }:
-            # G±R combines two already-reduced curves; bunching that
-            # combination stays at the curve level.
-            return None
-
-        try:
-            base_factor = max(1, int(grouping.get("bunching_factor", 1)))
-        except (TypeError, ValueError):
-            base_factor = 1
-        reduction_grouping = dict(grouping)
-        reduction_grouping["bunching_factor"] = base_factor * extra
-
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
-        try:
-            beta = float(grouping.get("beta", 1.0))
-        except (TypeError, ValueError):
-            beta = 1.0
-        deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
-        period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
-
-        # Recipe key. The grouping digest covers groups, exclusions, deadtime,
-        # background, good-bin window and the base bunching factor; the reduction
-        # additionally reads alpha/beta, the forward/backward group ids, the
-        # deadtime mode, per-detector t0 overrides, good_frames and the period
-        # selection — none captured by the digest — plus the display multiplier
-        # ``extra``.
         key = (
             fourier_grouping_digest(run),
-            int(forward_gid),
-            int(backward_gid),
-            round(float(alpha), 12),
-            round(float(beta), 12),
-            deadtime_mode,
-            int(base_factor),
-            int(extra),
+            binning,
+            forward_gid,
+            backward_gid,
+            alpha,
+            beta,
+            flags.deadtime_mode,
             tuple(detector_t0_overrides(grouping, len(run.histograms)) or ()),
             grouping.get("good_frames"),
-            str(period_mode),
+            tuple(grouping.get("period_good_frames") or ()),
+            tuple(
+                tuple(row) if isinstance(row, list) else None
+                for row in (grouping.get("period_dead_time_us") or ())
+            ),
+            period_mode,
             _period_histograms_key(grouping.get("period_histograms")),
         )
 
-        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-            selected_histograms, selected_grouping = self._period_histograms_for_mode(
+        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            reduced = reduce_period_asymmetry(
                 run.histograms,
-                reduction_grouping,
-                period_index=period_index,
+                grouping,
+                period_mode,
+                binning=binning,
+                forward_idx=forward_idx,
+                backward_idx=backward_idx,
+                alpha=alpha,
+                beta=beta,
+                use_deadtime=flags.use_deadtime,
+                deadtime_mode=flags.deadtime_mode,
+                use_background=flags.use_background,
+                facility=facility,
+                metadata=run.metadata,
+                reference_resolver=lambda g: self._resolve_background_reference(g, run),
             )
-            time_axis, asymmetry, error, _dt_applied, _background_state = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=selected_histograms,
-                    grouping=selected_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=alpha if alpha > 0 else 1.0,
-                    use_deadtime=bool(grouping.get("deadtime_correction", False)),
-                    deadtime_mode=deadtime_mode,
-                    use_background=bool(grouping.get("background_correction", False)),
-                )
-            )
-            if len(time_axis) == 0:
-                return None
-            return time_axis, asymmetry, error
+            return reduced.time, reduced.asymmetry, reduced.error
 
-        cached = self._reduction_cache.get_or_compute(
+        time, asymmetry, error = self._reduction_cache.get_or_compute(
             run, "rebunch", key, _compute, _rebunch_nbytes
         )
-        if cached is None:
-            return None
-        # Copy on the way out: the cache returns the stored arrays and the plot
-        # panel wraps them into a display dataset that RRF / plotting may
-        # transform in place.
-        time_axis, asymmetry, error = cached
-        return time_axis.copy(), asymmetry.copy(), error.copy()
-
-    def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
-        """Return histograms prepared for grouping, with optional deadtime correction.
-
-        Parameters
-        ----------
-        histograms
-            Original run histograms.
-        grouping
-            Run grouping dictionary potentially containing ``dead_time_us``.
-        use_deadtime
-            Whether deadtime correction should be applied.
-
-        Returns
-        -------
-        tuple[list[Histogram], bool]
-            Prepared histogram list and a flag indicating whether deadtime was
-            actually applied.
-        """
-        if not use_deadtime:
-            return list(histograms), False
-        return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
+        # Display transforms can mutate their arrays; cached acquisition coordinates remain intact.
+        return time.copy(), asymmetry.copy(), error.copy()
 
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
@@ -6521,56 +6087,18 @@ class MainWindow(QMainWindow):
 
     def _resolve_background_reference(
         self, grouping: dict, sample_run
-    ) -> tuple[list, float] | None:
-        """Delegate ``background_run`` resolution to the core resolver.
+    ) -> BackgroundReference | None:
+        """Resolve against loaded runs and the per-window file cache.
 
-        The GUI supplies the loaded-dataset registry (reuse an already-open
-        reference run) and a per-window cache (load the reference once per apply
-        batch, not once per sample dataset); the core
-        :func:`resolve_background_reference` owns the matching, loader fallback
-        and frame-scale arithmetic. On failure we surface the message and skip
-        the subtraction.
+        Input and I/O failures propagate to the user-boundary error handler;
+        a final reduction cannot substitute unsubtracted counts.
         """
-        cache = getattr(self, "_background_run_cache", None)
-        if cache is None:
-            cache = {}
-            self._background_run_cache = cache
-        sample_frames = good_frames(getattr(sample_run, "grouping", None), default=0.0) or None
-        try:
-            reference = resolve_background_reference(
-                grouping.get("background_run"),
-                sample_good_frames=sample_frames,
-                datasets=self._data_browser.get_all_datasets(),
-                cache=cache,
-            )
-        except (ValueError, OSError) as exc:
-            self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
-            return None
-        return reference.histograms, reference.scale
-
-    def _apply_deadtime_correction(
-        self,
-        counts,
-        tau_us: float,
-        bin_width_us: float,
-        *,
-        num_good_frames: float = 1.0,
-    ):
-        """Apply non-paralyzable deadtime correction to histogram counts.
-
-        The corrected counts are computed as:
-
-        ``N_corr = N / (1 - N * tau / (dt * n_frames))``
-
-        where ``tau`` is detector deadtime, ``dt`` is bin width, and
-        ``n_frames`` is the number of good frames (Mantid-compatible).
-        Denominators are clamped away from zero for numerical stability.
-        """
-        return apply_deadtime_correction(
-            counts,
-            tau_us,
-            bin_width_us,
-            num_good_frames=num_good_frames,
+        sample_frames = good_frames(sample_run.grouping, default=0.0) or None
+        return resolve_background_reference(
+            grouping.get("background_run"),
+            sample_good_frames=sample_frames,
+            datasets=self._data_browser.get_all_datasets(),
+            cache=self._background_run_cache,
         )
 
     def _maybe_apply_comment_field(
@@ -6703,6 +6231,14 @@ class MainWindow(QMainWindow):
 
     def _on_export_fit_report(self) -> None:
         """Write a human-readable report of every dataset's latest fit to a file."""
+        errors = [
+            f"Run {dataset.run_number}: {dataset.metadata['correction_error']}"
+            for dataset in self._data_browser.get_all_datasets()
+            if dataset.metadata.get("correction_error")
+        ]
+        if errors:
+            QMessageBox.warning(self, "Corrections incomplete", "\n".join(errors))
+            return
         records = self._collect_latest_fit_records()
         if not records:
             self._log_panel.log("No fits to export.")
@@ -9969,30 +9505,61 @@ class MainWindow(QMainWindow):
             return
         run = self._current_dataset.run
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        deadtimes = calibrate_deadtime_from_histograms(
-            list(run.histograms),
-            # t_good_offset is measured from t0 (the calibrator adds it to
-            # t0_bin); first_good_bin is absolute (= t0_bin + t_good_offset), so
-            # passing it would double-count t0.  good_frames lives in grouping,
-            # not metadata — the universal deadtime normaliser.
-            t_good_offset=int(grouping.get("t_good_offset", 0) or 0),
-            last_good_bin=grouping.get("last_good_bin"),
-            num_good_frames=good_frames(grouping),
-            detector_t0_bins=effective_detector_t0_bins(list(run.histograms), grouping),
+        self._maxent_deadtime_generation += 1
+        generation = self._maxent_deadtime_generation
+        self._maxent_fitted_deadtime = None
+        self._maxent_panel.set_deadtime_text("Fitting deadtime…", can_apply=False)
+        self._tasks.start(
+            lambda worker: fit_deadtime_calibration(
+                list(run.histograms),
+                num_good_frames=grouping.get("good_frames"),
+                t_good_offset=int(grouping.get("t_good_offset", 0)),
+                last_good_bin=grouping.get("last_good_bin"),
+                detector_t0_bins=effective_detector_t0_bins(list(run.histograms), grouping),
+                source_run=int(run_number),
+                method="maxent_fit",
+                cancel_callback=worker.is_cancelled,
+            ),
+            on_finished=functools.partial(
+                self._on_maxent_deadtime_fitted, generation=generation, source_run=int(run_number)
+            ),
+            on_error=functools.partial(
+                self._on_maxent_deadtime_error, generation=generation, source_run=int(run_number)
+            ),
+            cancel_exceptions=(CancelledError,),
         )
-        if not deadtimes:
+
+    def _on_maxent_deadtime_fitted(
+        self, calibration: DeadtimeCalibration | None, *, generation: int, source_run: int
+    ) -> None:
+        if (
+            generation != self._maxent_deadtime_generation
+            or source_run != self._maxent_active_run_number_or_none()
+        ):
+            return
+        if calibration is None:
             self._maxent_panel.set_deadtime_text("Deadtime fit failed.", can_apply=False)
             return
-        self._maxent_fitted_deadtime = (int(run_number), [float(v) for v in deadtimes])
-        mean_us = float(np.mean(deadtimes))
+        if calibration.source_run != source_run:
+            raise ValueError("MaxEnt deadtime calibration must belong to its requested source run")
+        self._maxent_fitted_deadtime = calibration
+        mean_us = float(np.mean(calibration.tau_us))
         self._maxent_panel.set_deadtime_text(
-            f"Fitted deadtime: mean {mean_us * 1000.0:.2f} ns across {len(deadtimes)} detector(s).",
+            f"Fitted deadtime: mean {mean_us * 1000.0:.2f} ns across {len(calibration.tau_us)} detector(s).",
             can_apply=True,
         )
         self._set_fourier_status(
-            f"Fitted deadtime for run {run_number} (mean {mean_us * 1000.0:.2f} ns).",
+            f"Fitted deadtime for run {calibration.source_run} (mean {mean_us * 1000.0:.2f} ns).",
             success=True,
         )
+
+    def _on_maxent_deadtime_error(self, message: str, *, generation: int, source_run: int) -> None:
+        if (
+            generation != self._maxent_deadtime_generation
+            or source_run != self._maxent_active_run_number_or_none()
+        ):
+            return
+        self._maxent_panel.set_deadtime_text(f"Deadtime fit failed: {message}", can_apply=False)
 
     def _on_maxent_apply_deadtime(self) -> None:
         """Apply the fitted deadtime to the active run's grouping correction."""
@@ -10000,7 +9567,7 @@ class MainWindow(QMainWindow):
         if (
             run_number is None
             or self._maxent_fitted_deadtime is None
-            or self._maxent_fitted_deadtime[0] != int(run_number)
+            or self._maxent_fitted_deadtime.source_run != int(run_number)
             or self._current_dataset is None
             or self._current_dataset.run is None
         ):
@@ -10008,19 +9575,9 @@ class MainWindow(QMainWindow):
             return
         run = self._current_dataset.run
         grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
-        fitted = list(self._maxent_fitted_deadtime[1])
-        # Route through the shared chokepoint so the MaxEnt calibration writes the
-        # grouping exactly like the count-fit promote (per-detector values,
-        # before/after, re-reduce message). The "maxent_fit" provenance label is
-        # kept — both labels are inert in reduction (only file-sourced deadtimes
-        # are distinguished), but the label records where the value came from.
-        change = promote_deadtime_to_grouping(
-            grouping,
-            fitted,
-            n_histograms=len(run.histograms),
-            method="maxent_fit",
-        )
+        change = promote_deadtime_to_grouping(grouping, self._maxent_fitted_deadtime)
         run.grouping = grouping
+        self._current_dataset.metadata["grouping_overrides"] = True
         # MaxEnt fits one deadtime per detector, so summarise the change across
         # all detectors (a single-detector readout would misreport when detector
         # 0 fits ~0 but others do not).
@@ -10038,6 +9595,7 @@ class MainWindow(QMainWindow):
             f"Applied fitted deadtime to run {run_number}'s grouping. Re-reduce the run to apply.",
             success=True,
         )
+        self._mark_dirty()
         self._log_panel.log(f"Applied MaxEnt-fitted deadtime to run {run_number}.")
 
     def _maxent_export_result(self, run_number: int):
@@ -13041,8 +12599,7 @@ class MainWindow(QMainWindow):
         """
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
-        self._alc_corrected_scan = None
-        self._alc_baseline_curve = None
+        self._alc_baseline = None
         self._alc_rf_fitted = False
         if not self._alc_scan_points:
             self._alc_scan_view.clear()
@@ -13297,8 +12854,7 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             self._alc_notify("Baseline", str(exc), warning=True)
             return
-        self._alc_corrected_scan = result.corrected
-        self._alc_baseline_curve = result.baseline
+        self._alc_baseline = result
         # Baseline/peaks and the RF fit share one overlay slot; a baseline fit
         # supersedes any RF fit so the persisted "rf_fitted" flag stays accurate.
         self._alc_rf_fitted = False
@@ -13311,13 +12867,12 @@ class MainWindow(QMainWindow):
         Prevents a later peak fit from running against a baseline-corrected scan
         that no longer matches the regions the user now sees.
         """
-        self._alc_corrected_scan = None
-        self._alc_baseline_curve = None
+        self._alc_baseline = None
 
     def _on_fit_peaks(self) -> None:
         """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
-        corrected = self._alc_corrected_scan
-        if corrected is None:
+        baseline = self._alc_baseline
+        if baseline is None:
             self._alc_notify(
                 "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
             )
@@ -13340,14 +12895,11 @@ class MainWindow(QMainWindow):
                 initial[model.component_param_name(i, local)] = spec[local]
 
         try:
-            fit = fit_scan_model(corrected, model, initial=initial)
+            peaks = fit_scan_peaks(baseline, model, initial=initial)
+            fit = peaks.fit
         except (ValueError, TypeError) as exc:
             self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
             return
-        if not fit.success:
-            self._alc_notify("Peaks", f"Peak fit did not converge: {fit.message}", warning=True)
-            return
-
         fitted_values = {name: fit.parameters[name].value for name in model.param_names}
         results: list[dict] = []
         summary_lines: list[str] = []
@@ -13356,25 +12908,25 @@ class MainWindow(QMainWindow):
             f_val = fitted_values[model.component_param_name(i, "f")]
             b0_val = fitted_values[b0_name]
             bwid_val = abs(fitted_values[model.component_param_name(i, "Bwid")])
-            b0_err = fit.uncertainties.get(b0_name, 0.0)
+            b0_err = peaks.uncertainties[b0_name]
+            amp_err = peaks.uncertainties[model.component_param_name(i, "f")]
+            width_err = peaks.uncertainties[model.component_param_name(i, "Bwid")]
             factor = model.components[i].fwhm_factor
-            fwhm = factor * bwid_val if factor is not None else float("nan")
+            assert factor is not None, "ALC peak models must define an FWHM factor"
+            fwhm = factor * bwid_val
             results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
             summary_lines.append(
                 f"Peak {i + 1} ({spec['label']}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
-                f"FWHM = {fwhm:.4g} G, amp = {f_val:.3g} %"
+                f"FWHM = {fwhm:.4g} ± {factor * width_err:.2g} G, amp = {f_val:.3g} ± {amp_err:.2g} %"
             )
 
         # Overlay the total fit = baseline + peaks on the raw scan.
-        peak_curve = np.asarray(model.function(corrected.x, **fitted_values), dtype=float)
-        total = peak_curve
-        if self._alc_baseline_curve is not None:
-            baseline = np.asarray(self._alc_baseline_curve, dtype=float)
-            if baseline.shape == peak_curve.shape:
-                total = baseline + peak_curve
+        peak_curve = np.asarray(model.function(baseline.scan.x, **fitted_values), dtype=float)
+        total = baseline.baseline + peak_curve
+        summary_lines.append("Uncertainties include the fitted baseline.")
         self._alc_rf_fitted = False  # a peaks fit supersedes any RF fit overlay
         self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
-        self._alc_scan_view.show_fit_overlay(corrected.x, total)
+        self._alc_scan_view.show_fit_overlay(baseline.scan.x, total)
         self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
 
     def _on_fit_rf(self) -> None:
@@ -14456,12 +14008,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
     def _grouped_fit_completion_summary(self, grouped_datasets, results_dict) -> str:
-        """Human-readable grouped-fit accounting for the completion log (F12).
-
-        A grouped batch produces one ``(run, group)`` *trace* per member, not one
-        "group": report "35 traces (7 runs × 5 groups)" — and the average χ²ᵣ —
-        rather than the ambiguous "35 groups" the old log printed.
-        """
+        """Name completed runs, groups and the recorded likelihood statistic."""
         n_traces = len(grouped_datasets)
         source_runs: set[int] = set()
         for dataset in grouped_datasets:
@@ -14472,12 +14019,10 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 continue
         n_runs = len(source_runs)
-        chi2_values = [
-            float(payload[0].reduced_chi_squared)
+        summaries = [
+            fit_result_summary(payload[0])
             for payload in results_dict.values()
-            if isinstance(payload, tuple)
-            and payload
-            and np.isfinite(getattr(payload[0], "reduced_chi_squared", float("nan")))
+            if isinstance(payload, tuple) and payload
         ]
         parts: list[str] = []
         if n_runs > 1 and n_traces % n_runs == 0:
@@ -14487,8 +14032,9 @@ class MainWindow(QMainWindow):
             parts.append(f"{n_traces} groups (run {run})")
         else:
             parts.append(f"{n_traces} traces")
-        if chi2_values:
-            parts.append(f"average χ²ᵣ = {sum(chi2_values) / len(chi2_values):.3f}")
+        statistic = reduced_statistic_summary(summaries, mean=True)
+        if statistic:
+            parts.append(statistic)
         return " · ".join(parts)
 
     def _on_grouped_fit_completed(
@@ -14636,6 +14182,7 @@ class MainWindow(QMainWindow):
         """
         if dataset is None:
             return
+        self._mark_dirty()
         self._log_panel.log("Count calibration promoted to grouping; re-reduce to apply.")
         self.statusBar().showMessage("Count calibration promoted to grouping — re-reduce to apply.")
 
@@ -16560,7 +16107,7 @@ class MainWindow(QMainWindow):
         the crop's own ``fit_range`` stamp (see ``PlotPanel.get_fit_dataset``)
         re-applied afterwards, since the source dataset never carries it.
         """
-        if dataset is None:
+        if dataset is None or dataset.metadata.get("correction_error") is not None:
             return None
         snapshot = self._frame_snapshot(dataset) if projection in ROTATED_PROJECTIONS else None
         if projection in ROTATED_PROJECTIONS and snapshot is None:
@@ -16812,29 +16359,24 @@ class MainWindow(QMainWindow):
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
-        source_dataset = self._plot_panel.get_analysis_dataset(source)
-        if source_dataset is None:
+        source_dataset = source
+        run = source.run
+        display_factor = self._plot_panel.get_bunch_factor()
+        if run is not None and run.histograms and display_factor > 1:
+            base_factor = binning_spec(run.grouping).factor
+            display_run = replace(
+                run, grouping=run.grouping | {"bunching_factor": base_factor * display_factor}
+            )
+            source_dataset = replace(source, run=display_run)
+        if run is None or not run.histograms:
             return []
 
-        run = getattr(source_dataset, "run", None)
-        if run is None or not getattr(run, "histograms", None):
-            # No run to key on (histogram-less curve); build uncached.
-            try:
-                return build_grouped_time_domain_datasets(
-                    source_dataset, lifetime_corrected=lifetime_corrected
-                )
-            except ValueError:
-                return []
+        key = (*self._grouped_time_domain_cache_key(run, lifetime_corrected), display_factor)
 
-        key = self._grouped_time_domain_cache_key(run, lifetime_corrected)
-
-        def _compute() -> list[MuonDataset] | None:
-            try:
-                return build_grouped_time_domain_datasets(
-                    source_dataset, lifetime_corrected=lifetime_corrected
-                )
-            except ValueError:
-                return None
+        def _compute() -> list[MuonDataset]:
+            return build_grouped_time_domain_datasets(
+                source_dataset, lifetime_corrected=lifetime_corrected
+            )
 
         cached = self._reduction_cache.get_or_compute(
             run,
@@ -17139,34 +16681,23 @@ class MainWindow(QMainWindow):
         self._autosave_timer.start(minutes * 60_000)
 
     def _autosave_path(self) -> str:
-        """Return this session's crash-recovery snapshot path (D9).
-
-        Beside the project file (``<stem>.autosave.asymp``) once the session
-        has one; under the platform app-data directory, keyed as
-        ``untitled``, for a session that has never been saved.
-        """
+        """Locate the snapshot beside a saved project or in app data for an untitled one."""
         if self._current_project_path:
             current = Path(self._current_project_path)
             return str(current.with_name(current.stem + ".autosave.asymp"))
-        directory = (
-            Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
-            / "autosave"
-        )
-        directory.mkdir(parents=True, exist_ok=True)
-        return str(directory / "untitled.autosave.asymp")
+        return str(app_data.app_data_dir() / "autosave" / "untitled.autosave.asymp")
 
     def _delete_autosave_file(self) -> None:
         """Remove this session's autosave file, if one exists (D9)."""
-        Path(self._autosave_path()).unlink(missing_ok=True)
+        try:
+            Path(self._autosave_path()).unlink(missing_ok=True)
+        except OSError as exc:
+            self._log_panel.log(f"Could not remove autosave: {exc}")
 
     def _on_autosave_timeout(self) -> None:
-        """Write a crash-recovery snapshot while the project is dirty (D9).
+        """Collect state on the GUI thread and write the snapshot through the task runner.
 
-        Runs on the GUI thread, as the timer's own slot; ``collect_project_state``
-        must happen here, exactly as in :meth:`_write_project`. The write itself
-        goes to the shared ``_tasks`` runner and never touches
-        ``_current_project_path``, the recent-projects list, the window title,
-        or the dirty flag — only a real save does that.
+        Only a real save changes the project path, title, or dirty state.
         """
         if not self._dirty:
             return
@@ -17183,8 +16714,15 @@ class MainWindow(QMainWindow):
             return
         path = self._autosave_path()
         self._project_save_active = True
+
+        def write_autosave(worker):
+            if worker.is_cancelled():
+                return
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            save_project(state, path, backup=False)
+
         self._tasks.start(
-            lambda w, state=state, path=path: save_project(state, path, backup=False),
+            write_autosave,
             on_finished=lambda _result, path=path: self._on_autosave_finished(path),
             on_error=self._on_autosave_error,
         )
@@ -17229,7 +16767,7 @@ class MainWindow(QMainWindow):
             if window is not None and stats is not None:
                 window._log_perf_event("memory_settle", started_at, **stats)
 
-        QTimer.singleShot(0, _run)
+        QTimer.singleShot(0, self, _run)
 
     def _resolve_open_source(self, path: str) -> tuple[str | None, bool]:
         """Pick which file :meth:`_open_project_file` reads for *path* (D9).
@@ -17661,7 +17199,7 @@ class MainWindow(QMainWindow):
                 self._on_fit_rf()
             elif series.extra.get("baseline_fitted"):
                 self._on_fit_baseline()
-                if self._alc_corrected_scan is None:
+                if self._alc_baseline is None:
                     self._log_panel.log(
                         "ALC: the saved baseline could not be re-fitted on load "
                         "(some runs may be missing the scan's x-axis log)."
@@ -17963,48 +17501,74 @@ class MainWindow(QMainWindow):
                     # ``profile``. A dataset with neither — or whose assigned
                     # name no longer resolves — follows the default profile of
                     # its fingerprint, if any.
-                    profile_name = ds_info.get("profile")
-                    grouping_overrides = ds_info.get("grouping_overrides")
-                    if isinstance(grouping_overrides, dict):
-                        # Heal the persisted per-run override against the fresh run
-                        # (its stored instrument may be stale); discard the wrong
-                        # instrument's structure before applying it.
-                        grouping_overrides, heal_note = reconcile_instrument_for_payload(
-                            dataset.run, grouping_overrides
-                        )
-                        if heal_note:
-                            self._log_panel.log(heal_note, tag="grouping")
-                        self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
-                        dataset.metadata["grouping_overrides"] = True
-                        if profile_name:
-                            self._assign_dataset_profile(dataset, str(profile_name))
-                    elif dataset.run is not None:
-                        followed_name: str | None = None
-                        if profile_name:
-                            resolved_grouping = self._resolve_named_profile_for_run(
-                                str(profile_name), dataset.run
+                    requested_grouping = ds_info.get("grouping_overrides")
+                    if not isinstance(requested_grouping, dict):
+                        requested_grouping = None
+                    requested_profile_name = ds_info.get("profile")
+                    try:
+                        profile_name = requested_profile_name
+                        grouping_overrides = ds_info.get("grouping_overrides")
+                        if isinstance(grouping_overrides, dict):
+                            # Heal the persisted per-run override against the fresh run
+                            # (its stored instrument may be stale); discard the wrong
+                            # instrument's structure before applying it.
+                            grouping_overrides, heal_note = reconcile_instrument_for_payload(
+                                dataset.run, grouping_overrides
                             )
-                            if resolved_grouping is not None:
-                                self._apply_grouping_settings_to_dataset(dataset, resolved_grouping)
-                                followed_name = str(profile_name)
-                        if followed_name is None:
-                            inherited = default_profile_for_run(
-                                self._grouping_profiles, dataset.run
-                            )
-                            if inherited is not None:
-                                run = dataset.run
-                                resolved_grouping = resolve_effective_grouping(
-                                    inherited,
-                                    run,
-                                    reference_resolver=lambda g, r=run: (
-                                        self._resolve_background_reference(g, r)
-                                    ),
+                            if heal_note:
+                                self._log_panel.log(heal_note, tag="grouping")
+                            requested_grouping = grouping_overrides
+                            self._apply_grouping_settings_to_dataset(dataset, requested_grouping)
+                            dataset.metadata["grouping_overrides"] = True
+                            if profile_name:
+                                self._assign_dataset_profile(dataset, str(profile_name))
+                        elif dataset.run is not None:
+                            followed_name: str | None = None
+                            if profile_name:
+                                resolved_grouping = self._resolve_named_profile_for_run(
+                                    str(profile_name), dataset.run
                                 )
-                                self._apply_grouping_settings_to_dataset(dataset, resolved_grouping)
-                                followed_name = inherited.name
-                        if followed_name is not None:
-                            dataset.metadata.pop("grouping_overrides", None)
-                            self._assign_dataset_profile(dataset, followed_name)
+                                if resolved_grouping is not None:
+                                    requested_grouping = resolved_grouping
+                                    self._apply_grouping_settings_to_dataset(
+                                        dataset, requested_grouping
+                                    )
+                                    followed_name = str(profile_name)
+                            if followed_name is None:
+                                inherited = default_profile_for_run(
+                                    self._grouping_profiles, dataset.run
+                                )
+                                if inherited is not None:
+                                    run = dataset.run
+                                    requested_profile_name = inherited.name
+                                    resolved_grouping = resolve_effective_grouping(
+                                        inherited,
+                                        run,
+                                        reference_resolver=lambda g, r=run: (
+                                            self._resolve_background_reference(g, r)
+                                        ),
+                                    )
+                                    requested_grouping = resolved_grouping
+                                    self._apply_grouping_settings_to_dataset(
+                                        dataset, requested_grouping
+                                    )
+                                    followed_name = inherited.name
+                            if followed_name is not None:
+                                dataset.metadata.pop("grouping_overrides", None)
+                                self._assign_dataset_profile(dataset, followed_name)
+
+                    except (ValueError, OSError) as exc:
+                        if requested_grouping is not None and dataset.run is not None:
+                            dataset.run.grouping = dict(dataset.run.grouping) | requested_grouping
+                        if isinstance(ds_info.get("grouping_overrides"), dict):
+                            dataset.metadata["grouping_overrides"] = True
+                        if requested_profile_name is not None:
+                            self._assign_dataset_profile(dataset, str(requested_profile_name))
+                        dataset.metadata["correction_error"] = str(exc)
+                        self._log_panel.log(
+                            f"Run {dataset.run_number}: Corrections incomplete: {exc}",
+                            tag="grouping",
+                        )
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)
@@ -18086,6 +17650,7 @@ class MainWindow(QMainWindow):
         if state.get("view_modes_state") is not None:
             self._apply_view_mode(self._active_view_mode_index)
         else:
+            self._set_view_bunch_spin_value(self._plot_panel.get_bunch_factor())
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))

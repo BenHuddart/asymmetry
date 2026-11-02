@@ -21,6 +21,13 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_curves import dense_fit_curve
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    information_weights,
+    score_deltas,
+)
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter
 
 if TYPE_CHECKING:
@@ -29,7 +36,6 @@ if TYPE_CHECKING:
     from asymmetry.core.fitting.fit_wizard import (
         CandidateAssessment,
         FitWizardRecommendation,
-        SelectionMetric,
     )
     from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
     from asymmetry.core.representation.base import FitSlot
@@ -50,30 +56,6 @@ DIFFERENCE_SIGMA_THRESHOLD = 2.0
 #: A per-run χ²ᵣ at most this is a good fit, and at most ``FAIR_CHI2_MAX`` a fair one.
 GOOD_CHI2_MAX = 1.5
 FAIR_CHI2_MAX = 5.0
-
-
-def score_deltas(scores: Sequence[float]) -> list[float]:
-    """Each score minus the best finite score; a non-finite score's delta is ``inf``."""
-    values = np.asarray(scores, dtype=float)
-    finite = np.isfinite(values)
-    deltas = np.full(values.shape, math.inf)
-    if finite.any():
-        deltas[finite] = values[finite] - values[finite].min()
-    return deltas.tolist()
-
-
-def information_weights(scores: Sequence[float]) -> list[float]:
-    """Akaike-style evidence weights, w ∝ exp(−Δ/2), from information-criterion values.
-
-    A non-finite score gets weight ``0.0`` and is left out of the normalisation;
-    when every score is non-finite there is nothing to rank and every weight is
-    ``0.0``.
-    """
-    raw = np.exp(-np.asarray(score_deltas(scores), dtype=float) / 2.0)
-    total = float(raw.sum())
-    if total == 0.0:
-        return [0.0] * len(raw)
-    return (raw / total).tolist()
 
 
 def shortlist(scores: Mapping[str, float]) -> tuple[str, ...]:
@@ -389,18 +371,24 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     return RunCurves(curve, normalised_residuals(dataset, curve))
 
 
-def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
-    """*slot*'s information criterion from its stored χ² (k = npar); NaN with no data key."""
-    from asymmetry.core.fitting.fit_wizard import SelectionMetric, compute_information_criteria
-
+def _saved_fit_comparison_key(
+    slot: FitSlot,
+) -> tuple[tuple[float | None, float | None, int], Objective] | None:
+    """Only known likelihoods on the same sampled data share a ranking pool."""
     data_key = slot.data_key()
-    if data_key is None:
+    objective = None if slot.result is None else slot.result.get("objective")
+    return None if data_key is None or objective is None else (data_key, Objective(objective))
+
+
+def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
+    """Criterion from recorded χ² and npar; NaN without known data and objective."""
+    comparison_key = _saved_fit_comparison_key(slot)
+    if comparison_key is None:
         return math.nan
-    aic, aicc, bic = compute_information_criteria(
-        float(slot.result["chi_squared"]), int(slot.result["npar"]), data_key[2]
-    )
-    score = {SelectionMetric.AIC: aic, SelectionMetric.AICC: aicc, SelectionMetric.BIC: bic}[metric]
-    return math.nan if score is None else float(score)
+    score = InformationCriteria(
+        float(slot.result["chi_squared"]), int(slot.result["npar"]), comparison_key[0][2]
+    ).value(metric)
+    return math.nan if score is None else score
 
 
 def summarise_saved_fits(
@@ -411,19 +399,19 @@ def summarise_saved_fits(
     *,
     first: str,
 ) -> tuple[CandidateSummary, ...]:
-    """One single-run summary per saved fit, ranked within each data key (single-fit D7).
+    """One single-run summary per saved fit, ranked within matching data and recorded objectives.
 
     ``fits`` pairs each slot with the name it reads under; the summary's key is
     its ``fit_id``. Fits sharing :meth:`FitSlot.data_key` saw the same points,
-    so Δ and weights are taken within that group, best first; a group of one or
-    a fit with no key is not ranked (Δ is infinite, its weight 0). The group
+    and must record the same objective to share Δ and weights. A group of one
+    or a fit with no key/objective is not ranked (Δ is infinite, its weight 0). The group
     holding *first* leads, then the others in the order given. ``curves``
     holds the dense curves built so far; a fit missing from it has none yet.
     """
     groups: dict[object, list[tuple[FitSlot, str]]] = {}
     for slot, name in fits:
-        data_key = slot.data_key()
-        groups.setdefault(data_key if data_key is not None else slot.fit_id, []).append(
+        comparison_key = _saved_fit_comparison_key(slot)
+        groups.setdefault(comparison_key if comparison_key is not None else slot.fit_id, []).append(
             (slot, name)
         )
     ordered = sorted(

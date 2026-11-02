@@ -34,14 +34,6 @@ from asymmetry.gui.mainwindow import MainWindow
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

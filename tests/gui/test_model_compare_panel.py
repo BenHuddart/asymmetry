@@ -62,9 +62,9 @@ def _pool(*assessments, titles: tuple[str, ...]) -> tuple[CandidateSummary, ...]
 
 def _default_pool() -> tuple[CandidateSummary, ...]:
     return _pool(
-        _assessment("lf|shared", aicc=100.0),
-        _assessment("lf|local", aicc=102.0, global_names=(), local_names=("A_1", "Lambda")),
-        _assessment("gkt|x", aicc=130.0),
+        _assessment("lf|shared", statistic=100.0),
+        _assessment("lf|local", statistic=102.0, global_names=(), local_names=("A_1", "Lambda")),
+        _assessment("gkt|x", statistic=130.0),
         titles=("LF", "LF", "GKT"),
     )
 
@@ -135,10 +135,10 @@ def _trend_axes(panel: ModelComparePanel):
 
 def test_rows_group_consecutive_titles_in_rank_order(qapp: QApplication) -> None:
     summaries = _pool(
-        _assessment("lf|a", aicc=100.0),
-        _assessment("lf|b", aicc=101.0),
-        _assessment("gkt|a", aicc=102.0),
-        _assessment("lf|c", aicc=103.0),
+        _assessment("lf|a", statistic=100.0),
+        _assessment("lf|b", statistic=101.0),
+        _assessment("gkt|a", statistic=102.0),
+        _assessment("lf|c", statistic=103.0),
         titles=("LF", "LF", "GKT", "LF"),
     )
     panel = _panel(summaries)
@@ -163,7 +163,7 @@ def test_rows_carry_role_chips_and_a_fixed_line(qapp: QApplication) -> None:
     texts = [label.text() for label in shared.findChildren(QLabel)]
     assert "Fixed: A_bg" in texts
 
-    unfixed = _pool(_assessment("x|1", aicc=1.0), titles=("X",))
+    unfixed = _pool(_assessment("x|1", statistic=1.0), titles=("X",))
     unfixed = (
         replace(
             unfixed[0],
@@ -181,7 +181,7 @@ def test_rows_show_delta_and_evidence_weight(qapp: QApplication) -> None:
     rows = _rows(_panel(summaries))
     assert [rows[s.key].delta_bar.toolTip() for s in summaries] == [
         f"{_METRIC}: best",
-        f"{_METRIC}: +2.0",
+        f"{_METRIC}: +6.0",
         f"{_METRIC}: +30",
     ]
     assert [rows[s.key].weight.text() for s in summaries] == [
@@ -199,9 +199,9 @@ def test_format_weight(weight: float, text: str) -> None:
 
 def test_gate_badge_reads_pass_or_warn_with_the_summary(qapp: QApplication) -> None:
     summaries = _pool(
-        _assessment("x|pass", aicc=1.0),
+        _assessment("x|pass", statistic=1.0),
         _assessment(
-            "x|warn", aicc=2.0, gate_reasons={702: ("runs-test z score suggests structure",)}
+            "x|warn", statistic=2.0, gate_reasons={702: ("runs-test z score suggests structure",)}
         ),
         titles=("X", "X"),
     )
@@ -219,7 +219,7 @@ def test_flag_lines_name_the_runs_that_earned_each_flag(qapp: QApplication) -> N
     summaries = _pool(
         _assessment(
             "x|1",
-            aicc=1.0,
+            statistic=1.0,
             fits=fits,
             global_names=(),
             local_names=("A_1", "Lambda"),
@@ -240,7 +240,9 @@ def test_flag_lines_name_the_runs_that_earned_each_flag(qapp: QApplication) -> N
 def test_a_flag_every_run_earned_reads_at_every_run(qapp: QApplication) -> None:
     fits = {run: _fit(run, a_1_err=30.0) for run in _RUNS}
     summaries = _pool(
-        _assessment("x|1", aicc=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda")),
+        _assessment(
+            "x|1", statistic=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda")
+        ),
         titles=("X",),
     )
     row = _rows(_panel(summaries))["x|1"]
@@ -249,7 +251,7 @@ def test_a_flag_every_run_earned_reads_at_every_run(qapp: QApplication) -> None:
 
 def test_a_shared_global_flag_names_no_run(qapp: QApplication) -> None:
     fits = {run: _fit(run, a_1_err=30.0) for run in _RUNS}
-    summaries = _pool(_assessment("x|1", aicc=1.0, fits=fits), titles=("X",))
+    summaries = _pool(_assessment("x|1", statistic=1.0, fits=fits), titles=("X",))
     row = _rows(_panel(summaries))["x|1"]
     assert [label.text() for label in row.flag_labels] == ["A_1 poorly determined"]
 
@@ -260,7 +262,7 @@ def test_flag_lines_beyond_the_cap_sit_behind_a_more_line(qapp: QApplication) ->
     (summary,) = _pool(
         _assessment(
             "x|1",
-            aicc=1.0,
+            statistic=1.0,
             fits=fits,
             global_names=(),
             local_names=("A_1", "Lambda"),
@@ -403,8 +405,8 @@ def test_table_lists_a_alone_with_roles_and_values(qapp: QApplication) -> None:
 
 def test_table_pairs_a_and_b_with_the_sigma_difference(qapp: QApplication) -> None:
     summaries = _pool(
-        _assessment("x|a", aicc=1.0, fits={r: _fit(r, a_1=20.0, a_1_err=0.3) for r in _RUNS}),
-        _assessment("x|b", aicc=2.0, fits={r: _fit(r, a_1=21.55, a_1_err=0.4) for r in _RUNS}),
+        _assessment("x|a", statistic=1.0, fits={r: _fit(r, a_1=20.0, a_1_err=0.3) for r in _RUNS}),
+        _assessment("x|b", statistic=2.0, fits={r: _fit(r, a_1=21.55, a_1_err=0.4) for r in _RUNS}),
         titles=("X", "X"),
     )
     panel = _panel(summaries)
@@ -416,8 +418,8 @@ def test_table_pairs_a_and_b_with_the_sigma_difference(qapp: QApplication) -> No
 
 def test_a_parameter_with_different_roles_names_both(qapp: QApplication) -> None:
     summaries = _pool(
-        _assessment("x|a", aicc=1.0),
-        _assessment("x|b", aicc=2.0, global_names=(), local_names=("A_1", "Lambda")),
+        _assessment("x|a", statistic=1.0),
+        _assessment("x|b", statistic=2.0, global_names=(), local_names=("A_1", "Lambda")),
         titles=("X", "X"),
     )
     panel = _panel(summaries)
@@ -430,10 +432,12 @@ def test_flagged_values_wear_the_warning_or_error_colour(qapp: QApplication) -> 
     fits[702] = _fit(702, a_1=0.0)
     fits[703] = _fit(703, a_1=math.nan)
     summaries = _pool(
-        _assessment("x|a", aicc=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda")),
+        _assessment(
+            "x|a", statistic=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda")
+        ),
         _assessment(
             "x|b",
-            aicc=2.0,
+            statistic=2.0,
             fits={701: fits[701], 702: fits[702], 703: _fit(703)},
             global_names=(),
             local_names=("A_1", "Lambda"),
@@ -507,7 +511,7 @@ def test_clicking_a_shared_or_fixed_row_keeps_the_trend(qapp: QApplication) -> N
 
 def test_an_a_with_no_local_parameters_shows_the_placeholder(qapp: QApplication) -> None:
     summaries = _pool(
-        _assessment("x|1", aicc=1.0, global_names=("A_1", "Lambda"), local_names=()),
+        _assessment("x|1", statistic=1.0, global_names=("A_1", "Lambda"), local_names=()),
         titles=("X",),
     )
     panel = _panel(summaries)
@@ -579,7 +583,9 @@ def _single_panel(summaries: tuple[CandidateSummary, ...]) -> ModelComparePanel:
 
 
 def test_one_run_lists_candidates_without_role_chips_or_trend(qapp: QApplication) -> None:
-    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    panel = _single_panel(
+        _single_pool(_single("exp", statistic=1.0), _single("gkt", statistic=3.0))
+    )
     assert panel._caption.text() == f"Candidates · {_METRIC}"
     rows = _rows(panel)
     assert list(rows) == ["exp", "gkt"]
@@ -591,7 +597,9 @@ def test_one_run_lists_candidates_without_role_chips_or_trend(qapp: QApplication
 
 
 def test_one_run_table_shows_bare_symbols_and_one_value_per_side(qapp: QApplication) -> None:
-    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    panel = _single_panel(
+        _single_pool(_single("exp", statistic=1.0), _single("gkt", statistic=3.0))
+    )
     assert _column(panel, 0) == ["A_1", "λ", "A_bg · fixed"]
     assert _column(panel, 1)[0] == "20.00(20)"
     panel.set_b("gkt")
@@ -601,7 +609,7 @@ def test_one_run_table_shows_bare_symbols_and_one_value_per_side(qapp: QApplicat
 def test_one_run_flag_lines_and_gate_name_no_run(qapp: QApplication) -> None:
     flagged = _single(
         "exp",
-        aicc=1.0,
+        statistic=1.0,
         fit=_fit(701, a_1=0.0),
         gate_reasons=("runs-test z score suggests structure",),
     )
@@ -615,8 +623,8 @@ def test_one_run_flag_lines_and_gate_name_no_run(qapp: QApplication) -> None:
 
 
 def test_a_pending_a_is_asked_for_and_refreshed_in_place(qapp: QApplication) -> None:
-    built = _single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0))
-    bare = _single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0, curves=False))
+    built = _single_pool(_single("exp", statistic=1.0), _single("gkt", statistic=3.0))
+    bare = _single_pool(_single("exp", statistic=1.0), _single("gkt", statistic=3.0, curves=False))
     panel = _single_panel(bare)
     requested: list[str] = []
     panel.curves_required.connect(requested.append)
@@ -633,6 +641,10 @@ def test_a_pending_a_is_asked_for_and_refreshed_in_place(qapp: QApplication) -> 
 
 
 def test_refresh_curves_rejects_a_different_ranking(qapp: QApplication) -> None:
-    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    panel = _single_panel(
+        _single_pool(_single("exp", statistic=1.0), _single("gkt", statistic=3.0))
+    )
     with pytest.raises(ValueError, match="ranking"):
-        panel.refresh_curves(_single_pool(_single("gkt", aicc=0.5), _single("exp", aicc=1.0)))
+        panel.refresh_curves(
+            _single_pool(_single("gkt", statistic=0.5), _single("exp", statistic=1.0))
+        )

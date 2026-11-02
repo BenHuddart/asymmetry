@@ -17,7 +17,6 @@ from asymmetry.core.fitting.muon_fluorine.dipolar import (
 )
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.muonium import (
-    VACUUM_MUONIUM_A_HF_MHZ,
     a_hf_from_low_tf_pair,
     high_tf_pair_frequencies,
     low_tf_muonium,
@@ -32,6 +31,7 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_multiplet_match,
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
 
 def _dataset(time: np.ndarray, asym: np.ndarray) -> MuonDataset:
@@ -70,7 +70,7 @@ def _peaks_at(frequencies: list[float], snr: float = 20.0) -> PeakAnalysis:
 
 
 def test_a_hf_inversion_round_trip_exact() -> None:
-    for field, a_hf in ((20.0, VACUUM_MUONIUM_A_HF_MHZ), (50.0, 500.0), (5.0, 4463.302)):
+    for field, a_hf in ((20.0, MUONIUM_VACUUM_HYPERFINE_MHZ), (50.0, 500.0), (5.0, 4463.302)):
         lo, hi = low_tf_pair_frequencies(field, a_hf)
         recovered = a_hf_from_low_tf_pair(field, lo, hi)
         assert recovered is not None
@@ -117,7 +117,7 @@ def test_low_tf_muonium_pair_recovers_hyperfine() -> None:
     rng = np.random.default_rng(12)
     field = 20.0
     t = np.linspace(0.0, 16.0, 16384)  # nyquist ~512 MHz, resolution 1/16 MHz
-    y = 0.2 * low_tf_muonium(t, field, VACUUM_MUONIUM_A_HF_MHZ, 0.0)
+    y = 0.2 * low_tf_muonium(t, field, MUONIUM_VACUUM_HYPERFINE_MHZ, 0.0)
     y = y + rng.normal(0.0, 0.005, t.size)
     analysis = analyze_dataset_peaks(_dataset(t, y), burg_check="never")
 
@@ -127,7 +127,7 @@ def test_low_tf_muonium_pair_recovers_hyperfine() -> None:
     a_hf = muonium[0].derived("a_hf_mhz")
     assert a_hf is not None
     # Peak-position error propagates ~1/splitting into A_hf; 10 % is realistic.
-    assert a_hf == pytest.approx(VACUUM_MUONIUM_A_HF_MHZ, rel=0.10)
+    assert a_hf == pytest.approx(MUONIUM_VACUUM_HYPERFINE_MHZ, rel=0.10)
 
 
 def test_larmor_line_recognised() -> None:
@@ -155,7 +155,7 @@ def test_larmor_line_recognised() -> None:
 
 def test_high_tf_pair_sum_identity() -> None:
     field = 5000.0
-    a_hf = VACUUM_MUONIUM_A_HF_MHZ
+    a_hf = MUONIUM_VACUUM_HYPERFINE_MHZ
     nu12, nu34 = high_tf_pair_frequencies(field, a_hf)
     assert nu12 + nu34 == pytest.approx(a_hf)
 

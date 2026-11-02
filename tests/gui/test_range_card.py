@@ -18,14 +18,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from asymmetry.gui.widgets.range_card import RangeCard, RangeCardView  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _view(**overrides) -> RangeCardView:
     base = dict(
         idx=0,

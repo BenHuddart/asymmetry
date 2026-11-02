@@ -13,28 +13,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QHeaderView,
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QWidget,
-)
+from PySide6.QtWidgets import QApplication, QHeaderView, QLabel, QPushButton, QScrollArea, QWidget
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def test_log_panel_appends_message(qapp: QApplication) -> None:
@@ -242,11 +227,13 @@ def test_maxent_progress_uses_determinate_footer_bar(qapp: QApplication) -> None
     assert footer._progress_bar.maximum() == 0
 
 
-def test_maxent_panel_sections_collapse_persist_via_isolated_settings(qapp: QApplication) -> None:
+def test_maxent_panel_sections_collapse_persist_via_isolated_settings(
+    tmp_path, qapp: QApplication
+) -> None:
     """Collapsed/expanded state for the collapsible sections persists across
     panel instances via QSettings, isolated from the app's real settings scope
     (mirrors the PanelSection persistence pattern)."""
-    settings = QSettings("AsymmetryTest", "maxent_panel_sections_test")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     try:
         panel = MaxEntPanel()
@@ -573,7 +560,7 @@ def test_frequency_plot_panel_switches_between_mhz_and_field_units(
     assert len(draw_calls) == 1
     x_min, x_max, _y_min, _y_max = panel.get_view_limits()
     assert x_min == pytest.approx(0.0)
-    assert x_max == pytest.approx(2.0 / (135.538817 * 1.0e-4), abs=1e-3)
+    assert x_max == pytest.approx(2.0 / _gamma_mhz(1.0), abs=1e-3)
 
 
 def test_fourier_panel_correlation_mode_reveals_controls(qapp: QApplication) -> None:
@@ -678,7 +665,7 @@ def test_frequency_plot_panel_shift_axis_transforms_the_line_data(qapp: QApplica
     if hasattr(panel, "set_decimation_enabled"):
         panel.set_decimation_enabled(False, redraw=False)
 
-    center = 100.0 * 135.538817 * 1.0e-4  # γ_μ·B(100 G) in MHz
+    center = _gamma_mhz(100.0)  # γ_μ·B(100 G) in MHz
     dataset = MuonDataset(
         time=np.array([center - 1.0, center, center + 1.0]),
         asymmetry=np.array([1.0, 2.0, 1.5]),
@@ -751,7 +738,8 @@ def _freq_spectrum(run_number: int, field: float, center_mhz: float) -> MuonData
 
 
 def _gamma_mhz(field_gauss: float) -> float:
-    return field_gauss * 135.538817 * 1.0e-4
+    """CODATA 2018 γ_μ/(2π), independently typed in MHz/T, converted from gauss."""
+    return field_gauss * 135.5388095 * 1.0e-4
 
 
 def test_frequency_shift_run_field_overlay_aligns_different_fields(qapp: QApplication) -> None:

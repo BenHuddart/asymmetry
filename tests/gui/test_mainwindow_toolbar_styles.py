@@ -16,16 +16,6 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import build_nav_button_qss, build_segmented_button_qss
 
 
-@pytest.fixture
-def qapp():
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 class TestBuildSegmentedButtonQss:
     def test_base_rule_has_font_weight_600(self) -> None:
         """font-weight: 600 must be in the *base* rule, not only :checked.

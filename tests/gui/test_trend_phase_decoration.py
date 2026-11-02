@@ -48,14 +48,6 @@ _PHASE = PhaseDecoration(
 _T_AXIS_TEXT = "\U0001d447 (K)"  # matches the combo item exactly ("𝑇 (K)")
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _row(run: int, temperature: float, sigma: float) -> dict:
     return {
         "run_number": run,

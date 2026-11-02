@@ -18,11 +18,11 @@ from asymmetry.core.fitting.fit_wizard import (
     build_candidate_templates,
     build_fit_wizard_recommendation,
     build_fit_wizard_recommendation_for_templates,
-    compute_information_criteria,
     deserialize_fit_wizard_recommendation,
     fingerprint_spectrum,
     serialize_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -45,24 +45,6 @@ def _dataset_for(model: CompositeModel, **params: float) -> MuonDataset:
     y = model.function(t, **params)
     e = np.full_like(t, 0.01)
     return MuonDataset(time=t, asymmetry=y, error=e, metadata={"run_number": 1})
-
-
-def test_information_criteria_formulae() -> None:
-    aic, aicc, bic = compute_information_criteria(
-        chi_squared=10.0, parameter_count=3, sample_count=100
-    )
-    assert aic == pytest.approx(16.0)
-    assert aicc == pytest.approx(16.25)
-    assert bic == pytest.approx(10.0 + 3.0 * np.log(100.0))
-
-
-def test_information_criteria_aicc_falls_back_to_aic_when_sample_count_is_small() -> None:
-    aic, aicc, bic = compute_information_criteria(
-        chi_squared=10.0, parameter_count=3, sample_count=4
-    )
-    assert aic == pytest.approx(16.0)
-    assert aicc is None
-    assert bic == pytest.approx(10.0 + 3.0 * np.log(4.0))
 
 
 def test_fit_wizard_recommends_exponential_for_exponential_spectrum(
@@ -487,6 +469,7 @@ def test_residual_gate_demotes_structured_residuals() -> None:
         metadata={"run_number": 1},
     )
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=float(np.sum((residuals / dataset.error) ** 2)),
         reduced_chi_squared=1.0,
@@ -543,7 +526,7 @@ def test_failed_candidate_fit_is_retained_in_the_comparison_table(
     def _patched_fit(self, dataset, model_fn, parameters, *args, **kwargs):
         param_names = {parameter.name for parameter in parameters}
         if "sigma" in param_names and "beta" not in param_names and "frequency" not in param_names:
-            return FitResult(success=False, message="forced failure")
+            return FitResult(objective=Objective.GAUSSIAN, success=False, message="forced failure")
         return original_fit(dataset, model_fn, parameters)
 
     monkeypatch.setattr(wizard_module.FitEngine, "fit", _patched_fit)

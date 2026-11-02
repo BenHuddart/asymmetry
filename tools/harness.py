@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
-import json
 import os
 import re
 import subprocess
@@ -14,7 +13,6 @@ import sys
 import sysconfig
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -28,13 +26,8 @@ CORE_ROOT = SRC_ROOT / "core"
 GUI_ROOT = SRC_ROOT / "gui"
 TESTS_ROOT = ROOT / "tests"
 
-# ── One t0 resolver (decision D10) ────────────────────────────────────────────
-# `effective_detector_t0_bins` in core/transform/t0.py is the ONLY source of
-# per-detector alignment: it returns the T0Policy-resolved override when the
-# grouping carries one and the file `Histogram.t0_bin` otherwise. An alignment
-# call that omits `detector_t0_bins=` silently re-derives alignment from the
-# histograms alone, so the user's Manual / Auto-detect t0 applies to reduction
-# and to nothing else — the bug D10 exists to make unrepeatable.
+# Alignment must use T0Policy-resolved detector offsets; raw histogram t0
+# omits Manual/Auto-detect overrides applied by the user's reduction recipe.
 T0_ALIGNMENT_CALLS = frozenset({"common_t0_for_groups", "apply_grouping_aligned"})
 # Paths (relative to src/asymmetry) that legitimately align without the
 # resolver: the alignment chokepoints themselves, and the loaders, which run
@@ -219,59 +212,57 @@ SANCTIONED_TEST_SUBPACKAGES = frozenset(
 )
 REQUIRED_KNOWLEDGE_FILES = (
     "AGENTS.md",
+    "CLAUDE.md",
     "README.md",
     "CONTRIBUTING.md",
-    "docs/INDEX.md",
+    "RELEASING.md",
+    "docs/README.md",
     "docs/ARCHITECTURE.md",
+    "docs/GUI_GUIDELINES.md",
     "docs/HARNESS.md",
-    "docs/porting/README.md",
-    "docs/porting/index.json",
-    "docs/QUALITY.md",
-    "docs/PLANS.md",
+    "docs/STYLE.md",
+    "docs/contributing.rst",
+    "docs/reference/index.rst",
+    "tests/README.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/implementation.yml",
+    ".github/ISSUE_TEMPLATE/instrument-review.yml",
     ".github/copilot-instructions.md",
 )
 # AGENTS.md costs context in every session of every agent, so it stays a short map:
 # a rule that does not fit replaces another, or becomes a check here.
 AGENTS_MD_MAX_LINES = 150
-# The packaged agent skill grows by accretion: each evaluation failure tempts a
-# new paragraph. Its line count is frozen here and may only fall, so a new rule
-# replaces or merges an old one. Lower the baseline whenever the file shrinks.
+# The packaged skill has a frozen line budget; lower it whenever the file shrinks.
 SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
 SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
-PORTING_REQUIRED_STUDY_FILES = (
-    "README.md",
-    "comparison.md",
-    "implementation-options.md",
-    "test-data.md",
-    "verification-plan.md",
+# Each retired file must stay listed until deletion; removed entries cannot return.
+RETIRED_DOC_PATHS = (
+    "docs/plans",
+    "docs/porting",
+    "docs/studies",
+    "docs/audit",
+    "docs/investigations",
+    "docs/PLANS.md",
 )
-PORTING_REQUIRED_CANDIDATE_FILES = (
-    "README.md",
-    "comparison.md",
-    "scoring.md",
+RETIRED_DOCS_BASELINE = Path("tools/baselines/retired_docs.txt")
+
+
+# Load the stdlib-only rule module for both the script and import-by-path callers.
+_CHECKS_SPEC = importlib.util.spec_from_file_location(
+    "asymmetry_harness_checks", ROOT / "tools" / "harness_checks.py"
 )
-# Subdirectories of docs/porting/ that hold reference or workflow docs, not study artifacts.
-PORTING_NON_STUDY_DIRS = frozenset({"practical-workflows", "reference"})
-PORTING_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-
-
-@dataclass(frozen=True)
-class HarnessFailure:
-    """A structural harness failure with a location and remediation hint."""
-
-    path: Path
-    line: int
-    message: str
-
-    def format(self) -> str:
-        try:
-            relpath = self.path.relative_to(ROOT)
-        except ValueError:
-            relpath = self.path
-        location = f"{relpath}:{self.line}" if self.line else str(relpath)
-        return f"{location}: {self.message}"
+assert _CHECKS_SPEC is not None and _CHECKS_SPEC.loader is not None
+_numeric_checks = importlib.util.module_from_spec(_CHECKS_SPEC)
+sys.modules[_CHECKS_SPEC.name] = _numeric_checks
+_CHECKS_SPEC.loader.exec_module(_numeric_checks)
+HarnessFailure = _numeric_checks.HarnessFailure
+find_physical_constant_duplicate_violations = (
+    _numeric_checks.find_physical_constant_duplicate_violations
+)
+find_count_boundary_violations = _numeric_checks.find_count_boundary_violations
+find_binning_payload_violations = _numeric_checks.find_binning_payload_violations
+find_unit_comparison_violations = _numeric_checks.find_unit_comparison_violations
 
 
 def _module_matches(module: str, banned: str) -> bool:
@@ -377,16 +368,7 @@ def _enclosing_function_name(tree: ast.Module, lineno: int) -> str | None:
 
 
 def find_axis_limit_policy_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return `set_xlim(`/`set_ylim(` calls outside AxisLimitPolicy's resolve path.
-
-    A call inside a file listed in :data:`AXIS_LIMIT_POLICY_FUNCTIONS` is only
-    allowed inside one of that file's named functions (where the resolved
-    dict from `AxisLimitPolicy.resolve` is applied); a call in any other file
-    is only allowed when that file is on :data:`AXIS_LIMIT_SURFACE_ALLOWLIST`
-    (a surface that is not an axis-limit-policy plot). Anything else bypasses
-    the policy, so the fields, the axes and the policy could disagree. See
-    ``docs/plans/axis-limit-policy.md``.
-    """
+    """Return axis-limit calls outside the shared AxisLimitPolicy resolution path."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -426,17 +408,7 @@ PROCESS_EVENTS_ALLOWLIST = frozenset({GUI_ROOT / "app.py"})
 
 
 def find_process_events_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return ``processEvents(`` calls outside the startup allowlist.
-
-    ``processEvents()`` in application code — classically inside a loop or a
-    progress callback — freezes between calls and invites re-entrancy while
-    *looking* responsive; the 2026-07 responsiveness programme removed every
-    such use. Long work belongs on a ``TaskRunner`` worker; widget-touching
-    loops go through the chunked progress runner
-    (``MainWindow._apply_items_with_progress``); completed-when-returned call
-    sites use a worker plus a nested ``QEventLoop``. See
-    ``docs/GUI_GUIDELINES.md`` § "Keeping the GUI responsive".
-    """
+    """Return event-loop pumping outside the startup allowlist; workers own long work."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -536,16 +508,7 @@ def find_t0_alignment_violations(src_root: Path = SRC_ROOT) -> list[HarnessFailu
 
 
 def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return ``.screen()`` calls on widgets/windows outside the screen guard.
-
-    PySide's ``QWidget.screen()`` / ``QWindow.screen()`` bindings tie the
-    process-wide ``QScreen`` wrapper's lifetime to the receiver's wrapper
-    (shiboken parent link); a transient receiver collected by the cyclic GC
-    can then delete the live C++ ``QScreen`` while it is still in Qt's screen
-    list — the FB↔FFT crash. Resolve screens with
-    ``asymmetry.gui.screen_guard.screen_for`` instead. Comment text is
-    ignored so prose may reference the banned call.
-    """
+    """Return screen queries outside the guard that pins QScreen wrapper lifetimes."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -570,12 +533,7 @@ def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[Harnes
 
 
 def find_bespoke_gle_export_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return GLE-export sequence fragments re-rolled outside the shared home.
-
-    Three signatures, one rule: `compile_gle(` calls, dynamic gleplot imports,
-    and `_show_gle_preview` definitions belong in `gui/utils/` — surfaces go
-    through `asymmetry.gui.utils.gle_export.run_gle_export`.
-    """
+    """Return GLE export sequences outside the shared export helper."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -621,12 +579,7 @@ def find_bespoke_gle_export_violations(gui_root: Path = GUI_ROOT) -> list[Harnes
 
 
 def find_bespoke_section_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return bespoke titled/collapsible-section idioms outside the shared home.
-
-    A ``*CollapsibleSection`` class or a fresh import of the removed
-    ``collapsible_section`` module re-rolls the one titled-section primitive the
-    refresh consolidated onto ``PanelSection``.
-    """
+    """Return section chrome that bypasses the shared PanelSection foundation."""
 
     remediation = "Use `asymmetry.gui.widgets.panel_section.PanelSection`."
     failures: list[HarnessFailure] = []
@@ -694,13 +647,7 @@ def find_raw_hex_colour_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFai
 
 
 def find_literal_pixel_geometry_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return fixed/minimum width/height set to a bare int literal >= threshold.
-
-    Literal-pixel geometry freezes a widget at a design size and drifts once the
-    font-driven UI zoom scales everything else. Sizes should derive from
-    `styles/metrics.py` helpers; genuine design floors are allowlisted per file
-    in :data:`PIXEL_GEOMETRY_ALLOWLIST`.
-    """
+    """Require font-derived geometry except allowlisted design floors."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -761,28 +708,12 @@ def find_test_placement_violations(tests_root: Path = TESTS_ROOT) -> list[Harnes
 
 
 def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[HarnessFailure]:
-    """Return `tests/gui/` files that need `qapp` but carry no `pytest.mark.gui`.
+    """Require a GUI marker wherever a test requests the qapp fixture."""
 
-    `--subset gui`/`--subset non-gui` shard by pytest marker, not by directory
-    (see `tests/conftest.py`), so a `tests/gui/` file with no explicit marker
-    silently falls into the `unit` bucket and runs on the non-GUI CI runner —
-    exactly the drift that put a `FitParametersPanel`-constructing test on the
-    non-GUI shard (crashing an xdist worker there) before this check existed.
-    Flags any file that requests the `qapp` fixture (by parameter or by
-    `pytestmark = pytest.mark.usefixtures("qapp")`) without a `pytest.mark.gui`
-    anywhere in the file; files that mix pure and Qt-dependent tests are
-    expected to carry a per-function `@pytest.mark.gui` instead of a blanket
-    `pytestmark`, which this check accepts equally.
-    """
-
-    gui_root = tests_root / "gui"
     failures: list[HarnessFailure] = []
-    if not gui_root.exists():
-        return failures
-
     func_pattern = re.compile(r"^def (test_\w+)\s*\(([^)]*)\)", re.MULTILINE)
     module_qapp_fixture = re.compile(r'pytestmark\s*=.*usefixtures\(\s*["\']qapp["\']')
-    for path in sorted(gui_root.rglob("test_*.py")):
+    for path in sorted(tests_root.rglob("test_*.py")):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
@@ -797,19 +728,12 @@ def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[Ha
         if not offenders and module_qapp_fixture.search(text):
             offenders = ["<module-level pytestmark>"]
         if offenders:
-            failures.append(
-                HarnessFailure(
-                    path,
-                    0,
-                    (
-                        f"{len(offenders)} test(s) request the `qapp` fixture (e.g. "
-                        f"`{offenders[0]}`) but the file carries no `pytest.mark.gui`, so "
-                        "they silently run in the non-GUI CI shard. Add "
-                        "`pytestmark = [pytest.mark.gui]` (or a per-function "
-                        "`@pytest.mark.gui` if the file also has pure tests)."
-                    ),
-                )
+            message = (
+                f"{len(offenders)} test(s) request `qapp` (e.g. `{offenders[0]}`) without "
+                "`pytest.mark.gui`. Add a module marker or mark each Qt test with "
+                "`@pytest.mark.gui` so it runs with GUI isolation."
             )
+            failures.append(HarnessFailure(path, 0, message))
     return failures
 
 
@@ -866,6 +790,66 @@ def find_dependency_boundary_violations(
                     ),
                 )
             )
+    return failures
+
+
+def find_user_location_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Keep app-data resolution in one seam and test settings out of native user stores."""
+    failures: list[HarnessFailure] = []
+    gui = root / "src/asymmetry/gui"
+    for path in _iter_python_files(gui):
+        if path == gui / "utils/app_data.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.alias)
+                and node.name == "QStandardPaths"
+                or isinstance(node, ast.Attribute)
+                and node.attr == "QStandardPaths"
+                or isinstance(node, ast.Name)
+                and node.id == "QStandardPaths"
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Resolve app data through gui.utils.app_data.app_data_dir().",
+                    )
+                )
+                break
+    for path in _iter_python_files(root / "tests"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if path != root / "tests/conftest.py" and (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "qapp"
+                or isinstance(node, ast.Call)
+                and ast.unparse(node.func).split(".")[-1] == "QApplication"
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Request the root qapp fixture; do not duplicate QApplication construction or qapp fixtures.",
+                    )
+                )
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "QSettings"
+                and (node.args or node.keywords)
+                and not any(
+                    isinstance(arg, ast.Attribute)
+                    and arg.attr in ({"IniFormat"} if i == 0 else {"IniFormat", "NativeFormat"})
+                    for i, arg in enumerate(node.args[:2])
+                )
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Use QSettings() under the GUI fixture or an explicit temporary settings file, never organisation/application names.",
+                    )
+                )
     return failures
 
 
@@ -941,260 +925,65 @@ def find_skill_growth_violations(
     ]
 
 
-def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
-    """Return porting-study layout issues that break the study-first workflow."""
+def find_retired_doc_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Reject new historical plans and require deletions to shrink their baseline."""
 
+    baseline = root / RETIRED_DOCS_BASELINE
+    if not baseline.is_file():
+        return [HarnessFailure(baseline, 0, "Missing retired-docs baseline.")]
     failures: list[HarnessFailure] = []
-    porting_root = root / "docs" / "porting"
-    index_path = porting_root / "index.json"
-
-    if not porting_root.is_dir():
-        failures.append(
-            HarnessFailure(
-                porting_root,
-                0,
-                "Missing `docs/porting/` directory for study-first feature ports.",
-            )
-        )
-        return failures
-
-    if not index_path.is_file():
-        failures.append(
-            HarnessFailure(
-                index_path,
-                0,
-                "Missing `docs/porting/index.json` machine-readable study index.",
-            )
-        )
-        return failures
-
-    try:
-        index_data = json.loads(index_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        failures.append(
-            HarnessFailure(index_path, exc.lineno, f"Invalid JSON: {exc.msg}"),
-        )
-        return failures
-
-    if not isinstance(index_data, dict):
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must be a JSON object."),
-        )
-        return failures
-
-    version = index_data.get("version")
-    studies = index_data.get("studies")
-    if not isinstance(version, int) or version < 1:
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must define an integer `version` >= 1."),
-        )
-    if not isinstance(studies, list):
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must define a `studies` array."),
-        )
-        return failures
-
-    # Top-level dirs that hold documentation or candidate containers, not study artifacts.
-    _skip_dirs = PORTING_NON_STUDY_DIRS | {"candidates"}
-    study_dirs = {
-        path.name: path
-        for path in sorted(porting_root.iterdir())
-        if path.is_dir() and path.name not in _skip_dirs
-    }
-
-    candidates_root = porting_root / "candidates"
-    candidate_dirs = {
-        path.name: path
-        for path in (sorted(candidates_root.iterdir()) if candidates_root.is_dir() else [])
-        if path.is_dir()
-    }
-
-    indexed_study_slugs: dict[str, dict[str, object]] = {}
-    indexed_candidate_slugs: dict[str, dict[str, object]] = {}
-    all_indexed_slugs: set[str] = set()
-
-    for entry in studies:
-        if not isinstance(entry, dict):
-            failures.append(
-                HarnessFailure(index_path, 0, "Each porting study entry must be a JSON object."),
-            )
-            continue
-
-        slug = entry.get("slug")
-        feature_name = entry.get("feature_name")
-        status = entry.get("status")
-        path_value = entry.get("path")
-        references = entry.get("references")
-        docs = entry.get("docs")
-
-        if not isinstance(slug, str) or not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(index_path, 0, "Each study entry needs a kebab-case `slug`."),
-            )
-            continue
-        if slug in all_indexed_slugs:
-            failures.append(
-                HarnessFailure(index_path, 0, f"Duplicate porting study slug `{slug}` in index."),
-            )
-            continue
-        all_indexed_slugs.add(slug)
-
-        is_candidate = status == "candidate"
-        if is_candidate:
-            indexed_candidate_slugs[slug] = entry
-        else:
-            indexed_study_slugs[slug] = entry
-
-        if not isinstance(feature_name, str) or not feature_name.strip():
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a non-empty `feature_name`."
-                ),
-            )
-        if not isinstance(status, str) or not status.strip():
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a non-empty `status`."
-                ),
-            )
-
-        if is_candidate:
-            expected_path = f"docs/porting/candidates/{slug}"
-            expected_docs: dict[str, str] = {
-                "readme": f"{expected_path}/README.md",
-                "comparison": f"{expected_path}/comparison.md",
-                "scoring": f"{expected_path}/scoring.md",
-            }
-        else:
-            expected_path = f"docs/porting/{slug}"
-            expected_docs = {
-                "readme": f"{expected_path}/README.md",
-                "comparison": f"{expected_path}/comparison.md",
-                "implementation_options": f"{expected_path}/implementation-options.md",
-                "test_data": f"{expected_path}/test-data.md",
-                "verification_plan": f"{expected_path}/verification-plan.md",
-            }
-
-        if path_value != expected_path:
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` must use `path: {expected_path}`."
-                ),
-            )
-        if not isinstance(references, list) or not all(
-            isinstance(item, str) for item in references
+    entries: set[str] = set()
+    previous = ""
+    for line, relative in enumerate(baseline.read_text(encoding="utf-8").splitlines(), 1):
+        path = Path(relative)
+        if (
+            not relative
+            or relative != relative.strip()
+            or path.is_absolute()
+            or "\\" in relative
+            or ".." in path.parts
+            or path.as_posix() != relative
+            or not any(relative == p or relative.startswith(f"{p}/") for p in RETIRED_DOC_PATHS)
+            or relative <= previous
         ):
             failures.append(
                 HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a string `references` list."
-                ),
+                    baseline,
+                    line,
+                    "Malformed retired-docs baseline entry; use strictly sorted, unique repo-relative POSIX file paths in retired locations.",
+                )
             )
-        if not isinstance(docs, dict):
-            failures.append(
-                HarnessFailure(index_path, 0, f"Porting study `{slug}` needs a `docs` object."),
-            )
-            continue
-
-        for key, expected_doc_path in expected_docs.items():
-            if docs.get(key) != expected_doc_path:
+        else:
+            entries.add(relative)
+            if not (root / relative).is_file():
                 failures.append(
                     HarnessFailure(
-                        index_path,
-                        0,
-                        f"Porting study `{slug}` must define `docs.{key}` as `{expected_doc_path}`.",
+                        baseline,
+                        line,
+                        f"Retired file {relative} is gone; delete line {line} from {RETIRED_DOCS_BASELINE} so it cannot return.",
                     )
                 )
-
-    for slug, study_dir in study_dirs.items():
-        if not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(
-                    study_dir,
-                    0,
-                    "Porting study directories must use kebab-case feature slugs.",
-                )
-            )
-
-        for filename in PORTING_REQUIRED_STUDY_FILES:
-            file_path = study_dir / filename
-            if not file_path.is_file():
+        previous = relative
+    for relative in RETIRED_DOC_PATHS:
+        location = root / relative
+        paths = [location] if location.is_file() else sorted(location.rglob("*"))
+        for path in paths:
+            parts = path.relative_to(root).parts
+            if not path.is_file() or any(p.startswith(".") or p == "__pycache__" for p in parts):
+                continue
+            if path.relative_to(root).as_posix() not in entries:
                 failures.append(
                     HarnessFailure(
-                        file_path,
+                        path,
                         0,
-                        "Missing required study-pass artifact for feature port.",
+                        "New file in a retired planning location; plans go in a GitHub issue, lasting content in the owning Sphinx page, a regression test, or an invariant comment.",
                     )
                 )
-
-        if slug not in indexed_study_slugs:
-            failures.append(
-                HarnessFailure(
-                    study_dir,
-                    0,
-                    "Porting study directory is missing from `docs/porting/index.json`.",
-                )
-            )
-
-    for slug in indexed_study_slugs:
-        if slug not in study_dirs:
-            failures.append(
-                HarnessFailure(
-                    index_path,
-                    0,
-                    f"Porting index entry `{slug}` does not have a matching study directory.",
-                )
-            )
-
-    for slug, candidate_dir in candidate_dirs.items():
-        if not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(
-                    candidate_dir,
-                    0,
-                    "Porting candidate directories must use kebab-case feature slugs.",
-                )
-            )
-
-        for filename in PORTING_REQUIRED_CANDIDATE_FILES:
-            file_path = candidate_dir / filename
-            if not file_path.is_file():
-                failures.append(
-                    HarnessFailure(
-                        file_path,
-                        0,
-                        "Missing required candidate artifact for feature port.",
-                    )
-                )
-
-        if slug not in indexed_candidate_slugs:
-            failures.append(
-                HarnessFailure(
-                    candidate_dir,
-                    0,
-                    "Porting candidate directory is missing from `docs/porting/index.json`.",
-                )
-            )
-
-    for slug in indexed_candidate_slugs:
-        if slug not in candidate_dirs:
-            failures.append(
-                HarnessFailure(
-                    index_path,
-                    0,
-                    f"Porting index candidate `{slug}` does not have a matching candidate directory.",
-                )
-            )
-
     return failures
 
 
 def _load_screenshot_capture_module():
-    """Load ``docs/screenshots/capture.py`` without importing the docs package.
-
-    The module's top-level imports are stdlib-only (Qt is deferred into the
-    capture path), so executing it here keeps `structural` free of third-party
-    packages and of any sys.path manipulation.
-    """
+    """Load the stdlib-only screenshot checks without importing the docs package."""
     capture_path = ROOT / "docs" / "screenshots" / "capture.py"
     spec = importlib.util.spec_from_file_location("asymmetry_screenshot_capture", capture_path)
     assert spec is not None and spec.loader is not None
@@ -1232,9 +1021,13 @@ def run_structural_checks() -> int:
         *find_knowledge_base_violations(),
         *find_agent_guide_violations(),
         *find_skill_growth_violations(),
-        *find_porting_policy_violations(),
+        *find_retired_doc_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
+        *find_physical_constant_duplicate_violations(),
+        *find_count_boundary_violations(),
+        *find_binning_payload_violations(),
+        *find_unit_comparison_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),
@@ -1248,6 +1041,7 @@ def run_structural_checks() -> int:
         *find_literal_pixel_geometry_violations(),
         *find_test_placement_violations(),
         *find_missing_gui_marker_violations(),
+        *find_user_location_violations(),
         *find_screenshot_reference_violations(),
     ]
     if not failures:
@@ -1368,24 +1162,8 @@ _TIER_MARKER: dict[str, str | None] = {
     "full": None,
 }
 
-# The full tier is the only one that runs the heavy fit-wizard integration/slow
-# tests, and one of them — the exhaustive global-wizard harness — fans its fits
-# across a spawn ProcessPoolExecutor sized to ``cpu_count - 2``, blind to the
-# fact it is already one xdist worker of many. Under ``-n auto`` (one worker per
-# core) that nested pool oversubscribes the runner: the single-threaded neighbour
-# fits are starved of CPU, run past ``--timeout``, and — because the thread-method
-# timeout cannot interrupt native Minuit/BLAS code — xdist kills the stalled
-# worker as "node down: Not properly terminated". This is why the release-tag
-# "Full test suite" run failed on the same wizard tests every time.
-#
-# Two workers is the sweet spot: the harness's ``cpu_count - 2`` pool plus two
-# xdist workers fits the core count without oversubscription (the harness worker
-# is blocked on its subprocess, so the CPU-bound processes are the pool plus the
-# one neighbour test). The generous timeout is belt-and-braces — it also covers
-# the harness test's own multi-hundred-second internal wall budget. The full tier
-# runs only on release tags, so the reduced parallelism costs wall-clock we can
-# afford; other tiers keep ``-n auto`` (the standard tier is sharded across
-# runners by CI instead).
+# Full-tier fit-wizard tests use nested process pools. Two xdist workers bound
+# competing fits; the timeout covers their multi-hundred-second wall budget.
 _FULL_TIER_WORKERS = "2"
 _FULL_TIER_TIMEOUT_S = 600
 

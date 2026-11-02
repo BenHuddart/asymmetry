@@ -49,14 +49,6 @@ FitPanelFloatLimitField = FloatLimitField
 PlotPanelFloatLimitField = FloatLimitField
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # fit_panel-style construction — FloatLimitField() with defaults (clamp + commit)
 # ─────────────────────────────────────────────────────────────────────────────

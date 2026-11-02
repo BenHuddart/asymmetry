@@ -9,14 +9,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- All grouped FFT display modes preserve the reduction's good-time interval
+  and exact t0 when staggered detector timing changes the alignment reference.
+
+- ROOT and PSI headers convert declared time, field, and temperature units;
+  invalid units and missing ROOT timing raise errors with file and field context.
+
+- NeXus exports declare temperature, field, timing, and dead-time units so
+  other readers can interpret the physical quantities without guessing.
+
+- Toolbar **Bunch:** merges recorded output bins counts-first in every binning
+  and G±R mode; saved projects keep recorded bins without multiplying them twice.
+
+- CLI `reduce --rebin` merges counts before forming asymmetry, including period
+  differences and shared-background errors; invalid binning raises an error.
+
+- Scripted spectral-moment propagation includes normalization and peak motion
+  in width, skewness, peak-field and asymmetry uncertainties.
+
+- Nodal and anisotropic superconducting laws resolve Fermi-surface averages down
+  to T/Tc = 0.005; density helpers choose resolution without `n_phi` or `n_theta`.
+
+- Superconducting density laws use a nonsingular thermal integral with controlled
+  quadrature error, correcting biases in the default s-wave curve and gap fits.
+
+- Superconducting docs and component help distinguish second-moment widths from
+  the `Gaussian` width when inferring penetration depth.
+
+- Abragam and Keren stay accurate near zero fluctuation rate and weak field;
+  negative or non-finite rates raise an error, and Keren is even in time.
+
+- ALC **Fit peaks** and `integral-scan --baseline` report fitted-baseline
+  uncertainty in peak positions, widths, and amplitudes.
+
+- Scripted ALC baseline subtraction exposes correlated propagated errors, and
+  `fit_scan_peaks` carries fitted-baseline uncertainty into peak inference.
+
+- Wizard and role comparisons explain unavailable criteria; CLI screening prints
+  `n/a`, and saved fits rank only with matching data and recorded objectives.
+
+- Single, global and joint Gaussian fits reject invalid uncertainties with run
+  and point context; Poisson fits reject negative, non-integer and corrected counts.
+
+- Core wizard and role-search rankings exclude unavailable AICc without substituting
+  AIC; series screening criteria use totals and unit-weight trends profile variance.
+
+- Estimate/Cal fit the exact rational deadtime model with signed coefficients;
+  count-fit promotion adds the fitted increment to the applied base table.
+
+- Grouping previews label incomplete corrections and disable Apply; restored runs
+  retain failed requests and block fits and exports until a successful apply.
+
+- Final reduction and calibration reject unavailable deadtime or background
+  corrections instead of returning an uncorrected spectrum as corrected.
+- Reference-background deadtime correction uses the reference's own frame exposure.
+
+- DT₀ count fits use the exact forward form of the reduction correction,
+  accounting for unequal detector rates and the effective bunched bin width.
+
+- Deadtime correction preserves finite signed coefficients and rejects singular
+  corrections or invalid counts, bin widths and frame metadata with a clear error.
+
+- Raw PSI/ROOT acquisition mismatches, invalid background windows, and Fourier
+  reference runs that do not cover the sample raise an error.
+
+- Background-subtracted error bars scale the background-estimate uncertainty with
+  the number of merged bins and account for overlap with the estimation window.
+
+- Mismatched count arrays and reversed or out-of-range good-bin windows raise an
+  error instead of being truncated or replaced by the full range.
+
+- Vortex-lattice fits retain numerical accuracy on long, uniformly sampled time axes.
+
+- Gaussian and Kubo–Toyabe reference pages and component help distinguish the
+  zero-field match σ = Δ from the transverse-field envelope σ = Δ/√2; fitted values are unchanged.
+- Closing an untouched window no longer creates application-data folders;
+  failed autosave writes and removal errors are logged without preventing close.
+- Deferred memory cleanup is cancelled when its window is destroyed.
 - PSI MDU loading retains longer histograms, pads shorter ones, and validates
   record bounds before allocating counts with bounded temporary read buffers.
+
+### Removed
+
+- The count-fit deadtime promotion “accumulate” toggle; promotion always uses the captured applied base.
+
+- Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
 
 - **Auto Phase** estimates each detector group's common phase through the sampled
   FFT response, preserves the measured spectrum on the percent scale, and refuses
   weak or unstable estimates with an explanation and conditional diagnostics.
+
+- Grouping profiles expose one validated `binning: BinningSpec` for their base bins.
+
+- Curve-only `rebin` and `MuonDataset.rebin` are named `merge_curve_bins`;
+  raw-count reductions take an explicit `BinningSpec`.
+
+- The superconducting kernel exposes `thermal_integral(gap_over_temperature)`
+  in place of `energy_integral`; `rho_*` helpers no longer accept `n_energy`.
+
+- `sigma_to_lambda_nm` and `lambda_nm_to_sigma_us` require an explicit `width=` convention.
+
+- Saved fit summaries record their objective; count fits display Poisson deviance
+  and suppress χ² verdicts for sparse or unrecorded expected counts.
+
+- In-memory fit results require an explicit Gaussian or Poisson objective;
+  Poisson engine calls take validated raw-count observations.
+
+- Wizard caches record sample counts instead of redundant criteria and selected scores;
+  project caches migrate and older work-directory entries must be regenerated.
+
+- Grouped reduction results expose immutable `corrections` outcomes in place of
+  `deadtime_applied` and `background_state`; CLI work directories require a new survey.
+
+- The standalone deadtime correction requires an explicit `num_good_frames` value.
+
+- Integral asymmetry and detailed alpha estimation accept `GroupCounts` with shared
+  uncertainty components; reference-count subtraction returns a variance.
+
+- The grouped-count API uses validated `ForwardBackwardCounts`; `binned_fb_asymmetry`
+  accepts that value with its window, variances and time grid.
+
+- Calculations share cited physical constants, using CODATA 2018, Stone’s 2019 fluorine moment,
+  and Liu’s vacuum-muonium seed; inferred μ–F distances increase by about 0.014% at fixed coupling.
 
 - **``recipe --run`` starts each line where the run shows it.** At the recipe's
   frequencies and rates, every precessing term's amplitude and phase (and a

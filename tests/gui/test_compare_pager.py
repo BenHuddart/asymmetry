@@ -28,14 +28,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset_with_histograms() -> MuonDataset:
     h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
     h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)

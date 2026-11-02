@@ -63,7 +63,8 @@ class SpectrumMoments:
     ``skewness``, ``skewness_g1`` and ``beta`` are dimensionless. ``*_err`` are
     1σ uncertainties, ``NaN`` when unavailable (no spectrum errors, or a moment
     the chosen method cannot propagate). An empty window yields ``n_sample == 0``
-    and all-``NaN`` moments.
+    and all-``NaN`` moments. Propagation assumes fixed support and peak bin,
+    independent errors, and leaves cube-root alpha unavailable.
     """
 
     b_pk: float
@@ -122,18 +123,22 @@ _ERR_ATTR = {
 # ── core moment kernel ──────────────────────────────────────────────────────
 
 
-def _parabolic_peak(x: NDArray[np.float64], amp: NDArray[np.float64], ipk: int) -> float | None:
-    """Return the five-point parabolic-vertex peak position, or ``None``.
+@dataclass(frozen=True)
+class _ParabolicVertex:
+    position: float
+    gradient: NDArray[np.float64] | None
 
-    Fits a quadratic to the five points centred on *ipk* (in normalised
-    coordinates for conditioning, as WiMDA does) and returns its vertex. Returns
-    ``None`` when *ipk* is within two points of either end (the edge guard) or the
-    fitted parabola is degenerate (opens the wrong way / is flat), so the caller
-    falls back to the discrete peak bin.
+
+def _parabolic_peak(
+    x: NDArray[np.float64], amp: NDArray[np.float64], ipk: int
+) -> _ParabolicVertex | None:
+    """Five-point vertex and its amplitude derivative on a fixed peak bin.
+
+    Normalised coordinates keep the quadratic operator conditioned. An edge,
+    nonconcave or clamped vertex has no differentiable peak uncertainty.
     """
-    n = x.size
     half = _PARABOLA_POINTS // 2
-    if ipk < half or ipk > n - half - 1:
+    if ipk < half or ipk > x.size - half - 1:
         return None
     lo, hi = ipk - half, ipk + half + 1
     x0 = float(x[ipk])
@@ -141,19 +146,23 @@ def _parabolic_peak(x: NDArray[np.float64], amp: NDArray[np.float64], ipk: int) 
     if dx == 0.0:
         return None
     xn = (x[lo:hi] - x0) / dx
-    yn = amp[lo:hi]
-    # Quadratic least squares: y = a·xn² + b·xn + c.
-    coeffs = np.polyfit(xn, yn, 2)
-    a, b = float(coeffs[0]), float(coeffs[1])
-    if a >= 0.0:  # not a downward parabola → no meaningful maximum
+    operator = np.linalg.pinv(np.column_stack((xn**2, xn, np.ones_like(xn))))
+    a, b, _ = operator @ amp[lo:hi]
+    if a >= 0.0:
         return None
-    vertex_n = -b / (2.0 * a)
-    vertex = vertex_n * dx + x0
-    # Clamp to the fitted five-point span: a near-flat parabola can place the
-    # vertex far outside the points it was fitted to, which is unphysical for a
-    # peak. WiMDA leaves this unclamped (divergence D8); we bound it.
+    vertex = x0 - dx * b / (2 * a)
     span_lo, span_hi = float(x[lo]), float(x[hi - 1])
-    return min(max(vertex, span_lo), span_hi)
+    if vertex <= span_lo or vertex >= span_hi:
+        return _ParabolicVertex(float(np.clip(vertex, span_lo, span_hi)), None)
+    gradient = np.zeros_like(amp)
+    gradient[lo:hi] = dx * (-operator[1] / (2 * a) + b * operator[0] / (2 * a**2))
+    return _ParabolicVertex(float(vertex), gradient)
+
+
+def _support(amp: NDArray[np.float64], cutoff: float) -> tuple[int, NDArray[np.bool_]]:
+    """Fix the discrete peak and the samples strictly above its cutoff."""
+    ipk = int(np.argmax(amp))
+    return ipk, amp > cutoff * amp[ipk]
 
 
 def _moment_scalars(
@@ -168,16 +177,14 @@ def _moment_scalars(
     """
     if x.size == 0:
         return None
-    ipk = int(np.argmax(amp))
+    ipk, mask = _support(amp, cutoff_fraction)
     peak_amp = float(amp[ipk])
     if not np.isfinite(peak_amp) or peak_amp <= 0.0:
         return None
 
     refined = _parabolic_peak(x, amp, ipk)
-    b_pk = float(x[ipk]) if refined is None else float(refined)
+    b_pk = float(x[ipk]) if refined is None else refined.position
 
-    threshold = float(cutoff_fraction) * peak_amp
-    mask = amp > threshold
     p = amp[mask]
     b = x[mask]
     m0 = float(p.sum())
@@ -260,50 +267,45 @@ def _bootstrap_errors(
     return out
 
 
-def _propagate_errors(
+def _moment_jacobian(
     x: NDArray[np.float64],
     amp: NDArray[np.float64],
-    sigma: NDArray[np.float64],
     cutoff_fraction: float,
     base: dict[str, float],
-) -> dict[str, float]:
-    """First-order (linear) propagation of σ through the *integral* moments.
+) -> dict[str, NDArray[np.float64]]:
+    """First-order rows with fixed support and peak bin; missing means unavailable.
 
-    Deterministic and cheap, but only the amplitude-weighted integral moments are
-    differentiable in the weights; the parabolic ``b_pk`` and the ``b_pk``-derived
-    ``b_diff``/``beta`` are left ``NaN`` (use bootstrap for those). Mirrors the
-    intent of WiMDA's commented ``errsread`` block.
+    Normalisation, central moments and the refined peak all vary with amplitude.
+    JCGM 100:2008 section 5 gives the uncertainty contraction for independent
+    errors. Cube-root alpha is excluded: its derivative diverges at symmetry.
     """
-    out = dict.fromkeys(_BOOTSTRAP_KEYS, float("nan"))
-    ipk = int(np.argmax(amp))
-    peak_amp = float(amp[ipk])
-    if peak_amp <= 0.0:
-        return out
-    mask = amp > cutoff_fraction * peak_amp
-    p, b, s = amp[mask], x[mask], sigma[mask]
-    m0 = float(p.sum())
-    if m0 <= 0.0:
-        return out
-    b_ave = base["b_ave"]
-    # var(b_ave) = Σ [(B_i - b_ave)/m0]² σ_i²
-    out["b_ave"] = float(np.sqrt(np.sum(((b - b_ave) / m0) ** 2 * s**2)))
-    # m2 = Σ p_i d_i²/m0 with d fixed → var(m2) = Σ (d_i²/m0)² σ_i²; δ√m2 = δm2/(2√m2)
-    d = b - b_ave
+    ipk, mask = _support(amp, cutoff_fraction)
+    total = float(amp[mask].sum())
     m2 = base["b_rms_mean"] ** 2
-    if m2 > 0.0:
-        var_m2 = float(np.sum((d**2 / m0) ** 2 * s**2))
-        out["b_rms_mean"] = float(np.sqrt(var_m2) / (2.0 * np.sqrt(m2)))
-    dpk = b - base["b_pk"]
+    if m2 <= 0:
+        return {}
+    d = x - base["b_ave"]
+    mean = np.where(mask, d / total, 0.0)
+    second = np.where(mask, (d**2 - m2) / total, 0.0)
+    gamma = base["skewness_g1"]
+    third = np.where(mask, (d**3 - gamma * m2**1.5 - 3 * m2 * d) / total, 0.0)
+    rows = {
+        "b_ave": mean,
+        "b_rms_mean": second / (2 * np.sqrt(m2)),
+        "skewness_g1": third / m2**1.5 - 1.5 * gamma / m2 * second,
+    }
+    vertex = _parabolic_peak(x, amp, ipk)
+    if vertex is None or vertex.gradient is None:
+        return rows
+    peak = vertex.gradient
     m2pk = base["b_rms_peak"] ** 2
-    if m2pk > 0.0:
-        var_m2pk = float(np.sum((dpk**2 / m0) ** 2 * s**2))
-        out["b_rms_peak"] = float(np.sqrt(var_m2pk) / (2.0 * np.sqrt(m2pk)))
-    # γ₁ = m₃/m₂^{3/2}: propagate the m₃ term (dominant), m₂ held.
-    m2_15 = m2**1.5
-    if m2_15 > 0.0:
-        var_m3 = float(np.sum((d**3 / m0) ** 2 * s**2))
-        out["skewness_g1"] = float(np.sqrt(var_m3) / m2_15)
-    return out
+    e = x - base["b_pk"]
+    second_peak = np.where(mask, (e**2 - m2pk) / total, 0.0) - 2 * base["b_diff"] * peak
+    rows["b_pk"] = peak
+    rows["b_diff"] = mean - peak
+    rows["b_rms_peak"] = second_peak / (2 * np.sqrt(m2pk))
+    rows["beta"] = (mean - peak) / np.sqrt(m2pk) - base["beta"] * second_peak / (2 * m2pk)
+    return rows
 
 
 # ── public API ──────────────────────────────────────────────────────────────
@@ -360,9 +362,10 @@ def spectrum_moments(
         Optional per-point 1σ amplitude errors enabling uncertainties.
     uncertainty:
         ``"bootstrap"`` (default; resample over *errors*, propagates through every
-        moment incl. the nonlinear ones), ``"propagate"`` (linear, integral
-        moments only), or ``"none"``. Falls back to all-``NaN`` errors when
-        *errors* is absent or non-positive.
+        moment incl. the nonlinear ones), ``"propagate"`` (first order with fixed
+        support and peak bin, independent errors; cube-root alpha unavailable),
+        or ``"none"``. Errors are all ``NaN`` when *errors* is absent or
+        non-positive. Unrefined or clamped peaks have no peak-derived errors.
     n_bootstrap, seed:
         Bootstrap draw count and RNG seed (recorded in ``recipe`` for
         reproducibility).
@@ -441,7 +444,8 @@ def spectrum_moments(
         if uncertainty == "bootstrap":
             errs = _bootstrap_errors(xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed)
         else:
-            errs = _propagate_errors(xa, ya, sig_safe, cutoff_fraction, base)
+            for key, row in _moment_jacobian(xa, ya, cutoff_fraction, base).items():
+                errs[key] = float(np.linalg.norm(row * sig_safe))
 
     if error_oversampling > 1.0:
         # Correlated (zero-padded) samples: the noise model above draws

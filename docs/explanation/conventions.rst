@@ -40,6 +40,78 @@ interface, the fitted parameters, and the exported data:
 The muon gyromagnetic ratio is taken as
 :math:`\gamma_\mu / 2\pi = 135.539` MHz/T.
 
+Physical constants
+------------------
+
+The :ref:`physical constants API <physical-constants-api>` gives
+values, units, uncertainties, and sources. Exact defining values follow the
+2019 SI; magnetic constants follow CODATA 2018, lifetimes follow PDG 2024,
+the fluorine-19 ratio follows Stone’s recommended 2019 nuclear moment,
+and the vacuum muonium hyperfine starting value follows Liu et al. (1999).
+Derived SI constants use the defining values directly. This fixed reference set
+keeps calculations independent of the SciPy version installed.
+
+The fluorine ratio is calculated from the recommended nuclear moment and
+CODATA 2018 nuclear magneton using :math:`\gamma_F/(2\pi)=2\mu_F/h` for spin
+:math:`I=1/2`. Its standard uncertainty is given in the API alongside the other
+measured constants. The pion lifetime is rounded to three decimal places in μs,
+and the proton gyromagnetic ratio is truncated to the stated precision.
+
+.. _gaussian-width-conventions:
+
+Gaussian widths
+---------------
+
+The width :math:`\Delta=\gamma_\mu B_c` is an angular-frequency width (μs⁻¹),
+where :math:`B_c` is the standard deviation of one Cartesian component of an
+isotropic, zero-mean Gaussian field. Its total vector second moment is
+:math:`\langle|\mathbf B|^2\rangle=3B_c^2`. A transverse-field Gaussian
+frequency distribution and the early-time zero-field polarisation use different
+mappings to the ``Gaussian`` component:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 27 73
+
+   * - Model
+     - Width convention and relevant limit
+   * - ``Gaussian``
+     - :math:`e^{-\sigma^2t^2}`. Transverse-field envelope:
+       :math:`\sigma=\gamma_\mu B_c/\sqrt{2}`; zero-field early-time match:
+       :math:`\sigma=\gamma_\mu B_c`.
+   * - ``StaticGKT_ZF``
+     - :math:`\Delta=\gamma_\mu B_c`; starts as :math:`1-\Delta^2t^2`
+       and includes the static dip and :math:`1/3` tail.
+   * - ``LongitudinalFieldKT``
+     - The same per-component :math:`\Delta`; its zero-field limit is
+       ``StaticGKT_ZF``.
+   * - ``DynamicGaussianKT``
+     - The same per-component :math:`\Delta`; vanishing fluctuation rate
+       recovers the static KT response.
+   * - ``Abragam``
+     - Static transverse-field limit :math:`e^{-\Delta^2t^2/2}`;
+       ``Gaussian`` at :math:`\sigma=\Delta/\sqrt{2}`.
+   * - ``Keren``
+     - At zero applied field and vanishing fluctuation rate,
+       :math:`e^{-\Delta^2t^2}`; ``Gaussian`` at :math:`\sigma=\Delta`.
+       This limit matches the early-time KT curvature, not its full static tail.
+
+   * - Temperature-dependent ``SC_*``
+     - Width parameters inherit the convention of the input trend;
+       normalised :math:`\rho_s(T)` is unchanged by constant width rescaling.
+   * - ``SC_Brandt_*`` and σ ↔ λ helpers
+     - Second-moment width :math:`\sigma_2=\gamma_\mu B_\mathrm{rms}` for
+       :math:`e^{-\sigma_2^2t^2/2}`. Helpers require ``width=`` to select
+       :math:`\sigma_2` or :math:`\sigma_G=\sigma_2/\sqrt{2}`.
+   * - ``VortexLattice`` and ``VortexLatticePowder``
+     - The field distribution is calibrated to the Brandt second moment;
+       the time signal is its characteristic function, without a Gaussian-width
+       substitution. See :ref:`sc-width-convention`.
+
+The Gaussian and zero-field KT functions first differ at fourth order:
+:math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`.
+See :ref:`fit-gaussian` and :ref:`fit-static-gkt-zf` for applicability.
+
 The asymmetry convention
 ------------------------
 
@@ -96,3 +168,12 @@ deadtime, background), :mod:`asymmetry.core.fitting` (models and engines),
 :mod:`asymmetry.core.io` (loaders). The API reference is :doc:`/api/index`, and
 the design rationale and study notes behind individual features are kept in the
 repository under ``docs/porting/``.
+
+
+.. rubric:: References
+
+- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- A. Abragam, *The Principles of Nuclear Magnetism* (Clarendon Press,
+  Oxford, 1961).
+- A. Keren, Phys. Rev. B **50**, 10039 (1994).

@@ -1,43 +1,7 @@
-"""Global / batch fit tab (``GlobalFitTab``) and batch-seeding constants.
+"""Global and grouped-count fit controls, workers, and result presentation.
 
-Split out of ``fit_panel.py`` (Phase 2 mechanical split).
-
-Navigation map
---------------
-~5.0k lines. Module-level constants precede the class: ``BATCH_SEEDING_MODES``
-(the ``(label, mode)`` pairs shared by the on-tab selector and the
-``Analysis > Batch seeding`` menu so they cannot drift), ``BATCH_SEEDING_LABELS``
-(reverse lookup), ``BATCH_SEEDING_TOOLTIP``, the Parameters rail's settings key
-and chips, and the results card's hand-off labels. Everything else lives on
-``GlobalFitTab(FitTabBase)`` — one large class with no section-comment
-markers; methods cluster thematically in roughly this order:
-
-- **Construction** — ``__init__`` builds the batch-mode selector, the
-  parameter-classification table, and per-group model tables (deliberately
-  *not* sharing a factory with ``SingleFitTab``'s single table — see
-  ``docs/audit/shared-foundations/FOLLOW-UPS.md`` Phase 2 H2).
-- **Rail, results card and outcome chip** — ``_card_actions``,
-  ``_apply_column_group`` (the rail's three tables), ``_render_fit_summary``
-  (every converged multi-member read-out) and the per-member results windows.
-- **Grouped model dialog** — ``_open_grouped_initial_values_dialog``.
-- **Per-run wizard-cache lookups** — ``_single_fit_wizard_cache_for_run``.
-- **Fraction-value linking** — ``_synchronize_fraction_value_rows`` (the
-  global-tab counterpart of the single-tab fraction sync, using the shared
-  ``tab_base`` fraction helpers under the hood).
-- **Count-domain / T0 baseline fitting** — ``set_count_baseline``,
-  ``_render_count_fb_result``, ``promote_count_t0``.
-- **Fit run/stop lifecycle** — ``_on_stop_fit`` (cancels
-  ``self._count_fit_worker or self._fit_worker`` — the global tab has a
-  second, count-domain worker that ``SingleFitTab`` does not), and
-  ``_on_grouped_fit_finished`` (the completion slot that records results back
-  into the series/table state).
-- **Global-wizard status/seed reporting** — ``_status_text_from_global_wizard``,
-  ``_grouped_member_nuisance_seeds``, ``current_grouped_seed_values``.
-- **Teardown** — ``_reset_group_parameter_estimates`` and related per-group
-  reset helpers near the end of the file.
-
-Entry points GUI callers use most: construction via ``FitPanel``, then the
-``_on_*_fit_finished``/``_on_stop_fit`` pair as the fit-lifecycle boundary.
+Batch seeding labels are shared with the analysis menu. Fits run through
+TaskRunner; result slots bind the launch-time dataset and objective context.
 """
 
 import copy
@@ -85,7 +49,6 @@ from asymmetry.core.fitting.composite import (
     migrate_legacy_fraction_state,
 )
 from asymmetry.core.fitting.count_domain import (
-    COUNT_COSTS,
     RESERVED_COUNT_PARAMS,
     fb_overlay_curves,
     fit_fb_alpha,
@@ -117,6 +80,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_state,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags
 from asymmetry.core.fitting.parameter_carry import align_component_names, carry_parameters
 from asymmetry.core.fitting.parameters import (
@@ -125,6 +89,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.result_summary import reduced_statistic_label, reduced_statistic_summary
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import (
@@ -579,23 +544,18 @@ class GlobalFitTab(FitTabBase):
         # ``_coadd_window`` successive members per fit via combine_runs.
         self._coadd_mode = "off"
         self._coadd_window = 2
-        # Count-domain fit target: "all" (fgAll, the existing grouped path),
-        # "fb" (forward+backward with free alpha), or "single" (one histogram).
         self._count_fit_mode = "all"
         self._count_fit_cost = "poisson"
+        self._grouped_context_cache = None
         self._count_single_side = "forward"
-        # Phase 2 window/nuisance flexibility (all off by default).
         self._count_exclude: tuple[float, float] | None = None
         self._count_fit_t0 = False
         self._count_baseline = False
-        # Phase 3 count-loss + double pulse.
         self._count_deadtime = False
         self._count_dpsep = 0.0  # µs; > 0 switches on the double-pulse model
         self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
-        self._last_count_dt0: float | None = None
-        self._last_count_group: int | None = None
-        # Fitted calibrations captured for the α/t0/background promote paths
-        # (siblings of the deadtime DT0 promote). Each is suggest-only.
+        self._last_count_deadtime: FitResult | None = None
+        self._last_count_group: str | None = None
         self._last_count_alpha: tuple[float, float | None] | None = None
         self._last_count_t0_us: float | None = None
         self._last_count_bg: tuple[float | None, float | None] | None = None
@@ -1070,7 +1030,7 @@ class GlobalFitTab(FitTabBase):
         self._member_results = dict(results_by_member)
         member_flags = self.last_batch_member_flags()
         chips: list[MemberChip] = []
-        chi2_values: list[float] = []
+        summaries = []
         n_converged = 0
         n_clean = 0
         for member, result in results_by_member.items():
@@ -1080,9 +1040,9 @@ class GlobalFitTab(FitTabBase):
             n_converged += converged
             n_clean += clean
             chi2 = float(result.reduced_chi_squared)
-            if np.isfinite(chi2):
-                chi2_values.append(chi2)
-            quality = _fit_summary(result).get("quality")
+            summary = _fit_summary(result)
+            summaries.append(summary)
+            quality = summary["quality"]
             chips.append(
                 MemberChip(
                     run=int(member),
@@ -1098,11 +1058,7 @@ class GlobalFitTab(FitTabBase):
 
         total = len(results_by_member)
         warned = total - n_clean
-        meta = (
-            f"χ²ᵣ {min(chi2_values):.3g}–{max(chi2_values):.3g}"
-            if len(chi2_values) > 1
-            else (f"χ²ᵣ {chi2_values[0]:.3g}" if chi2_values else "")
-        )
+        meta = reduced_statistic_summary(summaries)
         self._results_card.set_summary(
             FitCardSummary(
                 tag=f"{tag_prefix} {'✓' if not warned else '⚠'}",
@@ -1584,19 +1540,9 @@ class GlobalFitTab(FitTabBase):
             )
             return
         converged = [s for s in summaries.values() if s.get("success")]
-        chi2 = [
-            float(s["reduced_chi_squared"])
-            for s in converged
-            if isinstance(s.get("reduced_chi_squared"), int | float)
-            and np.isfinite(float(s["reduced_chi_squared"]))
-        ]
         flagged = sum(1 for s in converged if set(s.get("quality_flags") or ()) - {"failed"})
         warned = len(summaries) - len(converged) + flagged
-        meta = (
-            f"χ²ᵣ {min(chi2):.3g}–{max(chi2):.3g}"
-            if len(chi2) > 1
-            else (f"χ²ᵣ {chi2[0]:.3g}" if chi2 else "")
-        )
+        meta = reduced_statistic_summary(converged)
         self._results_card.set_summary(
             FitCardSummary(
                 tag=f"Batch {'✓' if not warned else '⚠'}",
@@ -3480,7 +3426,7 @@ class GlobalFitTab(FitTabBase):
 
     def set_count_fit_cost(self, cost: str) -> None:
         """Select the count-fit cost: ``poisson`` (default) or ``gaussian``."""
-        self._count_fit_cost = cost if cost in COUNT_COSTS else "poisson"
+        self._count_fit_cost = Objective(cost).value
 
     def set_count_single_side(self, side: str) -> None:
         """Select which detector group the single-histogram fit targets."""
@@ -3517,39 +3463,30 @@ class GlobalFitTab(FitTabBase):
         """Toggle locating dpsep by a coarse->fine scan rather than fixing it."""
         self._count_dpsep_fit = bool(enabled)
 
-    def promote_count_deadtime(self, *, additive: bool = False) -> None:
-        """Promote the last fitted deadtime DT0 into the grouping (WiMDA Send-to-Group)."""
+    def promote_count_deadtime(self) -> None:
+        """Promote the captured applied base plus the fitted residual coefficient."""
         from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
-        from asymmetry.core.transform.grouping import effective_group_indices
 
         dataset = self._current_dataset
-        if self._last_count_dt0 is None or self._last_count_group is None:
+        result = self._last_count_deadtime
+        if result is None or result.deadtime_calibration is None:
             self._results_card.set_message(
                 "Run a deadtime count fit first, then promote DT0.", tag="Error", tone="error"
             )
             return
         if dataset is None or dataset.run is None or not dataset.run.histograms:
             self._results_card.set_message(
-                "Promote needs the active run with detector histograms.",
-                tag="Error",
-                tone="error",
+                "Promote needs the active run with detector histograms.", tag="Error", tone="error"
             )
             return
-        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
-        indices = effective_group_indices(grouping, int(self._last_count_group))
-        change = promote_deadtime_to_grouping(
-            grouping,
-            float(self._last_count_dt0),
-            n_histograms=len(dataset.run.histograms),
-            detector_indices=indices or None,
-            additive=additive,
-        )
-        before = next(iter(change["before"].values()), 0.0)
-        after = next(iter(change["after"].values()), 0.0)
+        calibration = result.deadtime_calibration
+        if calibration.source_run != dataset.run_number:
+            raise ValueError("deadtime promotion must target the run used by the fit")
+        promote_deadtime_to_grouping(dataset.run.grouping, calibration)
+        dataset.metadata["grouping_overrides"] = True
         self._results_card.set_message(
-            f"Group {self._last_count_group} detectors: "
-            f"{before:.5g} → {after:.5g} µs ({'added' if additive else 'replaced'}). "
-            "Re-reduce the run to apply.",
+            f"Group {self._last_count_group} detectors: DT₀ {result.parameters['DT0'].value:+.4g} µs "
+            "added to the applied correction. Re-reduce the run to apply.",
             tag="Deadtime promoted",
             tone="ok",
         )
@@ -3657,7 +3594,7 @@ class GlobalFitTab(FitTabBase):
             # beta held fixed at 1 (simple exponential); free beta is unstable.
             params.add(Parameter(name="beta_base", value=1.0, min=0.2, max=3.0, fixed=True))
         if self._count_deadtime:
-            params.add(Parameter(name="DT0", value=0.005, min=0.0, max=0.5))
+            params.add(Parameter(name="DT0", value=0.005))
         if self._count_dpsep > 0.0:
             if self._count_dpsep_fit:
                 # Free dpsep: a coarse->fine scan refines it around the instrument
@@ -3726,10 +3663,10 @@ class GlobalFitTab(FitTabBase):
                 minos=minos,
             )
 
-            def on_finished(result, d=dataset, f=forward, b=backward, c=cost):
+            def on_finished(result, d=dataset, f=forward, b=backward):
                 self._count_fit_worker = None
                 self._set_series_busy(False)
-                self._render_count_fb_result(d, result, f, b, cost=c)
+                self._render_count_fb_result(d, result, f, b)
 
         else:
             target = backward if self._count_single_side == "backward" else forward
@@ -3748,10 +3685,10 @@ class GlobalFitTab(FitTabBase):
                 minos=minos,
             )
 
-            def on_finished(result, d=dataset, t=target, c=cost, s=side):
+            def on_finished(result, d=dataset, t=target, s=side):
                 self._count_fit_worker = None
                 self._set_series_busy(False)
-                self._render_count_single_result(d, result, t, cost=c, side=s)
+                self._render_count_single_result(d, result, t, side=s)
 
         self._count_fit_worker = _start_fit_call(
             self,
@@ -3774,10 +3711,7 @@ class GlobalFitTab(FitTabBase):
         self._count_fit_worker = None
         self._on_series_fit_cancelled()
 
-    def _render_count_fb_result(
-        self, dataset, result, forward: int, backward: int, *, cost: str | None = None
-    ) -> None:
-        cost = cost if cost is not None else self._count_fit_cost
+    def _render_count_fb_result(self, dataset, result, forward: int, backward: int) -> None:
         if not result.success:
             self._results_card.set_message(
                 error_html(result.message or "Forward/backward fit failed"),
@@ -3786,7 +3720,7 @@ class GlobalFitTab(FitTabBase):
             )
             return
         fwd = result.group_results[forward]
-        self._store_count_deadtime(fwd, forward)
+        self._store_count_deadtime(fwd, f"{forward}/{backward}")
         self._store_count_fb_extras(dataset, result, forward, backward)
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
@@ -3794,15 +3728,17 @@ class GlobalFitTab(FitTabBase):
         fwd_summary = _fit_summary(fwd)
         chip = fit_quality_chip_html(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         detail = (
-            f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
-            f"(cost: {cost})<br>" + "<br>".join(rows)
+            f"α = {self._fmt_value(alpha, alpha_err)} · {reduced_statistic_label(fwd.objective)} = {fwd.reduced_chi_squared:.4f}{chip} "
+            "<br>" + "<br>".join(rows)
         )
         self._results_card.set_message(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail),
             tag="Fit ✓",
             tone="ok",
             tooltip=fit_quality_tooltip(
-                fwd_summary.get("quality"), fwd_summary.get("params_at_bound")
+                fwd_summary.get("quality"),
+                fwd_summary.get("params_at_bound"),
+                quality_reason=fwd_summary["quality_reason"],
             ),
         )
         if self._current_dataset is dataset:
@@ -3820,10 +3756,8 @@ class GlobalFitTab(FitTabBase):
         result,
         group_id: int,
         *,
-        cost: str | None = None,
         side: str | None = None,
     ) -> None:
-        cost = cost if cost is not None else self._count_fit_cost
         side = side if side is not None else self._count_single_side
         if not result.success:
             self._results_card.set_message(
@@ -3837,14 +3771,19 @@ class GlobalFitTab(FitTabBase):
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         summary = _fit_summary(result)
         chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
-        detail = f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(
-            rows
+        detail = (
+            f"{reduced_statistic_label(result.objective)} = {result.reduced_chi_squared:.4f}{chip}<br>"
+            + "<br>".join(rows)
         )
         self._results_card.set_message(
             success_html(f"Single-histogram fit · group {group_id} ({side})", detail=detail),
             tag="Fit ✓",
             tone="ok",
-            tooltip=fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound")),
+            tooltip=fit_quality_tooltip(
+                summary.get("quality"),
+                summary.get("params_at_bound"),
+                quality_reason=summary["quality_reason"],
+            ),
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -3886,18 +3825,16 @@ class GlobalFitTab(FitTabBase):
         except ValueError:
             return {}
 
-    def _store_count_deadtime(self, fit_result, group_id: int) -> None:
-        """Remember a converged DT0 so it can be promoted to the grouping."""
-        if "DT0" in fit_result.parameters.names:
-            self._last_count_dt0 = float(fit_result.parameters["DT0"].value)
-            self._last_count_group = int(group_id)
-        else:
-            self._last_count_dt0 = None
-            self._last_count_group = None
+    def _store_count_deadtime(self, fit_result: FitResult, group_id: int | str) -> None:
+        """Retain the fitted result's immutable total table for explicit promotion."""
+        self._last_count_deadtime = (
+            fit_result if fit_result.deadtime_calibration is not None else None
+        )
+        self._last_count_group = str(group_id) if self._last_count_deadtime is not None else None
 
     def _clear_count_calibrations(self) -> None:
         """Drop every captured count-fit calibration (DT0/α/t0/background)."""
-        self._last_count_dt0 = None
+        self._last_count_deadtime = None
         self._last_count_group = None
         self._last_count_alpha = None
         self._last_count_t0_us = None
@@ -4370,9 +4307,10 @@ class GlobalFitTab(FitTabBase):
 
         n_members = len(member_results)
         n_runs = len(set(source_run.values())) if source_run else 0
-        reduced = [r.reduced_chi_squared for r in member_results.values() if r.reduced_chi_squared]
-        avg_red_chi2 = sum(reduced) / len(reduced) if reduced else 0.0
-        stats = f"{n_runs} runs · {n_members} group fits · avg χ²/ν = {avg_red_chi2:.4f}"
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in member_results.values()], mean=True
+        )
+        stats = f"{n_runs} runs · {n_members} group fits · {statistic}"
         seeding_reason = getattr(series_result, "seeding_reason", "")
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
@@ -4562,11 +4500,10 @@ class GlobalFitTab(FitTabBase):
         warnings, the fitted/failed/flagged accounting, the resolved seeding mode
         and the near-transition advice — is composed here instead.
         """
-        avg_red_chi2 = sum(r.reduced_chi_squared for r in successful.values()) / len(successful)
-        lines = [
-            f"avg χ²/ν = {avg_red_chi2:.4f} · {len(successful)} datasets · "
-            f"npar = {len(global_param_names)}"
-        ]
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in successful.values()], mean=True
+        )
+        lines = [f"{statistic} · {len(successful)} datasets · npar = {len(global_param_names)}"]
         # The same trap typically fires for every run, so dedupe to one row per
         # distinct message (first-seen order) rather than repeating it per dataset.
         seen: set[str] = set()
@@ -5194,11 +5131,11 @@ class GlobalFitTab(FitTabBase):
 
         n_groups = len(grouped_result.group_results)
         group_results = list(grouped_result.group_results.values())
-        avg_red_chi2 = (
-            sum(r.reduced_chi_squared for r in group_results) / n_groups if n_groups > 0 else 0.0
-        )
         n_shared = len(grouped_result.shared_parameters)
-        stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in group_results], mean=True
+        )
+        stats = f"{n_groups} groups · {statistic} · shared = {n_shared}"
         self._render_fit_summary(
             dict(grouped_result.group_results), tag_prefix="Fit", detail_html=stats
         )
@@ -5647,15 +5584,8 @@ class GlobalFitTab(FitTabBase):
     def _grouped_mode_context(
         self,
     ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
-        """Return the grouped time-domain context, memoised per active dataset.
-
-        Building the grouped groups/datasets is relatively expensive on
-        high-resolution histograms and is requested several times per
-        selection/UI refresh.  The result depends only on the active dataset and
-        the fit-blocked state, so it is cached and reused until the active
-        dataset changes (see :meth:`set_current_dataset`).
-        """
-        cache = getattr(self, "_grouped_context_cache", None)
+        """Reuse grouped inputs while members, corrections and likelihood stay unchanged."""
+        cache = self._grouped_context_cache
         # Identity of each member *and* of its data arrays and run: a
         # re-reduction (grouping edit, projection change) reassigns those
         # attributes on the same dataset object, and the grouped count domains
@@ -5664,7 +5594,13 @@ class GlobalFitTab(FitTabBase):
             (id(ds), id(ds.time), id(ds.asymmetry), id(ds.error), id(ds.run))
             for ds in self._grouped_member_datasets()
         )
-        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        key = (
+            member_ids,
+            self._fit_blocked,
+            self._count_fit_cost,
+            self._coadd_mode,
+            self._coadd_window,
+        )
         if cache is not None and cache[0] == key:
             return cache[1]
         result = self._compute_grouped_mode_context()
@@ -5713,7 +5649,12 @@ class GlobalFitTab(FitTabBase):
             fit_t_max = float(np.max(time_values[finite_mask])) if np.any(finite_mask) else None
             run_label = getattr(dataset, "run_label", str(dataset.run_number))
             try:
-                groups = build_grouped_time_domain_groups(dataset, t_min=fit_t_min, t_max=fit_t_max)
+                groups = build_grouped_time_domain_groups(
+                    dataset,
+                    t_min=fit_t_min,
+                    t_max=fit_t_max,
+                    lifetime_corrected=Objective(self._count_fit_cost) is Objective.GAUSSIAN,
+                )
                 datasets = build_grouped_time_domain_datasets(dataset)
             except ValueError as exc:
                 skipped.append(f"{run_label}: {exc}")
@@ -5814,7 +5755,13 @@ class GlobalFitTab(FitTabBase):
         """
         self._grouped_mode_context()  # ensure _grouped_members is current
         member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
-        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        key = (
+            member_ids,
+            self._fit_blocked,
+            self._count_fit_cost,
+            self._coadd_mode,
+            self._coadd_window,
+        )
         cache = self._grouped_seed_cache
         if cache is not None and cache[0] == key:
             return cache[1]

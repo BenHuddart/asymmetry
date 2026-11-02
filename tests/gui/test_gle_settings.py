@@ -25,14 +25,6 @@ from asymmetry.gui.gle_settings import (  # noqa: E402
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _fake_gle(tmp_path: Path, banner: str = "GLE version 4.3.10") -> Path:
     script = tmp_path / "gle"
     script.write_text(f'#!/bin/sh\necho "{banner}"\n', encoding="utf-8")

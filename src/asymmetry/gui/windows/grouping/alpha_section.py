@@ -45,9 +45,10 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.transform.background import resolve_background_mode
+from asymmetry.core.transform.corrections import BackgroundReference, CorrectionStatus
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
-    CorrectedGroupedCounts,
     ReferenceResolver,
     corrected_grouped_counts,
     correction_flags_from_grouping,
@@ -79,10 +80,6 @@ __all__ = [
 
 CorrectionProvider = Callable[[MuonDataset], "dict[str, Any]"]
 
-#: Background ``method`` labels that mean *no subtraction happened* — a requested
-#: background correction that could not be applied to this run.
-_BACKGROUND_NOT_APPLIED = frozenset({"", "none", "missing_reference", "missing_fixed_values"})
-
 
 @dataclass(frozen=True)
 class AlphaEstimateRequest:
@@ -100,7 +97,7 @@ class AlphaEstimateRequest:
     first_good_bin: int
     last_good_bin: int
     run_label: str
-    resolved_reference: tuple[list[Histogram], float] | None
+    resolved_reference: BackgroundReference | None
     facility: str
 
 
@@ -122,9 +119,9 @@ class AlphaEstimateResult:
 def build_corrected(
     histograms: list[Histogram],
     grouping: dict[str, Any],
-    resolved_reference: tuple[list[Histogram], float] | None,
+    resolved_reference: BackgroundReference | None,
     facility: str,
-) -> CorrectedGroupedCounts:
+) -> ForwardBackwardCounts:
     """Deadtime-correct, group and background-subtract F/B for the estimate.
 
     Pure (no widgets). Raises :class:`ValueError` when the groups reference no
@@ -155,39 +152,19 @@ def build_corrected(
     )
 
 
-def correction_note(
-    grouping: dict[str, Any], corrected: CorrectedGroupedCounts
-) -> tuple[str, bool]:
-    """Describe which corrections the estimate reflects (text, warn?).
-
-    ``warn`` is ``True`` when a *requested* correction could not be applied to
-    this run — the anti-mislead guardrail.
-    """
-    flags = correction_flags_from_grouping(grouping)
-    applied: list[str] = []
-    missing: list[str] = []
-    if flags.use_deadtime:
-        (applied if corrected.deadtime_applied else missing).append("deadtime")
-    if flags.use_background:
-        method = str((corrected.background_state or {}).get("method", ""))
-        if method and method not in _BACKGROUND_NOT_APPLIED:
-            applied.append(f"background ({method})")
-        else:
-            missing.append("background")
-    if not flags.use_deadtime and not flags.use_background:
+def correction_note(grouping: dict[str, Any], corrected: ForwardBackwardCounts) -> tuple[str, bool]:
+    """Describe the complete correction outcome used for this estimate."""
+    corrected.corrections.require_complete()
+    applied = [
+        outcome.name
+        for outcome in (corrected.corrections.deadtime, corrected.corrections.background)
+        if outcome.status == CorrectionStatus.APPLIED
+    ]
+    if not applied:
         return (
             "No deadtime or background correction is configured — α is estimated on raw counts.",
             False,
         )
-    if missing:
-        pronoun = "it" if len(missing) == 1 else "them"
-        note = ""
-        if applied:
-            note = "Applied: " + ", ".join(applied) + ".  "
-        note += (
-            "Not applied to this run: " + ", ".join(missing) + f" — α does not reflect {pronoun}."
-        )
-        return (note, True)
     return ("α is estimated on corrected counts (" + ", ".join(applied) + ").", False)
 
 
@@ -203,8 +180,9 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     corrected = build_corrected(
         request.histograms, request.grouping, request.resolved_reference, request.facility
     )
-    forward, backward, common_t0 = corrected.forward, corrected.backward, int(corrected.common_t0)
-    bin_width = float(corrected.bin_width)
+    forward = corrected.forward.counts
+    common_t0 = corrected.common_t0_bin
+    bin_width = float(corrected.bin_width_us)
 
     time_us = None
     if request.method == "general":
@@ -218,18 +196,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     if worker.is_cancelled():
         raise TaskCancelledError
     estimate = estimate_alpha_detailed(
-        forward,
-        backward,
+        corrected.forward,
+        corrected.backward,
         method=request.method,
         time_us=time_us,
         first_good_bin=request.first_good_bin,
         last_good_bin=request.last_good_bin,
-        # Ratio-only, and only meaningful when a constant background was
-        # actually removed — without it the reported σ omits the subtraction
-        # entirely and reads far too small on a late, low-counts window.
-        subtracted_background=(
-            corrected.subtracted_background() if request.method == "ratio" else None
-        ),
     )
     note_text, note_warn = correction_note(request.grouping, corrected)
     return AlphaEstimateResult(
@@ -325,10 +297,7 @@ def grouping_for_reduction(
     """
     grouping: dict[str, Any] = {}
     if correction_provider is not None:
-        try:
-            grouping = dict(correction_provider(dataset) or {})
-        except Exception:  # noqa: BLE001 — a broken provider degrades to raw counts
-            grouping = {}
+        grouping = dict(correction_provider(dataset))
     grouping["groups"] = {int(gid): [int(i) + 1 for i in idxs] for gid, idxs in groups.items()}
     grouping["forward_group"] = int(forward_gid)
     grouping["backward_group"] = int(backward_gid)
@@ -338,21 +307,19 @@ def grouping_for_reduction(
 
 def resolve_reference(
     grouping: dict[str, Any], reference_resolver: ReferenceResolver | None
-) -> tuple[list[Histogram], float] | None:
+) -> BackgroundReference | None:
     """Resolve the ``reference_run`` background on the GUI thread, or ``None``.
 
     Done on the GUI thread (not in the worker) because the resolver reaches into
     the loaded-dataset registry; the result is plain data snapshotted into the
-    worker request. Degrades to ``None`` for non-reference modes or any failure.
+    worker request. Non-reference modes return ``None``; resolution failures
+    reach the user-input error display.
     """
     if reference_resolver is None:
         return None
     if resolve_background_mode(grouping) != "reference_run":
         return None
-    try:
-        return reference_resolver(grouping)
-    except Exception:  # noqa: BLE001 — an unresolvable reference degrades to no subtraction
-        return None
+    return reference_resolver(grouping)
 
 
 def good_window(grouping: dict[str, Any], n_bins: int) -> tuple[int, int]:
@@ -542,18 +509,22 @@ class AlphaSectionWidget(QWidget):
         context = self._context_provider() if self._context_provider is not None else {}
         self._estimate_source_run = int(dataset.run_number)
         self._estimate_token += 1
-        request = build_alpha_request(
-            token=self._estimate_token,
-            dataset=dataset,
-            groups=context.get("groups") or {},
-            forward_gid=int(context.get("forward_group", 1)),
-            backward_gid=int(context.get("backward_group", 2)),
-            excluded_detectors=context.get("excluded_detectors") or [],
-            method=self._current_method(),
-            correction_provider=context.get("correction_provider"),
-            reference_resolver=context.get("reference_resolver"),
-            facility=str(context.get("facility", "")),
-        )
+        try:
+            request = build_alpha_request(
+                token=self._estimate_token,
+                dataset=dataset,
+                groups=context.get("groups") or {},
+                forward_gid=int(context.get("forward_group", 1)),
+                backward_gid=int(context.get("backward_group", 2)),
+                excluded_detectors=context.get("excluded_detectors") or [],
+                method=self._current_method(),
+                correction_provider=context.get("correction_provider"),
+                reference_resolver=context.get("reference_resolver"),
+                facility=str(context.get("facility", "")),
+            )
+        except (ValueError, OSError) as exc:
+            self._on_estimate_error(str(exc))
+            return
         self._estimate_btn.setEnabled(False)
         self._result_label.set_pen_color(tokens.TEXT_MUTED)
         self._result_label.setText("Computing estimate…")

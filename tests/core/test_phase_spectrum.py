@@ -28,6 +28,9 @@ from asymmetry.core.fourier.spectrum import (
 )
 from asymmetry.core.representation.factory import representation_from_dict
 from asymmetry.core.representation.frequency import FrequencyFFT
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
 def _phase_run(monkeypatch, *, count_scale=1.0):
@@ -249,15 +252,18 @@ def test_auto_fb_uses_percent_asymmetry_without_fractional_baseline(monkeypatch)
 
 
 @pytest.mark.parametrize(
-    ("declared_t0", "exact_subbin"), [(124, None), (124, 0.0), (124, 0.25), (None, None)]
+    ("reference_t0", "declared_t0", "exact_subbin"),
+    [(130, 124, None), (130, 124, 0.0), (130, 124, 0.25), (124, 124, 0.25), (130, None, None)],
 )
-def test_auto_group_good_bins_preserve_declared_profile_t0_coordinates(
-    monkeypatch, declared_t0, exact_subbin
+@pytest.mark.parametrize("manual_shift", [0, 2])
+def test_group_fft_modes_preserve_reduction_good_window_and_exact_t0(
+    monkeypatch, reference_t0, declared_t0, exact_subbin, manual_shift
 ):
-    """Aligning detector t0s must preserve the profile's post-prompt good interval."""
+    """A different FFT alignment reference must preserve the reduction's samples."""
     n, dt = 512, 0.01
     histograms = []
-    for t0 in (130, 124, 124):
+    detector_t0s = (reference_t0, 124, 124)
+    for t0 in detector_t0s:
         relative_time = (np.arange(n) - t0) * dt
         counts = 1000.0 * (1.0 + 0.1 * np.cos(2 * np.pi * 4 * relative_time + 0.2))
         counts[t0 : t0 + 2] = 1.0e9
@@ -271,39 +277,71 @@ def test_auto_group_good_bins_preserve_declared_profile_t0_coordinates(
         "last_good_bin": 500,
     }
     if declared_t0 is not None:
-        grouping["t0_bin"] = declared_t0
+        grouping["t0_bin"] = declared_t0 + manual_shift
     if exact_subbin is not None:
-        grouping["t0_time_us"] = (declared_t0 + 0.5 + exact_subbin) * dt
+        grouping["t0_time_us"] = (declared_t0 + manual_shift + 0.5 + exact_subbin) * dt
+    if manual_shift:
+        grouping[EFFECTIVE_DETECTOR_T0_KEY] = [t0 + manual_shift for t0 in detector_t0s]
     original_grouping = dict(grouping)
     run = Run(run_number=11, histograms=histograms, grouping=grouping)
     observed = []
+    prepared_inputs = []
+    prepare = spectrum_module.prepare_fft_time_signal
+
+    def capture_preparation(dataset, **kwargs):
+        prepared = prepare(dataset, **kwargs)
+        prepared_inputs.append((dataset, prepared))
+        return prepared
 
     def capture_phase_input(acquisition, config, **kwargs):
         observed.append(acquisition)
         return _estimate(0.2)
 
     monkeypatch.setattr(spectrum_module, "fit_fft_phase", capture_phase_input)
-    result = compute_average_group_spectrum(
-        run, GroupSpectrumConfig(display="phaseOptReal", selected_group_ids=[2, 3])
-    )
-    assert result is not None
+    monkeypatch.setattr(spectrum_module, "prepare_fft_time_signal", capture_preparation)
+    for display in ("(Power)^1/2", "Phase Spectrum", "Cos", "Sin", "Phase", "phaseOptReal"):
+        result = compute_average_group_spectrum(
+            run, GroupSpectrumConfig(display=display, selected_group_ids=[2, 3])
+        )
+        assert result is not None
+
+    # These detector indices are independently known: the resolved F/B window
+    # [130, 500] excludes both prompt bins [124, 125] on each selected detector.
+    origin = (declared_t0 if declared_t0 is not None else reference_t0) + manual_shift
+    origin += exact_subbin or 0.0
+    expected_time = (np.arange(130, 501) - origin) * dt
+    raw_start = 130 if declared_t0 is not None else 130 - (reference_t0 - 124)
+    raw_counts = histograms[1].counts[raw_start : raw_start + 371]
+    if declared_t0 is not None:
+        reduced = group_forward_backward(histograms, grouping)
+        np.testing.assert_array_equal(raw_counts, reduced.forward[130:501])
+        assert np.max(raw_counts) < 1e9
+    lifetime_scale = np.exp(expected_time / MUON_LIFETIME_US)
+    for dataset, prepared in prepared_inputs:
+        np.testing.assert_allclose(dataset.time, expected_time, atol=1e-14)
+        np.testing.assert_allclose(dataset.asymmetry, raw_counts * lifetime_scale)
+        np.testing.assert_allclose(dataset.error, np.sqrt(raw_counts) * lifetime_scale)
+        np.testing.assert_array_equal(
+            prepared.unwindowed_signal, prepared_inputs[0][1].unwindowed_signal
+        )
+        np.testing.assert_array_equal(prepared.sample_errors, prepared_inputs[0][1].sample_errors)
     assert len(observed) == 2
-    expected_start = (6 - (exact_subbin or 0.0)) * dt if declared_t0 is not None else 0.0
     for acquisition, group_id in zip(observed, ("2", "3")):
-        assert acquisition.time_start_us == pytest.approx(expected_start)
+        assert acquisition.time_start_us == pytest.approx(expected_time[0])
         assert len(acquisition.window_weights) == 371
-        if declared_t0 is not None:
-            assert np.max(np.abs(acquisition.unwindowed_signal)) < 2.0
+        np.testing.assert_array_equal(
+            acquisition.unwindowed_signal, prepared_inputs[0][1].unwindowed_signal
+        )
         report = result.metadata["fourier_phase_fit"]["groups"][group_id]["acquisition"]
         assert report == {
             "sample_count": 371,
-            "time_start_us": pytest.approx(expected_start),
+            "time_start_us": pytest.approx(expected_time[0]),
             "sample_interval_us": pytest.approx(dt),
         }
     assert run.grouping is grouping
     assert grouping == original_grouping
     assert grouping["first_good_bin"] == 130
     assert grouping["last_good_bin"] == 500
-    for histogram, t0 in zip(run.histograms, (130, 124, 124)):
+    for histogram, t0 in zip(run.histograms, detector_t0s):
         assert histogram.t0_bin == t0
         np.testing.assert_array_equal(histogram.counts[t0 : t0 + 2], [1e9, 1e9])

@@ -7,7 +7,6 @@ Use the :func:`load` convenience function to auto-detect the format::
 """
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -23,6 +22,7 @@ from asymmetry.core.io.periods import (
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
 from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
+from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.grouping import good_frames
 
 # Register built-in loaders
@@ -92,11 +92,11 @@ def _grouping_good_frames(source: object) -> float | None:
     return good_frames(getattr(source, "grouping", None), default=0.0) or None
 
 
-def _reference_frame_scale(
+def _reference_frame_exposure(
     reference_run: object,
     sample_good_frames: float | None,
     payload: dict,
-) -> float:
+) -> tuple[float, float | None, float | None, str]:
     """Sample/reference good-frame ratio, without mixing measurement epochs.
 
     A *live* ratio is used only when BOTH the sample and reference live frame
@@ -111,36 +111,35 @@ def _reference_frame_scale(
         if sample_good_frames is not None and float(sample_good_frames) > 0.0
         else None
     )
+    sample, reference = live_sample, live_reference
+    source = "live_frames"
     if live_sample is not None and live_reference:
         scale = live_sample / float(live_reference)
-    else:
+    elif (
+        payload.get("good_frames_sample") is not None
+        and payload.get("good_frames_reference") is not None
+    ):
         try:
-            scale = float(payload.get("good_frames_sample")) / float(
-                payload.get("good_frames_reference")
-            )
-        except (TypeError, ValueError, ZeroDivisionError):
-            try:
-                scale = float(payload.get("scale", 1.0))
-            except (TypeError, ValueError):
-                scale = 1.0
+            sample = float(payload["good_frames_sample"])
+            reference = float(payload["good_frames_reference"])
+        except (TypeError, ValueError):
+            raise ValueError(
+                "reference background frame counts must be finite and positive"
+            ) from None
+        if not np.isfinite(sample) or not np.isfinite(reference) or sample <= 0 or reference <= 0:
+            raise ValueError("reference background frame counts must be finite and positive")
+        scale = sample / reference
+        source = "saved_frames"
+    else:
+        sample, reference = None, None
+        source = "explicit_scale" if "scale" in payload else "unity_assumption"
+        try:
+            scale = float(payload.get("scale", 1.0))
+        except (TypeError, ValueError):
+            raise ValueError("reference background scale must be finite and positive") from None
     if not np.isfinite(scale) or scale <= 0.0:
-        scale = 1.0
-    return scale
-
-
-@dataclass
-class BackgroundReference:
-    """A resolved ``background_run`` reference: source histograms + frame scale.
-
-    ``histograms`` are the reference run's raw (pre-deadtime) histograms — the
-    caller applies the *same* deadtime treatment as the sample and groups/aligns
-    them before :func:`subtract_scaled_counts` (study divergence D6). ``scale``
-    is the good-frame ratio sample/reference (WiMDA's exposure scale).
-    """
-
-    histograms: list
-    scale: float
-    run_number: int | None = None
+        raise ValueError("reference background scale must be finite and positive")
+    return scale, sample, reference, source
 
 
 def resolve_background_reference(
@@ -149,7 +148,8 @@ def resolve_background_reference(
     sample_good_frames: float | None = None,
     datasets: Iterable[MuonDataset] = (),
     cache: dict[str, object] | None = None,
-) -> BackgroundReference:
+    allow_file: bool = True,
+) -> BackgroundReference | None:
     """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
 
     This is the single home for reference-run resolution so the same logic
@@ -162,7 +162,8 @@ def resolve_background_reference(
     ``source_file`` (cached per source path in ``cache`` when provided, so a
     batch apply loads the reference **once**, not once per sample dataset). The
     scale is sample/reference good frames, falling back to the payload snapshots
-    and finally ``1.0``.
+    and finally ``1.0``. With ``allow_file=False``, an unloaded reference returns
+    ``None`` without disk I/O, for advisory previews.
 
     Raises
     ------
@@ -195,6 +196,8 @@ def resolve_background_reference(
                 break
 
     if reference_run is None:
+        if not allow_file:
+            return None
         if not source_file:
             raise ValueError("the reference is not loaded and no source file is recorded")
         # Cache only loader-loaded references (an in-registry run is reused live
@@ -206,11 +209,17 @@ def resolve_background_reference(
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")
 
-    scale = _reference_frame_scale(reference_run, sample_good_frames, payload)
+    scale, sample_frames, reference_frames, scale_source = _reference_frame_exposure(
+        reference_run, sample_good_frames, payload
+    )
 
     return BackgroundReference(
         histograms=list(reference_run.histograms),
         scale=float(scale),
+        source_file=reference_run.source_file or source_file,
+        good_frames_sample=sample_frames,
+        good_frames_reference=reference_frames,
+        scale_source=scale_source,
         run_number=None if run_number is None else int(run_number),
     )
 

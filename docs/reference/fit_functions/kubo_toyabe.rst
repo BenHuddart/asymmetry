@@ -20,8 +20,10 @@ of the family:
 
 A longitudinal field adds a Larmor term :math:`\omega_0 = \gamma_\mu B_L`
 that **decouples** the muon (:math:`G \to 1` as :math:`B_L \to \infty`);
-recovery of the polarisation under a small decoupling field is the
-unambiguous experimental signature that the local field is static. For an
+recovery under a field satisfying :math:`\gamma_\mu B_L\gg\Delta` is consistent
+with static fields, but slow fluctuations (:math:`
+u\ll\Delta`) can also
+decouple. Field recovery alone does not uniquely establish a static state. For an
 end-to-end walk-through see :doc:`/workflows/lf_decoupling_dynamics`.
 
 .. _fit-static-gkt-zf:
@@ -36,20 +38,25 @@ StaticGKT_ZF
 
 The zero-field static Gaussian Kubo–Toyabe function: the foundational
 response of a host in which a static, isotropic, Gaussian-distributed local
-field (typically randomly oriented nuclear moments) dominates. The
-:math:`1/3` tail has a geometric origin — one third of the ensemble has its
-spin parallel to the local field and is not depolarised, while the remaining
-two thirds precess and dephase into the dip at :math:`t = \sqrt{3}/\Delta`.
+field (typically randomly oriented nuclear moments) dominates. The :math:`1/3` tail is the angular average of the squared spin
+projection
+along the local field; that component does not dephase. The complementary
+transverse projection precesses and dephases into the dip at
+:math:`t=\sqrt{3}/\Delta`.
 The width
 
 .. math::
 
-   \Delta = \gamma_\mu\sqrt{\langle B^2\rangle}
+   \Delta = \gamma_\mu\sqrt{\langle B_x^2\rangle} = \gamma_\mu B_c
 
-sets both the dip position and the early-time Gaussian behaviour,
-:math:`1 - \Delta^2 t^2 + \dots`. For metals and diamagnetic hosts with only
+uses the standard deviation of one Cartesian component of the zero-mean
+isotropic field distribution; :math:`\langle|\mathbf B|^2\rangle=3\Delta^2/\gamma_\mu^2`.
+It sets both the dip position and the early-time response
+:math:`1-\Delta^2t^2+(5/12)\Delta^4t^4+O(t^6)`. For metals and diamagnetic
+hosts with only
 nuclear moments :math:`\Delta \sim 0.1{-}0.5\;\mu s^{-1}`; appreciably larger
-values imply an electronic contribution.
+values can also reflect short muon–nucleus distances, several sites, or an
+electronic contribution.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -59,11 +66,14 @@ Name       Symbol           Unit   Description
 =========  ===============  =====  ===========================================
 
 A good seed follows directly from the data: the dip sits at
-:math:`t_{\min} = \sqrt{3}/\Delta`. If the data window does not extend past
-the dip, the function is indistinguishable from a Gaussian with
-:math:`\sigma = \Delta/\sqrt{2}` (:ref:`fit-gaussian`); if the data decay
-monotonically *through* the plateau value, the field is partly dynamic — use
-``DynamicGaussianKT``. Common composites are ``StaticGKT_ZF + Constant`` and
+:math:`t_{\min} = \sqrt{3}/\Delta`. For :math:`\Delta t\ll1` it agrees to leading
+order with ``Gaussian`` at
+:math:`\sigma=\Delta` (:ref:`fit-gaussian`), with a fourth-order difference
+:math:`-\Delta^4t^4/12`. A window ending before the dip can still resolve that
+difference if its precision is sufficient. Relaxation of the tail can indicate
+fluctuations or an additional relaxation channel; use ``DynamicGaussianKT``
+when field dynamics are required by the data. Common composites are
+``StaticGKT_ZF + Constant`` and
 ``StaticGKT_ZF * Exponential + Constant`` when an additional dynamic channel
 modulates the static recovery. A standalone ``StaticGKT_ZF`` model is
 available in the ``MODELS`` registry.

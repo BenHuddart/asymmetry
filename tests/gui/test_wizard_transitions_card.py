@@ -25,7 +25,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
@@ -51,6 +50,7 @@ from asymmetry.core.fitting.global_search.trend_objective import (
     CandidateRung,
     SelectionObjective,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 from asymmetry.gui.utils.phase_colors import EXCLUDED_PHASE_HATCH_COLOR, phase_color
@@ -66,14 +66,6 @@ _TEMPERATURES = (1.8, 8.0, 16.0, 22.0, 28.0, 40.0)
 _PHASE_I = _RUNS[0:3]
 _PHASE_II = _RUNS[3:5]
 _STUB = _RUNS[5]
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture
@@ -127,6 +119,7 @@ def _assessment(
         dataset = by_run[run_number]
         curve = template.model.function(dataset.time, A_1=0.2, Lambda=0.3, A_bg=0.01)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=52.0,
             reduced_chi_squared=1.04,
@@ -170,10 +163,7 @@ def _assessment(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )

@@ -25,14 +25,6 @@ from asymmetry.gui.widgets.parameter_card import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _stack(*names: str) -> ParameterCardStack:
     stack = ParameterCardStack()
     for name in names:

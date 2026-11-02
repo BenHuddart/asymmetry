@@ -9,13 +9,19 @@ has one canonical structure for parameter trending.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Mapping, Sequence
 
+from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags, parameters_at_bound
 
-__all__ = ["fit_result_summary", "parameters_at_bound"]
+__all__ = [
+    "fit_result_summary",
+    "parameters_at_bound",
+    "reduced_statistic_label",
+    "reduced_statistic_summary",
+]
 
 #: Default two-sided confidence level R for the χ² good/poor/overdone verdict.
 #: Muon-tuned to 0.999 (WiMDA's own clamp ceiling): high-statistics muon fits
@@ -39,34 +45,78 @@ FIT_QUALITY_CONFIDENCE = 0.999
 _CHI2_MARGINAL_ABS_TOL = 0.2
 
 
-def _infer_dof(fit_result: Any) -> int:
-    """Best-effort degrees of freedom ν for the χ² verdict.
+def _infer_dof(fit_result: FitResult) -> int:
+    """Use recorded ν, or recover it from the reported statistic and reduced value."""
+    if fit_result.dof > 0:
+        return fit_result.dof
+    statistic, reduced = fit_result.chi_squared, fit_result.reduced_chi_squared
+    return (
+        int(round(statistic / reduced))
+        if math.isfinite(statistic) and math.isfinite(reduced) and statistic > 0 and reduced > 0
+        else 0
+    )
 
-    Prefers the explicit :attr:`FitResult.dof` (set at the core minimiser sites);
-    falls back to inferring ν ≈ round(χ² / χ²ᵣ) for any legacy caller that does not
-    populate it. Returns 0 ("unknown") when neither source is usable.
+
+# A display threshold for an asymptotic approximation, not a sparse-count calibration.
+_POISSON_MIN_EXPECTED_COUNT = 5.0
+
+
+def reduced_statistic_label(objective: Objective | str | None, *, ascii: bool = False) -> str:
+    """Name the recorded objective without inferring it from a stored numeric field."""
+    if objective is None:
+        return "Fit statistic/nu" if ascii else "Fit statistic/ν"
+    if Objective(objective) is Objective.POISSON:
+        return "Poisson deviance/nu" if ascii else "Poisson deviance/ν"
+    return "chi^2/nu" if ascii else "χ²/ν"
+
+
+def reduced_statistic_summary(summaries: Sequence[Mapping], *, mean: bool = False) -> str:
+    """Describe homogeneous reduced statistics without pooling unknown likelihoods."""
+    if not summaries:
+        return ""
+    objectives = {summary.get("objective") for summary in summaries}
+    if len(objectives) != 1:
+        return "Mixed fit objectives."
+    objective = next(iter(objectives))
+    if objective is None:
+        return "Fit objective was not recorded."
+    values = [
+        float(summary["reduced_chi_squared"])
+        for summary in summaries
+        if isinstance(summary.get("reduced_chi_squared"), (int, float))
+        and math.isfinite(summary["reduced_chi_squared"])
+    ]
+    if not values:
+        return ""
+    label = reduced_statistic_label(objective)
+    if mean:
+        return f"average {label} = {sum(values) / len(values):.4f}"
+    extent = f"{min(values):.3g}–{max(values):.3g}" if len(values) > 1 else f"{values[0]:.3g}"
+    return f"{label} {extent}"
+
+
+def _quality_reason(fit_result: FitResult) -> str | None:
+    """Explain when the selected likelihood has no displayed χ² approximation."""
+    if fit_result.objective is Objective.POISSON:
+        minimum = fit_result.minimum_expected_count
+        if minimum is None:
+            return "Poisson expected counts were not recorded; no χ² quality verdict is available."
+        if minimum < _POISSON_MIN_EXPECTED_COUNT:
+            return "Poisson deviance has no χ² quality verdict when any fitted expected count is below 5."
+    return None
+
+
+def _quality_summary(
+    fit_result: FitResult, confidence: float = FIT_QUALITY_CONFIDENCE
+) -> dict | None:
+    """Return an applicable approximate χ² band, or no verdict.
+
+    Poisson applicability uses the whole minimized objective's expected-count
+    minimum. The confidence level controls the two-sided reference band.
     """
-    dof = int(getattr(fit_result, "dof", 0) or 0)
-    if dof > 0:
-        return dof
-    chi2 = float(getattr(fit_result, "chi_squared", 0.0))
-    reduced = float(getattr(fit_result, "reduced_chi_squared", 0.0))
-    if chi2 > 0.0 and reduced > 0.0:
-        return int(round(chi2 / reduced))
-    return 0
-
-
-def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE) -> dict | None:
-    """JSON-serialisable χ² verdict for *fit_result*, or ``None`` when none applies.
-
-    Carries the good/poor/overdone verdict plus the target χ²ᵣ band so every fit
-    surface can render the same chip and teaching tooltip (W7). ``None`` when no
-    verdict is possible (ν < 1 or non-finite χ²) — surfaces then show χ²ᵣ bare.
-
-    ``confidence`` is the two-sided level R for the band (default WiMDA's
-    ``Rgoodfit`` = 0.95); the GUI passes the user-configured value.
-    """
-    chi2 = float(getattr(fit_result, "chi_squared", 0.0))
+    if _quality_reason(fit_result) is not None:
+        return None
+    chi2 = fit_result.chi_squared
     dof = _infer_dof(fit_result)
     quality = assess_fit_quality(chi2, dof, confidence)
     if quality.verdict is None or not all(
@@ -80,6 +130,11 @@ def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE
     marginal = quality.verdict == "poor" and abs(chi2_reduced - 1.0) <= _CHI2_MARGINAL_ABS_TOL
     return {
         "verdict": quality.verdict,
+        "assumption": (
+            "χ² laws are approximate for nonlinear or bounded fits."
+            if fit_result.objective is Objective.GAUSSIAN
+            else "The Poisson deviance uses an approximate χ² law; fitted expected counts are at least 5."
+        ),
         "chi2_reduced": chi2_reduced,
         "band_low": float(quality.band_low),
         "band_high": float(quality.band_high),
@@ -92,54 +147,39 @@ def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE
 
 
 def fit_result_summary(
-    fit_result: Any,
+    fit_result: FitResult,
     *,
     confidence: float = FIT_QUALITY_CONFIDENCE,
     extra_flags: Sequence[str] = (),
 ) -> dict:
-    """Return a JSON-serialisable summary of *fit_result*.
+    """Record the likelihood, statistics, parameters and quality applicability.
 
-    Includes the fitted parameter values and uncertainties so a series'
-    ``results_by_run`` can drive parameter trending. Several *additive* diagnostic
-    keys ride alongside without changing the meaning of the existing fields:
-
-    - ``"quality"`` — the χ² good/poor/overdone verdict + target band (or ``None``).
-    - ``"params_at_bound"`` — names of free parameters pinned on a finite bound
-      (a poorly-constrained / rail-to-bound signal), for an advisory badge.
-    - ``"quality_flags"`` — the advisory member-quality flags (``failed`` /
-      ``large_rel_err`` / ``bound_pinned`` / ``spurious_reseeded``), as a sorted
-      list. Diagnostic only; never mutates trend inclusion (D3). Callers with
-      trend context pass ``extra_flags`` (e.g. ``spurious_reseeded``).
-    - ``"uncertainties_asymmetric"`` — opt-in MINOS intervals ``{name: [lo, hi]}``
-      (``lo < 0 < hi``), a display-only overlay. ``"uncertainties"`` stays the
-      symmetric HESSE σ that every downstream surface consumes.
-
-    ``confidence`` sets the two-sided level R of the χ² quality band (default
-    WiMDA's ``Rgoodfit`` = 0.95); the GUI threads the user-configured value here.
+    The minimum fitted expectation belongs to the whole objective, including
+    coupled members. MINOS intervals are signed parameter offsets; symmetric
+    HESSE uncertainties retain their own values. Advisory member flags never
+    change trend inclusion. Confidence uses the configured two-sided band level.
     """
-    parameters: dict[str, float] = {}
-    parameter_set = getattr(fit_result, "parameters", None)
-    if parameter_set is not None:
-        for name in getattr(parameter_set, "names", []):
-            try:
-                parameters[str(name)] = float(parameter_set[name].value)
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue
-    uncertainties = {
-        str(k): float(v) for k, v in (getattr(fit_result, "uncertainties", {}) or {}).items()
-    }
+    parameters = {parameter.name: float(parameter.value) for parameter in fit_result.parameters}
+    uncertainties = {str(name): float(value) for name, value in fit_result.uncertainties.items()}
     asymmetric = {
-        str(k): [float(lo), float(hi)]
-        for k, (lo, hi) in (getattr(fit_result, "minos_errors", None) or {}).items()
+        str(name): [float(lo), float(hi)]
+        for name, (lo, hi) in (fit_result.minos_errors or {}).items()
     }
     return {
-        "success": bool(getattr(fit_result, "success", False)),
-        "chi_squared": float(getattr(fit_result, "chi_squared", 0.0)),
-        "reduced_chi_squared": float(getattr(fit_result, "reduced_chi_squared", 0.0)),
+        "success": bool(fit_result.success),
+        "objective": fit_result.objective.value,
+        "minimum_expected_count": (
+            None
+            if fit_result.minimum_expected_count is None
+            else float(fit_result.minimum_expected_count)
+        ),
+        "chi_squared": float(fit_result.chi_squared),
+        "reduced_chi_squared": float(fit_result.reduced_chi_squared),
         "parameters": parameters,
         "uncertainties": uncertainties,
         "uncertainties_asymmetric": asymmetric,
         "quality": _quality_summary(fit_result, confidence),
-        "params_at_bound": parameters_at_bound(parameter_set),
+        "quality_reason": _quality_reason(fit_result),
+        "params_at_bound": parameters_at_bound(fit_result.parameters),
         "quality_flags": sorted(member_quality_flags(fit_result, extra_flags=extra_flags)),
     }

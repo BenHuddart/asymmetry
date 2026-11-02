@@ -124,9 +124,9 @@ teaching guide states no target value for it; the :math:`0.38`–:math:`0.39`
 
    The :math:`\tfrac{2}{3}` transverse component gives the Gaussian dip and
    recovery; the :math:`\tfrac{1}{3}` longitudinal component is the flat tail.
-   The full component, its longitudinal-field generalisation, and the relation
-   :math:`\sigma = \Delta/\sqrt{2}` are on the :ref:`Kubo–Toyabe reference page
-   <fit-static-gkt-zf>`.
+   The full component, its longitudinal-field generalisation, and its
+   zero-field early-time relation to ``Gaussian`` are on the
+   :ref:`Kubo–Toyabe reference page <fit-static-gkt-zf>`.
 
 Low-temperature quantum diffusion
 ---------------------------------

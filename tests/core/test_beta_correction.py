@@ -29,9 +29,11 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry_with_count_errors,
     estimate_alpha,
 )
+from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.integral import integrate_asymmetry
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
+from tests.counts import aligned_counts
 
 MU_TAU_US = 2.197
 
@@ -137,25 +139,19 @@ class TestBetaFormula:
     def test_binned_reduction_threads_beta(self):
         t, f, b, alpha_true, beta_true = _synthetic_counts()
         _, with_beta, _ = binned_fb_asymmetry(
-            f,
-            b,
-            grouping={"bunching_factor": 1},
-            common_t0=0,
-            bin_width_us=0.016,
+            aligned_counts(
+                f, b, common_t0=0, bin_width_us=0.016, first_good_bin=0, last_good_bin=f.size - 1
+            ),
+            binning=binning_spec({"bunching_factor": 1}),
             alpha=alpha_true,
-            first_good_bin=0,
-            last_good_bin=f.size - 1,
             beta=beta_true,
         )
         _, without, _ = binned_fb_asymmetry(
-            f,
-            b,
-            grouping={"bunching_factor": 1},
-            common_t0=0,
-            bin_width_us=0.016,
+            aligned_counts(
+                f, b, common_t0=0, bin_width_us=0.016, first_good_bin=0, last_good_bin=f.size - 1
+            ),
+            binning=binning_spec({"bunching_factor": 1}),
             alpha=alpha_true,
-            first_good_bin=0,
-            last_good_bin=f.size - 1,
         )
         assert not np.allclose(with_beta, without)
         np.testing.assert_allclose(with_beta, 0.25 * np.cos(8.0 * t), rtol=1e-12, atol=1e-14)
@@ -210,7 +206,7 @@ class TestBetaAlphaIndependence:
 class TestBetaIntegral:
     def test_integral_matches_summed_counts_formula(self):
         _, f, b, alpha, beta = _synthetic_counts()
-        value, error = integrate_asymmetry(f, b, alpha=alpha, beta=beta)
+        value, error = integrate_asymmetry(GroupCounts(f), GroupCounts(b), alpha=alpha, beta=beta)
         ref_a, ref_e = compute_asymmetry(np.array([np.sum(f)]), np.array([np.sum(b)]), alpha, beta)
         assert value == pytest.approx(float(ref_a[0]))
         assert error == pytest.approx(float(ref_e[0]))
@@ -219,7 +215,7 @@ class TestBetaIntegral:
         f = np.ones(8)
         b = np.ones(8)
         with pytest.raises(ValueError, match="beta"):
-            integrate_asymmetry(f, b, alpha=1.0, beta=0.0)
+            integrate_asymmetry(GroupCounts(f), GroupCounts(b), alpha=1.0, beta=0.0)
 
 
 # --------------------------------------------------------------------------- #

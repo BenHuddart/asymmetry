@@ -39,6 +39,30 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py docs` | Sphinx documentation build. |
 | `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
 
+### Grouped-count boundaries
+
+Structural checks reject `min` calls that truncate multiple array lengths in
+`core/transform`. Detector alignment computes its terminal crop explicitly.
+Functions consuming `binned_fb_asymmetry` or `slice_to_good_window` read the
+validated `BinWindow` rather than parsing window keys from grouping again.
+Both violation counts are zero; metadata displays and non-F/B analyses retain
+their own window policies.
+
+### Physical-unit authority
+
+Unit comparisons in raw-file loaders belong to the shared physical-unit table.
+Structural validation freezes the three NeXus normalizer comparisons and rejects
+new dispatch elsewhere. The constant authority also covers the Celsius offset.
+
+### Physical-constant authority
+
+Structural validation scans Python assignments and numeric literals in the
+application, screenshot scenarios, and tools. Physical constants come from
+`core/utils/constants.py`; teaching examples derive their rounding from that
+authority. Tests may type independent reference values. Source-reproducing
+paper and guide arithmetic has a baseline with a frozen count per file;
+removing a duplicate requires lowering its count or removing its entry.
+
 ### Test tiers
 
 `test` and `validate` accept `--tier {fast,standard,full}`:
@@ -50,15 +74,29 @@ boundary, touches shared behavior, or changes user-visible workflows.
   the pre-push gate and what CI runs. The GUI tests it adds each construct
   widgets (often a full `MainWindow`), so it takes ~2 min locally — run it once
   per task, not per iteration.
-- **`full`** — every test, including `slow`/`integration`. Runs on release tags
-  via the `Full test suite` workflow. It runs with reduced parallelism (`-n 2`
+- **`full`** — every test, including `slow`/`integration`. The reusable `Full test
+  suite` workflow runs inside the release workflow on the exact tagged commit
+  and gates publication alongside both platform builds. Manual dispatch can
+  validate other refs without publishing. It runs with reduced parallelism (`-n 2`
   and a raised per-test timeout) rather than `-n auto`: the exhaustive
   global-wizard harness test fans its own fits across a `cpu_count - 2` process
   pool, so a worker-per-core layout oversubscribes the runner and stalls
   neighbour fits past the timeout (historically crashing the release-tag run).
+  The full-tier workflow logs each test's identity and stops on the first worker
+  crash, retaining the failing test in the log instead of restarting workers.
   All tiers also pin the numeric backends to one thread each (`*_NUM_THREADS=1`)
   so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
   threads.
+
+CI configures pytest's native watchdog with `faulthandler_timeout=600`.
+Pytest resets the timer for each test and owns the diagnostic file descriptor
+through capture and teardown. A test exceeding that interval emits all thread
+stacks before the job deadline.
+
+The full-suite workflow logs Linux's `oom_kill` counter and available memory
+before and after tests, including test failures. A counter increase establishes
+an out-of-memory kill on the runner; it does not identify the victim process.
+An unchanged counter leaves other causes of worker termination unresolved.
 
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
@@ -138,3 +176,34 @@ Add a new harness check when:
 Keep rules high signal. A harness that fails noisily for incidental style drift
 will stop being trusted; a harness that encodes real project invariants will
 compound.
+
+## Retired planning locations
+
+Plans and review decisions belong in GitHub issues. The structural check rejects
+new files under `docs/plans/`, `docs/porting/`, `docs/studies/`, `docs/audit/`,
+`docs/investigations/`, and at `docs/PLANS.md`. Existing files are frozen in
+`tools/baselines/retired_docs.txt`, one strictly sorted repository-relative POSIX
+file path per line. Editing an existing file is allowed while its supported
+content is rescued into the owning Sphinx page, a regression test, or an invariant
+comment.
+
+When deleting a retired file, delete its baseline line in the same change. A stale
+entry fails structural checks, and a file reintroduced after removal fails as a
+new plan. Emptying the baseline is allowed; no placeholder study or index entry
+is required. Hidden files and `__pycache__` directories are ignored.
+
+## Test user-state isolation
+
+The root `qapp` fixture owns QApplication construction; structural checks reject
+local `qapp` fixtures and direct application construction elsewhere in tests.
+The root fixtures load Qt and run window cleanup only for tests marked `gui`.
+A core-only run imports no Qt through fixtures and can run without PySide6.
+GUI settings (including system fallbacks), app data, and cached fit times use
+per-test temporary locations; plugin discovery is isolated for every test.
+The temporary roots are independent between xdist workers.
+
+`tests/tools/test_test_isolation.py` checks a core harness subprocess with Qt
+imports blocked. On Linux it also runs a GUI case with its subprocess home
+pointing at a regular file, which makes real user-config paths unwritable even
+for a privileged test process. Reproduce both checks with
+`python tools/harness.py test -- tests/tools/test_test_isolation.py`.

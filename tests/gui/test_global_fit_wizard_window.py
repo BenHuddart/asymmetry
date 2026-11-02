@@ -8,6 +8,8 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from tests.core.criteria_fixtures import with_aicc
+
 pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -40,6 +42,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.panels.log_panel import LogPanel
@@ -50,14 +53,6 @@ from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 from tests._qt_helpers import wait_for
 
 LF_DYNAMICS = WizardScope(physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}))
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture
@@ -111,6 +106,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         curve = model.function(dataset.time, A_1=0.2, Lambda=lam, A_bg=0.01)
         run_number = int(dataset.run_number)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=3.0 + idx,
             reduced_chi_squared=0.05 + 0.01 * idx,
@@ -203,10 +199,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         ),
         run_diagnostics=tuple(run_diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )
@@ -258,23 +251,22 @@ def _fake_multi_variant_recommendation(
         base.assessments[0],
         assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
     )
-    shared = replace(
-        base.assessments[0],
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        global_parameters=ParameterSet(
-            [
-                Parameter("A_1", value=0.2, min=0.0, max=1.0),
-                Parameter("Lambda", value=0.35, min=0.0, max=5.0),
-                Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
-            ]
+    shared = with_aicc(
+        replace(
+            base.assessments[0],
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            global_parameters=ParameterSet(
+                [
+                    Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                    Parameter("Lambda", value=0.35, min=0.0, max=5.0),
+                    Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
+                ]
+            ),
+            parameter_recommendations=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
         ),
-        parameter_recommendations=(),
-        aic=11.0,
-        aicc=11.2,
-        bic=13.0,
-        selected_score=11.2,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        base.assessments[0].aicc + 1,
     )
     return replace(
         base,
@@ -298,6 +290,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
     assessment = CandidateAssessment(
         template=template,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=4.0,
             reduced_chi_squared=0.08,
@@ -312,10 +305,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
             residuals=np.asarray(dataset.asymmetry - curve, dtype=float),
             message="ok",
         ),
-        aic=8.0,
-        aicc=8.2,
-        bic=9.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.8,
         runs_z_score=0.1,
         max_abs_autocorrelation=0.1,
@@ -1158,15 +1148,7 @@ def test_cancel_in_the_progress_block_cancels_and_lands_on_the_origin(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The progress block's Cancel, shown while running, cooperatively cancels the run.
-
-    Phase-one blocks on a threading.Event so the GUI thread can confirm the
-    worker is live, click Cancel, then release phase-one. The worker's next
-    cancel checkpoint raises FitCancelledError (declared in _cancel_exceptions);
-    the base's cancelled slot clears busy, the progress block collapses to its
-    Run log, and the window lands on the step the run started from. The
-    screening builder must never run.
-    """
+    """The progress block's Cancel, shown while running, cooperatively cancels the run."""
     import threading
 
     released = threading.Event()

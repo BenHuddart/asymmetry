@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QDialog
 
 import asymmetry.gui.panels.fit_parameters_panel as fpp
 from asymmetry.core.fitting.axis_transforms import AxisTransform
@@ -29,11 +29,6 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _GroupFitData,
 )
 from tests.gui._trend_panel import card
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _row(run_number: int, field: float, lam: float, lam_err: float = 0.02) -> _FitRow:

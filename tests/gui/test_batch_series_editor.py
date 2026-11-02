@@ -19,11 +19,12 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.project.schema import load_project, save_project
 from asymmetry.core.representation import FitSeries, RepresentationType
@@ -36,8 +37,8 @@ _RUNS = [10, 11, 12]
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _new_window() -> MainWindow:
@@ -78,6 +79,7 @@ def _dataset(run_number: int, field: float = 100.0) -> MuonDataset:
 
 def _result(value: float = 0.2) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=0.5,

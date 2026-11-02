@@ -44,6 +44,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import record_scale_estimate
 from asymmetry.core.utils.constants import (
@@ -71,14 +72,6 @@ from asymmetry.gui.panels.fit_panel import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def dataset() -> MuonDataset:
     t = np.linspace(0.0, 4.0, 80)
@@ -100,6 +93,7 @@ def _wizard_payload_for_dataset(
     )
     curve = model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01)
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
         reduced_chi_squared=0.1,
@@ -117,10 +111,7 @@ def _wizard_payload_for_dataset(
     assessment = CandidateAssessment(
         template=template,
         fit_result=result,
-        aic=8.0,
-        aicc=8.2,
-        bic=10.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
@@ -193,6 +184,7 @@ def _global_wizard_recommendation_for_dataset(
     fit_results = {}
     for run_number, lambda_value in ((int(dataset.run_number), 0.4), (102, 0.6)):
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=5.0,
             reduced_chi_squared=0.1,
@@ -271,10 +263,7 @@ def _global_wizard_recommendation_for_dataset(
             ),
         ),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )
@@ -499,13 +488,7 @@ def test_single_fit_apply_fit_wizard_assessment_ticks_fix_for_pinned_parameter(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
-    """Applying a wizard result must keep the wizard's pins.
-
-    The wizard pins applied-field parameters (``field``, and ``B_L`` on a
-    ZF/LF run); Apply has always read ``fitted.fixed``, but the engine used to
-    drop the flag on its way out of the fit, so a pinned parameter landed in
-    the table unticked and unbounded.
-    """
+    """Applying a wizard result must keep the wizard's pins."""
     assessment, recommendation = _wizard_payload_for_dataset(dataset)
     pinned = assessment.fit_result.parameters["Lambda"]
     pinned.fixed = True
@@ -647,12 +630,7 @@ def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: Mu
 def test_partial_batch_failure_emits_converged_series_and_warns(
     qapp: QApplication,
 ) -> None:
-    """A partial batch fit emits a series from the converged runs and warns.
-
-    Exercises the real (un-mocked) ``_on_fit_finished`` path: the failed run must
-    be dropped from the emitted curves (``_results_with_curves`` must not KeyError
-    on it) and the result box must surface a non-blocking failure warning.
-    """
+    """A partial batch fit emits a series from the converged runs and warns."""
     t = np.linspace(0.0, 4.0, 40)
 
     def _ds(run_number: int) -> MuonDataset:
@@ -675,6 +653,7 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
     )
 
     ok = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=0.5,
@@ -683,7 +662,7 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
         ),
         uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
     )
-    failed = FitResult(success=False, message="call limit reached")
+    failed = FitResult(objective=Objective.GAUSSIAN, success=False, message="call limit reached")
 
     tab._on_fit_finished(launch, {10: ok, 11: failed}, [])
 
@@ -694,14 +673,7 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
 def test_batch_to_single_view_switch_preserves_model(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
-    """A hand-built single-fit model survives a Single→Batch→Single view switch.
-
-    Regression for GUI_LORE "Batch→Single view switch resets the single-fit model".
-    Once a run has been batched its per-projection slot exists but is empty, so the
-    restore provider returns ``{}`` and ``set_dataset`` blanks the live form to the
-    default model on re-bind. Switching back to Single must restore the model the
-    user built rather than leaving the default.
-    """
+    """A hand-built single-fit model survives a Single→Batch→Single view switch."""
     panel = FitPanel()
     # Simulate a batched run: its single-fit slot is present but empty, so the
     # restore mediator asks for a blank form on every re-bind.
@@ -730,12 +702,7 @@ def test_batch_to_single_view_switch_preserves_model(
 def test_view_switch_snapshot_does_not_override_a_persisted_fit(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
-    """A populated slot payload (a real saved fit) wins over a stale tab snapshot.
-
-    The snapshot only rescues an *unfit* hand-built form; when navigating to a
-    projection that has its own persisted fit, that fit must show — the snapshot
-    is invalidated, not replayed on return to Single.
-    """
+    """A populated slot payload (a real saved fit) wins over a stale tab snapshot."""
     panel = FitPanel()
     panel.set_dataset(dataset)
     panel._single_tab._set_composite_model(
@@ -761,16 +728,7 @@ def test_view_switch_snapshot_does_not_override_a_persisted_fit(
 def test_domain_switch_on_batch_tab_does_not_replay_time_model_into_single(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
-    """FB→FFT with the Batch tab active must not leave a time model in Single.
-
-    Leaving the Single tab snapshots its (time-domain) form. Switching the plot
-    representation to FFT then runs ``set_domain("frequency")`` +
-    ``set_dataset`` (the MainWindow chain), which re-establishes the same run
-    number — so on the next visit to Single the stale snapshot matched its
-    ``(run, projection)`` binding and replayed a time-domain Exponential into
-    the frequency-domain form. The snapshot's binding identity must include
-    the domain.
-    """
+    """FB→FFT with the Batch tab active must not leave a time model in Single."""
     panel = FitPanel()
     panel.set_dataset(dataset)
 
@@ -934,6 +892,7 @@ def test_single_fit_success_emits_and_updates_table(
         [Parameter(name=p, value=float(i + 1)) for i, p in enumerate(model.param_names)]
     )
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=10.0,
         reduced_chi_squared=0.5,
@@ -1006,6 +965,7 @@ def test_single_fit_uses_dataset_object_it_was_given(
         captured["model_fn"] = model_fn
         captured["n_points"] = len(captured_dataset.time)
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -1027,19 +987,14 @@ def test_single_fit_uses_dataset_object_it_was_given(
 def test_single_fit_threads_zero_padding_oversampling(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
-    """A padded FFT spectrum's fit carries the effective-sample-size correction.
-
-    Zero-padded spectra stamp ``fourier_padding`` into their metadata; the tab
-    must thread it to the engine as ``error_oversampling``. Time-domain
-    datasets carry no stamp and must not see the kwarg at all (engine test
-    doubles with strict signatures stay unchanged).
-    """
+    """A padded FFT spectrum's fit carries the effective-sample-size correction."""
     captured: dict = {}
 
     def _make_stub(model):
         def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None, **kwargs):
             captured["kwargs"] = dict(kwargs)
             return FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -1105,6 +1060,7 @@ def _blocking_fit_engine(release: threading.Event, model):
     def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         release.wait(10.0)
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -1307,6 +1263,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
 
     pset = ParameterSet([Parameter(name=p, value=1.0) for p in model.param_names])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
         reduced_chi_squared=0.5,
@@ -1329,7 +1286,7 @@ def test_global_fit_finished_failure_lists_failed_runs(
 ) -> None:
     tab = GlobalFitTab()
     launch = FitLaunch(model=tab._composite_model, global_params=(), datasets=())
-    fail = FitResult(success=False, message="x")
+    fail = FitResult(objective=Objective.GAUSSIAN, success=False, message="x")
 
     tab._on_fit_finished(launch, {101: fail}, ParameterSet())
     assert "Batch fit failed" in tab._results_card.content_html()
@@ -1463,10 +1420,18 @@ def test_grouped_fit_finished_updates_grouped_tables(
         ),
         group_results={
             1: FitResult(
-                success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=forward_params
+                objective=Objective.GAUSSIAN,
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=forward_params,
             ),
             2: FitResult(
-                success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=backward_params
+                objective=Objective.GAUSSIAN,
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=backward_params,
             ),
         },
     )
@@ -2183,8 +2148,10 @@ def test_grouped_mode_context_uses_current_fit_window(
         run=Run(run_number=101),
     )
     captured: dict[str, tuple[float | None, float | None]] = {}
+    corrections: list[bool] = []
 
-    def _fake_groups(_dataset, *, t_min=None, t_max=None):
+    def _fake_groups(_dataset, *, t_min=None, t_max=None, lifetime_corrected=True):
+        corrections.append(lifetime_corrected)
         captured["groups"] = (t_min, t_max)
         return [
             SimpleNamespace(group_id=1, group_name="Forward"),
@@ -2221,6 +2188,11 @@ def test_grouped_mode_context_uses_current_fit_window(
     assert captured["groups"] == pytest.approx((1.0, 3.0))
     assert captured["datasets"] == (None, None)
 
+    assert corrections[-1] is False
+    tab.set_count_fit_cost("gaussian")
+    tab._grouped_mode_context()
+    assert corrections[-1] is True
+
 
 def test_grouped_context_builds_members_for_multiple_runs(
     qapp: QApplication,
@@ -2235,7 +2207,7 @@ def test_grouped_context_builds_members_for_multiple_runs(
             run=Run(run_number=run),
         )
 
-    def _fake_groups(_dataset, *, t_min=None, t_max=None):
+    def _fake_groups(_dataset, *, t_min=None, t_max=None, lifetime_corrected=True):
         return [
             SimpleNamespace(group_id=1, group_name="Forward"),
             SimpleNamespace(group_id=2, group_name="Backward"),
@@ -2660,8 +2632,8 @@ def test_global_tab_inherits_model_and_average_values_from_single_fits(
     model = CompositeModel(["Gaussian", "Constant"], operators=["+"])
     p1 = ParameterSet([Parameter("A_1", 0.20), Parameter("sigma", 1.1), Parameter("A_bg", 0.01)])
     p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("sigma", 1.5), Parameter("A_bg", 0.03)])
-    r1 = FitResult(success=True, parameters=p1)
-    r2 = FitResult(success=True, parameters=p2)
+    r1 = FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p1)
+    r2 = FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p2)
 
     tab.register_single_fit_seed(101, model, r1)
     tab.register_single_fit_seed(102, model, r2)
@@ -2681,8 +2653,12 @@ def test_global_fit_uses_inherited_local_values_per_run(
     model = tab._composite_model
     p1 = ParameterSet([Parameter("A_1", 0.22), Parameter("Lambda", 0.40), Parameter("A_bg", 0.01)])
     p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("Lambda", 0.85), Parameter("A_bg", 0.02)])
-    tab.register_single_fit_seed(101, model, FitResult(success=True, parameters=p1))
-    tab.register_single_fit_seed(102, model, FitResult(success=True, parameters=p2))
+    tab.register_single_fit_seed(
+        101, model, FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p1)
+    )
+    tab.register_single_fit_seed(
+        102, model, FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p2)
+    )
 
     # Enforce classification for this test case.
     row_by_name = {}
@@ -2753,7 +2729,10 @@ def test_batch_fit_uses_edited_fixed_value_after_global_batch(
             [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=True)]
         )
         result = FitResult(
-            success=True, parameters=params, uncertainties={name: 0.01 for name in pnames}
+            objective=Objective.GAUSSIAN,
+            success=True,
+            parameters=params,
+            uncertainties={name: 0.01 for name in pnames},
         )
         return (result, (np.array([0.0, 1.0]), np.array([0.2, 0.1])), [])
 
@@ -2957,6 +2936,7 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
             [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=False)]
         )
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=2.0,
             reduced_chi_squared=1.0,
@@ -3011,7 +2991,10 @@ def test_global_fit_results_preserve_parameter_type_selection(
             [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=False)]
         )
         return FitResult(
-            success=True, parameters=params, uncertainties={name: 0.01 for name in pnames}
+            objective=Objective.GAUSSIAN,
+            success=True,
+            parameters=params,
+            uncertainties={name: 0.01 for name in pnames},
         )
 
     results = {
@@ -3049,9 +3032,13 @@ def test_fit_panel_batch_tab_auto_inherits_completed_single_fits(
     p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("sigma", 1.5), Parameter("A_bg", 0.03)])
 
     panel._single_tab.set_dataset(dataset)
-    panel._single_tab.fit_completed.emit(FitResult(success=True, parameters=p1), None, [])
+    panel._single_tab.fit_completed.emit(
+        FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p1), None, []
+    )
     panel._single_tab.set_dataset(d2)
-    panel._single_tab.fit_completed.emit(FitResult(success=True, parameters=p2), None, [])
+    panel._single_tab.fit_completed.emit(
+        FitResult(objective=Objective.GAUSSIAN, success=True, parameters=p2), None, []
+    )
 
     _assert_inherits_averaged_seeds(panel._global_tab, model)
 
@@ -3075,7 +3062,7 @@ def test_fit_panel_refresh_carries_fitted_source_and_clears_result(
     panel.set_dataset(d1)
     panel._single_tab._param_table.item(0, 1).setText("0.777")
     panel._single_tab.fit_completed.emit(
-        FitResult(success=True, parameters=ParameterSet()), None, []
+        FitResult(objective=Objective.GAUSSIAN, success=True, parameters=ParameterSet()), None, []
     )
     assert panel._single_fit_provenance == "own_slot"
 
@@ -3136,7 +3123,7 @@ def test_fit_panel_refresh_reseeds_bl_from_target_field(
         if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
             panel._single_tab._param_table.item(row, 1).setText("50.0")
     panel._single_tab.fit_completed.emit(
-        FitResult(success=True, parameters=ParameterSet()), None, []
+        FitResult(objective=Objective.GAUSSIAN, success=True, parameters=ParameterSet()), None, []
     )
 
     # d2 has field=150 G — refreshing onto it reseeds B_L to 150, not 50.
@@ -3189,6 +3176,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
         )
         curve = model.function(ds.time, A_1=0.2, Lambda=lam, A_bg=0.01)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=5.0,
             reduced_chi_squared=0.1,
@@ -3273,10 +3261,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
             ),
         ),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )
@@ -3831,13 +3816,7 @@ def test_bounded_phase_seed_padding_caps_large_signals() -> None:
 
 
 def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> None:
-    """A 13-parameter model must expose every parameter row for editing.
-
-    Regression: the single-fit Parameters table used to collapse to a handful
-    of rows with no scrollbar, so the lower parameters of the CdS three-line
-    model (A_5/frequency_5/phase_5/Lambda_6/A_bg) were unreachable — they could
-    not be seen, seeded, or fixed.
-    """
+    """A 13-parameter model must expose every parameter row for editing."""
     tab = SingleFitTab()
     cds_model = CompositeModel.from_expression(
         "Oscillatory * Exponential + Oscillatory * Exponential "
@@ -4662,7 +4641,9 @@ def test_typed_amplitude_survives_a_run_switch_while_bl_follows_the_run(
     tab._set_composite_model(CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"]))
     assert _table_value(tab._param_table, "B_L") == pytest.approx(50.0)
     _set_table_value(tab._param_table, "A_1", "0.31")
-    tab.fit_completed.emit(FitResult(success=True, parameters=ParameterSet()), None, [])
+    tab.fit_completed.emit(
+        FitResult(objective=Objective.GAUSSIAN, success=True, parameters=ParameterSet()), None, []
+    )
 
     panel.set_dataset(d2)
 

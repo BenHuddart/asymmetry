@@ -1,17 +1,11 @@
 """Frequency ↔ field unit conversions for spectral displays.
 
-A muon precession line at frequency ν corresponds to a local field B through the
-Larmor relation ν = γ_μ B / 2π, with γ_μ/2π = 135.538817 MHz/T, so a MaxEnt or
-FFT spectrum can be displayed against frequency (MHz) or field (Gauss / Tesla)
-interchangeably (Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*,
-OUP 2022, §15.5).
+A muon precession line obeys ν = γ_μ B / 2π. The cited ratio and unit definitions
+in :mod:`asymmetry.core.utils.constants` set the frequency (MHz) and field
+(Gauss / Tesla) scales for both FFT and maximum-entropy spectra. Other probes
+can pass their own positive gyromagnetic ratio.
 
-These are pure scalar/array converters built on the CODATA constants in
-:mod:`asymmetry.core.utils.constants`.  The gyromagnetic ratio is a parameter
-defaulting to the muon value, so other probes (¹⁹F, ¹H) can pass their own.
-
-This is the shared units helper for the frequency-domain display work; the
-``frequency-domain-finishers`` project reuses this API verbatim.
+See Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, OUP 2022, §15.5.
 """
 
 from __future__ import annotations

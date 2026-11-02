@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
     _X_LABELS,
@@ -272,11 +273,10 @@ def period_run(combined: Run, index: int) -> Run:
     }
 
     good_frames = grouping.get("period_good_frames")
-    if isinstance(good_frames, list) and index < len(good_frames):
-        try:
-            period_grouping["good_frames"] = float(good_frames[index])
-        except (TypeError, ValueError):
-            pass
+    if isinstance(good_frames, list):
+        period_grouping.pop("good_frames", None)
+        if index < len(good_frames) and good_frames[index] is not None:
+            period_grouping["good_frames"] = good_frames[index]
 
     dead_time = grouping.get("period_dead_time_us")
     if (
@@ -333,11 +333,10 @@ def select_period_histograms(
     period_grouping = dict(grouping)
 
     period_good_frames = grouping.get("period_good_frames")
-    if isinstance(period_good_frames, list) and period_index < len(period_good_frames):
-        try:
-            period_grouping["good_frames"] = float(period_good_frames[period_index])
-        except (TypeError, ValueError):
-            pass
+    if isinstance(period_good_frames, list):
+        period_grouping.pop("good_frames", None)
+        if period_index < len(period_good_frames) and period_good_frames[period_index] is not None:
+            period_grouping["good_frames"] = period_good_frames[period_index]
 
     period_dead_time_us = grouping.get("period_dead_time_us")
     if isinstance(period_dead_time_us, list) and period_index < len(period_dead_time_us):
@@ -383,27 +382,19 @@ def combine_period_asymmetry(
     * ``GREEN_MINUS_RED``: ``green - red``
     * ``GREEN_PLUS_RED``: ``green + red``
 
-    with errors added in quadrature. Arrays are truncated to their common
-    length (the time axis from the red spectrum is used). Returns empty arrays
-    when there is no overlap.
+    with errors added in quadrature. All arrays must have the same length and
+    the time coordinates must be identical; misaligned periods raise an error.
     """
-    n = min(
-        len(red_time),
-        len(green_time),
-        len(red_asymmetry),
-        len(green_asymmetry),
-        len(red_error),
-        len(green_error),
-    )
-    if n <= 0:
-        empty = np.array([], dtype=np.float64)
-        return empty, empty.copy(), empty.copy()
-
-    time = np.asarray(red_time[:n], dtype=np.float64).copy()
-    red_a = np.asarray(red_asymmetry[:n], dtype=np.float64)
-    green_a = np.asarray(green_asymmetry[:n], dtype=np.float64)
-    red_e = np.asarray(red_error[:n], dtype=np.float64)
-    green_e = np.asarray(green_error[:n], dtype=np.float64)
+    arrays = (red_time, red_asymmetry, red_error, green_time, green_asymmetry, green_error)
+    if any(np.asarray(array).ndim != 1 or len(array) != len(red_time) for array in arrays):
+        raise ValueError(
+            "Period asymmetry arrays must have identical lengths and be one-dimensional."
+        )
+    if not np.array_equal(red_time, green_time):
+        raise ValueError("Period asymmetry time arrays must be identical.")
+    time = np.asarray(red_time, dtype=np.float64).copy()
+    red_a, green_a = np.asarray(red_asymmetry), np.asarray(green_asymmetry)
+    red_e, green_e = np.asarray(red_error), np.asarray(green_error)
 
     mode_key = str(mode)
     if mode_key == str(PeriodMode.GREEN_MINUS_RED):
@@ -515,9 +506,10 @@ def _sum_period_set(runs: list[Run], periods: list[int]) -> list[Histogram]:
     return sum_period_histograms([runs[p - 1].histograms for p in periods])
 
 
-def _sum_period_good_frames(runs: list[Run], periods: list[int]) -> float:
+def _sum_period_good_frames(runs: list[Run], periods: list[int]) -> float | None:
     """Total good frames across the given 1-based periods (summed exposure)."""
-    return float(sum(good_frames(runs[p - 1].grouping) for p in periods))
+    frames = [good_frames(runs[p - 1].grouping, default=0.0) for p in periods]
+    return float(sum(frames)) if all(value > 0 for value in frames) else None
 
 
 def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float]:
@@ -529,7 +521,7 @@ def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float]:
     do not shift the others. Ragged tables (malformed metadata) reduce to their
     common detector count rather than crashing.
     """
-    tables: list[tuple[list[float], float]] = []
+    tables: list[tuple[list[float], float | None]] = []
     for p in periods:
         grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
         values = grouping.get("dead_time_us")
@@ -543,6 +535,10 @@ def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float]:
         return list(reference)
     stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
     weights = [frames for _, frames in tables]
+    if None in weights:
+        raise DeadtimeCorrectionError(
+            "combining different period coefficients requires good frames"
+        )
     table = np.average(stacked, axis=0, weights=weights)
     return [float(v) for v in table]
 
@@ -610,7 +606,9 @@ def combine_mapped_periods(
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)
     grouping["period_mapping"] = {str(k): v for k, v in sorted(normalised.items())}
-    grouping["good_frames"] = frames[0]
+    grouping.pop("good_frames", None)
+    if frames[0] is not None:
+        grouping["good_frames"] = frames[0]
     if dead_times[0]:
         grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)

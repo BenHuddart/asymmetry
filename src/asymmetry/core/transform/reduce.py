@@ -1,56 +1,37 @@
-"""Grouped-histogram → asymmetry reduction (the counts-then-ratio pipeline).
+"""Group detector counts and apply requested corrections before forming asymmetry.
 
-This module owns the single reduction chokepoint that turns a run's detector
-histograms into a forward/backward asymmetry curve, exactly the way the app does
-it for real: deadtime correction, forward/backward grouping onto a common t0,
-optional background subtraction, then :func:`binned_fb_asymmetry` (counts summed
-onto output bins *before* the asymmetry is formed — the order WiMDA, musrfit and
-Mantid all use).
-
-It was lifted out of ``MainWindow._reduce_grouped_histograms_to_asymmetry`` so
-that the GUI reduction and the grouping window's live *preview* pane share one
-implementation of the numerics rather than forking them. The GUI-specific pieces
-that method still owned are passed in as plain values / a callback so this
-function stays Qt-free:
-
-* ``facility`` — the accelerator-period label. Defaults to ``None``, meaning
-  "derive it from ``metadata``" (:func:`~asymmetry.core.transform.background.resolve_facility`),
-  because these functions take histograms rather than a run and so cannot read
-  the metadata themselves; pass ``metadata=run.metadata`` and it resolves the way
-  the GUI's explicit string always did.
-* ``reference_resolver`` — resolves the ``reference_run`` background mode's
-  reference histograms + frame-scale (the GUI supplies the loaded-dataset
-  registry; the preview supplies a no-op that skips the subtraction).
-
-The reduction is pinned bit-identical against the original MainWindow output by
-``tests/gui/test_grouping_preview_pane.py``.
+Final analysis requires complete correction outcomes. A preview may explicitly
+retain an incomplete result, carrying its unavailable or failed status.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.asymmetry import SubtractedBackground
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
 )
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    CorrectionStatus,
+)
 from asymmetry.core.transform.deadtime import (
-    has_file_deadtime,
-    has_resolved_deadtime,
     prepare_histograms_with_deadtime,
 )
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, GroupCounts, good_window
 from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
+    align_forward_backward,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
@@ -59,33 +40,19 @@ from asymmetry.core.transform.units import (
 )
 from asymmetry.core.utils.perf import perf_timer
 
-#: A background ``reference_run`` resolver: given the grouping dict, return the
-#: reference run's histograms and the good-frame scale, or ``None`` to skip the
-#: subtraction. The GUI passes one backed by its loaded-dataset registry; the
-#: preview pane passes one that always returns ``None``.
-ReferenceResolver = Callable[[dict[str, Any]], "tuple[list[Histogram], float] | None"]
+#: Resolve reference identity, histograms, and the exposure used for subtraction.
+ReferenceResolver = Callable[[dict[str, Any]], BackgroundReference | None]
 
 
 @dataclass(frozen=True)
 class GroupedAsymmetryReduction:
-    """Result of :func:`reduce_grouped_asymmetry`.
-
-    ``asymmetry`` and ``error`` are **in percent (0–100)** — already scaled ×100
-    from the fraction :func:`~asymmetry.core.transform.binned_fb_asymmetry`
-    returns, matching the arrays the plot panel and
-    :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` consume; the
-    :attr:`units` field states that machine-readably. ``time`` is in µs relative
-    to t0. ``deadtime_applied`` reports whether deadtime correction actually ran,
-    and ``background_state`` mirrors the per-mode dict the MainWindow records
-    back onto ``run.grouping`` (``None`` when no background correction was
-    requested).
-    """
+    """Final percent asymmetry, its µs axis, and requested/effective corrections."""
 
     time: NDArray[np.float64]
     asymmetry: NDArray[np.float64]
     error: NDArray[np.float64]
-    deadtime_applied: bool
-    background_state: dict[str, object] | None
+    corrections: CorrectionOutcomes
+    binning: BinningSpec
     #: Scale of :attr:`asymmetry` and :attr:`error`. Always
     #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
     #: has no other mode; the field exists so a consumer can assert the scale it
@@ -119,7 +86,13 @@ def correction_flags_from_grouping(grouping: dict[str, Any] | None) -> Correctio
     grouping = grouping if isinstance(grouping, dict) else {}
     use_deadtime = bool(grouping.get("deadtime_correction", False))
     deadtime_mode = (
-        str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "off"))).strip().lower()
+        str(
+            grouping.get(
+                "deadtime_mode", grouping.get("deadtime_method", "file" if use_deadtime else "off")
+            )
+        )
+        .strip()
+        .lower()
         or "off"
     )
     if deadtime_mode == "load":
@@ -129,71 +102,6 @@ def correction_flags_from_grouping(grouping: dict[str, Any] | None) -> Correctio
         grouping.get("background_correction", False) and background_mode != "none"
     )
     return CorrectionFlags(use_deadtime, deadtime_mode, use_background)
-
-
-def _prepare_grouping_histograms(
-    histograms: list[Histogram], grouping: dict, use_deadtime: bool
-) -> tuple[list[Histogram], bool]:
-    """Return histograms prepared for grouping, with optional deadtime correction."""
-    if not use_deadtime:
-        return list(histograms), False
-    return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
-
-
-@dataclass(frozen=True)
-class CorrectedGroupedCounts:
-    """Deadtime-corrected, grouped, background-subtracted forward/backward counts.
-
-    This is the reduction pipeline's state *one step before* the asymmetry is
-    formed — the point both the reduction (:func:`reduce_grouped_asymmetry`) and
-    the alpha estimate must read, so a calibrated ``alpha`` balances the same
-    spectra the reduction applies it to. ``forward_error``/``backward_error`` are
-    the propagated per-bin count errors when background subtraction supplied them
-    (both-or-neither), else ``None``. Arrays are truncated to their common length.
-
-    ``background_level``/``background_level_error`` record the *constant* level
-    subtracted from each group and its standard error, for the modes that
-    subtract one (``None`` for ``reference_run``, which subtracts a per-bin
-    spectrum, and when no background was applied). They exist because the
-    corrected arrays alone cannot tell a downstream estimator what was taken
-    out of them — see :meth:`subtracted_background`.
-
-    ``t0_time_us`` is the run's exact common t0 in µs
-    (:func:`~asymmetry.core.transform.t0.common_t0_time_us` at ``common_t0``);
-    every stamp built from these counts is the bin centre ``(k + 0.5)·w`` minus
-    it, so a caller that re-derives an axis from ``common_t0`` alone drops the
-    sub-bin part.
-    """
-
-    forward: NDArray[np.float64]
-    backward: NDArray[np.float64]
-    forward_error: NDArray[np.float64] | None
-    backward_error: NDArray[np.float64] | None
-    common_t0: int
-    bin_width: float
-    t0_time_us: float
-    deadtime_applied: bool
-    background_state: dict[str, object] | None
-    background_level: tuple[float, float] | None = None
-    background_level_error: tuple[float, float] | None = None
-
-    def subtracted_background(self) -> SubtractedBackground | None:
-        """The constant background removed here, in the alpha estimator's form.
-
-        Hand this to
-        :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed` with
-        ``method="ratio"`` so its uncertainty accounts for the subtraction;
-        without it the reported σ is roughly a factor of two small in a late,
-        low-counts window. ``None`` when nothing constant was subtracted.
-        """
-        if self.background_level is None or self.background_level_error is None:
-            return None
-        return SubtractedBackground(
-            forward=float(self.background_level[0]),
-            backward=float(self.background_level[1]),
-            forward_error=float(self.background_level_error[0]),
-            backward_error=float(self.background_level_error[1]),
-        )
 
 
 def corrected_grouped_counts(
@@ -208,7 +116,9 @@ def corrected_grouped_counts(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
-) -> CorrectedGroupedCounts:
+    allow_incomplete: bool = False,
+    context: str = "",
+) -> ForwardBackwardCounts:
     """Run the reduction's correction stages up to (not including) the asymmetry.
 
     Applies, in the order every reference program uses: deadtime correction
@@ -236,76 +146,61 @@ def corrected_grouped_counts(
         deadtime_mode=deadtime_mode,
         background=use_background,
     ) as perf:
-        effective_use_deadtime = bool(use_deadtime)
-        if effective_use_deadtime:
-            if deadtime_mode == "file":
-                effective_use_deadtime = has_file_deadtime(grouping, len(histograms))
-            else:
-                effective_use_deadtime = has_resolved_deadtime(grouping, len(histograms))
-
-        working_histograms, dt_applied = _prepare_grouping_histograms(
+        working_histograms, deadtime_outcome = prepare_histograms_with_deadtime(
             histograms,
             grouping,
-            effective_use_deadtime,
+            use_deadtime,
+            mode=deadtime_mode,
+            allow_incomplete=True,
         )
 
         # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
         # so alignment shifts without the histograms' own t0_bin being rewritten.
         detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
-        common_t0 = common_t0_for_groups(
-            working_histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0
+        forward, backward, crop = align_forward_backward(
+            working_histograms, forward_idx, backward_idx, detector_t0
         )
-        forward = apply_grouping_aligned(
-            working_histograms,
-            forward_idx,
-            common_t0_bin=common_t0,
-            detector_t0_bins=detector_t0,
-        )
-        backward = apply_grouping_aligned(
-            working_histograms,
-            backward_idx,
-            common_t0_bin=common_t0,
-            detector_t0_bins=detector_t0,
-        )
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
+        common_t0 = crop.common_t0_bin
+        n_grouped = crop.length
+        window = good_window(grouping, n_grouped)
 
-        background_state: dict[str, object] | None = None
-        bkg_result = None
+        background_outcome = CorrectionOutcome("background", "none", CorrectionStatus.OFF)
         if use_background:
             bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
             reference_forward = None
             reference_backward = None
             reference_scale = None
+            resolved = None
             if (
                 resolve_background_mode(grouping) == "reference_run"
                 and reference_resolver is not None
             ):
                 resolved = reference_resolver(grouping)
                 if resolved is not None:
-                    reference_histograms, reference_scale = resolved
-                    reference_prepared, _ = _prepare_grouping_histograms(
-                        reference_histograms,
-                        grouping,
-                        effective_use_deadtime,
+                    reference_scale = resolved.scale
+                    reference_grouping = dict(grouping, good_frames=resolved.good_frames_reference)
+                    reference_prepared, reference_outcome = prepare_histograms_with_deadtime(
+                        resolved.histograms,
+                        reference_grouping,
+                        use_deadtime,
+                        mode=deadtime_mode,
+                        allow_incomplete=True,
                     )
-                    reference_forward = apply_grouping_aligned(
+                    if reference_outcome.status in {
+                        CorrectionStatus.UNAVAILABLE,
+                        CorrectionStatus.FAILED,
+                    }:
+                        deadtime_outcome = replace(
+                            reference_outcome, reason=f"reference run: {reference_outcome.reason}"
+                        )
+                    reference_forward, reference_backward, reference_crop = align_forward_backward(
                         reference_prepared,
                         forward_idx,
-                        common_t0_bin=common_t0,
-                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
-                    )
-                    reference_backward = apply_grouping_aligned(
-                        reference_prepared,
                         backward_idx,
+                        effective_detector_t0_bins(reference_prepared, grouping),
                         common_t0_bin=common_t0,
-                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
+                        sample_length=n_grouped,
                     )
-            try:
-                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-            except (TypeError, ValueError):
-                last_good = n_grouped - 1
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -314,74 +209,49 @@ def corrected_grouped_counts(
                 bin_width_us=bin_width,
                 facility=facility,
                 metadata=metadata,
-                last_good_bin=last_good,
+                last_good_bin=window.last,
                 reference_forward=reference_forward,
                 reference_backward=reference_backward,
                 reference_scale=reference_scale,
             )
-            forward = bkg_result.forward
-            backward = bkg_result.backward
-            background_state = {"method": bkg_result.method}
-            if bkg_result.applied:
-                if bkg_result.values is not None:
-                    background_state["values"] = [
-                        float(bkg_result.values[0]),
-                        float(bkg_result.values[1]),
-                    ]
-                if bkg_result.ranges is not None:
-                    background_state["ranges"] = [
-                        [int(v) for v in bkg_result.ranges[0]],
-                        [int(v) for v in bkg_result.ranges[1]],
-                    ]
-                if bkg_result.details is not None:
-                    background_state["details"] = dict(bkg_result.details)
+            forward_counts = bkg_result.forward
+            backward_counts = bkg_result.backward
+            background_outcome = bkg_result.outcome
+            if resolved is not None and background_outcome.status == CorrectionStatus.APPLIED:
+                effective = background_outcome.to_dict()["effective"]
+                effective["reference_alignment"] = asdict(reference_crop)
+                effective["reference"] = {
+                    "run_number": resolved.run_number,
+                    "file_name": resolved.source_file,
+                    "scale": resolved.scale,
+                    "scale_source": resolved.scale_source,
+                    "good_frames_sample": resolved.good_frames_sample,
+                    "good_frames_reference": resolved.good_frames_reference,
+                }
+                background_outcome = replace(background_outcome, effective=effective)
 
         bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
         t0_time_us = common_t0_time_us(working_histograms, grouping, common_t0)
-        # Errors are only usable when background subtraction supplied both — the
-        # asymmetry's error path treats them both-or-neither.
-        forward_error = None
-        backward_error = None
-        if (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.forward_error is not None
-            and bkg_result.backward_error is not None
-        ):
-            forward_error = bkg_result.forward_error
-            backward_error = bkg_result.backward_error
+        if not use_background:
+            forward_counts = GroupCounts(forward)
+            backward_counts = GroupCounts(backward)
 
+        corrections = CorrectionOutcomes(deadtime_outcome, background_outcome)
+        if not allow_incomplete:
+            corrections.require_complete(context=context)
         perf.detail(
             bins=n_grouped,
-            deadtime_applied=dt_applied,
-            background_applied=bool(background_state),
+            deadtime_applied=deadtime_outcome.status == CorrectionStatus.APPLIED,
+            background_applied=background_outcome.status == CorrectionStatus.APPLIED,
         )
-        background_level: tuple[float, float] | None = None
-        background_level_error: tuple[float, float] | None = None
-        if (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.values is not None
-            and bkg_result.value_errors is not None
-        ):
-            background_level = (float(bkg_result.values[0]), float(bkg_result.values[1]))
-            background_level_error = (
-                float(bkg_result.value_errors[0]),
-                float(bkg_result.value_errors[1]),
-            )
-
-        return CorrectedGroupedCounts(
-            forward=forward,
-            backward=backward,
-            forward_error=forward_error,
-            backward_error=backward_error,
-            common_t0=int(common_t0),
-            bin_width=float(bin_width),
+        return ForwardBackwardCounts(
+            forward=forward_counts,
+            backward=backward_counts,
+            alignment=crop,
+            window=window,
+            bin_width_us=bin_width,
             t0_time_us=t0_time_us,
-            deadtime_applied=dt_applied,
-            background_state=background_state,
-            background_level=background_level,
-            background_level_error=background_level_error,
+            corrections=corrections,
         )
 
 
@@ -389,6 +259,7 @@ def reduce_grouped_asymmetry(
     *,
     histograms: list[Histogram],
     grouping: dict,
+    binning: BinningSpec,
     forward_idx: list[int],
     backward_idx: list[int],
     alpha: float,
@@ -398,6 +269,8 @@ def reduce_grouped_asymmetry(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    allow_incomplete: bool = False,
+    context: str = "",
     beta: float = 1.0,
 ) -> GroupedAsymmetryReduction:
     """Reduce grouped histograms to a forward/backward asymmetry curve.
@@ -443,41 +316,19 @@ def reduce_grouped_asymmetry(
             facility=facility,
             metadata=metadata,
             reference_resolver=reference_resolver,
+            allow_incomplete=allow_incomplete,
+            context=context,
         )
-        forward = corrected.forward
-        backward = corrected.backward
-        n_grouped = min(len(forward), len(backward))
-
-        # Every binning mode (fixed included) bins the counts before forming
-        # the asymmetry — the counts-then-ratio order all reference programs
-        # use. The returned arrays are final: good window applied, bunching
-        # applied, no further slicing or bunching by the caller.
-        try:
-            first_good = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first_good = 0
-        try:
-            last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-        except (TypeError, ValueError):
-            last_good = n_grouped - 1
         time_axis, asymmetry, error = binned_fb_asymmetry(
-            forward,
-            backward,
-            grouping=grouping,
-            common_t0=corrected.common_t0,
-            bin_width_us=corrected.bin_width,
-            t0_time_us=corrected.t0_time_us,
+            corrected,
+            binning=binning,
             alpha=alpha,
-            first_good_bin=first_good,
-            last_good_bin=last_good,
-            forward_error=corrected.forward_error,
-            backward_error=corrected.backward_error,
             beta=beta,
         )
         perf.detail(
             bins=len(time_axis),
-            deadtime_applied=corrected.deadtime_applied,
-            background_applied=bool(corrected.background_state),
+            deadtime_applied=corrected.corrections.deadtime.status == CorrectionStatus.APPLIED,
+            background_applied=corrected.corrections.background.status == CorrectionStatus.APPLIED,
         )
         # binned_fb_asymmetry returns the fraction; the public contract of this
         # reduction (and of MuonDataset) is percent, so scale here — the one
@@ -486,18 +337,120 @@ def reduce_grouped_asymmetry(
             time=np.asarray(time_axis, dtype=np.float64),
             asymmetry=np.asarray(asymmetry * PERCENT_PER_FRACTION, dtype=np.float64),
             error=np.asarray(error * PERCENT_PER_FRACTION, dtype=np.float64),
-            deadtime_applied=corrected.deadtime_applied,
-            background_state=corrected.background_state,
+            corrections=corrected.corrections,
+            binning=binning,
             units=ASYMMETRY_PERCENT,
         )
 
 
+@dataclass(frozen=True)
+class PeriodAsymmetryReduction:
+    """Percent asymmetry after binning each period; keep every correction outcome."""
+
+    time: NDArray[np.float64]
+    asymmetry: NDArray[np.float64]
+    error: NDArray[np.float64]
+    corrections: dict[str, CorrectionOutcomes]
+    binning: BinningSpec
+
+
+def reduce_period_asymmetry(
+    histograms: list[Histogram],
+    grouping: dict,
+    period_mode: str,
+    *,
+    binning: BinningSpec,
+    forward_idx: list[int],
+    backward_idx: list[int],
+    alpha: float,
+    use_deadtime: bool,
+    deadtime_mode: str,
+    use_background: bool,
+    beta: float = 1.0,
+    facility: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    reference_resolver: ReferenceResolver | None = None,
+    allow_incomplete: bool = False,
+    context: str = "",
+) -> PeriodAsymmetryReduction:
+    """Reduce identical raw-bin edges per period before combining G +/- R.
+
+    Period selection supplies each period's own exposure and deadtime table.
+    A sum or difference combines asymmetries, with independent variances added;
+    it never sums or averages already reduced bins to implement bunching.
+    """
+    from asymmetry.core.io.periods import combine_period_asymmetry, select_period_histograms
+    from asymmetry.core.utils.constants import PeriodMode
+
+    mode = PeriodMode(period_mode)
+    combined = mode in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}
+    labels = (PeriodMode.RED, PeriodMode.GREEN) if combined else (mode,)
+    periods = grouping.get("period_histograms")
+    if periods is not None and (not isinstance(periods, list) or len(periods) != 2):
+        raise ValueError("Period asymmetry reduction requires exactly two held periods.")
+    if combined and periods is None:
+        raise ValueError("A period sum or difference requires two held periods.")
+    if periods is not None and any(
+        not isinstance(period, list)
+        or not period
+        or any(not isinstance(hist, Histogram) for hist in period)
+        for period in periods
+    ):
+        raise ValueError("Held periods must contain nonempty histogram lists.")
+    reduced = {}
+    for label in labels:
+        selected, effective = (
+            select_period_histograms(histograms, grouping, int(label == PeriodMode.GREEN))
+            if periods is not None
+            else (histograms, grouping)
+        )
+        reduced[label] = reduce_grouped_asymmetry(
+            histograms=selected,
+            grouping=effective,
+            binning=binning,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            alpha=alpha,
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            beta=beta,
+            facility=facility,
+            metadata=metadata,
+            reference_resolver=reference_resolver,
+            allow_incomplete=allow_incomplete,
+            context=f"{context} {label}".strip() if combined else context,
+        )
+    if combined:
+        red, green = reduced[PeriodMode.RED], reduced[PeriodMode.GREEN]
+        time, asymmetry, error = combine_period_asymmetry(
+            red.time,
+            red.asymmetry,
+            red.error,
+            green.time,
+            green.asymmetry,
+            green.error,
+            mode,
+        )
+    else:
+        single = reduced[mode]
+        time, asymmetry, error = single.time, single.asymmetry, single.error
+    return PeriodAsymmetryReduction(
+        time,
+        asymmetry,
+        error,
+        {str(label): result.corrections for label, result in reduced.items()},
+        binning,
+    )
+
+
 __all__ = [
-    "CorrectedGroupedCounts",
     "CorrectionFlags",
     "GroupedAsymmetryReduction",
     "ReferenceResolver",
     "corrected_grouped_counts",
     "correction_flags_from_grouping",
     "reduce_grouped_asymmetry",
+    "reduce_period_asymmetry",
+    "PeriodAsymmetryReduction",
 ]

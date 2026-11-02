@@ -32,9 +32,7 @@ class FitWizardGktScenario(Scenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ag_zf_gkt()
         window._data_browser.add_dataset(dataset)

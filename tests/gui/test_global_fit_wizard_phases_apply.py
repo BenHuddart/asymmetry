@@ -21,7 +21,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -38,6 +37,7 @@ from asymmetry.core.fitting.global_search.partition import (
     Segment,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.utils.phase_colors import phase_color
 
@@ -53,11 +53,10 @@ _MODEL = CompositeModel(["Exponential", "Constant"], operators=["+"])
 
 
 @pytest.fixture
-def mw():
+def mw(qapp):
     from asymmetry.gui.mainwindow import MainWindow
     from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
-    QApplication.instance() or QApplication([])
     QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
     window = MainWindow()
     for run_number, temperature in zip(_RUNS, _TEMPERATURES, strict=True):
@@ -104,6 +103,7 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
     curve = np.array([0.1, 0.09, 0.08, 0.07])
     fit_results = {
         run: FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=51.5,
             reduced_chi_squared=1.03,
@@ -143,10 +143,7 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
             for run in runs
         ),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run={run: (time_axis.copy(), curve.copy()) for run in runs},
         component_curves_by_run={run: () for run in runs},
     )

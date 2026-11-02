@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import faulthandler
-import os
-import sys
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,50 +7,13 @@ from pathlib import Path
 import pytest
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    """Arm a native-thread watchdog that dumps every thread's stack on a hang.
-
-    A rare intermittent GUI-test deadlock (a native Qt event loop / iminuit C++
-    block that holds the GIL) wedges a CI shard for up to ~60 min. Our per-test
-    ``pytest-timeout`` uses ``--timeout-method=thread`` — a *Python* timer thread
-    that cannot run while C code holds the GIL, so it never fires and the shard
-    hangs until the job-level ``timeout-minutes`` kills the runner.
-
-    ``faulthandler.dump_traceback_later`` runs in a dedicated *C* thread that does
-    not need the GIL, so it fires and dumps all thread stacks even mid-native
-    block — capturing the culprit test/stack in the logs before the job dies.
-
-    Opt-in via ``ASYMMETRY_FAULTHANDLER_TIMEOUT`` (seconds) so local runs stay
-    quiet; CI sets it below the job timeout and above the healthy shard runtime.
-    Runs in every process, including each xdist worker (where the hang lives).
-    """
-    faulthandler.enable()
-    raw = os.environ.get("ASYMMETRY_FAULTHANDLER_TIMEOUT")
-    if not raw:
-        return
-    try:
-        seconds = float(raw)
-    except ValueError:
-        return
-    if seconds > 0:
-        # repeat=True keeps dumping every ``seconds`` so a long wedge yields
-        # more than one stack; exit=False leaves process teardown to the
-        # job-level timeout (we only want the diagnostic dump, not a kill here).
-        faulthandler.dump_traceback_later(seconds, repeat=True, exit=False, file=sys.stderr)
-
-
-def pytest_unconfigure(config: pytest.Config) -> None:
-    """Cancel the hang watchdog armed in :func:`pytest_configure`."""
-    faulthandler.cancel_dump_traceback_later()
-
-
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register ``--shard K/N`` for splitting a selection across CI runners.
 
     CI splits the standard tier across several runners. The split is by a
     stable hash of each test's node id rather than collection order, so the N
-    independent shard processes — which ``pytest-randomly`` orders differently —
-    still cover every selected test exactly once, with no overlap or gap.
+    independent shard processes still cover every selected test exactly once,
+    with no overlap or gap.
     """
     parser.addoption(
         "--shard",
@@ -69,24 +29,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def qapp() -> object:
     """Return the process-wide ``QApplication``, creating it once per session.
 
-    A single application instance is reused across every GUI test. Defining it
-    here (session scope) decouples the application's lifetime from the xdist
-    distribution strategy: workers no longer rebuild the app per file. Test
-    modules that still declare their own module-scoped ``qapp`` fixture simply
-    shadow this one harmlessly. Returns ``None`` if PySide6 is unavailable.
+    GUI tests request this fixture; core tests never import Qt through it.
     """
-    try:
-        from PySide6.QtWidgets import QApplication
-    except Exception:
-        return None
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
 
-    app = QApplication.instance()
+    app = qt_widgets.QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = qt_widgets.QApplication([])
     return app
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[None]:
     """Suppress ``MainWindow``'s unsaved-changes close prompt by default.
 
@@ -97,16 +50,13 @@ def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[N
     for every test except those explicitly marked ``real_save_guard``, which
     exercise the guard itself (with their own ``QMessageBox`` stubs).
 
-    Imported lazily so non-GUI test sessions (no PySide6) pay nothing.
+    The GUI fixture gate requests this only for gui-marked tests.
     """
     if "real_save_guard" in request.keywords:
         yield
         return
-    try:
-        from asymmetry.gui.mainwindow import MainWindow
-    except Exception:
-        yield
-        return
+    from asymmetry.gui.mainwindow import MainWindow
+
     original = MainWindow._maybe_save
     MainWindow._maybe_save = lambda self, *a, **k: True  # type: ignore[assignment]
     try:
@@ -115,182 +65,50 @@ def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[N
         MainWindow._maybe_save = original  # type: ignore[assignment]
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_qt_widgets() -> Iterator[None]:
-    """Tear down all Qt state after every test to prevent cross-test bleed.
-
-    GUI tests historically created ``MainWindow`` (and other widgets) without
-    ever closing them. Under a shared ``QApplication`` the windows and their
-    parentless child widgets accumulated across a file (~58 top-level widgets
-    per ``MainWindow``). Because several construction steps scan every live
-    top-level widget, per-test setup time grew linearly with the number of
-    leaked windows — turning the file into an O(n^2) crawl (observed ~1s ->
-    45s ``MainWindow`` setup) and leaking state that made tests order-dependent.
-
-    The non-obvious part of the fix: ``deleteLater`` posts a ``DeferredDelete``
-    event that a bare ``processEvents()`` does NOT dispatch when there is no
-    running event loop (the test runner has none). Without explicitly flushing
-    those events the widgets are never actually destroyed. We therefore close
-    each top-level widget (firing real ``closeEvent`` handlers, where
-    ``MainWindow`` joins its MaxEnt thread), schedule deletion, then force the
-    ``DeferredDelete`` events through with ``sendPostedEvents`` — which drops
-    the live top-level count back to zero between tests and keeps setup flat.
-
-    The fixture depends on no other fixture (it queries
-    ``QApplication.instance()`` directly) so module-local ``qapp`` fixtures
-    cannot shadow it, and it is a no-op when PySide6 is absent or no
-    application has been created (pure-unit tests).
-    """
-    try:
-        from PySide6.QtCore import QEvent, QThread
-        from PySide6.QtWidgets import QApplication
-    except Exception:
-        yield
-        return
-
-    app = QApplication.instance()
-    if app is None:
-        yield
-        return
+@pytest.fixture
+def _cleanup_qt_widgets(qapp) -> Iterator[None]:
+    """Close widgets and flush deferred deletion; lifetime failures belong to this test."""
+    from tests._qt_helpers import dispose_qt_widgets
 
     yield
-
-    _deferred_delete = QEvent.Type.DeferredDelete.value
-
-    def _drain() -> None:
-        # Force-dispatch deferred deletions; a bare processEvents() will not
-        # flush DeferredDelete events outside a running event loop.
-        try:
-            app.sendPostedEvents(None, _deferred_delete)
-            app.processEvents()
-            app.sendPostedEvents(None, _deferred_delete)
-        except Exception:
-            pass
-
-    # Stop any QThread still running (e.g. a MaxEnt worker whose window was not
-    # closed by the test). Bounded wait; pytest-timeout is the hard ceiling.
-    try:
-        for thread in app.findChildren(QThread):
-            try:
-                if thread.isRunning():
-                    thread.quit()
-                    thread.wait(5000)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Close every top-level widget (runs closeEvent handlers), then schedule
-    # and flush deletion so the C++ objects are gone before the next test.
-    # MainWindow's closeEvent now guards unsaved work with a modal Save/Discard/
-    # Cancel prompt (F4/P0-2). In an offscreen teardown that dialog would block
-    # forever, so force-clear the dirty flag first — this is a non-interactive
-    # force-close, the production guard is exercised by its own tests.
-    for widget in list(app.topLevelWidgets()):
-        clear_dirty = getattr(widget, "_clear_dirty", None)
-        if callable(clear_dirty):
-            try:
-                clear_dirty()
-            except Exception:
-                pass
-        try:
-            widget.close()
-        except Exception:
-            pass
-    for widget in list(app.topLevelWidgets()):
-        try:
-            widget.deleteLater()
-        except Exception:
-            pass
-    _drain()
-    # With no window left, drop the app sheet so the next test's MainWindow is
-    # built unstyled and styled once at the end (see UIManager.restore_settings);
-    # building under a live sheet re-polishes every reparented subtree.
-    app.setStyleSheet("")
-
-    # Join any worker thread orphaned this test: a panel GC'd without
-    # shutdown_workers(), or a shutdown() whose bounded wait timed out, hands its
-    # still-running QThread to the process-level reaper (destroying a running
-    # QThread aborts). The reaper keeps it running by design; left alone that
-    # lingering compute bleeds CPU into the next test and flakes GUI tests on the
-    # sharded 2-core CI runners. findChildren(QThread) above cannot reach these
-    # (they are unparented from their dying runner), so bounded-join them here.
-    try:
-        from asymmetry.gui.tasks import drain_orphan_threads
-
-        drain_orphan_threads()
-    except Exception:
-        pass
-
-    # Release any matplotlib figures embedded in the closed widgets.
-    try:
-        import matplotlib.pyplot as plt
-
-        plt.close("all")
-    except Exception:
-        pass
+    dispose_qt_widgets(qapp)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
-    """Redirect ``QSettings`` to a per-test temp location.
+def _isolate_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent tests from discovering user-authored functions from the real home."""
+    from asymmetry.core import plugins
 
-    The application uses default-named ``QSettings()``, which otherwise share a
-    single backend file across every test *and* every ``pytest-xdist`` worker.
-    Under parallel runs that shared state leaks between tests (e.g. the UI-scale
-    persistence assertions intermittently reading another test's value), so we
-    point each test at its own temporary ini file. No-op if PySide6 is absent.
-    """
-    try:
-        from PySide6.QtCore import QSettings
-    except Exception:
-        yield
-        return
+    monkeypatch.setattr(plugins, "USER_FUNCTIONS_DIR", tmp_path / "user_functions")
 
+
+@pytest.fixture(autouse=True)
+def _gui_state_gate(request: pytest.FixtureRequest) -> None:
+    """Only gui-marked tests load Qt fixtures and window cleanup."""
+    if request.node.get_closest_marker("gui") is not None:
+        request.getfixturevalue("_isolated_gui_state")
+        request.getfixturevalue("_bypass_unsaved_changes_prompt")
+        request.getfixturevalue("_cleanup_qt_widgets")
+
+
+@pytest.fixture
+def _isolated_gui_state(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep preferences, app data, and cached fit times inside this test's directory."""
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from asymmetry.gui.styles import fonts
+    from asymmetry.gui.utils import app_data, fit_times
+
+    QCoreApplication.setOrganizationName("Asymmetry")
+    QCoreApplication.setApplicationName("Asymmetry")
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _isolate_fit_time_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Point the wizards' per-machine fit-time store at a per-test file.
-
-    The store is loaded once per process from the app data folder; without this a
-    wizard test would read and write the real ``fit_times.json``, and one test's
-    timings would change which models the next test's picker tags slow.
-    """
-    try:
-        from asymmetry.gui.utils import fit_times
-    except Exception:
-        yield
-        return
-
-    monkeypatch.setattr(fit_times, "fit_times_path", lambda: tmp_path / "fit_times.json")
+    for scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
+        QSettings.setPath(QSettings.Format.IniFormat, scope, str(tmp_path / "qt-settings"))
+    monkeypatch.setattr(app_data, "app_data_dir", lambda: tmp_path / "app-data")
     fit_times.shared_fit_time_store.cache_clear()
-    yield
-    fit_times.shared_fit_time_store.cache_clear()
-
-
-@pytest.fixture(autouse=True)
-def _reset_ui_font_scale() -> Iterator[None]:
-    """Reset the process-wide UI font scale to 1.0 around every test.
-
-    ``ui_manager.UIManager`` publishes the active scale to the font builders via
-    ``fonts.set_ui_font_scale`` (so chrome/value fonts built after a scale change
-    are born scaled). That module global persists across tests in a worker
-    process; without a reset, a test that constructs ``MainWindow`` (applying the
-    0.9 default scale) would leak a non-unity scale into a later test that asserts
-    design-size fonts. No-op when PySide6 is unavailable.
-    """
-    try:
-        from asymmetry.gui.styles import fonts
-    except Exception:
-        yield
-        return
-
     fonts.set_ui_font_scale(1.0)
     yield
+    fit_times.shared_fit_time_store.cache_clear()
     fonts.set_ui_font_scale(1.0)
 
 
@@ -313,9 +131,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if count < 1 or not (1 <= index <= count):
         raise pytest.UsageError(f"--shard K/N requires N >= 1 and 1 <= K <= N, got {shard!r}")
 
-    # Partition by a stable hash of the node id (NOT collection order, which
-    # pytest-randomly varies per process): every shard process then keeps a
-    # disjoint slice and the union is the whole selection.
+    # A stable node-id hash gives disjoint slices independent of collection order.
     kept, deselected = [], []
     for item in items:
         bucket = zlib.crc32(item.nodeid.encode("utf-8")) % count

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit.global_tab import (
     USE_AS_SEEDS_ACTION,
@@ -42,7 +43,9 @@ def _result(amp: float, freq: float, success: bool = True) -> FitResult:
     ps.add(Parameter(name="A_1", value=amp))
     ps.add(Parameter(name="frequency", value=freq))
     ps.add(Parameter(name="lambda", value=0.1))
-    return FitResult(success=success, reduced_chi_squared=1.0, parameters=ps)
+    return FitResult(
+        objective=Objective.GAUSSIAN, success=success, reduced_chi_squared=1.0, parameters=ps
+    )
 
 
 def _launch(tab: GlobalFitTab) -> FitLaunch:

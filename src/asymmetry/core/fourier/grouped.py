@@ -8,8 +8,14 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
+    background_window,
     resolve_background_mode,
     subtract_scaled_counts,
+)
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    CorrectionStatus,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
@@ -19,7 +25,7 @@ from asymmetry.core.transform.grouping import (
     good_frames,
     resolve_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -73,14 +79,10 @@ def _group_background_range_for_group(
     """Return a background range for one group when explicitly configured."""
 
     def _parse_range(value: object) -> tuple[int, int] | None:
-        if not isinstance(value, (list, tuple)) or len(value) < 2:
+        if value is None:
             return None
-        try:
-            lo = int(float(value[0]))
-            hi = int(float(value[1]))
-        except (TypeError, ValueError):
-            return None
-        return (lo, hi) if lo <= hi else (hi, lo)
+        window = background_window(value)
+        return window.first, window.last
 
     raw_ranges = grouping.get("background_ranges")
     if isinstance(raw_ranges, dict):
@@ -100,6 +102,8 @@ def _group_background_range_for_group(
             return forward
 
     if isinstance(raw_ranges, (list, tuple)) and len(raw_ranges) >= 2:
+        if not isinstance(raw_ranges[0], (list, tuple)):
+            return _parse_range(raw_ranges)
         first = _parse_range(raw_ranges[0])
         second = _parse_range(raw_ranges[1])
         if first is not None and second is not None:
@@ -155,20 +159,26 @@ def _resolve_group_reference_counts(
 
     cache = cache if cache is not None else {}
     sample_frames = good_frames(grouping, default=0.0) or None
-    try:
-        reference = resolve_background_reference(
-            grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
-        )
-    except (ValueError, OSError):
-        return None, None
+    reference = resolve_background_reference(
+        grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
+    )
 
     # Prepared reference histograms are identical for every group of this run
     # (same grouping + deadtime flag), so prepare once per sweep.
-    prepared_key = ("_prepared_reference", bool(apply_deadtime))
+    prepared_key = (
+        "_prepared_reference",
+        bool(apply_deadtime),
+        reference.source_file,
+        reference.run_number,
+        reference.good_frames_reference,
+        tuple(grouping.get("dead_time_us", ())) if apply_deadtime else (),
+    )
     reference_prepared = cache.get(prepared_key)
     if reference_prepared is None:
         reference_prepared, _ = prepare_histograms_with_deadtime(
-            reference.histograms, grouping, apply_deadtime
+            reference.histograms,
+            dict(grouping, good_frames=reference.good_frames_reference),
+            apply_deadtime,
         )
         cache[prepared_key] = reference_prepared
     reference_counts = apply_grouping_aligned(
@@ -204,21 +214,31 @@ def _apply_group_background_correction(
         # the reference is resolved+grouped by the caller and subtracted at the
         # count level, matching the time-domain reduction.
         if reference_counts is None or reference_scale is None:
-            return counts, False, None
+            CorrectionOutcomes(
+                background=CorrectionOutcome(
+                    "background", mode, CorrectionStatus.UNAVAILABLE, "reference run is not loaded"
+                )
+            ).require_complete()
         sample = np.asarray(counts, dtype=np.float64)
         reference = np.asarray(reference_counts, dtype=np.float64)
-        # Pad a shorter reference with zeros so subtract_scaled_counts (which
-        # truncates to the common length) cannot silently shorten the sample
-        # signal — bins the reference does not cover keep their raw value rather
-        # than dropping out of the spectrum and collapsing last_good_bin.
         if reference.size < sample.size:
-            reference = np.concatenate(
-                [reference, np.zeros(sample.size - reference.size, dtype=np.float64)]
+            raise ValueError(
+                f"reference run has {reference.size} aligned bins; sample requires {sample.size}."
             )
-        corrected, _errors = subtract_scaled_counts(sample, reference, float(reference_scale))
+        reference_on_sample = reference[: sample.size]
+        corrected, _variance = subtract_scaled_counts(
+            sample, reference_on_sample, float(reference_scale)
+        )
         return corrected, True, None
     if mode not in available_background_modes(metadata=metadata, source_file=source_file):
-        return counts, False, None
+        CorrectionOutcomes(
+            background=CorrectionOutcome(
+                "background",
+                mode,
+                CorrectionStatus.UNAVAILABLE,
+                "mode is unavailable for this acquisition",
+            )
+        ).require_complete()
 
     payload = dict(grouping)
     # Only the fixed/range modes carry a per-group value/range from the
@@ -253,8 +273,18 @@ def _apply_group_background_correction(
         metadata=metadata,
         last_good_bin=last_good_bin,
     )
-    background_value = correction.values[0] if correction.values is not None else None
-    return correction.forward, bool(correction.applied), background_value
+    CorrectionOutcomes(background=correction.outcome).require_complete()
+    values = (
+        correction.outcome.effective.get("values")
+        if correction.outcome.effective is not None
+        else None
+    )
+    background_value = values[0] if values is not None else None
+    return (
+        correction.forward.counts,
+        correction.outcome.status == CorrectionStatus.APPLIED,
+        background_value,
+    )
 
 
 def build_group_signal_dataset(
@@ -334,6 +364,21 @@ def build_group_signal_dataset(
     if counts.size == 0:
         raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
 
+    declared_t0 = grouping.get("t0_bin")
+    if declared_t0 is not None:
+        # The resolved window belongs to declared_t0's aligned coordinates.
+        # Moving the reference by delta bins moves both endpoints and exact t0
+        # by delta, preserving the same detector samples and physical times.
+        offset = common_t0 - int(declared_t0)
+        grouping = dict(grouping, t0_bin=common_t0)
+        for key in ("first_good_bin", "last_good_bin"):
+            bound = grouping.get(key)
+            if bound is not None and int(bound) >= 0:
+                grouping[key] = int(bound) + offset
+        exact_t0_us = grouping.get("t0_time_us")
+        if exact_t0_us is not None:
+            grouping["t0_time_us"] = float(exact_t0_us) + offset * histograms[0].bin_width
+
     source_file = str(getattr(run, "source_file", "") or "")
     reference_counts, reference_scale = _resolve_group_reference_counts(
         grouping,
@@ -372,10 +417,7 @@ def build_group_signal_dataset(
         last_good = counts.size - 1
 
     trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
-    try:
-        bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
-    except (TypeError, ValueError):
-        bunch_factor = 1
+    bunch_factor = binning_spec(grouping).factor
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0

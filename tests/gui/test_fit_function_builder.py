@@ -19,14 +19,6 @@ from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _ok(dialog: FitFunctionBuilderDialog):
     return dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
 

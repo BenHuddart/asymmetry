@@ -8,51 +8,7 @@ dataset passed to fitting in the GUI. The original MuonDataset is preserved,
 so changing the bunch factor after fitting only changes the plotted data while
 the existing fit curve remains overlaid.
 
-Navigation map
---------------
-~7.3k lines, a single ``PlotPanel(QWidget)`` class; a known decomposition
-target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in
-this pass. Methods are not grouped by section comments in the source; they
-cluster thematically in roughly this order:
-
-- **Construction and control widgets** — ``__init__``, ``_create_limit_controls``,
-  ``_create_plot_header``/``_create_plot_footer`` build the axis-limit fields
-  (``FloatLimitField``/``AxisLimitControls`` from ``gui/widgets/axis_limits.py``)
-  and the canvas chrome.
-- **Frequency-axis unit/reference conversion** — the ``_convert_frequency_*``
-  and ``_display_x_*``/``_display_y_*`` helpers translate between canonical
-  MHz storage and the user-selected display unit/reference.
-- **Navigation mode and axis limits** — ``_set_navigation_mode`` keeps the
-  Matplotlib toolbar pan/zoom state and the nav buttons consistent; the
-  axis window itself is owned by one
-  :class:`~asymmetry.gui.widgets.axis_limits.AxisLimitPolicy` (``_limits``),
-  resolved once per render and mirrored into the limit fields and the Auto
-  X/Y buttons (see :meth:`PlotPanel._apply_limits`).
-- **Dataset/projection plumbing** — ``get_analysis_dataset``, projection
-  axis helpers (``_axis_key_for_dataset``, ``set_projections``,
-  ``fit_target_projection``), and the low-count/low-confidence masking used
-  before plotting (``_low_count_mask_for_dataset``, ``_low_confidence_mask_for_dataset``).
-- **Rendering** — the ``plot_*`` family is the core draw path:
-  ``plot_datasets``/``plot_dataset`` (single/overlay), ``plot_vector_subplots``,
-  ``plot_grouped_time_domain_subplots``, ``plot_maxent_reconstruction*``, and
-  ``plot_fit``/``set_global_fits`` for fit-curve overlay. Each render resolves
-  its axes through ``_limits`` and applies the result with ``_apply_limits``;
-  ``_default_x_limits`` and ``_signal_y_limits_from_last_plot`` /
-  ``_auto_y_limits_from_display_arrays`` are the *bounds suppliers* an Auto (or
-  never-framed) axis follows.
-- **Interaction** — mouse/canvas event handlers (``_on_canvas_button_press``,
-  ``_on_canvas_motion_notify``, ``_on_canvas_button_release``) drive fit-range
-  and moments-window drag handles, annotation add/edit/delete, and the cursor
-  readout.
-- **Export** — ``get_current_plot_export_data``, ``export_plotted_data_as_text``,
-  ``export_plots_to_gle`` (via the shared ``run_gle_export`` orchestrator in
-  ``gui/utils/gle_export.py``), ``export_current_plot``.
-- **State I/O** — ``get_state``/``restore_state`` at the end serialize panel
-  configuration (bunch factor, view limits, projections, decimation, RRF) for
-  project persistence.
-
-Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
-``plot_fit``, ``set_view_limits``/``get_view_limits``, ``get_state``/``restore_state``.
+Time-domain asymmetry is in percent; stored frequency coordinates are in MHz.
 """
 
 from __future__ import annotations
@@ -103,6 +59,7 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -111,7 +68,7 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
-from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
@@ -410,10 +367,9 @@ class PlotPanel(QWidget):
         self._tasks = TaskRunner(self)
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
         #: Host-injected counts-first re-reduction hook for display bunching
-        #: (see :meth:`set_counts_rebunch_provider`). ``None`` outside a
-        #: MainWindow (standalone panels fall back to the curve-level rebin).
+        #: Histogram-backed bunching requires this provider; curve-only panels do not.
         self._counts_rebunch_provider: (
-            Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray] | None] | None
+            Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray]] | None
         ) = None
         self._current_time_view_mode = "fb_asymmetry"
         self._available_time_view_modes = ["fb_asymmetry"]
@@ -2833,46 +2789,15 @@ class PlotPanel(QWidget):
 
     def set_counts_rebunch_provider(
         self,
-        provider: Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray] | None]
-        | None,
+        provider: Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray]] | None,
     ) -> None:
-        """Install the counts-first re-reduction hook for display bunching.
+        """Install the histogram-backed display reducer returning percent arrays.
 
-        ``provider(dataset, factor)`` re-runs the dataset's recorded reduction
-        (deadtime/background corrections included) with the panel's bunch
-        factor multiplied onto the grouping ``bunching_factor``, returning
-        ``(time, asymmetry, error)`` on the percent scale — or ``None`` when
-        counts-first bunching does not apply (no raw histograms, non-fixed
-        binning, period-combined curves), in which case
-        :meth:`get_analysis_dataset` falls back to the curve-level rebin.
+        The provider replays corrections and merges recorded output bins in
+        every binning and period mode. Curve-only and rotated inputs are
+        handled directly by the panel's independent curve-bin operation.
         """
         self._counts_rebunch_provider = provider
-
-    def _counts_first_rebunched(
-        self, dataset: MuonDataset, bunch_factor: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        """Counts-first bunched arrays via the injected hook, or ``None``.
-
-        Rebinning the already-formed asymmetry curve merges the σ = 100 %
-        no-information sentinels of one-sided raw bins (F·B = 0) into every
-        block's quadrature, inflating late-time errors on sparse data; when
-        the run still carries its raw histograms the provider redoes the
-        reduction on the counts instead.
-        """
-        provider = self._counts_rebunch_provider
-        run = getattr(dataset, "run", None)
-        if provider is None or run is None or not getattr(run, "histograms", None):
-            return None
-        result = provider(dataset, int(bunch_factor))
-        if result is None:
-            return None
-        time, asymmetry, error = result
-        time = np.asarray(time, dtype=float)
-        asymmetry = np.asarray(asymmetry, dtype=float)
-        error = np.asarray(error, dtype=float)
-        if time.size == 0 or asymmetry.size != time.size or error.size != time.size:
-            return None
-        return time, asymmetry, error
 
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return the dataset that should be used for plotting and fitting.
@@ -2881,8 +2806,8 @@ class PlotPanel(QWidget):
         larger bunch factor, a rebinned MuonDataset copy is returned with the
         same metadata and run association. Runs that still carry raw
         histograms are re-reduced counts-first through the host-injected
-        provider; histogram-less curves (co-added data, G±R combinations)
-        keep the curve-level :func:`rebin`.
+        provider for every binning and period mode. Curves without histograms
+        and rotated projections use :func:`merge_curve_bins`.
         """
         if dataset is None:
             return None
@@ -2894,23 +2819,26 @@ class PlotPanel(QWidget):
         if bunch_factor <= 1:
             return dataset
 
-        # A rotated projection mixes two reductions, so its values are bunched (D8).
-        rebunched = (
-            None
-            if FRAME_METADATA_KEY in dataset.metadata
-            else self._counts_first_rebunched(dataset, bunch_factor)
+        curve_only = (
+            FRAME_METADATA_KEY in dataset.metadata
+            or dataset.run is None
+            or not dataset.run.histograms
         )
-        if rebunched is not None:
-            time, asymmetry, error = rebunched
-        else:
-            time, asymmetry, error = rebin(
-                dataset.time,
-                dataset.asymmetry,
-                dataset.error,
-                bunch_factor,
+        if curve_only:
+            time, asymmetry, error = merge_curve_bins(
+                dataset.time, dataset.asymmetry, dataset.error, bunch_factor
             )
-        if time.size == 0 or asymmetry.size == 0 or error.size == 0:
-            return dataset
+        else:
+            if self._counts_rebunch_provider is None:
+                raise ValueError(
+                    "Histogram-backed bunching requires a counts-first reduction provider."
+                )
+            result = self._counts_rebunch_provider(dataset, bunch_factor)
+            if result is None:
+                raise ValueError(
+                    "Counts-first reduction provider must return time, asymmetry, and error arrays."
+                )
+            time, asymmetry, error = result
         return MuonDataset(
             time=time,
             asymmetry=asymmetry,
@@ -6636,8 +6564,7 @@ class PlotPanel(QWidget):
         # on the displayed asymmetry) already flags unreliable bins there. Skip
         # the raw-bin reduction explicitly rather than letting it self-disable
         # via a silent array-shape mismatch.
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
+        if binning_spec(grouping).mode != "fixed":
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
@@ -6657,15 +6584,7 @@ class PlotPanel(QWidget):
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-        n_grouped = min(len(fb.forward), len(fb.backward))
-        if n_grouped == 0:
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-        forward = fb.forward[:n_grouped]
-        backward = fb.backward[:n_grouped]
+        forward, backward = fb.forward, fb.backward
         alpha = fb.alpha
         common_t0 = fb.common_t0
 
@@ -6675,12 +6594,7 @@ class PlotPanel(QWidget):
             source_file = str(
                 getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
             )
-            # Mode-aware gate (matches the real reduction): apply whichever
-            # background mode the grouping selects when it is available for this
-            # source, instead of the old PSI/LEM-only range gate. (reference_run
-            # needs externally resolved counts that this display-only mask does
-            # not load, so apply_grouped_background_correction no-ops it here —
-            # a minor difference in which bins render gray, never in the data.)
+            # This display mask uses only backgrounds with resolved inputs.
             mode = resolve_background_mode(grouping)
             available = available_background_modes(metadata=metadata, source_file=source_file)
             if mode in available:
@@ -6696,9 +6610,9 @@ class PlotPanel(QWidget):
                     bin_width_us=bin_width,
                     facility=facility,
                 )
-                if bkg_result.applied:
-                    forward = bkg_result.forward
-                    backward = bkg_result.backward
+                if bkg_result.outcome.status == CorrectionStatus.APPLIED:
+                    forward = bkg_result.forward.counts
+                    backward = bkg_result.backward.counts
 
         denominator = np.asarray(forward + alpha * backward, dtype=float)
         if denominator.size == 0:
@@ -8494,7 +8408,8 @@ class PlotPanel(QWidget):
         if t_good_offset is None and first_good_bin is not None:
             t_good_offset = max(0, first_good_bin - t0_bin)
         last_good_bin = _safe_int(grouping.get("last_good_bin"))
-        bunching_factor = _safe_int(grouping.get("bunching_factor"))
+        binning = binning_spec(grouping)
+        bunching_factor = binning.factor
         deadtime_correction = bool(grouping.get("deadtime_correction", False))
 
         with open(dat_path, "w", encoding="utf-8") as f:
@@ -8559,14 +8474,14 @@ class PlotPanel(QWidget):
                 fg_text = "" if t_good_offset is None else str(t_good_offset)
                 lg_text = "" if last_good_bin is None else str(last_good_bin)
                 f.write(f"!  Offset to first good bin = {fg_text}, Last good bin = {lg_text}\n")
-            binning_mode = str(grouping.get("binning_mode", "fixed"))
+            binning_mode = binning.mode
             if binning_mode == "variable":
                 f.write(
-                    f"!  Variable binning, initial bin = {grouping.get('bin0_us')} us, "
-                    f"bin at 10 us = {grouping.get('bin10_us')} us\n"
+                    f"!  Variable binning, initial bin = {binning.bin0_us} us, "
+                    f"bin at 10 us = {binning.bin10_us} us\n"
                 )
             elif binning_mode == "constant_error":
-                f.write(f"!  Constant-error binning, initial bin = {grouping.get('bin0_us')} us\n")
+                f.write(f"!  Constant-error binning, initial bin = {binning.bin0_us} us\n")
             elif bunching_factor is not None:
                 f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
             f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
@@ -8741,11 +8656,7 @@ class PlotPanel(QWidget):
         return width, height
 
     def _collect_export_payloads(self) -> list[dict] | None:
-        """Assemble the current plot's export payloads (with the ALL fallback).
-
-        Shared by the GLE export and the plain-text data export so both see the
-        same per-dataset payloads.
-        """
+        """Collect the shared GLE/text payloads, including vector projections."""
         payloads = self.get_current_plot_export_data()
         if (
             payloads is None
@@ -8811,14 +8722,32 @@ class PlotPanel(QWidget):
             return None
         return str(content_combo.currentData()), bool(range_box.isChecked())
 
-    def export_plotted_data_as_text(self) -> None:
-        """Export the plotted curve(s) as plain text, without the GLE machinery.
+    def _export_corrections_ready(self) -> bool:
+        if not self._has_mpl:
+            return True
+        datasets = (
+            self._current_datasets
+            + self._grouped_time_subplot_datasets
+            + [dataset for group in self._vector_subplot_datasets.values() for dataset in group]
+        )
+        errors = {
+            dataset.run_number: dataset.metadata["correction_error"]
+            for dataset in datasets
+            if dataset.metadata.get("correction_error") is not None
+        }
+        if not errors:
+            return True
+        QMessageBox.warning(
+            self,
+            "Corrections incomplete",
+            "\n".join(f"Run {run}: {reason}" for run, reason in errors.items()),
+        )
+        return False
 
-        Reuses the same ``.dat``/``.fit`` writers (and their provenance header)
-        as the GLE export, but writes only the text files — no ``.gleplot``
-        folder, GLE script, or compile. The content switch (data only / data +
-        fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
-        """
+    def export_plotted_data_as_text(self) -> None:
+        """Export the visible data and fit curves as plain text."""
+        if not self._export_corrections_ready():
+            return
         axis_groups = self._export_axis_groups()
         if not axis_groups:
             QMessageBox.warning(
@@ -8963,14 +8892,9 @@ class PlotPanel(QWidget):
         return fig, axes_objs
 
     def export_plots_to_gle(self) -> None:
-        """Export current main-plot view as GLE using gleplot.
-
-        Time-domain data is plotted with error bars (no connecting lines) and
-        fit curves with lines (no markers). Frequency-domain (FFT/MaxEnt) views
-        mirror the on-screen spectrum instead: a piecewise-linear line in the
-        current display unit plus a light shaded ±1σ band. File names are
-        derived from the Label dropdown value for each dataset.
-        """
+        """Export the visible curves as GLE with their plotted errors and bands."""
+        if not self._export_corrections_ready():
+            return
         payloads = self._collect_export_payloads()
         if not payloads:
             QMessageBox.warning(

@@ -30,10 +30,11 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QToolButton
+from PySide6.QtWidgets import QMenu, QPushButton, QToolButton
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit.single_tab import (
@@ -56,8 +57,8 @@ _RETIRED_LABELS = {"Drop background", "More…", "Send to Batch", "Add to Series
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _run_stub_fit(tab: SingleFitTab) -> None:
@@ -66,6 +67,7 @@ def _run_stub_fit(tab: SingleFitTab) -> None:
 
     def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=60.0,
             reduced_chi_squared=1.0,
@@ -93,6 +95,7 @@ def _run_stub_fit(tab: SingleFitTab) -> None:
 def _stub_result(chi2: float) -> FitResult:
     """A converged single-parameter result, enough to render an outcome chip."""
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=chi2 * 30.0,
         reduced_chi_squared=chi2,
@@ -153,13 +156,13 @@ def test_model_row_wraps_instead_of_stacking(app):
         tab.deleteLater()
 
 
-def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
+def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(tmp_path, app):
     """At rest the table shows Name·Value·Fix·Min·Max without a scrollbar.
 
     The tab's *minimum* width stays under ``char_width(40)`` — the fit-range
     row, not the table, is what the dock can never be narrower than.
     """
-    settings = QSettings("AsymmetryTest", "FitPanelDensity")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     tab = SingleFitTab(settings=settings)
     try:
@@ -187,13 +190,13 @@ def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
         settings.clear()
 
 
-def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(app):
+def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(tmp_path, app):
     """The Batch tab's tables fit the same dock as the Single tab's.
 
     Parameter · Seed · Type is what rests visible; the rail's ``Bounds`` chip is
     off, so Min and Max are not part of the resting budget.
     """
-    settings = QSettings("AsymmetryTest", "BatchPanelDensity")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     tab = GlobalFitTab(member_kind="runs", settings=settings)
     try:

@@ -35,6 +35,18 @@ The short version
   :class:`~asymmetry.core.transform.FieldScan` is fraction-scale, and so are the
   amplitudes fitted to it.
 
+The binned primitive accepts a
+:class:`~asymmetry.core.transform.fb_counts.ForwardBackwardCounts` value,
+which carries counts, variances, the good-bin window and the time grid.
+Its result remains fraction-scale; validation does not rescale the counts
+or the resulting asymmetry.
+
+The integral primitive and detailed α estimator accept two
+:class:`~asymmetry.core.transform.fb_counts.GroupCounts` values, including
+independent variances and shared correction components. For example,
+``integrate_asymmetry(corrected.forward, corrected.backward)`` returns one
+fractional asymmetry and its marginal error.
+
 Naming a scale in code
 ----------------------
 
@@ -100,7 +112,7 @@ scale it was given: it is safe on either, and never converts.
      - As above, with supplied count uncertainties.
    * - :func:`~asymmetry.core.transform.binned_fb_asymmetry`
      - fraction
-     - Counts are binned first, then the ratio formed.
+     - Accepts validated grouped counts; bins counts before forming the ratio.
    * - :func:`~asymmetry.core.transform.reduce_grouped_asymmetry`
      - **percent**
      - The one step on the reduction path that applies the ``×100``;
@@ -124,7 +136,7 @@ scale it was given: it is safe on either, and never converts.
      - preserves
      - Dividing by :math:`\Delta x` leaves the asymmetry scale alone.
    * - :func:`~asymmetry.core.transform.rebin`,
-       :meth:`~asymmetry.core.data.dataset.MuonDataset.rebin`
+       :meth:`~asymmetry.core.data.dataset.MuonDataset.merge_curve_bins`
      - preserves
      - A mean of values with errors in quadrature.
    * - :func:`~asymmetry.core.transform.rrf_demodulate`,

@@ -45,11 +45,6 @@ from asymmetry.core.representation import RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _new_window() -> MainWindow:
     settings = QSettings()
     settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)

@@ -55,6 +55,14 @@ and from Mantid's binary HDF5 ``.mantid`` files.
 What is stored
 --------------
 
+Saved fit summaries record their likelihood as ``objective``. Gaussian and
+Poisson statistics keep their corresponding labels after loading. A grouped
+result whose objective was not recorded has ``objective: null``, no χ² quality
+verdict, and the explanation "Fit objective was not recorded." A known
+Gaussian fit retains ``objective: gaussian``. Poisson summaries carry the
+minimum fitted expected count used by the quality-display policy; see
+:doc:`assessing_a_fit`.
+
 Project files store:
 
 * Loaded dataset references (source file paths)
@@ -68,7 +76,11 @@ Project files store:
 * Separate frequency-fit state for displayed Fourier spectra
 * Per-run Fourier group-phase tables, included groups, and auto-estimated
   phase markers
-* Cached single-fit and global-fit wizard analysis payloads when present
+* Cached single-fit and global-fit wizard analysis payloads when present.
+  Assessments retain fit statistics and ``sample_count``; information criteria
+  are derived from those values. ``sample_count: null`` means the count is
+  unknown, so AICc and BIC are unavailable for that cached row. Reanalyse the
+  run to record the fitted count.
 * **Per-dataset representations** — for each analysis domain (F-B asymmetry,
   detector groups, FFT, MaxEnt) that the user has exercised, the stored
   representation records a *recipe* (for FFT: the generation config) and its
@@ -590,15 +602,27 @@ is preserved without re-running the Grouping dialog.
     Optional per-detector deadtime values in microseconds, read from formats
     that provide NeXus-style deadtime metadata.
 
+On restore, correction outcomes are recomputed from the saved request. A run
+whose requested correction cannot be applied stays in the project with its
+request intact and a "Corrections incomplete" badge. Fits and data, plot and
+fit-report exports refuse while the run is incomplete. A successful **Apply**
+clears the error. The project stores the request, rather than a second copy of
+the effective correction outcome.
+
+``deadtime_errors_us``
+    Optional per-detector standard errors in microseconds from a promoted
+    calibration. ``null`` means unknown, including a nonzero applied base whose
+    covariance with a count-fit increment is unavailable. The total table is
+    saved as a run override, with ``deadtime_reference_run`` naming its source.
+
 ``background_correction``
     Boolean; whether grouped-count background subtraction is active.
 
 ``background_method``
     Optional string set after grouping is applied. ``"fixed"`` means explicit
     forward/backward background values were used. ``"estimated"`` means the
-    values were calculated from background bin ranges. ``"invalid_range"``
-    means background correction was requested but not applied because the range
-    was outside the grouped data.
+    values were calculated from background bin ranges. Unavailable or failed
+    corrections prevent Apply; invalid ranges raise an input error.
 
 ``background_ranges``
     Optional inclusive background-bin ranges for forward and backward grouped
@@ -703,8 +727,13 @@ While a project has unsaved changes, a timer (default every 5 minutes,
 ``0`` disables it — the ``QSettings`` key ``project/autosave_interval_minutes``)
 writes a crash-recovery snapshot to ``<name>.autosave.asymp`` beside a saved
 project, or to an ``untitled.autosave.asymp`` file under the platform's
-application-data directory for a session that has never been saved. A
-successful save or a clean window close deletes it — including the
+application-data directory for a session that has never been saved. Directory
+creation runs with the snapshot write in the background. If creation or writing
+fails, the snapshot is skipped and the log reports ``Autosave failed: …``.
+Closing an untouched window does not create an application-data directory.
+If deleting a snapshot fails, closing continues and the log reports
+``Could not remove autosave: …``. A successful save or a clean window close
+attempts to remove the snapshot — including the
 ``untitled`` snapshot a session wrote before its first **Save As**. If you
 keep working while a save is writing, that work is not in the saved file:
 the session stays marked as modified and its snapshot is kept. Opening a

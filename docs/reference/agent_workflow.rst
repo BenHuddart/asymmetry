@@ -206,7 +206,9 @@ and each is printed on the line under the command's table:
   transverse pair of a five-histogram PSI GPS file, whose default pair is
   Back/Forw. ``info`` lists each file's groups and its default pair.
 - ``--deadtime from_file`` applies each file's own per-detector deadtimes
-  (default ``off``, the GUI's fresh-run default).
+  (default ``off``, the GUI's fresh-run default). A file without a complete,
+  non-zero per-detector table is an error. For example:
+  ``asymmetry: Run 101: deadtime correction requested (from_file) but not applied: the file has no non-zero per-detector deadtime table.``
 - ``--background tail_fit`` fits a flat rate under the late-time decay and
   subtracts it (pulsed sources); ``--background range`` subtracts the mean
   over a pre-t0 bin range, ``0.1·t0``–``0.6·t0`` unless a range is given as
@@ -1901,9 +1903,10 @@ always visible. Bounds and large errors are assessed per parameter: an
 unconstrained nuisance damping term does not invalidate a precise amplitude,
 frequency or Gaussian width. Trend rows retain ``params_at_bound`` in JSON;
 whole-fit failures, unresolved frequencies, spurious reseeds and unphysical
-amplitudes still qualify the entire fit. The stored work-directory schema is
-now 5; older reduced caches and series must be regenerated rather than read
-without this diagnostic metadata.
+amplitudes still qualify the entire fit. Work-directory entries record their
+schema. Reduced caches, wizard results and series under an older schema must
+be regenerated so their statistics and diagnostic metadata match the analysis
+contract.
 
 Temperature endpoints print the coldest-minus-next difference and its combined
 error. Values within two combined errors are described as consistent; a
@@ -2069,13 +2072,14 @@ need magnetic line-shift/splitting interpretations.
 Sampling bandwidth in stored reductions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``reduce --rebin`` averages bins and lowers the Nyquist frequency used by later
-fits and transforms. Before averaging, the workflow checks detected spectral
+``reduce --rebin`` merges raw counts before forming the asymmetry and lowers
+the Nyquist frequency used by later fits and transforms. Before merging, the workflow checks detected spectral
 lines on the native record. It rejects a factor that would fold a detected line
 through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
 factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
 applied field alone does not forbid averaging a nonprecessing LF trace; the
-check protects measured lines, rather than assuming a Larmor line is present.
+check protects measured lines. Fit-recipe ``rebin`` uses independent curve-bin
+means, recorded as ``rebin_operation: merge_curve_bins`` in the recipe.
 To average a known fast line away on purpose, for example to study slower
 relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
 "Rebin even when a detected line lies above the new Nyquist frequency,

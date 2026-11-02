@@ -25,6 +25,7 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     corrected_grouped_counts,
     correction_flags_from_grouping,
@@ -87,7 +88,7 @@ def test_raw_counts_bias_the_estimate_but_subtraction_recovers_true_alpha():
         use_background=False,
     )
     raw_alpha = estimate_alpha(
-        raw.forward, raw.backward, first_good_bin=0, last_good_bin=N_BINS - 1
+        raw.forward.counts, raw.backward.counts, first_good_bin=0, last_good_bin=N_BINS - 1
     )
 
     grouping = _base_grouping()
@@ -104,7 +105,10 @@ def test_raw_counts_bias_the_estimate_but_subtraction_recovers_true_alpha():
         use_background=True,
     )
     corrected_alpha = estimate_alpha(
-        corrected.forward, corrected.backward, first_good_bin=0, last_good_bin=N_BINS - 1
+        corrected.forward.counts,
+        corrected.backward.counts,
+        first_good_bin=0,
+        last_good_bin=N_BINS - 1,
     )
 
     # The flat pedestal biases the raw estimate toward 1; subtracting it recovers
@@ -131,12 +135,13 @@ def test_corrected_counts_match_the_reductions_pre_asymmetry_counts():
         use_background=True,
     )
     # Background-subtracted single-detector groups equal the pure decay signal.
-    np.testing.assert_allclose(corrected.forward, A_TRUE * _decay(), rtol=1e-9)
-    np.testing.assert_allclose(corrected.backward, _decay(), rtol=1e-9)
+    np.testing.assert_allclose(corrected.forward.counts, A_TRUE * _decay(), rtol=1e-9)
+    np.testing.assert_allclose(corrected.backward.counts, _decay(), rtol=1e-9)
 
     # And the reduction runs without error on the same grouping (shared pipeline).
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=[0],
         backward_idx=[1],
@@ -259,7 +264,7 @@ def _reduced_background(run: Run, **kwargs):
         use_background=True,
         **kwargs,
     )
-    state = corrected.background_state
+    state = corrected.corrections.background.effective
     assert state is not None
     return state["ranges"][0], corrected.background_level
 
@@ -291,6 +296,7 @@ def test_reduce_grouped_asymmetry_defaults_the_facility_too():
     kwargs = dict(
         histograms=run.histograms,
         grouping=_psi_grouping(),
+        binning=binning_spec(_psi_grouping()),
         forward_idx=[0],
         backward_idx=[1],
         alpha=A_TRUE,
@@ -301,8 +307,8 @@ def test_reduce_grouped_asymmetry_defaults_the_facility_too():
     derived = reduce_grouped_asymmetry(**kwargs, metadata=run.metadata)
     explicit = reduce_grouped_asymmetry(**kwargs, facility="PSI")
     untrimmed = reduce_grouped_asymmetry(**kwargs, facility="")
-    assert derived.background_state == explicit.background_state
-    assert derived.background_state != untrimmed.background_state
+    assert derived.corrections.background.effective == explicit.corrections.background.effective
+    assert derived.corrections.background.effective != untrimmed.corrections.background.effective
     np.testing.assert_allclose(derived.asymmetry, explicit.asymmetry, rtol=0, atol=0)
 
 
@@ -322,7 +328,7 @@ def test_reduction_falls_back_to_the_groupings_instrument_without_metadata():
         deadtime_mode="off",
         use_background=True,
     )
-    state = corrected.background_state
+    state = corrected.corrections.background.effective
     assert state is not None
     trimmed, _ = _reduced_background(run, facility="PSI")
     assert state["ranges"][0] == trimmed

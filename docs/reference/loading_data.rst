@@ -20,6 +20,20 @@ be navigated with the scriptable period-selection API — see
 For an end-to-end walk-through that starts with loading, see
 :doc:`/workflows/temperature_scan_magnetism`.
 
+Acquisition shape and alignment
+-------------------------------
+
+A detector's acquired histogram is retained before grouping. PSI and ROOT
+acquisition arrays must have equal one-dimensional shape; a mismatch raises
+``count arrays must have equal shape.`` PSI-MDU records use their declared
+format extent, including padding of shorter records, before this check.
+
+All three loaders align the selected detectors by their own time-zero bins
+and crop the forward/backward pair to their common terminal bin. The loaded
+run metadata records this operation as ``grouped_alignment``: the common t0,
+each detector's shift, both group lengths, and the retained length. This
+makes the alignment crop distinguishable from missing acquisition bins.
+
 Supported formats
 -----------------
 
@@ -60,6 +74,13 @@ honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
 ``mT`` / ``millitesla`` by a factor of 10. An absent, blank, gauss, or
 unrecognised unit is passed through unchanged — the loader never guesses a
 conversion the file did not declare.
+
+NeXus exports declare units on every written physical quantity: sample
+``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
+``corrected_time``, ``time_zero``, and ``dead_time`` use ``microseconds``,
+and ``resolution`` uses ``picoseconds``. These declarations follow the
+`muon NeXus definition <https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_
+(v1, pp. 9, 11, and 14). Per-detector time zero retains its sub-bin precision.
 
 HiFi can sweep the field with its small Z coil on top of the main solenoid held
 persistent, and such a run records only the Z offset (a title of ``F=50`` with
@@ -188,6 +209,58 @@ Asymmetry supports PSI raw histogram files in the classic PSI-BIN and PSI-MDU
 formats. These files are loaded into normal raw histogram runs, so they use the
 same full Grouping dialog as ISIS NeXus data.
 
+ROOT and PSI header quantities
+""""""""""""""""""""""""""""""
+
+Text header quantities are converted to μs, G, and K using the declared unit
+adjacent to the number, after an optional uncertainty. Symbols are
+case-sensitive (``mT`` and ``MT`` differ); spelled-out unit names are
+case-insensitive. Both micro glyphs, ``µ`` and ``μ``, are accepted.
+
+.. list-table:: Supported text-header units
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Quantity
+     - Stored as
+     - Accepted units
+   * - ROOT time resolution
+     - μs
+     - ``s``, ``ms``, ``us``/``µs``/``μs``, ``ns``, ``ps``
+   * - Magnetic field
+     - G
+     - ``G``, ``kG``, ``T``, ``mT``, ``uT``/``µT``/``μT``
+   * - Temperature
+     - K
+     - ``K``, ``mK``, ``°C``/``degC``
+
+For example, ``10mT`` is 100 G, ``300mK`` is 0.3 K, and ``20degC`` is
+293.15 K. A PSI label of ``TF 100`` has no unit following the number and uses
+the PSI G convention; the ``T`` in the prefix is not a tesla declaration.
+The SI temperature relation and prefixes follow the
+`BIPM SI Brochure <https://www.bipm.org/en/publications/si-brochure>`_.
+
+ROOT requires a declared unit for present numeric temperature and field
+headers and a finite, positive ``RunInfo/Time Resolution``. Missing resolution
+raises ``missing time value.`` rather than inventing a bin width. Incompatible
+units raise an error naming the file, header field, token, and supported units,
+for example ``example.root: RunInfo/Sample Magnetic Field: field unit 'Oe';
+supported units: G, kG, T, mT, uT.`` Oersted describes H rather than B and is
+not converted to gauss.
+
+PSI text headers without a unit use K or G, recorded as an ``unverified`` format
+convention pending instrument review. A declared file unit takes precedence.
+MDU's nonzero mean-temperature header takes precedence over the title's
+sample-temperature field. ``metadata["declared_units"]`` records each source
+header's unit, ``source`` (``file`` or ``format``), and convention ``reference``;
+it contains no duplicate measured values. ROOT sensor logs associated with a
+header declaration are converted to the same canonical unit before their
+means and primary thermometer are selected. Their ``unit_declaration`` retains
+the original unit.
+
+PSI format and acquisition details
+""""""""""""""""""""""""""""""""""
+
 PSI publishes a `data-format overview <https://www.psi.ch/en/smus/data-format>`_
 and a `BIN layout description
 <https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt>`_.
@@ -207,8 +280,19 @@ The raw metadata retains ``HIFI`` while the detector layout resolves to
 ``HAL``. This is distinct from both ISIS HiFi and PSI FLAME.
 
 PSI files can store different ``t0`` values per detector. Asymmetry preserves
-those detector-specific offsets and aligns histograms by their own ``t0`` when
-regrouping.
+those detector-specific offsets and aligns histograms by their effective
+``t0`` when regrouping. Each group ends at its shortest shifted detector;
+forward and backward sums are cropped together to the shorter group.
+The grouped-count result and loaded alignment record carry the common t0 bin, each detector shift,
+both group lengths before cropping, and the final length. For example,
+two 1000-bin detectors with t0 bins 100 and 110 produce group lengths 1010
+and 1000; the shared record retains 1000 bins.
+
+A reference background is aligned on the sample's common t0 grid. It must
+cover every sample bin: a shorter reference raises an error such as
+``reference run has 500 aligned bins; sample requires 1000.`` A longer
+reference is cropped to the sample's terminal bin. The grouped Fourier path
+uses the same coverage rule and does not pad a missing reference tail.
 
 For PSI-BIN, musrfit's ``MuSR_td_PSI_bin`` reader uses the stored ``t0`` and
 ``first good`` values directly as C++ vector indices, so Asymmetry treats them

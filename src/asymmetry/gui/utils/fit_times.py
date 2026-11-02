@@ -13,18 +13,16 @@ from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths
-
 from asymmetry.core.fitting.fit_time_store import FitTimeStore
 from asymmetry.core.fitting.fit_wizard import CandidateAssessment
+from asymmetry.gui.utils import app_data
 
 _log = logging.getLogger(__name__)
 
 
 def fit_times_path() -> Path:
     """Where this computer's fit times live: ``fit_times.json`` in the app data folder."""
-    location = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-    return Path(location) / "fit_times.json"
+    return app_data.app_data_dir() / "fit_times.json"
 
 
 @cache

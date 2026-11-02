@@ -34,6 +34,7 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     SpectrumFingerprint,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import (
     DetectedPeak,
@@ -101,14 +102,6 @@ def _recommendation_with_peaks(dataset: MuonDataset) -> FitWizardRecommendation:
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def dataset() -> MuonDataset:
     t = np.linspace(0.0, 8.0, 120)
@@ -130,6 +123,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     )
     exp_curve = exp_model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01)
     exp_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
         reduced_chi_squared=0.05,
@@ -148,6 +142,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     )
     gauss_curve = gauss_model.function(dataset.time, A_1=0.18, sigma=0.6, A_bg=0.02)
     gauss_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=9.0,
         reduced_chi_squared=0.09,
@@ -193,10 +188,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     exp_assessment = CandidateAssessment(
         template=exp_template,
         fit_result=exp_result,
-        aic=8.0,
-        aicc=8.2,
-        bic=10.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
@@ -216,10 +208,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     gauss_assessment = CandidateAssessment(
         template=gauss_template,
         fit_result=gauss_result,
-        aic=12.0,
-        aicc=12.2,
-        bic=14.0,
-        selected_score=12.2,
+        sample_count=1000,
         residual_rms=1.5,
         runs_z_score=2.5,
         max_abs_autocorrelation=0.4,
@@ -294,14 +283,7 @@ def test_fit_wizard_window_failed_refresh_clears_recommendation(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A refresh that fails must clear the stale recommendation and prefix the error.
-
-    Regression: after the WizardWindowBase unification the single wizard briefly
-    inherited the base default failure hook, which set only the raw message —
-    dropping the "Fit wizard analysis failed:" prefix (leaving it inconsistent
-    with the global wizard) and leaving the previous successful recommendation
-    live, so the still-enabled metric combo could resurrect stale results.
-    """
+    """A refresh that fails must clear the stale recommendation and prefix the error."""
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",

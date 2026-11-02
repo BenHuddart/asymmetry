@@ -23,7 +23,7 @@ the reference run and applies it to all selected datasets (the same
 reference-run convention as deadtime estimation). Three methods are offered;
 all report the estimate with a statistical uncertainty, e.g. 1.3702(45)
 — from a seeded Poisson bootstrap of the histogram counts for the two
-optimising methods, and from an exact closed-form propagation for the count
+optimising methods, and from closed-form first-order propagation for the count
 ratio. WiMDA reports a bare number for the same operations.
 
 Choosing a method
@@ -170,29 +170,24 @@ this bias.
 
 .. _alpha-ratio-subtracted-background:
 
-*Uncertainty when a background has already been subtracted.* Because the ratio
-is an explicit function of the two window sums, its uncertainty is propagated in
-closed form rather than bootstrapped:
+*Uncertainty when a background has already been subtracted.* The ratio uses
+first-order propagation of the two independent detector-group sums:
 
 .. math::
 
-   \left( \frac{\sigma_\alpha}{\alpha} \right)^2 =
-     \frac{S_F + n\,k_F}{S_F^2} + \frac{S_B + n\,k_B}{S_B^2}
-     + \left( \frac{n\,\sigma_{k_F}}{S_F} \right)^2
-     + \left( \frac{n\,\sigma_{k_B}}{S_B} \right)^2 ,
+   \left(\frac{\sigma_\alpha}{\alpha}\right)^2
+   = \frac{V_F}{S_F^2}+\frac{V_B}{S_B^2},
+   \qquad
+   V = \sum_S v_j+n^2\sigma_\theta^2-2n\sum_S\kappa_j.
 
-where :math:`S_F`, :math:`S_B` are the summed counts over the :math:`n`-bin
-window and :math:`k`, :math:`\sigma_k` are a constant background already
-subtracted from every bin of each group and its standard error. The first two
-terms are Poisson: subtracting a constant shifts the mean but not the variance,
-so the relevant total is the **raw** :math:`S + n k`. The last two are the
-baseline's own error, which is *fully correlated* across the window — one
-estimate is removed from all :math:`n` bins, so it enters as :math:`n\sigma_k`,
-not :math:`\sqrt{n}\,\sigma_k`.
+Here :math:`S_F,S_B` are corrected sums over the :math:`n` selected bins,
+and the variance and covariance terms are defined in
+:ref:`background-count-uncertainty`. For a range mean the overlap term is
+computed from the actual raw-bin coefficients. A disjoint estimation window
+has :math:`\kappa_j=0` on the signal window and retains the full
+:math:`n^2\sigma_\theta^2` shared contribution.
 
-Subtracted counts cannot reveal either quantity on their own, so a caller
-working from :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts`
-must hand them over::
+The typed groups carry their independent variances and shared components::
 
     corrected = corrected_grouped_counts(..., use_background=True)
     estimate = estimate_alpha_detailed(
@@ -201,13 +196,11 @@ must hand them over::
         method="ratio",
         first_good_bin=lo,
         last_good_bin=hi,
-        subtracted_background=corrected.subtracted_background(),
     )
 
-The grouping dialog does this for you. Omit it and the last two terms — and the
-:math:`n k` in the first two — are simply missing, which on a late, low-counts
-window where the background is a sizeable fraction of the signal under-states
-:math:`\sigma_\alpha` by roughly a factor of two.
+The grouping dialog supplies these groups automatically. The uncertainty is
+propagated from the corrected counts and their recorded noise model; the
+background is not inferred from the corrected values alone.
 
 Count-fit α
 ------------
@@ -246,11 +239,13 @@ Poisson bootstrap: the histogram counts are resampled 200 times from their
 observed values, the estimator is re-run on each replica, and the spread of the
 replicas (a percentile-based standard error, robust against the heavy tails the
 General method develops near its identifiability limit) is quoted. The bootstrap
-is seeded, so repeating an estimate gives identical digits. The count ratio
+is seeded, so repeating an estimate gives identical digits. These two methods
+resample positive count means as Poisson and do not propagate shared correction
+components into their bootstrap uncertainty. The count ratio
 instead propagates in closed form (see
-:ref:`alpha-ratio-subtracted-background`), which is exact for a ratio of window
-sums and, unlike a bootstrap of the counts as handed in, can account for a
-background subtracted before the estimate was made. Setting ``n_bootstrap=0``
+:ref:`background uncertainty <alpha-ratio-subtracted-background>`), using
+first-order propagation of the window sums and including the recorded shared
+background components. Setting ``n_bootstrap=0``
 suppresses the uncertainty for every method.
 
 The uncertainty is statistical only — it does not include the count-ratio

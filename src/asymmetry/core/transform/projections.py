@@ -19,6 +19,7 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
 from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
     reduce_grouped_asymmetry,
@@ -104,6 +105,7 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
     for label, (forward, backward) in pairs.items():
         result = reduce_grouped_asymmetry(
             histograms=source.histograms,
+            binning=binning_spec(grouping),
             grouping=grouping,
             forward_idx=effective_group_indices(grouping, forward, n_histograms=n_histograms),
             backward_idx=effective_group_indices(grouping, backward, n_histograms=n_histograms),

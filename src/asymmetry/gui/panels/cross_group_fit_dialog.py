@@ -25,6 +25,7 @@ from asymmetry.core.fitting.cross_group_roles import (
     CrossGroupRoleRecommendation,
     suggest_cross_group_roles,
 )
+from asymmetry.core.fitting.information_criteria import SelectionMetric, rank
 from asymmetry.core.fitting.parameter_carry import carry_parameter_set
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -61,9 +62,6 @@ class CrossGroupDialogOutput:
 class CrossGroupFitDialog(ModelFitDialog):
     """Cross-group fit dialog extending the base model-fit dialog."""
 
-    # global_fit_parameter_model now honours error modes, fit windows, and
-    # effective-variance x-uncertainty, so all the inherited controls are shown
-    # and wired through _run_fit / config.
     _supports_error_modes = True
     _supports_windows = True
     _supports_x_errors = True
@@ -422,7 +420,8 @@ class CrossGroupFitDialog(ModelFitDialog):
         self, recommendation: CrossGroupRoleRecommendation, *, cancelled: bool
     ) -> None:
         """Populate the rationale panel with the per-parameter + candidate view."""
-        crit = recommendation.criterion.upper()
+        metric = SelectionMetric.from_value(recommendation.criterion)
+        crit = metric.value
         lines: list[str] = []
         if cancelled:
             lines.append("Suggestion cancelled — roles left unchanged.")
@@ -442,23 +441,21 @@ class CrossGroupFitDialog(ModelFitDialog):
             lines.append("")
 
         if recommendation.candidates:
-            best = None
-            for cand in recommendation.candidates:
-                if cand.success:
-                    best = cand.criterion_value(recommendation.criterion)
-                    break
-            lines.append(f"Top candidates ({crit}):")
-            for cand in recommendation.candidates[:5]:
-                local_label = ", ".join(cand.local_params) or "none"
-                if not cand.success:
-                    lines.append(f"  ✗ local = [{local_label}] — did not converge")
-                    continue
-                value = cand.criterion_value(recommendation.criterion)
-                if best is not None and np.isfinite(value) and np.isfinite(best):
-                    delta = f"  (Δ {value - best:+.2f})"
-                else:
-                    delta = ""
-                lines.append(f"  local = [{local_label}]: {crit} {value:.2f}{delta}")
+            ranked, excluded = rank(recommendation.candidates, metric)
+            if ranked:
+                best = ranked[0].criterion_value(metric)
+                lines.append(f"Top candidates ({crit}):")
+                for cand in ranked[:5]:
+                    local_label = ", ".join(cand.local_params) or "none"
+                    value = cand.criterion_value(metric)
+                    lines.append(
+                        f"  local = [{local_label}]: {crit} {value:.2f}  (Δ {value - best:+.2f})"
+                    )
+            if excluded:
+                lines.append(f"Not ranked ({crit}):")
+                for cand, reason in excluded:
+                    local_label = ", ".join(cand.local_params) or "none"
+                    lines.append(f"  local = [{local_label}] — {reason}")
 
         self._rationale_panel.setPlainText("\n".join(lines))
         self._rationale_panel.setVisible(True)

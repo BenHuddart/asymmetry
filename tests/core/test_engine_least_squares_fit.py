@@ -375,6 +375,13 @@ def test_a_cost_factory_is_refused_by_name() -> None:
     datasets, inits = _make_series(a0_true=22.0, lambdas=[0.4, 0.9], seed=31)
     engine = FitEngine()
 
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
+
+    observations = {
+        ds.run_number: PoissonCounts(ds.time, np.ones_like(ds.time), CountSource.RAW)
+        for ds in datasets
+    }
+
     with pytest.raises(NotImplementedError, match="least_squares"):
         engine.global_fit(
             datasets,
@@ -383,6 +390,7 @@ def test_a_cost_factory_is_refused_by_name() -> None:
             ["Lambda"],
             inits,
             strategy="least_squares",
+            observations=observations,
             cost_factory=POISSON_COST,
         )
 
@@ -422,7 +430,10 @@ def _problem(datasets, inits, *, global_params, local_params, groups=None, t_min
         for pname in global_params
         if any(not inits[ds.run_number][pname].fixed for ds in datasets)
     ]
+    from asymmetry.core.fitting.engine import _dataset_observations
+
     return _build_coupled_global_problem(
+        observations={ds.run_number: _dataset_observations(ds, t_min, t_max) for ds in datasets},
         datasets=datasets,
         model_fn=_MODEL,
         global_params=global_params,

@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QPushButton
 
 from asymmetry.gui.panels.alc_panel import ALCScanView
 
@@ -44,8 +44,8 @@ _FIT_BUTTON_LABELS = ["Fit baseline", "Fit peaks", "Fit RF resonance"]
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _find_fit_button(view, label: str) -> QPushButton:

@@ -46,6 +46,8 @@ import numpy as np
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
 from .._base import _process_events_for
 from ._corpus import CorpusScenario, load_corpus_datasets, register
 
@@ -96,7 +98,9 @@ _ZF_DYNAMIC_MODEL = (["DynamicGaussianKT", "Constant"], None)
 # TF precession damped by the Abragam envelope: A·cos(2πft+φ)·G_Abragam(Δ,ν) + bg.
 _TF_ABRAGAM_MODEL = (["Oscillatory", "Abragam", "Constant"], ["*", "+"])
 
-_GAMMA_MU_MHZ_PER_G = 0.0135538  # muon gyromagnetic ratio in MHz/G
+_GAMMA_MU_MHZ_PER_G = (
+    np.trunc(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * 1e7) / 1e7
+)  # muon gyromagnetic ratio in MHz/G
 
 
 def _pump(milliseconds: int) -> None:

@@ -82,10 +82,28 @@ A **Cost** selector chooses how the counts are weighted:
   when every fitted bin has high counts; it matches the historical WiMDA
   weighting.
 
-The two agree where counts are high and diverge where they are sparse; when in
-doubt, the Poisson cost is the safe default. The reduced statistic reported for
-a Poisson fit is the Cash value per degree of freedom, which behaves like a
-reduced χ² near the minimum.
+Poisson fits require finite, non-negative integer counts from the raw acquisition.
+Deadtime-corrected and lifetime-corrected counts are ineligible, even when a
+corrected value happens to be an integer. The error for corrected deadtime data
+is "Poisson likelihood needs raw counts; these counts were deadtime-corrected.
+Use the DT₀ count-domain model or the Gaussian cost." Disable the reduction's
+deadtime correction and fit DT₀ in the expected raw counts, or select
+**Gaussian √N** for corrected observations. That Gaussian cost uses
+:math:`\sigma=\sqrt{\max(N,1)}`.
+
+The Poisson statistic is the deviance
+:math:`D=2\sum_i[\mu_i-n_i+n_i\ln(n_i/\mu_i)]`, with the zero-count limit
+:math:`D_i=2\mu_i`, including exactly zero at :math:`n_i=\mu_i=0`
+[baker_cousins]_. It equals Cash's statistic up to a data-only constant.
+Invalid trial expectations receive a restoring penalty; a reported optimum
+outside the Poisson domain fails and identifies the affected bins. Positive
+observations require positive expectations; zero observations permit zero.
+The result is labelled **Poisson deviance/ν**, including the detailed results
+window. A χ² quality verdict is shown only when every fitted expected count is
+at least five; sparse fits show the reason in the tooltip. This display
+threshold is an approximation, not a calibrated goodness-of-fit test.
+**Fit ✓** reports convergence. See :doc:`assessing_a_fit` for the assumptions.
+Gaussian and Poisson fits approach agreement at high counts.
 
 Seeding N₀, and the spurious minimum
 ------------------------------------
@@ -165,28 +183,45 @@ is off by default and, when off, leaves the fit numerically unchanged.
 Count loss and double pulse
 ---------------------------
 
-* **Fit deadtime DT₀** — add a non-paralysable count-loss term to the fit. The
-  observed counts are the true counts damped by 1 − DT₀·r, with r the
-  per-frame, per-detector count rate; DT₀ is the detector deadtime in
-  microseconds, the same quantity the Grouping dialog's deadtime correction
-  applies. A high-rate run is needed for DT₀ to be well determined.
+* **Fit deadtime DT₀** — fit the non-paralysable mean count model [Knoll]_:
 
-  The core API offers WiMDA's full set of count-loss forms via the
-  ``deadtime_model`` argument — *simple* (DT₀ only), *linear*
-  ((DT₀ + DT₁·evfr)·r, using the group event fraction evfr), *polynomial*
-  (adding C₂·10³·r², C₃·10⁶·r³, C₄·10⁹·r⁴), and *power-law*
-  ((evfr·DT₀)^C₂·exp(−(C₄·λ_μ·t)^C₃)). The loaders carry no ISIS event-fraction
-  block, so evfr defaults to 1 unless the grouping supplies it. The GUI fits the
-  *simple* DT₀ term, which is the dominant and best-determined coefficient.
+  .. math::
 
-  Once a deadtime fit converges, **Promote DT₀ → grouping** writes the fitted
-  value into the grouping's per-detector deadtime (WiMDA's Send-to-Group),
-  reporting the before/after values; tick **accumulate** to add to the existing
-  value rather than replace it. Re-reduce the run to apply the promoted
-  correction. This closes the calibration loop: fit the deadtime, promote it,
-  and the reduced data is corrected. A polynomial or power-law promotion also
-  records the model name and higher-order coefficients with the run, while the
-  reduction still applies the dominant DT₀.
+     M_i = \frac{N_i}{1 + aN_i}, \qquad a = \frac{\mathrm{DT}_0}{\Delta t\,F}.
+
+  Here :math:`N_i` and :math:`M_i` are true and observed counts for detector
+  :math:`i`, :math:`F` is the good-frame count, and both DT₀ and the bin width
+  :math:`\Delta t` are in microseconds. The formula is the exact algebraic
+  inverse of the Grouping dialog's deadtime correction. Signed calibration
+  coefficients are supported. Trial values with an undefined mean
+  (:math:`1+aN_i\leq0`) receive infinite cost; counts are never clipped.
+  Good frames must be finite and positive whenever DT₀ is supplied.
+
+  Detectors in a group are assumed to share their time dependence:
+  :math:`N_i=w_iN_G`, with :math:`\sum_iw_i=1`. Their means are summed
+  individually. Shares are estimated from per-detector counts in the fit
+  window, inverted at each trial DT₀. This accounts for unequal detector
+  rates; a high-rate run is needed to determine DT₀. Bunching uses
+  :math:`\Delta t_{\mathrm{eff}}=k\Delta t` for :math:`k` raw bins. Treating
+  the rate as constant within a bunch is an approximation whose error is
+  second order in its within-bunch variation. The count likelihood does not
+  propagate uncertainty in the estimated shares or establish an acquisition
+  variance model for deadtime losses.
+
+  **Promote DT₀** adds the fitted increment to the table actually applied to
+  the fitted counts. This composition is exact for the rational model:
+  :math:`f_a(f_b(N))=f_{a+b}(N)`. The captured total table is independent of
+  later edits to the live grouping. A forward/backward fit promotes both banks;
+  a single-group fit adds its increment only to that group's detectors.
+  For example: "Group 1 detectors: DT₀ +0.0012 µs added to the applied correction.
+  Re-reduce the run to apply." The correction is enabled in Manual mode and
+  records the ``count_fit`` method and source run. Promotion writes the captured
+  total, so repeating it does not add the increment a second time.
+
+  ``FitResult.deadtime_calibration`` holds the immutable total coefficients,
+  errors in µs, method and source run. An error is unknown when a nonzero
+  applied base has no recorded covariance with the residual fit; promotion
+  does not invent a total uncertainty.
 
 * **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
   source; 0 leaves the single-pulse model. The two pulses each carry the
@@ -263,3 +298,30 @@ References
   parameter α, and the Poisson nature of detector counts.
 * A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, the
   single-histogram (*fittype 0*) count fit and its cost options.
+
+.. [Knoll] G. F. Knoll, *Radiation Detection and Measurement*, 4th ed.
+   (Wiley, 2010), Chapter 4, “Dead Time”.
+
+Compared with other programs
+----------------------------
+
+Asymmetry's per-detector Estimate/Cal mean is algebraically equivalent to the
+published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`
+(Kilcoyne, RAL-94-080, §4). It fits the rational mean to raw counts with
+Poisson standard deviations; it does not fit the transformed correlated
+observables.
+
+A recorded Mantid 6.16.1 ``CalMuonDeadTime`` v1 binary check used noiseless
+coefficients −0.02, 0 and +0.02 µs, :math:`N_0=10000` counts/bin, lifetime
+2.1969811 µs, one million frames, 0.016 µs bins with edges
+:math:`0.496+k\times0.016` µs (:math:`k=0,\ldots,282`), and fit range
+0.5–5 µs. Mantid recovered each coefficient within :math:`2\times10^{-12}` µs;
+Asymmetry agrees within :math:`10^{-9}` µs. The weighting conventions differ
+for noisy data, so this check establishes agreement on the noiseless mean,
+not statistical equivalence of the estimators. See
+:doc:`detector_grouping` for the primary ISIS report and
+:doc:`/explanation/comparison` for the bounds of the program comparisons.
+
+.. [baker_cousins] S. Baker and R. D. Cousins, Nuclear Instruments and Methods
+   **221**, 437–442 (1984), `doi:10.1016/0167-5087(84)90016-4
+   <https://doi.org/10.1016/0167-5087(84)90016-4>`_.

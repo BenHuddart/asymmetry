@@ -22,7 +22,6 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -58,8 +57,8 @@ _ROLES_B = {"A_1": "global", "sigma": "local", "A_bg": "global"}
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture

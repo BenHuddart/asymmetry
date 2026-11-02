@@ -39,8 +39,7 @@ REPORT = {
 
 @pytest.fixture
 def panel(qapp):
-    settings = QSettings("AsymmetryTest", "fourier_auto_phase")
-    settings.clear()
+    settings = QSettings()
     widget = FourierPanel(settings=settings)
     yield widget
     widget.close()

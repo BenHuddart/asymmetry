@@ -719,19 +719,18 @@ def test_load_v1_good_frames_from_beam_keeps_deadtime_stable(tmp_path, loader: N
     histograms = ds.run.histograms
     raw_total = float(sum(np.sum(h.counts) for h in histograms))
     corrected, applied = prepare_histograms_with_deadtime(histograms, ds.run.grouping, True)
-    assert applied
+    assert applied.status == "applied"
     corrected_total = float(sum(np.sum(h.counts) for h in corrected))
     # Stable correction: a few percent, emphatically not the ~1000x blow-up
     # the good_frames=1.0 default produced.
     assert corrected_total == pytest.approx(raw_total, rel=0.05)
     assert all(np.all(np.isfinite(h.counts)) for h in corrected)
 
-    # Contrast: the pre-fix good_frames=1.0 default blows the counts up.
-    bug_grouping = dict(ds.run.grouping)
-    bug_grouping["good_frames"] = 1.0
-    blown, _ = prepare_histograms_with_deadtime(histograms, bug_grouping, True)
-    blown_total = float(sum(np.sum(h.counts) for h in blown))
-    assert blown_total > raw_total * 100.0
+    from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
+
+    bug_grouping = dict(ds.run.grouping, good_frames=1.0)
+    with pytest.raises(DeadtimeCorrectionError, match="requires < 1"):
+        prepare_histograms_with_deadtime(histograms, bug_grouping, True)
 
 
 def test_beam_good_frames_count_the_data_periods_not_the_dae_cycle(

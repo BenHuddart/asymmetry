@@ -1,10 +1,4 @@
-"""Grouped time-domain fitting helpers.
-
-This module adapts WiMDA-style multi-group count fitting onto Asymmetry's
-existing simultaneous-fit engine. The first slice intentionally keeps the
-engine unchanged and expresses each included group as one temporary fitting
-domain.
-"""
+"""Fit detector groups as simultaneous time-domain count datasets."""
 
 from __future__ import annotations
 
@@ -23,24 +17,35 @@ from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
-    POISSON_COST,
     CostFactory,
     FitCancelledError,
     FitEngine,
     FitResult,
     _reject_affine_ties,
 )
+from asymmetry.core.fitting.likelihood import (
+    CountSource,
+    GaussianObservations,
+    Objective,
+    PoissonCounts,
+)
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import map_when_a_pool_pays, open_spawn_pool
 from asymmetry.core.fitting.series_seeding import recommend_series_seeding
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionStatus,
+    require_complete_dataset,
+)
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.rebin import binning_spec, rebin_counts
+from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
@@ -62,13 +67,9 @@ def validate_grouped_model_contract(
     model_values: dict[str, float],
     fixed_params: set[str] | list[str] | tuple[str, ...],
 ) -> None:
-    """Reject grouped-model parameter ownership that conflicts with group nuisances.
+    """Require unit physics amplitudes and zero physics backgrounds.
 
-    Grouped time-domain fits reserve the overall scale and constant background for
-    the per-group nuisance block. The shared model is therefore interpreted as a
-    normalized polarization-like function: model amplitude parameters must be
-    fixed at ``1`` and model background parameters must be fixed at ``0``.
-    Fraction parameters remain free and are not treated as amplitude conflicts.
+    Group nuisances own the count scale and constant background.
     """
     fixed = {str(name) for name in fixed_params}
 
@@ -105,17 +106,7 @@ def normalize_to_grouped_contract(
     model: CompositeModel,
     base_values: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Force a model's parameters to the normalised-polarisation contract.
-
-    The grouped time-domain fit (and the multi-group *simulation* that mirrors
-    it) reserve the overall scale for the per-group amplitude and the constant
-    background for the per-group ``N0``, so the shared model must be a
-    unit-amplitude, zero-baseline polarisation: amplitude parameters fixed at
-    ``1`` and background parameters fixed at ``0``. Returns ``base_values`` (a
-    copy, defaulting to ``{}``) with those parameters overridden — the single
-    definition of the contract, used by both the fit seed cache and the
-    multi-group simulate dialog.
-    """
+    """Fix physics amplitudes to one and backgrounds to zero; group nuisances own them."""
     values = dict(base_values or {})
     for name, kind in model.parameter_kinds().items():
         if kind is ParameterKind.AMPLITUDE:
@@ -136,6 +127,17 @@ class GroupedTimeDomainGroup:
     error: NDArray[np.float64]
     source_run_number: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    detector_counts: NDArray[np.float64] | None = None
+    deadtime: CorrectionOutcome = CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
+    detector_indices: tuple[int, ...] = ()
+
+    @property
+    def count_source(self) -> CountSource:
+        if self.deadtime.status is CorrectionStatus.APPLIED:
+            return CountSource.DEADTIME_CORRECTED
+        if self.metadata.get("grouped_time_domain_lifetime_corrected", False):
+            return CountSource.LIFETIME_CORRECTED
+        return CountSource.RAW
 
 
 @dataclass
@@ -155,12 +157,7 @@ def build_grouped_time_domain_datasets(
     t_max: float | None = None,
     lifetime_corrected: bool = True,
 ) -> list[MuonDataset]:
-    """Return grouped-count datasets for one grouped run.
-
-    With ``lifetime_corrected=True`` (the default) the counts are scaled by
-    ``exp(t / tau_mu)``; with ``False`` the raw detector counts are returned, on
-    which Poisson statistics are exact.
-    """
+    """Return raw or lifetime-corrected grouped-count datasets for one run."""
     with perf_timer(
         "core.reduce.grouped_time_domain",
         lifetime_corrected=lifetime_corrected,
@@ -224,33 +221,26 @@ def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
 
 @dataclass
 class _CountGroupContext:
-    """Shared per-run setup for building one or more count-domain group traces.
-
-    Computed once over a chosen set of detector groups so that single-group,
-    forward/backward, and full multi-group builders all share the same t0
-    alignment, good-bin window, deadtime preparation, and bunching.
-    """
+    """Shared detector alignment, window, correction, and bunching settings."""
 
     run: Any
     prepared_histograms: list[Any]
+    deadtime: CorrectionOutcome
     common_t0: int
-    #: Per-detector t0 bins every alignment in this context uses (D10): the
-    #: policy-resolved override when the grouping carries one, else each
-    #: histogram's own file t0.
+    #: Per-detector alignment bins after applying the t0 policy.
     detector_t0_bins: list[int]
     first_good: int
     last_good: int
     bunch_factor: int
     bin_width: float
     axis_start: float
-    #: Sub-bin offset of the exact t0 from the centre of ``common_t0``, added to
-    #: every stamp (D4). Exactly 0.0 when the run carries no exact t0.
+    #: Exact-t0 residual from the common bin centre, in µs.
     t0_residual_us: float
     group_names: dict[Any, Any]
 
 
 def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
-    """Validate a dataset and return ``(run, grouping, groups_raw, included_groups)``."""
+    """Require histograms and a grouping at the count-fit input boundary."""
     run = dataset.run
     if run is None:
         raise ValueError("Grouped time-domain fitting requires a dataset with a source run")
@@ -291,12 +281,24 @@ def _count_group_context(
     group_specs: list[tuple[int, list[int]]],
 ) -> _CountGroupContext:
     """Prepare the shared count-build context over the given detector groups."""
+    require_complete_dataset(dataset)
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    prepared_histograms, _ = prepare_histograms_with_deadtime(
+    prepared_histograms, deadtime = prepare_histograms_with_deadtime(
         list(run.histograms),
         grouping,
         apply_deadtime,
     )
+    if correction_flags_from_grouping(grouping).use_background:
+        corrected_grouped_counts(
+            histograms=prepared_histograms,
+            grouping=grouping,
+            forward_idx=group_specs[0][1],
+            backward_idx=group_specs[-1][1],
+            use_deadtime=False,
+            deadtime_mode="off",
+            use_background=True,
+            metadata=run.metadata,
+        )
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     common_t0 = common_t0_for_groups(
         prepared_histograms,
@@ -314,10 +316,7 @@ def _count_group_context(
     except (TypeError, ValueError):
         last_good = max_last_good
     last_good = max(first_good, min(max_last_good, last_good))
-    try:
-        bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
-    except (TypeError, ValueError):
-        bunch_factor = 1
+    bunch_factor = binning_spec(grouping).factor
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0
@@ -328,6 +327,7 @@ def _count_group_context(
     return _CountGroupContext(
         run=run,
         prepared_histograms=prepared_histograms,
+        deadtime=deadtime,
         common_t0=common_t0,
         detector_t0_bins=detector_t0_bins,
         first_good=first_good,
@@ -350,28 +350,32 @@ def _build_one_count_group(
     lifetime_corrected: bool,
     exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainGroup | None:
-    """Build one count-domain group trace from a prepared context.
-
-    ``exclude`` drops an interior ``[t0, t1]`` window of bins from the trace
-    (WiMDA's second time range), endpoints inclusive — for rejecting a laser/RF
-    artefact or a spike without splitting the fit. Returns ``None`` when the
-    group yields no usable bins inside the fit window.
-    """
+    """Align and bunch detector counts together before applying the fit mask."""
     run = ctx.run
-    counts = apply_grouping_aligned(
-        ctx.prepared_histograms,
-        indices,
-        common_t0_bin=ctx.common_t0,
-        detector_t0_bins=ctx.detector_t0_bins,
-    )
+    aligned = [
+        apply_grouping_aligned(
+            ctx.prepared_histograms,
+            [index],
+            common_t0_bin=ctx.common_t0,
+            detector_t0_bins=ctx.detector_t0_bins,
+        )
+        for index in indices
+    ]
+    terminal_bin = min(ctx.last_good + 1, *(trace.size for trace in aligned))
+    detector_counts = np.asarray([trace[ctx.first_good : terminal_bin] for trace in aligned])
+    counts = detector_counts.sum(axis=0)
     if counts.size == 0:
         return None
-    trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
+    trimmed_counts = counts
+    bunch_factor = ctx.bunch_factor if counts.size >= ctx.bunch_factor else 1
     time = (
         np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
     ) * ctx.bin_width + ctx.t0_residual_us
-    if ctx.bunch_factor > 1:
-        time, trimmed_counts = rebin_counts(time, trimmed_counts, ctx.bunch_factor)
+    if bunch_factor > 1:
+        detector_counts = np.asarray(
+            [rebin_counts(time, trace, bunch_factor)[1] for trace in detector_counts]
+        )
+        time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 
     if lifetime_corrected:
         scale = np.exp(time / float(MUON_LIFETIME_US))
@@ -400,7 +404,7 @@ def _build_one_count_group(
             "group_id": int(group_id),
             "group_name": str(group_name),
             "grouped_time_domain": True,
-            "grouped_time_domain_bunch_factor": ctx.bunch_factor,
+            "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
         }
     )
@@ -410,6 +414,9 @@ def _build_one_count_group(
         time=np.asarray(time[mask], dtype=float).copy(),
         counts=np.asarray(out_counts[mask], dtype=float).copy(),
         error=np.asarray(errors[mask], dtype=float).copy(),
+        detector_counts=detector_counts[:, mask].copy(),
+        deadtime=ctx.deadtime,
+        detector_indices=tuple(indices),
         source_run_number=int(run.run_number),
         metadata=metadata,
     )
@@ -460,18 +467,10 @@ def build_count_groups(
     lifetime_corrected: bool = True,
     exclude: tuple[float, float] | None = None,
 ) -> list[GroupedTimeDomainGroup]:
-    """Build several named detector groups sharing ONE t0 alignment.
+    """Build requested groups in order, on one detector-aligned time axis.
 
-    All requested groups go through a single context, so the common t0 (and
-    good-bin window, bunching, deadtime preparation) is computed over the union
-    of their detectors and every trace lands on one time axis. The
-    forward/backward count fit needs this: building the two banks separately
-    would give them independent ``common_t0`` values and misalign the shared
-    physics whenever the F and B detectors carry different ``t0_bin``.
-
-    Unlike :func:`build_grouped_time_domain_groups` this does not require the
-    groups to be in the ``included_groups`` map. Returns one group per id, in the
-    requested order.
+    Common t0 is computed over the detector union so F/B models compare the
+    same time coordinates, even when detectors carry different t0 bins.
     """
     run, grouping, _groups_raw, _included = _count_group_setup(dataset)
     specs: list[tuple[int, list[int]]] = []
@@ -543,51 +542,22 @@ def _raw_count_model(model_fn):
     return raw
 
 
-def _raw_group_counts(
-    time: NDArray[np.float64],
-    counts: NDArray[np.float64],
-    metadata: dict,
-) -> NDArray[np.float64]:
-    """Invert the lifetime correction on a trace to recover raw Poisson counts.
-
-    ``_build_one_count_group`` records whether it applied the ``e^(t/τ_μ)``
-    correction; when it did, ``raw = corrected · e^(−t/τ_μ)`` restores the
-    Poisson-distributed (rebinned) counts. An already-raw trace passes through.
-    """
-    if not bool(metadata.get("grouped_time_domain_lifetime_corrected", True)):
-        return np.asarray(counts, dtype=float)
-    return np.asarray(counts, dtype=float) * np.exp(
-        -np.asarray(time, dtype=float) / float(MUON_LIFETIME_US)
-    )
-
-
-def _resolve_grouped_cost(cost: str):
-    """Validate a grouped-fit cost name and return ``(use_poisson, cost_factory)``.
-
-    Shared by the single-run and global-series grouped fitters so the cost
-    contract (valid names, the Poisson→raw-count routing) lives in one place.
-    """
-    if cost not in COST_FACTORIES:
-        raise ValueError(
-            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
+def group_observations(
+    group: GroupedTimeDomainGroup, objective: Objective, *, t_min=None, t_max=None
+):
+    """Validate grouped count data under the requested likelihood once."""
+    if objective is Objective.POISSON:
+        return PoissonCounts(
+            group.time,
+            group.counts,
+            group.count_source,
+            group.source_run_number,
+            t_min=t_min,
+            t_max=t_max,
         )
-    use_poisson = cost == "poisson"
-    return use_poisson, (POISSON_COST if use_poisson else None)
-
-
-def _raw_count_dataset_fields(time, counts, metadata):
-    """Return (raw_counts, poisson_error, metadata) for a Poisson grouped fit.
-
-    Inverts the lifetime correction to recover the raw Poisson counts and floors
-    a Poisson √N error (unused by Cash, but ``global_fit`` rejects zero errors);
-    the returned metadata records the trace is no longer lifetime-corrected so it
-    cannot be double-corrected downstream.
-    """
-    raw = _raw_group_counts(time, counts, metadata)
-    error = np.sqrt(np.clip(raw, 1.0, None))
-    fixed_metadata = dict(metadata)
-    fixed_metadata["grouped_time_domain_lifetime_corrected"] = False
-    return raw, error, fixed_metadata
+    return GaussianObservations(
+        group.time, group.counts, group.error, group.source_run_number, t_min=t_min, t_max=t_max
+    )
 
 
 def fit_grouped_time_domain(
@@ -619,7 +589,7 @@ def fit_grouped_time_domain(
     convention:
 
     - ``"poisson"`` (default) — the Cash statistic on the **raw** Poisson
-      counts (the lifetime correction is inverted and the model is multiplied
+      counts (built without a lifetime correction; the model is multiplied
       by ``e^(−t/τ_μ)`` to predict raw counts). This is the statistically
       faithful objective: at low counts the √N-Gaussian weight biases the fit,
       and Cash removes that bias. Reported ``chi_squared`` is the Cash value
@@ -680,12 +650,15 @@ def fit_grouped_time_domain(
     # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
     # objective sees true Poisson statistics; Gaussian keeps the historical
     # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
-    use_poisson, cost_factory = _resolve_grouped_cost(cost)
+    objective = Objective(cost)
+    use_poisson = objective is Objective.POISSON
+    cost_factory = COST_FACTORIES[objective] if use_poisson else None
     base_model_fn = build_grouped_count_model(polarization_model_fn)
     model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
 
     engine = fit_engine or FitEngine()
     temporary_datasets: list[MuonDataset] = []
+    observations = {}
     temporary_initial_params: dict[int, ParameterSet] = {}
     internal_to_group: dict[int, Hashable] = {}
 
@@ -700,8 +673,7 @@ def fit_grouped_time_domain(
                 f"Grouped time-domain arrays for {group.group_id!r} must share one shape"
             )
         metadata = dict(group.metadata)
-        if use_poisson:
-            counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
+        observations[internal_id] = group_observations(group, objective, t_min=t_min, t_max=t_max)
         metadata.update(
             {
                 "run_number": internal_id,
@@ -724,6 +696,7 @@ def fit_grouped_time_domain(
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
+        observations=observations,
         global_params=global_params,
         local_params=local_params,
         initial_params=temporary_initial_params,
@@ -1418,8 +1391,11 @@ def _fit_grouped_series_global(
     rather than one monolithic Minuit fit; otherwise the monolithic path runs.
     """
     cross_run_local = set(cross_run_local_params or [])
-    use_poisson, cost_factory = _resolve_grouped_cost(cost)
+    objective = Objective(cost)
+    use_poisson = objective is Objective.POISSON
+    cost_factory = COST_FACTORIES[objective] if use_poisson else None
     temporary_datasets: list[MuonDataset] = []
+    observations = {}
     temporary_initial: dict[int, ParameterSet] = {}
     member_source_run: dict[int, int] = {}
     member_group_id: dict[int, Hashable] = {}
@@ -1451,8 +1427,7 @@ def _fit_grouped_series_global(
                     "must share one shape"
                 )
             metadata = dict(group.metadata)
-            if use_poisson:
-                counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
+            observations[key] = group_observations(group, objective, t_min=t_min, t_max=t_max)
             metadata.update(
                 {
                     "run_number": key,
@@ -1517,6 +1492,7 @@ def _fit_grouped_series_global(
             nuisances=list(local_params),
             initial_params=initial_params,
             temporary_datasets=temporary_datasets,
+            observations=observations,
             temporary_initial=temporary_initial,
             member_source_run=member_source_run,
             member_group_id=member_group_id,
@@ -1536,6 +1512,7 @@ def _fit_grouped_series_global(
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
+        observations=observations,
         global_params=engine_global,
         local_params=engine_local,
         initial_params=temporary_initial,
@@ -1816,6 +1793,7 @@ def _blockwise_run_rounds(
     run_seeds: dict[int, dict[Hashable, ParameterSet]],
     shared_values: dict[str, float],
     temporary_datasets: list[MuonDataset],
+    observations: dict,
     member_source_run: dict[int, int],
     member_group_id: dict[int, Hashable],
     model_fn,
@@ -1900,6 +1878,7 @@ def _blockwise_run_rounds(
         outer_results, outer_shared = engine.global_fit(
             temporary_datasets,
             model_fn,
+            observations=observations,
             global_params=list(truly_global),
             local_params=list(nuisances) + list(per_run_physics),
             initial_params=outer_initial,
@@ -1942,6 +1921,7 @@ def _fit_grouped_series_global_blockwise(
     nuisances: list[str],
     initial_params: dict[int, dict[Hashable, ParameterSet]],
     temporary_datasets: list[MuonDataset],
+    observations: dict,
     temporary_initial: dict[int, ParameterSet],
     member_source_run: dict[int, int],
     member_group_id: dict[int, Hashable],
@@ -2008,6 +1988,7 @@ def _fit_grouped_series_global_blockwise(
             run_seeds=run_seeds,
             shared_values=shared_values,
             temporary_datasets=temporary_datasets,
+            observations=observations,
             member_source_run=member_source_run,
             member_group_id=member_group_id,
             model_fn=model_fn,

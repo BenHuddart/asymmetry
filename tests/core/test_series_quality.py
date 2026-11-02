@@ -12,6 +12,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import (
     MEMBER_QUALITY_FLAGS,
     MemberQuality,
@@ -29,6 +30,7 @@ def _result(*, success=True, chi2r=1.0, params=None, unc=None) -> FitResult:
     for p in params or []:
         ps.add(p)
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         reduced_chi_squared=chi2r,
         parameters=ps,
@@ -170,6 +172,7 @@ class _BistableEngine:
             fitted.add(Parameter(name="A_1", value=20.0))
             fitted.add(Parameter(name="frequency", value=real))
             return FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 reduced_chi_squared=1.0,
                 parameters=fitted,
@@ -178,6 +181,7 @@ class _BistableEngine:
         fitted.add(Parameter(name="A_1", value=0.05))
         fitted.add(Parameter(name="frequency", value=_SPURIOUS_FREQ))
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             reduced_chi_squared=3.0,
             parameters=fitted,
@@ -230,6 +234,7 @@ def test_stranded_spurious_member_flagged_even_without_reseed():
                 ps.add(Parameter(name="A_1", value=20.0))
                 ps.add(Parameter(name="frequency", value=_REAL_FREQ[run]))
             return FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 reduced_chi_squared=1.0,
                 parameters=ps,

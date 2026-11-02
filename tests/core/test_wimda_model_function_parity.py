@@ -181,25 +181,25 @@ def test_mu_repolarisation_recovers_hyperfine_constant() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_arrhenius_recipe_matches_wimda_func2_with_constant_correction() -> None:
-    """D4: WiMDA's e/k is 0.089 % low; meV + CODATA k_B reproduce func2 exactly
-    once the energy is rescaled by the constant ratio."""
-    c_wimda = 1.60e-19 / 1.38e-23
-    kb_mev = 8.617333262e-2  # CODATA, as used by _arrhenius
-    c_codata = 1.0 / (kb_mev * 1.0e-3)
+def test_arrhenius_energy_rescaling_compensates_for_rounded_constants() -> None:
+    """Rescaling the energy preserves the Boltzmann exponent when e/k changes."""
+    e_over_k_rounded = 1.60e-19 / 1.38e-23
+    # Exact revised SI definitions, independent of the production constant.
+    kb_mev = 1.380649e-23 / 1.602176634e-19 * 1e3
+    e_over_k_si = 1.0 / (kb_mev * 1e-3)
     t = np.array([50.0, 100.0, 200.0, 300.0])
     amp1, ea1_ev, amp2, ea2_ev = 5.0, 0.10, 50.0, 0.25
-    wimda = amp1 * np.exp(-ea1_ev * c_wimda / t) + amp2 * np.exp(-ea2_ev * c_wimda / t)
-    scale = c_wimda / c_codata  # = 0.99911...; Ea[meV] = 1000*Ea[eV]*scale
+    expected = amp1 * np.exp(-ea1_ev * e_over_k_rounded / t) + amp2 * np.exp(
+        -ea2_ev * e_over_k_rounded / t
+    )
+    scale = e_over_k_rounded / e_over_k_si
     ours = _arrhenius(t, amp1, 1000.0 * ea1_ev * scale) + _arrhenius(
         t, amp2, 1000.0 * ea2_ev * scale
     )
-    np.testing.assert_allclose(ours, wimda, rtol=1e-12)
-    # The naive 1000x conversion is measurably off: the 0.089 % constant error
-    # is amplified by the Boltzmann exponent (≈ Ea·c/T · 8.9e-4 in y).
+    np.testing.assert_allclose(ours, expected, rtol=1e-12)
     naive = _arrhenius(t, amp1, 1000.0 * ea1_ev) + _arrhenius(t, amp2, 1000.0 * ea2_ev)
-    assert 1e-4 < np.max(np.abs(naive / wimda - 1.0)) < 0.1
-    np.testing.assert_allclose(c_codata / c_wimda - 1.0, 8.897e-4, rtol=1e-3)
+    assert 1e-4 < np.max(np.abs(naive / expected - 1.0)) < 0.1
+    np.testing.assert_allclose(e_over_k_si / e_over_k_rounded - 1.0, 8.897e-4, rtol=1e-3)
 
 
 def test_order_parameter_plus_constant_matches_wimda_func5() -> None:
@@ -389,15 +389,12 @@ def test_mu_repolarisation_shares_breit_rabi_constants() -> None:
     """B0 must come from the same per-ratio constants as the Breit-Rabi
     muonium components, and the default A_hf from the shared vacuum value —
     otherwise a repolarisation-fitted A_hf can drift from a TF-fitted one."""
-    from asymmetry.core.fitting.muonium import (
-        G_E_MHZ_PER_G,
-        G_MU_MHZ_PER_G,
-        VACUUM_MUONIUM_A_HF_MHZ,
-    )
+    from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
+    from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
     assert (
         PARAMETER_MODEL_COMPONENTS["MuRepolarisation"].param_defaults["A_hf"]
-        == VACUUM_MUONIUM_A_HF_MHZ
+        == MUONIUM_VACUUM_HYPERFINE_MHZ
     )
     np.testing.assert_allclose(
         isotropic_mu_b0_gauss(1.0), 1.0 / (G_E_MHZ_PER_G + G_MU_MHZ_PER_G), rtol=0

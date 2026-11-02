@@ -7,10 +7,12 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.phase_fit import PhaseFitRejectedError
 from asymmetry.core.fourier.spectrum import GroupSpectrumConfig, compute_average_group_spectrum
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.io import load
+from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.workflow.reduction import ReductionSettings, resolve_reduction_grouping
 from tests.corpus import corpus_path, requires_corpus
 
@@ -20,7 +22,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
 @requires_corpus(_AFM)
-@pytest.mark.parametrize("run_number", [686, 730])
+@pytest.mark.parametrize("run_number", [*range(686, 694), *range(730, 740)])
 def test_high_field_afm_keeps_an_accepted_line_on_the_recorded_field(run_number):
     assert _AFM is not None
     run = load(str(_AFM / f"tdc_hifi_2020_{run_number:05d}.mdu")).run
@@ -56,6 +58,30 @@ def test_high_field_afm_keeps_an_accepted_line_on_the_recorded_field(run_number)
             second["standard_error_radians"], abs=1e-7
         )
         assert first["acquisition"] == second["acquisition"]
+
+
+@requires_corpus(_AFM)
+@pytest.mark.parametrize("run_number", [686, 693, 730, 739])
+@pytest.mark.parametrize("pair", [("1", "5"), ("2", "6"), ("3", "7"), ("4", "8")])
+@pytest.mark.parametrize("t0_offset", [0, 3])
+def test_high_field_afm_grouped_fft_preserves_reduction_window(run_number, pair, t0_offset):
+    assert _AFM is not None
+    run = load(str(_AFM / f"tdc_hifi_2020_{run_number:05d}.mdu")).run
+    run = replace(
+        run,
+        grouping=resolve_reduction_grouping(
+            run, ReductionSettings(pair=pair, t0_offset_bins=t0_offset)
+        ),
+    )
+    reduced = group_forward_backward(run.histograms, run.grouping)
+    first, last = (run.grouping[key] for key in ("first_good_bin", "last_good_bin"))
+    expected_time = (np.arange(first, last + 1) - reduced.common_t0) * run.histograms[0].bin_width
+    for gid, counts in zip(pair, (reduced.forward, reduced.backward)):
+        signal = build_group_signal_dataset(
+            run, int(gid), center_signal=False, apply_lifetime_correction=False
+        )
+        np.testing.assert_array_equal(signal.asymmetry, counts[first : last + 1])
+        np.testing.assert_allclose(signal.time, expected_time, atol=1e-14)
 
 
 @requires_corpus(_GLASS)

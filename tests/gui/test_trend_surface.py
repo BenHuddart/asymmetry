@@ -20,10 +20,10 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
@@ -35,8 +35,8 @@ from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture
@@ -74,6 +74,7 @@ def _dataset(run_number: int, field: float = 100.0) -> MuonDataset:
 def _result(rchi: float = 0.5, **param_kw) -> FitResult:
     params = {"A": 0.2, "Lambda": 0.5, **param_kw}
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=rchi,

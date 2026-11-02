@@ -1,29 +1,8 @@
-"""Non-modal guided fit wizard for single time-domain asymmetry spectra.
+"""Single-spectrum wizard with Welcome, Running and Result views.
 
-The window is a three-state, answer-first shell built on
-:class:`~asymmetry.gui.windows.wizard_base.WizardWindowBase` via the
-``_build_central()`` hook (so ``self._tabs`` stays ``None`` and no tab
-scaffolding is created). The three states live in a ``QStackedWidget``:
-
-* **Welcome** — a plain explanation, the run-context line, a prominent
-  *Analyze* button, and a collapsed *Guide the analysis (optional)* section
-  housing the existing scope selector + FFT/user-peak seeding UI.
-* **Running** — the decision trail streams stage headlines as the core reports
-  progress; Cancel stays visible (base chrome).
-* **Result** — the answer card (verdict + confidence + overlay plot + apply),
-  the *Compare candidates* section (the shared ``ModelComparePanel`` with one
-  run: its candidate A is the card's selection), and the six-step decision
-  trail, whose steps expand inline to the re-parented deep panels (scope view,
-  FFT+peaks, compare table). A *Copy analysis log* and a *Re-analyze*
-  affordance sit alongside. Design: ``docs/plans/fit-wizard-compare.md``.
-
-All verdict/confidence/no-structure prose comes from
-``asymmetry.core.fitting.wizard_narrative`` — never re-worded here. The deep
-panels are built once and re-parented between the Welcome guidance section and
-the Result trail expansions (only one state is visible at a time). The external
-surface (``set_analysis_context``, ``set_cached_recommendation``, the
-``analysis_cached``/``apply_assessment_requested`` signals, and the four-key
-``_analysis_signature``) is unchanged so ``single_tab.py`` needs no edits.
+Core recommendations supply the verdict, confidence and likelihood criteria.
+The Result view pairs an answer card with candidate curves, residual checks
+and the recorded decision trail; deep panels are reparented between views.
 """
 
 from __future__ import annotations
@@ -83,6 +62,7 @@ from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
 from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
+from asymmetry.gui.utils.information_criteria import criterion_item
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
@@ -1453,18 +1433,24 @@ class FitWizardWindow(WizardWindowBase):
                     "Disqualified: " + "; ".join(assessment.disqualification_reasons)
                 )
             self._compare_table.setItem(row, 0, title_item)
-            self._compare_table.setItem(
-                row, 1, _numeric_item(assessment.metric_value(self._recommendation.metric))
-            )
-            self._compare_table.setItem(row, 2, _numeric_item(assessment.aic))
-            self._compare_table.setItem(
-                row,
-                3,
-                _numeric_item(assessment.aicc)
-                if assessment.aicc is not None
-                else QTableWidgetItem("AIC"),
-            )
-            self._compare_table.setItem(row, 4, _numeric_item(assessment.bic))
+            for column, metric in enumerate(
+                (
+                    self._recommendation.metric,
+                    SelectionMetric.AIC,
+                    SelectionMetric.AICC,
+                    SelectionMetric.BIC,
+                ),
+                start=1,
+            ):
+                self._compare_table.setItem(
+                    row,
+                    column,
+                    criterion_item(
+                        assessment.criteria,
+                        metric,
+                        unavailable_reason=assessment.unavailable_reason(metric),
+                    ),
+                )
             gate_text = "Pass" if assessment.residual_gate_passed else "Warn"
             self._compare_table.setItem(row, 5, QTableWidgetItem(gate_text))
             self._compare_table.setItem(

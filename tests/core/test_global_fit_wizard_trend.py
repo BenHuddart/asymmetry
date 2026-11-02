@@ -129,7 +129,6 @@ def test_template_outside_the_band_is_listed_and_does_not_contend(hopping) -> No
                 trend=recommendation.recommended_assessment.rung.trend,
                 hard_to_justify=(),
             ),
-            aicc=-math.inf,
         )
         if assessment.template.key == "exp_constant"
         else assessment

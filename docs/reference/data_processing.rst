@@ -5,21 +5,19 @@ The processing tools in this chapter act on a loaded dataset before it
 reaches the fit engine: rebinning to trade time resolution for statistics,
 restricting the time range, applying the grouping defined in the Grouping
 dialog, estimating the calibration constant :math:`\alpha`, and the
-specific deadtime / background corrections that PSI BIN-style raw
-histograms typically require. The order is always deadtime first, then
-background, then grouping, then asymmetry — skipping deadtime when it is
-needed inflates the fitted amplitudes, and applying background subtraction
-before grouping mis-weights the per-detector contributions.
+deadtime and background corrections for raw detector histograms. The order is
+deadtime, grouping, background subtraction, then asymmetry. The nonlinear
+deadtime inverse acts on each raw detector before any count subtraction.
 
 Rebinning is the most common operation. Combining :math:`N` adjacent bins
 reduces the per-bin uncertainty by :math:`\sqrt{N}` at the cost of time
 resolution, so the new bin width should stay well below the period of any
 precession you intend to fit (rule of thumb: at least eight samples per
-cycle). NeXus files from ISIS arrive pre-corrected for deadtime; PSI BIN
-and ROOT files generally require deadtime correction to be enabled in the
-Grouping dialog before any analysis. Visually compare the raw and
-processed traces in the plot panel before committing to a fit — the
-preview is faster than diagnosing a misweighted asymmetry after the fact.
+cycle). ISIS NeXus files carry raw counts and may supply per-detector deadtime
+coefficients; enable **File** in the Grouping window to apply them. PSI BIN/MDU
+and ROOT can use separately calibrated coefficients in their whole-acquisition
+normalisation. See :doc:`detector_grouping` for the correction's domain and
+signed coefficients. Compare the raw and processed traces before fitting.
 
 .. image:: /_generated/screenshots/bunching_comparison.png
    :alt: ×1, ×4, and ×16 bunching comparison on a 1.4 MHz TF signal
@@ -45,7 +43,7 @@ Reduce noise by combining adjacent time bins:
 
 .. code-block:: python
 
-   from asymmetry.core.transform.rebin import rebin
+   from asymmetry.core.transform.rebin import merge_curve_bins
    import numpy as np
    
    # Original data
@@ -54,7 +52,7 @@ Reduce noise by combining adjacent time bins:
    error = np.ones(1000) * 0.01
    
    # Rebin by factor of 10
-   t_rebinned, a_rebinned, e_rebinned = rebin(time, asymmetry, error, factor=10)
+   t_rebinned, a_rebinned, e_rebinned = merge_curve_bins(time, asymmetry, error, factor=10)
    
    print(f"Original: {len(time)} points")
    print(f"Rebinned: {len(t_rebinned)} points")
@@ -149,27 +147,30 @@ is the detector-layout **Backward** group, and the analysis **Backward Group**
 is the detector-layout **Forward** group. ISIS data keep the instrument
 forward/backward convention already used by their detector layouts.
 
-Asymmetry and uncertainty handling follows Mantid-style behaviour:
+Asymmetry and uncertainty handling uses the following convention:
 
 * If :math:`F + \alpha B = 0`, asymmetry is set to 0 for that bin.
 * The default uncertainty for that bin is 1.0 (fractional), i.e. 100% in the
   GUI percentage display.
-* For non-zero denominator, uncertainty is computed as:
+* For a non-zero denominator and positive propagated variance, the Poisson
+  uncertainty at β = 1 is:
 
 .. math::
 
-   \sigma_A = \frac{\sqrt{(F + \alpha^2 B)\left(1 + \left(\frac{F-\alpha B}{F+\alpha B}\right)^2\right)}}{|F+\alpha B|}
+   \sigma_A = \frac{2|\alpha|\sqrt{FB(F+B)}}{(F+\alpha B)^2}
 
 In low-count late-time tails, this naturally produces large fluctuations and
 large uncertainties.
 
-For musrfit-style PSI background correction, the background is subtracted from
-the grouped count histograms before this pair formula is evaluated. The
-asymmetry value still uses the same alpha convention above, but uncertainty is
-propagated from the corrected count histograms using musrfit-style count
-errors: fixed-background subtraction keeps Poisson errors from the raw counts,
-while estimated-background subtraction adds the uncertainty of the estimated
-constant background before propagating through the pair formula.
+Background is subtracted from the grouped count histograms before the pair
+formula is evaluated. The value retains the same alpha convention. Error
+propagation uses raw independent count variances, the shared background-level
+variance and its covariance with any overlapping signal bins. A merged block
+of m bins carries the shared level variance multiplied by m². Fixed levels
+are exact by declaration, and independent background-run spectra add their
+frame-scaled variances. See :ref:`background-count-uncertainty` for the formula
+and the tail-fit approximation. Degenerate first-order asymmetry variance
+uses the unit error sentinel.
 
 In vector-polarisation mode, axis-specific alpha values (``alpha_x``,
 ``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``

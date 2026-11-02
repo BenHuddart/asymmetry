@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QComboBox
 
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
@@ -37,11 +37,6 @@ from tests.core.sharing_series import TRANSITION, SimulatedSeries, hopping_serie
 _EXEMPT = (3, 8)
 _RUNS = tuple(range(1, 13))
 _COUPLED = tuple(run for run in _RUNS if run not in _EXEMPT)
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(scope="module")
@@ -184,11 +179,10 @@ def test_the_wizard_result_is_cached_under_the_series_it_analysed(qapp, hopping)
 
 
 @pytest.fixture
-def mw(hopping):
+def mw(qapp, hopping):
     from asymmetry.gui.mainwindow import MainWindow
     from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
-    QApplication.instance() or QApplication([])
     QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
     window = MainWindow()
     series, _recommendation = hopping
