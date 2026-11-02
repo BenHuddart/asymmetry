@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Describe deadtime count-error conventions in WiMDA, Mantid, and musrfit,
+  including fixed-calibration assumptions and limits of the comparisons.
+
 ### Fixed
 
 - FFT and Burg spectra reject nonuniform, reversed, or undersized time grids,

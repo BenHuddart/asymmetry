@@ -79,6 +79,40 @@ extended models. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
 workflows. No third-party implementation source is reproduced in Asymmetry.
 
+Deadtime count errors
+---------------------
+
+The deadtime inverse and its count-error convention are separate choices.
+Inspection of WiMDA's **Grouping** / **Deadtime Correction** in the
+maintainer-supplied snapshot shows corrected values with uncorrected counting
+totals retained for the counting-error basis. Calibration coefficients and frame
+exposure are treated as fixed. This is source inspection, not a WiMDA binary
+comparison; the snapshot is not assigned a release version.
+
+Executed synthetic checks distinguish the other reference programs:
+
+* **Mantid 6.16.1**, **ApplyDeadTimeCorr**, retains supplied workspace errors.
+  With 1 µs bins, 100 frames, counts [100, 25], and a 0.2 µs coefficient,
+  corrected values are [125, 26.315789473684212]; errors [10, 5] remain
+  [10, 5]. Supplying [7, 3] instead retains [7, 3]. Signed coefficients,
+  unequal detector rates, grouping, and bin merging preserve that behaviour.
+* **musrfit 1.12.1**, revision ``708f777b`` with ROOT 6.40.04, exports
+  single-histogram errors from corrected counts. With count-rate scaling
+  disabled, 100000 counts/bin, 0.1 µs bins, 100000 frames, and a 0.02 µs
+  coefficient give 125000 counts and error 353.553. The signed grid
+  [−0.02, 0, 0.005, 0.02, 0.05] µs, single and unequal grouped detectors
+  (100000 and 25000 counts/bin), and packing factors one and four agree
+  with this convention to relative tolerance :math:`5\times10^{-6}`, set
+  by the ASCII export precision.
+
+Asymmetry's deadtime-prepared histograms carry corrected values without a
+separate counting variance, so its counting errors differ from the inspected
+WiMDA convention and from Mantid's retention of supplied errors.
+These comparisons do not assert equality of low-count asymmetry formulas,
+background treatment, or fit objectives. In particular, WiMDA's finite-count
+term in asymmetry errors is distinct from its retained counting-error basis.
+The formulas and limitations are in :doc:`/reference/detector_grouping`.
+
 At a glance: feature coverage
 -----------------------------
 
