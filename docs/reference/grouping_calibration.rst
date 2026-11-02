@@ -305,9 +305,10 @@ Compared with other programs
 
 Calibration preparation enforces Asymmetry's independent-pair uncertainty model.
 Native Mantid 6.16.1 rejects the tested identical pair lists but accepts partial
-overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA manual/source
-evidence does not establish a disjointness guarantee. These are grouping-input
-observations, without executed WiMDA results or calibration-estimator agreement.
+overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA permits a
+histogram to contribute to both selected groups. Asymmetry requires disjoint
+effective channels before preparing an independent F/B calibration. These
+grouping-input conventions do not establish calibration-estimator agreement.
 See :doc:`detector_grouping` and :doc:`/explanation/comparison` for sources,
 settings and limits.
 
