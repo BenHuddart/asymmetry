@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Scripted spectral-moment propagation includes normalization and peak motion
+  in width, skewness, peak-field and asymmetry uncertainties.
+
 - Nodal and anisotropic superconducting laws resolve Fermi-surface averages down
   to T/Tc = 0.005; density helpers choose resolution without `n_phi` or `n_theta`.
 
