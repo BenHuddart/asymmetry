@@ -24,7 +24,8 @@ from asymmetry.core.instrument import (
     get_instrument_layout,
     preset_grouping_for_run,
 )
-from asymmetry.core.io.base import BaseLoader, field_direction_from_text
+from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
+from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.transform import (
     align_forward_backward,
     common_t0_time_us,
@@ -84,26 +85,6 @@ _PSI_MONTHS = {
 }
 
 
-def _extract_field_from_comment(comment: str) -> float | None:
-    """Extract magnetic field in Gauss from comment text."""
-    if not comment:
-        return None
-
-    patterns = [
-        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-        r"(?i)\b([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, comment)
-        if match is None:
-            continue
-        try:
-            return float(match.group(1))
-        except ValueError:
-            continue
-    return None
-
-
 def header_sensor_rejection(setpoint: float, mean: float, deviation: float) -> str:
     """Why header sensor 1 is not the sample's temperature, or ``""`` when it is.
 
@@ -158,6 +139,7 @@ class _PsiRawRun:
     instrument: str
     beamline: str
     muon_source: str
+    declared_units: dict = field(default_factory=dict)
     temperature_logs: _PsiTemperatureLogs | None = None
     temperature_log_rejections: list[dict[str, str]] = field(default_factory=list)
     #: PSI-BIN header sensor means and deviations in K, four each; MDU has none.
@@ -282,6 +264,7 @@ class PsiLoader(BaseLoader):
         instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temp_text = self._text(header[148:158])
         field_text = self._text(header[158:168])
+        quantities = read_header_quantities(str(path), temp_text, field_text)
         started = self._date_time(self._text(header[218:227]), self._text(header[236:244]))
         stopped = self._date_time(self._text(header[227:236]), self._text(header[244:252]))
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
@@ -297,8 +280,9 @@ class PsiLoader(BaseLoader):
             run_number=int(run_number),
             title=self._text(header[860:922]),
             sample=self._text(header[138:148]),
-            temperature=self._parse_temperature(temp_text),
-            field=self._parse_field_gauss(field_text),
+            temperature=quantities.temperature,
+            field=quantities.field,
+            declared_units=quantities.declarations,
             orientation=self._text(header[168:178]),
             setup=self._text(header[178:188]),
             comment=self._text(header[860:922]),
@@ -411,10 +395,12 @@ class PsiLoader(BaseLoader):
 
         started = self._date_time(header.start_date, header.start_time)
         stopped = self._date_time(header.end_date, header.end_time)
-        temperature = self._parse_temperature(header.mean_temp)
-        title_temperature = self._parse_temperature(header.run_title[10:20])
-        if not header.mean_temp or (temperature == 0 and title_temperature != 0):
-            temperature = title_temperature
+        quantities = read_header_quantities(
+            str(path),
+            header.run_title[10:20],
+            header.run_title[20:30],
+            mean_temperature=header.mean_temp,
+        )
         instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
             path, header.run_number, started=started, stopped=stopped
@@ -425,8 +411,9 @@ class PsiLoader(BaseLoader):
             run_number=header.run_number,
             title=header.run_subtitle,
             sample=header.run_title[:10].strip(),
-            temperature=temperature,
-            field=self._parse_field_gauss(header.run_title[20:30]),
+            temperature=quantities.temperature,
+            field=quantities.field,
+            declared_units=quantities.declarations,
             orientation=header.run_title[30:40].strip(),
             setup="",
             comment=header.run_subtitle,
@@ -1100,9 +1087,10 @@ class PsiLoader(BaseLoader):
             "title": raw.title,
             "sample": raw.sample,
             "temperature": raw.temperature,
+            "declared_units": raw.declared_units,
             "field": raw.field,
             "field_header": raw.field,
-            "field_comment_candidate": _extract_field_from_comment(raw.comment),
+            "field_comment_candidate": comment_field_gauss(raw.comment),
             "orientation": raw.orientation,
             "setup": raw.setup,
             "comment": raw.comment,
@@ -1526,21 +1514,6 @@ class PsiLoader(BaseLoader):
         if date and time:
             return f"{date} {time}"
         return date or time
-
-    def _parse_temperature(self, text: str) -> float:
-        match = re.search(r"([+-]?\d+(?:\.\d+)?)", str(text))
-        return float(match.group(1)) if match else 0.0
-
-    def _parse_field_gauss(self, text: str) -> float:
-        raw = str(text).strip()
-        match = re.search(r"([+-]?\d+(?:\.\d+)?)", raw)
-        if not match:
-            return 0.0
-        value = float(match.group(1))
-        token = raw.lower()
-        if "t" in token and "g" not in token:
-            return value * 1.0e4
-        return value
 
     def _resize_ints(
         self,

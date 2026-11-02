@@ -7,6 +7,7 @@ Magnetic conversion uses the canonical gauss-to-tesla constant.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -29,7 +30,7 @@ class UnitDeclaration:
 
 @dataclass(frozen=True)
 class UnitConvention:
-    """A missing-unit convention from a documented format, rather than an instrument guess."""
+    """An explicit format-unit convention with its source or unverified status."""
 
     unit: str
     reference: str
@@ -150,3 +151,38 @@ def uniform_bin_width_us(
     if np.any(np.abs(steps - width) > tolerance):
         raise ValueError(f"{context}: time axis must have uniform bin widths.")
     return width
+
+
+_NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+_TEXT_QUANTITY = re.compile(
+    rf"(?P<value>{_NUMBER})\s*(?:(?:(?:\+-|\+/-|±)\s*{_NUMBER}|\(\s*{_NUMBER}\s*\))\s*)?"
+    r"(?P<unit>[A-Za-zµμ°][A-Za-zµμ°._/-]*)?"
+)
+
+
+def quantity_parts(text: str | None) -> tuple[float | None, str]:
+    """Read the value and adjacent unit, after an optional uncertainty."""
+    match = _TEXT_QUANTITY.search(text or "")
+    if match is None:
+        return None, ""
+    return float(match["value"]), unit_text(match["unit"])
+
+
+def parse_quantity(
+    text: str | None,
+    dimension: Dimension,
+    *,
+    context: str,
+    convention: UnitConvention | None = None,
+    default: float | None = None,
+) -> tuple[float, UnitDeclaration | None]:
+    """Convert a text header quantity without reading units from unrelated prefixes."""
+    value, token = quantity_parts(text)
+    if value is None:
+        if default is not None:
+            return default, None
+        raise ValueError(f"{context}: missing {dimension} value.")
+    converted, declaration = canonical(
+        value, token, dimension, context=context, convention=convention
+    )
+    return float(converted), declaration

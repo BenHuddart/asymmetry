@@ -59,15 +59,13 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.utils.constants import CELSIUS_ZERO_K
+
 from .._base import _process_events_for
 from ._corpus import CorpusScenario, load_corpus_datasets, register
 
 EXAMPLE = "Magnetism/Ferromagnetic nickel"
 _DATA = "Magnetism/Ferromagnetic nickel/Data/emu00%d.nxs"
-
-# File/guide temperatures are the furnace controller's CELSIUS readings
-# (GROUND_TRUTH §2 warning); add this when plotting trends in kelvin.
-_CELSIUS_TO_K = 273.15
 
 # ZF spontaneous precession = Oscillatory × Exponential relaxation + baseline.
 # The EMU asymmetry the loader builds is uncalibrated (α = 1); the large
@@ -280,7 +278,7 @@ class NiNuTOrderParameterScenario(CorpusScenario):
         for run in _ZF_OP_RUNS:
             ds = load_corpus_datasets([_DATA % run])[0]
             nu, err, amp = _fit_zf_frequency(ds, nu_seed, amp_seed)
-            temps.append(float(ds.temperature) + _CELSIUS_TO_K)
+            temps.append(float(ds.temperature) + CELSIUS_ZERO_K)
             nus.append(nu)
             errs.append(err)
             if amp > 0.5:
@@ -471,7 +469,7 @@ class NiLfDecouplingScenario(CorpusScenario):
                 "run_number": int(_LF_RUNS[i]),
                 "run_label": f"{fields[i]:.0f} G",
                 "field": float(fields[i]),
-                "temperature": 200.0 + _CELSIUS_TO_K,
+                "temperature": 200.0 + CELSIUS_ZERO_K,
                 "values": {"asymmetry": float(recovered[i])},
                 "errors": {"asymmetry": 0.15},
             }

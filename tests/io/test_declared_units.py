@@ -187,3 +187,151 @@ def test_integer_axis_conversion_allows_only_floating_arithmetic_roundoff():
             storage_scale=0.001,
             context="synthetic: /axis",
         )
+
+
+@pytest.mark.parametrize(
+    "key,text,expected",
+    [
+        ("Time Resolution", "1.0e-6 s", 1.0),
+        ("Time Resolution", "0.09765625 ns", 0.00009765625),
+        ("Time Resolution", "97.65625 ps", 0.00009765625),
+        ("Sample Magnetic Field", "10 mT", 100),
+        ("Sample Magnetic Field", "0.5 kG", 500),
+        ("Sample Magnetic Field", "100 uT", 1),
+        ("Sample Temperature", "300 mK", 0.3),
+        ("Sample Temperature", "20 +- 0.1 degC", 293.15),
+    ],
+)
+def test_root_declared_quantity_units(tmp_path, key, text, expected):
+    uproot = pytest.importorskip("uproot")
+    from asymmetry.core.io.root import RootLoader
+    from tests.io.test_root_loader import _write_musrroot_directory
+
+    path = tmp_path / "units.root"
+    _write_musrroot_directory(path)
+    with uproot.update(path) as h:
+        h[f"RunHeader/RunInfo/{key}"] = text
+    dataset = RootLoader().load(path)
+    if key == "Time Resolution":
+        assert dataset.run.histograms[0].bin_width == pytest.approx(expected)
+    else:
+        assert dataset.metadata["field" if "Field" in key else "temperature"] == pytest.approx(
+            expected
+        )
+    dimension = {
+        "Time Resolution": "time",
+        "Sample Magnetic Field": "field",
+        "Sample Temperature": "temperature",
+    }[key]
+    assert dataset.metadata["declared_units"][dimension][f"RunInfo/{key}"]["source"] == "file"
+
+
+@pytest.mark.parametrize("text", ["", "0.2 parsec", "0.2 K"])
+def test_root_missing_or_invalid_resolution_raises(tmp_path, text):
+    uproot = pytest.importorskip("uproot")
+    from asymmetry.core.io.root import RootLoader
+    from tests.io.test_root_loader import _write_musrroot_directory
+
+    path = tmp_path / "units.root"
+    _write_musrroot_directory(path)
+    with uproot.update(path) as h:
+        h["RunHeader/RunInfo/Time Resolution"] = text
+    with pytest.raises(ValueError) as error:
+        RootLoader().load(path)
+    assert str(path) in str(error.value)
+    assert "Time Resolution" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "field,temperature,expected_field,expected_temperature",
+    [(b"10mT", b"300mK", 100, 0.3), (b"TF 100", b"5", 100, 5), (b"0.5kG", b"20degC", 500, 293.15)],
+)
+def test_psi_adjacent_units_and_unverified_missing_convention(
+    tmp_path, field, temperature, expected_field, expected_temperature
+):
+    from asymmetry.core.io.psi import PsiLoader
+    from tests.io.test_psi_loader import _write_psi_bin
+
+    path = tmp_path / "units.bin"
+    _write_psi_bin(path, field=field)
+    content = bytearray(path.read_bytes())
+    content[148:158] = temperature.ljust(10, b" ")
+    path.write_bytes(content)
+    dataset = PsiLoader().load(path)
+    assert dataset.metadata["field"] == pytest.approx(expected_field)
+    assert dataset.metadata["temperature"] == pytest.approx(expected_temperature)
+    declaration = dataset.metadata["declared_units"]["field"]["header/field"]
+    if field == b"TF 100":
+        assert declaration["source"] == "format"
+        assert "unverified" in declaration["reference"]
+    else:
+        assert declaration["source"] == "file"
+
+
+@pytest.mark.parametrize(
+    "key,text",
+    [
+        ("Sample Magnetic Field", "1 MT"),
+        ("Sample Magnetic Field", "1 Oe"),
+        ("Sample Magnetic Field", "1 K"),
+        ("Sample Magnetic Field", "1"),
+        ("Sample Temperature", "1 F"),
+        ("Sample Temperature", "1"),
+    ],
+)
+def test_root_invalid_metadata_unit_rejected(tmp_path, key, text):
+    uproot = pytest.importorskip("uproot")
+    from asymmetry.core.io.root import RootLoader
+    from tests.io.test_root_loader import _write_musrroot_directory
+
+    path = tmp_path / "bad.root"
+    _write_musrroot_directory(path)
+    with uproot.update(path) as h:
+        h[f"RunHeader/RunInfo/{key}"] = text
+    with pytest.raises(ValueError, match="supported units") as error:
+        RootLoader().load(path)
+    assert str(path) in str(error.value)
+    assert key in str(error.value)
+
+
+def test_root_sensor_conversion_and_primary_selection_use_the_same_kelvin_scale(tmp_path):
+    uproot = pytest.importorskip("uproot")
+    from asymmetry.core.io.root import RootLoader
+    from tests.io.test_root_loader import _write_flame_root_directory
+
+    path = tmp_path / "sensor.root"
+    _write_flame_root_directory(path)
+    with uproot.update(path) as h:
+        h["RunHeader/RunInfo/Sample Temperature"] = "10.4 +- 0.1 mK; Sens=SAM_ts_value"
+    dataset = RootLoader().load(path)
+    series = dataset.metadata["nexus_time_series"]
+    sample = series["musrroot_slow_control/flamesam0 SAM ts value"]
+    other = series["musrroot_slow_control/flamedil0 DIL T mix value"]
+    assert dataset.metadata["temperature"] == pytest.approx(0.0104)
+    assert sample["mean"] == pytest.approx(0.0106)
+    assert sample["units"] == "K"
+    assert sample["unit_declaration"]["unit"] == "mK"
+    assert sample["primary"] is True
+    assert other["primary"] is False
+
+
+def test_mdu_mean_temperature_precedence_records_its_actual_field():
+    from asymmetry.core.io.psi_units import read_header_quantities
+
+    quantities = read_header_quantities("synthetic", "25K", "10mT", mean_temperature="300mK")
+    assert quantities.temperature == pytest.approx(0.3)
+    assert quantities.field == 100
+    assert quantities.declarations["temperature"]["header/mean_temp"]["unit"] == "mK"
+
+
+@pytest.mark.parametrize("text", [b"10Oe", b"10MT", b"10K"])
+def test_psi_incompatible_field_unit_raises(tmp_path, text):
+    from asymmetry.core.io.psi import PsiLoader
+    from tests.io.test_psi_loader import _write_psi_bin
+
+    path = tmp_path / "bad.bin"
+    _write_psi_bin(path, field=text)
+    with pytest.raises(ValueError, match="supported units") as error:
+        PsiLoader().load(path)
+    assert str(path) in str(error.value)
+    assert "header/field" in str(error.value)
