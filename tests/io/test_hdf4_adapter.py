@@ -150,7 +150,9 @@ def _v1_handle(
     sample.children["temperature"] = Dataset(
         "temperature", np.array([10.0], dtype=np.float32), attrs={"units": "Kelvin"}
     )
-    sample.children["magnetic_field"] = Dataset("magnetic_field", np.array([100.0], np.float32))
+    sample.children["magnetic_field"] = Dataset(
+        "magnetic_field", np.array([100.0], np.float32), attrs={"units": "G"}
+    )
     sample.children["magnetic_field_state"] = _char("magnetic_field_state", "TF")
     if field_vector is not None:
         sample.children["magnetic_field_vector"] = Dataset(
@@ -320,8 +322,12 @@ def test_v1_logged_sample_temperature_from_nxlog_name_child() -> None:
     run = handle._group.children["run"]
     nxlog = Group("log_1", "NXlog")
     nxlog.children["name"] = _char("name", "Temp_Sample")
-    nxlog.children["time"] = Dataset("time", np.array([-30.0, 0.0, 30.0, 60.0], dtype=np.float64))
-    nxlog.children["values"] = Dataset("values", np.array([300.0, 5.0, 5.0, 5.0], np.float64))
+    nxlog.children["time"] = Dataset(
+        "time", np.array([-30.0, 0.0, 30.0, 60.0], dtype=np.float64), attrs={"units": "seconds"}
+    )
+    nxlog.children["values"] = Dataset(
+        "values", np.array([300.0, 5.0, 5.0, 5.0], np.float64), attrs={"units": "K"}
+    )
     run.children["log_1"] = nxlog
 
     loader = NexusLoader()
