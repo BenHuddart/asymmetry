@@ -3,7 +3,8 @@ Grouping and calibration walkthrough
 
 Calibration preparation uses the same unique acquired-channel membership and
 exclusions as reduction. Invalid or missing members and required groups emptied
-by exclusions make the request unavailable; select a matching preset or edit
+by exclusions, or shared effective channels within an independent F/B pair,
+make the request unavailable; select a matching preset or edit
 the groups before estimating. See :doc:`detector_grouping` for the membership
 contract and its comparisons with other programs.
 
@@ -309,3 +310,15 @@ See also
 * :doc:`vector_polarization` — building :math:`P_x` / :math:`P_y` / :math:`P_z`
   groups in the layout editor.
 * :doc:`project_files` — how a profile is saved and restored with a project.
+
+
+Compared with other programs
+----------------------------
+
+Calibration preparation enforces Asymmetry's independent-pair uncertainty model.
+Native Mantid 6.16.1 rejects the tested identical pair lists but accepts partial
+overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA manual/source
+evidence does not establish a disjointness guarantee. These are grouping-input
+observations, without executed WiMDA results or calibration-estimator agreement.
+See :doc:`detector_grouping` and :doc:`/explanation/comparison` for sources,
+settings and limits.

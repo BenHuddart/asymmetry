@@ -26,15 +26,14 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
+from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform import (
-    align_forward_backward,
     common_t0_time_us,
-    compute_asymmetry,
     good_window_for_groups,
     run_t0_time_us,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
-from asymmetry.core.transform.grouping import InvalidGroupingError, effective_group_indices
+from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -1046,24 +1045,15 @@ class PsiLoader(BaseLoader):
             groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
                 preset_override
             )
-        membership_error = None
-        try:
-            selection = {"groups": groups}
+        selection = {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid}
+        quick = quick_asymmetry(histograms, selection)
+        asymmetry, error, alignment = quick.asymmetry, quick.error, quick.alignment
+        membership_error = quick.unavailable_reason
+        common_t0, n = quick.common_t0, len(asymmetry)
+        first_good, last_good = 0, n_bins - 1
+        if alignment is not None:
             forward_idx = effective_group_indices(selection, forward_gid, n_histograms=n_hist)
             backward_idx = effective_group_indices(selection, backward_gid, n_histograms=n_hist)
-        except InvalidGroupingError as exc:
-            membership_error = str(exc)
-            alignment = None
-            common_t0, n = max(t0_bins), 0
-            first_good, last_good = 0, n_bins - 1
-            asymmetry = error = np.array([], dtype=np.float64)
-        else:
-            forward, backward, alignment = align_forward_backward(
-                histograms, forward_idx, backward_idx
-            )
-            common_t0, n = alignment.common_t0_bin, alignment.length
-            asymmetry, error = compute_asymmetry(forward, backward, alpha=1.0)
-            asymmetry, error = asymmetry * 100.0, error * 100.0
             first_good, last_good = good_window_for_groups(
                 sorted(set(forward_idx) | set(backward_idx)),
                 t0_bins,

@@ -1,4 +1,4 @@
-"""Exclusions preserve authored channels and expose an unavailable empty group."""
+"""Exclusions preserve authored channels and expose an unavailable shared F/B observation."""
 
 from pathlib import Path
 
@@ -52,14 +52,14 @@ class MembershipScenario(Scenario):
         pane.flush()
         _pump_until(lambda: pane._last_result is not None)
         if self.unavailable:
-            dialog._exclude_edit.setText("1,2")
+            dialog._exclude_edit.setText("")
             dialog._refresh_preview()
             pane.flush()
             _pump_until(lambda: not pane.corrections_complete)
-            if dialog._file_common_t0_for_preview_run() != 2:
-                raise RuntimeError("Unavailable membership must preserve the full-run timing base")
+            if "shared acquired channels 2" not in pane._incomplete_banner.text():
+                raise RuntimeError("The preview must identify the shared channel")
             if dialog._apply_btn.isEnabled():
-                raise RuntimeError("An empty group must disable Apply")
+                raise RuntimeError("A shared F/B observation must disable Apply")
         elif pane._last_result.facts.member_counts != (1, 1):
             raise RuntimeError("The preview must report effective channel membership")
         _pump_events(80)
@@ -83,7 +83,7 @@ class ExclusionScenario(MembershipScenario):
 
 class UnavailableScenario(MembershipScenario):
     name = "grouping_membership_unavailable"
-    description = "Synthetic empty group with disabled Apply."
+    description = "Synthetic shared F/B channel with disabled Apply."
     unavailable = True
 
 

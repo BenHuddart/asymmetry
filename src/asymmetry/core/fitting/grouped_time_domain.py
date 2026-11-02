@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.count_corrections import require_count_background
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
     CostFactory,
@@ -45,7 +46,7 @@ from asymmetry.core.transform.grouping import (
     group_counts_aligned,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
-from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
@@ -278,16 +279,7 @@ def _count_group_context(
         apply_deadtime,
     )
     if correction_flags_from_grouping(grouping).use_background:
-        corrected_grouped_counts(
-            histograms=prepared_histograms,
-            grouping=grouping,
-            forward_idx=group_specs[0][1],
-            backward_idx=group_specs[-1][1],
-            use_deadtime=False,
-            deadtime_mode="off",
-            use_background=True,
-            metadata=run.metadata,
-        )
+        require_count_background(prepared_histograms, grouping, group_specs, run.metadata, deadtime)
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     common_t0 = common_t0_for_groups(
         prepared_histograms,

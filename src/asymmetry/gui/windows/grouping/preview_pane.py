@@ -464,7 +464,7 @@ class GroupingPreviewPane(QWidget):
 
     def show_error(self, message: str) -> None:
         self._generation += 1
-        self._pending = None
+        self._pending = self._deferred_result = None
         self._debounce.stop()
         self._state = message
         self._incomplete_banner.setText(f"Incomplete preview — {message}")
@@ -564,10 +564,8 @@ class GroupingPreviewPane(QWidget):
     def _on_canvas_button_release(self, event: object) -> None:
         """Capture the user's view when a nav drag actually moved it.
 
-        Runs after the toolbar's own release handlers (registered first), so the
-        limits are final. A mode-on click that moved nothing captures nothing —
-        otherwise a stray click would freeze the autoscale at its current range.
-        Any redraw deferred during the drag lands now.
+        Toolbar release handlers run first, so the limits are final. A click
+        that moves nothing does not freeze the autoscale; a deferred draw lands now.
         """
         press_view = self._nav_press_view
         self._nav_press_view = None
@@ -1003,7 +1001,7 @@ class GroupingPreviewPane(QWidget):
     def show_unavailable(self) -> None:
         """Hide the pane with a note: this dataset has no histograms to reduce."""
         self._generation += 1
-        self._state = None
+        self._state = self._deferred_result = None
         self._incomplete_banner.hide()
         self.setVisible(False)
         self._status.setText("Preview needs raw detector histograms (none loaded).")

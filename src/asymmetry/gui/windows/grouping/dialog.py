@@ -96,7 +96,7 @@ from asymmetry.core.transform import (
     resolve_facility,
 )
 from asymmetry.core.transform.corrections import BackgroundReference
-from asymmetry.core.transform.grouping import InvalidGroupingError
+from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -3697,8 +3697,9 @@ class GroupingDialog(QDialog):
         if excluded is None:
             return  # parse error already shown
         try:
-            for combo in (self._forward_combo, self._backward_combo):
-                self._filtered_group_indices(int(combo.currentData()))
+            independent_pair_indices(
+                self._current_grouping_payload(), n_histograms=len(self._run.histograms)
+            )
         except InvalidGroupingError as exc:
             QMessageBox.warning(self, "Invalid Grouping", str(exc))
             return
@@ -5563,12 +5564,6 @@ class GroupingDialog(QDialog):
                 self._vector_estimate_queue.pop(0)
                 continue
             forward_gid, backward_gid = int(pair[0]), int(pair[1])
-            if forward_gid == backward_gid:
-                QMessageBox.warning(
-                    self, "Invalid Grouping", "Forward and backward groups must differ."
-                )
-                self._vector_estimate_queue.pop(0)
-                continue
             self._vector_estimate_source_run = int(dataset.run_number)
             self._vector_estimate_token += 1
             token = self._vector_estimate_token

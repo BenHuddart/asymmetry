@@ -30,6 +30,7 @@ from asymmetry.core.transform.deadtime import (
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, good_window
 from asymmetry.core.transform.grouping import (
     align_forward_backward_counts,
+    independent_pair_indices,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
@@ -146,6 +147,11 @@ def corrected_grouped_counts(
         deadtime_mode=deadtime_mode,
         background=use_background,
     ) as perf:
+        forward_idx, backward_idx = independent_pair_indices(
+            grouping,
+            n_histograms=len(histograms),
+            resolved_indices=(forward_idx, backward_idx),
+        )
         working_histograms, deadtime_outcome = prepare_histograms_with_deadtime(
             histograms,
             grouping,
