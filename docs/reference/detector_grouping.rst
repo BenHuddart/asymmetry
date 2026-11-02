@@ -828,10 +828,56 @@ Below the pole there is no arbitrary percentage cutoff. Differentiating the
 inverse shows that relative count uncertainty is amplified by
 :math:`1/(1-x)` compared with the raw relative uncertainty, so a large positive
 correction is sensitive to statistical and calibration errors. This derivative
-is a model sensitivity: current propagation treats deadtime-corrected detector
-counts as Poisson and omits the inverse's derivative and coefficient uncertainty.
+is a model sensitivity, not a complete statistical model of detector losses.
+Current propagation treats deadtime-corrected detector counts as Poisson and
+omits the inverse's derivative and coefficient uncertainty. The reference
+conventions and the limits of this approximation are described below.
 Deadtime must act before count subtraction: applying this nonlinear inverse to subtracted
 counts is not an equivalent operation.
+
+Count uncertainty conventions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Correcting a count value does not make it a new independent Poisson observation.
+The error convention must be specified separately from the inverse formula.
+For measured counts :math:`M`, corrected counts :math:`C=M/(1-x)`, and fixed
+calibration and exposure, three distinct conventions are
+
+.. math::
+
+   v_{\mathrm{measured}}=M,\qquad
+   v_{\mathrm{corrected\ Poisson}}=C,\qquad
+   v_{\mathrm{delta}}=\frac{M}{(1-x)^4}.
+
+The last expression follows by differentiating the inverse and assuming
+:math:`\operatorname{var}(M)=M`. That assumption is conditional: detector
+deadtime can change the observation statistics [counting_uncertainty]_. None
+of these expressions alone establishes coverage for a physical detector or
+includes uncertainty in its calibration coefficient or frame exposure.
+
+An executed **Mantid 6.16.1** comparison of **ApplyDeadTimeCorr** preserves the
+workspace's supplied errors, including errors that differ from :math:`\sqrt{M}`.
+With counts [100, 25], errors [10, 5], 1 µs bins, 100 frames, and a 0.2 µs
+coefficient, the corrected values are [125, 26.315789473684212] and the errors
+remain [10, 5]. The correction table supplies coefficients, without a
+coefficient-error column [mantid_deadtime_errors]_.
+
+An executed **musrfit 1.12.1** comparison (revision ``708f777b``, ROOT 6.40.04)
+of single-histogram fitting gives a different error convention. For 100000
+counts per 0.1 µs bin, 100000 frames, and a 0.02 µs coefficient, its exported
+corrected count is 125000 and its error is 353.553, the rounded value of
+:math:`\sqrt{125000}`. The check disables count-rate scaling and uses one raw
+bin per output bin. Grouping unequal detectors and packing four bins retains
+this corrected-Poisson convention. The six-significant-digit export is compared
+at relative tolerance :math:`5\times10^{-6}`. These checks concern exported
+single-histogram errors, not every musrfit fit or likelihood mode.
+
+Asymmetry's prepared histograms currently carry corrected values without a
+separate counting variance. Consequently, the reduction's count-error basis
+does not retain Mantid's supplied errors.
+Background estimation has its own shared uncertainty propagation; it does not
+restore the counting variance lost during deadtime preparation.
+See :doc:`/explanation/comparison` for the bounds of the program comparisons.
 
 ISIS calibration and signed coefficients
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -878,7 +924,7 @@ not asserted.
 preserves negative coefficients through NeXus and calibration-text loading,
 manual input, and the standard ISIS correction path. Its automatic and
 per-detector calibration paths also retain signed fit results. This is a
-behavioural source inspection, with no binary numerical cross-check or claim
+source inspection, with no binary numerical cross-check or claim
 about the optional extended correction models. The public manual describes the
 workflows [wimda_deadtime]_. See :doc:`/explanation/comparison` for the bounds of
 these comparisons.
@@ -896,6 +942,11 @@ these comparisons.
 .. [mantid_deadtime] Mantid 6.13.1 documentation,
    `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.13.1/algorithms/ApplyDeadTimeCorr-v1.html>`_
    and `CalMuonDeadTime v1 <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_.
+.. [mantid_deadtime_errors] Mantid 6.16.1 documentation,
+   `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.16.1/algorithms/ApplyDeadTimeCorr-v1.html>`_.
+.. [counting_uncertainty] S. Pommé, R. Fitzgerald, and J. Keightley,
+   Metrologia **52**, S3 (2015),
+   `doi:10.1088/0026-1394/52/3/S3 <https://doi.org/10.1088/0026-1394/52/3/S3>`_.
 
 Background correction
 ----------------------
