@@ -58,6 +58,7 @@ def apply_grouping_aligned(
     *,
     common_t0_bin: int | None = None,
     detector_t0_bins: list[int] | None = None,
+    variance: bool = False,
 ) -> NDArray[np.float64]:
     """Sum detector counts after aligning each detector's own ``t0_bin``.
 
@@ -70,6 +71,8 @@ def apply_grouping_aligned(
     (indexed 0-based across the full histogram list) — the non-destructive
     route a *manual* T0Policy uses to shift the effective t0 without rewriting
     ``Histogram.t0_bin``. When ``None``, each histogram's own ``t0_bin`` is used.
+    With ``variance=True``, sum supplied independent variances, using measured
+    counts for detectors without an explicit variance. Padding contributes zero.
     """
     with perf_timer("core.grouping.apply_aligned", n_indices=len(group_indices)) as perf:
         present = _present_indices(group_indices, len(histograms))
@@ -98,7 +101,10 @@ def apply_grouping_aligned(
 
         total = np.zeros(min_len, dtype=np.float64)
         for (_, hist), offset in zip(selected, offsets):
-            counts = np.asarray(hist.counts, dtype=np.float64)
+            values = (
+                hist.count_variance if variance and hist.count_variance is not None else hist.counts
+            )
+            counts = np.asarray(values, dtype=np.float64)
             if offset <= 0:
                 # Aligned array is ``counts[-offset:]`` (``counts`` itself when
                 # offset == 0); add its first ``min_len`` samples.
@@ -181,6 +187,58 @@ def align_forward_backward(
         length,
     )
     return forward[:length], backward[:length], crop
+
+
+def _aligned_count_variance(histograms, indices, **alignment):
+    """Keep Poisson inference only when every contributing detector is raw."""
+    if not any(
+        histograms[i].count_variance is not None for i in _present_indices(indices, len(histograms))
+    ):
+        return None
+    return apply_grouping_aligned(histograms, indices, variance=True, **alignment)
+
+
+def group_counts_aligned(
+    histograms: list[Histogram],
+    group_indices: list[int],
+    *,
+    common_t0_bin: int | None = None,
+    detector_t0_bins: list[int] | None = None,
+) -> GroupCounts:
+    """Sum counts and supplied variances on the same detector alignment grid."""
+    options = dict(common_t0_bin=common_t0_bin, detector_t0_bins=detector_t0_bins)
+    counts = apply_grouping_aligned(histograms, group_indices, **options)
+    return GroupCounts(counts, _aligned_count_variance(histograms, group_indices, **options))
+
+
+def align_forward_backward_counts(
+    histograms: list[Histogram],
+    forward_indices: list[int],
+    backward_indices: list[int],
+    detector_t0_bins: list[int] | None = None,
+    *,
+    common_t0_bin: int | None = None,
+    sample_length: int | None = None,
+) -> tuple[GroupCounts, GroupCounts, AlignmentCrop]:
+    """Align both count groups and crop their noise onto the same terminal bin."""
+    forward, backward, crop = align_forward_backward(
+        histograms,
+        forward_indices,
+        backward_indices,
+        detector_t0_bins,
+        common_t0_bin=common_t0_bin,
+        sample_length=sample_length,
+    )
+    groups = []
+    for indices, counts in ((forward_indices, forward), (backward_indices, backward)):
+        variance = _aligned_count_variance(
+            histograms,
+            indices,
+            common_t0_bin=crop.common_t0_bin,
+            detector_t0_bins=detector_t0_bins,
+        )
+        groups.append(GroupCounts(counts, None if variance is None else variance[: crop.length]))
+    return groups[0], groups[1], crop
 
 
 def good_frames(grouping: dict | None, default: float = 1.0) -> float:
@@ -573,13 +631,13 @@ def group_forward_backward(
         beta = 1.0
 
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-    forward, backward, crop = align_forward_backward(
+    forward, backward, crop = align_forward_backward_counts(
         histograms, forward_indices, backward_indices, detector_t0_bins
     )
     width = float(histograms[0].bin_width)
     counts = ForwardBackwardCounts(
-        GroupCounts(forward),
-        GroupCounts(backward),
+        forward,
+        backward,
         common_t0_time_us(histograms, grouping, crop.common_t0_bin),
         width,
         good_window(grouping, crop.length),

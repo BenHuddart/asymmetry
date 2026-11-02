@@ -197,19 +197,7 @@ def build_grouped_time_domain_datasets(
 
 
 def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
-    """Cheap availability probe for the grouped time-domain build.
-
-    Answers "would :func:`build_grouped_time_domain_groups` find enough
-    groups?" without any array work, by running the same setup validation the
-    build itself runs (source run with histograms, grouping with at least two
-    included non-empty detector groups) — the GUI gates views and toolbar
-    buttons on this for every selection change, where building the full
-    per-group traces just to test truthiness is far too expensive.
-
-    A pathological run that passes this probe can still fail the full build
-    (e.g. every bin masked out of the fit window); callers already treat a
-    failed build as no-data at render time.
-    """
+    """Check for two included groups without aligning or binning histogram arrays."""
     if dataset is None:
         return False
     try:
@@ -280,7 +268,6 @@ def _count_group_context(
     run: Any,
     group_specs: list[tuple[int, list[int]]],
 ) -> _CountGroupContext:
-    """Prepare the shared count-build context over the given detector groups."""
     require_complete_dataset(dataset)
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     prepared_histograms, deadtime = prepare_histograms_with_deadtime(
@@ -350,7 +337,7 @@ def _build_one_count_group(
     lifetime_corrected: bool,
     exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainGroup | None:
-    """Align and bunch detector counts together before applying the fit mask."""
+    """Align counts and measured variance before bunching and masking."""
     run = ctx.run
     aligned = [
         apply_grouping_aligned(
@@ -364,6 +351,13 @@ def _build_one_count_group(
     terminal_bin = min(ctx.last_good + 1, *(trace.size for trace in aligned))
     detector_counts = np.asarray([trace[ctx.first_good : terminal_bin] for trace in aligned])
     counts = detector_counts.sum(axis=0)
+    variance = apply_grouping_aligned(
+        ctx.prepared_histograms,
+        indices,
+        common_t0_bin=ctx.common_t0,
+        detector_t0_bins=ctx.detector_t0_bins,
+        variance=True,
+    )[ctx.first_good : terminal_bin]
     if counts.size == 0:
         return None
     trimmed_counts = counts
@@ -372,18 +366,15 @@ def _build_one_count_group(
         np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
     ) * ctx.bin_width + ctx.t0_residual_us
     if bunch_factor > 1:
+        _, variance = rebin_counts(time, variance, bunch_factor)
         detector_counts = np.asarray(
             [rebin_counts(time, trace, bunch_factor)[1] for trace in detector_counts]
         )
         time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 
-    if lifetime_corrected:
-        scale = np.exp(time / float(MUON_LIFETIME_US))
-        out_counts = trimmed_counts * scale
-        errors = np.sqrt(np.clip(trimmed_counts, 1.0, None)) * scale
-    else:
-        out_counts = trimmed_counts
-        errors = np.sqrt(np.clip(trimmed_counts, 1.0, None))
+    scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
+    out_counts = trimmed_counts * scale
+    errors = np.sqrt(np.clip(variance, 1.0, None)) * scale
 
     mask = np.ones_like(time, dtype=bool)
     if t_min is not None:

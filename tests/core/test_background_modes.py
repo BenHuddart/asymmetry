@@ -286,6 +286,7 @@ def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
     recorded by the time-domain reduction even though the persisted grouping
     carries background_mode='range'."""
     from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.transform.fb_counts import GroupCounts
 
     counts = np.full(200, 80.0)
     grouping = {
@@ -296,7 +297,7 @@ def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
         "backward_group": 2,
     }
     corrected, applied, value = _apply_group_background_correction(
-        counts,
+        GroupCounts(counts),
         grouping=grouping,
         group_id=2,  # backward group must get ITS value, not the forward one
         t0_bin=20,
@@ -306,13 +307,14 @@ def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
     )
     assert applied
     assert value == pytest.approx(3.0)
-    np.testing.assert_allclose(corrected, counts - 3.0)
+    np.testing.assert_allclose(corrected.counts, counts - 3.0)
 
 
 def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
     """Review fix: pulsed data with tail-fit background corrects the Fourier
     input too (the old range-only gate skipped it)."""
     from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.transform.fb_counts import GroupCounts
 
     counts = _pulsed_counts(5000.0, 0.8, seed=7)
     grouping = {
@@ -321,7 +323,7 @@ def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
         "last_good_bin": N_BINS - 1,
     }
     corrected, applied, value = _apply_group_background_correction(
-        counts,
+        GroupCounts(counts),
         grouping=grouping,
         group_id=1,
         t0_bin=T0_BIN,
@@ -331,7 +333,7 @@ def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
     )
     assert applied
     assert value is not None and value > 0.0
-    assert float(np.sum(corrected)) < float(np.sum(counts))
+    assert float(np.sum(corrected.counts)) < float(np.sum(counts))
 
 
 def test_fourier_group_path_refuses_missing_reference():

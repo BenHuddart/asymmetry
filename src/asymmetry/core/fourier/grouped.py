@@ -10,7 +10,6 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     background_window,
     resolve_background_mode,
-    subtract_scaled_counts,
 )
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
@@ -18,11 +17,12 @@ from asymmetry.core.transform.corrections import (
     CorrectionStatus,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.fb_counts import GroupCounts, linear_combination_variance
 from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
     good_frames,
+    group_counts_aligned,
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
@@ -133,7 +133,7 @@ def _resolve_group_reference_counts(
     apply_deadtime: bool,
     detector_t0_bins: list[int],
     cache: dict | None = None,
-) -> tuple[np.ndarray | None, float | None]:
+) -> tuple[GroupCounts | None, float | None]:
     """Resolve+group a ``reference_run`` background for one detector group.
 
     Returns the reference run's counts summed over the *same* group indices and
@@ -181,19 +181,19 @@ def _resolve_group_reference_counts(
             apply_deadtime,
         )
         cache[prepared_key] = reference_prepared
-    reference_counts = apply_grouping_aligned(
+    reference_counts = group_counts_aligned(
         reference_prepared,
         group_indices,
         common_t0_bin=common_t0,
         detector_t0_bins=detector_t0_bins,
     )
-    if reference_counts.size == 0:
+    if reference_counts.counts.size == 0:
         return None, None
     return reference_counts, reference.scale
 
 
 def _apply_group_background_correction(
-    counts: np.ndarray,
+    counts: GroupCounts,
     *,
     grouping: dict,
     group_id: int,
@@ -201,36 +201,27 @@ def _apply_group_background_correction(
     bin_width: float,
     metadata: dict,
     source_file: str,
-    reference_counts: np.ndarray | None = None,
+    reference_counts: GroupCounts | None = None,
     reference_scale: float | None = None,
-) -> tuple[np.ndarray, bool, float | None]:
+) -> tuple[GroupCounts, bool, float | None]:
     """Apply optional grouped background subtraction for one detector group."""
     if not bool(grouping.get("background_correction", False)):
         return counts, False, None
 
     mode = resolve_background_mode(grouping)
-    if mode == "reference_run":
-        # Reference-run subtraction is always available (no source-type gate);
-        # the reference is resolved+grouped by the caller and subtracted at the
-        # count level, matching the time-domain reduction.
-        if reference_counts is None or reference_scale is None:
-            CorrectionOutcomes(
-                background=CorrectionOutcome(
-                    "background", mode, CorrectionStatus.UNAVAILABLE, "reference run is not loaded"
-                )
-            ).require_complete()
-        sample = np.asarray(counts, dtype=np.float64)
-        reference = np.asarray(reference_counts, dtype=np.float64)
-        if reference.size < sample.size:
+    if mode == "reference_run" and reference_counts is not None:
+        length = counts.counts.size
+        if reference_counts.counts.size < length:
             raise ValueError(
-                f"reference run has {reference.size} aligned bins; sample requires {sample.size}."
+                f"reference run has {reference_counts.counts.size} aligned bins; sample requires {length}."
             )
-        reference_on_sample = reference[: sample.size]
-        corrected, _variance = subtract_scaled_counts(
-            sample, reference_on_sample, float(reference_scale)
+        variance = reference_counts.variance
+        reference_counts = GroupCounts(
+            reference_counts.counts[:length], None if variance is None else variance[:length]
         )
-        return corrected, True, None
-    if mode not in available_background_modes(metadata=metadata, source_file=source_file):
+    if mode != "reference_run" and mode not in available_background_modes(
+        metadata=metadata, source_file=source_file
+    ):
         CorrectionOutcomes(
             background=CorrectionOutcome(
                 "background",
@@ -241,22 +232,17 @@ def _apply_group_background_correction(
         ).require_complete()
 
     payload = dict(grouping)
-    # Only the fixed/range modes carry a per-group value/range from the
-    # time-domain reduction. tail_fit re-fits each group's own counts here
-    # (the same Poisson estimator as the reduction), so it must NOT be
-    # overridden by stray background_values/background_ranges keys left in the
-    # grouping from an earlier mode.
+    # An acquisition window defines both the level and its shared uncertainty.
+    # Cached levels alone are exact constants, not a substitute for that window.
     if mode in ("fixed", "range"):
         selected_value = _group_background_value_for_group(grouping, group_id)
         selected_range = _group_background_range_for_group(grouping, group_id)
-        if selected_value is not None:
-            # Per-group values come from the time-domain reduction; subtract
-            # them verbatim regardless of how that reduction estimated them.
-            payload["background_fixed_values"] = [selected_value, selected_value]
-            payload["background_mode"] = "fixed"
-        elif selected_range is not None:
+        if selected_range is not None and (mode == "range" or selected_value is None):
             payload["background_ranges"] = [list(selected_range), list(selected_range)]
             payload["background_mode"] = "range"
+        elif selected_value is not None:
+            payload["background_fixed_values"] = [selected_value, selected_value]
+            payload["background_mode"] = "fixed"
 
     last_good_bin = payload.get("last_good_bin")
     try:
@@ -264,8 +250,11 @@ def _apply_group_background_correction(
     except (TypeError, ValueError):
         last_good_bin = None
     correction = apply_grouped_background_correction(
-        np.asarray(counts, dtype=np.float64),
-        np.asarray(counts, dtype=np.float64),
+        counts,
+        counts,
+        reference_forward=reference_counts,
+        reference_backward=reference_counts,
+        reference_scale=reference_scale,
         grouping=payload,
         t0_bin=int(t0_bin),
         bin_width_us=float(bin_width),
@@ -281,7 +270,7 @@ def _apply_group_background_correction(
     )
     background_value = values[0] if values is not None else None
     return (
-        correction.forward.counts,
+        correction.forward,
         correction.outcome.status == CorrectionStatus.APPLIED,
         background_value,
     )
@@ -355,13 +344,13 @@ def build_group_signal_dataset(
             prepared_histograms, *all_group_indices, detector_t0_bins=detector_t0_bins
         )
     common_t0 = max(0, int(reference_t0_bin))
-    counts = apply_grouping_aligned(
+    group = group_counts_aligned(
         prepared_histograms,
         indices,
         common_t0_bin=common_t0,
         detector_t0_bins=detector_t0_bins,
     )
-    if counts.size == 0:
+    if group.counts.size == 0:
         raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
 
     declared_t0 = grouping.get("t0_bin")
@@ -379,7 +368,7 @@ def build_group_signal_dataset(
         if exact_t0_us is not None:
             grouping["t0_time_us"] = float(exact_t0_us) + offset * histograms[0].bin_width
 
-    source_file = str(getattr(run, "source_file", "") or "")
+    source_file = run.source_file
     reference_counts, reference_scale = _resolve_group_reference_counts(
         grouping,
         group_indices=indices,
@@ -388,8 +377,8 @@ def build_group_signal_dataset(
         detector_t0_bins=detector_t0_bins,
         cache=background_reference_cache,
     )
-    counts, background_applied, background_value = _apply_group_background_correction(
-        counts,
+    group, background_applied, background_value = _apply_group_background_correction(
+        group,
         grouping=grouping,
         group_id=int(group_id),
         # ``counts`` is aligned to ``common_t0`` (apply_grouping_aligned), so the
@@ -403,6 +392,7 @@ def build_group_signal_dataset(
         reference_scale=reference_scale,
     )
 
+    counts = group.counts
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
     except (TypeError, ValueError):
@@ -427,6 +417,9 @@ def build_group_signal_dataset(
     time = (
         np.arange(trimmed_counts.size, dtype=float) + float(axis_start)
     ) * bin_width + residual_us
+    n_output = trimmed_counts.size // bunch_factor
+    edges = first_good + np.arange(n_output + 1) * bunch_factor
+    variance = linear_combination_variance(group, edges) if n_output else np.array([], dtype=float)
     if bunch_factor > 1:
         time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 
@@ -437,7 +430,7 @@ def build_group_signal_dataset(
     signal = trimmed_counts * scale
     if center_signal and signal.size > 0:
         signal -= float(np.mean(signal))
-    error = np.sqrt(np.clip(trimmed_counts, 1.0, None)) * scale
+    error = np.sqrt(np.clip(variance, 1.0, None)) * scale
 
     group_names = grouping.get("group_names") if isinstance(grouping, dict) else None
     group_name = None

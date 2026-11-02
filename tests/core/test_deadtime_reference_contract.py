@@ -1,7 +1,5 @@
 """Recorded synthetic Mantid 6.16.1 count references and the reduction gap."""
 
-from dataclasses import fields
-
 import numpy as np
 import pytest
 
@@ -10,7 +8,8 @@ from asymmetry.core.transform.deadtime import (
     apply_deadtime_correction,
     prepare_histograms_with_deadtime,
 )
-from asymmetry.core.transform.grouping import apply_grouping_aligned
+from asymmetry.core.transform.fb_counts import linear_combination_variance
+from asymmetry.core.transform.grouping import group_counts_aligned
 from asymmetry.core.transform.rebin import rebin_counts
 
 
@@ -49,9 +48,11 @@ def test_mantid_6_16_1_grouped_binned_counts_reference(coefficient, expected_cou
         True,
         mode="manual",
     )
-    grouped = apply_grouping_aligned(prepared, [0, 1])
-    _, corrected = rebin_counts(prepared[0].time_axis, grouped, 2)
+    grouped = group_counts_aligned(prepared, [0, 1])
+    _, corrected = rebin_counts(prepared[0].time_axis, grouped.counts, 2)
     np.testing.assert_allclose(corrected, expected_count, rtol=1e-12)
+    sigma = np.sqrt(linear_combination_variance(grouped, [0, 2, 4]))
+    np.testing.assert_allclose(sigma, [13.038404810405298] * 2, rtol=1e-12)
 
 
 def test_deadtime_preparation_preserves_measured_count_variance():
@@ -64,6 +65,4 @@ def test_deadtime_preparation_preserves_measured_count_variance():
     )
     np.testing.assert_array_equal(prepared[0].counts, [125.0])
     np.testing.assert_array_equal(histogram.counts, [100.0])
-    if "count_variance" not in {field.name for field in fields(Histogram)}:
-        pytest.xfail("#390: Histogram has no count_variance field")
     np.testing.assert_array_equal(prepared[0].count_variance, [100.0])

@@ -24,7 +24,7 @@ _SEED = 20261031
 
 class BackgroundBinnedUncertaintyScenario(Scenario):
     name = "background_binned_uncertainty"
-    description = "Tail-fit background and fixed bunching in the asymmetry preview."
+    description = "Deadtime, tail-fit background and fixed bunching in the asymmetry preview."
     size = (1180, 780)
     requires_fit = True
 
@@ -40,7 +40,7 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             run_number=8101,
             histograms=[Histogram(counts, bin_width=width, t0_bin=t0) for counts in raw],
             metadata={
-                "title": "Unpolarised decay with count background (synthetic)",
+                "title": "Measured counts with fixed deadtime and background (synthetic)",
                 "simulation_seed": _SEED,
             },
             grouping={
@@ -55,6 +55,11 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
                 "t0_bin": t0,
                 "bunching_factor": 8,
                 "background_correction": False,
+                "deadtime_correction": True,
+                "deadtime_mode": "manual",
+                "deadtime_method": "manual",
+                "dead_time_us": [0.1, 0.1],
+                "good_frames": 2000.0,
             },
         )
         asymmetry, error = compute_asymmetry(*raw)

@@ -27,9 +27,9 @@ from asymmetry.core.transform.corrections import (
 from asymmetry.core.transform.deadtime import (
     prepare_histograms_with_deadtime,
 )
-from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, GroupCounts, good_window
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, good_window
 from asymmetry.core.transform.grouping import (
-    align_forward_backward,
+    align_forward_backward_counts,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
@@ -157,7 +157,7 @@ def corrected_grouped_counts(
         # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
         # so alignment shifts without the histograms' own t0_bin being rewritten.
         detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
-        forward, backward, crop = align_forward_backward(
+        forward, backward, crop = align_forward_backward_counts(
             working_histograms, forward_idx, backward_idx, detector_t0
         )
         common_t0 = crop.common_t0_bin
@@ -193,13 +193,15 @@ def corrected_grouped_counts(
                         deadtime_outcome = replace(
                             reference_outcome, reason=f"reference run: {reference_outcome.reason}"
                         )
-                    reference_forward, reference_backward, reference_crop = align_forward_backward(
-                        reference_prepared,
-                        forward_idx,
-                        backward_idx,
-                        effective_detector_t0_bins(reference_prepared, grouping),
-                        common_t0_bin=common_t0,
-                        sample_length=n_grouped,
+                    reference_forward, reference_backward, reference_crop = (
+                        align_forward_backward_counts(
+                            reference_prepared,
+                            forward_idx,
+                            backward_idx,
+                            effective_detector_t0_bins(reference_prepared, grouping),
+                            common_t0_bin=common_t0,
+                            sample_length=n_grouped,
+                        )
                     )
             bkg_result = apply_grouped_background_correction(
                 forward,
@@ -233,8 +235,8 @@ def corrected_grouped_counts(
         bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
         t0_time_us = common_t0_time_us(working_histograms, grouping, common_t0)
         if not use_background:
-            forward_counts = GroupCounts(forward)
-            backward_counts = GroupCounts(backward)
+            forward_counts = forward
+            backward_counts = backward
 
         corrections = CorrectionOutcomes(deadtime_outcome, background_outcome)
         if not allow_incomplete:

@@ -89,7 +89,11 @@ is "Poisson likelihood needs raw counts; these counts were deadtime-corrected.
 Use the DT₀ count-domain model or the Gaussian cost." Disable the reduction's
 deadtime correction and fit DT₀ in the expected raw counts, or select
 **Gaussian √N** for corrected observations. That Gaussian cost uses
-:math:`\sigma=\sqrt{\max(N,1)}`.
+:math:`\sigma=\sqrt{\max(v,1)}`, where :math:`v` is the grouped and binned
+counting variance. For deadtime-corrected histograms this retains measured
+count variance, or explicitly supplied independent variance, rather than
+inferring it from corrected counts. Lifetime correction scales σ and counts
+by the same factor. Coefficient and exposure uncertainty are excluded.
 
 The Poisson statistic is the deviance
 :math:`D=2\sum_i[\mu_i-n_i+n_i\ln(n_i/\mu_i)]`, with the zero-count limit

@@ -26,7 +26,10 @@ never modified, and changing mode (or any width) is always reversible. In
 all modes the *counts* are summed onto the output bins and the
 asymmetry formed per output bin — at late times the raw bins hold zero
 counts, where an asymmetry ratio per raw bin is undefined while summed
-counts remain exactly Poisson.
+raw independent counts have additive Poisson variance. Deadtime-corrected
+counts retain measured counting variance through the same bin sums; they are
+not treated as fresh Poisson observations. Shared-background covariance is
+propagated separately, including overlap with the estimation window.
 
 Display bunching
 ----------------
