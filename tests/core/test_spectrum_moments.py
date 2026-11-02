@@ -219,7 +219,7 @@ def test_bootstrap_is_deterministic_under_seed():
     assert a.beta_err == b.beta_err
 
 
-def test_propagate_gives_integral_errors_and_nan_for_peak():
+def test_propagate_gives_integral_and_refined_peak_errors():
     x = np.linspace(-60.0, 60.0, 2001)
     amp = _gaussian(x, 0.0, 8.0)
     m = spectrum_moments(
@@ -232,7 +232,7 @@ def test_propagate_gives_integral_errors_and_nan_for_peak():
     )
     assert math.isfinite(m.b_ave_err) and m.b_ave_err > 0
     assert math.isfinite(m.b_rms_mean_err)
-    assert math.isnan(m.b_pk_err)  # parabolic peak not linearly propagated
+    assert math.isfinite(m.b_pk_err) and m.b_pk_err > 0
 
 
 def test_bootstrap_tolerates_negative_or_nonfinite_sigma():
@@ -278,7 +278,7 @@ def test_parabolic_peak_is_clamped_to_the_fitted_span():
         peak = _parabolic_peak(x, amp, ipk)
         if peak is None:
             continue
-        assert x[ipk - 2] - 1e-9 <= peak <= x[ipk + 2] + 1e-9
+        assert x[ipk - 2] - 1e-9 <= peak.position <= x[ipk + 2] + 1e-9
 
 
 def test_no_errors_yields_nan_uncertainties():
