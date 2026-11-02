@@ -16,7 +16,15 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.io.base import BaseLoader, field_direction_from_text
+from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
+from asymmetry.core.io.physical_units import (
+    CANONICAL_UNITS,
+    Dimension,
+    UnitDeclaration,
+    canonical,
+    parse_quantity,
+    quantity_parts,
+)
 from asymmetry.core.transform import (
     align_forward_backward,
     common_t0_time_us,
@@ -27,25 +35,11 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.utils.perf import perf_timer
 
-
-def _extract_field_from_comment(comment: str) -> float | None:
-    """Extract magnetic field in Gauss from title/comment text."""
-    if not comment:
-        return None
-
-    patterns = [
-        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-        r"(?i)\b([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, comment)
-        if match is None:
-            continue
-        try:
-            return float(match.group(1))
-        except ValueError:
-            continue
-    return None
+_PHYSICAL_HEADER_FIELDS: dict[str, Dimension] = {
+    "Time Resolution": "time",
+    "Sample Magnetic Field": "field",
+    "Sample Temperature": "temperature",
+}
 
 
 @dataclass
@@ -85,12 +79,29 @@ class RootLoader(BaseLoader):
             with uproot.open(path) as root_file:
                 header, header_kind, run_summary = self._read_header(root_file)
                 root_histograms = self._read_histograms(root_file)
-                slow_control_logs = self._read_slow_control_logs(root_file, path, header)
+                quantities = {
+                    name: parse_quantity(
+                        header.get(f"RunInfo/{name}"),
+                        dimension,
+                        context=f"{path}: RunInfo/{name}",
+                        default=None if dimension == "time" else 0.0,
+                    )
+                    for name, dimension in _PHYSICAL_HEADER_FIELDS.items()
+                }
+                slow_control_logs = self._read_slow_control_logs(
+                    root_file, path, header, quantities["Sample Temperature"][0]
+                )
 
             if not root_histograms:
                 raise ValueError(f"ROOT file does not contain hDecay histograms: {filepath}")
             dataset = self._build_dataset(
-                path, header, header_kind, root_histograms, slow_control_logs, run_summary
+                path,
+                header,
+                header_kind,
+                root_histograms,
+                quantities,
+                slow_control_logs,
+                run_summary,
             )
             perf.detail(detectors=len(root_histograms), bins=dataset.n_points)
             return dataset
@@ -247,12 +258,13 @@ class RootLoader(BaseLoader):
         self,
         root_file,
         path: Path,
-        header: dict[str, str] | None = None,
+        header: dict[str, str],
+        temperature_kelvin: float,
     ) -> _RootSlowControlLogs | None:
         """Read MusrRoot slow-control histograms from ``SCAnaModule``."""
         time_series: dict[str, dict[str, Any]] = {}
         seen_paths: set[str] = set()
-        sensor_roles = self._slow_control_sensor_roles(header or {})
+        sensor_roles = self._slow_control_sensor_roles(header)
 
         for key in root_file.keys(recursive=True):
             clean = self._clean_key(key)
@@ -303,7 +315,7 @@ class RootLoader(BaseLoader):
 
         if not time_series:
             return None
-        self._resolve_primary_sample_temperature(time_series, header or {})
+        self._resolve_primary_sample_temperature(time_series, temperature_kelvin)
         return _RootSlowControlLogs(
             source_file=str(path),
             channels=[key.rsplit("/", 1)[-1] for key in sorted(time_series)],
@@ -313,9 +325,9 @@ class RootLoader(BaseLoader):
     def _resolve_primary_sample_temperature(
         self,
         time_series: dict[str, dict[str, Any]],
-        header: dict[str, str],
+        scalar: float,
     ) -> None:
-        """Pick one primary among competing sample-temperature series.
+        """Pick one primary among competing canonical-K sample-temperature series.
 
         New-format FLAME files expose several channels matching the role (e.g.
         "Cryostat Sample Temperature" plus an all-NaN "Dilution Sample
@@ -335,7 +347,6 @@ class RootLoader(BaseLoader):
             # label-matched channels arrive with primary=False.
             candidates[0]["primary"] = True
             return
-        scalar = self._float_from_value(header.get("RunInfo/Sample Temperature"), default=0.0)
 
         def typical(info: dict[str, Any]) -> float:
             values = np.asarray(info.get("values", ()), dtype=np.float64)  # finite-filtered
@@ -380,6 +391,15 @@ class RootLoader(BaseLoader):
         if time_axis.size != values.size:
             time_axis = np.arange(values.size, dtype=np.float64)
 
+        raw_units = self._slow_control_units(label, title, sensor_role)
+        dimension = "temperature" if sensor_role.get("role") == "sample_temperature" else "field"
+        declaration = None
+        if sensor_role.get("header_key"):
+            values, declaration = canonical(
+                values, raw_units, dimension, context=f"{source_file}: {key}"
+            )
+            raw_units = CANONICAL_UNITS[dimension]
+
         finite = np.isfinite(values)
         if not np.any(finite):
             return None
@@ -388,7 +408,7 @@ class RootLoader(BaseLoader):
         series_path = f"musrroot_slow_control/{label}"
         info: dict[str, Any] = {
             "path": series_path,
-            "units": self._slow_control_units(label, title, sensor_role),
+            "units": raw_units,
             "time": [float(v) for v in valid_time],
             "values": [float(v) for v in valid_values],
             "mean": float(np.mean(valid_values)),
@@ -398,6 +418,8 @@ class RootLoader(BaseLoader):
             "source_format": "MusrRoot SCAnaModule",
             "reader_provenance": "MusrRoot slow-control histogram",
         }
+        if declaration is not None:
+            info["unit_declaration"] = asdict(declaration)
         if sensor_role:
             info.update(
                 {
@@ -467,7 +489,7 @@ class RootLoader(BaseLoader):
             role = self._slow_control_role_for_header_key(key)
             if role is None:
                 continue
-            units = self._unit_from_value(value).upper()
+            units = quantity_parts(value)[1]
             for sensor in self._slow_control_sensors_from_value(value):
                 normalized = self._normalize_sensor_text(sensor)
                 if not normalized:
@@ -555,10 +577,13 @@ class RootLoader(BaseLoader):
         header: dict[str, str],
         header_kind: str,
         root_histograms: list[_RootHistogram],
+        quantities: dict[str, tuple[float, UnitDeclaration | None]],
         slow_control_logs: _RootSlowControlLogs | None = None,
         run_summary: str | None = None,
     ) -> MuonDataset:
-        bin_width_us = self._time_resolution_us(header)
+        bin_width_us = quantities["Time Resolution"][0]
+        if not np.isfinite(bin_width_us) or bin_width_us <= 0:
+            raise ValueError(f"{path}: RunInfo/Time Resolution must be finite and positive.")
         selected = self._select_histograms(header, root_histograms)
         counts = validated_count_arrays(*(hist.counts for hist in selected))
         max_bin = max(0, counts[0].size - 1)
@@ -589,7 +614,7 @@ class RootLoader(BaseLoader):
             t0_time_us = (
                 None
                 if t0_value is None
-                else (self._float_from_value(t0_value, default=0.0) + 0.5) * bin_width_us
+                else ((quantity_parts(t0_value)[0] or 0.0) + 0.5) * bin_width_us
             )
 
             histograms.append(
@@ -646,7 +671,14 @@ class RootLoader(BaseLoader):
         error = error[first_good : last_good + 1]
 
         metadata = self._metadata(
-            path, header, header_kind, labels, root_numbers, slow_control_logs, run_summary
+            path,
+            header,
+            header_kind,
+            labels,
+            root_numbers,
+            quantities,
+            slow_control_logs,
+            run_summary,
         )
         metadata["grouped_alignment"] = asdict(alignment)
         grouping = {
@@ -758,6 +790,7 @@ class RootLoader(BaseLoader):
         header_kind: str,
         labels: list[str],
         root_numbers: list[int],
+        quantities: dict[str, tuple[float, UnitDeclaration | None]],
         slow_control_logs: _RootSlowControlLogs | None = None,
         run_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -766,7 +799,7 @@ class RootLoader(BaseLoader):
             match = re.search(r"(\d+)", path.stem)
             run_number = int(match.group(1)) if match else 0
 
-        field = self._field_gauss(header.get("RunInfo/Sample Magnetic Field"))
+        field = quantities["Sample Magnetic Field"][0]
         instrument = header.get("RunInfo/Instrument", "").strip()
         if not instrument and "flame" in path.stem.lower():
             instrument = "FLAME"
@@ -774,16 +807,18 @@ class RootLoader(BaseLoader):
             instrument = instrument.upper()
         title = header.get("RunInfo/Run Title", "")
         comment = header.get("RunInfo/Comment", "")
-        field_comment_candidate = _extract_field_from_comment(f"{title} {comment}")
+        field_comment_candidate = comment_field_gauss(f"{title} {comment}")
 
         metadata: dict[str, Any] = {
             "run_number": run_number,
             "title": title,
             "sample": header.get("RunInfo/Sample Name", ""),
-            "temperature": self._float_from_value(
-                header.get("RunInfo/Sample Temperature"),
-                default=0.0,
-            ),
+            "temperature": quantities["Sample Temperature"][0],
+            "declared_units": {
+                dimension: {f"RunInfo/{name}": asdict(quantities[name][1])}
+                for name, dimension in _PHYSICAL_HEADER_FIELDS.items()
+                if quantities[name][1] is not None
+            },
             "field": field,
             "field_header": field,
             "field_comment_candidate": field_comment_candidate,
@@ -993,35 +1028,6 @@ class RootLoader(BaseLoader):
     # Small helpers
     # ------------------------------------------------------------------
 
-    def _time_resolution_us(self, header: dict[str, str]) -> float:
-        value = header.get("RunInfo/Time Resolution")
-        if not value:
-            return 1.0
-        number = self._float_from_value(value, default=1.0)
-        unit = self._unit_from_value(value)
-        if unit in {"ps", "picosec", "picosecond", "picoseconds"}:
-            return number * 1.0e-6
-        if unit in {"ns", "nanosec", "nanosecond", "nanoseconds"}:
-            return number * 1.0e-3
-        if unit in {"us", "microsec", "microsecond", "microseconds"}:
-            return number
-        return number
-
-    def _field_gauss(self, value: str | None) -> float:
-        if not value:
-            return 0.0
-        number = self._float_from_value(value, default=0.0)
-        unit = self._unit_from_value(value)
-        if unit in {"t", "tesla"}:
-            return number * 1.0e4
-        return number
-
-    def _float_from_value(self, value: str | None, *, default: float = 0.0) -> float:
-        if value is None:
-            return default
-        match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", str(value))
-        return float(match.group(0)) if match else default
-
     def _int_from_value(self, value: str | None, *, default: int = 0) -> int:
         if value is None:
             return default
@@ -1035,16 +1041,6 @@ class RootLoader(BaseLoader):
             int(round(float(match.group(0))))
             for match in re.finditer(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", str(value))
         ]
-
-    def _unit_from_value(self, value: str | None) -> str:
-        if value is None:
-            return ""
-        text = str(value)
-        match = re.search(
-            r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\s*(?:\+-\s*[-+0-9.eE]+\s*)?([A-Za-z/]+)",
-            text,
-        )
-        return match.group(1).lower() if match else ""
 
     def _parse_musrroot_string(self, text: str) -> tuple[str, str] | None:
         match = re.match(r"\s*\d+\s*-\s*(.*?)\s*(?:-@\d+)?\s*$", text)

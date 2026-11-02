@@ -71,6 +71,7 @@ from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.utils.constants import CELSIUS_ZERO_K
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.palette import is_dark_surface
@@ -96,9 +97,6 @@ _LOG_TEMPERATURE_FOREGROUND = QColor(tokens.LOGGED_VALUE_FG)
 #: when there is no logged sample thermometer to switch to).
 _SUSPECT_TEMPERATURE_FOREGROUND = QColor(tokens.WARN)
 _SUSPECT_TEMPERATURE_MARKER = " ⚠"
-#: Celsius→Kelvin offset, used only to spell out the conversion in the warning
-#: tooltip. The displayed value itself is never converted (see the loader).
-_ABSOLUTE_ZERO_CELSIUS = 273.15
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
@@ -2880,8 +2878,8 @@ class DataBrowserPanel(QWidget):
             ),
             (
                 f"If this is °C, the temperature in K is "
-                f"{value:.2f} + {_ABSOLUTE_ZERO_CELSIUS:g} = "
-                f"{value + _ABSOLUTE_ZERO_CELSIUS:.2f} K."
+                f"{value:.2f} + {CELSIUS_ZERO_K:g} = "
+                f"{value + CELSIUS_ZERO_K:.2f} K."
             ),
             (
                 "The value is left unchanged (auto-adding 273 would corrupt a "

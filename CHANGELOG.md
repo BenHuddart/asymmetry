@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ROOT and PSI headers convert declared time, field, and temperature units;
+  invalid units and missing ROOT timing raise errors with file and field context.
+
 - NeXus exports declare temperature, field, timing, and dead-time units so
   other readers can interpret the physical quantities without guessing.
 

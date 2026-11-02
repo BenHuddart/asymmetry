@@ -47,6 +47,7 @@ CANONICAL_NAMES = (
     "MUONIUM_VACUUM_HYPERFINE_MHZ",
     "MAGNETIC_FLUX_QUANTUM_WB",
     "GAUSS_TO_TESLA",
+    "CELSIUS_ZERO_K",
 )
 
 
@@ -250,4 +251,49 @@ def find_binning_payload_violations(root: Path = ROOT) -> list[HarnessFailure]:
                     f"Raw binning reads: {len(reads)}, frozen count {allowed}. Use binning_spec; lower the baseline when reads are removed.",
                 )
             )
+    return failures
+
+
+# NeXus's separate normalizers are the only allowed unit-dispatch exceptions.
+UNIT_COMPARISON_BASELINE = {"src/asymmetry/core/io/nexus.py": 3}
+
+
+def find_unit_comparison_violations(
+    root: Path = ROOT, *, baseline: dict = UNIT_COMPARISON_BASELINE
+) -> list[HarnessFailure]:
+    """Keep physical unit dispatch inside the shared conversion table."""
+    failures = []
+    counts = {}
+    for path in sorted((root / "src/asymmetry/core/io").rglob("*.py")):
+        if path.name == "physical_units.py":
+            continue
+        comparisons = [
+            node
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Compare)
+            and any(
+                isinstance(part, ast.Name)
+                and (part.id in {"unit", "units", "unit_token"} or part.id.endswith("_UNIT_TOKENS"))
+                or isinstance(part, ast.Call)
+                and isinstance(part.func, ast.Attribute)
+                and part.func.attr == "get"
+                and part.args
+                and isinstance(part.args[0], ast.Constant)
+                and part.args[0].value == "units"
+                for part in ast.walk(node)
+            )
+        ]
+        relative = path.relative_to(root).as_posix()
+        counts[relative] = len(comparisons)
+        allowed = baseline.get(relative, 0)
+        if len(comparisons) != allowed:
+            failures.append(
+                HarnessFailure(
+                    path,
+                    comparisons[0].lineno if comparisons else 0,
+                    f"Unit comparisons: {len(comparisons)}, frozen count {allowed}. Use physical_units; lower the baseline when comparisons are removed.",
+                )
+            )
+    for relative in baseline.keys() - counts.keys():
+        failures.append(HarnessFailure(root / relative, 0, "Unit-comparison baseline is stale."))
     return failures
