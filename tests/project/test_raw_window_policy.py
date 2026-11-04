@@ -284,3 +284,15 @@ def test_good_events_sum_aligned_raw_observations_with_staggered_detectors():
     grouping = resolve_effective_grouping(request(5), run)
     expected = run.histograms[0].counts[20:76].sum() + run.histograms[1].counts[25:81].sum()
     assert good_event_count(run.histograms, grouping) == expected
+
+
+@pytest.mark.parametrize("mode", ["green_minus_red", "green_plus_red"])
+@pytest.mark.parametrize("bounds", [((20, 80), (20, 80)), ((40, 60), (40, 60))])
+def test_combined_asymmetry_does_not_publish_base_period_good_events(mode, bounds):
+    from asymmetry.core.transform.grouping import good_event_count
+
+    run = acquired_run()
+    green = acquired_run(bounds=bounds)
+    run.grouping["period_histograms"] = [run.histograms, green.histograms]
+    grouping = resolve_effective_grouping(replace(request(), period_mode=mode), run)
+    assert good_event_count(run.histograms, grouping) is None

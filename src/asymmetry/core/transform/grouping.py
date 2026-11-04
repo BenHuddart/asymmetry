@@ -335,7 +335,11 @@ def good_event_count(
     Good Events and the export header share this uncorrected observation sum.
     An unavailable request returns None while acquired counts remain available.
     """
+    from asymmetry.core.utils.constants import PeriodMode
+
     if not histograms or not isinstance(grouping, dict):
+        return None
+    if grouping.get("period_mode") in (PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED):
         return None
     if (
         grouping.get("first_good_bin") is None

@@ -16,7 +16,9 @@ chosen set is remembered with the project. Two are worth knowing:
 - **Good Events (MEv)** — raw counts in the selected forward/backward
   observations, using their aligned good-bin window and selected held period.
   This is the same uncorrected sum written as ``events_grouped`` in exports.
-  Unavailable selections leave Good Events undetermined; acquired total counts
+  Combined G±R asymmetries have no single F/B count spectrum, so Good Events
+  and Events/frame are undetermined. Unavailable selections also leave Good
+  Events undetermined; acquired total counts
   remain available.
 - **Events/frame** — Good Events divided by the selected acquisition period's frame count, a
   rate-independent measure of how much beam each run collected. Use it to spot a

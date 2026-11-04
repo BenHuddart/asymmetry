@@ -2577,17 +2577,7 @@ class GroupingDialog(QDialog):
         delta = t0_bin - self._good_window_t0_bin
         self._good_window_t0_bin = t0_bin
         if delta and self._current_good_window_mode() == "manual":
-            policy = self._draft.good_window_policy
-            first, last = self._file_good_window_for_preview_run()
-            with QSignalBlocker(self._t_good_offset_spin), QSignalBlocker(self._last_good_spin):
-                if policy.mode == "manual" and policy.first_offset_bins is None:
-                    self._t_good_offset_spin.setValue(first - t0_bin)
-                self._last_good_spin.setValue(
-                    last + self._bin_index_base()
-                    if policy.mode == "manual" and policy.last_offset_bins is None
-                    else int(self._last_good_spin.value()) + delta
-                )
-
+            self._seed_good_window_mode_from_draft()
         elif delta and self._editing_target() == "profile":
             self._set_good_window_spins(*self._file_good_window_for_preview_run())
 
@@ -2697,6 +2687,7 @@ class GroupingDialog(QDialog):
         ):
             blocked = spin.blockSignals(True)
             try:
+                spin.setSpecialValueText("")
                 spin.setValue(value)
             finally:
                 spin.blockSignals(blocked)
@@ -2731,7 +2722,9 @@ class GroupingDialog(QDialog):
                 if offset is not None and (
                     isinstance(offset, bool) or not isinstance(offset, Integral)
                 ):
-                    spin.lineEdit().setText(repr(offset))
+                    with QSignalBlocker(spin):
+                        spin.setSpecialValueText(repr(offset))
+                        spin.setValue(spin.minimum())
         self._apply_good_window_mode_to_controls()
 
     def _apply_good_window_mode_to_controls(self) -> None:
@@ -2755,8 +2748,8 @@ class GroupingDialog(QDialog):
 
     def _on_good_window_mode_changed(self, *args: object) -> None:
         """React to a good-window mode change: gate/seed the spins, then refresh."""
-        if self._editing_target() == "profile" and self._current_good_window_mode() == "from_file":
-            self._draft.good_window_policy = GoodWindowPolicy()
+        if self._editing_target() == "profile":
+            self._draft.good_window_policy = self._current_good_window_policy()
         self._apply_good_window_mode_to_controls()
         self._refresh_preview()
 
@@ -2780,6 +2773,7 @@ class GroupingDialog(QDialog):
                 else ("last_offset_bins", value - self._bin_index_base() - t0)
             )
             self._draft.good_window_policy = replace(policy, **{key: value})
+            spin.setSpecialValueText("")
             self._mark_dirty()
 
     def _refresh_good_window_line(self) -> None:

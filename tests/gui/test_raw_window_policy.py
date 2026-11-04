@@ -201,12 +201,19 @@ def test_malformed_project_window_reopens_and_repairs(qapp, tmp_path, key, value
     restored = window._grouping_profiles[0]
     assert restored.to_dict()["good_window_policy"] == {"mode": "manual", key: value}
     dialog = GroupingDialog([reopened], profiles=[restored])
+    dialog.show()
+    qapp.processEvents()
     assert dialog._current_good_window_policy().to_dict() == {"mode": "manual", key: value}
     pane = dialog._preview_pane
     pane.flush()
     _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
     assert not dialog._apply_btn.isEnabled()
     spin = dialog._t_good_offset_spin if key == "first_offset_bins" else dialog._last_good_spin
+    assert repr(value) in spin.lineEdit().text()
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+    dialog._t0_spin.setValue(dialog._t0_spin.value() + 1)
+    assert dialog._current_good_window_policy().to_dict() == {"mode": "manual", key: value}
     assert repr(value) in spin.lineEdit().text()
     from PySide6.QtTest import QTest
 
