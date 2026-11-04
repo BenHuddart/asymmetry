@@ -12,5 +12,6 @@ documentation.
 
    musr_primer
    conventions
+   reduction_pipeline
    comparison
    glossary

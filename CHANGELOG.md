@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Explain the count-based reduction pipeline with a flowchart and a guide to
+  reviewed grouping, calibration-policy, timing, and loading comparisons.
+
 - Explain WiMDA grouping and exclusion differences, and restore the Auto Phase
   screenshot required for documentation publication.
 - Describe deadtime count-error conventions in Mantid and musrfit,

@@ -1,11 +1,11 @@
 Asymmetry in the μSR software landscape
 =======================================
 
-This page positions Asymmetry alongside the established μSR analysis
-programs — **WiMDA**, **musrfit**, and **Mantid** — and publishes the
-team's near-term roadmap. It is the public summary of a more detailed
-internal comparison maintained under ``docs/porting/`` in the
-Asymmetry repository.
+This page compares Asymmetry with **WiMDA**, **musrfit**, and **Mantid**.
+The count-reduction guide below covers reviewed grouping, calibration-policy,
+timing, and loading conventions. Its agreement statements apply to the named
+versions, observations, and settings; they do not certify every analysis method
+or every supported file.
 
 The intended reader is a μSR practitioner who already uses one of
 WiMDA, musrfit, or Mantid and wants to know where Asymmetry fits.
@@ -45,6 +45,57 @@ The reference programs
      - Modern Python stack; Fit Wizard (AICc-ranked); composite-model
        expression syntax; interactive parameter trending
 
+.. _reviewed-count-reduction:
+
+Reviewed count-reduction conventions
+------------------------------------
+
+Start with :doc:`reduction_pipeline` for the standard F/B operation order.
+The closest reference depends on the operation, rather than on a single
+preferred program. The detailed contracts and versioned comparisons are linked
+below; different defaults must be matched before judging numerical agreement.
+
+.. list-table:: Conventions and meaningful differences
+   :header-rows: 1
+   :widths: 24 36 40
+
+   * - Operation
+     - Asymmetry convention / closest comparison
+     - Meaningful difference and detail
+   * - Membership and F/B pairs
+     - Explicit selections, like Mantid detector IDs and musrfit histogram lists
+     - Unique members and independent disjoint pairs are Asymmetry choices;
+       reuse across projections remains valid. See :ref:`comparison-membership`.
+   * - Calibration policies
+     - Stored versus explicit estimates, like WiMDA's stored α and Estimate;
+       integral α uses the Mantid AlphaCalc convention
+     - Enabled automatic policies use current inputs; fixed and one-shot values
+       stay fixed. See :ref:`comparison-calibration-policies`.
+   * - Alignment and NeXus width
+     - Whole-bin alignment and declared-resolution fixed-bin counts, closest
+       to WiMDA/musrfit
+     - Selected exact origin and residuals are retained; Mantid also preserves
+       coordinates and offers common-grid rebinning. See :ref:`comparison-timing`.
+   * - PSI intervals
+     - Selected file-good intersection; musrfit is the primary PSI comparator
+     - Explicit musrfit endpoints and omitted defaults differ; WiMDA uses a
+       shared interval. See :ref:`comparison-psi-intervals`.
+   * - ROOT calibration and coverage
+     - Legacy v5 and modern layouts use common reduction; closest to musrfit
+     - v4 remains unsupported; acquired-example checks and the directory-case
+       limit have distinct scopes. See :ref:`comparison-root`.
+
+Agreement means agreement for matched observations and uncertainty conventions,
+within the stated storage or export precision. Explained convention differences
+are identified separately. Unverified paths and unresolved uncertainty
+comparisons remain limits; acceptance of a selection alone does not establish
+correct covariance or physical calibration. WiMDA behaviour below has no
+identified executable release version or binary numerical comparison; the
+`author's homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_ describe
+its workflows without supplying a version for these observations.
+
+.. _comparison-membership:
+
 Detector membership and exclusions
 ----------------------------------
 
@@ -58,10 +109,15 @@ Mantid's `MuonGroupingCounts documentation
 <https://docs.mantidproject.org/v6.16.1/algorithms/MuonGroupingCounts-v1.html>`_
 specifies detector-ID selection. The `musrfit manual's RUN grouping
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-forward-backward>`_
-selects histogram numbers. Native Mantid 6.16.1 and musrfit 1.12.1
-(``708f777b``, ROOT 6.40.04) agree with ordinary count addition on the synthetic
-inputs and tolerances in :doc:`/reference/detector_grouping`. Both reject the
-tested missing member and count a repeated member twice. Asymmetry's unique
+selects histogram numbers. Mantid 6.16.1 sums synthetic channels [10, 20]
+and [50, 60] to [60, 80],
+retaining supplied errors in quadrature within relative/absolute tolerance
+:math:`10^{-12}`. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), with
+corrections off, 0.1 μs bins, and packing one, exports 125000 counts/bin
+from constant channels 100000 and 25000; Poisson errors agree within relative
+:math:`5\times10^{-6}`, set by six-significant-digit text precision. Both
+reject the tested missing member and count a repeated member twice.
+Asymmetry's unique
 membership rule deliberately rejects that repetition. The tests do not establish
 pair independence or equivalence of geometry, timing, or calibration methods.
 
@@ -78,10 +134,13 @@ and overlapping auxiliary groups, and never infers identity from equal counts.
 WiMDA's **Group Table Edit** forms groups from numbered histogram channels.
 A repeated entry contributes again, and a histogram can contribute to both
 forward and backward groups. WiMDA can regenerate group membership when the
-requested histogram range is unavailable. Asymmetry rejects repeated structured
-members and missing requested channels, and requires disjoint effective channels
-for independent F/B analysis. These restrictions preserve the requested
-observations and the assumptions of its uncertainty model.
+requested histogram range is unavailable. Asymmetry also checks structured
+membership for repeated or missing requested
+channels, and requires nonempty disjoint effective channels for independent
+F/B analysis. These checks preserve an unweighted authored selection and the
+independent-count uncertainty model. Failure concerns the requested reduction:
+raw histograms and saved requests remain available for inspection and repair.
+See :doc:`/reference/detector_grouping` for the membership contract.
 
 WiMDA can exclude physical-detector contributions before combining them into
 mapped histograms. Asymmetry excludes acquired histogram channels without
@@ -89,6 +148,40 @@ rewriting the loaded data. When an acquired channel combines several physical
 detectors, excluding it removes the whole channel. Neither program can recover
 hidden constituent observations from a file that already aggregates them.
 See :doc:`/reference/data_reduction/detector_exclusion` for that distinction.
+
+.. _comparison-calibration-policies:
+
+Stored and automatic calibration policies
+-----------------------------------------
+
+Asymmetry preserves fixed and one-shot calibrated coefficients during regrouping.
+Enabled automatic policies use current inputs: ``per_run_estimate`` α is the
+integral ratio of the current corrected grouped counts over the good window.
+It is distinct from repeating an optimising α fit. β has fixed and calibrated
+policies, without that automatic ratio policy. See
+:doc:`/reference/data_reduction/alpha_calibration` and
+:doc:`/reference/data_reduction/beta_calibration` for the contracts.
+
+WiMDA keeps α stored during ordinary regrouping; **Estimate** is a separate
+action, while enabled background processing is evaluated when groups are
+rebuilt. Mantid's `AlphaCalc v1
+<https://docs.mantidproject.org/v6.13.1/algorithms/AlphaCalc-v1.html>`_
+computes the integral efficiency ratio as a separate operation; it is the
+closest convention for Asymmetry's automatic ratio, rather than a claim that
+Mantid automatically refits α after every grouping edit. musrfit specifies α/β
+through its `RUN/model configuration
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
+These policy distinctions do not establish numerical equivalence between
+calibration estimators. The cited Mantid documentation version is distinct
+from the 6.16.1 executable used in the numerical comparisons below.
+
+Asymmetry also checks that automatic α has finite positive F/B integrals and
+a finite positive ratio. An undefined estimate makes that reduction unavailable
+and editable; it does not replace the stored request with unity. Explicit
+fixed unity remains valid. This protects the ratio's mathematical inputs,
+without claiming that all reference workflows use the same guard.
+
+.. _comparison-timing:
 
 Integer timing alignment
 ------------------------
@@ -106,8 +199,8 @@ do not override a usable resolution or infer an extra acquisition-start shift.
 musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports identical arrays for regular,
 cumulative-float32, and shortened-terminal synthetic HDF5 coordinates with
 unchanged counts and resolution. Mantid 6.16.1's legacy loader retains supplied
-coordinate variations and loads all 66 affected original HDF4 files with exact
-count retention. These cases do not certify physical t0 or terminal-bin exposure;
+coordinate variations in the compared HDF4 inputs while retaining their counts
+exactly. These cases do not certify physical t0 or terminal-bin exposure;
 :doc:`/reference/loading_data` states the fixed-bin and axis-fallback conventions.
 
 Asymmetry also checks that selected channels have compatible widths before
@@ -139,6 +232,8 @@ and `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 The tutorial version is separate from the recorded executable version.
 :doc:`/reference/detector_grouping` gives the selected bins and output mapping.
 
+.. _comparison-root:
+
 PSI legacy ROOT calibration
 ---------------------------
 
@@ -159,9 +254,13 @@ container bins remain in the loaded histograms. The generated ``TDirectory``
 variant uses ``decayAnaModule``, while this musrfit reader requests
 ``DecayAnaModule``; Asymmetry reads that representation without claiming a
 native numerical comparison for it. WiMDA and Mantid coverage of this legacy
-class is unverified, and no original ROOT acquisition is in the teaching
-corpus. See :doc:`/reference/loading_data` and the
+class is unverified. The legacy v5 agreement above uses synthetic files;
+the modern acquired examples below extend a different part of ROOT coverage.
+Two legacy v4 examples remain loading failures, outside the supported numeric
+v5 decoder. See :doc:`/reference/loading_data` and the
 `musrfit RUN settings <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
+
+.. _comparison-psi-intervals:
 
 PSI good-data intervals
 -----------------------

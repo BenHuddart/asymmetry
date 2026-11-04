@@ -1,6 +1,9 @@
 Loading Data
 ============
 
+For the operation order and calibration dependencies, see
+:doc:`/explanation/reduction_pipeline`.
+
 Asymmetry reads the major muSR raw-data formats through a common
 :func:`~asymmetry.core.io.load` API and a uniform Grouping dialog: ISIS
 muon NeXus (legacy V1 and V2), PSI BIN/MDU, and MusrRoot/LEM ROOT. The
@@ -219,8 +222,8 @@ analysis. Asymmetry follows that interpretation while retaining its exact t0
 and bin-centre stamps. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports
 identical arrays for synthetic regular, cumulative-float32, and shortened-terminal
 coordinate variants with the same counts and resolution. Mantid 6.16.1's legacy
-loader retains coordinate variations: all 66 affected original HDF4 inputs
-load with unchanged counts. This is a scoped count/coordinate comparison, not
+loader retains coordinate variations: the compared HDF4 inputs
+retain their counts exactly. This is a scoped count/coordinate comparison, not
 physical timing or exposure certification. See :doc:`/explanation/comparison`
 and the `Mantid legacy loader reference
 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_.
@@ -485,11 +488,8 @@ and musrfit's legacy ROOT calibration conventions:
 
 * MusrRoot files are detected from ``RunHeader`` and ``hDecay%03d``
   histograms. Both the documented ``RunHeader`` ``TFolder`` layout and the
-  newer ``TDirectory`` layout are supported. musrfit added the
-  ``TDirectory``-based layout in a 2025 commit series, and the current
-  MusrRoot specification defines it as canonical (the ``TFolder`` streaming is
-  deprecated). PSI's 2026 FLAME DAQ writes this layout; other PSI bulk-µSR
-  instruments are expected to follow, since the layout is instrument-agnostic.
+  newer ``TDirectory`` layout are supported. Both use the same scientific
+  reduction after decoding; the container does not select an observation model.
 * Histogram search follows musrfit's paths: ``histos/hDecay%03d`` for folder
   files and ``histos/DecayAnaModule/hDecay%03d`` for directory files.
 * ``RunInfo`` values such as run number, title, laboratory, instrument,

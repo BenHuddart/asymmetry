@@ -33,3 +33,12 @@
     max-width: 100%;
     height: auto;
 }
+
+/* Keep diagram labels readable without widening a narrow documentation page. */
+.rst-content .reduction-pipeline {
+    overflow-x: auto;
+}
+
+.rst-content .reduction-pipeline img {
+    min-width: 660px;
+}
