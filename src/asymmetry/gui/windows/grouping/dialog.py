@@ -2657,9 +2657,9 @@ class GroupingDialog(QDialog):
             else GoodWindowPolicy()
         )
         offsets = []
-        for authored, displayed in (
-            (policy.first_offset_bins, t_good_offset),
-            (policy.last_offset_bins, last_good - t0_bin),
+        for authored, displayed, spin in (
+            (policy.first_offset_bins, t_good_offset, self._t_good_offset_spin),
+            (policy.last_offset_bins, last_good - t0_bin, self._last_good_spin),
         ):
             offsets.append(
                 authored
@@ -2668,6 +2668,7 @@ class GroupingDialog(QDialog):
                     authored is None
                     or isinstance(authored, bool)
                     or not isinstance(authored, Integral)
+                    or bool(spin.specialValueText())
                 )
                 else displayed
             )
@@ -2687,8 +2688,9 @@ class GroupingDialog(QDialog):
         ):
             blocked = spin.blockSignals(True)
             try:
-                spin.setSpecialValueText("")
-                spin.setValue(value)
+                outside = not spin.minimum() <= value <= spin.maximum()
+                spin.setSpecialValueText(str(value) if outside else "")
+                spin.setValue(spin.minimum() if outside else value)
             finally:
                 spin.blockSignals(blocked)
 

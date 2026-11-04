@@ -438,3 +438,34 @@ def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(q
     np.testing.assert_allclose(pane._last_result.error, final.error)
     dialog._clear_dirty()
     dialog.close()
+
+
+@pytest.mark.parametrize("key", ["first_offset_bins", "last_offset_bins"])
+@pytest.mark.parametrize("value", [2**40, -(2**40), 2147483640])
+def test_large_authored_window_stays_editable(qapp, key, value):
+    from PySide6.QtTest import QTest
+
+    dataset, profile = dataset_and_profile(request())
+    policy = GoodWindowPolicy.from_dict({"mode": "manual", key: value})
+    dialog = GroupingDialog([dataset], profiles=[replace(profile, good_window_policy=policy)])
+    dialog.show()
+    qapp.processEvents()
+    assert dialog._current_good_window_policy() == policy
+    dialog._t0_spin.setValue(dialog._t0_spin.value() + 1)
+    assert dialog._current_good_window_policy() == policy
+    spin = dialog._t_good_offset_spin if key == "first_offset_bins" else dialog._last_good_spin
+    expected = (
+        value
+        if key == "first_offset_bins"
+        else value + dialog._effective_t0_for_preview_run() + dialog._bin_index_base()
+    )
+    assert spin.lineEdit().text() == str(expected)
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), "20" if key == "first_offset_bins" else "70")
+    assert dialog._current_good_window_policy().to_dict()[key] != value
+    dialog._good_window_mode_combo.setCurrentIndex(
+        dialog._good_window_mode_combo.findData("from_file")
+    )
+    assert dialog._current_good_window_policy() == GoodWindowPolicy()
+    dialog._clear_dirty()
+    dialog.close()
