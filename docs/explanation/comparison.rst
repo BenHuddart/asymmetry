@@ -90,6 +90,28 @@ detectors, excluding it removes the whole channel. Neither program can recover
 hidden constituent observations from a file that already aggregates them.
 See :doc:`/reference/data_reduction/detector_exclusion` for that distinction.
 
+Integer timing alignment
+------------------------
+
+WiMDA aligns whole raw bins. Asymmetry also retains integer shifts, but resolves
+its exact reference and common observed support from the effective selected
+channels after exclusions. The maximum selected anchor defines the reference;
+acquired-channel ordinal breaks ties. Fractional residuals and their range are
+recorded in μs, without interpolating counts or assigning timing uncertainties.
+
+The recorded musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) type-0 integer grouping
+case uses 0.1 μs bins, ``forward 1 2``, ``t0 2 4``, ``data 1 9``, packing one,
+and no corrections. Eight selected counts agree exactly with Asymmetry, with
+timestamps agreeing within :math:`10^{-12}` μs. This is a count and coordinate
+check, not physical t0 certification. Mantid 6.16.1 keeps per-spectrum shifted
+X coordinates; direct grouping requires compatible grids, while explicit
+rebinning can redistribute counts onto common edges. See the
+`Mantid muon reduction tutorial
+<https://docs.mantidproject.org/v6.9.0/tutorials/muon_GUI_course/basics_of_data_reductions.html>`_
+and `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
+The tutorial version is separate from the recorded executable version.
+:doc:`/reference/detector_grouping` gives the selected bins and output mapping.
+
 Signed deadtime coefficients
 ----------------------------
 

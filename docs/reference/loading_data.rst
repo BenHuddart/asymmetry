@@ -28,11 +28,14 @@ acquisition arrays must have equal one-dimensional shape; a mismatch raises
 ``count arrays must have equal shape.`` PSI-MDU records use their declared
 format extent, including padding of shorter records, before this check.
 
-All three loaders align the selected detectors by their own time-zero bins
-and crop the forward/backward pair to their common terminal bin. The loaded
-run metadata records this operation as ``grouped_alignment``: the common t0,
-each detector's shift, both group lengths, and the retained length. This
-makes the alignment crop distinguishable from missing acquisition bins.
+All three loaders align the effective selected detectors by their own time-zero
+bins and retain only their common observed support, excluding leading and
+trailing padding. The ``grouped_alignment`` metadata records the local common
+anchor, ``first_bin`` removed at the front, detector offsets, group lengths,
+retained length, and fractional timing residuals and spread in μs. Raw arrays
+remain available for inspection. Selected grids must be compatible; an unused
+detector cannot change selected timing or grid validity. See
+:doc:`/reference/detector_grouping` for the exact-reference and raw-bin mapping.
 
 Supported formats
 -----------------
@@ -280,13 +283,12 @@ The raw metadata retains ``HIFI`` while the detector layout resolves to
 ``HAL``. This is distinct from both ISIS HiFi and PSI FLAME.
 
 PSI files can store different ``t0`` values per detector. Asymmetry preserves
-those detector-specific offsets and aligns histograms by their effective
-``t0`` when regrouping. Each group ends at its shortest shifted detector;
-forward and backward sums are cropped together to the shorter group.
-The grouped-count result and loaded alignment record carry the common t0 bin, each detector shift,
-both group lengths before cropping, and the final length. For example,
-two 1000-bin detectors with t0 bins 100 and 110 produce group lengths 1010
-and 1000; the shared record retains 1000 bins.
+those detector-specific offsets and aligns counts and supplied independent
+variances with identical whole-bin shifts. Two 1000-bin detectors with t0 bins
+100 and 110 have common observed aligned bins 10…999. The output retains 990
+bins, with local anchor 100 and offsets 0 and −10. Raw bin 0 of the first
+detector and raw bin 10 of the second therefore share output bin 0. No padded
+bin is treated as an observation.
 
 A reference background is aligned on the sample's common t0 grid. It must
 cover every sample bin: a shorter reference raises an error such as

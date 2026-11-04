@@ -40,14 +40,15 @@ from asymmetry.core.transform.corrections import (
     require_complete_dataset,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.fb_counts import AlignmentCrop
 from asymmetry.core.transform.grouping import (
-    common_t0_for_groups,
     effective_group_indices,
     group_counts_aligned,
+    resolve_alignment,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
-from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
+from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
 
@@ -218,9 +219,7 @@ class _CountGroupContext:
     run: Any
     prepared_histograms: list[Any]
     deadtime: CorrectionOutcome
-    common_t0: int
-    #: Per-detector alignment bins after applying the t0 policy.
-    detector_t0_bins: list[int]
+    alignment: AlignmentCrop
     first_good: int
     last_good: int
     bunch_factor: int
@@ -279,27 +278,23 @@ def _count_group_context(
     if correction_flags_from_grouping(grouping).use_background:
         require_count_background(prepared_histograms, grouping, group_specs, run.metadata)
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
-    common_t0 = common_t0_for_groups(
+    alignment = resolve_alignment(
         prepared_histograms,
         *(indices for _, indices in group_specs),
         detector_t0_bins=detector_t0_bins,
     )
-
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    max_last_good = max(0, min(len(hist.counts) for hist in prepared_histograms) - 1)
-    try:
-        last_good = int(grouping.get("last_good_bin", max_last_good))
-    except (TypeError, ValueError):
-        last_good = max_last_good
-    last_good = max(first_good, min(max_last_good, last_good))
+    window = alignment.window(grouping)
+    first_good, last_good = window.first, window.last
     bunch_factor = binning_spec(grouping).factor
-
-    bin_width = float(prepared_histograms[0].bin_width)
-    axis_start = first_good - common_t0
-    t0_residual_us = t0_stamp_residual_us(prepared_histograms, grouping, common_t0)
+    selected = sorted({i for _, indices in group_specs for i in indices})
+    bin_width = float(prepared_histograms[selected[0]].bin_width)
+    axis_start = first_good - alignment.common_t0_bin
+    t0_residual_us = (alignment.common_t0_bin + 0.5) * bin_width - common_t0_time_us(
+        prepared_histograms,
+        grouping,
+        alignment.common_t0_bin,
+        selected_indices=selected,
+    )
     group_names = (
         grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
     )
@@ -307,8 +302,7 @@ def _count_group_context(
         run=run,
         prepared_histograms=prepared_histograms,
         deadtime=deadtime,
-        common_t0=common_t0,
-        detector_t0_bins=detector_t0_bins,
+        alignment=alignment,
         first_good=first_good,
         last_good=last_good,
         bunch_factor=bunch_factor,
@@ -335,8 +329,7 @@ def _build_one_count_group(
         group_counts_aligned(
             ctx.prepared_histograms,
             [index],
-            common_t0_bin=ctx.common_t0,
-            detector_t0_bins=ctx.detector_t0_bins,
+            alignment=ctx.alignment,
         )
         for index in indices
     ]
@@ -385,6 +378,7 @@ def _build_one_count_group(
             "group_id": int(group_id),
             "group_name": str(group_name),
             "grouped_time_domain": True,
+            "grouped_alignment": ctx.alignment.to_dict(),
             "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
         }

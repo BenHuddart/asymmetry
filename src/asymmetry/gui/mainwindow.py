@@ -5729,8 +5729,7 @@ class MainWindow(QMainWindow):
             grouping.pop(key, None)
         grouping.update(background_grouping_metadata(outcomes))
 
-        # binned_fb_asymmetry already applied the good window and the
-        # binning (fixed bunching included) inside the reduction.
+        dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
         dataset.time = time_axis.copy()
         dataset.asymmetry = asymmetry.copy()
         dataset.error = error.copy()

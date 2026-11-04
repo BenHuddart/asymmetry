@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align selected channels on common observed support, preserve their exact timing
+  reference, and record fractional residuals; reject incompatible grids and malformed timing overrides.
+
 - Failed explicit Auto-detect t0 searches make reductions unavailable while
   retaining raw data and settings for repair.
 

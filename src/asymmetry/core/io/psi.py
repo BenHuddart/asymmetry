@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import struct
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import chain, islice
 from pathlib import Path
@@ -28,9 +28,7 @@ from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direct
 from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform import (
-    common_t0_time_us,
     good_window_for_groups,
-    run_t0_time_us,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.transform.grouping import effective_group_indices
@@ -1060,23 +1058,15 @@ class PsiLoader(BaseLoader):
                 first_good_bins,
                 last_good_bins,
                 common_t0_bin=int(common_t0),
-                n_bins=n,
+                n_bins=n + alignment.first_bin,
             )
         alpha = 1.0
 
-        # Bin centres from the run's exact t0 (D4). PSI headers carry an integer
-        # t0 only, so the residual is 0.0 and this is the integer-bin axis; the
-        # call keeps the loader axis and the reduction axis one formula.
-        bin_width_us = float(raw.bin_width_us)
-        t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
-            histograms, None, int(common_t0)
-        )
-        time_axis = (
-            np.arange(n, dtype=np.float64) - float(common_t0)
-        ) * bin_width_us + t0_residual_us
-        time_axis = time_axis[first_good : last_good + 1]
-        asymmetry = asymmetry[first_good : last_good + 1]
-        error = error[first_good : last_good + 1]
+        start = alignment.first_bin if alignment is not None else 0
+        window = slice(max(0, first_good - start), last_good - start + 1)
+        time_axis = quick.time[window]
+        asymmetry = asymmetry[window]
+        error = error[window]
 
         metadata = {
             "run_number": raw.run_number,
@@ -1109,7 +1099,7 @@ class PsiLoader(BaseLoader):
         if membership_error is not None:
             metadata["correction_error"] = membership_error
         else:
-            metadata["grouped_alignment"] = asdict(alignment)
+            metadata["grouped_alignment"] = alignment.to_dict()
         if raw.temperature_logs is not None:
             metadata["nexus_time_series"] = raw.temperature_logs.time_series
             metadata["psi_temperature_log"] = {
@@ -1175,9 +1165,6 @@ class PsiLoader(BaseLoader):
             # The registry identity and the raw header name have separate provenance.
             "instrument": canonical_instrument or raw.instrument,
         }
-        t0_time_us = run_t0_time_us(histograms, common_t0)
-        if t0_time_us is not None:
-            grouping["t0_time_us"] = float(t0_time_us)
         if preset_name is not None:
             # Record the applied preset so the grouping window shows it as the
             # live grouping (not merely the pre-selected default) and provenance

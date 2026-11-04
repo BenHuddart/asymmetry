@@ -29,9 +29,9 @@ from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform import (
     common_t0_time_us,
     good_window_for_groups,
-    run_t0_time_us,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
+from asymmetry.core.transform.t0 import selected_t0_reference
 from asymmetry.core.utils.perf import perf_timer
 
 _PHYSICAL_HEADER_FIELDS: dict[str, Dimension] = {
@@ -645,28 +645,23 @@ class RootLoader(BaseLoader):
         common_t0, n = quick.common_t0, len(asymmetry)
         alpha = 1.0
 
-        group_idx = sorted(
-            i for i in set(forward_idx) | set(backward_idx) if 0 <= i < len(histograms)
-        ) or list(range(len(histograms)))
-        first_good, last_good = good_window_for_groups(
-            group_idx,
-            detector_t0_bins,
-            first_good_bins,
-            last_good_bins,
-            common_t0_bin=int(common_t0),
-            n_bins=n,
-        )
+        group_idx = sorted(set(forward_idx) | set(backward_idx))
+        first_good, last_good = first_good_bins[0], last_good_bins[0]
+        if quick.alignment is not None:
+            first_good, last_good = good_window_for_groups(
+                group_idx,
+                detector_t0_bins,
+                first_good_bins,
+                last_good_bins,
+                common_t0_bin=int(common_t0),
+                n_bins=n + quick.alignment.first_bin,
+            )
 
-        # Retain the fractional file t0 when stamping the aligned bin centres.
-        t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
-            histograms, None, int(common_t0)
-        )
-        time_axis = (
-            np.arange(n, dtype=np.float64) - float(common_t0)
-        ) * bin_width_us + t0_residual_us
-        time_axis = time_axis[first_good : last_good + 1]
-        asymmetry = asymmetry[first_good : last_good + 1]
-        error = error[first_good : last_good + 1]
+        start = quick.alignment.first_bin if quick.alignment is not None else 0
+        window = slice(max(0, first_good - start), last_good - start + 1)
+        time_axis = quick.time[window]
+        asymmetry = asymmetry[window]
+        error = error[window]
 
         metadata = self._metadata(
             path,
@@ -702,9 +697,11 @@ class RootLoader(BaseLoader):
             "root_histo_numbers": root_numbers,
             "instrument": str(metadata.get("instrument", "")),
         }
-        t0_time_us = run_t0_time_us(histograms, common_t0)
-        if t0_time_us is not None:
-            grouping["t0_time_us"] = float(t0_time_us)
+        if (
+            quick.alignment is not None
+            and histograms[selected_t0_reference(histograms, grouping)].t0_time_us is not None
+        ):
+            grouping["t0_time_us"] = common_t0_time_us(histograms, grouping, common_t0)
 
         run = Run(
             run_number=int(metadata.get("run_number", 0) or 0),

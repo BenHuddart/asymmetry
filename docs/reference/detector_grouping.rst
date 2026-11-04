@@ -612,20 +612,39 @@ values directly instead. A Manual offset or an Auto-detect result therefore
 shifts every one of those consistently; nothing downstream can silently fall
 back to the file t0 that the mode overrode.
 
-**The exact time-zero.** A header integer bin only places t0 to the nearest
-bin; where the file also carries a continuous value — ISIS ``time_zero`` (µs)
-or MusrRoot's ``Time Zero Bin`` (a ``Double_t``, not an integer) — Asymmetry
-keeps it and stamps every time axis from it: bin *k*'s time stamp is
-``(k + ½)·w − t0`` (the bin's centre, minus the exact t0), rather than the
-coarser ``(k − t0_bin)·w``. On a file with no exact value the two are
-identical, since the fallback is defined as the centre of ``t0_bin`` itself
-— so this changes nothing for a run without one. Where it does apply, the
-sub-bin correction is small (up to half a bin) but not negligible for a TF
-phase: at 16 ns binning and 0.1 T it is worth up to 39° (see
-``docs/porting/t0-determination/isis-header-index-base.md``), so some
-existing ISIS/MusrRoot TF fits shift phase by up to half a bin once this
-lands — correctly. Integer bins remain authoritative for detector alignment
-and the good-bin window; only the time *stamp* uses the exact value.
+**Integer alignment and exact time-zero.** Only the effective selected channels,
+after exclusions, determine the alignment and time axis. Their acquisition grids
+must have finite positive, compatible widths. An unused channel cannot move the
+origin or make a selected pair unavailable. Channel IDs are acquired histogram
+ordinals; reordering acquisition arrays requires remapping membership explicitly.
+
+For integer anchors :math:`n_i`, the uncropped common anchor is
+:math:`c=\max_i n_i`, and raw bin :math:`k` moves to :math:`k+c-n_i`.
+Only bins observed by every selected channel survive: leading and trailing
+padding contribute no exposure. Empty support is unavailable; a genuine one-bin
+intersection is valid. Counts and supplied independent variances use identical
+slices, and raw acquisition arrays remain intact.
+
+The exact reference uses the selected channel at the maximum effective anchor,
+breaking ties by acquired-channel ordinal. Its exact header origin, or the
+centre of its integer bin when no exact value exists, moves with whole-bin
+policy offsets. Other selected channels retain their shifted-origin differences
+as ``timing_residuals_us``. ``timing_spread_us`` is their full range in μs.
+These describe the integer approximation, rather than statistical uncertainty
+or fractional count resampling. A stored run-wide scalar cannot replace the
+reference for a different pair. Each EMU vector projection resolves its own
+selected support and reference.
+
+If leading support is removed at aligned bin :math:`L`, the output index is
+:math:`r=k+c-n_i-L`. The output integer anchor is :math:`c-L` and its exact
+origin moves by :math:`-Lw`, preserving bin-centre stamps
+:math:`(r+\tfrac12)w-T_0`. The effective ``grouped_alignment`` record carries
+``first_bin`` (:math:`L`), the local anchor, detector offsets (so raw
+:math:`k=r-\mathrm{offset}_i`), group lengths, and residuals. Saved grouping
+requests keep their uncropped aligned coordinates and remain editable when
+unavailable. Explicit per-detector overrides require one non-negative integer
+per acquired channel; booleans, fractions, malformed entries, and wrong lengths
+are rejected.
 
 Good-window modes
 ------------------
@@ -1013,6 +1032,14 @@ channels between the selected F/B groups. It can regenerate membership when
 requested histograms are unavailable. Asymmetry reports these requests as
 unavailable until the grouping is repaired, preserving the authored selection.
 These arithmetic comparisons do not certify detector geometry or pair independence.
+WiMDA aligns whole raw bins. A recorded musrfit 1.12.1 (``708f777b``, ROOT
+6.40.04) integer case, with 0.1 μs bins, ``forward 1 2``, ``t0 2 4``,
+``data 1 9``, packing one, and corrections off, exports counts 331, 342,
+353, 364, 375, 386, 397, and 408 at −0.1 through 0.6 μs. Asymmetry matches
+the selected counts exactly and stamps within :math:`10^{-12}` μs. Mantid
+6.16.1 preserves per-spectrum shifted axes and requires compatible grids before
+direct grouping; explicit fractional rebinning is a separate operation.
+This count comparison does not certify physical time-zero accuracy.
 See :doc:`/explanation/comparison` for sources and limits.
 
 WiMDA keeps alpha stored during ordinary regrouping and evaluates enabled

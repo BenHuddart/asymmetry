@@ -1070,7 +1070,7 @@ def test_aligned_grouping_preserves_per_detector_t0() -> None:
 
     assert common_t0 == 2
     assert apply_grouping_aligned(histograms, [0], common_t0_bin=common_t0) == pytest.approx(
-        [0, 1, 2, 3, 4]
+        [1, 2, 3, 4]
     )
     assert apply_grouping_aligned(histograms, [1], common_t0_bin=common_t0) == pytest.approx(
         [10, 20, 30, 40]

@@ -437,12 +437,7 @@ def _exact_t0_run(*, hist_t0_us: float | None, grouping_extra: dict | None = Non
 
 @pytest.mark.parametrize("via", ["histograms", "grouping"])
 def test_reduction_axis_follows_the_runs_exact_t0(via):
-    """The exact t0 reaches the reduced dataset from either source.
-
-    Detector ``t0_time_us`` (a loader fact) and ``grouping["t0_time_us"]`` (the
-    same fact after a T0Policy shift) both resolve through
-    ``common_t0_time_us``; the grouping wins when both are set.
-    """
+    """Selected exact detector timing wins over a cached grouping scalar."""
     exact = (8 + 0.3) * BIN_WIDTH_US
     base = TimeFBAsymmetry().compute(_exact_t0_run(hist_t0_us=None))[0]
     if via == "histograms":
@@ -452,5 +447,6 @@ def test_reduction_axis_follows_the_runs_exact_t0(via):
             _exact_t0_run(hist_t0_us=None, grouping_extra={"t0_time_us": exact})
         )[0]
     assert base.time[0] == pytest.approx(0.0, abs=1e-15)
-    np.testing.assert_allclose(shifted.time - base.time, 0.2 * BIN_WIDTH_US, rtol=0, atol=1e-15)
+    expected_shift = 0.2 * BIN_WIDTH_US if via == "histograms" else 0.0
+    np.testing.assert_allclose(shifted.time - base.time, expected_shift, rtol=0, atol=1e-15)
     np.testing.assert_array_equal(shifted.asymmetry, base.asymmetry)
