@@ -242,7 +242,7 @@ The `muon NeXus definition, version 2 revision 8, p. 51
 <https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_
 defines physical good times relative to ``raw_time``. Asymmetry adopts inclusive
 raw-centre membership on its nominal fixed-bin grid and retains the resulting
-per-detector bounds through reduction and projects. Integer attributes retain
+per-detector bounds through reduction and project reopening. Integer attributes retain
 precedence for their corresponding endpoints. The definition does not settle
 every writer's integer base or sub-bin rounding convention.
 

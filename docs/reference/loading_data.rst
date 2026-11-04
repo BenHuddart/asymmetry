@@ -170,7 +170,12 @@ period selection, and project reopening use those same bounds through the
 shared grouping resolver; raw count arrays retain every acquired bin. Mapped
 period sums use the intersection of their contributors' good intervals.
 An empty interval leaves the initial asymmetry unavailable and the raw
-histograms available for inspection or an edited request.
+histograms available for inspection or an edited request. If selected channels
+have valid alignment but no common good interval, their common integer anchor
+and available exact origin remain recorded; unused detectors cannot replace
+that timing. Mapped detector tables describe the summed histograms, including
+when period selection uses retained histograms because a held-period table is
+unavailable.
 
 Asymmetry also checks that optional good bounds can be interpreted in the
 supported units and detector/period shape. An unusable optional declaration
@@ -789,6 +794,11 @@ Green** (period 2) and **light-ON = Red** (period 1); confirm this against the
 relaxation for your instrument. Out-of-range numbers and unknown labels raise a
 clear error at the boundary. The GUI red/green selector calls this same core
 API, so scripts and the desktop app agree on the per-period spectra.
+
+The G±R combination requires identical reduced time grids, including the
+selected interval. Differing file-good windows can make the combination
+unavailable while each period remains selectable. Asymmetry does not
+implicitly crop or resample these curves to make them match.
 
 Accessing metadata
 ~~~~~~~~~~~~~~~~~~

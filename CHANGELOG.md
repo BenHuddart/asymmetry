@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unavailable file-good windows retain selected timing, and mapped-period detector bounds follow summed or retained histograms during profile resolution.
+
 - NeXus physical good times select raw acquisition bins and retain their detector/period windows through regrouping, re-reduction, and project reopening.
 
 - Load legacy LEM ROOT version-5 timing headers, retaining detector counts and

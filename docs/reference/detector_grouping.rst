@@ -626,7 +626,9 @@ back to the file t0 that the mode overrode.
 **Integer alignment and exact time-zero.** Only the effective selected channels,
 after exclusions, determine the alignment and time axis. Their acquisition grids
 must have finite positive, compatible widths. An unused channel cannot move the
-origin or make a selected pair unavailable. Channel IDs are acquired histogram
+origin or make a selected pair unavailable. A resolved selected alignment and
+its available exact origin remain recorded when only the file-good interval
+is empty. Channel IDs are acquired histogram
 ordinals; reordering acquisition arrays requires remapping membership explicitly.
 
 NeXus acquisition widths use declared resolution and explicit time units;

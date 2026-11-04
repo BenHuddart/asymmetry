@@ -35,7 +35,9 @@ class QuickAsymmetry:
         """Canonical uncropped bounds, including an explicitly unavailable window."""
         start = self.alignment.first_bin if self.alignment is not None else 0
         first, last = (
-            (1, 0) if self.window is None else (self.window.first + start, self.window.last + start)
+            (start + 1, start)
+            if self.window is None
+            else (self.window.first + start, self.window.last + start)
         )
         return {
             **({"t0_time_us": self.t0_time_us} if self.t0_time_us is not None else {}),
@@ -55,6 +57,9 @@ class QuickAsymmetry:
 
 def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
+    alignment = None
+    common_t0 = max((hist.t0_bin for hist in histograms), default=0)
+    t0_time_us = None
     try:
         # File-good quick looks derive bounds from acquired histograms, never
         # a scalar window left by another selected pair or an unavailable one.
@@ -65,6 +70,16 @@ def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmet
         }
         grouped = group_forward_backward(histograms, file_grouping)
         alignment = grouped.counts.alignment
+        common_t0 = grouped.common_t0 + alignment.first_bin
+        reference = selected_t0_reference(
+            histograms,
+            grouping,
+            selected_indices=[i for i, _ in alignment.detector_offsets],
+        )
+        if histograms[reference].t0_time_us is not None:
+            t0_time_us = (
+                grouped.counts.t0_time_us + alignment.first_bin * grouped.counts.bin_width_us
+            )
         first, last = good_window_for_groups(
             [i for i, _ in alignment.detector_offsets],
             effective_detector_t0_bins(histograms, grouping),
@@ -82,10 +97,11 @@ def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmet
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
             np.array([], dtype=np.float64),
-            max((hist.t0_bin for hist in histograms), default=0),
-            None,
+            common_t0,
+            alignment,
             None,
             str(exc),
+            t0_time_us=t0_time_us,
         )
     asymmetry, error = compute_asymmetry(grouped.forward, grouped.backward, alpha=grouped.alpha)
     return QuickAsymmetry(
@@ -93,19 +109,8 @@ def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmet
         error * PERCENT_PER_FRACTION,
         (np.arange(grouped.forward.size) + 0.5) * grouped.counts.bin_width_us
         - grouped.counts.t0_time_us,
-        grouped.common_t0 + grouped.counts.alignment.first_bin,
+        common_t0,
         alignment,
         window,
-        t0_time_us=(
-            grouped.counts.t0_time_us + alignment.first_bin * grouped.counts.bin_width_us
-            if histograms[
-                selected_t0_reference(
-                    histograms,
-                    grouping,
-                    selected_indices=[i for i, _ in alignment.detector_offsets],
-                )
-            ].t0_time_us
-            is not None
-            else None
-        ),
+        t0_time_us=t0_time_us,
     )

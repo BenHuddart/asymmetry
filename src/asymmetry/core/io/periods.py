@@ -376,19 +376,18 @@ def select_period_histograms(
     period_grouping = select_period_grouping(grouping, period_index)
 
     period_histograms = grouping.get("period_histograms")
-    if not (isinstance(period_histograms, list) and period_index < len(period_histograms)):
-        return _clone_histograms(histograms), period_grouping
-
-    selected_period = period_histograms[period_index]
-    if not isinstance(selected_period, list):
-        return _clone_histograms(histograms), period_grouping
-
-    cloned_period: list[Histogram] = []
-    for hist in selected_period:
-        if not isinstance(hist, Histogram):
-            return _clone_histograms(histograms), period_grouping
-        cloned_period.append(_clone_histogram(hist))
-    histograms = cloned_period or _clone_histograms(histograms)
+    selected_period = (
+        period_histograms[period_index]
+        if isinstance(period_histograms, list) and period_index < len(period_histograms)
+        else None
+    )
+    if (
+        isinstance(selected_period, list)
+        and selected_period
+        and all(isinstance(hist, Histogram) for hist in selected_period)
+    ):
+        histograms = selected_period
+    histograms = _clone_histograms(histograms)
     for key, values in (
         ("detector_t0_bins", [hist.t0_bin for hist in histograms]),
         ("detector_first_good_bins", [hist.good_bin_start for hist in histograms]),
@@ -661,9 +660,10 @@ def combine_mapped_periods(
         grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)
 
+    red_histograms, grouping = select_period_histograms(red_histograms, grouping, RED_INDEX)
     run = Run(
         run_number=run_number,
-        histograms=_clone_histograms(red_histograms),
+        histograms=red_histograms,
         metadata=metadata,
         grouping=grouping,
         source_file=source_file or base_run.source_file,
