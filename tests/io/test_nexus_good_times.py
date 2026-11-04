@@ -380,3 +380,23 @@ def test_unverified_integer_period_shapes_use_remaining_bounds(tmp_path, version
     expected = (11, 14) if version == "v2" else (0, 31)
     for ds in datasets:
         assert [(h.good_bin_start, h.good_bin_end) for h in ds.run.histograms] == [expected] * 2
+
+
+@pytest.mark.parametrize("histogram_state", ["absent", "partial", "malformed"])
+def test_cached_only_period_selection_keeps_released_fallback(histogram_state):
+    from asymmetry.core.io.periods import select_period
+    from tests.io.test_period_selection import _combined_two_period
+
+    combined = _combined_two_period()
+    if histogram_state == "absent":
+        del combined.run.grouping["period_histograms"]
+    elif histogram_state == "partial":
+        combined.run.grouping["period_histograms"] = combined.run.grouping["period_histograms"][:1]
+    else:
+        combined.run.grouping["period_histograms"][1] = ["unavailable"]
+    selected = select_period(combined, "green")
+    np.testing.assert_array_equal(selected.time, combined.run.grouping["period_reduced"][1][0])
+    assert selected.run.metadata["period_number"] == 2
+    for original, restored in zip(combined.run.histograms, selected.run.histograms, strict=True):
+        np.testing.assert_array_equal(restored.counts, original.counts)
+        assert restored is not original

@@ -270,17 +270,11 @@ def period_run(combined: Run, index: int) -> Run:
     grouping = combined.grouping
     from asymmetry.core.project.profiles import GoodWindowPolicy
 
-    count = len(grouping["period_histograms"])
+    count = len(grouping.get("period_reduced") or grouping["period_histograms"])
 
-    period_grouping = select_period_grouping(grouping, index)
+    histograms, period_grouping = select_period_histograms(combined.histograms, grouping, index)
     for key in ("period_histograms", "period_reduced", "period_mode", "period_t0_sources"):
         period_grouping.pop(key, None)
-
-    period_histograms = grouping.get("period_histograms")
-    if isinstance(period_histograms, list) and index < len(period_histograms):
-        histograms = _clone_histograms(period_histograms[index])
-    else:
-        histograms = _clone_histograms(combined.histograms)
 
     metadata = dict(combined.metadata)
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
@@ -345,22 +339,6 @@ def select_period_grouping(grouping: dict, period_index: int) -> dict:
     follow the selected acquisition period, whose exposure normalises counts.
     """
     period_grouping = dict(grouping)
-    periods = grouping.get("period_histograms")
-    if periods:
-        histograms = periods[period_index]
-        for key, values in (
-            ("detector_t0_bins", [hist.t0_bin for hist in histograms]),
-            ("detector_first_good_bins", [hist.good_bin_start for hist in histograms]),
-            (
-                "detector_last_good_bins",
-                [
-                    hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1
-                    for hist in histograms
-                ],
-            ),
-        ):
-            if key in grouping:
-                period_grouping[key] = values
     if "period_t0_sources" in grouping:
         period_grouping["t0_source"] = grouping["period_t0_sources"][period_index]
 
@@ -417,7 +395,21 @@ def select_period_histograms(
         if not isinstance(hist, Histogram):
             return _clone_histograms(histograms), period_grouping
         cloned_period.append(_clone_histogram(hist))
-    return cloned_period or _clone_histograms(histograms), period_grouping
+    histograms = cloned_period or _clone_histograms(histograms)
+    for key, values in (
+        ("detector_t0_bins", [hist.t0_bin for hist in histograms]),
+        ("detector_first_good_bins", [hist.good_bin_start for hist in histograms]),
+        (
+            "detector_last_good_bins",
+            [
+                hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1
+                for hist in histograms
+            ],
+        ),
+    ):
+        if key in grouping:
+            period_grouping[key] = values
+    return histograms, period_grouping
 
 
 def combine_period_asymmetry(
