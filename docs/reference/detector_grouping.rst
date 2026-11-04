@@ -1338,7 +1338,7 @@ ROOT Grouping
 -------------
 
 MusrRoot/LEM ROOT files also use the full Grouping window. The ROOT loader
-follows musrfit's ``PRunDataHandler::ReadRootFile`` and reads detector labels
+reads detector labels
 from ``DetectorInfo`` when available, falling back to the ROOT histogram title
 or ``hDecay`` name. As with PSI BIN/MDU files, repeated detector labels are
 kept as separate visible groups with numeric suffixes.
@@ -1359,6 +1359,12 @@ constructing the initial asymmetry. ``Time Zero Bin`` is stored as a
 (``t0_time_us``) for the time-stamp convention above rather than rounding it
 to the nearest bin. A file with no ``Time Zero Bin`` key at all gets
 ``t0_source = "missing"``, the same fallback as a zero PSI header.
+
+Legacy LEM ``TLemRunHeader`` v5 maps numeric t0 entries to its zero-based
+``hDecay00``, ``hDecay01``, … identities before the same reduction. Modern
+``DetectorInfo`` identities, fractional timing, and red/green offsets retain
+their own file mappings. ROOT container terminal bins are retained; selecting
+a common analysis window does not remove them from the acquired histograms.
 
 Detector layout editor workflow
 --------------------------------

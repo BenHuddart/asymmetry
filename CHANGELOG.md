@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Load legacy LEM ROOT version-5 timing headers, retaining detector counts and
+  calibration through the shared PSI reduction.
+
 - NeXus loading preserves exact timing and recorded bins using declared resolution;
   secondary coordinates and unusable optional timing declarations do not block usable analysis.
 - NeXus t0 conflicts preserve coherent detectors' exact timing, and period selection
