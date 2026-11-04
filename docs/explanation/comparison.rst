@@ -56,6 +56,7 @@ preferred program. The detailed contracts and versioned comparisons are linked
 below; different defaults must be matched before judging numerical agreement.
 
 .. list-table:: Conventions and meaningful differences
+   :class: reduction-conventions
    :header-rows: 1
    :widths: 24 36 40
 
@@ -358,13 +359,12 @@ Calibration noise and model mismatch can
 produce negative fitted coefficients; the sign does not diagnose an individual
 calibration's quality.
 
-Inspection of the maintainer-supplied **WiMDA** source snapshot confirms that
-its standard ISIS loading, manual-input and correction paths preserve signed
-coefficients, as do its calibration fit results. This is a source
-inspection, with no binary numerical cross-check or assertion about optional
-extended models. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
+**WiMDA** preserves signed coefficients in its standard ISIS loading,
+manual-input, and correction paths, as do its calibration fit results. No
+binary numerical agreement or behaviour of the optional extended models is
+established here. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
-workflows. No third-party implementation source is reproduced in Asymmetry.
+workflows.
 
 Deadtime count errors
 ---------------------

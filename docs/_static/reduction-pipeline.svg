@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="700" height="900" viewBox="0 0 700 900" role="img" aria-labelledby="title description">
 <title id="title">Standard count-based forward/backward reduction</title>
-<desc id="description">For one selected run and period, acquired histograms undergo optional detector deadtime correction, whole-bin alignment and group summation, optional group background correction, count binning, and asymmetry formation. Dashed arrows supply settings, calibration, references, and current corrected counts. An integral-observable branch uses corrected grouped counts with its own window, estimator, and balances.</desc>
+<desc id="description">For one selected run and period, acquired histograms undergo optional detector deadtime correction, whole-bin alignment and group summation, optional group background correction, count binning, and asymmetry formation. Dashed arrows supply settings, calibration, references, and current corrected counts. A run-level integral-observable branch supports no background or a constant subtraction, with its own window, estimator, and balances.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#35566c"/></marker></defs>
 <rect width="700" height="900" fill="white"/>
 <g fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)">
@@ -53,12 +53,13 @@
 <rect x="435" y="440" width="245" height="70" rx="8" fill="#f3eef9" stroke="#35566c" stroke-width="1.5"/>
 <text x="557.5" y="463.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Background inputs</text>
 <text x="557.5" y="487.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Prepared reference / scale</text>
-<rect x="435" y="555" width="245" height="80" rx="8" fill="#eaf4ec" stroke="#35566c" stroke-width="1.5"/>
-<text x="557.5" y="571.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Integral observables / scans</text>
-<text x="557.5" y="595.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Own window and estimator</text>
-<text x="557.5" y="619.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">with α / β balances</text>
+<rect x="435" y="550" width="245" height="100" rx="8" fill="#eaf4ec" stroke="#35566c" stroke-width="1.5"/>
+<text x="557.5" y="564.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Integral observables / scans</text>
+<text x="557.5" y="588.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">No / constant background</text>
+<text x="557.5" y="612.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Own window and estimator</text>
+<text x="557.5" y="636.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">with α / β balances</text>
 <rect x="435" y="675" width="245" height="70" rx="8" fill="#f3eef9" stroke="#35566c" stroke-width="1.5"/>
 <text x="557.5" y="698.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Resolve α / β policies</text>
 <text x="557.5" y="722.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Fixed / calibrated / auto α</text>
-<text x="405" y="655" font-family="DejaVu Sans, sans-serif" font-size="14" fill="#163449">Current counts</text>
+<text x="405" y="666" font-family="DejaVu Sans, sans-serif" font-size="14" fill="#163449">Current counts</text>
 <text x="350" y="885" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Solid: count flow     Dashed: settings and dependencies</text></svg>

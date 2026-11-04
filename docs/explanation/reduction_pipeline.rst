@@ -20,7 +20,8 @@ and the selected interval with the result.
    Standard count-based F/B reduction for one selected run and period. Solid
    arrows carry counts and uncertainty information; dashed arrows supply
    settings, calibration, reference data, or current-count inputs. Corrections
-   act only when enabled. The integral branch has its own window and estimator.
+   act only when enabled. The integral branch has its own window and estimator
+   and accepts no background or a constant subtraction.
    On narrow screens the figure can be scrolled horizontally.
 
 From acquired counts to a ratio
@@ -80,7 +81,10 @@ policies, without an automatic integral-ratio policy. The owning contracts are
 Other observables and observation models
 ----------------------------------------
 
-The corrected grouped-count stage also supplies :doc:`/reference/alc_mode`.
+The corrected grouped-count stage also supplies :doc:`/reference/alc_mode`
+for supported run-level preparation with no background or a constant subtraction.
+Reference-run subtraction is unavailable on that branch; its preparation does
+not resolve a reference spectrum.
 Its count-integral estimator sums a chosen interval before taking a ratio;
 its differential estimator averages valid per-bin asymmetries. This branch
 therefore precedes the time-curve binning box and still depends on the applicable

@@ -42,3 +42,9 @@
 .rst-content .reduction-pipeline img {
     min-width: 660px;
 }
+
+/* The reduction guide is prose: keep all three columns visible at docs width. */
+.rst-content table.reduction-conventions td,
+.rst-content table.reduction-conventions th {
+    white-space: normal;
+}
