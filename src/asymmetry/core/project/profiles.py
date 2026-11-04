@@ -97,7 +97,6 @@ period_reduced                    per-run     per-period reduced arrays cache
 period_good_frames                per-run     per-period good frames
 period_dead_time_us               per-run     per-period deadtime tables
 period_mapping                    per-run     period-number -> label map
-period_reduced                    per-run     reduced-array cache
 ================================  ==========  ===============================================
 
 ``*`` marks a key whose *value* is produced by resolution from a profile policy
@@ -1309,6 +1308,7 @@ _PER_RUN_FACT_KEYS = (
     "period_reduced",
     "period_good_frames",
     "period_dead_time_us",
+    "period_t0_sources",
     "period_mapping",
 )
 
@@ -1318,8 +1318,7 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
     for key in _PER_RUN_FACT_KEYS:
         if key in run_grouping:
             grouping[key] = run_grouping[key]
-    # t0_bin has a sensible fall-back to the first histogram's t0 when the run
-    # grouping did not record one (matches the loaders / GUI extract behaviour).
+    # Missing run-level anchors use the first acquired histogram.
     if "t0_bin" not in grouping and run.histograms:
         grouping["t0_bin"] = int(run.histograms[0].t0_bin)
 

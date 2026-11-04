@@ -119,7 +119,15 @@ class GroupingWindowT0RowScenario(Scenario):
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = _make_prompt_peak_run()
+        # Green's coherent calibration supplies its own verdict despite a red conflict.
+        dataset.run.grouping.update(
+            t0_source="conflict",
+            period_t0_sources=["conflict", "file"],
+            period_histograms=[dataset.run.histograms, dataset.run.histograms],
+            period_reduced=[(dataset.time, dataset.asymmetry, dataset.error)] * 2,
+        )
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
+        dialog._set_period_mode("green")
         dialog.resize(*dialog.preferred_window_size())
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
@@ -147,6 +155,7 @@ class GroupingWindowT0RowScenario(Scenario):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
         _optimize_png(out_path)
 
+        dialog._clear_dirty()
         dialog.close()
         dialog.deleteLater()
         _pump_events(40)

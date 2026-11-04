@@ -25,6 +25,9 @@ def test_raw_loading_survives_unavailable_default_pair(tmp_path, monkeypatch, lo
             values = data[...][:1]
             del handle["raw_data_1/instrument/detector_1/counts"]
             handle["raw_data_1/instrument/detector_1/counts"] = values
+            timing = handle["raw_data_1/instrument/detector_1/time_zero"][...][:1]
+            del handle["raw_data_1/instrument/detector_1/time_zero"]
+            handle["raw_data_1/instrument/detector_1/time_zero"] = timing
         dataset = NexusLoader().load(str(path))
     elif loader_kind == "root":
         path = tmp_path / "single.root"

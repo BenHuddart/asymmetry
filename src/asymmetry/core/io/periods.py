@@ -270,7 +270,7 @@ def period_run(combined: Run, index: int) -> Run:
     count = len(grouping["period_reduced"])
 
     period_grouping = select_period_grouping(grouping, index)
-    for key in ("period_histograms", "period_reduced", "period_mode"):
+    for key in ("period_histograms", "period_reduced", "period_mode", "period_t0_sources"):
         period_grouping.pop(key, None)
 
     period_histograms = grouping.get("period_histograms")
@@ -321,6 +321,8 @@ def select_period_grouping(grouping: dict, period_index: int) -> dict:
     follow the selected acquisition period, whose exposure normalises counts.
     """
     period_grouping = dict(grouping)
+    if "period_t0_sources" in grouping:
+        period_grouping["t0_source"] = grouping["period_t0_sources"][period_index]
 
     period_good_frames = grouping.get("period_good_frames")
     if isinstance(period_good_frames, list):
@@ -614,6 +616,12 @@ def combine_mapped_periods(
 
     grouping = dict(base_run.grouping) if isinstance(base_run.grouping, dict) else {}
     grouping["period_histograms"] = sets
+    # Summed histograms retain the first contributor's timing and its provenance.
+    grouping["period_t0_sources"] = [
+        runs[periods[0] - 1].grouping.get("t0_source", "file")
+        for periods in (red_periods, green_periods)
+        if periods
+    ]
     grouping["period_good_frames"] = frames
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)

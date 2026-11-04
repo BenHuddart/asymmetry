@@ -217,3 +217,14 @@ def test_dead_times_ragged_tables_truncate_instead_of_crashing():
     assert len(table) == 2
     expected = (0.010 * 1000.0 + 0.020 * 2000.0) / 3000.0
     assert table == pytest.approx([expected] * 2)
+
+
+@pytest.mark.parametrize("conflicting_period", [0, 1])
+def test_mapped_sets_keep_the_timing_source_of_their_histograms(conflicting_period):
+    periods = _four_periods()
+    for index, dataset in enumerate(periods):
+        dataset.run.grouping["t0_source"] = "conflict" if index == conflicting_period else "file"
+    mapped = combine_mapped_periods(periods, {1: "red", 2: "green", 3: "red"})
+    for index in range(2):
+        _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
+        assert grouping["t0_source"] == periods[index].run.grouping["t0_source"]

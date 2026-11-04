@@ -19,6 +19,20 @@ are alignment diagnostics, not a timing uncertainty or a fractional resampling.
 Only common observed support is reduced, including valid one-bin intersections.
 See :doc:`/reference/detector_grouping` for coordinate and provenance details.
 
+NeXus uses declared resolution for its fixed-bin width and compares integer
+and exact t0 at stored representation precision. A displaced exact header
+remains advisory with usable integer timing. Secondary coordinate disagreement
+does not discard valid file timing. Unusable optional declarations use remaining
+calibration. Without usable file t0, raw loading remains available and the
+existing automatic search applies; an unresolved physical bin width prevents
+calibrated loading. Conflicts remove exact timing only on affected detectors,
+and two-period selection retains the selected period's calibration status.
+The ``RG Mode`` controls update the file anchor, detected value, and verdict
+for the selected period. Switching periods preserves an authored manual t0
+offset while updating its displayed absolute bin.
+These checks do not establish physical t0 accuracy. See
+:doc:`/reference/loading_data` for the timing and compatibility contract.
+
 The grouping window's t0 row carries a read-only line, identical whichever
 mode is selected, that shows the file value beside the detected one so you
 never have to take either on faith:

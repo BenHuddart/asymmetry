@@ -99,6 +99,33 @@ channels after exclusions. The maximum selected anchor defines the reference;
 acquired-channel ordinal breaks ties. Fractional residuals and their range are
 recorded in μs, without interpolating counts or assigning timing uncertainties.
 
+WiMDA and musrfit use declared resolution for fixed-bin NeXus count analysis.
+Asymmetry follows that interpretation, retaining its exact origins and
+bin-centre convention. Supplied auxiliary coordinates remain inspectable and
+do not override a usable resolution or infer an extra acquisition-start shift.
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports identical arrays for regular,
+cumulative-float32, and shortened-terminal synthetic HDF5 coordinates with
+unchanged counts and resolution. Mantid 6.16.1's legacy loader retains supplied
+coordinate variations and loads all 66 affected original HDF4 files with exact
+count retention. These cases do not certify physical t0 or terminal-bin exposure;
+:doc:`/reference/loading_data` states the fixed-bin and axis-fallback conventions.
+
+Asymmetry also checks that selected channels have compatible widths before
+integer alignment, protecting its whole-bin count transport. A failed request
+leaves raw histograms available. When no usable resolution exists, Asymmetry
+also checks the selected fallback axis's shape, finiteness, monotonicity, and
+uniform spacing to obtain a physical width. Failure then concerns calibrated
+loading, because inventing a width would invent physical coordinates.
+Asymmetry also checks detector/period timing shapes and redundant integer/exact
+t0 agreement: unusable optional timing uses the remaining calibration, while
+an exact/integer disagreement is advisory and keeps integer timing for the
+affected detectors without discarding coherent exact origins elsewhere. Missing
+or unusable file t0 uses the existing search policy, and two-period selection
+retains the selected period's own calibration status. These
+checks apply to the adopted interpretation, rather than requiring all auxiliary
+fields to conform. They do not imply that other programs omit such checks in
+every workflow.
+
 The recorded musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) type-0 integer grouping
 case uses 0.1 μs bins, ``forward 1 2``, ``t0 2 4``, ``data 1 9``, packing one,
 and no corrections. Eight selected counts agree exactly with Asymmetry, with
