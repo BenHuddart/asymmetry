@@ -139,6 +139,30 @@ and `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 The tutorial version is separate from the recorded executable version.
 :doc:`/reference/detector_grouping` gives the selected bins and output mapping.
 
+PSI legacy ROOT calibration
+---------------------------
+
+Asymmetry adopts musrfit's numeric ``TLemRunHeader`` v5 calibration for legacy
+LEM ROOT: ns resolution and zero-based per-detector t0, followed by the shared
+count reduction. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) gives identical
+selected counts, times, and errors for equivalent synthetic BIN, legacy ROOT,
+and modern ``TFolder`` inputs. Asymmetry's F/B asymmetry and Poisson errors
+agree within the six-significant-digit ASCII output precision (relative
+:math:`5\times10^{-6}`); timing agrees within relative :math:`3\times10^{-8}`
+from BIN float32 versus legacy decimal ns storage. Asymmetry reports percent
+asymmetry while musrfit reports fractions.
+
+The compared selections are forward raw bins 20–59 and backward raw bins
+23–62 with t0 4/7, packing one, alpha=beta=1, zero background, and no deadtime.
+Different endpoint requests need not select the same observations. Extra ROOT
+container bins remain in the loaded histograms. The generated ``TDirectory``
+variant uses ``decayAnaModule``, while this musrfit reader requests
+``DecayAnaModule``; Asymmetry reads that representation without claiming a
+native numerical comparison for it. WiMDA and Mantid coverage of this legacy
+class is unverified, and no original ROOT acquisition is in the teaching
+corpus. See :doc:`/reference/loading_data` and the
+`musrfit RUN settings <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
+
 Signed deadtime coefficients
 ----------------------------
 

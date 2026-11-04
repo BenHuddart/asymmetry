@@ -12,6 +12,7 @@ import pytest
 pytestmark = [pytest.mark.io]
 
 from asymmetry.core.io import RootLoader, load
+from asymmetry.core.io.root_header import parse_musrroot_string
 from asymmetry.core.representation.time import TimeFBAsymmetry
 
 uproot = pytest.importorskip("uproot")
@@ -853,12 +854,11 @@ def test_encoded_gps_directory_merges_split_halves_like_folder_fixture(tmp_path)
 
 
 def test_parse_musrroot_string_preserves_internal_hyphens() -> None:
-    loader = RootLoader()
-    assert loader._parse_musrroot_string("005 - Name: Left/Forward - field off -@0") == (
+    assert parse_musrroot_string("005 - Name: Left/Forward - field off -@0") == (
         "Name",
         "Left/Forward - field off",
     )
-    assert loader._parse_musrroot_string("023 - Time Resolution: 0.09765625 ns; SiPM -@3") == (
+    assert parse_musrroot_string("023 - Time Resolution: 0.09765625 ns; SiPM -@3") == (
         "Time Resolution",
         "0.09765625 ns; SiPM",
     )

@@ -33,6 +33,13 @@ offset while updating its displayed absolute bin.
 These checks do not establish physical t0 accuracy. See
 :doc:`/reference/loading_data` for the timing and compatibility contract.
 
+Legacy LEM ROOT ``TLemRunHeader`` v5 supplies per-detector numeric t0 in
+zero-based bins. Asymmetry retains nonnegative anchors, including explicit
+zero and fractional bins, with the same bin-centre stamp convention as modern
+ROOT. Negative unspecified entries do not become file calibration. These file
+anchors enter the shared whole-bin alignment; they do not select a different
+search or reduction method.
+
 The grouping window's t0 row carries a read-only line, identical whichever
 mode is selected, that shows the file value beside the detected one so you
 never have to take either on faith:
