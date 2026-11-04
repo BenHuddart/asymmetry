@@ -25,6 +25,8 @@ No reference class or implementation source is included.
 `reference.json` records input SHA256 hashes and fresh musrfit ASCII exports
 of time, observed value, and error; the theory column is excluded. Settings:
 packing 1, t0 4/7, no deadtime, zero fixed background, alpha=beta=1.
+The optional native tests repeat each case with explicit t0 and with file t0
+(no t0 line), so the serialized header calibration is compared directly.
 Type 0 groups forward histograms 1/2 and uses `data 20 60`.
 Type 2 uses forward 1, backward 2 and `data 20 60 23 63`.
 Both select forward raw 20..59 and backward raw 23..62. The equivalent

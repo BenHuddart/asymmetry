@@ -523,7 +523,8 @@ Legacy LEM ROOT files can carry a serialized ``TLemRunHeader`` version 5 in
 in zero-based bins, then uses the same unit conversion, alignment, and reduction
 as modern ROOT and PSI BIN. Histogram numbers (including ``hDecay00``), titles,
 and every stored count are retained. Display strings do not override numeric
-calibration; histogram axes do not supply a missing physical width. The legacy
+calibration; histogram axes do not supply a missing physical width. Negative
+unspecified and nonfinite t0 entries supply no file anchor for that detector. The legacy
 header does not supply detector good-bin bounds, so the initial window uses
 the existing t0-to-end defaults; an explicit analysis window remains editable.
 Other legacy class versions are outside this supported layout.
@@ -738,13 +739,12 @@ dialog:
          loaded synthetic legacy LEM ROOT run with a 10 ns bin width.
    :width: 100%
 
-*The* **Run Parameters** *table in the Get Info dialog for a loaded*
-*transverse-field run, with each field selectable for inclusion in the Data*
-*Browser via the* **Include in Data Browser** *column. The loader keeps the*
-*experiment provenance explicit — instrument, title, temperature, field, and*
-*the raw histogram geometry (four detector histograms, 2400 bins,*
-*0.005 μs bin width, and the summed counts) — alongside the free-text*
-*comment and run start/end timestamps.*
+*The* **Run Parameters** *table in the Get Info dialog for a loaded synthetic*
+*legacy LEM ROOT run. Each field is selectable for inclusion in the Data Browser*
+*via the* **Include in Data Browser** *column. The numeric header supplies the*
+*title, temperature, field, run timestamps, and file time zero. Two detector*
+*histograms retain 129 bins each, including the terminal zero, with a 0.01 μs*
+*bin width; the summed counts remain available alongside that calibration.*
 
 Loading multiple files
 ~~~~~~~~~~~~~~~~~~~~~~

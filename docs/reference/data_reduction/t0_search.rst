@@ -34,9 +34,9 @@ These checks do not establish physical t0 accuracy. See
 :doc:`/reference/loading_data` for the timing and compatibility contract.
 
 Legacy LEM ROOT ``TLemRunHeader`` v5 supplies per-detector numeric t0 in
-zero-based bins. Asymmetry retains nonnegative anchors, including explicit
+zero-based bins. Asymmetry retains finite nonnegative anchors, including explicit
 zero and fractional bins, with the same bin-centre stamp convention as modern
-ROOT. Negative unspecified entries do not become file calibration. These file
+ROOT. Negative unspecified or nonfinite entries do not become file calibration. These file
 anchors enter the shared whole-bin alignment; they do not select a different
 search or reduction method.
 

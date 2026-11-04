@@ -145,6 +145,7 @@ should be split into subpages or generated differently — that is how the 1.6 M
 python -m docs.screenshots.capture --check-refs   # refs + size budget
 python tools/harness.py structural                # includes the check above
 python tools/harness.py docs                      # Sphinx build + page size budget
+pip install -c constraints.txt -e ".[hdf4,hdf5,root]" # screenshot file loaders
 python tools/harness.py docs --screenshots        # full local build
 ```
 

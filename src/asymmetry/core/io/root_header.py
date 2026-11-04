@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from math import isfinite
 from typing import Any
 
 from asymmetry.core.io.physical_units import UnitConvention
@@ -96,8 +97,8 @@ def read_lem_header(record) -> dict[str, str]:
     """Decode TLemRunHeader v5 numeric calibration, not its display strings.
 
     LEM stores resolution in ns, field in G, temperature in K, and t0 in
-    zero-based bins indexed by hDecay00, hDecay01, ... . Negative t0 entries
-    mark unspecified channels; histogram axes do not supply calibration.
+    zero-based bins indexed by hDecay00, hDecay01, ... . Negative or nonfinite
+    t0 entries supply no usable calibration; histogram axes do not supply calibration.
     """
     header = {
         f"RunInfo/{key}": str(record.member(member))
@@ -119,6 +120,6 @@ def read_lem_header(record) -> dict[str, str]:
     for number, t0 in enumerate(record.member("fTimeZero")[: record.member("fNHist")]):
         prefix = f"DetectorInfo/Detector{number:03d}"
         header[f"{prefix}/Histo Number"] = str(number)
-        if t0 >= 0:
+        if isfinite(t0) and t0 >= 0:
             header[f"{prefix}/Time Zero Bin"] = str(t0)
     return header

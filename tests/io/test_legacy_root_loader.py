@@ -99,7 +99,8 @@ def test_cross_format_selected_observations(filename):
     np.testing.assert_allclose(reduced.error / 100, fb_export[:, 2], rtol=5e-6)
 
 
-def test_lem_numeric_members_own_calibration():
+@pytest.mark.parametrize("unspecified", [-1.0, np.inf, -np.inf, np.nan])
+def test_lem_numeric_members_own_calibration(unspecified):
     from asymmetry.core.io.root_header import read_lem_header
 
     with uproot.open(FIXTURES / "legacy-lem.root") as root_file:
@@ -107,7 +108,7 @@ def test_lem_numeric_members_own_calibration():
         # Change only the decoded numeric payload; its display strings stay stale.
         record.members["fTimeResolution"] = 25.0
         record.members["fNHist"] = 3
-        record.members["fTimeZero"] = np.array([0.0, 7.25, -1.0])
+        record.members["fTimeZero"] = np.array([0.0, 7.25, unspecified])
         header = read_lem_header(record)
     assert header["RunInfo/Time Resolution"] == "25.0"
     assert header["DetectorInfo/Detector000/Time Zero Bin"] == "0.0"

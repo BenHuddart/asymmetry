@@ -20,7 +20,8 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "psi_root"
     ],
 )
 @pytest.mark.parametrize("asymmetry", [False, True])
-def test_native_psi_selected_observations(tmp_path, filename, format_name, asymmetry):
+@pytest.mark.parametrize("file_t0", [False, True])
+def test_native_psi_selected_observations(tmp_path, filename, format_name, asymmetry, file_t0):
     executable = shutil.which("musrfit")
     if executable is None:
         pytest.skip("musrfit executable is not installed")
@@ -38,6 +39,8 @@ def test_native_psi_selected_observations(tmp_path, filename, format_name, asymm
         if asymmetry
         else "fittype 0\nnorm 2\nbackgr.fit 3\nforward 1 2\nt0 4 7\ndata 20 60"
     )
+    if file_t0:
+        settings = settings.replace("t0 4 7\n", "")
     (tmp_path / "reference.msr").write_text(
         f"""Synthetic PSI selected observations
 ###############################################################
