@@ -261,3 +261,16 @@ def test_ratio_helper_never_supplies_a_default_for_an_unusable_estimate(forward,
     with np.errstate(over="ignore"):
         with pytest.raises(CorrectionUnavailableError, match="alpha"):
             estimate_alpha(np.array(forward), np.array(backward))
+
+
+def test_profile_keeps_acquired_period_t0_sources():
+    run = policy_run()
+    run.grouping.update(
+        t0_source="conflict",
+        period_t0_sources=["conflict", "file"],
+        period_histograms=[run.histograms, run.histograms],
+    )
+    profile = replace(automatic_profile(), period_mode="green")
+    grouping = resolve_effective_grouping(profile, run)
+    assert grouping["t0_source"] == "file"
+    assert grouping["period_t0_sources"] == ["conflict", "file"]

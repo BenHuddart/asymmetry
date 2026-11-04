@@ -118,7 +118,10 @@ uniform spacing to obtain a physical width. Failure then concerns calibrated
 loading, because inventing a width would invent physical coordinates.
 Asymmetry also checks detector/period timing shapes and redundant integer/exact
 t0 agreement: unusable optional timing uses the remaining calibration, while
-an exact/integer disagreement is advisory and keeps integer timing. These
+an exact/integer disagreement is advisory and keeps integer timing for the
+affected detectors without discarding coherent exact origins elsewhere. Missing
+or unusable file t0 uses the existing search policy, and two-period selection
+retains the selected period's own calibration status. These
 checks apply to the adopted interpretation, rather than requiring all auxiliary
 fields to conform. They do not imply that other programs omit such checks in
 every workflow.

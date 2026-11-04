@@ -621,6 +621,8 @@ ordinals; reordering acquisition arrays requires remapping membership explicitly
 NeXus acquisition widths use declared resolution and explicit time units;
 exact origins retain their stored representation precision. A coherent exact
 header is retained even at a bin edge; integer-only timing remains sufficient.
+A conflicting detector loses only its own exact origin. Other detectors keep
+their sub-bin calibration, including when the conflict lies outside the pair.
 The selected operation consumes those acquired facts without reconstructing a
 second grid. See :doc:`loading_data` for timing conflicts and invalid axes.
 

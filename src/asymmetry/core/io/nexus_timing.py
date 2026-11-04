@@ -173,19 +173,6 @@ def read_nexus_timing(
                 "%s/counts:t0_bin: unusable integer anchors; using exact time_zero when available.",
                 context,
             )
-    if (
-        anchors is None
-        and exact_values is None
-        and (
-            attr is not None
-            or (exact is not None)
-            or (
-                group.get("time_zero") is not None
-                and int(group["time_zero"].attrs.get("available", 1)) != 0
-            )
-        )
-    ):
-        raise ValueError(f"{context}: no usable t0_bin or time_zero declaration.")
 
     decodes = []
     for period in range(n_periods):
@@ -207,22 +194,22 @@ def read_nexus_timing(
             bins = np.maximum(0, bins)
         else:
             bins = anchors[period]
-        conflict = False
+        conflicts = np.zeros(n_detectors, dtype=bool)
         if times is not None and anchors is not None:
             errors = exact_errors[period] + (bins + 1) * width_error
-            conflict = bool(
-                np.any((times < bins * width - errors) | (times > (bins + 1) * width + errors))
-            )
-        if conflict:
+            conflicts = (times < bins * width - errors) | (times > (bins + 1) * width + errors)
+        if np.any(conflicts):
             logger.warning(
-                "%s: NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0.",
+                "%s: NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0 only for conflicting detectors.",
                 context,
             )
         decodes.append(
             T0Decode(
                 bins,
-                [None] * n_detectors if times is None or conflict else times.tolist(),
-                "conflict" if conflict else "file",
+                [None] * n_detectors
+                if times is None
+                else [None if conflicts[i] else float(value) for i, value in enumerate(times)],
+                "conflict" if np.any(conflicts) else "file",
             )
         )
     return width, decodes, source

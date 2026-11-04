@@ -191,21 +191,25 @@ channels: a scalar broadcasts, a detector vector covers every detector, and a
 period-by-detector table covers every period. Nonfinite values, unsupported
 time units, and unusable integer anchors are diagnosed; a usable remaining
 integer or exact declaration still supplies calibrated timing. This prevents
-silently resizing a detector calibration. If declarations are present but none
-can be interpreted, loading raises ``no usable t0_bin or time_zero declaration.``
-A genuinely absent or unavailable t0 retains the existing automatic-search
-policy, recorded as ``t0_source = "missing"``; see :doc:`data_reduction/t0_search`.
+silently resizing a detector calibration. If no t0 declaration can be
+interpreted, raw loading remains available and
+``t0_source = "missing"`` invokes the existing automatic-search policy, just as
+for absent or unavailable calibration; see :doc:`data_reduction/t0_search`.
 
 Asymmetry also checks whether redundant exact ``time_zero`` falls inside the
 bin identified by ``t0_bin``, allowing stored representation precision at an
 edge. This keeps coherent exact origins, including zero, without accepting a
 materially displaced header as sub-bin calibration. Disagreement is advisory:
-loading succeeds with the integer anchor, drops the exact origin, and records
+loading succeeds with integer anchors and drops exact origins only for the
+conflicting detectors. Coherent detectors retain their exact calibration, so an
+unused detector cannot change the selected pair's timestamps. The run records
 ``t0_source = "conflict"`` with the warning
-``NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0.``
+``NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0 only for conflicting detectors.``
 Integer-only timing is sufficient. Auxiliary corrected coordinates cannot
 discard a valid exact origin. Loaded timestamps and re-reduction use the same
 selected-channel alignment and leading-crop mapping; counts remain unchanged.
+Two-period selection retains each period's own file-timing status, including
+header conflicts, alongside its histograms and default reduced arrays.
 
 Compared with other programs
 """"""""""""""""""""""""""""

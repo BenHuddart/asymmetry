@@ -881,12 +881,8 @@ class NexusLoader(BaseLoader):
         :func:`asymmetry.core.io.periods.combine_mapped_periods` with the
         trivial ``{1: red, 2: green}`` mapping, so the loader's two-period
         combination and the N-period "Map periods…" reducer are one code path.
-        It then caches each period's loader-default reduced arrays
-        (``period_reduced``) so the scriptable period-selection API
-        (:func:`asymmetry.core.io.periods.select_period`) can return exactly
-        what the loader produced per period without redoing the good-bin
-        windowing — the mapped reducer drops that cache because summed sets no
-        longer correspond to a single per-period reduction.
+        Period selection retains timing status and default reduced arrays.
+        Mapped sums discard the cache because they combine acquisition periods.
         """
         combined = combine_mapped_periods(
             period_datasets,

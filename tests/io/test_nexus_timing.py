@@ -290,7 +290,6 @@ def test_unusable_optional_t0_uses_remaining_calibration(tmp_path, fault, caplog
         ("uniform", "no usable"),
         ("nonfinite", "no usable"),
         ("missing", "no usable"),
-        ("t0", "no usable t0"),
     ],
 )
 def test_no_usable_required_timing_has_contextual_failure(tmp_path, fault, match):
@@ -298,21 +297,17 @@ def test_no_usable_required_timing_has_contextual_failure(tmp_path, fault, match
     write_timing(path)
     with h5py.File(path, "a") as f:
         d = f["raw_data_1/instrument/detector_1"]
-        if fault == "t0":
-            d["counts"].attrs["t0_bin"] = -1
-            d["time_zero"][()] = np.nan
+        del d["resolution"]
+        del d["corrected_time"]
+        if fault == "shape":
+            del d["raw_time"]
+            d.create_dataset("raw_time", data=[0, 1, 2])
+        elif fault == "uniform":
+            d["raw_time"][10] += 0.003
+        elif fault == "nonfinite":
+            d["raw_time"][10] = np.nan
         else:
-            del d["resolution"]
-            del d["corrected_time"]
-            if fault == "shape":
-                del d["raw_time"]
-                d.create_dataset("raw_time", data=[0, 1, 2])
-            elif fault == "uniform":
-                d["raw_time"][10] += 0.003
-            elif fault == "nonfinite":
-                d["raw_time"][10] = np.nan
-            else:
-                del d["raw_time"]
+            del d["raw_time"]
     with pytest.raises(ValueError, match=match) as exc:
         NexusLoader().load(path)
     assert str(path) in str(exc.value)
@@ -380,3 +375,132 @@ def test_non_scalar_units_do_not_abort_timing_alternatives(tmp_path, field, toke
         for i, hist in enumerate(dataset.run.histograms):
             np.testing.assert_array_equal(hist.counts, np.arange(64) + i * 64 + 10)
     assert f"/{field}: unusable timing declaration" in caplog.text
+
+
+@pytest.mark.parametrize("fault", ["nonfinite", "shape", "units", "anchors"])
+def test_unusable_t0_retains_raw_loading_and_missing_calibration(tmp_path, fault, caplog):
+    path = tmp_path / "missing-calibration.nxs"
+    write_timing(path)
+    with h5py.File(path, "a") as file:
+        detector = file["raw_data_1/instrument/detector_1"]
+        del detector["counts"].attrs["t0_bin"]
+        if fault == "nonfinite":
+            detector["time_zero"][()] = np.nan
+        elif fault == "shape":
+            del detector["time_zero"]
+            detector.create_dataset("time_zero", data=[0.4, 0.4, 0.4])
+        elif fault == "units":
+            detector["time_zero"].attrs["units"] = "K"
+        else:
+            del detector["time_zero"]
+            detector["counts"].attrs["t0_bin"] = -1
+    dataset = NexusLoader().load(path)
+    assert dataset.run.grouping["t0_source"] == "missing"
+    assert all(hist.t0_time_us is None for hist in dataset.run.histograms)
+    assert all(hist.bin_width == 0.016 for hist in dataset.run.histograms)
+    assert "unusable" in caplog.text
+    for i, hist in enumerate(dataset.run.histograms):
+        np.testing.assert_array_equal(hist.counts, np.arange(64) + i * 64 + 10)
+
+
+@pytest.mark.parametrize("conflicting_period", [0, 1])
+def test_two_period_selection_retains_each_calibration_status(tmp_path, conflicting_period):
+    from asymmetry.core.io.periods import select_period, select_period_histograms
+    from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+    from asymmetry.core.transform.t0 import assess_t0
+
+    path = tmp_path / "period-status.nxs"
+    write_timing(path, dtype=np.float64)
+    times = np.array([[0.4, 0.424], [0.504, 0.52]])
+    times[conflicting_period] = [0.9, 0.9]
+    counts = np.arange(256).reshape(2, 2, 64) + 10
+    with h5py.File(path, "a") as file:
+        detector = file["raw_data_1/instrument/detector_1"]
+        del detector["counts"]
+        del detector["time_zero"]
+        detector.create_dataset("counts", data=counts).attrs["t0_bin"] = [[26, 27], [32, 33]]
+        detector.create_dataset("time_zero", data=times)
+    combined = NexusLoader().load(path)
+    for period in range(2):
+        selected = select_period(combined, period + 1)
+        histograms, grouping = select_period_histograms(
+            combined.run.histograms, combined.run.grouping, period
+        )
+        expected_source = "conflict" if period == conflicting_period else "file"
+        assert selected.run.grouping["t0_source"] == expected_source
+        assert grouping["t0_source"] == expected_source
+        verdict = assess_t0(histograms, grouping, None)
+        assert any("disagrees" in message for message in verdict.messages) == (
+            period == conflicting_period
+        )
+        for detector, hist in enumerate(histograms):
+            np.testing.assert_array_equal(hist.counts, counts[period, detector])
+        quick = quick_asymmetry(histograms, grouping)
+        np.testing.assert_allclose(quick.time, selected.time, atol=1e-15)
+        np.testing.assert_array_equal(quick.asymmetry, selected.asymmetry)
+        np.testing.assert_array_equal(quick.error, selected.error)
+
+
+def test_spectator_conflict_retains_selected_exact_origins_and_residuals(tmp_path):
+    from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+
+    path = tmp_path / "spectator-conflict.nxs"
+    write_timing(path, dtype=np.float64)
+    counts = np.arange(192).reshape(3, 64) + 10
+    with h5py.File(path, "a") as file:
+        detector = file["raw_data_1/instrument/detector_1"]
+        for name in ("counts", "time_zero", "grouping"):
+            del detector[name]
+        detector.create_dataset("counts", data=counts).attrs["t0_bin"] = [26, 27, 57]
+        detector.create_dataset("time_zero", data=[0.401, 0.420, 0.1])
+        detector.create_dataset("grouping", data=[1, 2, 3])
+    dataset = NexusLoader().load(path)
+    assert [hist.t0_time_us for hist in dataset.run.histograms] == [0.401, 0.420, None]
+    assert dataset.run.grouping["t0_source"] == "conflict"
+    np.testing.assert_allclose(dataset.time, (np.arange(63) + 1.5) * 0.016 - 0.420, atol=1e-15)
+    quick = quick_asymmetry(dataset.run.histograms, dataset.run.grouping)
+    np.testing.assert_array_equal(quick.time, dataset.time)
+    np.testing.assert_array_equal(quick.asymmetry, dataset.asymmetry)
+    np.testing.assert_array_equal(quick.error, dataset.error)
+    np.testing.assert_allclose(
+        quick.alignment.timing_residuals_us, [(0, -0.003), (1, 0)], atol=1e-15
+    )
+    excluded = quick_asymmetry(
+        dataset.run.histograms, dict(dataset.run.grouping, excluded_detectors=[3])
+    )
+    np.testing.assert_array_equal(excluded.time, dataset.time)
+    for i, hist in enumerate(dataset.run.histograms):
+        np.testing.assert_array_equal(hist.counts, counts[i])
+
+
+def test_unusable_file_t0_can_resolve_existing_automatic_search(tmp_path):
+    from asymmetry.core.project.profiles import (
+        GroupingProfile,
+        profile_fingerprint_for_run,
+        resolve_effective_grouping,
+    )
+    from asymmetry.core.transform.t0 import effective_detector_t0_bins
+
+    path = tmp_path / "searchable.nxs"
+    write_timing(path)
+    counts = np.full((2, 64), 10)
+    counts[0, 25] = 10000
+    counts[1, 27] = 10000
+    with h5py.File(path, "a") as file:
+        detector = file["raw_data_1/instrument/detector_1"]
+        file["raw_data_1/instrument"].create_dataset("name", data=b"LEM")
+        detector["counts"][:] = counts
+        del detector["counts"].attrs["t0_bin"]
+        detector["time_zero"][()] = np.nan
+    dataset = NexusLoader().load(path)
+    profile = GroupingProfile(
+        name="prompt",
+        fingerprint=profile_fingerprint_for_run(dataset.run),
+        groups={1: [1], 2: [2]},
+    )
+    grouping = resolve_effective_grouping(profile, dataset.run)
+    assert dataset.run.grouping["t0_source"] == "missing"
+    assert grouping["t0_source"] == "detected"
+    assert effective_detector_t0_bins(dataset.run.histograms, grouping) == [25, 27]
+    for i, hist in enumerate(dataset.run.histograms):
+        np.testing.assert_array_equal(hist.counts, counts[i])
