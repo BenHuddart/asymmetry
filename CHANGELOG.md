@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NeXus loading preserves coherent exact timing using declared units, resolution,
+  and storage precision; malformed axes and genuinely conflicting timing remain explicit.
+
 - Reject unusable grouped Fourier windows and retain raw data for empty file-good
   reductions; applied timing records use the selected exact reference.
 

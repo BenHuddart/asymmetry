@@ -1357,7 +1357,7 @@ def test_v2_stale_time_zero_conflicts_and_the_attribute_wins(
     assert ds.run.histograms[0].t0_time_us is None
     assert ds.run.grouping["t0_source"] == "conflict"
     assert "t0_time_us" not in ds.run.grouping
-    assert any("disagrees with time_zero" in record.message for record in caplog.records)
+    assert any("declarations conflict" in record.message for record in caplog.records)
 
 
 def test_v2_corrected_time_disagreeing_with_the_attribute_is_a_conflict(

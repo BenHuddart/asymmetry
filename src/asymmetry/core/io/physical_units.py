@@ -144,13 +144,28 @@ def uniform_bin_width_us(
     if np.any(steps <= 0):
         raise ValueError(f"{context}: time axis must be strictly increasing.")
     width = float((values[-1] - values[0]) / (values.size - 1))
-    tolerance = 4 * float(np.spacing(np.max(np.abs(values))))
-    if np.issubdtype(stored_dtype, np.floating):
-        magnitude = np.asarray(np.max(np.abs(values)) / storage_scale, dtype=stored_dtype)
-        tolerance = max(tolerance, 4 * float(np.spacing(magnitude)) * storage_scale)
+    tolerance = float(
+        np.max(storage_precision_us(values, stored_dtype=stored_dtype, storage_scale=storage_scale))
+    )
     if np.any(np.abs(steps - width) > tolerance):
         raise ValueError(f"{context}: time axis must have uniform bin widths.")
     return width
+
+
+def storage_precision_us(
+    values: np.ndarray, *, stored_dtype: np.dtype, storage_scale: float = 1.0
+) -> np.ndarray:
+    """Four ULPs in canonical μs, retaining the declared storage scale.
+
+    The allowance covers stored coordinate arithmetic and unit conversion;
+    it describes representation precision, not measurement uncertainty.
+    """
+    values = np.asarray(values, dtype=float)
+    error = 4 * np.abs(np.spacing(values))
+    if np.issubdtype(stored_dtype, np.floating):
+        stored = np.asarray(np.abs(values) / storage_scale, dtype=stored_dtype)
+        error = np.maximum(error, 4 * np.spacing(stored).astype(float) * storage_scale)
+    return error
 
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"

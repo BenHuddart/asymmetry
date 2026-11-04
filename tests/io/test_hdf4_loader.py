@@ -59,6 +59,7 @@ def _write_hdf4_v1(
     last_good_bin: int | None = None,
     switching_states: int | None = None,
     number: int = 4242,
+    time_zero: float | None = None,
     title: str = "Synthetic v1",
     temp_log_name: str | None = None,
     temp_log_values: tuple[float, ...] = (5.0, 5.0, 5.0),
@@ -77,13 +78,17 @@ def _write_hdf4_v1(
     counts = np.asarray(counts, dtype=np.int32)
     n_bins = counts.shape[-1]
     corrected_time = ((np.arange(n_bins) - 2) * 0.1).astype(np.float64)
+    if time_zero is not None:
+        corrected_time = ((np.arange(n_bins) + 0.5) * 0.016 - np.float32(time_zero)).astype(
+            np.float32
+        )
     grouping = np.array([1, 2], dtype=np.int32)
 
     hdf = HDF(str(path), HC.WRITE | HC.CREATE)
     v = hdf.vgstart()
     sd = SD(str(path), SDC.WRITE | SDC.CREATE)
     try:
-        np_of = {SDC.INT32: np.int32, SDC.FLOAT64: np.float64}
+        np_of = {SDC.INT32: np.int32, SDC.FLOAT32: np.float32, SDC.FLOAT64: np.float64}
 
         def _num(name, arr, dtype, attrs=None):
             arr = np.asarray(arr, dtype=np_of[dtype])
@@ -91,7 +96,10 @@ def _write_hdf4_v1(
             s = sd.create(name, dtype, shape)
             s[:] = arr.reshape(shape)
             for key, val in (attrs or {}).items():
-                s.attr(key).set(SDC.INT32, int(val))
+                if isinstance(val, str):
+                    s.attr(key).set(SDC.CHAR8, val)
+                else:
+                    s.attr(key).set(SDC.INT32, int(val))
             ref = s.ref()
             s.endaccess()
             return ref
@@ -125,7 +133,17 @@ def _write_hdf4_v1(
 
         hist = _vgroup("histogram_data_1", "NXdata")
         hist.add(HC.DFTAG_NDG, _num("counts", counts, SDC.INT32, bin_attrs))
-        hist.add(HC.DFTAG_NDG, _num("corrected_time", corrected_time, SDC.FLOAT64))
+        hist.add(
+            HC.DFTAG_NDG,
+            _num(
+                "corrected_time", corrected_time, SDC.FLOAT64 if time_zero is None else SDC.FLOAT32
+            ),
+        )
+        if time_zero is not None:
+            hist.add(HC.DFTAG_NDG, _num("resolution", [16000], SDC.INT32, {"units": "picoseconds"}))
+            hist.add(
+                HC.DFTAG_NDG, _num("time_zero", [time_zero], SDC.FLOAT32, {"units": "microseconds"})
+            )
         hist.add(HC.DFTAG_NDG, _num("grouping", grouping, SDC.INT32))
         run.insert(hist)
         hist.detach()
@@ -214,3 +232,15 @@ def test_hdf4_load_does_not_lock_file(loader: NexusLoader, tmp_path) -> None:
     _ = _as_single(loader.load(str(path)))
     path.unlink()  # raises PermissionError on Windows if still locked
     assert not path.exists()
+
+
+def test_native_hdf4_float32_timing_preserves_declared_grid(tmp_path, loader):
+    path = tmp_path / "float32.nxs"
+    counts = np.arange(128, dtype=np.int32).reshape(2, 64) + 10
+    _write_hdf4_v1(path, counts=counts, t0_bin=26, time_zero=0.4)
+    ds = loader.load(path)
+    assert ds.run.grouping["t0_source"] == "file"
+    for i, hist in enumerate(ds.run.histograms):
+        assert hist.bin_width == 0.016
+        assert hist.t0_time_us == float(np.float32(0.4))
+        np.testing.assert_array_equal(hist.counts, counts[i])

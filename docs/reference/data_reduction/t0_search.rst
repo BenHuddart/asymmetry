@@ -19,6 +19,13 @@ are alignment diagnostics, not a timing uncertainty or a fractional resampling.
 Only common observed support is reduced, including valid one-bin intersections.
 See :doc:`/reference/detector_grouping` for coordinate and provenance details.
 
+NeXus compares redundant timing at its stored dtype precision and declared
+unit scale, preserving coherent exact origins at bin edges. A displaced header
+remains an advisory conflict with usable integer timing; malformed declarations
+raise at loading rather than masquerading as missing timing. These checks do
+not establish physical t0 accuracy. See :doc:`/reference/loading_data` for the
+grid, origin, and units contract.
+
 The grouping window's t0 row carries a read-only line, identical whichever
 mode is selected, that shows the file value beside the detected one so you
 never have to take either on faith:

@@ -618,6 +618,12 @@ must have finite positive, compatible widths. An unused channel cannot move the
 origin or make a selected pair unavailable. Channel IDs are acquired histogram
 ordinals; reordering acquisition arrays requires remapping membership explicitly.
 
+NeXus acquisition widths and exact origins are normalised at loading, using
+explicit timing units and stored representation precision. A coherent exact
+header is retained even at a bin edge; integer-only timing remains sufficient.
+The selected operation consumes those acquired facts without reconstructing a
+second grid. See :doc:`loading_data` for timing conflicts and invalid axes.
+
 For integer anchors :math:`n_i`, the uncropped common anchor is
 :math:`c=\max_i n_i`, and raw bin :math:`k` moves to :math:`k+c-n_i`.
 Only bins observed by every selected channel survive: leading and trailing

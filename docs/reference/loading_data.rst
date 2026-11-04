@@ -145,41 +145,66 @@ canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 ``first_good_time`` / ``last_good_time`` are present, they are used only as a
 fallback if the corresponding integer bin attributes are missing.
 
-Asymmetry's internal ``Histogram`` and grouping bin indices are always
-zero-based array indices. ISIS header bins are **one-based and inclusive**,
-decoded deterministically rather than inferred: ``t0_bin``, ``first_good_bin``
-and ``last_good_bin`` each become ``attribute − 1`` and ``bin_index_base = 1``
-is recorded in grouping metadata for display, unconditionally, for every ISIS
-NeXus/HDF4 file. This is resolved evidence, not a heuristic — a 1,245-file
-survey across EMU, HiFi, MuSR and ARGUS (HDF4 V1 and HDF5 V2, 16 ns and 8 ns
-binning) found ``last_good_bin == n_bins`` in every file (a 0-based index can
-never equal the length) and ``t0_bin == floor(time_zero / resolution) + 1`` on
-every file whose quotient was unambiguously fractional; see
-``docs/porting/t0-determination/isis-header-index-base.md`` for the full
-evidence and the two counter-examples it also explains (a stale pre-2003
-header and an exact-edge tie). The file's own ``corrected_time`` axis — which
-musrfit and WiMDA both also read — is kept only as a *cross-check*: when it
-disagrees with the decoded ``t0_bin`` the run is flagged ``t0_source =
-"conflict"`` (the attribute still wins) rather than silently trusted or
-silently ignored.
+NeXus timing is decoded once into a common acquisition width in μs. Explicit
+``units`` on ``resolution``, ``raw_time``, ``corrected_time``, and ``time_zero``
+are converted using s, ms, μs (``us``), ns, or ps, including spelled-out names.
+When the declaration is absent, resolution uses ps in V1 and ns in V2;
+axes and exact time zero use μs. These conventions follow the
+`muon NeXus definition, version 2 revision 8 (including V1), pp. 14 and 49–51
+<https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_.
+Field, temperature, and log-unit compatibility are separate from these timing
+checks.
 
-The integer ``t0_bin`` only places t0 to the nearest bin. ISIS additionally
-stores ``time_zero``, the exact time of t0 in microseconds, which can fall
-anywhere within that bin (the survey found fractional positions from 0 to
-nearly 1). Asymmetry keeps this exact value (``t0_time_us``) and stamps the
-time axis from it — see :doc:`detector_grouping` § Time-zero (t0) modes for
-the bin-centre convention — rather than discarding up to half a bin of
-genuine precision. When ``time_zero`` and ``t0_bin`` disagree about which bin
-contains t0, the attribute ``t0_bin`` wins and the exact value is dropped
-(``t0_source = "conflict"``, with a loader warning); a file with neither
-field carries no usable t0 at all (``t0_source = "missing"``), and analysis
-falls back to the automatic search — see :doc:`data_reduction/t0_search` and
-:doc:`detector_grouping`. ``bin_index_base`` is display-only: the internal
-bins are always zero-based, and this field only tells the GUI which number to
-add back when showing a bin index to the user. For V1 (HDF4), this good-data
-window and ``t0_bin`` are read from the attributes of the ``counts`` dataset
-(where ISIS stores them) and decoded by the same one-based rule, matching the
-V2 behaviour.
+A positive scalar resolution supplies the width when present. Otherwise, the
+width is the validated end-to-end axis span divided by its number of steps.
+Shared one-dimensional axes with N+1 entries describe edges; N entries describe
+centres. Every supplied axis must be finite, increasing, and uniform; each coordinate
+must agree with the same affine grid. A single centre is sufficient when a
+positive resolution supplies its width. Redundant
+widths must agree within their stored dtype precision and unit scale: float32
+coordinates do not replace a coherent, precise resolution with the median of
+rounded adjacent differences. Four storage ULPs allow coordinate arithmetic
+and conversion round-off; this is a representation check, not a physical
+calibration uncertainty. A zero resolution means not applicable; without a
+usable axis or positive resolution loading raises
+``no usable time axis or positive resolution.`` A contradictory span raises
+``time axis conflicts with acquisition resolution.`` Nonuniform axes, including
+shortened terminal bins, are rejected rather than converted into a uniform grid.
+
+Raw axis offsets are normalised to the first acquisition edge. The same offset
+is removed from exact ``time_zero`` once, preserving physical bin-centre stamps.
+Corrected axes already refer to time zero and are checked against that normalised
+origin. With no raw axis, acquisition coordinates start at zero. Unsupported
+axis shapes raise an error rather than losing their offsets.
+
+Internal ``Histogram`` and grouping indices are zero-based. The ISIS
+``counts`` attribute ``t0_bin`` is converted to ``attribute − 1``; integer
+``first_good_bin`` and ``last_good_bin`` retain their existing one-based,
+inclusive decoding. ``bin_index_base = 1`` records the display convention.
+Good-time fallback selection is described above.
+
+The integer t0 anchor identifies a containing bin. Exact ``time_zero`` retains
+the sub-bin origin as ``t0_time_us`` when coherent, including a valid zero and
+values indistinguishable from a bin edge at stored precision. Integer-only
+timing is sufficient and does not require a separate exact value. Scalar exact
+origins broadcast to detectors; detector vectors and period-by-detector tables
+retain each supplied origin. Malformed, empty, or nonfinite declarations raise
+an error instead of becoming an absent-header fallback.
+
+The file's shared ``corrected_time`` is retained in metadata for inspection.
+Its origin must agree with a declared detector origin (or fall inside a declared
+integer bin when no exact origin is supplied). A displaced origin in either
+direction, or incompatible ``time_zero`` and ``t0_bin``, produces
+``t0_source = "conflict"`` with the warning
+``NeXus t0_bin/time_zero/corrected_time declarations conflict; keeping integer anchors and dropping exact t0.``
+The integer anchor remains usable and exact timing is dropped. With neither
+integer nor available exact timing, ``t0_source = "missing"`` retains the
+automatic-search policy; see :doc:`data_reduction/t0_search`.
+
+Loaded timestamps use the same selected-channel alignment as re-reduction,
+including leading support crops and fractional residuals. Raw counts are
+unchanged. See :doc:`detector_grouping` for the selected reference and coordinate
+mapping. These rules apply to native HDF4 and HDF5 through the same decoder.
 
 HDF4 container (legacy ``.nxs``)
 """"""""""""""""""""""""""""""""

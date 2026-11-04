@@ -99,6 +99,12 @@ channels after exclusions. The maximum selected anchor defines the reference;
 acquired-channel ordinal breaks ties. Fractional residuals and their range are
 recorded in μs, without interpolating counts or assigning timing uncertainties.
 
+Asymmetry validates NeXus timing units, redundant acquisition widths, and
+origins at the precision in which they were stored. This establishes header
+coherence, not agreement between programs' NeXus decoders or physical t0
+calibration. Coherent exact origins feed the selected integer alignment;
+see :doc:`/reference/loading_data` for edge and centre representations.
+
 The recorded musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) type-0 integer grouping
 case uses 0.1 μs bins, ``forward 1 2``, ``t0 2 4``, ``data 1 9``, packing one,
 and no corrections. Eight selected counts agree exactly with Asymmetry, with

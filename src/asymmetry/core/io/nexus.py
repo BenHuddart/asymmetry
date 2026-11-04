@@ -27,6 +27,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
+from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.t0 import selected_t0_reference
@@ -38,13 +39,6 @@ except ImportError:  # pragma: no cover - exercised when h5py is not installed
     h5py = None
 
 logger = logging.getLogger(__name__)
-
-#: Tolerance, in bins, for comparing ``time_zero / resolution`` against the
-#: ``t0_bin`` attribute. ISIS writes both in float32, so an exact bin edge can
-#: read back as 9.99999978 or 25.00001; a whole-bin disagreement is a genuine
-#: header conflict (docs/porting/t0-determination/isis-header-index-base.md).
-_T0_BIN_TOLERANCE = 1.0e-6
-
 
 #: Unit tokens (lower-cased, with degree signs / spaces / dots stripped) that a
 #: NeXus ``units`` attribute may use to name the Celsius scale. ``celcius`` is a
@@ -264,20 +258,6 @@ class _GroupingSelection:
     backward_group_id: int
 
 
-@dataclass
-class _T0Decode:
-    """Per-detector time zero decoded from an ISIS file's header (D5–D7)."""
-
-    #: 0-based index of the bin containing t0, one per detector.
-    t0_bins: np.ndarray
-    #: Exact t0 in µs from acquisition start, one per detector (``None`` where
-    #: the file provides no usable sub-bin value).
-    t0_time_us: list[float | None]
-    #: ``"file"``, ``"conflict"`` (fields disagree — the attribute wins) or
-    #: ``"missing"`` (no t0 in the file at all).
-    source: str
-
-
 class NexusLoader(BaseLoader):
     """Read ISIS muon ``.nxs`` files and return one or more datasets."""
 
@@ -380,10 +360,6 @@ class NexusLoader(BaseLoader):
             counts = counts.reshape(n_switching, n_spectra, counts.shape[-1])
         counts_periods = self._split_period_counts(counts)
 
-        corrected_time = np.asarray(
-            self._read_optional(h_data, "corrected_time", default=[]),
-            dtype=np.float64,
-        )
         grouping_array = np.asarray(
             self._read_optional(h_data, "grouping", default=[]),
             dtype=np.int64,
@@ -429,11 +405,6 @@ class NexusLoader(BaseLoader):
                 self._read_optional(entry, f"instrument/detector/{dead_time_key}", default=[]),
                 dtype=np.float64,
             )
-        time_zero_values = np.asarray(
-            self._read_optional(h_data, "time_zero", default=[]),
-            dtype=np.float64,
-        )
-
         run_number = self._safe_int(self._read_optional(entry, "number"), default=0)
         instrument_name = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "name")
@@ -505,15 +476,13 @@ class NexusLoader(BaseLoader):
         counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
 
         first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, h_data, n_bins)
-        _, bin_width = self._build_time_axis(corrected_time, n_bins)
-        decode = self._decode_t0(
-            t0_bin_attr=counts_attrs.get("t0_bin"),
-            time_zero_values=time_zero_values,
+        bin_width, decodes, corrected_time = read_nexus_timing(
+            h_data,
+            version="v1",
+            n_periods=len(counts_periods),
             n_detectors=n_detectors,
-            resolution_us=bin_width,
-            corrected_time=corrected_time,
             n_bins=n_bins,
-            source_file=source_file,
+            context=f"{source_file}/{entry_name}/histogram_data_1",
         )
         if corrected_time.size:
             metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
@@ -521,7 +490,7 @@ class NexusLoader(BaseLoader):
         return self._build_period_datasets(
             counts_periods=counts_periods,
             bin_width=bin_width,
-            decode=decode,
+            decodes=decodes,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
@@ -533,34 +502,12 @@ class NexusLoader(BaseLoader):
         )
 
     def _load_v2(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
-        """Read modern V2 muon NeXus content and reduce to asymmetry.
-
-        V2 files may contain both ``raw_time`` and ``corrected_time``.
-        Mantid's loading flow uses ``raw_time`` and applies ``time_zero`` as a
-        separate correction. To align user-visible behaviour with both Mantid
-        and files that already provide corrected centres:
-
-        * Prefer ``corrected_time`` when it has a shape compatible with counts.
-        * Otherwise, build from ``raw_time`` and subtract ``time_zero``.
-        * For per-histogram metadata, prefer ``counts.attrs['t0_bin']`` when
-          present, otherwise derive ``t0_bin`` from ``time_zero / bin_width``.
-        """
+        """Read modern V2 muon NeXus content on one validated acquisition grid."""
         entry = handle[entry_name]
         detector = self._require_group(self._require_group(entry, "instrument"), "detector_1")
 
         counts = np.asarray(self._require_dataset(detector, "counts"), dtype=np.float64)
         counts_periods = self._split_period_counts(counts)
-
-        raw_time = np.asarray(
-            self._read_optional(detector, "raw_time", default=[]), dtype=np.float64
-        )
-        if raw_time.size == 0:
-            raw_time = np.asarray(
-                self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64
-            )
-        corrected_time = np.asarray(
-            self._read_optional(detector, "corrected_time", default=[]), dtype=np.float64
-        )
 
         grouping_array = np.asarray(
             self._read_optional(detector, "grouping", default=[]), dtype=np.int64
@@ -596,10 +543,6 @@ class NexusLoader(BaseLoader):
                 self._read_optional(detector, dead_time_key, default=[]),
                 dtype=np.float64,
             )
-        time_zero_values = np.asarray(
-            self._read_optional(detector, "time_zero", default=[]), dtype=np.float64
-        )
-
         run_number = self._safe_int(self._read_optional(entry, "run_number"), default=0)
         title = self._safe_str(self._read_optional(entry, "title"))
         started = self._safe_str(self._read_optional(entry, "start_time"))
@@ -626,8 +569,6 @@ class NexusLoader(BaseLoader):
 
         counts_attrs = getattr(detector.get("counts"), "attrs", {})
         n_bins = int(counts_periods[0].shape[-1])
-        use_corrected_time = corrected_time.size in {n_bins, n_bins + 1}
-        time_axis_source = corrected_time if use_corrected_time else raw_time
 
         first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
         last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
@@ -671,17 +612,15 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
-        _, bin_width = self._build_time_axis(time_axis_source, n_bins)
-        decode = self._decode_t0(
-            t0_bin_attr=counts_attrs.get("t0_bin"),
-            time_zero_values=time_zero_values,
+        bin_width, decodes, corrected_time = read_nexus_timing(
+            detector,
+            version="v2",
+            n_periods=len(counts_periods),
             n_detectors=counts_periods[0].shape[0],
-            resolution_us=bin_width,
-            corrected_time=corrected_time if use_corrected_time else np.asarray([]),
             n_bins=n_bins,
-            source_file=source_file,
+            context=f"{source_file}/{entry_name}/instrument/detector_1",
         )
-        if use_corrected_time:
+        if corrected_time.size:
             metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
 
         # Keep integer bin metadata as the canonical source of the good-data
@@ -710,7 +649,7 @@ class NexusLoader(BaseLoader):
         return self._build_period_datasets(
             counts_periods=counts_periods,
             bin_width=bin_width,
-            decode=decode,
+            decodes=decodes,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
@@ -768,7 +707,7 @@ class NexusLoader(BaseLoader):
         *,
         counts_periods: list[np.ndarray],
         bin_width: float,
-        decode: _T0Decode,
+        decodes: list[T0Decode],
         grouping_array: np.ndarray,
         good_frames_values: np.ndarray,
         dead_time_values: np.ndarray,
@@ -809,6 +748,7 @@ class NexusLoader(BaseLoader):
                 raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
 
             n_detectors = period_counts.shape[0]
+            decode = decodes[period_idx - 1]
             histograms = self._build_histograms(
                 period_counts,
                 bin_width,
@@ -971,14 +911,14 @@ class NexusLoader(BaseLoader):
         period_counts: np.ndarray,
         bin_width: float,
         *,
-        decode: _T0Decode,
+        decode: T0Decode,
         first_good_bin: int,
         last_good_bin: int,
     ) -> list[Histogram]:
         """Create per-detector :class:`Histogram` objects for a period.
 
         The good-data window is a single run-level pair in ISIS files, so every
-        detector carries the same one; t0 comes from :meth:`_decode_t0`.
+        detector carries the same one; t0 comes from the validated NeXus timing declarations.
         """
         return [
             Histogram(
@@ -991,23 +931,6 @@ class NexusLoader(BaseLoader):
             )
             for i in range(period_counts.shape[0])
         ]
-
-    def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
-        """Build a usable time axis and bin width from NeXus time datasets."""
-        if source_axis.size == n_bins + 1:
-            axis = 0.5 * (source_axis[:-1] + source_axis[1:])
-        elif source_axis.size >= n_bins:
-            axis = source_axis[:n_bins]
-        else:
-            axis = np.arange(n_bins, dtype=np.float64)
-
-        if axis.size >= 2:
-            bin_width = float(np.nanmedian(np.diff(axis)))
-        else:
-            bin_width = 1.0
-        if not np.isfinite(bin_width) or bin_width == 0.0:
-            bin_width = 1.0
-        return np.asarray(axis, dtype=np.float64), float(bin_width)
 
     def _resolve_good_bin_range(
         self,
@@ -1047,24 +970,6 @@ class NexusLoader(BaseLoader):
 
         return lo, hi
 
-    def _attr_bin_values(self, attr: Any, *, n_detectors: int) -> np.ndarray | None:
-        """Per-detector values from an integer ``counts`` attribute, as written.
-
-        Accepts a scalar (broadcast across detectors) or a per-detector array;
-        returns ``None`` when the attribute is missing or unusable. Shared by
-        the v1 and v2 layouts, which both store ``t0_bin`` on the counts SDS.
-        The values are the file's own 1-based indices — :meth:`_decode_t0`
-        converts them.
-        """
-        if attr is None:
-            return None
-        values = np.asarray(attr, dtype=np.float64).ravel()
-        if values.size == 1 and np.isfinite(values[0]):
-            return np.full(n_detectors, int(round(float(values[0]))), dtype=np.int64)
-        if values.size == n_detectors and np.all(np.isfinite(values)):
-            return np.rint(values).astype(np.int64)
-        return None
-
     def _good_bin_window(self, counts_attrs: Any, h_data: Any, n_bins: int) -> tuple[int, int]:
         """The 0-based, inclusive good-data window from 1-based ISIS headers.
 
@@ -1089,133 +994,6 @@ class NexusLoader(BaseLoader):
         first_good = 0 if first_raw is None else max(0, int(first_raw) - 1)
         last_good = (n_bins - 1) if last_raw is None else max(0, int(last_raw) - 1)
         return first_good, last_good
-
-    def _decode_t0(
-        self,
-        *,
-        t0_bin_attr: Any,
-        time_zero_values: np.ndarray,
-        n_detectors: int,
-        resolution_us: float,
-        corrected_time: np.ndarray,
-        n_bins: int,
-        source_file: str,
-    ) -> _T0Decode:
-        """Decode per-detector t0 from the ISIS header (decisions D5, D6, D7).
-
-        ``t0_bin`` is the 1-based index of the bin *containing* the file's own
-        ``time_zero`` (µs), so the 0-based bin is ``t0_bin − 1`` — deterministic,
-        never inferred. ``time_zero`` additionally places t0 *within* that bin;
-        it is kept when the two agree (``floor(time_zero / resolution) + 1 ==
-        t0_bin``) and dropped when they do not, in which case the attribute wins
-        and ``t0_source`` is ``"conflict"`` (D6). With only ``time_zero`` the
-        containing bin is derived from it; with neither field the run has no
-        usable t0 (``"missing"``, D7 — resolution searches for one).
-        """
-        attr_bins = self._attr_bin_values(t0_bin_attr, n_detectors=n_detectors)
-        time_zeros = self._time_zero_per_detector(time_zero_values, n_detectors)
-
-        if attr_bins is None and time_zeros is None:
-            return _T0Decode(np.zeros(n_detectors, dtype=np.int64), [None] * n_detectors, "missing")
-
-        if attr_bins is None:
-            # ``time_zero`` alone: the bin containing it, with the same edge
-            # tolerance the agreement test uses (a quotient one ulp below an
-            # integer is an exact edge).
-            bins = np.maximum(
-                0,
-                np.asarray(
-                    [int(np.floor(tz / resolution_us + _T0_BIN_TOLERANCE)) for tz in time_zeros],
-                    dtype=np.int64,
-                ),
-            )
-            exact: list[float | None] = list(time_zeros)
-        elif time_zeros is None:
-            bins = np.maximum(0, attr_bins - 1)
-            exact = [None] * n_detectors
-        else:
-            bins = np.maximum(0, attr_bins - 1)
-            disagree = [
-                i
-                for i, tz in enumerate(time_zeros)
-                if not self._t0_fields_agree(tz, resolution_us, int(attr_bins[i]))
-            ]
-            if disagree:
-                logger.warning(
-                    "%s: NeXus t0_bin attribute %d disagrees with time_zero %.6f us at %.6f us "
-                    "binning (detector %d); keeping the attribute and dropping the exact t0.",
-                    source_file,
-                    int(attr_bins[disagree[0]]),
-                    float(time_zeros[disagree[0]]),
-                    float(resolution_us),
-                    disagree[0] + 1,
-                )
-                return _T0Decode(bins, [None] * n_detectors, "conflict")
-            exact = list(time_zeros)
-
-        return self._cross_check_corrected_time(
-            _T0Decode(bins, exact, "file"),
-            corrected_time=corrected_time,
-            n_bins=n_bins,
-            source_file=source_file,
-        )
-
-    def _time_zero_per_detector(
-        self, time_zero_values: np.ndarray, n_detectors: int
-    ) -> list[float] | None:
-        """``time_zero`` in µs per detector, or ``None`` when the file has none.
-
-        A scalar broadcasts across detectors; v2 files may store one value per
-        detector. Non-finite content counts as absent.
-        """
-        values = np.asarray(time_zero_values, dtype=np.float64).ravel()
-        if values.size == 0 or not np.all(np.isfinite(values)):
-            return None
-        if values.size == n_detectors:
-            return [float(v) for v in values]
-        return [float(values[0])] * n_detectors
-
-    def _t0_fields_agree(self, time_zero_us: float, resolution_us: float, attr_bin: int) -> bool:
-        """True when ``time_zero`` falls inside the bin ``t0_bin`` names.
-
-        That is ``attr_bin − 1 <= time_zero / resolution < attr_bin``, with a
-        tolerance of :data:`_T0_BIN_TOLERANCE` bins because both fields are
-        written in float32 (an exact edge reads back as 9.99999978).
-        """
-        q = float(time_zero_us) / float(resolution_us)
-        return (attr_bin - 1) - _T0_BIN_TOLERANCE <= q < attr_bin + _T0_BIN_TOLERANCE
-
-    def _cross_check_corrected_time(
-        self,
-        decode: _T0Decode,
-        *,
-        corrected_time: np.ndarray,
-        n_bins: int,
-        source_file: str,
-    ) -> _T0Decode:
-        """Flag a ``corrected_time`` axis that disagrees with the decoded t0.
-
-        The file's own axis is zero inside the t0 bin, so ``|ct|`` must not be
-        *smaller* one bin later. When it is, the axis was built from a different
-        t0 than the attribute declares (the 2003-era stale-header case) — the
-        attribute still wins, but the run is marked ``"conflict"``.
-        """
-        axis, _ = self._build_time_axis(corrected_time, n_bins)
-        if corrected_time.size == 0 or axis.size == 0:
-            return decode
-        k = int(np.max(decode.t0_bins))
-        if k + 1 >= axis.size:
-            return decode
-        if abs(float(axis[k + 1])) < abs(float(axis[k])):
-            logger.warning(
-                "%s: NeXus corrected_time is closer to zero at bin %d than at the "
-                "decoded t0 bin %d; keeping the t0_bin attribute.",
-                source_file,
-                k + 1,
-                k,
-            )
-            return _T0Decode(decode.t0_bins, [None] * len(decode.t0_time_us), "conflict")
-        return decode
 
     def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
         """Resolve forward/backward detector sets from file grouping or defaults."""
