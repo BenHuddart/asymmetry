@@ -172,6 +172,8 @@ def test_zero_and_single_bin_intersections_preserve_acquisition(boundary_file, l
     ],
 )
 def test_serialized_root_defaults_are_distinct_from_container_length(filename, first, last, length):
+    if filename.endswith(".root"):
+        pytest.importorskip("uproot")
     dataset = load(FIXTURES / filename)
     run = dataset.run
     assert [h.n_bins for h in run.histograms] == [length] * 2
@@ -189,7 +191,7 @@ def test_serialized_root_defaults_are_distinct_from_container_length(filename, f
 @pytest.mark.parametrize("encoded", [False, True])
 @pytest.mark.parametrize("exclude", [False, True])
 def test_modern_root_per_detector_bounds_ignore_spectators(tmp_path, encoded, exclude):
-    import uproot
+    uproot = pytest.importorskip("uproot")
 
     from tests.io.test_root_loader import _write_header_strings
 

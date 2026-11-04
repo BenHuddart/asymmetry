@@ -108,6 +108,7 @@ For acquired modern LEM, FLAME, and HiFi ROOT comparisons, point
 The optional cases also read sibling tutorial data in that checkout, in place.
 They compare omitted and matched explicit selections, exact counts, timestamps,
 and positive-count F/B errors; no acquisition data are copied into this repository.
+Cases skip when the optional ROOT dependency or their external example is absent.
 
 ## User-state isolation
 

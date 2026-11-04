@@ -18,6 +18,7 @@ from asymmetry.core.simulate import reduce_run_to_dataset
 from tests.io import test_psi_good_intervals
 
 pytestmark = [pytest.mark.io, pytest.mark.integration]
+pytest.importorskip("uproot")
 musrfit_export = test_psi_good_intervals.musrfit_export
 
 # External inputs from musrfit revision 708f777b; no acquisition is vendored.
@@ -78,6 +79,8 @@ def test_external_root_selected_observations(musrfit_export, example, pair, good
         pytest.skip("ASYMMETRY_MUSRFIT_DATA not set; external musrfit examples unavailable")
     relative, digest = EXAMPLES[example]
     path = (Path(locator) / relative).resolve()
+    if not path.is_file():
+        pytest.skip(f"musrfit example file not available: {relative}")
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
     dataset = load(path)
     run = dataset.run
