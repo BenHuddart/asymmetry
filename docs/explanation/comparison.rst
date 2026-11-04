@@ -205,9 +205,9 @@ absolute :math:`5\times10^{-7}` near zero because of ASCII precision.
 Omitted native data intervals select different observations in all three
 examples. The HiFi initial pair includes an empty channel; its error comparison
 uses an additional explicitly selected populated pair. Zero-count uncertainty
-conventions are outside that positive-count comparison: Asymmetry retains a
-unit-fraction uncertainty sentinel for one-sided or empty bins, whereas the
-native export supplies different finite errors. This is selected
+conventions are outside that positive-count comparison. For one-sided bins,
+Asymmetry retains a unit-fraction uncertainty sentinel, while the native export
+supplies count-dependent finite errors. This is selected
 numerical coverage of three acquired examples, not agreement for every example
 file or every ROOT layout.
 
