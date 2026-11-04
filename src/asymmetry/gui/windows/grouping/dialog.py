@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     GENERIC_INSTRUMENT,
@@ -408,9 +408,9 @@ class GroupingDialog(QDialog):
         #: its own lifetime, so a digest over the counts would cost exactly what
         #: the scan it guards costs. Populated by the off-thread detection and by
         #: the one-shot auto-detect scan, so neither repeats the other's work.
-        self._t0_search_cache: dict[tuple[int, int], RunT0Search] = {}
+        self._t0_search_cache: dict[tuple[int, int, int | None], RunT0Search] = {}
         #: Cache key of the detection currently in flight (single-flight guard).
-        self._t0_detection_key: tuple[int, int] | None = None
+        self._t0_detection_key: tuple[int, int, int | None] | None = None
         #: Verdict messages recorded at Apply (D9) — warnings, never a block.
         self.t0_apply_warnings: list[str] = []
         # Debounce: the preview run and the analysis groups both move under
@@ -2863,19 +2863,8 @@ class GroupingDialog(QDialog):
         self._refresh_t0_line()
 
     def _file_common_t0_for_preview_run(self) -> int:
-        """The preview run's **file** common t0 over the live analysis groups.
-
-        Derived from the run's own histograms and the current forward/backward
-        groups — never from the stored payload ``t0_bin``, which can carry a
-        manual/override shift (e.g. in override-editing mode). This is both what
-        "From file" displays and the baseline a Manual *offset* is measured
-        against (D3), so it must show the genuine file value; selecting From
-        file then genuinely clears any stored shift on Apply.
-        """
-        # ``detector_t0_bins=None`` on purpose: the From-file display and the
-        # Manual-offset baseline are the FILE values, so this one alignment call
-        # must ignore any resolved override rather than route through the
-        # resolver (D10's exception, spelled out).
+        """The live groups' file anchor, independent of policy overrides."""
+        # The file baseline excludes policy overrides.
         return self._common_t0_for_preview_run(None)
 
     def preferred_window_size(self) -> tuple[int, int]:
@@ -2898,16 +2887,28 @@ class GroupingDialog(QDialog):
         grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
         return self.minimumSizeHint().width() + 2 * grouping_room, 780
 
-    def _common_t0_for_preview_run(self, detector_t0_bins: list[int] | None) -> int:
-        """The common t0 the live analysis groups align to on the given bins.
+    def _t0_preview_run(self, period_mode: str | None = None) -> Run:
+        """Read selected acquired timing without copying count arrays."""
+        run = self._run
+        index = selected_period_index(run.grouping, period_mode or self._current_period_mode())
+        if index is None:
+            return run
+        return replace(
+            run,
+            histograms=run.grouping["period_histograms"][index],
+            grouping=select_period_grouping(run.grouping, index),
+        )
 
-        Mirrors what ``resolve_effective_grouping`` will compute for this run:
-        a max over the forward+backward detectors present in it, exclusions
-        applied. ``None`` asks for the file values. With unavailable membership,
-        retain the full-run maximum as the editing base; reduction stays unavailable.
-        """
+    def _common_t0_for_preview_run(
+        self, detector_t0_bins: list[int] | None, *, period_mode: str | None = None
+    ) -> int:
+        """Resolve the selected period's anchor over live, non-excluded groups.
+
+        With unavailable membership, the acquired maximum remains the editing
+        base while the requested reduction stays unavailable."""
         if self._run is None or not self._run.histograms:
             return 0
+        run = self._t0_preview_run(period_mode)
         try:
             forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
             backward_idx = self._filtered_group_indices(
@@ -2915,27 +2916,21 @@ class GroupingDialog(QDialog):
             )
         except InvalidGroupingError:
             return common_t0_for_groups(
-                self._run.histograms,
-                list(range(len(self._run.histograms))),
+                run.histograms,
+                list(range(len(run.histograms))),
                 detector_t0_bins=detector_t0_bins,
             )
         return common_t0_for_groups(
-            self._run.histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
+            run.histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
         )
 
     def _detected_common_t0_for_preview_run(self, search: RunT0Search) -> int:
-        """The common t0 a per-detector Auto-detect resolves for the live groups.
-
-        Auto-detect gives every detector its own detected t0 (``musrt0 -g``), so
-        the common bin is a max over the analysis detectors' *estimates* — not
-        the median of all of them. Routed through the same core helper
-        ``_apply_t0_policy`` uses, so the read-only spin cannot show a bin the
-        reduction will not align to.
-        """
-        source = (self._run.grouping or {}).get("t0_source")
+        """Align detected per-detector anchors over the live selected groups."""
+        run = self._t0_preview_run()
+        source = run.grouping.get("t0_source")
         bins = detected_detector_t0_bins(
             search,
-            [int(hist.t0_bin) for hist in self._run.histograms],
+            [int(hist.t0_bin) for hist in run.histograms],
             missing=source in ("missing", "detected"),
         )
         return self._common_t0_for_preview_run(bins)
@@ -2943,67 +2938,54 @@ class GroupingDialog(QDialog):
     def _seed_t0_spin_from_preview(self) -> None:
         """Show the preview run's file-derived common t0 in the (read-only) spin."""
         max_bin = self._max_bin_index_for_reference_dataset()
-        base = self._bin_index_base()
         t0_internal = max(0, min(max_bin, self._file_common_t0_for_preview_run()))
-        blocked = self._t0_spin.blockSignals(True)
-        try:
-            self._t0_spin.setValue(t0_internal + base)
-        finally:
-            self._t0_spin.blockSignals(blocked)
+        self._set_t0_spin_bin(t0_internal)
 
     def _seed_t0_spin_from_detection(self) -> None:
-        """Show the auto-detected common t0 in the read-only t0 spinbox.
+        """Display resolved or cached detection on the selected period's timing.
 
-        Prefers the consensus the resolve already computed (cached in
-        ``_last_resolved_seed`` whenever the draft was resolved under
-        ``auto_detect``). Re-running :func:`find_t0_for_run` here would scan
-        every detector a second time on the GUI thread — hundreds of ms at HiFi
-        scale — and, because it merged the reference-dataset metadata that
-        core's :func:`resolve_effective_grouping` does not, could even display a
-        t0 that disagreed with the one the reduction actually uses. Failing
-        that it reads the detected line's own cache (``_t0_search_cache``), and
-        only an explicit toggle with neither in hand falls back to a scan —
-        using the same ``run.metadata`` core does so the display cannot diverge,
-        under a wait cursor, and caching the result so the line never repeats it.
-        """
+        The resolved policy and the worker's detection cache share the same
+        acquired counts and metadata; neither changes the file calibration."""
         if self._run is None or not self._run.histograms:
             return
         resolved = self._last_resolved_seed
-        # Require ``t0_bin`` too, not just the strategy: ``_apply_t0_policy``
-        # writes the strategy before its ``delta == 0`` early return but leaves
-        # ``t0_bin`` unwritten there, so a run with per-detector-only t0 could
-        # carry provenance without a scalar consensus. Falling through to the
-        # scan then yields the right value, whereas a ``t0_bin`` default of 0
-        # would silently display the wrong t0.
+        # Strategy provenance alone does not supply a resolved common anchor.
         if resolved is not None and resolved.get("t0_search_strategy") and "t0_bin" in resolved:
-            self._apply_detected_t0_to_spin(int(resolved["t0_bin"]))
+            self._set_t0_spin_bin(int(resolved["t0_bin"]))
             return
         cached = self._t0_search_cache.get(self._t0_cache_key())
         if cached is not None:
             if cached.ok:
-                self._apply_detected_t0_to_spin(self._detected_common_t0_for_preview_run(cached))
+                self._set_t0_spin_bin(self._detected_common_t0_for_preview_run(cached))
             return
+        run = self._t0_preview_run()
         with self._busy_cursor():
-            search = find_t0_for_run(self._run.histograms, self._run.metadata or {})
+            search = find_t0_for_run(run.histograms, run.metadata)
         # The detected line needs the full search (per-detector outliers), and
         # this scan is exactly the one it would otherwise queue — cache it.
         self._t0_search_cache[self._t0_cache_key()] = search
         if search.ok:
-            self._apply_detected_t0_to_spin(self._detected_common_t0_for_preview_run(search))
+            self._set_t0_spin_bin(self._detected_common_t0_for_preview_run(search))
 
-    def _apply_detected_t0_to_spin(self, consensus_t0: int) -> None:
-        """Write a detected common t0 into the read-only spin."""
+    def _set_t0_spin_bin(self, consensus_t0: int) -> None:
+        """Display a zero-based t0 in the file's bin-number convention."""
         blocked = self._t0_spin.blockSignals(True)
         try:
             self._t0_spin.setValue(consensus_t0 + self._bin_index_base())
         finally:
             self._t0_spin.blockSignals(blocked)
+        with QSignalBlocker(self._last_good_spin), QSignalBlocker(self._t_good_offset_spin):
+            self._on_t0_changed()
 
     # -- the always-on file / detected / Δ line (D11) --------------------
 
-    def _t0_cache_key(self) -> tuple[int, int]:
+    def _t0_cache_key(self) -> tuple[int, int, int | None]:
         """Cache key for the preview run's detection (see ``_t0_search_cache``)."""
-        return (int(self._run.run_number), id(self._run))
+        return (
+            int(self._run.run_number),
+            id(self._run),
+            selected_period_index(self._run.grouping, self._current_period_mode()),
+        )
 
     def _schedule_t0_detection(self) -> None:
         """Queue the preview run's detection unless it is cached or in flight."""
@@ -3023,8 +3005,9 @@ class GroupingDialog(QDialog):
         if key in self._t0_search_cache or self._t0_detection_key is not None:
             return
         self._t0_detection_key = key
-        histograms = list(self._run.histograms)
-        metadata = dict(self._run.metadata or {})
+        run = self._t0_preview_run()
+        histograms = list(run.histograms)
+        metadata = dict(run.metadata)
         # No error/cancel callbacks: find_t0_for_run reports a failed search in
         # its own result (``ok=False``) rather than raising, and the only
         # cancellation is the dialog's own shutdown.
@@ -3039,20 +3022,17 @@ class GroupingDialog(QDialog):
         assert isinstance(result, RunT0Search)
         assert key is not None
         self._t0_search_cache[key] = result
+        if key == self._t0_cache_key() and self._current_t0_mode() == "auto_detect" and result.ok:
+            self._set_t0_spin_bin(self._detected_common_t0_for_preview_run(result))
         self._refresh_t0_line()
 
     def _t0_assessment_grouping(self) -> dict[str, Any]:
-        """The grouping :func:`assess_t0` reads: live groups + the run's t0 facts.
+        """Compare live groups with the selected period's acquired t0.
 
-        Deliberately free of ``effective_detector_t0_bins``: the line compares
-        the run's *file* alignment with the detection, so a policy shift already
-        in the stored payload must not move the baseline it is measured against.
-        ``bin_index_base`` rides along so the bins in the verdict messages are
-        written in the same base as the bins the line and the spin display, and
-        ``first_good_bin`` comes from the live controls so the good-window checks
-        judge the window the user is editing, not the one the run was loaded with.
-        """
-        run_grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        Effective policy overrides cannot move the file baseline. Display-base
+        bin numbers and live good-window controls keep the verdict in the
+        coordinates of the edited request."""
+        run_grouping = self._t0_preview_run().grouping
         grouping: dict[str, Any] = {
             "groups": {
                 gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
@@ -3069,7 +3049,7 @@ class GroupingDialog(QDialog):
     def _current_t0_verdict(self) -> T0Assessment:
         """The live t0 verdict for the preview run (D8), from the cached detection."""
         return assess_t0(
-            self._run.histograms,
+            self._t0_preview_run().histograms,
             self._t0_assessment_grouping(),
             self._t0_search_cache.get(self._t0_cache_key()),
         )
@@ -3097,7 +3077,7 @@ class GroupingDialog(QDialog):
 
         base = self._bin_index_base()
         file_common = self._file_common_t0_for_preview_run()
-        source = (self._run.grouping or {}).get("t0_source")
+        source = self._t0_preview_run().grouping.get("t0_source")
         if source in ("detected", "missing"):
             file_part = "File: none (detected)"
         else:
@@ -3765,8 +3745,8 @@ class GroupingDialog(QDialog):
         self._good_window_mode_combo.currentIndexChanged.connect(self._on_good_window_mode_changed)
         self._exclude_edit.textEdited.connect(self._refresh_preview)
         self._group_table.itemChanged.connect(self._refresh_preview)
-        for button in self._period_mode_buttons.values():
-            button.toggled.connect(self._refresh_preview)
+        for mode, button in self._period_mode_buttons.items():
+            button.toggled.connect(partial(self._on_period_mode_changed, mode))
         # Deadtime and background live in their own dialogs; the accept paths in
         # _on_configure_deadtime/_on_configure_background call _refresh_preview()
         # directly after folding the returned policy into the draft.
@@ -5664,6 +5644,22 @@ class GroupingDialog(QDialog):
         if btn is None:
             btn = self._period_mode_buttons[str(PeriodMode.RED)]
         btn.setChecked(True)
+
+    def _on_period_mode_changed(self, previous_mode: str, checked: bool) -> None:
+        """Keep the authored offset while changing the acquired timing reference."""
+        mode = self._current_t0_mode()
+        if not checked:
+            if mode == "manual":
+                offset = int(self._t0_spin.value()) - self._bin_index_base()
+                offset -= self._common_t0_for_preview_run(None, period_mode=previous_mode)
+                self._set_t0_spin_bin(self._file_common_t0_for_preview_run() + offset)
+            return
+        self._last_resolved_seed = None
+        if mode == "from_file":
+            self._seed_t0_spin_from_preview()
+        elif mode == "auto_detect" and self._t0_cache_key() in self._t0_search_cache:
+            self._seed_t0_spin_from_detection()
+        self._refresh_preview()
 
     def _current_period_mode(self) -> str:
         """Return key for the selected period mode."""

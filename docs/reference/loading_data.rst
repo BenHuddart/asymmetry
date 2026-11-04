@@ -145,41 +145,91 @@ canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 ``first_good_time`` / ``last_good_time`` are present, they are used only as a
 fallback if the corresponding integer bin attributes are missing.
 
-Asymmetry's internal ``Histogram`` and grouping bin indices are always
-zero-based array indices. ISIS header bins are **one-based and inclusive**,
-decoded deterministically rather than inferred: ``t0_bin``, ``first_good_bin``
-and ``last_good_bin`` each become ``attribute − 1`` and ``bin_index_base = 1``
-is recorded in grouping metadata for display, unconditionally, for every ISIS
-NeXus/HDF4 file. This is resolved evidence, not a heuristic — a 1,245-file
-survey across EMU, HiFi, MuSR and ARGUS (HDF4 V1 and HDF5 V2, 16 ns and 8 ns
-binning) found ``last_good_bin == n_bins`` in every file (a 0-based index can
-never equal the length) and ``t0_bin == floor(time_zero / resolution) + 1`` on
-every file whose quotient was unambiguously fractional; see
-``docs/porting/t0-determination/isis-header-index-base.md`` for the full
-evidence and the two counter-examples it also explains (a stale pre-2003
-header and an exact-edge tie). The file's own ``corrected_time`` axis — which
-musrfit and WiMDA both also read — is kept only as a *cross-check*: when it
-disagrees with the decoded ``t0_bin`` the run is flagged ``t0_source =
-"conflict"`` (the attribute still wins) rather than silently trusted or
-silently ignored.
+NeXus uses a fixed-bin acquisition model: a usable positive scalar
+``resolution`` supplies the nominal width in μs. Explicit time units convert
+s, ms, μs (``us``), ns, or ps, including spelled-out names. Missing resolution
+units mean ps in V1 and ns in V2; exact time zero and axis-fallback units mean
+μs. These conventions follow the
+`muon NeXus definition, version 2 revision 8 (including V1), pp. 14 and 49–51
+<https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_.
+Field, temperature, and log compatibility are separate from timing decoding.
 
-The integer ``t0_bin`` only places t0 to the nearest bin. ISIS additionally
-stores ``time_zero``, the exact time of t0 in microseconds, which can fall
-anywhere within that bin (the survey found fractional positions from 0 to
-nearly 1). Asymmetry keeps this exact value (``t0_time_us``) and stamps the
-time axis from it — see :doc:`detector_grouping` § Time-zero (t0) modes for
-the bin-centre convention — rather than discarding up to half a bin of
-genuine precision. When ``time_zero`` and ``t0_bin`` disagree about which bin
-contains t0, the attribute ``t0_bin`` wins and the exact value is dropped
-(``t0_source = "conflict"``, with a loader warning); a file with neither
-field carries no usable t0 at all (``t0_source = "missing"``), and analysis
-falls back to the automatic search — see :doc:`data_reduction/t0_search` and
-:doc:`detector_grouping`. ``bin_index_base`` is display-only: the internal
-bins are always zero-based, and this field only tells the GUI which number to
-add back when showing a bin index to the user. For V1 (HDF4), this good-data
-window and ``t0_bin`` are read from the attributes of the ``counts`` dataset
-(where ISIS stores them) and decoded by the same one-based rule, matching the
-V2 behaviour.
+Supplied ``raw_time``, ``time_of_flight``, and ``corrected_time`` arrays and
+attributes remain available in ``metadata["nexus_fields"]``. With a usable
+resolution they do not determine the grid, shift the acquisition origin, or
+veto loading. Accumulated coordinate rounding, discrepant secondary axes, and
+unusual terminal coordinates therefore retain every recorded count bin. The
+chosen width source is recorded as ``metadata["nexus_timing_source"]``.
+This nominal fixed-bin interpretation does not establish actual terminal-bin
+exposure or physical t0 accuracy.
+
+Without usable resolution, the loader tries ``raw_time``, then
+``time_of_flight``, then ``corrected_time``. Missing fields are skipped. Unusable
+numerical values or units are diagnosed and skipped. Empty or multi-token unit
+arrays make that declaration unusable; a remaining timing alternative is still
+tried. The first supported uniform axis supplies the width from its end-to-end
+span, using N+1 edges or N centres. It supplies spacing only: acquisition bins
+keep their zero-origin convention.
+
+Asymmetry also checks that an axis used as the width fallback is finite,
+increasing, and uniform, with the supported length and at least two points.
+These checks protect the uniform-bin interpretation when resolution cannot
+supply it; they do not apply to auxiliary axes when resolution is usable.
+Uniformity allows four ULPs of the stored dtype at its declared scale. An unsupported
+candidate is diagnosed and skipped. When no usable width remains, the error is ``no usable time axis or positive resolution.``
+The calibrated-load API cannot assign physical coordinates in that case, so
+it does not invent a 1 μs width.
+
+Internal ``Histogram`` and grouping indices are zero-based. The ISIS
+``counts`` attribute ``t0_bin`` is converted to ``attribute − 1``; integer
+``first_good_bin`` and ``last_good_bin`` keep their one-based, inclusive
+decoding. ``bin_index_base = 1`` records the display convention. Good-time
+fallback selection is described above.
+
+Asymmetry also checks that timing values can be assigned to the acquired
+channels: a scalar broadcasts, a detector vector covers every detector, and a
+period-by-detector table covers every period. Nonfinite values, unsupported
+time units, and unusable integer anchors are diagnosed; a usable remaining
+integer or exact declaration still supplies calibrated timing. This prevents
+silently resizing a detector calibration. If no t0 declaration can be
+interpreted, raw loading remains available and
+``t0_source = "missing"`` invokes the existing automatic-search policy, just as
+for absent or unavailable calibration; see :doc:`data_reduction/t0_search`.
+
+Asymmetry also checks whether redundant exact ``time_zero`` falls inside the
+bin identified by ``t0_bin``, allowing stored representation precision at an
+edge. This keeps coherent exact origins, including zero, without accepting a
+materially displaced header as sub-bin calibration. Disagreement is advisory:
+loading succeeds with integer anchors and drops exact origins only for the
+conflicting detectors. Coherent detectors retain their exact calibration, so an
+unused detector cannot change the selected pair's timestamps. The run records
+``t0_source = "conflict"`` with the warning
+``NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0 only for conflicting detectors.``
+Integer-only timing is sufficient. Auxiliary corrected coordinates cannot
+discard a valid exact origin. Loaded timestamps and re-reduction use the same
+selected-channel alignment and leading-crop mapping; counts remain unchanged.
+Two-period selection retains each period's own file-timing status, including
+header conflicts, alongside its histograms and default reduced arrays.
+
+Compared with other programs
+""""""""""""""""""""""""""""
+
+WiMDA and musrfit use declared resolution for their fixed-bin NeXus count
+analysis. Asymmetry follows that interpretation while retaining its exact t0
+and bin-centre stamps. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports
+identical arrays for synthetic regular, cumulative-float32, and shortened-terminal
+coordinate variants with the same counts and resolution. Mantid 6.16.1's legacy
+loader retains coordinate variations: all 66 affected original HDF4 inputs
+load with unchanged counts. This is a scoped count/coordinate comparison, not
+physical timing or exposure certification. See :doc:`/explanation/comparison`
+and the `Mantid legacy loader reference
+<https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_.
+
+Asymmetry also checks that selected channels have compatible bin widths before
+integer alignment, because whole-bin count transport requires one common
+spacing. Failure affects the requested reduction; acquired histograms remain
+available for inspection and repair. This selected-operation requirement does
+not make redundant file coordinates a loading gate. See :doc:`detector_grouping`.
 
 HDF4 container (legacy ``.nxs``)
 """"""""""""""""""""""""""""""""

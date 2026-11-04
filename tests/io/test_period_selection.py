@@ -382,3 +382,18 @@ def test_nexus_period_roundtrip_and_load_kwarg():
 
     with pytest.raises(ValueError):
         load(PHOTO_MUSR_FILE, period=5)
+
+
+@pytest.mark.parametrize("sources", [None, ["conflict", "file"]])
+def test_period_selection_accepts_projects_without_per_period_t0_status(sources):
+    from asymmetry.core.io.periods import select_period_grouping
+
+    dataset = _combined_two_period()
+    dataset.run.grouping["t0_source"] = "conflict"
+    if sources is not None:
+        dataset.run.grouping["period_t0_sources"] = sources
+    selected = select_period(dataset, "green")
+    expected = "conflict" if sources is None else "file"
+    assert selected.run.grouping["t0_source"] == expected
+    assert "period_t0_sources" not in selected.run.grouping
+    assert select_period_grouping(dataset.run.grouping, 1)["t0_source"] == expected

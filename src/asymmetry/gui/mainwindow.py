@@ -5284,6 +5284,7 @@ class MainWindow(QMainWindow):
         "period_dead_time_us",
         "period_histograms",
         "period_reduced",
+        "period_t0_sources",
     )
 
     def _preserve_per_run_normalisers(
@@ -5291,10 +5292,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Keep this run's own per-run normalisers when rebuilding its grouping.
 
-        Always prefer the dataset's own value (``existing_grouping``, the run's
-        loader-resolved metadata); fall back to ``grouping_result`` only when the
-        run never carried one. This stops a grouping template from clobbering a
-        run's ``good_frames`` with a different run's value.
+        Acquisition facts come from this dataset before the grouping result;
+        templates cannot replace another run's exposure or period calibration.
         """
         for key in self._PER_RUN_NORMALISER_KEYS:
             own = existing_grouping.get(key)
