@@ -217,3 +217,82 @@ def test_combined_preview_shares_final_period_calculation_and_grid_checks(qapp, 
         assert any("single selected period" in text.get_text() for text in pane._axes.texts)
     dialog._clear_dirty()
     dialog.close()
+
+
+@pytest.mark.parametrize("source", ["live", "saved", "explicit", "unity"])
+def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(qapp, source):
+    from asymmetry.core.io import resolve_background_reference
+    from asymmetry.core.project.profiles import BackgroundPolicy
+    from asymmetry.core.transform.rebin import binning_spec
+    from asymmetry.core.transform.reduce import reduce_period_asymmetry
+
+    dataset, profile = dataset_and_profile(request())
+    green = acquired_run(anchors=(10, 15))
+    reference, _ = dataset_and_profile(request())
+    reference.run.run_number = 99
+    reference.run.metadata["run_number"] = 99
+    reference.metadata["run_number"] = 99
+    for histograms, levels in [
+        (dataset.run.histograms, (100, 200)),
+        (green.histograms, (300, 400)),
+        (reference.run.histograms, (10, 20)),
+    ]:
+        for histogram, level in zip(histograms, levels):
+            histogram.counts[:] = level
+    payload = {"run_number": 99}
+    if source == "live":
+        reference.run.grouping["good_frames"] = 50
+    elif source == "saved":
+        payload.update(good_frames_sample=300, good_frames_reference=50)
+    elif source == "explicit":
+        payload["scale"] = 3
+    dataset.run.grouping.update(
+        good_frames=300,
+        period_good_frames=[100, 200],
+        period_histograms=[dataset.run.histograms, green.histograms],
+    )
+    profile = replace(
+        profile,
+        period_mode="green_minus_red",
+        background_policy=BackgroundPolicy(
+            mode="reference_run", details={"background_run": payload}
+        ),
+    )
+    dialog = GroupingDialog(
+        [dataset, reference], profiles=[profile], selected_run_number=dataset.run_number
+    )
+    pane = dialog._preview_pane
+    pane.flush()
+    _wait_until(lambda: pane.corrections_complete)
+    grouping = resolve_effective_grouping(profile, dataset.run)
+
+    def resolver(selected):
+        return resolve_background_reference(
+            payload,
+            sample_good_frames=selected.get("good_frames"),
+            datasets=[reference],
+            allow_file=False,
+        )
+
+    final = reduce_period_asymmetry(
+        dataset.run.histograms,
+        grouping,
+        "green_minus_red",
+        binning=binning_spec(grouping),
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=True,
+        reference_resolver=resolver,
+    )
+    scales = (2, 4) if source == "live" else ({"saved": 6, "explicit": 3, "unity": 1}[source],) * 2
+    red_f, red_b = 100 - scales[0] * 10, 200 - scales[0] * 20
+    green_f, green_b = 300 - scales[1] * 10, 400 - scales[1] * 20
+    expected = 100 * ((green_f - green_b) / (green_f + green_b) - (red_f - red_b) / (red_f + red_b))
+    np.testing.assert_allclose(pane._last_result.asymmetry, expected, atol=1e-12)
+    np.testing.assert_allclose(pane._last_result.asymmetry, final.asymmetry)
+    np.testing.assert_allclose(pane._last_result.error, final.error)
+    dialog._clear_dirty()
+    dialog.close()

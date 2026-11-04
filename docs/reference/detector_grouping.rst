@@ -710,7 +710,9 @@ this same resolved window. Independent projections and held periods resolve
 their own selected support; G±R still requires identical reduced grids.
 Fixed and one-shot calibrated coefficients stay
 fixed. The G±R preview uses the final per-period calculation and refuses
-mismatched grids. Counts and correction-compare curves require a single
+mismatched grids. Reference-background subtraction uses each period's live
+exposure; saved frame pairs and explicit scales retain their recorded meaning.
+Counts and correction-compare curves require a single
 selected period; a combined asymmetry has no single corresponding F/B spectrum. See :ref:`comparison-file-manual-windows` for the related reference
 workflows and their different controls.
 

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
     ForwardBackwardCounts,
@@ -216,10 +217,7 @@ class _PreviewRequest:
 
 @dataclass(frozen=True)
 class CountsCurves:
-    """Full grouped spectra on shared decimated bin-centre times in µs.
-
-    Marker edges retain the undecimated acquisition-bin coordinates.
-    """
+    """Decimated observed bin-centre spectra in μs, with undecimated marker edges."""
 
     #: Bin-centre times of the drawn bins, in µs after t0.
     time: np.ndarray
@@ -989,9 +987,13 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     """Reduce immutable request snapshots off-thread, with cooperative cancellation."""
     if worker.is_cancelled():
         raise TaskCancelledError
+
+    def resolve_reference(grouping):
+        return background_reference_for_grouping(request.resolved_reference, grouping)
+
     if request.profile is not None:
         grouping = resolve_effective_grouping(
-            request.profile, request.run, reference_resolver=lambda _: request.resolved_reference
+            request.profile, request.run, reference_resolver=resolve_reference
         )
     else:
         grouping = request.grouping or {}
@@ -1030,7 +1032,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=use_background,
             facility=facility,
-            reference_resolver=lambda _: request.resolved_reference,
+            reference_resolver=resolve_reference,
             allow_incomplete=True,
         )
         if worker.is_cancelled():
@@ -1060,7 +1062,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=bg,
             facility=facility,
-            reference_resolver=lambda _: request.resolved_reference,
+            reference_resolver=resolve_reference,
             allow_incomplete=True,
         )
 
