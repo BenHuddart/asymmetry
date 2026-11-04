@@ -110,6 +110,13 @@ They compare omitted and matched explicit selections, exact counts, timestamps,
 and positive-count F/B errors; no acquisition data are copied into this repository.
 Cases skip when the optional ROOT dependency or their external example is absent.
 
+The synthetic NeXus good-time comparison uses musrfit 1.12.1, revision
+``708f777b``, on ``PATH``. Run
+``python tools/harness.py test -- tests/io/test_nexus_good_time_reference.py``.
+It matches explicit selected raw channels, counts, and Poisson errors, and
+separates integer channel timestamps from exact NeXus time-zero calibration.
+The integration cases skip when that executable/version is absent.
+
 ## User-state isolation
 
 Only `gui`-marked tests activate Qt fixtures. They receive per-test temporary

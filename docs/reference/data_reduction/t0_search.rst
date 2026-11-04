@@ -43,6 +43,12 @@ ROOT. Negative unspecified or nonfinite entries do not become file calibration. 
 anchors enter the shared whole-bin alignment; they do not select a different
 search or reduction method.
 
+NeXus physical good times are resolved on raw acquisition centres before t0
+is subtracted, and remain attached to each detector and period as inclusive
+raw-bin bounds. Exact sub-bin t0 affects timestamps, never which raw bins
+these declarations select. Initial loading and subsequent file-good reductions
+share that interpretation; see :doc:`/reference/loading_data`.
+
 File-good bounds remain attached to raw acquisition bins. Asymmetry converts
 PSI MDU markers before alignment and stores BIN/MDU/ROOT good bounds as
 zero-based inclusive indices. The selected detectors' shifted bounds intersect
@@ -196,6 +202,11 @@ Mantid 6.16.1 retains shifted spectrum coordinates and offers explicit rebinning
 onto a common grid. Asymmetry records residuals from its integer approximation;
 none of these arithmetic checks establishes the physical origin of a pulse.
 See :doc:`/explanation/comparison` for the versioned scope and sources.
+
+For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
+1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
+interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+are not implied by agreement on matched raw observations.
 
 **References**
 

@@ -4,7 +4,7 @@ Crops to the ``t_good Offset`` row (mode selector, offset spinbox), the
 ``Last Good Bin`` row beneath it, and the always-on read-only line beneath
 *that* pair which carries the offset in time and, once Manual is selected,
 the file's own values alongside the edited ones. The synthesised run is a
-two-detector continuous source with an explicit file good window (offset 3
+two-detector NeXus acquisition with physical file good times (offset 3
 bins from t0, closing at bin 32); the scenario switches the selector to
 Manual and types a different offset (7 bins) so the line shows both the
 edited value and the file's, exactly the comparison Manual mode exists for.
@@ -15,12 +15,14 @@ Companion to :doc:`/reference/detector_grouping` and
 from __future__ import annotations
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from PySide6.QtCore import QEventLoop, QPoint, QRect, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 from ._base import CaptureContext, Scenario, _optimize_png, register
@@ -43,13 +45,9 @@ _MANUAL_OFFSET = 7
 
 
 def _make_two_detector_run(seed: int = 2026) -> MuonDataset:
-    """A two-detector continuous-source run with an explicit file good window.
+    """Load physical good times on a seeded synthetic acquisition grid."""
+    import h5py
 
-    Built directly from :class:`Histogram`/:class:`Run` (not through a
-    loader), as :mod:`grouping_window_t0_row` does, so the header values are
-    exactly what this scenario asks for rather than whatever a loader would
-    infer.
-    """
     rng = np.random.default_rng(seed)
     bins = np.arange(_N_BINS)
     tail = np.where(
@@ -60,55 +58,25 @@ def _make_two_detector_run(seed: int = 2026) -> MuonDataset:
     clean = np.full(_N_BINS, _BASELINE_COUNTS, dtype=float)
     clean[_T0_BIN] = _PEAK_COUNTS
     clean += tail
-    histograms = [
-        Histogram(
-            counts=rng.poisson(clean).astype(float),
-            bin_width=_BIN_WIDTH_US,
-            t0_bin=_T0_BIN,
-            good_bin_start=_FILE_FIRST_GOOD_BIN,
-            good_bin_end=_FILE_LAST_GOOD_BIN,
-        )
-        for _ in range(2)
-    ]
-    grouping = {
-        "groups": {1: [1], 2: [2]},
-        "group_names": {1: "Forward", 2: "Backward"},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "t0_bin": _T0_BIN,
-        "t_good_offset": _FILE_FIRST_GOOD_BIN - _T0_BIN,
-        "first_good_bin": _FILE_FIRST_GOOD_BIN,
-        "last_good_bin": _FILE_LAST_GOOD_BIN,
-        "bin_index_base": 0,
-        "bunching_factor": 1,
-        "deadtime_correction": False,
-        "included_groups": {1: True, 2: True},
-    }
-    run = Run(
-        run_number=9002,
-        histograms=histograms,
-        metadata={
-            "title": "PSI good-window calibration",
-            "facility": "PSI",
-            "temperature": 250.0,
-            "field": 0.0,
-        },
-        grouping=grouping,
-    )
-    time = (bins[_T0_BIN:] - _T0_BIN) * _BIN_WIDTH_US
-    return MuonDataset(
-        time=time,
-        asymmetry=np.zeros_like(time),
-        error=np.ones_like(time),
-        metadata={
-            "run_number": run.run_number,
-            "title": run.metadata["title"],
-            "temperature": 250.0,
-            "field": 0.0,
-        },
-        run=run,
-    )
+    counts = np.stack([rng.poisson(clean) for _ in range(2)])
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "good-window.nxs"
+        with h5py.File(path, "w") as handle:
+            entry = handle.create_group("raw_data_1")
+            entry.create_dataset("definition", data=b"muonTD")
+            entry.create_dataset("run_number", data=9002)
+            entry.create_dataset("title", data=b"NeXus good-window calibration")
+            detector = entry.create_group("instrument/detector_1")
+            detector.create_dataset("counts", data=counts)
+            detector.create_dataset("grouping", data=[1, 2])
+            for name, value in (
+                ("resolution", _BIN_WIDTH_US),
+                ("time_zero", (_T0_BIN + 0.5) * _BIN_WIDTH_US),
+                ("first_good_time", (_FILE_FIRST_GOOD_BIN + 0.5) * _BIN_WIDTH_US),
+                ("last_good_time", (_FILE_LAST_GOOD_BIN + 0.5) * _BIN_WIDTH_US),
+            ):
+                detector.create_dataset(name, data=value).attrs["units"] = "us"
+        return NexusLoader().load(path)
 
 
 class GroupingWindowGoodWindowRowScenario(Scenario):
