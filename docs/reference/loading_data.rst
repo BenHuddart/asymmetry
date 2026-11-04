@@ -217,8 +217,8 @@ it does not invent a 1 μs width.
 Internal ``Histogram`` and grouping indices are zero-based. The ISIS
 ``counts`` attribute ``t0_bin`` is converted to ``attribute − 1``; integer
 ``first_good_bin`` and ``last_good_bin`` retain the supported ISIS
-one-based, inclusive compatibility decoding, including scalar attributes and
-detector tables. The published definition alone does not establish an integer
+one-based, inclusive compatibility decoding: shared scalars in V1,
+and scalars or single-period detector vectors in V2. The published definition alone does not establish an integer
 base for every writer; V2 child good-bin datasets are retained as metadata
 without adding a new conversion for that spelling. ``bin_index_base = 1`` records the display convention. Good-time
 fallback selection is described above.
@@ -261,6 +261,11 @@ retain their counts exactly. This is a scoped count/coordinate comparison, not
 physical timing or exposure certification. See :doc:`/explanation/comparison`
 and the `Mantid legacy loader reference
 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_.
+
+For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
+1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
+interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+are not implied by agreement on matched raw observations.
 
 Asymmetry also checks that selected channels have compatible bin widths before
 integer alignment, because whole-bin count transport requires one common

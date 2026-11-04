@@ -9,7 +9,11 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import group_forward_backward
-from asymmetry.core.transform.t0 import effective_detector_t0_bins, good_window_for_groups
+from asymmetry.core.transform.t0 import (
+    effective_detector_t0_bins,
+    good_window_for_groups,
+    selected_t0_reference,
+)
 from asymmetry.core.transform.units import PERCENT_PER_FRACTION
 
 
@@ -24,6 +28,22 @@ class QuickAsymmetry:
     alignment: AlignmentCrop | None
     window: BinWindow | None
     unavailable_reason: str | None = None
+    t0_time_us: float | None = None
+
+    @property
+    def file_grouping(self) -> dict:
+        """Canonical uncropped bounds, including an explicitly unavailable window."""
+        start = self.alignment.first_bin if self.alignment is not None else 0
+        first, last = (
+            (1, 0) if self.window is None else (self.window.first + start, self.window.last + start)
+        )
+        return {
+            **({"t0_time_us": self.t0_time_us} if self.t0_time_us is not None else {}),
+            "t0_bin": self.common_t0,
+            "first_good_bin": first,
+            "last_good_bin": last,
+            "t_good_offset": max(0, first - self.common_t0),
+        }
 
     @property
     def metadata(self) -> dict:
@@ -69,4 +89,16 @@ def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmet
         grouped.common_t0 + grouped.counts.alignment.first_bin,
         alignment,
         window,
+        t0_time_us=(
+            grouped.counts.t0_time_us + alignment.first_bin * grouped.counts.bin_width_us
+            if histograms[
+                selected_t0_reference(
+                    histograms,
+                    grouping,
+                    selected_indices=[i for i, _ in alignment.detector_offsets],
+                )
+            ].t0_time_us
+            is not None
+            else None
+        ),
     )

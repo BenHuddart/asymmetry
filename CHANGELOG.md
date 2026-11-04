@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- NeXus physical good times select raw acquisition bins and retain their detector/period windows through regrouping, re-reduction, and project reopening.
-
 ### Documentation
 
 - Explain the count-based reduction pipeline with a flowchart and a guide to
@@ -22,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed
+
+- NeXus physical good times select raw acquisition bins and retain their detector/period windows through regrouping, re-reduction, and project reopening.
 
 - Load legacy LEM ROOT version-5 timing headers, retaining detector counts and
   calibration through the shared PSI reduction.

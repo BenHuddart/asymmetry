@@ -1046,6 +1046,11 @@ origin, residuals, common observed support, and inclusive window contract are
 defined above; :ref:`comparison-timing` and :ref:`comparison-psi-intervals`
 state the versioned comparisons and explain the different defaults.
 
+For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
+1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
+interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+are not implied by agreement on matched raw observations.
+
 Stored and one-shot coefficients remain fixed; enabled automatic policies use
 current inputs. See :ref:`comparison-calibration-policies` for the distinctions
 from WiMDA's explicit Estimate, Mantid's AlphaCalc, and musrfit configuration.

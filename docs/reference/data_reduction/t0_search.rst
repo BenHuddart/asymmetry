@@ -203,6 +203,11 @@ onto a common grid. Asymmetry records residuals from its integer approximation;
 none of these arithmetic checks establishes the physical origin of a pulse.
 See :doc:`/explanation/comparison` for the versioned scope and sources.
 
+For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
+1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
+interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+are not implied by agreement on matched raw observations.
+
 **References**
 
 - S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon

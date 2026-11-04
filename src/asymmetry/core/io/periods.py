@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
@@ -267,13 +268,8 @@ def period_run(combined: Run, index: int) -> Run:
     reduction of it is a reduction of that period alone.
     """
     grouping = combined.grouping
-    from asymmetry.core.project.profiles import (
-        profile_fingerprint_for_run,
-        profile_from_payload,
-        resolve_effective_grouping,
-    )
+    from asymmetry.core.project.profiles import GoodWindowPolicy
 
-    profile = profile_from_payload(grouping, "", profile_fingerprint_for_run(combined))
     count = len(grouping["period_histograms"])
 
     period_grouping = select_period_grouping(grouping, index)
@@ -308,7 +304,25 @@ def period_run(combined: Run, index: int) -> Run:
         source_file=combined.source_file,
     )
 
-    run.grouping.update(resolve_effective_grouping(profile, run))
+    # Per-detector file facts follow the selected period; scalar-only requests
+    # retain their recorded window. Extraction never runs a timing search.
+    if (
+        "detector_first_good_bins" in period_grouping
+        and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
+        == "from_file"
+    ):
+        quick = quick_asymmetry(
+            histograms,
+            {
+                key: value
+                for key, value in period_grouping.items()
+                if key not in {"first_good_bin", "last_good_bin"}
+            },
+        )
+        run.grouping.pop("t0_time_us", None)
+        run.grouping.update(quick.file_grouping)
+        metadata.pop("correction_error", None)
+        metadata.update(quick.metadata)
     return run
 
 
@@ -669,11 +683,22 @@ def combine_mapped_periods(
         grouping=grouping,
         source_file=source_file or base_run.source_file,
     )
-    reference = period_datasets[red_periods[0] - 1]
+    quick = quick_asymmetry(
+        red_histograms,
+        {
+            key: value
+            for key, value in grouping.items()
+            if key not in {"first_good_bin", "last_good_bin"}
+        },
+    )
+    grouping.pop("t0_time_us", None)
+    grouping.update(quick.file_grouping)
+    metadata.update(quick.metadata)
+    window = quick.window.slice if quick.window is not None else slice(0, 0)
     return MuonDataset(
-        time=np.asarray(reference.time, dtype=np.float64).copy(),
-        asymmetry=np.asarray(reference.asymmetry, dtype=np.float64).copy(),
-        error=np.asarray(reference.error, dtype=np.float64).copy(),
+        time=quick.time[window],
+        asymmetry=quick.asymmetry[window],
+        error=quick.error[window],
         metadata=metadata,
         run=run,
     )

@@ -30,7 +30,6 @@ from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.transform.t0 import selected_t0_reference
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
 try:  # optional dependency
@@ -727,17 +726,11 @@ class NexusLoader(BaseLoader):
                 },
             )
             asymmetry, error = quick.asymmetry, quick.error
-            common_t0, n_grouped = quick.common_t0, len(asymmetry)
             alpha = 1.0
 
             time_axis = quick.time
-            start = quick.alignment.first_bin if quick.alignment is not None else 0
-            t0_time_us = ((start + 0.5) * bin_width - time_axis[0]) if n_grouped else None
-            group_first_good, group_last_good = good_windows[period_idx - 1, 0]
             if quick.window is not None:
-                group_first_good = quick.window.first + start
-                group_last_good = quick.window.last + start
-                window = slice(quick.window.first, quick.window.last + 1)
+                window = quick.window.slice
                 time_axis = time_axis[window]
                 asymmetry = asymmetry[window]
                 error = error[window]
@@ -761,10 +754,7 @@ class NexusLoader(BaseLoader):
                 "forward_group": grouping.forward_group_id,
                 "backward_group": grouping.backward_group_id,
                 "alpha": alpha,
-                "first_good_bin": int(group_first_good),
-                "last_good_bin": int(group_last_good),
-                "t0_bin": int(common_t0),
-                "t_good_offset": max(0, int(group_first_good) - int(common_t0)),
+                **quick.file_grouping,
                 # ISIS header bins are 1-based; the payload keeps 0-based values
                 # and records the file's convention for display only.
                 "bin_index_base": 1,
@@ -783,12 +773,6 @@ class NexusLoader(BaseLoader):
             }
             if good_frames_periods[period_idx - 1] is not None:
                 run_grouping["good_frames"] = good_frames_periods[period_idx - 1]
-            if (
-                t0_time_us is not None
-                and histograms[selected_t0_reference(histograms, run_grouping)].t0_time_us
-                is not None
-            ):
-                run_grouping["t0_time_us"] = float(t0_time_us)
 
             run = Run(
                 run_number=period_run_number,

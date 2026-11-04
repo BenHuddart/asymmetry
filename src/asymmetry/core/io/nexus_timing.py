@@ -225,7 +225,9 @@ def read_nexus_timing(
     return width, decodes, source, windows
 
 
-def _good_bin_declaration(values: Any, n_periods: int, n_detectors: int, context: str):
+def _good_bin_declaration(
+    values: Any, version: str, n_periods: int, n_detectors: int, context: str
+) -> np.ndarray | None:
     """Decode the supported ISIS integer spelling, including numeric text attributes."""
     if values is None:
         return None
@@ -236,6 +238,11 @@ def _good_bin_declaration(values: Any, n_periods: int, n_detectors: int, context
         return None
     if not np.all(np.isfinite(raw)) or not np.all(raw == np.floor(raw)):
         logger.warning("%s: unusable good-bin declaration; trying other file bounds.", context)
+        return None
+    if raw.size != 1 and not (version == "v2" and n_periods == 1 and raw.shape == (n_detectors,)):
+        logger.warning(
+            "%s: unsupported good-bin shape %s; trying other file bounds.", context, raw.shape
+        )
         return None
     return _timing_table(raw, n_periods, n_detectors, context)
 
@@ -261,6 +268,7 @@ def _raw_good_windows(
     for endpoint, name in enumerate(("first_good", "last_good")):
         integer = _good_bin_declaration(
             group["counts"].attrs.get(f"{name}_bin"),
+            version,
             n_periods,
             n_detectors,
             f"{context}/counts:{name}_bin",
@@ -269,6 +277,7 @@ def _raw_good_windows(
             node = group.get(f"{name}_bin")
             integer = _good_bin_declaration(
                 None if node is None else np.asarray(node),
+                version,
                 n_periods,
                 n_detectors,
                 f"{context}/{name}_bin",

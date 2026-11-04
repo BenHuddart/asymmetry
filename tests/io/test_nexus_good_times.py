@@ -295,3 +295,88 @@ def test_v1_child_integer_compatibility_is_retained(tmp_path):
         d.create_dataset("last_good_bin", data=15)
     ds = NexusLoader().load(path)
     assert [(h.good_bin_start, h.good_bin_end) for h in ds.run.histograms] == [(11, 14)] * 2
+
+
+@pytest.mark.parametrize("second", [(1.0, 1.1), (0.40, 0.50)])
+def test_unavailable_selected_intersection_cannot_rereduce_first_detector(tmp_path, second):
+    path = tmp_path / "empty-pair.nxs"
+    write_good_times(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        for name, values in [
+            ("first_good_time", [0.22, second[0]]),
+            ("last_good_time", [0.30, second[1]]),
+        ]:
+            del d[name]
+            d.create_dataset(name, data=values)
+    ds = NexusLoader().load(path)
+    assert ds.n_points == 0
+    with pytest.raises(ValueError, match="reversed|empty"):
+        reduce_run_to_dataset(ds.run)
+    assert ds.run.histograms[0].n_bins == 32
+
+
+@pytest.mark.parametrize("with_green", [False, True])
+def test_mapped_dataset_and_rereduction_share_intersected_support(tmp_path, with_green):
+    from asymmetry.core.io.periods import combine_mapped_periods
+
+    path = tmp_path / "mapped.nxs"
+    raw = write_good_times(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        for name in ("counts", "first_good_time", "last_good_time"):
+            del d[name]
+        d.create_dataset("counts", data=np.stack([raw, raw + 10, raw + 20]))
+        d.create_dataset("first_good_time", data=[[0.22] * 2, [0.24] * 2, [0.22] * 2])
+        d.create_dataset("last_good_time", data=[[0.30] * 2, [0.32] * 2, [0.30] * 2])
+    periods = NexusLoader().load(path)
+    mapping = {1: "red", 2: "red", 3: "green" if with_green else "ignore"}
+    mapped = combine_mapped_periods(periods, mapping)
+    expected_time = [0.0426, 0.0626, 0.0826]
+    f, b = (2 * raw + 10)[:, 12:15]
+    expected_a = 100 * (f - b) / (f + b)
+    expected_e = 200 * np.sqrt(f * b / (f + b) ** 3)
+    for ds in (mapped, reduce_run_to_dataset(mapped.run)):
+        np.testing.assert_allclose(ds.time, expected_time, atol=1e-15)
+        np.testing.assert_allclose(ds.asymmetry, expected_a)
+        np.testing.assert_allclose(ds.error, expected_e)
+
+
+def test_period_selection_does_not_run_missing_t0_search(tmp_path):
+    from asymmetry.core.io.periods import select_period
+
+    path = tmp_path / "missing-t0.nxs"
+    raw = write_good_times(path)
+    raw[:, 10] = 10000
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        del d["time_zero"]
+        del d["counts"]
+        d.create_dataset("counts", data=np.stack([raw, raw + 10]))
+    loaded = NexusLoader().load(path)
+    for period in (1, 2):
+        selected = select_period(loaded, period)
+        assert selected.run.grouping["t0_source"] == "missing"
+        np.testing.assert_allclose(selected.time, [0.22, 0.24, 0.26, 0.28])
+        np.testing.assert_allclose(reduce_run_to_dataset(selected.run).time, selected.time)
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_unverified_integer_period_shapes_use_remaining_bounds(tmp_path, version):
+    path = tmp_path / "integer-shape.nxs"
+    raw = write_good_times(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        del d["counts"]
+        d.create_dataset("counts", data=np.stack([raw, raw + 10, raw + 20])).attrs[
+            "first_good_bin"
+        ] = [[16, 17]] * 3
+        if version == "v1":
+            run = f.create_group("run")
+            run.create_dataset("analysis", data=b"muonTD")
+            f.move(d.name, "run/histogram_data_1")
+            del f["raw_data_1"]
+    datasets = NexusLoader().load(path)
+    expected = (11, 14) if version == "v2" else (0, 31)
+    for ds in datasets:
+        assert [(h.good_bin_start, h.good_bin_end) for h in ds.run.histograms] == [expected] * 2
