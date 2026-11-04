@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
@@ -267,17 +268,13 @@ def period_run(combined: Run, index: int) -> Run:
     reduction of it is a reduction of that period alone.
     """
     grouping = combined.grouping
-    count = len(grouping["period_reduced"])
+    from asymmetry.core.project.profiles import GoodWindowPolicy
 
-    period_grouping = select_period_grouping(grouping, index)
+    count = len(grouping.get("period_reduced") or grouping["period_histograms"])
+
+    histograms, period_grouping = select_period_histograms(combined.histograms, grouping, index)
     for key in ("period_histograms", "period_reduced", "period_mode", "period_t0_sources"):
         period_grouping.pop(key, None)
-
-    period_histograms = grouping.get("period_histograms")
-    if isinstance(period_histograms, list) and index < len(period_histograms):
-        histograms = _clone_histograms(period_histograms[index])
-    else:
-        histograms = _clone_histograms(combined.histograms)
 
     metadata = dict(combined.metadata)
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
@@ -291,15 +288,29 @@ def period_run(combined: Run, index: int) -> Run:
     metadata["period_count"] = count
     metadata["run_label"] = f"{source_run}/{index + 1}"
     if count == 2:
-        metadata["period_label"] = period_labels(combined)[index]
+        metadata["period_label"] = str((PeriodMode.RED, PeriodMode.GREEN)[index])
 
-    return Run(
+    run = Run(
         run_number=period_run_number,
         histograms=histograms,
         metadata=metadata,
         grouping=period_grouping,
         source_file=combined.source_file,
     )
+
+    # Per-detector file facts follow the selected period; scalar-only requests
+    # retain their recorded window. Extraction never runs a timing search.
+    if (
+        "detector_first_good_bins" in period_grouping
+        and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
+        == "from_file"
+    ):
+        quick = quick_asymmetry(histograms, period_grouping)
+        run.grouping.pop("t0_time_us", None)
+        run.grouping.update(quick.file_grouping)
+        metadata.pop("correction_error", None)
+        metadata.update(quick.metadata)
+    return run
 
 
 # --- low-level helpers shared with the GUI reduction path ---------------------
@@ -365,19 +376,32 @@ def select_period_histograms(
     period_grouping = select_period_grouping(grouping, period_index)
 
     period_histograms = grouping.get("period_histograms")
-    if not (isinstance(period_histograms, list) and period_index < len(period_histograms)):
-        return _clone_histograms(histograms), period_grouping
-
-    selected_period = period_histograms[period_index]
-    if not isinstance(selected_period, list):
-        return _clone_histograms(histograms), period_grouping
-
-    cloned_period: list[Histogram] = []
-    for hist in selected_period:
-        if not isinstance(hist, Histogram):
-            return _clone_histograms(histograms), period_grouping
-        cloned_period.append(_clone_histogram(hist))
-    return cloned_period or _clone_histograms(histograms), period_grouping
+    selected_period = (
+        period_histograms[period_index]
+        if isinstance(period_histograms, list) and period_index < len(period_histograms)
+        else None
+    )
+    if (
+        isinstance(selected_period, list)
+        and selected_period
+        and all(isinstance(hist, Histogram) for hist in selected_period)
+    ):
+        histograms = selected_period
+    histograms = _clone_histograms(histograms)
+    for key, values in (
+        ("detector_t0_bins", [hist.t0_bin for hist in histograms]),
+        ("detector_first_good_bins", [hist.good_bin_start for hist in histograms]),
+        (
+            "detector_last_good_bins",
+            [
+                hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1
+                for hist in histograms
+            ],
+        ),
+    ):
+        if key in grouping:
+            period_grouping[key] = values
+    return histograms, period_grouping
 
 
 def combine_period_asymmetry(
@@ -502,8 +526,11 @@ def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Hist
                 counts=counts,
                 bin_width=first.bin_width,
                 t0_bin=first.t0_bin,
-                good_bin_start=first.good_bin_start,
-                good_bin_end=first.good_bin_end,
+                good_bin_start=max(period[det].good_bin_start for period in period_histograms),
+                good_bin_end=min(
+                    period[det].good_bin_end if period[det].good_bin_end >= 0 else n_bins - 1
+                    for period in period_histograms
+                ),
                 t0_time_us=first.t0_time_us,
             )
         )
@@ -633,18 +660,23 @@ def combine_mapped_periods(
         grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)
 
+    red_histograms, grouping = select_period_histograms(red_histograms, grouping, RED_INDEX)
     run = Run(
         run_number=run_number,
-        histograms=_clone_histograms(red_histograms),
+        histograms=red_histograms,
         metadata=metadata,
         grouping=grouping,
         source_file=source_file or base_run.source_file,
     )
-    reference = period_datasets[red_periods[0] - 1]
+    quick = quick_asymmetry(red_histograms, grouping)
+    grouping.pop("t0_time_us", None)
+    grouping.update(quick.file_grouping)
+    metadata.update(quick.metadata)
+    window = quick.window.slice if quick.window is not None else slice(0, 0)
     return MuonDataset(
-        time=np.asarray(reference.time, dtype=np.float64).copy(),
-        asymmetry=np.asarray(reference.asymmetry, dtype=np.float64).copy(),
-        error=np.asarray(reference.error, dtype=np.float64).copy(),
+        time=quick.time[window],
+        asymmetry=quick.asymmetry[window],
+        error=quick.error[window],
         metadata=metadata,
         run=run,
     )

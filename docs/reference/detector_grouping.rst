@@ -605,6 +605,14 @@ window (below) is applied on top. Files that carry one common t0 and one
 window for the whole run have nothing to re-derive and keep the loader's
 values exactly.
 
+NeXus physical file-good times are converted to per-detector raw-bin bounds
+before grouping. The **From file** good-window policy intersects those bounds
+after the selected detectors' integer shifts; excluded and unused detectors
+cannot narrow it. The ``RG Mode`` selection uses the selected period's bounds.
+Mapped period sums intersect their contributors' raw intervals. These file
+facts persist through project reopening without cropping acquired counts.
+The :doc:`loading_data` example gives the raw-bin and timestamp coordinates.
+
 **One resolver for every consumer.** Whichever mode is active, the
 per-detector bins it resolves to are read back by reduction, grouped
 Fourier, MaxEnt, count-domain fits, the deadtime calibration window, and the
@@ -618,7 +626,9 @@ back to the file t0 that the mode overrode.
 **Integer alignment and exact time-zero.** Only the effective selected channels,
 after exclusions, determine the alignment and time axis. Their acquisition grids
 must have finite positive, compatible widths. An unused channel cannot move the
-origin or make a selected pair unavailable. Channel IDs are acquired histogram
+origin or make a selected pair unavailable. A resolved selected alignment and
+its available exact origin remain recorded when only the file-good interval
+is empty. Channel IDs are acquired histogram
 ordinals; reordering acquisition arrays requires remapping membership explicitly.
 
 NeXus acquisition widths use declared resolution and explicit time units;
@@ -1037,6 +1047,11 @@ also offers coordinate-preserving and common-grid operations. The selected exact
 origin, residuals, common observed support, and inclusive window contract are
 defined above; :ref:`comparison-timing` and :ref:`comparison-psi-intervals`
 state the versioned comparisons and explain the different defaults.
+
+For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
+1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
+interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+are not implied by agreement on matched raw observations.
 
 Stored and one-shot coefficients remain fixed; enabled automatic policies use
 current inputs. See :ref:`comparison-calibration-policies` for the distinctions
