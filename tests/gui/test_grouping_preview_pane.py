@@ -1514,7 +1514,9 @@ def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
     the user judges the settings by and the thing they get.
     """
     # Exact t0 0.3 of a bin past the centre of bin 0 (w = 0.016 µs).
-    dataset = _histogram_dataset(grouping_extra={"t0_time_us": 0.016 * 0.8})
+    dataset = _histogram_dataset(grouping_extra={"t0_time_us": 9.0})
+    for hist in dataset.run.histograms:
+        hist.t0_time_us = 0.016 * 0.8
     pane = GroupingPreviewPane()
     pane.request_preview(
         histograms=dataset.run.histograms,

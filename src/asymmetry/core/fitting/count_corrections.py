@@ -3,7 +3,6 @@
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.background import apply_grouped_background_correction
 from asymmetry.core.transform.corrections import CorrectionOutcomes
-from asymmetry.core.transform.fb_counts import good_window
 from asymmetry.core.transform.grouping import align_forward_backward_counts
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
@@ -30,8 +29,9 @@ def require_count_background(
         backward,
         grouping=grouping,
         t0_bin=crop.common_t0_bin,
-        bin_width_us=histograms[0].bin_width,
-        last_good_bin=good_window(grouping, crop.length).last,
+        acquisition_start_bin=crop.first_bin,
+        bin_width_us=histograms[group_specs[0][1][0]].bin_width,
+        last_good_bin=crop.window(grouping).last,
         metadata=metadata,
     )
     CorrectionOutcomes(background=background.outcome).require_complete()

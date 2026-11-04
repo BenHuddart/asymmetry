@@ -17,10 +17,14 @@ from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
     ForwardBackwardCounts,
     GroupCounts,
-    good_window,
+    count_timing,
 )
-from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
-from asymmetry.core.utils.perf import perf_timer
+from asymmetry.core.transform.t0 import (
+    EFFECTIVE_DETECTOR_T0_KEY,
+    common_t0_time_us,
+    effective_detector_t0_bins,
+    selected_t0_reference,
+)
 
 
 class InvalidGroupingError(ValueError):
@@ -85,24 +89,91 @@ def _validated_group_indices(group_indices: list[int], n_histograms: int) -> lis
     return list(membership.indices(n_histograms))
 
 
-def _detector_t0(
+def resolve_alignment(
     histograms: list[Histogram],
-    index: int,
-    detector_t0_bins: list[int] | None,
-) -> int:
-    """The t0 bin to align detector ``index`` to.
+    *group_indices: list[int],
+    detector_t0_bins: list[int] | None = None,
+    common_t0_bin: int | None = None,
+    sample_length: int | None = None,
+    first_bin: int | None = None,
+) -> AlignmentCrop:
+    """Resolve selected grids, integer shifts, common observations and residuals.
 
-    Prefers a per-detector override from ``detector_t0_bins`` (the effective
-    t0 a T0Policy resolved for this run without mutating the histograms) and
-    falls back to the histogram's own file-derived ``t0_bin``. The override
-    lets a *manual* t0 policy shift the alignment point non-destructively —
-    the loaded ``Histogram.t0_bin`` values stay as read from the file.
+    Raw k maps to local r = k + c - n_i - L. Both the integer and exact
+    origins move by L*w, so removing unobserved padding preserves timestamps.
     """
-    if detector_t0_bins is not None and 0 <= index < len(detector_t0_bins):
-        override = detector_t0_bins[index]
-        if override is not None:
-            return int(override)
-    return int(histograms[index].t0_bin)
+    groups = [_validated_group_indices(indices, len(histograms)) for indices in group_indices]
+    selected = sorted({i for indices in groups for i in indices})
+    override = {} if detector_t0_bins is None else {EFFECTIVE_DETECTOR_T0_KEY: detector_t0_bins}
+    bins = effective_detector_t0_bins(histograms, override)
+    width = count_timing(histograms[selected[0]].bin_width, bins[selected[0]], None)[0]
+    for i in selected:
+        current, _ = count_timing(histograms[i].bin_width, bins[i], histograms[i].t0_time_us)
+        # Widths are canonical float64 scalars on zero-origin acquisition edges.
+        # One ULP admits representation rounding, not different acquisition grids.
+        if abs(current - width) > max(np.spacing(current), np.spacing(width)):
+            raise ValueError("Selected channels require a compatible acquisition grid.")
+    common = max(bins[i] for i in selected) if common_t0_bin is None else common_t0_bin
+    count_timing(width, common, None)
+    shifts = {i: common - bins[i] for i in selected}
+    lower = max(0, max(shifts.values()))
+    upper = min(histograms[i].n_bins + shifts[i] for i in selected)
+    if first_bin is not None:
+        if first_bin < lower:
+            raise ValueError("Reference observed support does not cover the sample start.")
+        lower = first_bin
+    available = upper - lower
+    if available < 1 or any(histograms[i].n_bins == 0 for i in selected):
+        raise ValueError("Selected channels have empty observed support.")
+    if sample_length is not None and sample_length > available:
+        raise ValueError(
+            f"reference run has {available} aligned bins; sample requires {sample_length}."
+        )
+    length = available if sample_length is None else sample_length
+    local_common = common - lower
+    reference = selected_t0_reference(histograms, override, selected_indices=selected)
+    fractions = {
+        i: (
+            0.0
+            if histograms[i].t0_time_us is None
+            else histograms[i].t0_time_us_effective - (histograms[i].t0_bin + 0.5) * width
+        )
+        for i in selected
+    }
+    residuals = tuple((i, fractions[i] - fractions[reference]) for i in selected)
+    lengths = tuple(
+        min(histograms[i].n_bins + shifts[i] for i in indices) - lower for indices in groups
+    )
+    if len(lengths) != 2:
+        lengths = (min(lengths), min(lengths))
+    return AlignmentCrop(
+        local_common,
+        tuple((i, shifts[i] - lower) for i in selected),
+        lengths,
+        length,
+        lower,
+        residuals,
+    )
+
+
+def sum_aligned_counts(
+    histograms: list[Histogram],
+    group_indices: list[int],
+    alignment: AlignmentCrop,
+    *,
+    variance: bool = False,
+) -> NDArray[np.float64]:
+    """Sum acquired slices only, with identical mapping for counts and variance."""
+    offsets = dict(alignment.detector_offsets)
+    total = np.zeros(alignment.length, dtype=np.float64)
+    for i in group_indices:
+        hist = histograms[i]
+        values = (
+            hist.count_variance if variance and hist.count_variance is not None else hist.counts
+        )
+        start = -offsets[i]
+        total += np.asarray(values, dtype=np.float64)[start : start + alignment.length]
+    return total
 
 
 def apply_grouping_aligned(
@@ -113,61 +184,11 @@ def apply_grouping_aligned(
     detector_t0_bins: list[int] | None = None,
     variance: bool = False,
 ) -> NDArray[np.float64]:
-    """Sum detector counts after aligning each detector's own ``t0_bin``.
-
-    ISIS NeXus files normally provide one common ``t0`` for every detector.
-    PSI BIN/MDU data can carry different
-    ``t0`` values per detector. This helper shifts each selected detector so
-    that its local ``t0_bin`` lands on ``common_t0_bin`` before summing.
-
-    ``detector_t0_bins`` optionally overrides each detector's alignment t0
-    (indexed 0-based across the full histogram list) — the non-destructive
-    route a *manual* T0Policy uses to shift the effective t0 without rewriting
-    ``Histogram.t0_bin``. When ``None``, each histogram's own ``t0_bin`` is used.
-    With ``variance=True``, sum supplied independent variances, using measured
-    counts for detectors without an explicit variance. Padding contributes zero.
-    """
-    with perf_timer("core.grouping.apply_aligned", n_indices=len(group_indices)) as perf:
-        present = _validated_group_indices(group_indices, len(histograms))
-        selected = [(i, histograms[i]) for i in present]
-        if common_t0_bin is None:
-            common_t0_bin = max(
-                0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
-            )
-        common_t0_bin = max(0, int(common_t0_bin))
-
-        # Each detector, once aligned, contributes an array of length
-        # ``len(counts) + offset`` (offset < 0 trims the head, offset > 0
-        # zero-pads it), so the summed length is known from the offsets alone —
-        # no need to materialise the shifted arrays to find it. Accumulate each
-        # detector's aligned slice directly into one buffer instead of building
-        # a list of full-length copies and summing them: same float64 additions
-        # in the same order (bit-identical result), but only the accumulator is
-        # allocated rather than one padded copy per detector in the group.
-        offsets = [
-            common_t0_bin - _detector_t0(histograms, i, detector_t0_bins) for i, _ in selected
-        ]
-        min_len = min(len(hist.counts) + offset for (_, hist), offset in zip(selected, offsets))
-
-        total = np.zeros(min_len, dtype=np.float64)
-        for (_, hist), offset in zip(selected, offsets):
-            values = (
-                hist.count_variance if variance and hist.count_variance is not None else hist.counts
-            )
-            counts = np.asarray(values, dtype=np.float64)
-            if offset <= 0:
-                # Aligned array is ``counts[-offset:]`` (``counts`` itself when
-                # offset == 0); add its first ``min_len`` samples.
-                src_start = -offset
-                total += counts[src_start : src_start + min_len]
-            elif min_len > offset:
-                # Aligned array is ``offset`` leading zeros then ``counts``; the
-                # zeros contribute nothing, so add ``counts`` from ``offset`` on.
-                total[offset:min_len] += counts[: min_len - offset]
-            # offset >= min_len: the aligned array is all zeros within the
-            # summed window, so it contributes nothing.
-        perf.detail(bins=min_len)
-        return total
+    """Sum selected observations on their common integer-aligned support."""
+    alignment = resolve_alignment(
+        histograms, group_indices, common_t0_bin=common_t0_bin, detector_t0_bins=detector_t0_bins
+    )
+    return sum_aligned_counts(histograms, group_indices, alignment, variance=variance)
 
 
 def common_t0_for_groups(
@@ -175,29 +196,35 @@ def common_t0_for_groups(
     *group_indices: list[int],
     detector_t0_bins: list[int] | None = None,
 ) -> int:
-    """Return a common t0 over a nonempty selection of acquired channels.
-
-    ``detector_t0_bins`` optionally overrides the per-detector t0 (see
-    :func:`apply_grouping_aligned`) so a *manual* T0Policy can shift the common
-    t0 without mutating ``Histogram.t0_bin``.
-    """
-    indices = sorted({idx for group in group_indices for idx in group})
-    indices = _validated_group_indices(indices, len(histograms))
-    return max(0, max(_detector_t0(histograms, idx, detector_t0_bins) for idx in indices))
+    """Maximum selected effective anchor in uncropped aligned coordinates."""
+    indices = _validated_group_indices(
+        sorted({i for group in group_indices for i in group}), len(histograms)
+    )
+    override = {} if detector_t0_bins is None else {EFFECTIVE_DETECTOR_T0_KEY: detector_t0_bins}
+    bins = effective_detector_t0_bins(histograms, override)
+    return max(bins[i] for i in indices)
 
 
 def group_reference_t0(histograms: list[Histogram], grouping: dict) -> int:
-    """Use every authored group for the shared spectral alignment reference.
-
-    Exclusions do not move this reference. Invalid auxiliary groups remain
-    unavailable instead of changing which acquired channels define the grid.
-    """
+    """Reference over effective authored groups for a shared spectral grid."""
     groups = grouping.get("groups")
     if not isinstance(groups, dict):
         raise InvalidGroupingError("Group definitions must be a dictionary.", grouping)
-    indices = [resolve_group_indices(groups, gid, n_histograms=len(histograms)) for gid in groups]
+    excluded = set(
+        ChannelMembership.from_entries(grouping.get("excluded_detectors", [])).indices(
+            len(histograms)
+        )
+    )
+    indices = sorted(
+        {
+            i
+            for gid in groups
+            for i in resolve_group_indices(groups, gid, n_histograms=len(histograms))
+        }
+        - excluded
+    )
     return common_t0_for_groups(
-        histograms, *indices, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
+        histograms, indices, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
     )
 
 
@@ -209,55 +236,23 @@ def align_forward_backward(
     *,
     common_t0_bin: int | None = None,
     sample_length: int | None = None,
+    first_bin: int | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], AlignmentCrop]:
-    """Align detector t0 bins, then crop both sums to their common terminal bin.
-
-    Each group ends at its shortest shifted detector. The pair then ends at
-    the shorter group, recording the original group lengths and every shift.
-    An explicit common t0 and sample length align and crop a reference onto
-    the sample's grid; the reference must cover the full sample record.
-    """
-    common = (
-        common_t0_bin
-        if common_t0_bin is not None
-        else common_t0_for_groups(
-            histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
-        )
+    """Align both groups onto their common observed support without padding."""
+    crop = resolve_alignment(
+        histograms,
+        forward_indices,
+        backward_indices,
+        detector_t0_bins=detector_t0_bins,
+        common_t0_bin=common_t0_bin,
+        sample_length=sample_length,
+        first_bin=first_bin,
     )
-    forward, backward = (
-        apply_grouping_aligned(
-            histograms, indices, common_t0_bin=common, detector_t0_bins=detector_t0_bins
-        )
-        for indices in (forward_indices, backward_indices)
+    return (
+        sum_aligned_counts(histograms, forward_indices, crop),
+        sum_aligned_counts(histograms, backward_indices, crop),
+        crop,
     )
-    lengths = (forward.size, backward.size)
-    available = min(lengths)
-    if sample_length is not None and sample_length > available:
-        raise ValueError(
-            f"reference run has {available} aligned bins; sample requires {sample_length}."
-        )
-    length = available if sample_length is None else sample_length
-    selected = sorted(set(forward_indices + backward_indices))
-    crop = AlignmentCrop(
-        common,
-        tuple(
-            (index, common - _detector_t0(histograms, index, detector_t0_bins))
-            for index in selected
-        ),
-        lengths,
-        length,
-    )
-    return forward[:length], backward[:length], crop
-
-
-def _aligned_count_variance(histograms, indices, **alignment):
-    """Keep Poisson inference only when every contributing detector is raw."""
-    if not any(
-        histograms[i].count_variance is not None
-        for i in _validated_group_indices(indices, len(histograms))
-    ):
-        return None
-    return apply_grouping_aligned(histograms, indices, variance=True, **alignment)
 
 
 def group_counts_aligned(
@@ -266,11 +261,23 @@ def group_counts_aligned(
     *,
     common_t0_bin: int | None = None,
     detector_t0_bins: list[int] | None = None,
+    alignment: AlignmentCrop | None = None,
 ) -> GroupCounts:
-    """Sum counts and supplied variances on the same detector alignment grid."""
-    options = dict(common_t0_bin=common_t0_bin, detector_t0_bins=detector_t0_bins)
-    counts = apply_grouping_aligned(histograms, group_indices, **options)
-    return GroupCounts(counts, _aligned_count_variance(histograms, group_indices, **options))
+    """Sum counts and supplied variances with one observed-bin mapping."""
+    if alignment is None:
+        alignment = resolve_alignment(
+            histograms,
+            group_indices,
+            common_t0_bin=common_t0_bin,
+            detector_t0_bins=detector_t0_bins,
+        )
+    counts = sum_aligned_counts(histograms, group_indices, alignment)
+    variance = (
+        sum_aligned_counts(histograms, group_indices, alignment, variance=True)
+        if any(histograms[i].count_variance is not None for i in group_indices)
+        else None
+    )
+    return GroupCounts(counts, variance)
 
 
 def align_forward_backward_counts(
@@ -281,25 +288,24 @@ def align_forward_backward_counts(
     *,
     common_t0_bin: int | None = None,
     sample_length: int | None = None,
+    first_bin: int | None = None,
 ) -> tuple[GroupCounts, GroupCounts, AlignmentCrop]:
-    """Align both count groups and crop their noise onto the same terminal bin."""
-    forward, backward, crop = align_forward_backward(
+    """Resolve the pair once and use identical observed support for its noise."""
+    crop = resolve_alignment(
         histograms,
         forward_indices,
         backward_indices,
-        detector_t0_bins,
+        detector_t0_bins=detector_t0_bins,
         common_t0_bin=common_t0_bin,
         sample_length=sample_length,
+        first_bin=first_bin,
     )
-    groups = []
-    for indices, counts in ((forward_indices, forward), (backward_indices, backward)):
-        variance = _aligned_count_variance(
-            histograms,
-            indices,
-            common_t0_bin=crop.common_t0_bin,
-            detector_t0_bins=detector_t0_bins,
-        )
-        groups.append(GroupCounts(counts, None if variance is None else variance[: crop.length]))
+    groups = [
+        group_counts_aligned(histograms, indices, alignment=crop)
+        for indices in (forward_indices, backward_indices)
+    ]
+    if any(group.variance is not None for group in groups):
+        groups = [GroupCounts(group.counts, group.independent_variance) for group in groups]
     return groups[0], groups[1], crop
 
 
@@ -579,6 +585,8 @@ class GroupedForwardBackward:
 def group_forward_backward(
     histograms: list[Histogram],
     grouping: dict,
+    *,
+    resolved_indices: tuple[list[int], list[int]] | None = None,
 ) -> GroupedForwardBackward:
     """Form aligned forward/backward groups from a (effective) grouping dict.
 
@@ -596,7 +604,7 @@ def group_forward_backward(
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     forward_indices, backward_indices = independent_pair_indices(
-        grouping, n_histograms=len(histograms)
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
     )
     try:
         alpha = float(grouping.get("alpha", 1.0))
@@ -613,19 +621,27 @@ def group_forward_backward(
     if not np.isfinite(beta) or beta <= 0.0:
         beta = 1.0
 
-    detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-    forward, backward, crop = align_forward_backward_counts(
-        histograms, forward_indices, backward_indices, detector_t0_bins
-    )
-    width = float(histograms[0].bin_width)
-    counts = ForwardBackwardCounts(
-        forward,
-        backward,
-        common_t0_time_us(histograms, grouping, crop.common_t0_bin),
-        width,
-        good_window(grouping, crop.length),
-        crop,
-    )
+    try:
+        detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
+        forward, backward, crop = align_forward_backward_counts(
+            histograms, forward_indices, backward_indices, detector_t0_bins
+        )
+        width = float(histograms[forward_indices[0]].bin_width)
+        counts = ForwardBackwardCounts(
+            forward,
+            backward,
+            common_t0_time_us(
+                histograms,
+                grouping,
+                crop.common_t0_bin,
+                selected_indices=sorted(set(forward_indices + backward_indices)),
+            ),
+            width,
+            crop.window(grouping),
+            crop,
+        )
+    except ValueError as exc:
+        raise InvalidGroupingError(str(exc), grouping) from exc
     return GroupedForwardBackward(
         counts=counts,
         alpha=alpha,

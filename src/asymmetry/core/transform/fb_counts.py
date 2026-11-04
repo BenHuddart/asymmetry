@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import InitVar, dataclass
+from dataclasses import InitVar, asdict, dataclass
 from numbers import Integral, Real
 from typing import Any
 
@@ -245,15 +245,49 @@ def linear_combination_variance(
 
 @dataclass(frozen=True)
 class AlignmentCrop:
-    """Detector shifts and the chosen terminal crop, all in acquisition bins."""
+    """Observed-bin mapping; offsets and anchor use the cropped local coordinate."""
 
     common_t0_bin: int
     detector_offsets: tuple[tuple[int, int], ...]
     group_lengths: tuple[int, int]
     length: int
+    first_bin: int = 0
+    timing_residuals_us: tuple[tuple[int, float], ...] = ()
+
+    @property
+    def timing_spread_us(self) -> float:
+        """Full residual range in μs; an integer approximation, not uncertainty."""
+        values = [value for _, value in self.timing_residuals_us]
+        return max(values, default=0.0) - min(values, default=0.0)
+
+    def to_dict(self) -> dict:
+        """Export the resolved mapping and derived fractional spread in μs."""
+        return {**asdict(self), "timing_spread_us": self.timing_spread_us}
+
+    def window(self, grouping: dict, *, offset_bins: int = 0) -> BinWindow:
+        """Translate explicit bounds to this grid, then intersect leading support.
+
+        ``offset_bins`` maps the request's aligned coordinate to the uncropped
+        grid. Absent endpoints select observed support without translation.
+        """
+        offset_bins = _bin_index(offset_bins, "good-bin window coordinate offset", signed=True)
+        first = (
+            _bin_index(grouping["first_good_bin"], "good-bin window first") + offset_bins
+            if "first_good_bin" in grouping
+            else self.first_bin
+        )
+        last = (
+            _bin_index(grouping["last_good_bin"], "good-bin window last") + offset_bins
+            if "last_good_bin" in grouping
+            else self.first_bin + self.length - 1
+        )
+        window = BinWindow(max(self.first_bin, first) - self.first_bin, last - self.first_bin)
+        window.validate_length(self.length)
+        return window
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "common_t0_bin", _bin_index(self.common_t0_bin, "common t0 bin"))
+        object.__setattr__(self, "first_bin", _bin_index(self.first_bin, "first observed bin"))
         lengths = tuple(_bin_index(value, "group length") for value in self.group_lengths)
         length = _bin_index(self.length, "aligned length")
         if len(lengths) != 2 or length < 1 or length > min(lengths):

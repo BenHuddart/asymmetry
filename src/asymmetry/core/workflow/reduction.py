@@ -362,7 +362,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         time=result.time,
         asymmetry=result.asymmetry,
         error=result.error,
-        metadata=dict(run.metadata),
+        metadata=result.metadata_with_alignment(run.metadata),
         run=run,
     )
 

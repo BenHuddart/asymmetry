@@ -11,6 +11,14 @@ A file converted from an old format, a run taken during commissioning, or a
 detector with a shifted cable delay can all carry a wrong t0, which shows up
 downstream as wrong frequencies in TF data and distorted early-time shapes.
 
+Alignment uses whole acquisition bins from the effective selected channels.
+Exact header timing supplies a deterministic selected reference, with ties at
+the maximum integer anchor resolved by acquired-channel ordinal. The result
+records the remaining fractional offsets and their full spread in μs; these
+are alignment diagnostics, not a timing uncertainty or a fractional resampling.
+Only common observed support is reduced, including valid one-bin intersections.
+See :doc:`/reference/detector_grouping` for coordinate and provenance details.
+
 The grouping window's t0 row carries a read-only line, identical whichever
 mode is selected, that shows the file value beside the detected one so you
 never have to take either on faith:
@@ -144,6 +152,16 @@ of a t0 error: a phase slope of q degrees per MHz corresponds to a t0 shift
 of q/360 μs). The line above already flags a discrepancy beyond the
 tolerance, so a quiet line is itself the reassurance that the file value is
 trustworthy.
+
+Compared with other programs
+----------------------------
+
+WiMDA uses whole-bin alignment. The recorded musrfit 1.12.1 integer grouped-count
+case agrees with Asymmetry when raw-bin selections and timestamps match.
+Mantid 6.16.1 retains shifted spectrum coordinates and offers explicit rebinning
+onto a common grid. Asymmetry records residuals from its integer approximation;
+none of these arithmetic checks establishes the physical origin of a pulse.
+See :doc:`/explanation/comparison` for the versioned scope and sources.
 
 **References**
 

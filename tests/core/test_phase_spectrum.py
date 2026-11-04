@@ -282,6 +282,9 @@ def test_group_fft_modes_preserve_reduction_good_window_and_exact_t0(
         grouping["t0_time_us"] = (declared_t0 + manual_shift + 0.5 + exact_subbin) * dt
     if manual_shift:
         grouping[EFFECTIVE_DETECTOR_T0_KEY] = [t0 + manual_shift for t0 in detector_t0s]
+    if exact_subbin is not None:
+        for hist in histograms:
+            hist.t0_time_us = (hist.t0_bin + 0.5 + exact_subbin) * dt
     original_grouping = dict(grouping)
     run = Run(run_number=11, histograms=histograms, grouping=grouping)
     observed = []
@@ -307,10 +310,10 @@ def test_group_fft_modes_preserve_reduction_good_window_and_exact_t0(
 
     # These detector indices are independently known: the resolved F/B window
     # [130, 500] excludes both prompt bins [124, 125] on each selected detector.
-    origin = (declared_t0 if declared_t0 is not None else reference_t0) + manual_shift
+    origin = 124 + manual_shift
     origin += exact_subbin or 0.0
     expected_time = (np.arange(130, 501) - origin) * dt
-    raw_start = 130 if declared_t0 is not None else 130 - (reference_t0 - 124)
+    raw_start = 130
     raw_counts = histograms[1].counts[raw_start : raw_start + 371]
     if declared_t0 is not None:
         reduced = group_forward_backward(histograms, grouping)

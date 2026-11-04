@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Any
 
 import numpy as np
@@ -48,22 +49,18 @@ EFFECTIVE_DETECTOR_T0_KEY = "effective_detector_t0_bins"
 
 
 def detector_t0_overrides(grouping: dict | None, n_histograms: int) -> list[int] | None:
-    """Extract policy-resolved per-detector t0 overrides from a grouping dict.
-
-    Reads :data:`EFFECTIVE_DETECTOR_T0_KEY` (a *manual* T0Policy writes it) and
-    returns it as an int list when it lines up with the histogram count, else
-    ``None``. Callers that want the alignment values themselves should use
-    :func:`effective_detector_t0_bins`; this raw accessor exists for the cache
-    digests that must distinguish "no override" from "override equal to file".
-    """
+    """Read an explicit integer table without changing an invalid request."""
     grouping = grouping if isinstance(grouping, dict) else {}
-    raw = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
+    if EFFECTIVE_DETECTOR_T0_KEY not in grouping:
+        return None
+    raw = grouping[EFFECTIVE_DETECTOR_T0_KEY]
     if not isinstance(raw, (list, tuple)) or len(raw) != n_histograms:
-        return None
-    try:
-        return [int(v) for v in raw]
-    except (TypeError, ValueError):
-        return None
+        raise ValueError("Effective detector t0 overrides must contain one integer per histogram.")
+    if any(isinstance(v, bool) or not isinstance(v, Integral) or v < 0 for v in raw):
+        raise ValueError(
+            "Effective detector t0 overrides must be non-negative integer bin indices."
+        )
+    return [int(v) for v in raw]
 
 
 def effective_detector_t0_bins(histograms: list[Histogram], grouping: dict | None) -> list[int]:
@@ -72,7 +69,8 @@ def effective_detector_t0_bins(histograms: list[Histogram], grouping: dict | Non
     The single resolver: a policy-resolved override from the grouping
     (:data:`EFFECTIVE_DETECTOR_T0_KEY`, written by a *manual* or *auto_detect*
     :class:`~asymmetry.core.project.profiles.T0Policy`) when present and of
-    matching length, else each histogram's own file-derived ``t0_bin``. The
+    matching length; malformed explicit tables raise. When absent, use each
+    histogram's own file-derived ``t0_bin``. The
     override is non-destructive — ``Histogram.t0_bin`` is never rewritten — so
     every consumer that re-derives alignment from the histograms alone silently
     ignores the user's t0 choice. Pass the result as ``detector_t0_bins=`` to
@@ -115,62 +113,74 @@ def good_window_for_groups(
     window may name. ``group_indices`` are 0-based; an empty list yields the
     full range.
     """
-    last_bin = max(0, int(n_bins) - 1)
+    if n_bins < 1:
+        raise ValueError("Selected channels have empty observed support.")
+    last_bin = int(n_bins) - 1
     firsts = [int(detector_first_good_bins[i]) - int(detector_t0_bins[i]) for i in group_indices]
     lasts = [int(detector_last_good_bins[i]) - int(detector_t0_bins[i]) for i in group_indices]
-    first_good = min(last_bin, max(0, int(common_t0_bin) + max(firsts, default=0)))
-    last_good = min(last_bin, max(0, int(common_t0_bin) + min(lasts, default=last_bin)))
-    return first_good, max(first_good, last_good)
+    first_good = max(0, int(common_t0_bin) + max(firsts, default=-common_t0_bin))
+    last_good = min(last_bin, int(common_t0_bin) + min(lasts, default=last_bin - common_t0_bin))
+    if first_good > last_good:
+        raise ValueError("Selected channels have empty good-bin support.")
+    return first_good, last_good
 
 
 def run_t0_time_us(histograms: list[Histogram], common_t0_bin: int) -> float | None:
-    """The run's exact t0 in µs, or ``None`` when no detector carries one (D4).
-
-    Per-detector data can carry a different exact t0 per detector while the run
-    reduces onto one common bin. The run's value is the mean exact t0 over the
-    detectors whose integer ``t0_bin`` *is* the common bin — the detectors whose
-    counts are not shifted by alignment. The others' sub-bin residuals (≤ ½ bin)
-    are dropped. ``None`` when none of those detectors has an exact t0, in which
-    case consumers fall back to
-    :attr:`~asymmetry.core.data.dataset.Histogram.t0_time_us_effective`.
-    """
+    """Mean exact origin of arithmetic members at a shared integer anchor."""
     values = [
-        float(hist.t0_time_us)
+        hist.t0_time_us
         for hist in histograms
-        if hist.t0_time_us is not None and int(hist.t0_bin) == int(common_t0_bin)
+        if hist.t0_bin == common_t0_bin and hist.t0_time_us is not None
     ]
-    if not values:
-        return None
-    return float(np.mean(values))
+    return float(np.mean(values)) if values else None
+
+
+def selected_t0_reference(
+    histograms: list[Histogram],
+    grouping: dict | None,
+    *,
+    selected_indices: Sequence[int] | None = None,
+) -> int:
+    """Selected maximum effective anchor, with acquired ordinal breaking ties."""
+    from asymmetry.core.transform.grouping import effective_group_indices
+
+    grouping = grouping if isinstance(grouping, dict) else {}
+    if selected_indices is None:
+        if "groups" in grouping:
+            selected_indices = sorted(
+                {
+                    i
+                    for key, default in (("forward_group", 1), ("backward_group", 2))
+                    for i in effective_group_indices(
+                        grouping, grouping.get(key, default), n_histograms=len(histograms)
+                    )
+                }
+            )
+        else:
+            selected_indices = list(range(len(histograms)))
+    bins = effective_detector_t0_bins(histograms, grouping)
+    return min(selected_indices, key=lambda i: (-bins[i], i))
 
 
 def common_t0_time_us(
     histograms: list[Histogram],
     grouping: dict | None,
     common_t0_bin: int,
+    *,
+    selected_indices: Sequence[int] | None = None,
 ) -> float:
-    r"""The run's exact common t0 in µs — the origin of every time stamp (D4).
+    """Exact selected reference on the output grid, with integer policy shifts.
 
-    Time stamps are bin *centres* measured from this value:
-    ``t_k = (k + 0.5)·w − T0``. Three sources, in order:
-
-    1. ``grouping["t0_time_us"]`` — the per-run fact a loader recorded, already
-       moved by ``delta·w`` if a :class:`~asymmetry.core.project.profiles.T0Policy`
-       shifted the alignment. It belongs to the *effective* common bin, so pass
-       the bin the alignment actually used.
-    2. :func:`run_t0_time_us` over ``histograms`` at ``common_t0_bin`` — the mean
-       exact t0 of the detectors that sit on that bin.
-    3. The bin centre ``(common_t0_bin + 0.5)·w``. This fallback makes
-       ``t_k = (k − common_t0_bin)·w``, the integer-bin axis, to the last bit.
+    The largest effective anchor wins; ties use acquired-channel ordinal.
+    An output anchor may be reindexed by a leading crop. Stored run scalars
+    cannot supply the origin for a different selected pair.
     """
-    grouping = grouping if isinstance(grouping, dict) else {}
-    stored = grouping.get("t0_time_us")
-    if stored is not None:
-        return float(stored)
-    measured = run_t0_time_us(histograms, common_t0_bin)
-    if measured is not None:
-        return measured
-    return (float(common_t0_bin) + 0.5) * float(histograms[0].bin_width)
+    reference = selected_t0_reference(histograms, grouping, selected_indices=selected_indices)
+    hist = histograms[reference]
+    width = float(hist.bin_width)
+    if hist.t0_time_us is None:
+        return (common_t0_bin + 0.5) * width
+    return hist.t0_time_us_effective + (common_t0_bin - hist.t0_bin) * width
 
 
 def t0_stamp_residual_us(

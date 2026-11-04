@@ -25,10 +25,11 @@ from asymmetry.core.transform.grouping import (
     good_frames,
     group_counts_aligned,
     group_reference_t0,
+    resolve_alignment,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
-from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
+from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -138,6 +139,7 @@ def _resolve_group_reference_counts(
     common_t0: int,
     apply_deadtime: bool,
     detector_t0_bins: list[int],
+    sample_alignment,
     cache: dict | None = None,
 ) -> tuple[GroupCounts | None, float | None]:
     """Resolve+group a ``reference_run`` background for one detector group.
@@ -187,11 +189,16 @@ def _resolve_group_reference_counts(
             apply_deadtime,
         )
         cache[prepared_key] = reference_prepared
-    reference_counts = group_counts_aligned(
+    reference_alignment = resolve_alignment(
         reference_prepared,
         group_indices,
-        common_t0_bin=common_t0,
-        detector_t0_bins=detector_t0_bins,
+        common_t0_bin=common_t0 + sample_alignment.first_bin,
+        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
+        first_bin=sample_alignment.first_bin,
+        sample_length=sample_alignment.length,
+    )
+    reference_counts = group_counts_aligned(
+        reference_prepared, group_indices, alignment=reference_alignment
     )
     if reference_counts.counts.size == 0:
         return None, None
@@ -352,29 +359,17 @@ def build_group_signal_dataset(
     if reference_t0_bin is None:
         reference_t0_bin = group_reference_t0(prepared_histograms, grouping)
     common_t0 = max(0, int(reference_t0_bin))
-    group = group_counts_aligned(
-        prepared_histograms,
-        indices,
-        common_t0_bin=common_t0,
-        detector_t0_bins=detector_t0_bins,
+    alignment = resolve_alignment(
+        prepared_histograms, indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
     )
-    if group.counts.size == 0:
-        raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
-
+    group = group_counts_aligned(prepared_histograms, indices, alignment=alignment)
+    common_t0 = alignment.common_t0_bin
     declared_t0 = grouping.get("t0_bin")
-    if declared_t0 is not None:
-        # The resolved window belongs to declared_t0's aligned coordinates.
-        # Moving the reference by delta bins moves both endpoints and exact t0
-        # by delta, preserving the same detector samples and physical times.
-        offset = common_t0 - int(declared_t0)
-        grouping = dict(grouping, t0_bin=common_t0)
-        for key in ("first_good_bin", "last_good_bin"):
-            bound = grouping.get(key)
-            if bound is not None and int(bound) >= 0:
-                grouping[key] = int(bound) + offset
-        exact_t0_us = grouping.get("t0_time_us")
-        if exact_t0_us is not None:
-            grouping["t0_time_us"] = float(exact_t0_us) + offset * histograms[0].bin_width
+    declared_t0 = common_t0 if declared_t0 is None else int(declared_t0)
+    window = alignment.window(grouping, offset_bins=common_t0 + alignment.first_bin - declared_t0)
+    grouping = dict(
+        grouping, t0_bin=common_t0, first_good_bin=window.first, last_good_bin=window.last
+    )
 
     source_file = run.source_file
     reference_counts, reference_scale = _resolve_group_reference_counts(
@@ -383,6 +378,7 @@ def build_group_signal_dataset(
         common_t0=common_t0,
         apply_deadtime=apply_deadtime,
         detector_t0_bins=detector_t0_bins,
+        sample_alignment=alignment,
         cache=background_reference_cache,
     )
     group, background_applied, background_value = _apply_group_background_correction(
@@ -393,7 +389,7 @@ def build_group_signal_dataset(
         # acquisition samples through a translation from background_t0.
         t0_bin=common_t0,
         background_t0_bin=background_t0,
-        bin_width=float(prepared_histograms[0].bin_width),
+        bin_width=float(prepared_histograms[indices[0]].bin_width),
         metadata=run.metadata,
         source_file=source_file,
         reference_counts=reference_counts,
@@ -401,27 +397,18 @@ def build_group_signal_dataset(
     )
 
     counts = group.counts
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", counts.size - 1))
-    except (TypeError, ValueError):
-        last_good = counts.size - 1
-    last_good = min(last_good, counts.size - 1)
-    if first_good > last_good:
-        first_good = 0
-        last_good = counts.size - 1
+    first_good, last_good = window.first, window.last
 
     trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
     bunch_factor = binning_spec(grouping).factor
 
-    bin_width = float(prepared_histograms[0].bin_width)
+    bin_width = float(prepared_histograms[indices[0]].bin_width)
     axis_start = first_good - common_t0
     # Bin centres from the run's exact t0 (D4): the residual is exactly 0.0 when
     # the run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual_us = t0_stamp_residual_us(prepared_histograms, grouping, common_t0)
+    residual_us = (common_t0 + 0.5) * bin_width - common_t0_time_us(
+        prepared_histograms, grouping, common_t0, selected_indices=indices
+    )
     time = (
         np.arange(trimmed_counts.size, dtype=float) + float(axis_start)
     ) * bin_width + residual_us
@@ -453,6 +440,7 @@ def build_group_signal_dataset(
             "run_number": run.run_number,
             "run_label": f"{run.run_number} {group_name}",
             "fourier_source": "group_signal",
+            "grouped_alignment": alignment.to_dict(),
             "fourier_lifetime_corrected": bool(apply_lifetime_correction),
             "fourier_background_corrected": bool(background_applied),
             "fourier_background_value": (
