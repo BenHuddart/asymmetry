@@ -163,6 +163,56 @@ class is unverified, and no original ROOT acquisition is in the teaching
 corpus. See :doc:`/reference/loading_data` and the
 `musrfit RUN settings <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
 
+PSI good-data intervals
+-----------------------
+
+Asymmetry adopts zero-based inclusive raw-bin bounds for file-good intervals
+and intersects them after whole-bin alignment over the selected detectors.
+BIN upper values at or beyond histogram length are clipped to the final
+stored index; interior values are retained. MDU M3/T4/T5 markers are converted
+at their hardware scale before clipping. Modern ROOT per-detector bounds use
+the same inclusive representation; legacy LEM v5 without good fields defaults
+from each detector's t0 through its final stored bin. Container-added bins
+remain stored, independently of their counts or the selected interval.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) explicit ``data`` intervals at
+packing one have an exclusive upper bound. For matched tagged BIN and MDU
+M3/T4/T5 selections, summed counts agree exactly, raw-bin identities agree,
+and exported Poisson errors agree within relative :math:`5\times10^{-6}`
+(six-significant-digit ASCII precision). Timestamp comparisons at that export
+precision use the same tolerance. The BIN and ROOT timing comparison above
+uses its separate storage-precision tolerance.
+
+Omitted ``data`` does not mean the same default as Asymmetry's file-good
+intersection. For the compared 128-bin BIN with t0 4, musrfit's single-channel
+fallback selects raw 5..127 whether the supplied last-good field is 60, 127,
+or 128. The equivalent 129-bin legacy/modern folder ROOT storage also includes
+raw bin 128, a retained terminal zero. Asymmetry's modern ROOT good fields
+can exclude that bin; legacy defaults can include it. Neither a terminal zero
+nor equal header integers establishes equivalent observations.
+
+WiMDA's **FileValues** uses the first histogram's good interval as the
+grouping reference, with zero last-good requesting histogram length. Its
+one-based histogram coordinates and shared end differ from Asymmetry's
+selected per-detector intersection. No WiMDA executable numerical agreement
+is claimed for these PSI boundaries. Mantid 6.16.1 ``LoadPSIMuonBin`` retains
+all 128 tagged BIN counts, exposes good-data limits in time units, and does
+not crop the raw workspace to those limits. This loading result does not
+establish Mantid's default analysis selection. MDU and ROOT interval reductions
+in Mantid, WiMDA ROOT, and native musrfit numerical reduction of the generated
+lower-case-directory representation remain unverified here.
+
+Asymmetry also checks that the selected channels have common acquired support
+and a nonempty intersection for a file-good reduction of independent counts.
+This prevents alignment padding from becoming observations. Raw histograms
+remain available when the initial pair is unavailable; the grouping request
+can be edited. These checks do not certify bin exposure from count values.
+See :doc:`/reference/loading_data`, the `musrfit manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_,
+`Mantid LoadPSIMuonBin
+<https://docs.mantidproject.org/nightly/algorithms/LoadPSIMuonBin-v1.html>`_,
+and the `WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/>`_.
+
 Signed deadtime coefficients
 ----------------------------
 
