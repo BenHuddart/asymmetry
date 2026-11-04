@@ -330,39 +330,37 @@ def good_event_count(
     histograms: list[Histogram] | None,
     grouping: dict | None,
 ) -> float | None:
-    """Total raw counts in the good-bin range over the forward+backward groups.
+    """Raw F/B observations inside the current aligned window and selected period.
 
-    Mirrors WiMDA's logbook "good events": the sum of
-    detector counts between ``first_good_bin`` and ``last_good_bin`` (inclusive)
-    across the detectors of the forward and backward groups. Returns ``None``
-    when the grouping lacks a good-bin range or named forward/backward groups
-    (e.g. an ungrouped run), so callers can fall back to a total-count display.
-
-    Detector ids in ``grouping['groups']`` are 1-based (WiMDA convention), so
-    histogram index = id − 1. This is the single source of truth for the
-    good-range event total: the data-browser "Good Events" column and the
-    export ``events_grouped`` header both call it, so they agree by construction.
+    Good Events and the export header share this uncorrected observation sum.
+    An unavailable request returns None while acquired counts remain available.
     """
     if not histograms or not isinstance(grouping, dict):
         return None
+    if (
+        grouping.get("first_good_bin") is None
+        or grouping.get("last_good_bin") is None
+        or not grouping.get("groups")
+    ):
+        return None
+    from asymmetry.core.io.periods import (
+        held_period_histograms,
+        histogram_grouping_facts,
+        selected_period_index,
+    )
 
-    first_good = grouping.get("first_good_bin")
-    last_good = grouping.get("last_good_bin")
-    if first_good is None or last_good is None or not grouping.get("groups"):
-        return None
+    period_index = selected_period_index(grouping)
+    if period_index is not None:
+        histograms = held_period_histograms(histograms, grouping, period_index)
+        grouping = histogram_grouping_facts(histograms, grouping)
     try:
-        lo = max(0, min(int(first_good), int(last_good)))
-        hi = max(int(first_good), int(last_good))
-        selected = [
-            index
-            for key, default in (("forward_group", 1), ("backward_group", 2))
-            for index in effective_group_indices(
-                grouping, grouping.get(key, default), n_histograms=len(histograms)
-            )
-        ]
-    except (TypeError, ValueError):
+        counts = group_forward_backward(histograms, grouping).counts
+    except InvalidGroupingError:
         return None
-    total = sum(float(np.sum(histograms[i].counts[lo : hi + 1])) for i in selected)
+    total = sum(
+        float(np.sum(group.counts[counts.window.slice]))
+        for group in (counts.forward, counts.backward)
+    )
     return total if total > 0 else None
 
 

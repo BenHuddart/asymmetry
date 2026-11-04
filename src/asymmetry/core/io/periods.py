@@ -375,6 +375,14 @@ def select_period_histograms(
     """
     period_grouping = select_period_grouping(grouping, period_index)
 
+    selected = held_period_histograms(histograms, grouping, period_index)
+    return _clone_histograms(selected), histogram_grouping_facts(selected, period_grouping)
+
+
+def held_period_histograms(
+    histograms: list[Histogram], grouping: dict, period_index: int
+) -> list[Histogram]:
+    """Read a held acquisition without copying counts; absent periods retain the acquired fallback."""
     period_histograms = grouping.get("period_histograms")
     selected_period = (
         period_histograms[period_index]
@@ -387,7 +395,7 @@ def select_period_histograms(
         and all(isinstance(hist, Histogram) for hist in selected_period)
     ):
         histograms = selected_period
-    return _clone_histograms(histograms), histogram_grouping_facts(histograms, period_grouping)
+    return histograms
 
 
 def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dict:

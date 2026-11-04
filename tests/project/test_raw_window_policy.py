@@ -241,8 +241,28 @@ def test_signed_workflow_request_matches_the_profile_reduction():
 
 @pytest.mark.parametrize("value", [True, 1.9, "2", float("nan")])
 def test_manual_offsets_are_integer_bin_requests(value):
-    with pytest.raises(ValueError, match="signed integer"):
-        GoodWindowPolicy(mode="manual", first_offset_bins=value)
+    profile = request().to_dict()
+    profile["good_window_policy"] = {"mode": "manual", "first_offset_bins": value}
+    restored = GroupingProfile.from_dict(profile)
+    with pytest.raises(InvalidGroupingError, match="signed integer"):
+        resolve_effective_grouping(restored, acquired_run())
+
+
+@pytest.mark.parametrize("key", ["first_offset_bins", "last_offset_bins"])
+@pytest.mark.parametrize("value", [True, 1.9, "2", "bad"])
+def test_malformed_authored_offsets_survive_profile_round_trip_until_repaired(key, value):
+    payload = request().to_dict()
+    payload["good_window_policy"] = {"mode": "manual", key: value}
+    profile = GroupingProfile.from_dict(payload)
+    assert profile.to_dict()["good_window_policy"] == payload["good_window_policy"]
+    run = acquired_run()
+    raw = [hist.counts.copy() for hist in run.histograms]
+    with pytest.raises(InvalidGroupingError, match="signed integer"):
+        resolve_effective_grouping(profile, run)
+    repaired = replace(profile, good_window_policy=GoodWindowPolicy())
+    group_forward_backward(run.histograms, resolve_effective_grouping(repaired, run))
+    for histogram, original in zip(run.histograms, raw):
+        np.testing.assert_array_equal(histogram.counts, original)
 
 
 @pytest.mark.parametrize("first,last,expected", [(-5, None, (5, 80)), (None, 85, (90, 95))])
@@ -255,3 +275,12 @@ def test_partial_manual_request_repairs_an_unavailable_legacy_scalar_window(firs
     np.testing.assert_array_equal(
         counts.forward.counts[counts.window.slice], run.histograms[0].counts[lo : hi + 1]
     )
+
+
+def test_good_events_sum_aligned_raw_observations_with_staggered_detectors():
+    from asymmetry.core.transform.grouping import good_event_count
+
+    run = acquired_run(anchors=(10, 15))
+    grouping = resolve_effective_grouping(request(5), run)
+    expected = run.histograms[0].counts[20:76].sum() + run.histograms[1].counts[25:81].sum()
+    assert good_event_count(run.histograms, grouping) == expected

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Malformed saved manual windows reopen for repair; selected-period metadata and Good Events follow the reduced observations.
+
 - Keep file-good selections on acquired bins through timing edits; resolve signed manual windows without silently clipping invalid requests.
 
 - Unavailable file-good windows retain selected timing, and mapped-period detector bounds follow summed or retained histograms during profile resolution.

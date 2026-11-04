@@ -80,21 +80,23 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             lambda: (
                 pane._tasks.active_count == 0
                 and pane._last_result is not None
+                and len(pane._last_result.corrections) == 1
                 and pane._last_result.counts.background_mode == "tail_fit"
                 and pane._last_result.counts.background_level is not None
-                and pane._last_result.corrections.deadtime.status == CorrectionStatus.APPLIED
-                and pane._last_result.corrections.deadtime.effective["tau_us"] == (0.1, 0.1)
-                and pane._last_result.corrections.deadtime.effective["good_frames"] == 2000.0
+                and pane._last_result.corrections[0].deadtime.status == CorrectionStatus.APPLIED
+                and pane._last_result.corrections[0].deadtime.effective["tau_us"] == (0.1, 0.1)
+                and pane._last_result.corrections[0].deadtime.effective["good_frames"] == 2000.0
             )
         )
         if (
             pane._tasks.active_count
             or pane._last_result is None
+            or len(pane._last_result.corrections) != 1
             or pane._last_result.counts.background_mode != "tail_fit"
             or pane._last_result.counts.background_level is None
-            or pane._last_result.corrections.deadtime.status != CorrectionStatus.APPLIED
-            or pane._last_result.corrections.deadtime.effective["tau_us"] != (0.1, 0.1)
-            or pane._last_result.corrections.deadtime.effective["good_frames"] != 2000.0
+            or pane._last_result.corrections[0].deadtime.status != CorrectionStatus.APPLIED
+            or pane._last_result.corrections[0].deadtime.effective["tau_us"] != (0.1, 0.1)
+            or pane._last_result.corrections[0].deadtime.effective["good_frames"] != 2000.0
         ):
             raise RuntimeError("Preview did not apply manual deadtime and complete its tail fit")
         _pump_events(80)

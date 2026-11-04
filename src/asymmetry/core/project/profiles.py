@@ -503,29 +503,32 @@ class GoodWindowPolicy:
     """File bounds or signed authored offsets from effective t0.
 
     An omitted manual endpoint retains its mapped file limit; acquired facts
-    remain separate from the resolved aligned interval.
+    remain separate from the resolved aligned interval. Malformed authored values
+    survive persistence for editing and become unavailable at resolution.
     """
 
     mode: str = "from_file"
-    first_offset_bins: int | None = None
-    last_offset_bins: int | None = None
+    first_offset_bins: Any = None
+    last_offset_bins: Any = None
 
     def __post_init__(self) -> None:
         if self.mode not in GOOD_WINDOW_POLICY_MODES:
             raise ValueError(f"Unknown good window mode {self.mode!r}.")
-        for name in ("first_offset_bins", "last_offset_bins"):
-            value = self.first_offset_bins if name == "first_offset_bins" else self.last_offset_bins
-            if value is not None and (isinstance(value, bool) or not isinstance(value, Integral)):
-                raise ValueError(f"Good window {name} must be a signed integer; got {value!r}.")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         data: dict[str, Any] = {"mode": self.mode}
         if self.mode == "manual":
-            if self.first_offset_bins is not None:
-                data["first_offset_bins"] = int(self.first_offset_bins)
-            if self.last_offset_bins is not None:
-                data["last_offset_bins"] = int(self.last_offset_bins)
+            for name, value in (
+                ("first_offset_bins", self.first_offset_bins),
+                ("last_offset_bins", self.last_offset_bins),
+            ):
+                if value is not None:
+                    data[name] = (
+                        int(value)
+                        if isinstance(value, Integral) and not isinstance(value, bool)
+                        else value
+                    )
         return data
 
     @classmethod
@@ -1341,12 +1344,7 @@ def _common_t0_over_groups(
     n_hist: int,
     detector_t0_bins: list[int] | None,
 ) -> int:
-    """The common t0 the reduction will align this profile's groups to.
-
-    :func:`common_t0_for_groups` over the forward+backward groups with the given
-    per-detector bins. Falls back to the copied ``t0_bin`` (then the first
-    histogram's t0, then 0) when the groups reference no present detectors.
-    """
+    """Resolve the effective common anchor over the authored F/B channels."""
     indices = _analysis_group_indices(grouping, n_hist)
     if run.histograms and indices:
         return common_t0_for_groups(run.histograms, indices, detector_t0_bins=detector_t0_bins)
@@ -1357,12 +1355,7 @@ def _common_t0_over_groups(
 
 
 def _file_common_t0(grouping: dict[str, Any], run: Run, n_hist: int) -> int:
-    """The file-derived common t0: max histogram t0 over the analysis groups.
-
-    ``detector_t0_bins=None`` on purpose: this is the *file* value a manual
-    offset is measured against and the base every policy shift is relative to,
-    so it must ignore any resolved override.
-    """
+    """Use acquired detector anchors as the baseline for a manual timing offset."""
     return _common_t0_over_groups(grouping, run, n_hist, None)
 
 
@@ -1446,6 +1439,13 @@ def resolve_good_window(
     """
     first_good, last_good = file_first_good, file_last_good
     if policy.mode == "manual":
+        for name in ("first_offset_bins", "last_offset_bins"):
+            value = (
+                policy.first_offset_bins if name == "first_offset_bins" else policy.last_offset_bins
+            )
+            if value is not None and (isinstance(value, bool) or not isinstance(value, Integral)):
+                raise ValueError(f"Good window {name} must be a signed integer; got {value!r}.")
+
         if policy.first_offset_bins is not None:
             first_good = int(t0_bin) + int(policy.first_offset_bins)
         if policy.last_offset_bins is not None:
@@ -1476,14 +1476,10 @@ def _apply_t0_policy(
     *,
     profile_name: str = "",
 ) -> None:
-    """Resolve timing without mutating acquired histograms.
+    """Resolve effective timing while retaining acquired histograms.
 
-    File timing supplies the base; missing file timing invokes the existing
-    search. Manual offsets shift that base. Explicit auto detection must succeed.
-    Each detector keeps its own detected bin; a failed detector uses its file
-    bin shifted by the median successful shift. This preserves detector stagger.
-    Exact timing moves by whole bins; acquired window facts stay fixed.
-    """
+    Detection keeps detector stagger; manual offsets move anchors by whole bins.
+    Exact timing moves with those anchors while raw window facts stay fixed."""
     if not run.histograms:
         return
     grouping["t0_bin"] = _file_common_t0(grouping, run, n_hist)

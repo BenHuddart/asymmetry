@@ -692,7 +692,10 @@ selection; the timing row has its own independent selector.
 Asymmetry also checks that authored endpoints are ordered and lie within the
 selected channels' common observed support. It reports the requested and
 available ranges instead of clipping or reordering them into observations.
-A genuine one-bin interval remains valid. An unsupported request makes the
+A genuine one-bin interval remains valid. Malformed saved offsets also reopen
+for repair: **t_good Offset** and **Last Good Bin** retain their authored values
+until an integer edit or selecting **From file** replaces them. Validation occurs
+when the calculation is requested. An unsupported request makes the
 preview unavailable and disables **Apply**; the settings remain editable and
 raw histograms remain available. These are calculation-request checks, not
 new facility-file loading restrictions. Automatic file/support intersection
