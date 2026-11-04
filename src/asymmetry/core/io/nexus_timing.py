@@ -14,9 +14,11 @@ import numpy as np
 
 from asymmetry.core.io.physical_units import (
     UnitConvention,
+    assess_uniform_bin_width_us,
     canonical,
+    physical_unit,
     storage_precision_us,
-    uniform_bin_width_us,
+    unit_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,8 +53,23 @@ def _read_time(group: Any, name: str, *, default_unit: str, context: str) -> _Ti
     node = group.get(name)
     if node is None:
         return None
+    if name == "time_zero" and int(node.attrs.get("available", 1)) == 0:
+        return None
     raw = np.asarray(node)
     field_context = f"{context}/{name}"
+    token = unit_text(node.attrs.get("units")) or default_unit
+    conversion = physical_unit(token, dimension="time")
+    if (
+        raw.dtype.kind not in "iuf"
+        or raw.size == 0
+        or not np.all(np.isfinite(raw))
+        or conversion is None
+    ):
+        logger.warning(
+            "%s: unusable timing declaration; using other file timing when available.",
+            field_context,
+        )
+        return None
     values, _ = canonical(
         raw,
         node.attrs.get("units"),
@@ -60,19 +77,12 @@ def _read_time(group: Any, name: str, *, default_unit: str, context: str) -> _Ti
         context=field_context,
         convention=UnitConvention(default_unit, _REFERENCE),
     )
-    scale, _ = canonical(
-        1,
-        node.attrs.get("units"),
-        "time",
-        context=field_context,
-        convention=UnitConvention(default_unit, _REFERENCE),
-    )
-    if values.size == 0 or not np.all(np.isfinite(values)):
-        raise ValueError(f"{field_context}: timing must contain finite, nonempty values.")
-    return _TimeField(values, raw.dtype, float(scale), field_context)
+    return _TimeField(values, raw.dtype, conversion.factor, field_context)
 
 
-def _timing_table(values: np.ndarray, n_periods: int, n_detectors: int, context: str) -> np.ndarray:
+def _timing_table(
+    values: np.ndarray, n_periods: int, n_detectors: int, context: str
+) -> np.ndarray | None:
     """Accept only scalar, detector-vector, or period-by-detector timing."""
     if values.size == 1:
         return np.full((n_periods, n_detectors), float(values.reshape(-1)[0]))
@@ -80,104 +90,98 @@ def _timing_table(values: np.ndarray, n_periods: int, n_detectors: int, context:
         return np.broadcast_to(values, (n_periods, n_detectors))
     if values.shape == (n_periods, n_detectors):
         return values
-    raise ValueError(
-        f"{context}: expected scalar, {n_detectors} detectors, or "
-        f"({n_periods}, {n_detectors}) period/detector values; got {values.shape}."
+    logger.warning(
+        "%s: unusable timing shape %s; expected scalar, detector-vector, or period/detector table.",
+        context,
+        values.shape,
     )
+    return None
 
 
 def read_nexus_timing(
     group: Any, *, version: str, n_periods: int, n_detectors: int, n_bins: int, context: str
-) -> tuple[float, list[T0Decode], np.ndarray]:
+) -> tuple[float, list[T0Decode], str]:
     """Validate file timing once, before constructing zero-origin histograms."""
     resolution = _read_time(
         group, "resolution", default_unit="ps" if version == "v1" else "ns", context=context
     )
-    raw = _read_time(group, "raw_time", default_unit="us", context=context)
-    if raw is None:
-        raw = _read_time(group, "time_of_flight", default_unit="us", context=context)
-    corrected = _read_time(group, "corrected_time", default_unit="us", context=context)
-    exact = _read_time(group, "time_zero", default_unit="us", context=context)
-    if exact is not None and int(group["time_zero"].attrs.get("available", 1)) == 0:
-        exact = None
-
     width = None
     width_error = 0.0
+    source = "resolution"
     if resolution is not None:
-        if resolution.values.size != 1 or float(resolution.values.reshape(-1)[0]) < 0:
-            raise ValueError(f"{resolution.context}: resolution must be a nonnegative scalar.")
-        candidate = float(resolution.values.reshape(-1)[0])
-        if candidate > 0:
-            width = candidate
+        if resolution.values.size == 1 and float(resolution.values.reshape(-1)[0]) > 0:
+            width = float(resolution.values.reshape(-1)[0])
             width_error = float(resolution.error.reshape(-1)[0])
-
-    axes = []
-    for field in (raw, corrected):
-        if field is None:
-            continue
-        if field.values.ndim != 1:
-            raise ValueError(f"{field.context}: expected a shared one-dimensional time axis.")
-        kind = "edges" if field.values.size == n_bins + 1 else "centres"
-        if n_bins == 1 and field.values.size == 1 and width is not None:
-            candidate, span_error = width, 0.0
         else:
-            candidate = uniform_bin_width_us(
-                field.values,
+            logger.info(
+                "%s: resolution is not a positive scalar; using an axis when available.",
+                resolution.context,
+            )
+    if width is None:
+        for source in ("raw_time", "time_of_flight", "corrected_time"):
+            axis = _read_time(group, source, default_unit="us", context=context)
+            if axis is None:
+                continue
+            kind = "edges" if axis.values.size == n_bins + 1 else "centres"
+            candidate = assess_uniform_bin_width_us(
+                axis.values,
                 kind=kind,
                 n_bins=n_bins,
-                stored_dtype=field.dtype,
-                storage_scale=field.scale,
-                context=field.context,
+                stored_dtype=axis.dtype,
+                storage_scale=axis.scale,
+                context=axis.context,
             )
-            span_error = float((field.error[0] + field.error[-1]) / (field.values.size - 1))
-        if width is None:
-            width, width_error = candidate, span_error
-        # Compare the full span, not a noisy adjacent-bin median. Endpoint
-        # quantisation bounds the uncertainty of the reconstructed width.
-        if abs(candidate - width) > span_error + width_error:
-            raise ValueError(f"{field.context}: time axis conflicts with acquisition resolution.")
-        indices = np.arange(field.values.size)
-        expected = field.values[0] + indices * width
-        coordinate_error = field.error + field.error[0] + indices * width_error
-        if np.any(np.abs(field.values - expected) > coordinate_error):
-            raise ValueError(
-                f"{field.context}: coordinates conflict with uniform acquisition grid."
-            )
-        axes.append((field, kind))
+            if isinstance(candidate, str):
+                logger.warning("%s; trying the next timing axis.", candidate)
+                continue
+            width = candidate
+            width_error = float((axis.error[0] + axis.error[-1]) / (axis.values.size - 1))
+            break
     if width is None:
         raise ValueError(f"{context}: no usable time axis or positive resolution.")
 
-    raw_origin = 0.0
-    origin_error = 0.0
-    for field, kind in axes:
-        if field is raw:
-            raw_origin = float(field.values[0]) - (width / 2 if kind == "centres" else 0)
-            origin_error = float(field.error[0]) + (width_error / 2 if kind == "centres" else 0)
-    exact_values = None
-    exact_errors = None
-    if exact is not None:
-        exact_values = (
-            _timing_table(exact.values, n_periods, n_detectors, exact.context) - raw_origin
-        )
-        exact_errors = (
-            _timing_table(exact.error, n_periods, n_detectors, exact.context) + origin_error
-        )
+    exact = _read_time(group, "time_zero", default_unit="us", context=context)
+    exact_values = (
+        None
+        if exact is None
+        else _timing_table(exact.values, n_periods, n_detectors, exact.context)
+    )
+    exact_errors = (
+        None
+        if exact_values is None
+        else storage_precision_us(exact_values, stored_dtype=exact.dtype, storage_scale=exact.scale)
+    )
     attr = group["counts"].attrs.get("t0_bin")
     anchors = None
     if attr is not None:
-        values = np.asarray(attr, dtype=float)
+        values = np.asarray(attr)
         if (
-            not np.all(np.isfinite(values))
-            or np.any(values != np.floor(values))
-            or np.any(values < 1)
+            values.dtype.kind in "iuf"
+            and np.all(np.isfinite(values))
+            and np.all(values == np.floor(values))
+            and np.all(values >= 1)
         ):
-            raise ValueError(f"{context}/counts:t0_bin: expected positive integer anchors.")
-        anchors = (
-            _timing_table(values, n_periods, n_detectors, f"{context}/counts:t0_bin").astype(
-                np.int64
+            table = _timing_table(values, n_periods, n_detectors, f"{context}/counts:t0_bin")
+            if table is not None:
+                anchors = table.astype(np.int64) - 1
+        else:
+            logger.warning(
+                "%s/counts:t0_bin: unusable integer anchors; using exact time_zero when available.",
+                context,
             )
-            - 1
+    if (
+        anchors is None
+        and exact_values is None
+        and (
+            attr is not None
+            or (exact is not None)
+            or (
+                group.get("time_zero") is not None
+                and int(group["time_zero"].attrs.get("available", 1)) != 0
+            )
         )
+    ):
+        raise ValueError(f"{context}: no usable t0_bin or time_zero declaration.")
 
     decodes = []
     for period in range(n_periods):
@@ -205,27 +209,9 @@ def read_nexus_timing(
             conflict = bool(
                 np.any((times < bins * width - errors) | (times > (bins + 1) * width + errors))
             )
-        for field, kind in axes:
-            if field is not corrected:
-                continue
-            axis_t0 = (width / 2 if kind == "centres" else 0) - float(field.values[0])
-            axis_error = float(field.error[0]) + (width_error / 2 if kind == "centres" else 0)
-            # A shared corrected axis can describe a detector or the common
-            # aligned origin. Per-detector exact values remain authoritative.
-            if times is not None:
-                conflict |= not bool(
-                    np.any(np.abs(times - axis_t0) <= exact_errors[period] + axis_error)
-                )
-            else:
-                conflict |= not bool(
-                    np.any(
-                        (axis_t0 >= bins * width - axis_error - bins * width_error)
-                        & (axis_t0 <= (bins + 1) * width + axis_error + (bins + 1) * width_error)
-                    )
-                )
         if conflict:
             logger.warning(
-                "%s: NeXus t0_bin/time_zero/corrected_time declarations conflict; keeping integer anchors and dropping exact t0.",
+                "%s: NeXus t0_bin/time_zero declarations conflict; keeping integer anchors and dropping exact t0.",
                 context,
             )
         decodes.append(
@@ -235,4 +221,4 @@ def read_nexus_timing(
                 "conflict" if conflict else "file",
             )
         )
-    return width, decodes, np.asarray([]) if corrected is None else corrected.values
+    return width, decodes, source

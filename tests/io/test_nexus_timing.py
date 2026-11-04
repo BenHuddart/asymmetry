@@ -1,4 +1,4 @@
-"""Timing declarations are numerical observations of one acquisition grid."""
+"""Declared acquisition timing remains usable across auxiliary axis variants."""
 
 import h5py
 import numpy as np
@@ -94,50 +94,48 @@ def test_resolution_only_uses_dialect_convention(tmp_path, version, value):
 
 
 @pytest.mark.parametrize(
-    "fault,message",
-    [
-        ("nan", "finite"),
-        ("reverse", "increasing"),
-        ("uneven", "uniform"),
-        ("length", "requires"),
-        ("units", "time unit"),
-        ("resolution", "conflicts"),
-        ("missing", "no usable"),
-        ("shape", "expected scalar"),
-        ("exact_nan", "finite"),
-        ("attr", "positive integer"),
-    ],
+    "fault", ["cumulative", "terminal", "displaced", "curved", "nan", "shape", "units"]
 )
-def test_invalid_timing_is_not_missing_header(tmp_path, fault, message):
-    path = tmp_path / "invalid.nxs"
-    write_timing(path)
+def test_declared_resolution_accepts_secondary_coordinate_variants(tmp_path, fault):
+    from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+
+    path = tmp_path / "coordinates.nxs"
+    write_timing(path, n_bins=2000)
     with h5py.File(path, "a") as f:
         d = f["raw_data_1/instrument/detector_1"]
-        if fault == "nan":
+        if fault == "cumulative":
+            d["raw_time"][:] = np.concatenate(
+                ([0], np.cumsum(np.full(2000, 0.016, dtype=np.float32)))
+            )
+        elif fault == "terminal":
+            d["raw_time"][-1] -= 0.0025
+            d["corrected_time"][-1] -= 0.0025
+        elif fault == "displaced":
+            d["corrected_time"][:] += 0.1
+        elif fault == "curved":
+            d["raw_time"][:] += 0.0005 * np.sin(np.pi * np.arange(2001) / 2000)
+        elif fault == "nan":
             d["raw_time"][10] = np.nan
-        elif fault == "reverse":
-            d["raw_time"][10] = -1
-        elif fault == "uneven":
-            d["raw_time"][10] += 0.003
-        elif fault == "length":
-            del d["raw_time"]
-            d.create_dataset("raw_time", data=np.arange(12))
-        elif fault == "units":
-            d["raw_time"].attrs["units"] = "K"
-        elif fault == "resolution":
-            d["resolution"][()] = 17000
-        elif fault == "missing":
-            for name in ("raw_time", "corrected_time", "resolution"):
-                del d[name]
         elif fault == "shape":
-            del d["time_zero"]
-            d.create_dataset("time_zero", data=[0.4, 0.4, 0.4])
-        elif fault == "exact_nan":
-            d["time_zero"][()] = np.nan
+            del d["raw_time"]
+            d.create_dataset("raw_time", data=np.arange(12).reshape(3, 4))
         else:
-            d["counts"].attrs["t0_bin"] = 25.5
-    with pytest.raises(ValueError, match=message):
-        NexusLoader().load(path)
+            d["raw_time"].attrs["units"] = "K"
+        original_raw = d["raw_time"][()]
+    ds = NexusLoader().load(path)
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.metadata["nexus_timing_source"] == "resolution"
+    quick = quick_asymmetry(ds.run.histograms, ds.run.grouping)
+    np.testing.assert_array_equal(ds.time, quick.time)
+    np.testing.assert_array_equal(ds.asymmetry, quick.asymmetry)
+    np.testing.assert_array_equal(ds.error, quick.error)
+    assert ds.time.size == 2000
+    for i, h in enumerate(ds.run.histograms):
+        assert h.bin_width == 0.016
+        assert h.t0_time_us == float(np.float32(0.4))
+        np.testing.assert_array_equal(h.counts, np.arange(2000) + i * 2000 + 10)
+    stored = ds.metadata["nexus_fields"]["instrument"]["detector_1"]["raw_time"]
+    np.testing.assert_array_equal(stored["value"], original_raw)
 
 
 @pytest.mark.parametrize("exact", [True, False])
@@ -155,27 +153,16 @@ def test_zero_is_valid_and_integer_only_is_sufficient(tmp_path, exact):
     assert ds.run.histograms[0].t0_time_us == (0 if exact else None)
 
 
-def test_raw_axis_origin_is_normalised_once(tmp_path):
+def test_secondary_raw_origin_does_not_shift_declared_timing(tmp_path):
     path = tmp_path / "offset.nxs"
     write_timing(path, dtype=np.float64)
     with h5py.File(path, "a") as f:
         d = f["raw_data_1/instrument/detector_1"]
         d["raw_time"][:] += 2.0
-        d["time_zero"][()] = 2.4
     ds = NexusLoader().load(path)
     assert ds.run.grouping["t0_source"] == "file"
-    assert ds.run.histograms[0].t0_time_us == pytest.approx(0.4)
+    assert ds.run.histograms[0].t0_time_us == 0.4
     np.testing.assert_allclose(ds.time, (np.arange(64) + 0.5) * 0.016 - 0.4, atol=1e-15)
-
-
-@pytest.mark.parametrize("displacement", [-0.1, 0.1])
-def test_displaced_corrected_origin_conflicts_in_both_directions(tmp_path, displacement):
-    path = tmp_path / "axis-conflict.nxs"
-    write_timing(path)
-    with h5py.File(path, "a") as f:
-        d = f["raw_data_1/instrument/detector_1"]
-        d["corrected_time"][:] += displacement
-    assert NexusLoader().load(path).run.grouping["t0_source"] == "conflict"
 
 
 def test_without_resolution_uses_validated_span(tmp_path):
@@ -243,31 +230,6 @@ def test_loaded_and_reduced_selected_pair_share_crop_and_exact_reference(tmp_pat
         np.testing.assert_array_equal(h.counts, counts[i])
 
 
-@pytest.mark.parametrize("fault", ["drift", "partial_bin"])
-def test_coordinates_outside_storage_precision_are_rejected(tmp_path, fault):
-    path = tmp_path / "inconsistent.nxs"
-    write_timing(path, n_bins=2000)
-    with h5py.File(path, "a") as f:
-        d = f["raw_data_1/instrument/detector_1"]
-        del d["raw_time"]
-        values = np.arange(2000) * (0.0160003 if fault == "drift" else 0.016)
-        if fault == "partial_bin":
-            values[-1] -= 0.0025
-        d.create_dataset("raw_time", data=values.astype(np.float32))
-    with pytest.raises(ValueError, match="conflicts|uniform"):
-        NexusLoader().load(path)
-
-
-def test_curved_coordinates_cannot_hide_behind_uniform_adjacent_steps(tmp_path):
-    path = tmp_path / "curved.nxs"
-    write_timing(path, n_bins=4096)
-    with h5py.File(path, "a") as f:
-        raw = f["raw_data_1/instrument/detector_1/raw_time"]
-        raw[:] += 0.0005 * np.sin(np.pi * np.arange(4097) / 4096)
-    with pytest.raises(ValueError, match="acquisition grid"):
-        NexusLoader().load(path)
-
-
 def test_single_bin_centres_use_declared_width(tmp_path):
     path = tmp_path / "single.nxs"
     write_timing(path, n_bins=1, exact=0)
@@ -281,3 +243,102 @@ def test_single_bin_centres_use_declared_width(tmp_path):
     assert ds.run.grouping["t0_source"] == "file"
     assert ds.run.histograms[0].bin_width == 0.016
     np.testing.assert_array_equal(ds.time, [0.008])
+
+
+@pytest.mark.parametrize("resolution", [0, -1, np.nan])
+def test_unusable_resolution_uses_supported_axis(tmp_path, resolution):
+    path = tmp_path / "fallback.nxs"
+    write_timing(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        del d["resolution"]
+        d.create_dataset("resolution", data=resolution)
+    ds = NexusLoader().load(path)
+    assert ds.metadata["nexus_timing_source"] == "raw_time"
+    assert ds.run.histograms[0].bin_width == float(np.float32(64 * 0.016)) / 64
+    assert ds.time.size == 64
+
+
+@pytest.mark.parametrize("fault", ["nonfinite", "shape", "units", "integer"])
+def test_unusable_optional_t0_uses_remaining_calibration(tmp_path, fault, caplog):
+    path = tmp_path / "optional.nxs"
+    write_timing(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        if fault == "nonfinite":
+            d["time_zero"][()] = np.nan
+        elif fault == "shape":
+            del d["time_zero"]
+            d.create_dataset("time_zero", data=[0.4, 0.4, 0.4])
+        elif fault == "units":
+            d["time_zero"].attrs["units"] = "K"
+        else:
+            d["counts"].attrs["t0_bin"] = 25.5
+    ds = NexusLoader().load(path)
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.time.size == 64
+    assert [h.t0_bin for h in ds.run.histograms] == [25, 25]
+    if fault != "integer":
+        assert all(h.t0_time_us is None for h in ds.run.histograms)
+    assert "unusable" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "fault,match",
+    [
+        ("shape", "no usable"),
+        ("uniform", "no usable"),
+        ("nonfinite", "no usable"),
+        ("missing", "no usable"),
+        ("t0", "no usable t0"),
+    ],
+)
+def test_no_usable_required_timing_has_contextual_failure(tmp_path, fault, match):
+    path = tmp_path / "unresolved.nxs"
+    write_timing(path)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        if fault == "t0":
+            d["counts"].attrs["t0_bin"] = -1
+            d["time_zero"][()] = np.nan
+        else:
+            del d["resolution"]
+            del d["corrected_time"]
+            if fault == "shape":
+                del d["raw_time"]
+                d.create_dataset("raw_time", data=[0, 1, 2])
+            elif fault == "uniform":
+                d["raw_time"][10] += 0.003
+            elif fault == "nonfinite":
+                d["raw_time"][10] = np.nan
+            else:
+                del d["raw_time"]
+    with pytest.raises(ValueError, match=match) as exc:
+        NexusLoader().load(path)
+    assert str(path) in str(exc.value)
+
+
+def test_normal_writer_rounding_does_not_warn(tmp_path, caplog):
+    path = tmp_path / "ordinary.nxs"
+    write_timing(path, n_bins=4096)
+    NexusLoader().load(path)
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("fault", ["shape", "nonuniform"])
+def test_axis_fallback_skips_unusable_candidate(tmp_path, fault, caplog):
+    path = tmp_path / "alternate-axis.nxs"
+    write_timing(path, dtype=np.float64)
+    with h5py.File(path, "a") as f:
+        d = f["raw_data_1/instrument/detector_1"]
+        del d["resolution"]
+        if fault == "shape":
+            del d["raw_time"]
+            d.create_dataset("raw_time", data=[0, 1, 2])
+        else:
+            d["raw_time"][10] += 0.003
+    ds = NexusLoader().load(path)
+    assert ds.time.size == 64
+    assert ds.metadata["nexus_timing_source"] == "corrected_time"
+    assert ds.run.histograms[0].bin_width == pytest.approx(0.016, abs=1e-15)
+    assert "raw_time" in caplog.text

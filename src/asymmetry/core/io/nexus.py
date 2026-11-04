@@ -476,7 +476,7 @@ class NexusLoader(BaseLoader):
         counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
 
         first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, h_data, n_bins)
-        bin_width, decodes, corrected_time = read_nexus_timing(
+        bin_width, decodes, timing_source = read_nexus_timing(
             h_data,
             version="v1",
             n_periods=len(counts_periods),
@@ -484,8 +484,7 @@ class NexusLoader(BaseLoader):
             n_bins=n_bins,
             context=f"{source_file}/{entry_name}/histogram_data_1",
         )
-        if corrected_time.size:
-            metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
+        metadata_base["nexus_timing_source"] = timing_source
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
@@ -612,7 +611,7 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
-        bin_width, decodes, corrected_time = read_nexus_timing(
+        bin_width, decodes, timing_source = read_nexus_timing(
             detector,
             version="v2",
             n_periods=len(counts_periods),
@@ -620,8 +619,7 @@ class NexusLoader(BaseLoader):
             n_bins=n_bins,
             context=f"{source_file}/{entry_name}/instrument/detector_1",
         )
-        if corrected_time.size:
-            metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
+        metadata_base["nexus_timing_source"] = timing_source
 
         # Keep integer bin metadata as the canonical source of the good-data
         # window. Floating-point good-time values are used only as a fallback
@@ -728,7 +726,7 @@ class NexusLoader(BaseLoader):
         convention reduction uses. With no exact t0 in the file this is
         identical to ``(k − t0_bin)·w``; with one it places the axis on the
         sub-bin position the DAQ recorded. The file's ``corrected_time`` is kept
-        in ``metadata["nexus_corrected_time"]`` for diagnostics.
+        in ``metadata["nexus_fields"]`` for inspection.
         """
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
@@ -1119,7 +1117,13 @@ class NexusLoader(BaseLoader):
             if attrs:
                 out["@attrs"] = attrs
             for key in node.keys():
-                out[str(key)] = self._extract_tree(node[key])
+                if key in {"raw_time", "time_of_flight", "corrected_time"}:
+                    out[str(key)] = {
+                        "value": np.asarray(node[key]).tolist(),
+                        "@attrs": self._attrs_to_python(node[key].attrs),
+                    }
+                else:
+                    out[str(key)] = self._extract_tree(node[key])
             return out
 
         return None

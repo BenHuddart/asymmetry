@@ -1360,20 +1360,19 @@ def test_v2_stale_time_zero_conflicts_and_the_attribute_wins(
     assert any("declarations conflict" in record.message for record in caplog.records)
 
 
-def test_v2_corrected_time_disagreeing_with_the_attribute_is_a_conflict(
+def test_v2_secondary_corrected_time_does_not_replace_declared_t0(
     tmp_path, loader: NexusLoader, caplog
 ) -> None:
-    """The axis vote survives only as a cross-check: it flags, it never decides."""
+    """A secondary origin cannot discard established file calibration."""
     path = tmp_path / "t0_axis_conflict.nxs"
     _write_v2_t0_file(path, t0_bin_attr=11, time_zero_us=0.167, corrected_time_t0_bin=20)
 
     with caplog.at_level("WARNING"):
         ds = loader.load(str(path))
 
-    # The attribute still decides the bin; only the exact t0 is dropped.
     assert [h.t0_bin for h in ds.run.histograms] == [10, 10]
-    assert ds.run.grouping["t0_source"] == "conflict"
-    assert any("corrected_time" in record.message for record in caplog.records)
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.histograms[0].t0_time_us == pytest.approx(0.167)
 
 
 def test_v2_last_good_bin_equal_to_the_histogram_length_is_the_final_bin(
@@ -1424,7 +1423,9 @@ def test_v2_dataset_axis_is_stamped_from_the_exact_t0(tmp_path, loader: NexusLoa
     expected = (np.arange(11, 32, dtype=np.float64) + 0.5) * _RES - 0.167
     assert ds.time == pytest.approx(expected)
     # The file's own axis is kept for diagnostics, not used for stamps.
-    assert ds.metadata["nexus_corrected_time"][11] == pytest.approx(expected[0])
+    assert ds.metadata["nexus_fields"]["instrument"]["detector_1"]["corrected_time"]["value"][
+        11
+    ] == pytest.approx(expected[0])
 
 
 def test_v1_t0_bin_attribute_decodes_one_based(tmp_path, loader: NexusLoader) -> None:

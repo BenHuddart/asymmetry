@@ -88,10 +88,12 @@ def unit_text(raw: object, *, context: str = "unit attribute") -> str:
     return str(raw).strip("\x00 \t\r\n").replace("µ", "u").replace("μ", "u")
 
 
-def physical_unit(raw: object) -> PhysicalUnit | None:
+def physical_unit(raw: object, *, dimension: Dimension | None = None) -> PhysicalUnit | None:
     """Match case-sensitive symbols and case-insensitive spelled-out unit names."""
     token = unit_text(raw)
     for unit in _UNITS:
+        if dimension is not None and unit.dimension != dimension:
+            continue
         if token == unit.symbol or token.casefold() in tuple(
             word.casefold() for word in unit.words
         ):
@@ -113,8 +115,8 @@ def canonical(
     if not token and convention is not None:
         token = convention.unit
         declaration = UnitDeclaration(token, "format", convention.reference)
-    unit = physical_unit(token)
-    if unit is None or unit.dimension != dimension:
+    unit = physical_unit(token, dimension=dimension)
+    if unit is None:
         supported = ", ".join(u.symbol for u in _UNITS if u.dimension == dimension)
         raise ValueError(
             f"{context}: {dimension} unit {token or '<missing>'!r}; supported units: {supported}."
@@ -131,24 +133,45 @@ def uniform_bin_width_us(
     context: str,
     storage_scale: float = 1.0,
 ) -> float:
-    """Validate a canonical axis using four ULPs of its original storage precision."""
+    """Require an axis that supplies one uniform physical width."""
+    result = assess_uniform_bin_width_us(
+        axis,
+        kind=kind,
+        n_bins=n_bins,
+        stored_dtype=stored_dtype,
+        context=context,
+        storage_scale=storage_scale,
+    )
+    if isinstance(result, str):
+        raise ValueError(result)
+    return result
+
+
+def assess_uniform_bin_width_us(
+    axis: np.ndarray,
+    *,
+    kind: Literal["edges", "centres"],
+    n_bins: int,
+    stored_dtype: np.dtype,
+    context: str,
+    storage_scale: float = 1.0,
+) -> float | str:
+    """Return a uniform physical width or the reason this axis cannot supply one."""
     values = np.asarray(axis, dtype=float)
     expected = n_bins + 1 if kind == "edges" else n_bins
     if values.ndim != 1 or values.size != expected or values.size < 2:
-        raise ValueError(
-            f"{context}: time axis requires {expected} {kind} and at least two points."
-        )
+        return f"{context}: time axis requires {expected} {kind} and at least two points."
     if not np.all(np.isfinite(values)):
-        raise ValueError(f"{context}: time axis must contain only finite values.")
+        return f"{context}: time axis must contain only finite values."
     steps = np.diff(values)
     if np.any(steps <= 0):
-        raise ValueError(f"{context}: time axis must be strictly increasing.")
+        return f"{context}: time axis must be strictly increasing."
     width = float((values[-1] - values[0]) / (values.size - 1))
     tolerance = float(
         np.max(storage_precision_us(values, stored_dtype=stored_dtype, storage_scale=storage_scale))
     )
     if np.any(np.abs(steps - width) > tolerance):
-        raise ValueError(f"{context}: time axis must have uniform bin widths.")
+        return f"{context}: time axis must have uniform bin widths."
     return width
 
 
