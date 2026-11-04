@@ -120,15 +120,18 @@ def test_ragged_detector_alignment_records_the_terminal_crop() -> None:
 
     histograms = [Histogram(np.ones(1000), bin_width=0.01, t0_bin=t0) for t0 in (100, 110)]
     forward, backward, crop = align_forward_backward(histograms, [0], [1], [100, 110])
-    assert crop == AlignmentCrop(110, ((0, 10), (1, 0)), (1010, 1000), 1000)
-    np.testing.assert_array_equal(forward[:10], 0.0)
-    np.testing.assert_array_equal(forward[10:], 1.0)
+    assert crop.common_t0_bin == 100
+    assert crop.detector_offsets == ((0, 0), (1, -10))
+    assert crop.first_bin == 10
+    assert crop.group_lengths == (1000, 990)
+    assert crop.length == 990
+    np.testing.assert_array_equal(forward, 1.0)
     np.testing.assert_array_equal(backward, 1.0)
     first, last = good_window_for_groups(
-        [0, 1], [100, 110], [0, 0], [999, 999], common_t0_bin=110, n_bins=crop.length
+        [0, 1], [100, 110], [0, 0], [999, 999], common_t0_bin=100, n_bins=crop.length
     )
     assert good_window({"first_good_bin": first, "last_good_bin": last}, crop.length) == BinWindow(
-        10, 999
+        0, 989
     )
 
 

@@ -7,7 +7,7 @@ retain an incomplete result, carrying its unavailable or failed status.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -27,13 +27,14 @@ from asymmetry.core.transform.corrections import (
 from asymmetry.core.transform.deadtime import (
     prepare_histograms_with_deadtime,
 )
-from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, good_window
+from asymmetry.core.transform.fb_counts import AlignmentCrop, ForwardBackwardCounts
 from asymmetry.core.transform.grouping import (
     align_forward_backward_counts,
+    group_forward_backward,
     independent_pair_indices,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
-from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
+from asymmetry.core.transform.t0 import effective_detector_t0_bins
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -54,6 +55,7 @@ class GroupedAsymmetryReduction:
     error: NDArray[np.float64]
     corrections: CorrectionOutcomes
     binning: BinningSpec
+    alignment: AlignmentCrop
     #: Scale of :attr:`asymmetry` and :attr:`error`. Always
     #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
     #: has no other mode; the field exists so a consumer can assert the scale it
@@ -160,19 +162,15 @@ def corrected_grouped_counts(
             allow_incomplete=True,
         )
 
-        # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
-        # so alignment shifts without the histograms' own t0_bin being rewritten.
-        detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
-        forward, backward, crop = align_forward_backward_counts(
-            working_histograms, forward_idx, backward_idx, detector_t0
-        )
-        common_t0 = crop.common_t0_bin
-        n_grouped = crop.length
-        window = good_window(grouping, n_grouped)
+        grouped = group_forward_backward(
+            working_histograms, grouping, resolved_indices=(forward_idx, backward_idx)
+        ).counts
+        forward, backward, crop = grouped.forward, grouped.backward, grouped.alignment
+        common_t0, n_grouped, window = grouped.common_t0_bin, crop.length, grouped.window
 
         background_outcome = CorrectionOutcome("background", "none", CorrectionStatus.OFF)
         if use_background:
-            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+            bin_width = float(working_histograms[forward_idx[0]].bin_width)
             reference_forward = None
             reference_backward = None
             reference_scale = None
@@ -205,7 +203,8 @@ def corrected_grouped_counts(
                             forward_idx,
                             backward_idx,
                             effective_detector_t0_bins(reference_prepared, grouping),
-                            common_t0_bin=common_t0,
+                            common_t0_bin=common_t0 + crop.first_bin,
+                            first_bin=crop.first_bin,
                             sample_length=n_grouped,
                         )
                     )
@@ -213,6 +212,7 @@ def corrected_grouped_counts(
                 forward,
                 backward,
                 grouping=grouping,
+                acquisition_start_bin=crop.first_bin,
                 t0_bin=common_t0,
                 bin_width_us=bin_width,
                 facility=facility,
@@ -227,7 +227,7 @@ def corrected_grouped_counts(
             background_outcome = bkg_result.outcome
             if resolved is not None and background_outcome.status == CorrectionStatus.APPLIED:
                 effective = background_outcome.to_dict()["effective"]
-                effective["reference_alignment"] = asdict(reference_crop)
+                effective["reference_alignment"] = reference_crop.to_dict()
                 effective["reference"] = {
                     "run_number": resolved.run_number,
                     "file_name": resolved.source_file,
@@ -238,8 +238,8 @@ def corrected_grouped_counts(
                 }
                 background_outcome = replace(background_outcome, effective=effective)
 
-        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-        t0_time_us = common_t0_time_us(working_histograms, grouping, common_t0)
+        bin_width = float(working_histograms[forward_idx[0]].bin_width)
+        t0_time_us = grouped.t0_time_us
         if not use_background:
             forward_counts = forward
             backward_counts = backward
@@ -347,6 +347,7 @@ def reduce_grouped_asymmetry(
             error=np.asarray(error * PERCENT_PER_FRACTION, dtype=np.float64),
             corrections=corrected.corrections,
             binning=binning,
+            alignment=corrected.alignment,
             units=ASYMMETRY_PERCENT,
         )
 
@@ -360,6 +361,22 @@ class PeriodAsymmetryReduction:
     error: NDArray[np.float64]
     corrections: dict[str, CorrectionOutcomes]
     binning: BinningSpec
+    alignments: dict[str, AlignmentCrop]
+
+    def metadata_with_alignment(self, metadata: dict) -> dict:
+        """Replace inherited alignment with the actual selected period resolutions."""
+        result = {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"grouped_alignment", "period_alignments"}
+        }
+        if len(self.alignments) == 1:
+            result["grouped_alignment"] = next(iter(self.alignments.values())).to_dict()
+        else:
+            result["period_alignments"] = {
+                label: value.to_dict() for label, value in self.alignments.items()
+            }
+        return result
 
 
 def reduce_period_asymmetry(
@@ -449,6 +466,7 @@ def reduce_period_asymmetry(
         error,
         {str(label): result.corrections for label, result in reduced.items()},
         binning,
+        {str(label): result.alignment for label, result in reduced.items()},
     )
 
 

@@ -134,7 +134,7 @@ def test_reference_background_uses_both_measured_variances_and_own_exposure():
     np.testing.assert_allclose(counts.forward.counts, 125.0 - 2 * 10.0 / 0.96)
 
 
-def test_alignment_shifts_pads_and_crops_variance_like_counts():
+def test_alignment_shifts_and_crops_observed_variance_like_counts():
     raw = [
         Histogram(np.array([10.0, 20.0, 30.0, 40.0]), 1.0, t0_bin=1),
         Histogram(np.array([2.0, 4.0, 6.0]), 1.0),
@@ -144,9 +144,9 @@ def test_alignment_shifts_pads_and_crops_variance_like_counts():
         raw, {"dead_time_us": [0.2, 0.0, -0.1], "good_frames": 100.0}, True, mode="manual"
     )
     f, b, crop = align_forward_backward_counts(prepared, [0, 1], [2])
-    np.testing.assert_array_equal(f.variance, [10.0, 22.0, 34.0, 46.0])
-    np.testing.assert_array_equal(b.variance, [0.0, 8.0, 8.0, 8.0])
-    assert crop.length == 4
+    np.testing.assert_array_equal(f.variance, [22.0, 34.0, 46.0])
+    np.testing.assert_array_equal(b.variance, [8.0, 8.0, 8.0])
+    assert crop.length == 3
 
 
 def test_ratio_alpha_uses_selected_count_variance():
@@ -225,9 +225,6 @@ def test_spectral_background_preserves_acquisition_bins_with_later_extra_group(
     )
     if declared_t0:
         run.grouping["t0_bin"] = 2
-    else:
-        # Without a declared axis, Fourier good-bin bounds already use its grid.
-        run.grouping.update(first_good_bin=6, last_good_bin=21)
     if range_form == "shared":
         run.grouping["background_range"] = [0, 1]
     elif range_form == "paired":

@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
@@ -37,6 +38,11 @@ class MembershipScenario(Scenario):
                 "last_good_bin": 199,
             },
         )
+        histograms[1].bin_width = 0.03
+        histograms[1].t0_time_us = 0.04
+        counts = group_forward_backward(histograms, run.grouping).counts
+        if counts.alignment.first_bin != 2 or counts.forward.counts.size != 198:
+            raise RuntimeError("The excluded channel must not change selected observed support")
         dataset = MuonDataset(
             time,
             np.zeros(200),
@@ -62,6 +68,7 @@ class MembershipScenario(Scenario):
                 raise RuntimeError("A shared F/B observation must disable Apply")
         elif pane._last_result.facts.member_counts != (1, 1):
             raise RuntimeError("The preview must report effective channel membership")
+        _pump_until(lambda: "…" not in dialog._t0_detected_label.text())
         _pump_events(80)
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)

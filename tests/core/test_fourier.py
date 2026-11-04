@@ -296,8 +296,10 @@ def test_build_group_signal_dataset_uses_common_run_t0_reference() -> None:
     early = build_group_signal_dataset(run, 1)
     late = build_group_signal_dataset(run, 2)
 
-    assert early.time[0] == pytest.approx(late.time[0])
-    assert int(np.argmax(early.asymmetry)) == int(np.argmax(late.asymmetry)) + 2
+    assert early.time[0] == pytest.approx(late.time[0] + 0.02)
+    np.testing.assert_allclose(early.time, late.time + 0.02, atol=1e-15)
+    assert early.time[-1] == pytest.approx(0.05)
+    assert late.time[-1] == pytest.approx(0.03)
 
 
 def test_build_group_signal_dataset_follows_manual_t0_override_like_reduction() -> None:

@@ -135,6 +135,7 @@ from asymmetry.core.transform.reduce import (
 from asymmetry.core.transform.t0 import (
     EFFECTIVE_DETECTOR_T0_KEY,
     detected_detector_t0_bins,
+    detector_t0_overrides,
     effective_detector_t0_bins,
     find_t0_for_run,
     good_window_for_groups,
@@ -945,29 +946,10 @@ _ALPHA_EXTRA_KEYS = _VECTOR_ALPHA_KEYS
 
 
 def _t0_policy_from_payload(payload: dict[str, Any]) -> T0Policy:
-    """Infer a :class:`T0Policy` from a stored grouping payload.
+    """Infer a manual offset from a validated legacy timing payload.
 
-    A payload records a *value*, not a policy, so this reconstructs one — for
-    **legacy payloads only**: the v11→v12 project migration,
-    :func:`asymmetry.core.workflow.reduction._profile_for_run`, and the grouping
-    dialog's fresh-draft path. Every payload written since carries an explicit
-    ``t0_policy`` (D1); nothing here is allowed to flip a freshly loaded run into
-    Manual.
-
-    Two manual signals, in order:
-
-    1. An explicit ``effective_detector_t0_bins`` override (written by a manual
-       or auto-detect resolution) — the offset is ``effective[i] −
-       detector_t0_bins[i]``, equal for every ``i`` by construction, so index 0
-       answers it and a payload missing the file table raises rather than guess.
-    2. The stored common ``t0_bin`` differing from the file-derived common t0.
-
-    That file-derived value must be **bit-identical to the loader's rule**: the
-    max of ``detector_t0_bins`` over the forward/backward group detectors, with
-    ``excluded_detectors`` removed — *never* the max over all detectors. An
-    out-of-group detector with a later header t0 is exactly what used to flip a
-    fresh PSI run into Manual. No per-detector table (a common-t0 NeXus payload)
-    means nothing to differ from: ``from_file``.
+    File anchors use only the effective F/B membership. Per-detector overrides
+    are validated by the profile boundary before they can imply an offset.
     """
     stored_t0 = _as_int(payload.get("t0_bin"))
     if stored_t0 is None:
@@ -1058,6 +1040,10 @@ def profile_from_payload(
     come back from the run at resolve time.
     """
     payload = payload if isinstance(payload, dict) else {}
+    try:
+        detector_t0_overrides(payload, fingerprint.histogram_count)
+    except ValueError as exc:
+        raise InvalidGroupingError(str(exc), payload) from exc
 
     extra: dict[str, Any] = {}
     for key in _STRUCTURE_KEYS:
@@ -1280,7 +1266,7 @@ def resolve_effective_grouping(
             _apply_alpha_policy(
                 grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
             )
-        except (InvalidGroupingError, CorrectionUnavailableError) as exc:
+        except (ValueError, CorrectionUnavailableError) as exc:
             # An unavailable request retains authored coefficients for explicit repair.
             _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
             if profile.alpha_policy.mode != "per_run_estimate":

@@ -69,6 +69,7 @@ class TimeFBAsymmetry(Representation):
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
                 "alpha": alpha,
+                "grouped_alignment": fb.counts.alignment.to_dict(),
             }
         )
         # Emitted only when the correction is active so existing metadata

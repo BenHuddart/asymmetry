@@ -120,7 +120,12 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             time=result.time,
             asymmetry=result.asymmetry,
             error=result.error,
-            metadata={**source.metadata, "projection": label, "period_index": period_index},
+            metadata={
+                **source.metadata,
+                "projection": label,
+                "period_index": period_index,
+                "grouped_alignment": result.alignment.to_dict(),
+            },
             run=source,
         )
     return datasets

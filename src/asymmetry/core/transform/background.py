@@ -348,6 +348,7 @@ def apply_grouped_background_correction(
     *,
     grouping: dict[str, Any] | None,
     t0_bin: int,
+    acquisition_start_bin: int = 0,
     bin_width_us: float,
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
@@ -501,7 +502,15 @@ def apply_grouped_background_correction(
             ranges=None,
         )
 
-    ranges = resolve_background_ranges(grouping, int(t0_bin))
+    ranges = resolve_background_ranges(grouping, int(t0_bin) + acquisition_start_bin)
+    ranges = tuple(
+        BinWindow(
+            value.first - acquisition_start_bin,
+            value.last - acquisition_start_bin,
+            label="background range",
+        )
+        for value in ranges
+    )
     ranges[0].validate_length(f.size, label="background range")
     ranges[1].validate_length(b.size, label="background range")
     f_range = _adjust_range_for_beam_period(

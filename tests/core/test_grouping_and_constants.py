@@ -136,36 +136,17 @@ def _apply_grouping_aligned_reference(
     common_t0_bin: int | None = None,
     detector_t0_bins: list[int] | None = None,
 ) -> np.ndarray:
-    """The pre-G1 implementation: build shifted full-length copies, then sum.
-
-    Kept here as the oracle the optimised in-place version must match exactly.
-    """
-    from asymmetry.core.transform.grouping import _detector_t0, _validated_group_indices
-
-    present = _validated_group_indices(group_indices, len(histograms))
-    selected = [(i, histograms[i]) for i in present]
-    if not selected:
-        return np.array([], dtype=np.float64)
-    if common_t0_bin is None:
-        common_t0_bin = max(
-            0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
-        )
-    common_t0_bin = max(0, int(common_t0_bin))
-    shifted: list[np.ndarray] = []
-    for i, hist in selected:
-        counts = np.asarray(hist.counts, dtype=np.float64)
-        offset = common_t0_bin - _detector_t0(histograms, i, detector_t0_bins)
-        if offset <= 0:
-            shifted.append(counts[-offset:].copy() if offset < 0 else counts.copy())
-            continue
-        out = np.zeros(len(counts) + offset, dtype=np.float64)
-        out[offset:] = counts
-        shifted.append(out)
-    min_len = min(len(a) for a in shifted)
-    total = np.zeros(min_len, dtype=np.float64)
-    for a in shifted:
-        total += a[:min_len]
-    return total
+    """Independent sums indexed by time relative to the earliest anchor."""
+    bins = detector_t0_bins or [hist.t0_bin for hist in histograms]
+    earliest = min(bins[i] for i in group_indices)
+    origins = {i: bins[i] - earliest for i in group_indices}
+    length = min(histograms[i].n_bins - origins[i] for i in group_indices)
+    return np.array(
+        [
+            sum(float(histograms[i].counts[r + origins[i]]) for i in group_indices)
+            for r in range(length)
+        ]
+    )
 
 
 @pytest.mark.parametrize(

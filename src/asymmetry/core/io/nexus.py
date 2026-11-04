@@ -29,7 +29,7 @@ from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.transform.t0 import good_window_for_groups, run_t0_time_us
+from asymmetry.core.transform.t0 import selected_t0_reference
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
 try:  # optional dependency
@@ -832,23 +832,18 @@ class NexusLoader(BaseLoader):
             common_t0, n_grouped = quick.common_t0, len(asymmetry)
             alpha = 1.0
 
-            t0_time_us = run_t0_time_us(histograms, common_t0)
-            t0_stamp = (
-                (float(common_t0) + 0.5) * bin_width if t0_time_us is None else float(t0_time_us)
-            )
-            time_axis = (np.arange(n_grouped, dtype=np.float64) + 0.5) * bin_width - t0_stamp
-
-            group_first_good, group_last_good = self._group_good_window(
-                histograms,
-                sorted(set(grouping.forward_indices) | set(grouping.backward_indices)),
-                common_t0=common_t0,
-                n_grouped=n_grouped,
-            )
+            time_axis = quick.time
+            start = quick.alignment.first_bin if quick.alignment is not None else 0
+            t0_time_us = ((start + 0.5) * bin_width - time_axis[0]) if n_grouped else None
+            group_first_good, group_last_good = first_good_bin, last_good_bin
+            if quick.window is not None:
+                group_first_good = quick.window.first + start
+                group_last_good = quick.window.last + start
             lo, hi = self._resolve_good_bin_range(
                 time_axis,
                 len(asymmetry),
-                first_good_bin=group_first_good,
-                last_good_bin=group_last_good,
+                first_good_bin=max(0, group_first_good - start),
+                last_good_bin=group_last_good - start,
                 first_good_time=first_good_time,
                 last_good_time=last_good_time,
                 use_first_good_time=use_first_good_time,
@@ -900,7 +895,11 @@ class NexusLoader(BaseLoader):
             }
             if good_frames_periods[period_idx - 1] is not None:
                 run_grouping["good_frames"] = good_frames_periods[period_idx - 1]
-            if t0_time_us is not None:
+            if (
+                t0_time_us is not None
+                and histograms[selected_t0_reference(histograms, run_grouping)].t0_time_us
+                is not None
+            ):
                 run_grouping["t0_time_us"] = float(t0_time_us)
 
             run = Run(
@@ -992,29 +991,6 @@ class NexusLoader(BaseLoader):
             )
             for i in range(period_counts.shape[0])
         ]
-
-    def _group_good_window(
-        self,
-        histograms: list[Histogram],
-        group_indices: list[int],
-        *,
-        common_t0: int,
-        n_grouped: int,
-    ) -> tuple[int, int]:
-        """The good window of the *aligned* group sums, in grouped-bin indices.
-
-        Thin adapter over :func:`good_window_for_groups`, which owns the rule for
-        every loader and for profile resolution; ISIS keeps the per-detector
-        tables on the histograms rather than in parallel lists.
-        """
-        return good_window_for_groups(
-            group_indices,
-            [int(hist.t0_bin) for hist in histograms],
-            [int(hist.good_bin_start) for hist in histograms],
-            [int(hist.good_bin_end) for hist in histograms],
-            common_t0_bin=common_t0,
-            n_bins=n_grouped,
-        )
 
     def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
         """Build a usable time axis and bin width from NeXus time datasets."""

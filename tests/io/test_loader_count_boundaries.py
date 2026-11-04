@@ -1,7 +1,5 @@
 """File-boundary shape checks and named detector-alignment provenance."""
 
-from dataclasses import asdict
-
 import numpy as np
 import pytest
 
@@ -58,7 +56,7 @@ def test_loader_records_the_named_group_alignment(tmp_path, kind):
         for key in ("forward_group", "backward_group")
     )
     _, _, crop = align_forward_backward(run.histograms, forward, backward)
-    assert dataset.metadata["grouped_alignment"] == asdict(crop)
+    assert dataset.metadata["grouped_alignment"] == crop.to_dict()
 
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,

@@ -171,7 +171,7 @@ def _hist(t0_bin: int, t0_time_us: float | None) -> Histogram:
     return Histogram(counts=np.ones(10), bin_width=0.016, t0_bin=t0_bin, t0_time_us=t0_time_us)
 
 
-def test_run_t0_time_us_averages_the_detectors_on_the_common_bin():
+def test_run_t0_time_us_averages_arithmetic_members_on_the_common_bin():
     """Detectors aligned onto the common bin set the run's exact t0; others don't."""
     histograms = [_hist(10, 0.166), _hist(10, 0.168), _hist(12, 0.200)]
     assert run_t0_time_us(histograms, 10) == pytest.approx(0.167)

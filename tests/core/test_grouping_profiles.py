@@ -1579,3 +1579,18 @@ def test_heal_keeps_a_real_manual_offset():
 
     assert heal_t0_policies([profile], {}) == []
     assert profile.t0_policy == T0Policy(mode="manual", offset_bins=-2)
+
+
+@pytest.mark.parametrize("override", [[1], [1.9, 3], [True, 3], [None, 3], "1,3", None])
+def test_profile_lifting_rejects_malformed_timing_overrides_without_coercion(override):
+    from asymmetry.core.transform.grouping import InvalidGroupingError
+
+    payload = {
+        "groups": {1: [1], 2: [2]},
+        "t0_bin": 3,
+        "detector_t0_bins": [1, 3],
+        "effective_detector_t0_bins": override,
+    }
+    with pytest.raises(InvalidGroupingError, match="t0") as caught:
+        profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
+    assert caught.value.grouping == payload

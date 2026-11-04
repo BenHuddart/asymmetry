@@ -179,7 +179,7 @@ def test_detector_traces_share_alignment_crop_and_fit_mask():
     assert np.all((group.time < 2) | (group.time > 3))
     aligned = apply_grouping_aligned(ds.run.histograms, [0, 1], common_t0_bin=2)
     expected = aligned[: (len(aligned) // 4) * 4].reshape(-1, 4).sum(axis=1)
-    time = (np.arange(len(aligned)) - 2) * 0.004
+    time = np.arange(len(aligned)) * 0.004
     time = time[: len(expected) * 4].reshape(-1, 4).mean(axis=1)
     mask = (time >= 0.2) & (time <= 8) & ((time < 2) | (time > 3))
     np.testing.assert_allclose(group.counts, expected[mask])
