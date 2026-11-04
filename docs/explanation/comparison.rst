@@ -196,6 +196,21 @@ select raw 23..127 for M3 (t0 7, 0.625 ns bins) and 107..127 for T4/T5
 (t0 5, approximately 0.09765625 ns bins). These differ from the converted
 file-good intervals 35..80 and 26..60 respectively.
 
+Tested on musrfit 1.12.1 example ROOT files (revision ``708f777b``): modern
+LEM with a terminal good bound, and FLAME and HiFi with interior good bounds.
+Explicit requests matched to Asymmetry's file-good observations give exact
+summed counts and raw-bin identities. Timestamps and positive-count F/B errors
+agree within relative :math:`5\times10^{-6}`; asymmetry exports also allow
+absolute :math:`5\times10^{-7}` near zero because of ASCII precision.
+Omitted native data intervals select different observations in all three
+examples. The HiFi initial pair includes an empty channel; its error comparison
+uses an additional explicitly selected populated pair. Zero-count uncertainty
+conventions are outside that positive-count comparison: Asymmetry retains a
+unit-fraction uncertainty sentinel for one-sided or empty bins, whereas the
+native export supplies different finite errors. This is selected
+numerical coverage of three acquired examples, not agreement for every example
+file or every ROOT layout.
+
 WiMDA's **Use File values** uses the first histogram's good interval as the
 grouping reference, with zero last-good requesting histogram length. Its
 one-based histogram coordinates and shared end differ from Asymmetry's

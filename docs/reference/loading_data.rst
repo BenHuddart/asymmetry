@@ -562,7 +562,18 @@ ns versus BIN float32 width accounts for a relative timing difference below
 :math:`3\times10^{-8}`. The generated ``TDirectory`` form uses a lower-case
 ``decayAnaModule`` name that this musrfit reader does not accept; Asymmetry
 reads it. No numerical agreement is claimed for that musrfit path, or for
-WiMDA or Mantid reading this legacy class. ROOT coverage here is synthetic.
+WiMDA or Mantid reading this legacy class. This cross-format analytic comparison
+uses synthetic files.
+
+Selected-bin reductions are also tested on three acquired musrfit 1.12.1
+example ROOT files (revision ``708f777b``): modern LEM terminal bounds and
+FLAME/HiFi interior bounds. Default and matched explicit requests are compared
+separately; matched counts agree exactly, with times and applicable errors
+agreeing at ASCII export precision. The HiFi error comparison uses a populated
+pair in addition to the initial pair containing an empty channel. See
+:doc:`/explanation/comparison` for uncertainty scope and remaining coverage
+limits. Legacy ``TLemRunHeader`` v4 calibration remains unsupported by the
+numeric decoder; those loading failures are a separate compatibility gap.
 
 Asymmetry also checks that the resolved physical width is finite and positive
 before calibrated loading, because its fixed-bin time axis requires it. Without

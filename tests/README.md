@@ -101,6 +101,14 @@ Native cases are marked ``integration``; they compare tagged raw-bin membership,
 explicit and omitted data intervals, counts, timing, and Poisson errors without
 external acquisition files. They skip when that executable/version is absent.
 
+For acquired modern LEM, FLAME, and HiFi ROOT comparisons, point
+`ASYMMETRY_MUSRFIT_DATA` at the full musrfit revision `708f777b` checkout's
+`doc/examples/data`, then run
+`python tools/harness.py test -- tests/io/test_psi_root_examples.py`.
+The optional cases also read sibling tutorial data in that checkout, in place.
+They compare omitted and matched explicit selections, exact counts, timestamps,
+and positive-count F/B errors; no acquisition data are copied into this repository.
+
 ## User-state isolation
 
 Only `gui`-marked tests activate Qt fixtures. They receive per-test temporary

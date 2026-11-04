@@ -262,12 +262,12 @@ def musrfit_export(tmp_path):
     if "1.12.1" not in version or "708f777b" not in version:
         pytest.skip("reference requires musrfit 1.12.1, revision 708f777b; ROOT 6.40.04")
 
-    def export(path, fmt, selection="", forward="1", asymmetry=False):
+    def export(path, fmt, selection="", forward="1", asymmetry=False, backward="2"):
         (tmp_path / "musrfit_startup.xml").write_text(
             f'<?xml version="1.0"?><musrfit><data_path>{path.parent}</data_path></musrfit>'
         )
         settings = (
-            "fittype 2\nalpha 4\nbackgr.fix 0 0\nforward 1\nbackward 2"
+            f"fittype 2\nalpha 4\nbackgr.fix 0 0\nforward {forward}\nbackward {backward}"
             if asymmetry
             else f"fittype 0\nnorm 1\nbackgr.fit 2\nforward {forward}"
         )
@@ -304,6 +304,7 @@ range -1 10
             text=True,
             timeout=30,
         )
+        (tmp_path / "native.log").write_text(result.stdout + result.stderr)
         assert result.returncode == 0, result.stdout + result.stderr
         return np.loadtxt(tmp_path / "endpoint_0.dat", comments="%", delimiter=",")
 
