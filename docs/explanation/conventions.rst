@@ -134,10 +134,10 @@ This convention is used consistently across the interface, the loaders, the
 grouping tools, and the fitting inputs. Some other programs place :math:`\alpha`
 on the forward group instead, so take care when comparing α values between
 tools (:math:`\beta` is numerically identical in both conventions).
-The corrections that produce the asymmetry are applied in a fixed order —
-deadtime, then background, then grouping, then asymmetry — as described in
-:doc:`/getting_started/key_concepts` and
-:doc:`/reference/data_reduction/index`.
+The standard count-based F/B path applies enabled detector deadtime correction
+before alignment and grouping, then enabled group background subtraction.
+Counts are binned before asymmetry is formed. The operation order and
+calibration dependencies are described in :doc:`reduction_pipeline`.
 
 Errors
 ------

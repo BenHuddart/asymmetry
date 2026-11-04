@@ -1,6 +1,9 @@
 Detector Grouping and Layout
 ============================
 
+For the operation order and calibration dependencies, see
+:doc:`/explanation/reduction_pipeline`.
+
 Detector grouping defines how the raw per-detector count histograms are
 combined into the forward and backward sums that enter the asymmetry
 formula. The choice is dictated by the experiment: a coarse two-group
@@ -1022,49 +1025,24 @@ that requires its calibration inputs, uncertainties and fit diagnostics.
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-PSI file-good windows are inclusive raw-bin bounds, shifted with each
-selected detector and intersected with common support. A 128-bin pair with
-t0 4/7 and file bounds 16..60 retains raw 16..57 paired with 19..60.
-Its inclusive uncropped aligned window is 19..60; after the three-bin
-support crop it is local 16..57. An explicit musrfit packing-one request
-``data 16 58 19 61`` selects those same observations. Its omitted-data fallback
-does not apply the same file-good intersection. See
-:doc:`/reference/loading_data` and :doc:`/explanation/comparison` for format
-normalisation, native versions, and limits.
+Asymmetry uses unique acquired-channel membership and requires disjoint,
+nonempty effective F/B pairs for its independent-count model. WiMDA and musrfit
+permit repeated and overlapping selections in the compared paths; Mantid rejects
+identical pairs but accepts partial overlap. Reuse across separate projections
+remains supported. See :ref:`comparison-membership` for versions, matched count
+comparisons, and uncertainty limits.
 
-For ordinary grouping, Mantid's ``MuonGroupingCounts`` selects detector IDs,
-whereas musrfit RUN lists select histogram numbers. Native Mantid 6.16.1 sums
-channels [10, 20] and [50, 60] to [60, 80], retaining supplied errors in
-quadrature, within relative/absolute tolerance :math:`10^{-12}`.
-Native musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), with zero deadtime,
-0.1 µs bins and packing one, exports 125000 counts/bin from constant channels
-100000 and 25000; its Poisson errors agree within relative tolerance
-:math:`5\times10^{-6}`, set by text precision. Both tested programs reject
-missing members and count repeated members twice. Asymmetry rejects repetitions
-because ordinary membership is unique, rather than a numerical weight.
-Native Mantid 6.16.1 ``MuonPairingAsymmetry`` rejects the tested identical
-lists but accepts partial overlap; native musrfit 1.12.1 accepts both tested
-overlaps. Asymmetry's disjoint-pair rule follows its independent-count uncertainty
-model. WiMDA **Group Table Edit** permits repeated histogram entries and shared
-channels between the selected F/B groups. It can regenerate membership when
-requested histograms are unavailable. Asymmetry reports these requests as
-unavailable until the grouping is repaired, preserving the authored selection.
-These arithmetic comparisons do not certify detector geometry or pair independence.
-WiMDA aligns whole raw bins. A recorded musrfit 1.12.1 (``708f777b``, ROOT
-6.40.04) integer case, with 0.1 μs bins, ``forward 1 2``, ``t0 2 4``,
-``data 1 9``, packing one, and corrections off, exports counts 331, 342,
-353, 364, 375, 386, 397, and 408 at −0.1 through 0.6 μs. Asymmetry matches
-the selected counts exactly and stamps within :math:`10^{-12}` μs. Mantid
-6.16.1 preserves per-spectrum shifted axes and requires compatible grids before
-direct grouping; explicit fractional rebinning is a separate operation.
-This count comparison does not certify physical time-zero accuracy.
-See :doc:`/explanation/comparison` for sources and limits.
+Whole-bin alignment is closest to WiMDA/musrfit's fixed-bin workflows; Mantid
+also offers coordinate-preserving and common-grid operations. The selected exact
+origin, residuals, common observed support, and inclusive window contract are
+defined above; :ref:`comparison-timing` and :ref:`comparison-psi-intervals`
+state the versioned comparisons and explain the different defaults.
 
-WiMDA keeps alpha stored during ordinary regrouping and evaluates enabled
-background processing when groups are rebuilt. Asymmetry preserves fixed and
-one-shot calibrated coefficients, while its explicit ``per_run_estimate`` policy
-recomputes the integral ratio. This distinction does not establish numerical
-agreement between calibration methods.
+Stored and one-shot coefficients remain fixed; enabled automatic policies use
+current inputs. See :ref:`comparison-calibration-policies` for the distinctions
+from WiMDA's explicit Estimate, Mantid's AlphaCalc, and musrfit configuration.
+The operation order and dependencies are illustrated in
+:doc:`/explanation/reduction_pipeline`.
 
 **Mantid 6.16.1**, run as a binary, accepts signed coefficients in
 ``ApplyDeadTimeCorr`` v1. For counts [5, 20], 1 µs bins and 10 good frames,
@@ -1085,12 +1063,10 @@ Asymmetry's rational calibration agrees on these noiseless inputs within
 Mantid fits the transformed regression, so noisy-data estimator equivalence is
 not asserted.
 
-**WiMDA**, checked by inspection of the maintainer-supplied source snapshot,
-preserves negative coefficients through NeXus and calibration-text loading,
+**WiMDA** preserves negative coefficients through NeXus and calibration-text loading,
 manual input, and the standard ISIS correction path. Its automatic and
-per-detector calibration paths also retain signed fit results. This is a
-source inspection, with no binary numerical cross-check or claim
-about the optional extended correction models. The public manual describes the
+per-detector calibration paths also retain signed fit results. No binary numerical agreement or behaviour of the optional extended correction
+models is established here. The public manual describes the
 workflows [wimda_deadtime]_. See :doc:`/explanation/comparison` for the bounds of
 these comparisons.
 

@@ -171,7 +171,8 @@ detectors balanced and calibrated, backgrounds handled, time-zero located, bad
 detectors excluded, and pulsed-beam periods mapped. Every quantity here feeds
 *all* downstream analysis — a weak α estimate or a missed background degrades
 every fit made from the data — so each page is explicit about when its method
-applies and when it does not. The grouping walkthrough is the guided tour; the
+applies and when it does not. The :doc:`/explanation/reduction_pipeline` explains the operation order.
+The grouping walkthrough is the guided tour; the
 individual reduction pages below document each correction in isolation, and
 :doc:`exclusions` disentangles the several "exclude" controls that recur across
 the program.

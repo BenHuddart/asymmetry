@@ -3,6 +3,9 @@
 Time-zero search
 ================
 
+For the operation order and calibration dependencies, see
+:doc:`/explanation/reduction_pipeline`.
+
 Everything downstream counts time from t0, the moment the muon spin starts
 evolving in the sample. The value stored in a data file is a calibration
 made by the instrument scientist; it is usually right, but the standard

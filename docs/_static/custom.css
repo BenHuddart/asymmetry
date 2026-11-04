@@ -33,3 +33,18 @@
     max-width: 100%;
     height: auto;
 }
+
+/* Keep diagram labels readable without widening a narrow documentation page. */
+.rst-content .reduction-pipeline {
+    overflow-x: auto;
+}
+
+.rst-content .reduction-pipeline img {
+    min-width: 660px;
+}
+
+/* The reduction guide is prose: keep all three columns visible at docs width. */
+.rst-content table.reduction-conventions td,
+.rst-content table.reduction-conventions th {
+    white-space: normal;
+}
