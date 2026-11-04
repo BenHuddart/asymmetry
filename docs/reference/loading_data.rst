@@ -295,8 +295,10 @@ the PSI G convention; the ``T`` in the prefix is not a tesla declaration.
 The SI temperature relation and prefixes follow the
 `BIPM SI Brochure <https://www.bipm.org/en/publications/si-brochure>`_.
 
-ROOT requires a declared unit for present numeric temperature and field
-headers and a finite, positive ``RunInfo/Time Resolution``. Missing resolution
+Modern ROOT text headers require a declared unit for present numeric temperature
+and field, and a finite, positive ``RunInfo/Time Resolution``. Legacy
+``TLemRunHeader`` v5 numeric members use their format units (ns, G, and K),
+recorded as ``source = "format"`` in ``declared_units``. Missing resolution
 raises ``missing time value.`` rather than inventing a bin width. Incompatible
 units raise an error naming the file, header field, token, and supported units,
 for example ``example.root: RunInfo/Sample Magnetic Field: field unit 'Oe';
@@ -453,8 +455,9 @@ musrfit. The loader reads the ROOT objects with ``uproot`` and maps the result
 into the same raw ``Run``/``Histogram`` model as ISIS NeXus and PSI BIN/MDU
 files, so ROOT runs use the full Grouping dialog.
 
-The implementation follows musrfit's ``PRunDataHandler::ReadRootFile`` rather
-than inventing a new interpretation. In particular:
+The supported representations use the `MusrRoot format
+<https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/MusrRoot/index.html>`_
+and musrfit's legacy ROOT calibration conventions:
 
 * MusrRoot files are detected from ``RunHeader`` and ``hDecay%03d``
   histograms. Both the documented ``RunHeader`` ``TFolder`` layout and the
@@ -515,10 +518,33 @@ than inventing a new interpretation. In particular:
   in ``RunInfo/Sample Temperature`` so the Get Info temperature row still opens
   the corresponding log plot.
 
-Legacy LEM ROOT files without a MusrRoot ``RunHeader`` are supported only when
-their ``RunInfo`` and histogram objects are readable through ``uproot``. The
-full PyROOT/TLemRunHeader object model used by very old files is not
-reimplemented.
+Legacy LEM ROOT files can carry a serialized ``TLemRunHeader`` version 5 in
+``RunInfo``. Asymmetry reads its numeric resolution in ns and per-detector t0
+in zero-based bins, then uses the same unit conversion, alignment, and reduction
+as modern ROOT and PSI BIN. Histogram numbers (including ``hDecay00``), titles,
+and every stored count are retained. Display strings do not override numeric
+calibration; histogram axes do not supply a missing physical width. Negative
+unspecified and nonfinite t0 entries supply no file anchor for that detector. The legacy
+header does not supply detector good-bin bounds, so the initial window uses
+the existing t0-to-end defaults; an explicit analysis window remains editable.
+Other legacy class versions are outside this supported layout.
+
+For the matched synthetic PSI comparison, musrfit 1.12.1 (``708f777b``, ROOT
+6.40.04) reads BIN, legacy LEM ROOT, and modern MusrRoot ``TFolder`` with
+identical selected count/time/error exports. Asymmetry preserves those raw
+observations and reproduces F/B asymmetry and Poisson errors within the ASCII
+export precision (relative tolerance :math:`5\times10^{-6}`). Legacy decimal
+ns versus BIN float32 width accounts for a relative timing difference below
+:math:`3\times10^{-8}`. The generated ``TDirectory`` form uses a lower-case
+``decayAnaModule`` name that this musrfit reader does not accept; Asymmetry
+reads it. No numerical agreement is claimed for that musrfit path, or for
+WiMDA or Mantid reading this legacy class. ROOT coverage here is synthetic.
+
+Asymmetry also checks that the resolved physical width is finite and positive
+before calibrated loading, because its fixed-bin time axis requires it. Without
+usable header calibration, loading fails with the file and timing field named;
+no width is inferred from a convenient histogram axis. This does not impose
+agreement between optional display metadata and numeric calibration.
 
 The optional ``uproot`` dependency is required for ROOT loading. Install with
 the ``root`` extra if it is not already present.
@@ -710,16 +736,15 @@ dialog:
    :alt: The Run Info dialog's Run Parameters table listing instrument, run
          number, title, comment, start/end times, temperature, field,
          detector-histogram count, bins, bin width, and total counts for a
-         loaded transverse-field run.
+         loaded synthetic legacy LEM ROOT run with a 10 ns bin width.
    :width: 100%
 
-*The* **Run Parameters** *table in the Get Info dialog for a loaded*
-*transverse-field run, with each field selectable for inclusion in the Data*
-*Browser via the* **Include in Data Browser** *column. The loader keeps the*
-*experiment provenance explicit — instrument, title, temperature, field, and*
-*the raw histogram geometry (four detector histograms, 2400 bins,*
-*0.005 μs bin width, and the summed counts) — alongside the free-text*
-*comment and run start/end timestamps.*
+*The* **Run Parameters** *table in the Get Info dialog for a loaded synthetic*
+*legacy LEM ROOT run. Each field is selectable for inclusion in the Data Browser*
+*via the* **Include in Data Browser** *column. The numeric header supplies the*
+*title, temperature, field, run timestamps, and file time zero. Two detector*
+*histograms retain 129 bins each, including the terminal zero, with a 0.01 μs*
+*bin width; the summed counts remain available alongside that calibration.*
 
 Loading multiple files
 ~~~~~~~~~~~~~~~~~~~~~~

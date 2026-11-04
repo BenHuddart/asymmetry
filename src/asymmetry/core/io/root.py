@@ -1,6 +1,6 @@
 """Load MusrRoot/LEM ROOT raw histogram data.
 
-The supported layout follows musrfit's ``PRunDataHandler::ReadRootFile``:
+The supported layout follows the public MusrRoot format:
 MusrRoot files store a ``RunHeader`` plus ``hDecay%03d`` histograms;
 LEM files use ROOT folders and ``hDecay%02d`` histograms. ``uproot`` reads
 these documented objects into the raw ``Run`` model.
@@ -26,6 +26,13 @@ from asymmetry.core.io.physical_units import (
     quantity_parts,
 )
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+from asymmetry.core.io.root_header import (
+    LEM_HEADER_UNITS,
+    parse_header_value,
+    parse_musrroot_string,
+    read_directory_header,
+    read_lem_header,
+)
 from asymmetry.core.transform import (
     common_t0_time_us,
 )
@@ -82,6 +89,9 @@ class RootLoader(BaseLoader):
                         header.get(f"RunInfo/{name}"),
                         dimension,
                         context=f"{path}: RunInfo/{name}",
+                        convention=LEM_HEADER_UNITS.get(name)
+                        if header_kind == "lem-root-v5"
+                        else None,
                         default=None if dimension == "time" else 0.0,
                     )
                     for name, dimension in _PHYSICAL_HEADER_FIELDS.items()
@@ -108,7 +118,7 @@ class RootLoader(BaseLoader):
         if "RunHeader" in root_file:
             run_header = root_file["RunHeader"]
             if self._is_directory(run_header):
-                header, run_summary = self._read_directory_header(run_header)
+                header, run_summary = read_directory_header(run_header)
                 return header, "musr-root-directory", run_summary
             return self._read_folder_header(run_header), "musr-root-folder", None
 
@@ -118,69 +128,14 @@ class RootLoader(BaseLoader):
                 header = self._read_directory_tree(root_file, "RunInfo")
             else:
                 header = self._read_folder_section(run_info, "RunInfo")
-            return header, "lem-root-folder", None
+            kind = (
+                "lem-root-v5"
+                if header.get("RunInfo/Header Class") == "TLemRunHeader v5"
+                else "lem-root-folder"
+            )
+            return header, kind, None
 
         raise ValueError("ROOT file does not contain a RunHeader or RunInfo header")
-
-    def _read_directory_header(self, run_header) -> tuple[dict[str, str], str | None]:
-        """Read a TDirectory ``RunHeader`` into header entries plus a run summary.
-
-        New-format (2026 DAQ) files write each leaf as a TObjString whose TKey
-        name and payload are both the encoded ``NNN - Label: Value -@type``
-        string. The ``:`` in those names breaks ``root_file[path]`` lookup
-        (uproot parses ``:`` as an object-path separator), so this walks
-        ``(name, object)`` pairs instead of re-fetching by key path — and the
-        names can also contain ``/`` (``N/A``, ``MeV/c``, URLs), so recursion
-        is per-directory to keep each leaf name intact.
-        """
-        header: dict[str, str] = {}
-        summary_lines: list[tuple[int, str]] = []
-
-        def walk(directory, section: str) -> None:
-            for key, obj in directory.items(recursive=False):
-                name = self._clean_key(key)
-                if self._is_directory(obj):
-                    if not section and name == "RunSummary":
-                        # Free-text lines ("NNNN text", no -@type); some
-                        # contain ":" and would false-parse, so they stay out
-                        # of the header dict and become one provenance blob.
-                        for line_key, line_obj in obj.items(recursive=False):
-                            line = self._object_string(line_obj)
-                            if line is not None:
-                                summary_lines.append(
-                                    self._run_summary_line(self._clean_key(line_key), line)
-                                )
-                        continue
-                    walk(obj, f"{section}/{name}" if section else name)
-                    continue
-                value = self._object_string(obj)
-                if value is None:
-                    continue
-                # Encoded leaves carry the encoding in the key name itself, so
-                # the leaf name is the discriminator: clean-form names ("Run
-                # Number") never parse, while parsing only the payload would
-                # false-parse clean values such as "2026-01-01 10:00:00".
-                parsed = self._parse_musrroot_string(name) if section else None
-                if parsed is not None:
-                    payload = self._parse_musrroot_string(value)
-                    header[f"{section}/{parsed[0]}"] = payload[1] if payload else parsed[1]
-                else:
-                    header[f"{section}/{name}" if section else name] = self._parse_header_value(
-                        value
-                    )
-
-        walk(run_header, "")
-        if not summary_lines:
-            return header, None
-        summary_lines.sort(key=lambda item: item[0])
-        return header, "\n".join(text for _, text in summary_lines)
-
-    def _run_summary_line(self, key_name: str, payload: str) -> tuple[int, str]:
-        order = re.match(r"\s*(\d+)", key_name)
-        # Strip the "NNNN " / "NNNN - " numeric prefix only; the remaining
-        # text (including indentation) is kept verbatim.
-        text = re.sub(r"^\d+(?: - | )", "", payload, count=1)
-        return int(order.group(1)) if order else 1 << 30, text
 
     def _read_directory_tree(self, root_file, prefix: str) -> dict[str, str]:
         header: dict[str, str] = {}
@@ -196,7 +151,7 @@ class RootLoader(BaseLoader):
                 continue
             value = self._object_string(obj)
             if value is not None:
-                header[path] = self._parse_header_value(value)
+                header[path] = parse_header_value(value)
         return header
 
     def _read_folder_header(self, run_header) -> dict[str, str]:
@@ -211,8 +166,11 @@ class RootLoader(BaseLoader):
     def _read_folder_section(self, section, prefix: str) -> dict[str, str]:
         header: dict[str, str] = {}
         for item in self._children(section):
+            if self._object_class(item) == "TLemRunHeader" and item.class_version == 5:
+                header.update(read_lem_header(item))
+                continue
             if self._object_class(item) == "TObjString":
-                parsed = self._parse_musrroot_string(str(item))
+                parsed = parse_musrroot_string(str(item))
                 if parsed is not None:
                     key, value = parsed
                     header[f"{prefix}/{key}"] = value
@@ -1023,21 +981,6 @@ class RootLoader(BaseLoader):
             int(round(float(match.group(0))))
             for match in re.finditer(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", str(value))
         ]
-
-    def _parse_musrroot_string(self, text: str) -> tuple[str, str] | None:
-        match = re.match(r"\s*\d+\s*-\s*(.*?)\s*(?:-@\d+)?\s*$", text)
-        if match is None:
-            return None
-        body = match.group(1)
-        if ":" not in body:
-            return None
-        key, value = body.split(":", 1)
-        return key.strip(), self._parse_header_value(value)
-
-    def _parse_header_value(self, value: Any) -> str:
-        text = str(value).strip()
-        text = re.sub(r"\s+-@\d+\s*$", "", text).strip()
-        return text
 
     def _clean_key(self, key: str) -> str:
         return re.sub(r";\d+$", "", str(key))

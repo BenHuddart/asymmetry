@@ -108,13 +108,11 @@ jobs:
           cache: "pip"
 
       - name: Install documentation dependencies
-        # The hdf4 (pyhdf) and hdf5 (h5py) extras are required by the corpus
-        # screenshot scenarios: most muon-school runs are legacy HDF4 NeXus v1,
-        # and the 2024 EMU/ARGUS teaching runs are NeXus v2 (HDF5). Without them
-        # captures fail at load and stubs silently replace the published renders.
+        # HDF4/HDF5 supply corpus loaders; ROOT supplies the synthetic legacy
+        # calibration capture through its production loader.
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[hdf4,hdf5]"
+          pip install -c constraints.txt -e ".[hdf4,hdf5,root]"
           pip install -c constraints.txt -r docs/requirements.txt
 
       - name: Install offscreen-Qt runtime libraries

@@ -1,22 +1,8 @@
-"""Run Info dialog: loaded-run provenance made explicit.
+"""Get Info provenance from a serialized synthetic legacy LEM ROOT acquisition.
 
-Companion screenshot to :doc:`/reference/loading_data` (the "Accessing
-metadata" and "Reference provenance" sections). Loading a raw run preserves
-its experiment provenance, and the **Get Info** dialog is where Asymmetry
-surfaces it. This scenario opens :class:`RunInfoDialog` on the grouped YBCO
-transverse-field archetype
-(:func:`docs.screenshots.data.make_ybco_knight_grouped`) — a run backed by a
-full :class:`~asymmetry.core.data.dataset.Run` with four detector histograms —
-so the **Run Parameters** table shows the metadata a loader extracts and keeps
-explicit: instrument, title, comment, temperature, field, the number of
-detector histograms, bin count, bin width, and total counts.
-
-The run header fields (instrument, comment, start/end, field direction) are
-plausible ISIS/MUSR values fed through the real dialog code path — the same
-metadata dict a NeXus loader would populate — with fixed timestamp strings so
-the capture is byte-stable (no wall clock). Temperature (100 K, just above
-YBCO's Tc=90 K) and field (200 G transverse) are consistent with the
-underlying synthetic run.
+The same production loader used by the GUI supplies numeric timing, scalar
+metadata, two histogram identities, and retained terminal bins. This capture
+exercises the calibration boundary without asserting physical t0 accuracy.
 """
 
 from __future__ import annotations
@@ -26,34 +12,28 @@ from pathlib import Path
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
-from ..data import make_ybco_knight_grouped
+from asymmetry.core.io import load
+
 from ._base import CaptureContext, Scenario, _optimize_png, register
 
 
 class RunInfoProvenanceScenario(Scenario):
     name = "run_info_provenance"
-    description = "Run Info dialog showing the preserved provenance of a loaded YBCO TF run."
+    description = (
+        "Run Info dialog showing the preserved provenance of a loaded legacy LEM ROOT run."
+    )
     size = (780, 660)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
-        dataset = make_ybco_knight_grouped()
-        # Enrich the run header the way a real NeXus loader would: these are the
-        # provenance fields the dialog renders (meta.get("instrument"),
-        # "comment", "started"/"stopped", "field_direction",
-        # "detector_orientation"). Fixed strings — no wall clock — keep the
-        # capture byte-identical across runs.
-        dataset.metadata.update(
-            {
-                "instrument": "MUSR",
-                "comment": "YBCO single crystal, TF 200 G, field perpendicular to c-axis",
-                "started": "2024-03-14 09:12:41",
-                "stopped": "2024-03-14 11:47:03",
-                "field_direction": "Transverse",
-                "detector_orientation": "Transverse",
-            }
-        )
+        fixture = Path(__file__).parents[3] / "tests/fixtures/psi_root/legacy-lem.root"
+        dataset = load(str(fixture))
+        assert dataset.run.histograms[0].bin_width == 0.01
+        assert dataset.run.grouping["detector_t0_bins"] == [4, 7]
+        # Logical synthetic provenance keeps workstation paths out of the image.
+        dataset.metadata["source_file"] = fixture.name
+        dataset.run.source_file = fixture.name
 
         dialog = RunInfoDialog(dataset)
         dialog.resize(*self.size)
