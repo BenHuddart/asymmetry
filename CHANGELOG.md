@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- NeXus loading uses declared resolution and preserves coherent exact timing;
-  secondary coordinate discrepancies retain usable analysis and all recorded count bins.
+- NeXus loading preserves exact timing and recorded bins using declared resolution;
+  secondary coordinates and unusable optional timing declarations do not block usable analysis.
 
 - Reject unusable grouped Fourier windows and retain raw data for empty file-good
   reductions; applied timing records use the selected exact reference.

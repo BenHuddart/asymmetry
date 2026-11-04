@@ -342,3 +342,41 @@ def test_axis_fallback_skips_unusable_candidate(tmp_path, fault, caplog):
     assert ds.metadata["nexus_timing_source"] == "corrected_time"
     assert ds.run.histograms[0].bin_width == pytest.approx(0.016, abs=1e-15)
     assert "raw_time" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "field", ["resolution", "raw_time", "time_of_flight", "corrected_time", "time_zero"]
+)
+@pytest.mark.parametrize("tokens", [[], [b"us", b"ns"]])
+def test_non_scalar_units_do_not_abort_timing_alternatives(tmp_path, field, tokens, caplog):
+    path = tmp_path / "unit-array.nxs"
+    write_timing(path)
+    with h5py.File(path, "a") as file:
+        detector = file["raw_data_1/instrument/detector_1"]
+        if field in {"raw_time", "time_of_flight", "corrected_time"}:
+            del detector["resolution"]
+        if field == "time_of_flight":
+            detector.move("raw_time", "time_of_flight")
+        if field == "corrected_time":
+            del detector["raw_time"]
+        detector[field].attrs["units"] = np.asarray(tokens, dtype="S2")
+    if field == "corrected_time":
+        with pytest.raises(ValueError, match="no usable time axis or positive resolution"):
+            NexusLoader().load(path)
+    else:
+        dataset = NexusLoader().load(path)
+        assert dataset.time.size == 64
+        assert dataset.run.grouping["t0_source"] == "file"
+        expected_source = (
+            "resolution"
+            if field == "time_zero"
+            else "raw_time"
+            if field == "resolution"
+            else "corrected_time"
+        )
+        assert dataset.metadata["nexus_timing_source"] == expected_source
+        if field == "time_zero":
+            assert all(hist.t0_time_us is None for hist in dataset.run.histograms)
+        for i, hist in enumerate(dataset.run.histograms):
+            np.testing.assert_array_equal(hist.counts, np.arange(64) + i * 64 + 10)
+    assert f"/{field}: unusable timing declaration" in caplog.text

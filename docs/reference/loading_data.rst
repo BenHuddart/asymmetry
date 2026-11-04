@@ -164,10 +164,12 @@ This nominal fixed-bin interpretation does not establish actual terminal-bin
 exposure or physical t0 accuracy.
 
 Without usable resolution, the loader tries ``raw_time``, then
-``time_of_flight``, then ``corrected_time``. Missing fields or unusable numerical
-values/units are skipped with a diagnostic. The first supported uniform axis supplies the width from its end-to-end span,
-using N+1 edges or N centres. It supplies
-spacing only: acquisition bins keep their zero-origin convention.
+``time_of_flight``, then ``corrected_time``. Missing fields are skipped. Unusable
+numerical values or units are diagnosed and skipped. Empty or multi-token unit
+arrays make that declaration unusable; a remaining timing alternative is still
+tried. The first supported uniform axis supplies the width from its end-to-end
+span, using N+1 edges or N centres. It supplies spacing only: acquisition bins
+keep their zero-origin convention.
 
 Asymmetry also checks that an axis used as the width fallback is finite,
 increasing, and uniform, with the supported length and at least two points.

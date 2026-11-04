@@ -57,8 +57,12 @@ def _read_time(group: Any, name: str, *, default_unit: str, context: str) -> _Ti
         return None
     raw = np.asarray(node)
     field_context = f"{context}/{name}"
-    token = unit_text(node.attrs.get("units")) or default_unit
-    conversion = physical_unit(token, dimension="time")
+    raw_unit = node.attrs.get("units")
+    conversion = (
+        physical_unit(unit_text(raw_unit) or default_unit, dimension="time")
+        if not isinstance(raw_unit, np.ndarray) or raw_unit.size == 1
+        else None
+    )
     if (
         raw.dtype.kind not in "iuf"
         or raw.size == 0
@@ -72,7 +76,7 @@ def _read_time(group: Any, name: str, *, default_unit: str, context: str) -> _Ti
         return None
     values, _ = canonical(
         raw,
-        node.attrs.get("units"),
+        raw_unit,
         "time",
         context=field_context,
         convention=UnitConvention(default_unit, _REFERENCE),
