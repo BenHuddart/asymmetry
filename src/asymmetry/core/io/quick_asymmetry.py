@@ -56,7 +56,14 @@ class QuickAsymmetry:
 def quick_asymmetry(histograms: list[Histogram], grouping: dict) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     try:
-        grouped = group_forward_backward(histograms, grouping)
+        # File-good quick looks derive bounds from acquired histograms, never
+        # a scalar window left by another selected pair or an unavailable one.
+        file_grouping = {
+            key: value
+            for key, value in grouping.items()
+            if key not in {"first_good_bin", "last_good_bin"}
+        }
+        grouped = group_forward_backward(histograms, file_grouping)
         alignment = grouped.counts.alignment
         first, last = good_window_for_groups(
             [i for i, _ in alignment.detector_offsets],

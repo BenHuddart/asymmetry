@@ -305,14 +305,7 @@ def period_run(combined: Run, index: int) -> Run:
         and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
         == "from_file"
     ):
-        quick = quick_asymmetry(
-            histograms,
-            {
-                key: value
-                for key, value in period_grouping.items()
-                if key not in {"first_good_bin", "last_good_bin"}
-            },
-        )
+        quick = quick_asymmetry(histograms, period_grouping)
         run.grouping.pop("t0_time_us", None)
         run.grouping.update(quick.file_grouping)
         metadata.pop("correction_error", None)
@@ -675,14 +668,7 @@ def combine_mapped_periods(
         grouping=grouping,
         source_file=source_file or base_run.source_file,
     )
-    quick = quick_asymmetry(
-        red_histograms,
-        {
-            key: value
-            for key, value in grouping.items()
-            if key not in {"first_good_bin", "last_good_bin"}
-        },
-    )
+    quick = quick_asymmetry(red_histograms, grouping)
     grouping.pop("t0_time_us", None)
     grouping.update(quick.file_grouping)
     metadata.update(quick.metadata)
