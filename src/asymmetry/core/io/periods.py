@@ -267,7 +267,14 @@ def period_run(combined: Run, index: int) -> Run:
     reduction of it is a reduction of that period alone.
     """
     grouping = combined.grouping
-    count = len(grouping["period_reduced"])
+    from asymmetry.core.project.profiles import (
+        profile_fingerprint_for_run,
+        profile_from_payload,
+        resolve_effective_grouping,
+    )
+
+    profile = profile_from_payload(grouping, "", profile_fingerprint_for_run(combined))
+    count = len(grouping["period_histograms"])
 
     period_grouping = select_period_grouping(grouping, index)
     for key in ("period_histograms", "period_reduced", "period_mode", "period_t0_sources"):
@@ -291,15 +298,18 @@ def period_run(combined: Run, index: int) -> Run:
     metadata["period_count"] = count
     metadata["run_label"] = f"{source_run}/{index + 1}"
     if count == 2:
-        metadata["period_label"] = period_labels(combined)[index]
+        metadata["period_label"] = str((PeriodMode.RED, PeriodMode.GREEN)[index])
 
-    return Run(
+    run = Run(
         run_number=period_run_number,
         histograms=histograms,
         metadata=metadata,
         grouping=period_grouping,
         source_file=combined.source_file,
     )
+
+    run.grouping.update(resolve_effective_grouping(profile, run))
+    return run
 
 
 # --- low-level helpers shared with the GUI reduction path ---------------------
@@ -321,6 +331,22 @@ def select_period_grouping(grouping: dict, period_index: int) -> dict:
     follow the selected acquisition period, whose exposure normalises counts.
     """
     period_grouping = dict(grouping)
+    periods = grouping.get("period_histograms")
+    if periods:
+        histograms = periods[period_index]
+        for key, values in (
+            ("detector_t0_bins", [hist.t0_bin for hist in histograms]),
+            ("detector_first_good_bins", [hist.good_bin_start for hist in histograms]),
+            (
+                "detector_last_good_bins",
+                [
+                    hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1
+                    for hist in histograms
+                ],
+            ),
+        ):
+            if key in grouping:
+                period_grouping[key] = values
     if "period_t0_sources" in grouping:
         period_grouping["t0_source"] = grouping["period_t0_sources"][period_index]
 
@@ -502,8 +528,11 @@ def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Hist
                 counts=counts,
                 bin_width=first.bin_width,
                 t0_bin=first.t0_bin,
-                good_bin_start=first.good_bin_start,
-                good_bin_end=first.good_bin_end,
+                good_bin_start=max(period[det].good_bin_start for period in period_histograms),
+                good_bin_end=min(
+                    period[det].good_bin_end if period[det].good_bin_end >= 0 else n_bins - 1
+                    for period in period_histograms
+                ),
                 t0_time_us=first.t0_time_us,
             )
         )

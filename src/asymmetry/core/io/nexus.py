@@ -466,17 +466,8 @@ class NexusLoader(BaseLoader):
             metadata_base["temperature_unit_suspect"] = True
             metadata_base["temperature_unit_suspect_reason"] = reason
 
-        # Real ISIS v1 files carry the good-data window and t0 as attributes on
-        # the ``counts`` SDS (1-based ``t0_bin`` / ``first_good_bin`` /
-        # ``last_good_bin``), exactly as the v2 layout does — not as child
-        # datasets of ``histogram_data_1``. Prefer those attributes; fall back
-        # to child datasets / defaults for synthetic or attribute-less files.
         n_detectors, n_bins = counts_periods[0].shape
-        counts_ds = h_data.get("counts")
-        counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
-
-        first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, h_data, n_bins)
-        bin_width, decodes, timing_source = read_nexus_timing(
+        bin_width, decodes, timing_source, good_windows = read_nexus_timing(
             h_data,
             version="v1",
             n_periods=len(counts_periods),
@@ -495,8 +486,7 @@ class NexusLoader(BaseLoader):
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
             run_number=run_number,
-            first_good_bin=first_good_bin,
-            last_good_bin=last_good_bin,
+            good_windows=good_windows,
             source_file=source_file,
         )
 
@@ -566,20 +556,7 @@ class NexusLoader(BaseLoader):
         field_direction = self._field_direction_from_state(field_state)
         field_vector = self._read_field_vector(sample)
 
-        counts_attrs = getattr(detector.get("counts"), "attrs", {})
         n_bins = int(counts_periods[0].shape[-1])
-
-        first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
-        last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
-        first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, None, n_bins)
-        first_good_time = self._safe_float(
-            self._read_optional(detector, "first_good_time"),
-            default=None,
-        )
-        last_good_time = self._safe_float(
-            self._read_optional(detector, "last_good_time"),
-            default=None,
-        )
 
         metadata_base = {
             "run_number": run_number,
@@ -611,7 +588,7 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
-        bin_width, decodes, timing_source = read_nexus_timing(
+        bin_width, decodes, timing_source, good_windows = read_nexus_timing(
             detector,
             version="v2",
             n_periods=len(counts_periods),
@@ -620,12 +597,6 @@ class NexusLoader(BaseLoader):
             context=f"{source_file}/{entry_name}/instrument/detector_1",
         )
         metadata_base["nexus_timing_source"] = timing_source
-
-        # Keep integer bin metadata as the canonical source of the good-data
-        # window. Floating-point good-time values are used only as a fallback
-        # when the file does not provide usable integer bin attributes.
-        use_first_good_time = first_good_bin_raw is None and first_good_time is not None
-        use_last_good_time = last_good_bin_raw is None and last_good_time is not None
 
         nexus_fields = self._extract_tree(entry)
         time_series = self._extract_time_series(entry)
@@ -653,12 +624,7 @@ class NexusLoader(BaseLoader):
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
             run_number=run_number,
-            first_good_bin=first_good_bin,
-            last_good_bin=last_good_bin,
-            first_good_time=first_good_time,
-            last_good_time=last_good_time,
-            use_first_good_time=use_first_good_time,
-            use_last_good_time=use_last_good_time,
+            good_windows=good_windows,
             source_file=source_file,
         )
 
@@ -711,12 +677,7 @@ class NexusLoader(BaseLoader):
         dead_time_values: np.ndarray,
         metadata_base: dict[str, Any],
         run_number: int,
-        first_good_bin: int,
-        last_good_bin: int,
-        first_good_time: float | None = None,
-        last_good_time: float | None = None,
-        use_first_good_time: bool = False,
-        use_last_good_time: bool = False,
+        good_windows: np.ndarray,
         source_file: str,
     ) -> list[MuonDataset]:
         """Construct one :class:`MuonDataset` per period from detector counts.
@@ -751,8 +712,7 @@ class NexusLoader(BaseLoader):
                 period_counts,
                 bin_width,
                 decode=decode,
-                first_good_bin=first_good_bin,
-                last_good_bin=last_good_bin,
+                good_windows=good_windows[period_idx - 1],
             )
 
             grouping = self._resolve_grouping(grouping_array, n_detectors)
@@ -773,24 +733,14 @@ class NexusLoader(BaseLoader):
             time_axis = quick.time
             start = quick.alignment.first_bin if quick.alignment is not None else 0
             t0_time_us = ((start + 0.5) * bin_width - time_axis[0]) if n_grouped else None
-            group_first_good, group_last_good = first_good_bin, last_good_bin
+            group_first_good, group_last_good = good_windows[period_idx - 1, 0]
             if quick.window is not None:
                 group_first_good = quick.window.first + start
                 group_last_good = quick.window.last + start
-            lo, hi = self._resolve_good_bin_range(
-                time_axis,
-                len(asymmetry),
-                first_good_bin=max(0, group_first_good - start),
-                last_good_bin=group_last_good - start,
-                first_good_time=first_good_time,
-                last_good_time=last_good_time,
-                use_first_good_time=use_first_good_time,
-                use_last_good_time=use_last_good_time,
-            )
-            if lo <= hi:
-                time_axis = time_axis[lo : hi + 1]
-                asymmetry = asymmetry[lo : hi + 1]
-                error = error[lo : hi + 1]
+                window = slice(quick.window.first, quick.window.last + 1)
+                time_axis = time_axis[window]
+                asymmetry = asymmetry[window]
+                error = error[window]
 
             period_run_number = run_number
             run_label = str(run_number)
@@ -906,88 +856,23 @@ class NexusLoader(BaseLoader):
         bin_width: float,
         *,
         decode: T0Decode,
-        first_good_bin: int,
-        last_good_bin: int,
+        good_windows: np.ndarray,
     ) -> list[Histogram]:
         """Create per-detector :class:`Histogram` objects for a period.
 
-        The good-data window is a single run-level pair in ISIS files, so every
-        detector carries the same one; t0 comes from the validated NeXus timing declarations.
+        Bounds are canonical raw-bin intervals; counts and exact t0 stay intact.
         """
         return [
             Histogram(
                 counts=np.asarray(period_counts[i], dtype=np.float64),
                 bin_width=float(bin_width),
                 t0_bin=int(decode.t0_bins[i]),
-                good_bin_start=int(first_good_bin),
-                good_bin_end=int(last_good_bin),
+                good_bin_start=int(good_windows[i, 0]),
+                good_bin_end=int(good_windows[i, 1]),
                 t0_time_us=decode.t0_time_us[i],
             )
             for i in range(period_counts.shape[0])
         ]
-
-    def _resolve_good_bin_range(
-        self,
-        time_axis: np.ndarray,
-        n_bins: int,
-        *,
-        first_good_bin: int,
-        last_good_bin: int,
-        first_good_time: float | None,
-        last_good_time: float | None,
-        use_first_good_time: bool,
-        use_last_good_time: bool,
-    ) -> tuple[int, int]:
-        """Resolve inclusive good-bin limits for a reduced dataset.
-
-        Integer bin metadata is canonical. Floating-point good-time metadata is
-        used only when the corresponding bin attribute is missing.
-        """
-        lo = max(0, int(first_good_bin))
-        hi = min(n_bins - 1, int(last_good_bin))
-        if time_axis.size != n_bins:
-            return lo, hi
-
-        tol = 1e-12
-        if n_bins >= 2:
-            step = float(np.nanmedian(np.diff(time_axis)))
-            if np.isfinite(step) and step != 0.0:
-                tol = max(1e-12, abs(step) * 1e-6)
-
-        if use_first_good_time and first_good_time is not None and np.isfinite(first_good_time):
-            lo = int(np.searchsorted(time_axis, float(first_good_time) - tol, side="left"))
-            lo = max(0, min(lo, n_bins - 1))
-
-        if use_last_good_time and last_good_time is not None and np.isfinite(last_good_time):
-            hi = int(np.searchsorted(time_axis, float(last_good_time) + tol, side="right") - 1)
-            hi = max(0, min(hi, n_bins - 1))
-
-        return lo, hi
-
-    def _good_bin_window(self, counts_attrs: Any, h_data: Any, n_bins: int) -> tuple[int, int]:
-        """The 0-based, inclusive good-data window from 1-based ISIS headers.
-
-        ``first_good_bin`` / ``last_good_bin`` are 1-based and inclusive in
-        every ISIS file surveyed (``last_good_bin == n_bins`` in all 1,245 —
-        docs/porting/t0-determination/isis-header-index-base.md), so both simply
-        lose one. ``h_data`` supplies the legacy child-dataset spelling for v1
-        files that carry no attributes; an absent field means "the whole
-        histogram".
-        """
-        first_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
-        last_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
-        if h_data is not None:
-            if first_raw is None:
-                first_raw = self._safe_int(
-                    self._read_optional(h_data, "first_good_bin"), default=None
-                )
-            if last_raw is None:
-                last_raw = self._safe_int(
-                    self._read_optional(h_data, "last_good_bin"), default=None
-                )
-        first_good = 0 if first_raw is None else max(0, int(first_raw) - 1)
-        last_good = (n_bins - 1) if last_raw is None else max(0, int(last_raw) - 1)
-        return first_good, last_good
 
     def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
         """Resolve forward/backward detector sets from file grouping or defaults."""

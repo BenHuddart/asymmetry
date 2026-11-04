@@ -104,7 +104,7 @@ def _timing_table(
 
 def read_nexus_timing(
     group: Any, *, version: str, n_periods: int, n_detectors: int, n_bins: int, context: str
-) -> tuple[float, list[T0Decode], str]:
+) -> tuple[float, list[T0Decode], str, np.ndarray]:
     """Validate file timing once, before constructing zero-origin histograms."""
     resolution = _read_time(
         group, "resolution", default_unit="ps" if version == "v1" else "ns", context=context
@@ -212,4 +212,102 @@ def read_nexus_timing(
                 "conflict" if np.any(conflicts) else "file",
             )
         )
-    return width, decodes, source
+    windows = _raw_good_windows(
+        group,
+        version=version,
+        n_periods=n_periods,
+        n_detectors=n_detectors,
+        n_bins=n_bins,
+        width=width,
+        width_error=width_error,
+        context=context,
+    )
+    return width, decodes, source, windows
+
+
+def _good_bin_declaration(values: Any, n_periods: int, n_detectors: int, context: str):
+    """Decode the supported ISIS integer spelling, including numeric text attributes."""
+    if values is None:
+        return None
+    try:
+        raw = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        logger.warning("%s: unusable good-bin declaration; trying other file bounds.", context)
+        return None
+    if not np.all(np.isfinite(raw)) or not np.all(raw == np.floor(raw)):
+        logger.warning("%s: unusable good-bin declaration; trying other file bounds.", context)
+        return None
+    return _timing_table(raw, n_periods, n_detectors, context)
+
+
+def _raw_good_windows(
+    group: Any,
+    *,
+    version: str,
+    n_periods: int,
+    n_detectors: int,
+    n_bins: int,
+    width: float,
+    width_error: float,
+    context: str,
+) -> np.ndarray:
+    """Inclusive centre membership on zero-origin acquisition bins, before t0.
+
+    Physical bounds reference raw_time (Cottrell p. 51). Centre membership is
+    Asymmetry's whole-bin policy; the definition does not prescribe rounding.
+    """
+    bounds = np.empty((n_periods, n_detectors, 2), dtype=np.int64)
+    centres = (np.arange(n_bins) + 0.5) * width
+    for endpoint, name in enumerate(("first_good", "last_good")):
+        integer = _good_bin_declaration(
+            group["counts"].attrs.get(f"{name}_bin"),
+            n_periods,
+            n_detectors,
+            f"{context}/counts:{name}_bin",
+        )
+        if integer is None and version == "v1":
+            node = group.get(f"{name}_bin")
+            integer = _good_bin_declaration(
+                None if node is None else np.asarray(node),
+                n_periods,
+                n_detectors,
+                f"{context}/{name}_bin",
+            )
+        if integer is not None:
+            bounds[:, :, endpoint] = np.maximum(0, integer - 1).astype(np.int64)
+            continue
+        bounds[:, :, endpoint] = 0 if endpoint == 0 else n_bins - 1
+        if version != "v2":
+            continue
+        field = _read_time(group, f"{name}_time", default_unit="us", context=context)
+        if field is None:
+            continue
+        # V2 defines scalar or [period,spectrum], not a period-only vector.
+        if (
+            field.values.size != 1
+            and field.values.shape != (n_periods, n_detectors)
+            and not (n_periods == 1 and field.values.shape == (n_detectors,))
+        ):
+            logger.warning(
+                "%s: unsupported good-time shape %s; keeping acquired extent.",
+                field.context,
+                field.values.shape,
+            )
+            continue
+        table = _timing_table(field.values, n_periods, n_detectors, field.context)
+        errors = storage_precision_us(table, stored_dtype=field.dtype, storage_scale=field.scale)
+        for period in range(n_periods):
+            for detector in range(n_detectors):
+                delta = centres - table[period, detector]
+                tolerance = errors[period, detector] + (np.arange(n_bins) + 0.5) * width_error
+                membership = delta >= -tolerance if endpoint == 0 else delta <= tolerance
+                indices = np.flatnonzero(membership)
+                bounds[period, detector, endpoint] = (
+                    int(indices[0 if endpoint == 0 else -1])
+                    if indices.size
+                    else (n_bins if endpoint == 0 else -1)
+                )
+    # Negative ends mean full range in Histogram; encode emptiness explicitly.
+    empty = bounds[:, :, 0] > bounds[:, :, 1]
+    bounds[empty] = (n_bins, n_bins - 1)
+    return bounds

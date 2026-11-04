@@ -605,6 +605,14 @@ window (below) is applied on top. Files that carry one common t0 and one
 window for the whole run have nothing to re-derive and keep the loader's
 values exactly.
 
+NeXus physical file-good times are converted to per-detector raw-bin bounds
+before grouping. The **From file** good-window policy intersects those bounds
+after the selected detectors' integer shifts; excluded and unused detectors
+cannot narrow it. The ``RG Mode`` selection uses the selected period's bounds.
+Mapped period sums intersect their contributors' raw intervals. These file
+facts persist through project reopening without cropping acquired counts.
+The :doc:`loading_data` example gives the raw-bin and timestamp coordinates.
+
 **One resolver for every consumer.** Whichever mode is active, the
 per-detector bins it resolves to are read back by reduction, grouped
 Fourier, MaxEnt, count-domain fits, the deadtime calibration window, and the

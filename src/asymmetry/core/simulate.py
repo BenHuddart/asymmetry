@@ -40,7 +40,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.periods import (
     combine_period_asymmetry,
-    select_period_histograms,
+    period_run,
 )
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
@@ -1882,15 +1882,13 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         str(PeriodMode.GREEN_MINUS_RED),
         str(PeriodMode.GREEN_PLUS_RED),
     }:
-        red_hists, red_grouping = select_period_histograms(run.histograms, grouping, 0)
-        green_hists, green_grouping = select_period_histograms(run.histograms, grouping, 1)
-        red = _reduce_histograms(red_hists, red_grouping)
-        green = _reduce_histograms(green_hists, green_grouping)
+        red_run, green_run = (period_run(run, index) for index in (0, 1))
+        red = _reduce_histograms(red_run.histograms, red_run.grouping)
+        green = _reduce_histograms(green_run.histograms, green_run.grouping)
         time, asymmetry, error = combine_period_asymmetry(*red, *green, mode)
     elif has_periods:
-        index = 1 if mode == str(PeriodMode.GREEN) else 0
-        hists, period_grouping = select_period_histograms(run.histograms, grouping, index)
-        time, asymmetry, error = _reduce_histograms(hists, period_grouping)
+        selected = period_run(run, 1 if mode == str(PeriodMode.GREEN) else 0)
+        time, asymmetry, error = _reduce_histograms(selected.histograms, selected.grouping)
     else:
         time, asymmetry, error = _reduce_histograms(run.histograms, grouping)
 

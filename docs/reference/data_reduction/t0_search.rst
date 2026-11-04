@@ -43,6 +43,12 @@ ROOT. Negative unspecified or nonfinite entries do not become file calibration. 
 anchors enter the shared whole-bin alignment; they do not select a different
 search or reduction method.
 
+NeXus physical good times are resolved on raw acquisition centres before t0
+is subtracted, and remain attached to each detector and period as inclusive
+raw-bin bounds. Exact sub-bin t0 affects timestamps, never which raw bins
+these declarations select. Initial loading and subsequent file-good reductions
+share that interpretation; see :doc:`/reference/loading_data`.
+
 File-good bounds remain attached to raw acquisition bins. Asymmetry converts
 PSI MDU markers before alignment and stores BIN/MDU/ROOT good bounds as
 zero-based inclusive indices. The selected detectors' shifted bounds intersect

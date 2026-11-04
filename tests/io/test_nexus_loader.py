@@ -899,8 +899,8 @@ def test_load_v2_uses_good_times_when_bin_attributes_missing(tmp_path, loader: N
     assert not isinstance(result, list)
 
     ds = result
-    assert ds.time == pytest.approx([-0.01, 0.01, 0.03])
-    assert ds.n_points == 3
+    assert ds.time == pytest.approx([-0.03, -0.01])
+    assert ds.n_points == 2
     assert ds.run is not None
     assert ds.run.grouping["first_good_bin"] == 0
 

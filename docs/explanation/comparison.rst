@@ -660,3 +660,51 @@ Software references:
 For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
 and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
 Press, Oxford, 2022).
+
+NeXus physical good-time selection
+---------------------------------
+
+The `muon NeXus definition, version 2 revision 8, p. 51
+<https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_
+defines physical good times relative to ``raw_time``. Asymmetry adopts inclusive
+raw-centre membership on its nominal fixed-bin grid and retains the resulting
+per-detector bounds through reduction and projects. Integer attributes retain
+precedence for their corresponding endpoints. The definition does not settle
+every writer's integer base or sub-bin rounding convention.
+
+In Mantid 6.16.1, a histogram workspace with the same 32 tagged bins, 0.02 μs
+width, and 0.2074 μs origin, cropped to raw limits 0.22–0.30 μs, selects the
+same four raw observations, centres, and Poisson errors. This comparison uses
+``CreateWorkspace`` and ``CropWorkspace``; it does not certify every NeXus
+loader default. Mantid retains supplied coordinate variation, whereas
+Asymmetry's declared-resolution grid is uniform. A physical threshold near a
+stored edge can therefore select different observations. Matched selections
+must be established before comparing reduction values; legacy first-good
+metadata does not by itself establish equal defaults.
+
+musrfit 1.12.1 (revision 708f777b, ROOT 6.40.04), with packing one and explicit
+data channels ``11 15``, selects tagged raw bins 11–14. Counts and Poisson
+errors agree within the ASCII export's six-significant-digit precision
+(relative tolerance 5 × 10⁻⁶). With an explicit integer t0 of 10 channels,
+its timestamps agree with Asymmetry's centre origin of 0.21 μs. The compared
+single-histogram path uses an integer channel anchor; its fractional ``t0``
+request does not reproduce Asymmetry's exact 0.2074 μs calibration. This is a
+timing-convention difference, not a count-selection disagreement. Physical
+fit-time limits and omitted data defaults are separate controls; no native
+HDF4 agreement is claimed for the build with HDF4 support disabled.
+
+WiMDA's **Use File values** uses a shared first-histogram interval and a
+zero-end fallback. Its NeXus physical-time conversion uses channel rounding
+and t0-related defaults, rather than Asymmetry's per-detector inclusive-centre
+intersection. The common choice is to retain whole observations on the raw
+acquisition grid; sub-bin thresholds and omitted endpoints need not select the
+same bins. No WiMDA executable numerical comparison is claimed. See the
+`WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_ for the workflow and
+the `musrfit manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_
+for channel and fit-time controls.
+
+Asymmetry also checks that the selected file-good intervals have nonempty
+common acquired support before reducing independent counts. An unavailable
+request retains the acquired histograms and editable grouping. Optional field
+shape or unit diagnostics do not impose whole-file rejection when another
+usable interpretation remains; see :doc:`/reference/loading_data`.

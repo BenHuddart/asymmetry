@@ -29,6 +29,8 @@ From acquired counts to a ratio
 
 **Decode and select.** NeXus, PSI BIN/MDU, and supported PSI ROOT readers
 preserve acquired histograms and resolve file timing and calibration facts.
+NeXus physical good times become per-detector, per-period raw-bin intervals
+at this boundary, before t0 subtraction; selection does not crop acquired arrays.
 Choose the run, period, projection, groups, and exclusions. Selection identifies
 observations; it does not add runs or periods together. A file suffix does not
 choose pulsed- or continuous-source physics. The format-specific contract is

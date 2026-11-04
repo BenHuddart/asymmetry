@@ -143,10 +143,41 @@ every run in the scan (not from one run alone) to report the step in gauss
 and a ready-made ``--fix dB=…`` for ``LorentzianLCRPair``
 (:doc:`alc_mode`).
 
-For NeXus good-data windows, Asymmetry treats integer bin metadata as
-canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
-``first_good_time`` / ``last_good_time`` are present, they are used only as a
-fallback if the corresponding integer bin attributes are missing.
+For NeXus good-data windows, a supported integer ``counts`` attribute
+(``first_good_bin`` or ``last_good_bin``) takes precedence independently for
+each endpoint. V1 also retains the child-dataset spelling as a compatibility
+fallback. V2 ``first_good_time`` and ``last_good_time`` supply a missing
+endpoint in physical time, with explicit units converted to μs and missing
+units interpreted as μs. These times reference the **raw acquisition axis**,
+before subtracting t0. A zero time is a real bound; an omitted endpoint uses
+the corresponding acquired extent. The V1 definition does not define these
+physical good-time fields, so V1 uses its integer bounds.
+
+Asymmetry selects whole bins whose raw centres ``(k + 0.5) * width`` lie
+inside the inclusive physical interval. Stored representation precision is
+allowed at a centre, using four storage ULPs for the bound and the nominal
+width; this allowance describes representation, not timing uncertainty. This
+centre-membership rule is Asymmetry's explicit selection convention: the
+NeXus definition specifies the raw coordinate but does not prescribe a
+sub-bin rounding rule. For 32 bins of width 0.02 μs, physical limits
+0.22–0.30 μs select raw indices 11–14. An exact t0 of 0.2074 μs stamps those
+observations at 0.0226, 0.0426, 0.0626, and 0.0826 μs.
+
+Physical limits accept a global scalar or a period-by-spectrum table; a
+single-period spectrum vector is also supported. They are resolved once into
+each acquired histogram's zero-based inclusive bounds. Regrouping, exclusions,
+period selection, and project reopening use those same bounds through the
+shared grouping resolver; raw count arrays retain every acquired bin. Mapped
+period sums use the intersection of their contributors' good intervals.
+An empty interval leaves the initial asymmetry unavailable and the raw
+histograms available for inspection or an edited request.
+
+Asymmetry also checks that optional good bounds can be interpreted in the
+supported units and detector/period shape. An unusable optional declaration
+is diagnosed and a usable alternative, or the acquired extent for that
+endpoint, is retained. This prevents assigning one detector's limit to another
+without rejecting an otherwise usable acquisition. The supplied fields stay
+available in ``metadata["nexus_fields"]``.
 
 NeXus uses a fixed-bin acquisition model: a usable positive scalar
 ``resolution`` supplies the nominal width in μs. Explicit time units convert
@@ -185,8 +216,11 @@ it does not invent a 1 μs width.
 
 Internal ``Histogram`` and grouping indices are zero-based. The ISIS
 ``counts`` attribute ``t0_bin`` is converted to ``attribute − 1``; integer
-``first_good_bin`` and ``last_good_bin`` keep their one-based, inclusive
-decoding. ``bin_index_base = 1`` records the display convention. Good-time
+``first_good_bin`` and ``last_good_bin`` retain the supported ISIS
+one-based, inclusive compatibility decoding, including scalar attributes and
+detector tables. The published definition alone does not establish an integer
+base for every writer; V2 child good-bin datasets are retained as metadata
+without adding a new conversion for that spelling. ``bin_index_base = 1`` records the display convention. Good-time
 fallback selection is described above.
 
 Asymmetry also checks that timing values can be assigned to the acquired
