@@ -226,7 +226,6 @@ from asymmetry.core.transform import (
     resolve_background_mode,
     resolve_deadtime,
     resolve_facility,
-    run_t0_time_us,
 )
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
@@ -254,6 +253,7 @@ from asymmetry.core.transform.rotating_frame import (
     period_weights,
     rotate_transverse,
 )
+from asymmetry.core.transform.t0 import common_t0_time_us, selected_t0_reference
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -5628,14 +5628,13 @@ class MainWindow(QMainWindow):
             ]
         else:
             grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
-        # Exact t0 carries the alignment's whole-bin delta. Derive it from file
-        # coordinates so repeated applies cannot compound the shift.
-        if run.histograms:
-            file_t0_time_us = run_t0_time_us(run.histograms, file_common_t0)
-            if file_t0_time_us is not None:
-                grouping["t0_time_us"] = file_t0_time_us + delta * float(
-                    run.histograms[0].bin_width
-                )
+        grouping.pop("t0_time_us", None)
+        selected = sorted(set(forward_idx + backward_idx))
+        reference = selected_t0_reference(run.histograms, grouping, selected_indices=selected)
+        if run.histograms[reference].t0_time_us is not None:
+            grouping["t0_time_us"] = common_t0_time_us(
+                run.histograms, grouping, t0_bin, selected_indices=selected
+            )
 
         if (
             resolve_deadtime(existing_grouping, len(run.histograms), True, "from_file").status

@@ -364,12 +364,12 @@ def build_group_signal_dataset(
     )
     group = group_counts_aligned(prepared_histograms, indices, alignment=alignment)
     common_t0 = alignment.common_t0_bin
-    declared_t0 = grouping.get("t0_bin", common_t0)
-    offset = common_t0 - int(declared_t0)
-    grouping = dict(grouping, t0_bin=common_t0)
-    for key in ("first_good_bin", "last_good_bin"):
-        if key in grouping:
-            grouping[key] += offset
+    declared_t0 = grouping.get("t0_bin")
+    declared_t0 = common_t0 if declared_t0 is None else int(declared_t0)
+    window = alignment.window(grouping, offset_bins=common_t0 + alignment.first_bin - declared_t0)
+    grouping = dict(
+        grouping, t0_bin=common_t0, first_good_bin=window.first, last_good_bin=window.last
+    )
 
     source_file = run.source_file
     reference_counts, reference_scale = _resolve_group_reference_counts(
@@ -397,18 +397,7 @@ def build_group_signal_dataset(
     )
 
     counts = group.counts
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", counts.size - 1))
-    except (TypeError, ValueError):
-        last_good = counts.size - 1
-    last_good = min(last_good, counts.size - 1)
-    if first_good > last_good:
-        first_good = 0
-        last_good = counts.size - 1
+    first_good, last_good = window.first, window.last
 
     trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
     bunch_factor = binning_spec(grouping).factor

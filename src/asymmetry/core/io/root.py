@@ -28,7 +28,6 @@ from asymmetry.core.io.physical_units import (
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform import (
     common_t0_time_us,
-    good_window_for_groups,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.transform.t0 import selected_t0_reference
@@ -635,30 +634,18 @@ class RootLoader(BaseLoader):
         groups, group_names, forward_gid, backward_gid = self._default_groups(
             labels, instrument=str(header.get("RunInfo/Instrument", ""))
         )
-        forward_idx = [det - 1 for det in groups[forward_gid]]
-        backward_idx = [det - 1 for det in groups[backward_gid]]
         quick = quick_asymmetry(
             histograms,
             {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid},
         )
         asymmetry, error = quick.asymmetry, quick.error
-        common_t0, n = quick.common_t0, len(asymmetry)
+        common_t0 = quick.common_t0
         alpha = 1.0
-
-        group_idx = sorted(set(forward_idx) | set(backward_idx))
         first_good, last_good = first_good_bins[0], last_good_bins[0]
-        if quick.alignment is not None:
-            first_good, last_good = good_window_for_groups(
-                group_idx,
-                detector_t0_bins,
-                first_good_bins,
-                last_good_bins,
-                common_t0_bin=int(common_t0),
-                n_bins=n + quick.alignment.first_bin,
-            )
-
-        start = quick.alignment.first_bin if quick.alignment is not None else 0
-        window = slice(max(0, first_good - start), last_good - start + 1)
+        if quick.window is not None:
+            first_good = quick.window.first + quick.alignment.first_bin
+            last_good = quick.window.last + quick.alignment.first_bin
+        window = quick.window.slice if quick.window is not None else slice(0, 0)
         time_axis = quick.time[window]
         asymmetry = asymmetry[window]
         error = error[window]

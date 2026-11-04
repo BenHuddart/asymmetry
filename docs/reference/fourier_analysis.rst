@@ -631,6 +631,11 @@ sample interval, component and observation bands, and each accepted estimate.
 All named groups must have valid acquired-channel membership, including
 auxiliary groups; see :doc:`detector_grouping` for the shared reference contract.
 
+An empty, reversed, or unsupported requested interval raises an error; the FFT does not
+replace it with the full signal. Missing or null declared t0 uses the resolved
+selected anchor. Explicit bounds are translated once onto the cropped observed
+grid, and absent endpoints select the corresponding observed limit.
+
 Signal significance is the total fitted positive amplitude divided by its
 conditional standard error, including covariance with the estimated phase.
 The engineering threshold is eight; it is not a calibrated false-positive

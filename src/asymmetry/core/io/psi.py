@@ -27,11 +27,7 @@ from asymmetry.core.instrument import (
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.transform import (
-    good_window_for_groups,
-)
 from asymmetry.core.transform.fb_counts import validated_count_arrays
-from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -1046,24 +1042,13 @@ class PsiLoader(BaseLoader):
         selection = {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid}
         quick = quick_asymmetry(histograms, selection)
         asymmetry, error, alignment = quick.asymmetry, quick.error, quick.alignment
-        membership_error = quick.unavailable_reason
-        common_t0, n = quick.common_t0, len(asymmetry)
+        common_t0 = quick.common_t0
         first_good, last_good = 0, n_bins - 1
-        if alignment is not None:
-            forward_idx = effective_group_indices(selection, forward_gid, n_histograms=n_hist)
-            backward_idx = effective_group_indices(selection, backward_gid, n_histograms=n_hist)
-            first_good, last_good = good_window_for_groups(
-                sorted(set(forward_idx) | set(backward_idx)),
-                t0_bins,
-                first_good_bins,
-                last_good_bins,
-                common_t0_bin=int(common_t0),
-                n_bins=n + alignment.first_bin,
-            )
+        if quick.window is not None:
+            first_good = quick.window.first + alignment.first_bin
+            last_good = quick.window.last + alignment.first_bin
         alpha = 1.0
-
-        start = alignment.first_bin if alignment is not None else 0
-        window = slice(max(0, first_good - start), last_good - start + 1)
+        window = quick.window.slice if quick.window is not None else slice(0, 0)
         time_axis = quick.time[window]
         asymmetry = asymmetry[window]
         error = error[window]
@@ -1096,10 +1081,7 @@ class PsiLoader(BaseLoader):
             "histogram_labels": list(raw.histogram_labels),
             "source_file": raw.source_file,
         }
-        if membership_error is not None:
-            metadata["correction_error"] = membership_error
-        else:
-            metadata["grouped_alignment"] = alignment.to_dict()
+        metadata.update(quick.metadata)
         if raw.temperature_logs is not None:
             metadata["nexus_time_series"] = raw.temperature_logs.time_series
             metadata["psi_temperature_log"] = {

@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject unusable grouped Fourier windows and retain raw data for empty file-good
+  reductions; applied timing records use the selected exact reference.
+
 - Align selected channels on common observed support, preserve their exact timing
   reference, and record fractional residuals; reject incompatible grids and malformed timing overrides.
 

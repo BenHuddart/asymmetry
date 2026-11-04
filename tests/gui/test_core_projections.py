@@ -57,3 +57,43 @@ def test_a_new_project_forgets_the_previous_projects_rotating_frames(mainwindow)
     mainwindow._project_model.rotating_frames[5] = RotatingFrame.typed_frequency(1.5, 1)
     mainwindow._clear_all_state()
     assert mainwindow._project_model.rotating_frames == {}
+
+
+def test_applied_exact_timing_uses_selected_reference_after_spectator_and_manual_edits(mainwindow):
+    from asymmetry.core.data.dataset import Histogram
+    from tests.gui.test_mainwindow_additional import _make_dataset
+
+    dataset = _make_dataset(7398, with_grouping=False)
+    dataset.run.histograms = [
+        Histogram(np.ones(4) * level, 0.1, 1, t0_time_us=exact)
+        for level, exact in ((10.0, 0.12), (20.0, 0.14))
+    ]
+    payload = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "t0_bin": 1,
+        "first_good_bin": 0,
+        "last_good_bin": 3,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+        "background_correction": False,
+    }
+    assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
+    assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.12)
+    axis = dataset.time.copy()
+    dataset.run.histograms.insert(0, Histogram(np.ones(4), 9.0, 1, t0_time_us=100.0))
+    payload["groups"] = {1: [2], 2: [3]}
+    assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
+    assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.12)
+    np.testing.assert_array_equal(dataset.time, axis)
+    payload.update(t0_bin=3)
+    assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
+    assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.32)
+    np.testing.assert_allclose(dataset.time, [axis[-1] - 0.2], atol=1e-15)
+    for histogram in dataset.run.histograms[1:]:
+        histogram.t0_time_us = None
+    payload["t0_bin"] = 1
+    assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
+    assert "t0_time_us" not in dataset.run.grouping

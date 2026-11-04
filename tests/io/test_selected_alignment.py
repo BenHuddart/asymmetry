@@ -71,3 +71,71 @@ def test_loader_keeps_raw_histograms_when_default_pair_is_unavailable(tmp_path, 
         loaded.run.histograms, dict(loaded.run.grouping, groups={1: [1], 2: [2]})
     )
     assert repaired.unavailable_reason is None
+
+
+@pytest.mark.parametrize("kind", ["psi", "root", "nexus"])
+def test_empty_file_good_support_retains_raw_data_for_window_repair(tmp_path, kind):
+    if kind == "psi":
+        from asymmetry.core.io.psi import PsiLoader
+        from tests.io.test_psi_loader import _write_psi_bin
+
+        path = tmp_path / "empty.bin"
+        _write_psi_bin(path)
+        loader = PsiLoader()
+        raw = loader._read_bin(path)
+        raw.t0_bins = [0, 3]
+        raw.first_good_bins = [0, 0]
+        raw.last_good_bins = [1, 1]
+        loaded = loader._build_dataset(raw)
+    elif kind == "root":
+        import uproot
+
+        from asymmetry.core.io.root import RootLoader
+        from tests.io.test_root_loader import _write_musrroot_directory
+
+        path = tmp_path / "empty.root"
+        _write_musrroot_directory(path)
+        with uproot.update(path) as file:
+            for i, anchor in ((1, 0), (2, 4)):
+                base = f"RunHeader/DetectorInfo/Detector{i:03d}/"
+                file[base + "Time Zero Bin"] = str(anchor)
+                file[base + "First Good Bin"] = "0"
+                file[base + "Last Good Bin"] = "1"
+        loaded = RootLoader().load(str(path))
+    else:
+        import h5py
+
+        from asymmetry.core.io.nexus import NexusLoader
+        from tests.io.test_nexus_loader import _write_v2_file
+
+        path = tmp_path / "empty.nxs"
+        _write_v2_file(path, first_good_bin_attr=1, last_good_bin_attr=2)
+        with h5py.File(path, "r+") as file:
+            file["raw_data_1/instrument/detector_1/counts"].attrs["t0_bin"] = np.array([1, 4])
+        loaded = NexusLoader().load(str(path))
+    assert loaded.time.size == loaded.asymmetry.size == loaded.error.size == 0
+    assert "empty good-bin support" in loaded.metadata["correction_error"]
+    histograms = loaded.run.histograms
+    assert len(histograms) == 2
+    assert all(hist.n_bins > 0 for hist in histograms)
+    assert [hist.good_bin_end for hist in histograms] == [1, 1]
+    assert all(np.any(hist.counts) for hist in histograms)
+    # Authored repair replaces the unavailable file intersection without mutating raw facts.
+    from asymmetry.core.transform.grouping import group_forward_backward
+
+    repaired = group_forward_backward(histograms, {"groups": {1: [1], 2: [2]}})
+    assert repaired.forward.size > 0
+
+
+def test_quick_file_window_retains_a_genuine_one_bin_intersection():
+    from asymmetry.core.data.dataset import Histogram
+
+    histograms = [
+        Histogram(np.arange(8.0) + 10.0, 0.1, 0, good_bin_end=0),
+        Histogram(np.arange(8.0) + 20.0, 0.1, 3, good_bin_end=3),
+    ]
+    quick = quick_asymmetry(histograms, {"groups": {1: [1], 2: [2]}})
+    assert quick.unavailable_reason is None
+    assert quick.window.first == quick.window.last == 0
+    np.testing.assert_allclose(quick.time[quick.window.slice], [0.0], atol=1e-15)
+    assert [hist.good_bin_end for hist in histograms] == [0, 3]

@@ -282,3 +282,50 @@ def test_final_period_provenance_replaces_inherited_loader_alignment():
     assert set(metadata["period_alignments"]) == {"red", "green"}
     assert metadata["title"] == "run"
     assert inherited["grouped_alignment"] == {"stale": True}
+
+
+@pytest.mark.parametrize("first,last", [(0, 0), (6, 4), (20, 21), (True, 5), (2.5, 5)])
+def test_fourier_rejects_invalid_or_unobserved_authored_windows(first, last):
+    from asymmetry.core.data.dataset import Run
+    from asymmetry.core.fourier.grouped import build_group_signal_dataset
+
+    run = Run(
+        histograms=tagged_histograms(),
+        grouping={
+            "groups": {1: [1, 2]},
+            "t0_bin": 3,
+            "first_good_bin": first,
+            "last_good_bin": last,
+        },
+    )
+    with pytest.raises(ValueError, match="good-bin window"):
+        build_group_signal_dataset(run, 1, center_signal=False, apply_lifetime_correction=False)
+
+
+def test_fourier_window_is_translated_once_after_leading_crop():
+    from asymmetry.core.data.dataset import Run
+    from asymmetry.core.fourier.grouped import build_group_signal_dataset
+
+    run = Run(
+        histograms=tagged_histograms(),
+        grouping={"groups": {1: [1, 2]}, "t0_bin": 3, "first_good_bin": 3, "last_good_bin": 5},
+    )
+    result = build_group_signal_dataset(
+        run, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    np.testing.assert_array_equal(result.asymmetry, [34.0, 36.0, 38.0])
+    np.testing.assert_allclose(result.time, [-0.02, 0.08, 0.18], atol=1e-15)
+
+
+def test_fourier_absent_and_none_declared_t0_use_selected_anchor():
+    from asymmetry.core.data.dataset import Run
+    from asymmetry.core.fourier.grouped import build_group_signal_dataset
+
+    run = Run(histograms=tagged_histograms(), grouping={"groups": {1: [1, 2]}})
+    absent = build_group_signal_dataset(
+        run, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    run.grouping["t0_bin"] = None
+    null = build_group_signal_dataset(run, 1, center_signal=False, apply_lifetime_correction=False)
+    np.testing.assert_array_equal(null.asymmetry, absent.asymmetry)
+    np.testing.assert_array_equal(null.time, absent.time)

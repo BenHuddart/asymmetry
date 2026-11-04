@@ -34,7 +34,9 @@ trailing padding. The ``grouped_alignment`` metadata records the local common
 anchor, ``first_bin`` removed at the front, detector offsets, group lengths,
 retained length, and fractional timing residuals and spread in μs. Raw arrays
 remain available for inspection. Selected grids must be compatible; an unused
-detector cannot change selected timing or grid validity. See
+detector cannot change selected timing or grid validity. An empty file-good
+intersection makes the quick look unavailable, retaining the raw counts and
+per-channel bounds for inspection and repair. See
 :doc:`/reference/detector_grouping` for the exact-reference and raw-bin mapping.
 
 Supported formats
