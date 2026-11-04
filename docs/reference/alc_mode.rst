@@ -22,6 +22,18 @@ Every integral reduction uses the independent F/B pair contract in
 exclusions. An overlapping saved request remains editable with its fixed
 correction settings and raw histograms, but cannot produce an integral value.
 
+.. _alc-count-preparation:
+
+Run-level integral preparation shares detector deadtime correction, whole-bin
+alignment, and grouping with the standard :doc:`/explanation/reduction_pipeline`.
+Asymmetry also checks that enabled background correction produces a constant
+subtracted level, as in range, tail-fit, or fixed mode. Reference-run subtraction
+is unavailable for this run-level operation because it does not resolve a
+reference spectrum.
+An unavailable correction prevents an integral value rather than silently
+integrating unsubtracted counts; raw histograms and the grouping remain
+available for repair.
+
 The integral-asymmetry observable
 ---------------------------------
 

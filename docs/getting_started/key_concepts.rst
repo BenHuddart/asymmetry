@@ -55,14 +55,15 @@ the asymmetry is known to oscillate symmetrically about zero; see
 The reduction order
 -------------------
 
-The corrections that take raw histograms to an asymmetry are applied in a fixed
-order — **deadtime → background → grouping → asymmetry** — because each step
-assumes the previous one has been done. Deadtime correction restores the true
-count rate where the instantaneous rate is high (PSI and ROOT histograms need it;
-ISIS NeXus data arrive already corrected); background subtraction removes the
-time-independent floor; only then are the detectors grouped and the asymmetry
-formed. The reduction layer is documented in
-:doc:`/reference/data_reduction/index`.
+The standard count-based forward/backward path applies **detector deadtime
+correction → alignment and grouping → group background subtraction → count
+binning → asymmetry**. Enabled deadtime correction acts on individual detector
+histograms using the applicable calibration and exposure. Selected channels
+are then aligned and summed, and enabled background correction acts on the
+grouped counts. Counts and their uncertainty information are combined into
+analysis bins before the ratio is formed. A file format alone does not decide
+which corrections are needed or enabled. See :doc:`/explanation/reduction_pipeline`
+for the operation order, calibration dependencies, and specialised-path limits.
 
 Representations
 ---------------

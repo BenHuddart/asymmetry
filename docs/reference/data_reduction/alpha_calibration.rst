@@ -64,9 +64,11 @@ from. This matters most for the background: a flat background pedestal does not
 track the detectors' efficiency ratio, so estimating :math:`\alpha` from the raw
 (unsubtracted) counts balances the *totals* and leaves the reduced weak-TF
 asymmetry off-centre once the background is subtracted. Estimating on the
-background-subtracted counts centres it. The correction order — deadtime, then
-grouping, then background subtraction, then the estimate — follows every
-reference program (WiMDA, Mantid, musrfit).
+background-subtracted counts centres it. Asymmetry estimates on counts after
+deadtime correction, grouping,
+and background subtraction. This preparation does not imply that every
+reference program uses the same estimator or automatic policy. See
+:ref:`comparison-calibration-policies` and :doc:`/explanation/reduction_pipeline`.
 
 The calibration dialog shows which corrections the estimate reflects beneath the
 result, and warns when a *requested* correction could not be applied to the

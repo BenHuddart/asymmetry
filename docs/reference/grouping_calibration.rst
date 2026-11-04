@@ -1,6 +1,9 @@
 Grouping and calibration walkthrough
 ====================================
 
+For the operation order and calibration dependencies, see
+:doc:`/explanation/reduction_pipeline`.
+
 Calibration preparation uses the same unique acquired-channel membership and
 exclusions as reduction. Invalid or missing members and required groups emptied
 by exclusions, or shared effective channels within an independent F/B pair,
