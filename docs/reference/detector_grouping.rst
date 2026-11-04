@@ -1022,6 +1022,16 @@ that requires its calibration inputs, uncertainties and fit diagnostics.
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+PSI file-good windows are inclusive raw-bin bounds, shifted with each
+selected detector and intersected with common support. A 128-bin pair with
+t0 4/7 and file bounds 16..60 retains raw 16..57 paired with 19..60.
+Its inclusive uncropped aligned window is 19..60; after the three-bin
+support crop it is local 16..57. An explicit musrfit packing-one request
+``data 16 58 19 61`` selects those same observations. Its omitted-data fallback
+does not apply the same file-good intersection. See
+:doc:`/reference/loading_data` and :doc:`/explanation/comparison` for format
+normalisation, native versions, and limits.
+
 For ordinary grouping, Mantid's ``MuonGroupingCounts`` selects detector IDs,
 whereas musrfit RUN lists select histogram numbers. Native Mantid 6.16.1 sums
 channels [10, 20] and [50, 60] to [60, 80], retaining supplied errors in

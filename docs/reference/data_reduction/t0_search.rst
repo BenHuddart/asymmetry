@@ -40,6 +40,16 @@ ROOT. Negative unspecified or nonfinite entries do not become file calibration. 
 anchors enter the shared whole-bin alignment; they do not select a different
 search or reduction method.
 
+File-good bounds remain attached to raw acquisition bins. Asymmetry converts
+PSI MDU markers before alignment and stores BIN/MDU/ROOT good bounds as
+zero-based inclusive indices. The selected detectors' shifted bounds intersect
+with their common support; a spectator's t0 or good interval does not restrict
+that pair. A native musrfit explicit ``data`` upper bound is exclusive at
+packing one, so equal displayed upper integers need not select equal counts.
+Omitted native ``data`` uses a different fallback from Asymmetry's file-good
+default. See :doc:`/reference/loading_data` and
+:doc:`/explanation/comparison` for examples and comparison limits.
+
 The grouping window's t0 row carries a read-only line, identical whichever
 mode is selected, that shows the file value beside the detected one so you
 never have to take either on faith:

@@ -350,19 +350,43 @@ cover every sample bin: a shorter reference raises an error such as
 reference is cropped to the sample's terminal bin. The grouped Fourier path
 uses the same coverage rule and does not pad a missing reference tail.
 
-For PSI-BIN, musrfit's ``MuSR_td_PSI_bin`` reader uses the stored ``t0`` and
-``first good`` values directly as C++ vector indices, so Asymmetry treats them
-as zero-based. The ``last good`` value has an end-bin convention: some PSI-BIN
-headers store the histogram length itself, for example ``8192`` for an
-8192-bin histogram. musrfit uses this effectively as an exclusive stop when it
-extracts good-bin ranges. Asymmetry stores the corresponding valid inclusive
-array index, so that example becomes ``8191`` internally.
+PSI file fields, Asymmetry's bounds, and a program's analysis request are
+distinct. For BIN, Asymmetry takes the supplied ``t0`` and first-good fields
+as zero-based raw-bin indices. It stores first/last-good bounds inclusively,
+clipped to ``0..N-1`` for an N-bin histogram. An interior last-good value
+``60`` stays ``60``; ``N-1`` and ``N`` both become ``N-1``. This is clipping,
+not subtraction from every upper field. Zero remains a literal bound; it
+does not request the full histogram. An empty aligned intersection leaves
+the acquisition available with an unavailable quick-look diagnostic.
 
 For PSI-MDU, timing markers use the settings' resolution factor :math:`q`:
 ``t0 = (stored_t0 + 1) * q - 1``,
 ``first_good = (stored_first_good + 1) * q - 1``, and
-``last_good = stored_last_good * q``. The loader preserves these values;
-subsequent grouping resolves the usable common window.
+``last_good = stored_last_good * q``. These converted indices are clipped
+to the loaded histogram and stored inclusively, as for BIN. The marker scale
+does not resample the counts. M3's terminal-sample omission is a separate
+format rule; T4/T5 retain that sample.
+
+The default analysis intersects the selected detectors' shifted inclusive
+file bounds with their common stored support. For example, 128-bin detectors
+with t0 4/7 and bounds 16..60 select forward raw bins 16..57 paired with
+backward raw bins 19..60: 42 observations. A last-good field of 128 instead
+selects raw 16..124 paired with 19..127: 109 observations. The last acquired
+bin is retained even when its count is zero. Unselected detectors do not
+restrict the interval. Loading and re-reduction use the same bounds; explicit
+grouping windows use inclusive uncropped aligned coordinates. Here forward
+and backward identify the acquisition channels; the initial analysis pair
+can swap their roles as described below.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) uses an exclusive upper endpoint
+for explicit ``RUN data`` intervals at packing one. Thus ``data 16 58 19 61``
+selects the same 42 paired observations as the first example. Omitting
+``data`` is different: the compared single-histogram workflow falls back to
+t0 plus approximately 10 ns through histogram length, rather than applying
+the file's first/last-good fields. A header dump alone does not establish a
+default analysis interval. See the `musrfit RUN settings
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_
+and :doc:`/explanation/comparison` for the comparison conditions and limits.
 
 PSI label metadata is used to build initial grouping suggestions. BIN labels
 such as ``Forw``/``Back`` and MDU positron labels such as ``F1``/``B1`` become
@@ -538,7 +562,18 @@ ns versus BIN float32 width accounts for a relative timing difference below
 :math:`3\times10^{-8}`. The generated ``TDirectory`` form uses a lower-case
 ``decayAnaModule`` name that this musrfit reader does not accept; Asymmetry
 reads it. No numerical agreement is claimed for that musrfit path, or for
-WiMDA or Mantid reading this legacy class. ROOT coverage here is synthetic.
+WiMDA or Mantid reading this legacy class. This cross-format analytic comparison
+uses synthetic files.
+
+Selected-bin reductions are also tested on three acquired musrfit 1.12.1
+example ROOT files (revision ``708f777b``): modern LEM terminal bounds and
+FLAME/HiFi interior bounds. Default and matched explicit requests are compared
+separately; matched counts agree exactly, with times and applicable errors
+agreeing at ASCII export precision. The HiFi error comparison uses a populated
+pair in addition to the initial pair containing an empty channel. See
+:doc:`/explanation/comparison` for uncertainty scope and remaining coverage
+limits. Legacy ``TLemRunHeader`` v4 calibration remains unsupported by the
+numeric decoder; those loading failures are a separate compatibility gap.
 
 Asymmetry also checks that the resolved physical width is finite and positive
 before calibrated loading, because its fixed-bin time axis requires it. Without
