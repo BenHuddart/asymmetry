@@ -191,7 +191,12 @@ raw bin 128, a retained terminal zero. Asymmetry's modern ROOT good fields
 can exclude that bin; legacy defaults can include it. Neither a terminal zero
 nor equal header integers establishes equivalent observations.
 
-WiMDA's **FileValues** uses the first histogram's good interval as the
+For the synthetic MDU marker cases, omitted-data single-channel fallbacks
+select raw 23..127 for M3 (t0 7, 0.625 ns bins) and 107..127 for T4/T5
+(t0 5, approximately 0.09765625 ns bins). These differ from the converted
+file-good intervals 35..80 and 26..60 respectively.
+
+WiMDA's **Use File values** uses the first histogram's good interval as the
 grouping reference, with zero last-good requesting histogram length. Its
 one-based histogram coordinates and shared end differ from Asymmetry's
 selected per-detector intersection. No WiMDA executable numerical agreement

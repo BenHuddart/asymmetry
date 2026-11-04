@@ -267,7 +267,7 @@ def musrfit_export(tmp_path):
             f'<?xml version="1.0"?><musrfit><data_path>{path.parent}</data_path></musrfit>'
         )
         settings = (
-            "fittype 2\nalpha 1\nbackgr.fix 0 0\nforward 1\nbackward 2"
+            "fittype 2\nalpha 4\nbackgr.fix 0 0\nforward 1\nbackward 2"
             if asymmetry
             else f"fittype 0\nnorm 1\nbackgr.fit 2\nforward {forward}"
         )
@@ -277,6 +277,7 @@ FITPARAMETER
 1 norm 1000 0 none
 2 bg 0 0 none
 3 asym 0 0 none
+4 alpha 1 0 none
 ###############################################################
 THEORY
 asymmetry 3
@@ -373,6 +374,21 @@ def test_native_omitted_data_does_not_use_bin_good_fields(boundary_file, musrfit
     # even when its header good interval is empty or starts much later.
     np.testing.assert_array_equal(exported[:, 1], tags[0, 5:128])
     np.testing.assert_allclose(exported[:, 0], np.arange(1, 124) * 0.01, rtol=3e-8)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("kind,first,anchor", [("M3", 23, 7), ("T4", 107, 5), ("T5", 107, 5)])
+def test_native_mdu_omitted_data_uses_timing_fallback(
+    boundary_file, musrfit_export, kind, first, anchor
+):
+    path, tags = boundary_file(kind)
+    run = load(path).run
+    exported = musrfit_export(path, "PSI-MDU")
+    raw = np.arange(first, 128)
+    np.testing.assert_array_equal(exported[:, 1], tags[0, raw])
+    width = run.histograms[0].bin_width
+    np.testing.assert_array_equal(np.rint(exported[:, 0] / width + anchor), raw)
+    np.testing.assert_allclose(exported[:, 0], (raw - anchor) * width, rtol=5e-6)
 
 
 @pytest.mark.integration
