@@ -99,19 +99,49 @@ def test_cross_format_selected_observations(filename):
     np.testing.assert_allclose(reduced.error / 100, fb_export[:, 2], rtol=5e-6)
 
 
-@pytest.mark.parametrize("unspecified", [-1.0, np.inf, -np.inf, np.nan])
-def test_lem_numeric_members_own_calibration(unspecified):
-    from asymmetry.core.io.root_header import read_lem_header
-
-    with uproot.open(FIXTURES / "legacy-lem.root") as root_file:
+@pytest.mark.parametrize(
+    "anchors, usable",
+    [
+        ((0.0, 7.25), (True, True)),
+        ((7.25, 0.0), (True, True)),
+        ((-1.0, 7.25), (False, True)),
+        ((np.inf, 7.25), (False, True)),
+        ((-np.inf, 7.25), (False, True)),
+        ((np.nan, 7.25), (False, True)),
+        ((-1.0, -1.0), (False, False)),
+    ],
+)
+def test_lem_numeric_calibration_through_production_loader(monkeypatch, anchors, usable):
+    path = FIXTURES / "legacy-lem.root"
+    with uproot.open(path) as root_file:
         record = root_file["RunInfo"].member("fFolders")[0]
-        # Change only the decoded numeric payload; its display strings stay stale.
+        # Inject edge payloads into the decoded serialized record, preserving
+        # its actual layout and stale display strings for production dispatch.
         record.members["fTimeResolution"] = 25.0
-        record.members["fNHist"] = 3
-        record.members["fTimeZero"] = np.array([0.0, 7.25, unspecified])
-        header = read_lem_header(record)
-    assert header["RunInfo/Time Resolution"] == "25.0"
-    assert header["DetectorInfo/Detector000/Time Zero Bin"] == "0.0"
-    assert header["DetectorInfo/Detector001/Time Zero Bin"] == "7.25"
-    assert "DetectorInfo/Detector002/Time Zero Bin" not in header
-    assert header["DetectorInfo/Detector002/Histo Number"] == "2"
+        record.members["fTimeZero"] = record.member("fTimeZero").copy()
+        record.members["fTimeZero"][:2] = anchors
+        monkeypatch.setattr(uproot, "open", lambda path: root_file)
+        dataset = load(str(path))
+    run = dataset.run
+    assert run.metadata["root_format"] == "lem-root-v5"
+    assert run.metadata["root_histo_numbers"] == [0, 1]
+    assert run.metadata["declared_units"]["time"]["RunInfo/Time Resolution"] == {
+        "unit": "ns",
+        "source": "format",
+        "reference": "TLemRunHeader v5; musrfit 1.12.1 ROOT-NPP",
+    }
+    assert run.grouping["t0_source"] == ("file" if any(usable) else "missing")
+    for index, histogram in enumerate(run.histograms):
+        np.testing.assert_array_equal(
+            histogram.counts, np.append((2 * index + 1) * (100 + np.arange(128)), 0)
+        )
+        assert histogram.bin_width == pytest.approx(0.025)
+        if usable[index]:
+            assert histogram.t0_bin == round(anchors[index])
+            assert histogram.t0_time_us == pytest.approx((anchors[index] + 0.5) * 0.025)
+        else:
+            assert histogram.t0_bin == 0
+            assert histogram.t0_time_us is None
+    assert np.all(np.isfinite(dataset.time))
+    assert np.all(np.isfinite(dataset.asymmetry))
+    assert np.all(np.isfinite(dataset.error))
