@@ -174,7 +174,6 @@ from asymmetry.core.project import (
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
-    aligned_n_bins,
     assigned_profile_for_run,
     default_profile_for_run,
     heal_t0_policies,
@@ -182,8 +181,7 @@ from asymmetry.core.project.profiles import (
     profile_fingerprint_for_run,
     reconcile_instrument_for_payload,
     resolve_effective_grouping,
-    resolve_good_window,
-    run_file_good_window,
+    resolve_run_good_window,
 )
 from asymmetry.core.representation import (
     FitSeries,
@@ -609,6 +607,7 @@ ALPHA_PROVENANCE_KEYS = (
     "alpha_z_reference_run",
 )
 REDUCTION_SETTING_KEYS = (
+    "good_window_policy",
     "background_mode",
     "background_run",
     "excluded_detectors",
@@ -5143,11 +5142,11 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 raw_t_good = 0
         try:
-            t_good_offset = max(0, int(raw_t_good))
+            t_good_offset = int(raw_t_good)
         except (TypeError, ValueError):
             t_good_offset = 0
 
-        first_good_bin = max(0, t0_bin + t_good_offset)
+        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
         try:
             last_good_bin = int(grouping.get("last_good_bin", 0))
         except (TypeError, ValueError):
@@ -5407,7 +5406,6 @@ class MainWindow(QMainWindow):
             t_good_offset = int(raw_t_good_offset)
         except (TypeError, ValueError):
             t_good_offset = 0
-        t_good_offset = max(0, min(max_bin - t0_bin, t_good_offset))
         first_good = t0_bin + t_good_offset
 
         try:
@@ -5428,34 +5426,8 @@ class MainWindow(QMainWindow):
             last_good_raw = int(grouping_result.get("last_good_bin", max_bin))
         except (TypeError, ValueError):
             last_good_raw = max_bin
-        last_good = max(first_good, min(max_bin, last_good_raw))
+        last_good = last_good_raw
 
-        # A payload carrying a good-window policy is the grouping window's
-        # profile broadcast: the absolute window above is the *preview* run's,
-        # and this run gets its own, derived from its own t0 and file window
-        # through the helpers the resolver uses (D6). Payloads without one — a
-        # released run's override, legacy callers — keep the absolute values.
-        # A dataset without raw histograms has no file window to re-derive, so
-        # the broadcast values stand there as they always have.
-        good_window_policy = grouping_result.get("good_window_policy")
-        if good_window_policy is not None and run.histograms:
-            window_grouping = dict(existing_grouping) | {
-                "groups": groups,
-                "forward_group": forward_gid,
-                "backward_group": backward_gid,
-                "excluded_detectors": exclusion_source.get("excluded_detectors", []),
-            }
-            file_first_good, file_last_good = run_file_good_window(
-                run, window_grouping, common_t0_bin=t0_bin
-            )
-            first_good, last_good = resolve_good_window(
-                GoodWindowPolicy.from_dict(good_window_policy),
-                t0_bin=t0_bin,
-                file_first_good=file_first_good,
-                file_last_good=file_last_good,
-                n_bins=aligned_n_bins(window_grouping, run, len(run.histograms), t0_bin),
-            )
-            t_good_offset = max(0, first_good - t0_bin)
         if axis_pairs and vector_axis in vector_alphas:
             alpha = float(vector_alphas[vector_axis])
         else:
@@ -5627,6 +5599,21 @@ class MainWindow(QMainWindow):
             ]
         else:
             grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        if EFFECTIVE_DETECTOR_T0_KEY in grouping_result:
+            grouping[EFFECTIVE_DETECTOR_T0_KEY] = grouping_result[EFFECTIVE_DETECTOR_T0_KEY]
+        policy = grouping_result.get("good_window_policy")
+        if policy is not None:
+            window_grouping = grouping | {
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "excluded_detectors": exclusion_source.get("excluded_detectors", []),
+                "t0_bin": t0_bin,
+            }
+            first_good, last_good = resolve_run_good_window(
+                GoodWindowPolicy.from_dict(policy), run, window_grouping
+            )
+            t_good_offset = first_good - t0_bin
         grouping.pop("t0_time_us", None)
         selected = sorted(set(forward_idx + backward_idx))
         reference = selected_t0_reference(run.histograms, grouping, selected_indices=selected)

@@ -8404,7 +8404,7 @@ class PlotPanel(QWidget):
         t_good_offset = _safe_int(grouping.get("t_good_offset"))
         first_good_bin = _safe_int(grouping.get("first_good_bin"))
         if t_good_offset is None and first_good_bin is not None:
-            t_good_offset = max(0, first_good_bin - t0_bin)
+            t_good_offset = first_good_bin - t0_bin
         last_good_bin = _safe_int(grouping.get("last_good_bin"))
         binning = binning_spec(grouping)
         bunching_factor = binning.factor

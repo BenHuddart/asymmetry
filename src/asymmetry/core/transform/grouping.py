@@ -588,18 +588,11 @@ def group_forward_backward(
     *,
     resolved_indices: tuple[list[int], list[int]] | None = None,
 ) -> GroupedForwardBackward:
-    """Form aligned forward/backward groups from a (effective) grouping dict.
+    """Resolve a selected pair onto common observations and one typed window.
 
-    This is the shared core of the time-domain F-B asymmetry and the
-    time-integral observable: it resolves the forward/backward group ids to
-    detector indices, aligns each detector to a common ``t0``, sums the groups,
-    and reads the balances ``alpha`` and ``beta`` (leniently, defaulting to
-    ``1.0``).  Callers
-    consume the validated window and time grid in ``counts`` for asymmetry
-    and rebinning, so reductions share the same aligned coordinates.
-
-    Raises :class:`ValueError` when the grouping lacks a ``groups`` definition or
-    the effective forward/backward groups are empty or share acquired channels.
+    Acquired k maps to local r = k + c - t0_i - L. A carried window policy
+    resolves for this actual pair/period, rather than reusing another pair's
+    scalar bounds. Legacy scalars retain their recorded coordinate meaning.
     """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
@@ -626,6 +619,17 @@ def group_forward_backward(
         forward, backward, crop = align_forward_backward_counts(
             histograms, forward_indices, backward_indices, detector_t0_bins
         )
+        window_grouping = grouping
+        if "good_window_policy" in grouping:
+            from asymmetry.core.project.profiles import GoodWindowPolicy, resolve_run_good_window
+
+            first, last = resolve_run_good_window(
+                GoodWindowPolicy.from_dict(grouping["good_window_policy"]),
+                Run(histograms=histograms, grouping=grouping),
+                grouping,
+                alignment=crop,
+            )
+            window_grouping = dict(grouping, first_good_bin=first, last_good_bin=last)
         width = float(histograms[forward_indices[0]].bin_width)
         counts = ForwardBackwardCounts(
             forward,
@@ -637,7 +641,7 @@ def group_forward_backward(
                 selected_indices=sorted(set(forward_indices + backward_indices)),
             ),
             width,
-            crop.window(grouping),
+            crop.window(window_grouping),
             crop,
         )
     except ValueError as exc:

@@ -3546,11 +3546,11 @@ class DataBrowserPanel(QWidget):
             except (TypeError, ValueError):
                 raw_t_good = 0
         try:
-            t_good_offset = max(0, int(raw_t_good))
+            t_good_offset = int(raw_t_good)
         except (TypeError, ValueError):
             t_good_offset = 0
 
-        first_good_bin = max(0, t0_bin + t_good_offset)
+        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
         try:
             last_good_bin = int(grouping.get("last_good_bin", last_good_default))
         except (TypeError, ValueError):

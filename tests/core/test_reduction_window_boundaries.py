@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
-from asymmetry.core.project.profiles import run_file_good_window
+from asymmetry.core.project.profiles import (
+    GoodWindowPolicy,
+    resolve_good_window,
+    run_file_good_window,
+)
 from asymmetry.core.transform.background import apply_grouped_background_correction
 
 
@@ -22,12 +26,27 @@ def test_declared_background_window_is_rejected(window, facility):
         )
 
 
-@pytest.mark.parametrize("window", [(7, 3), (0, 20), (-1, 3), ("bad", 3)])
-def test_profile_file_window_rejects_invalid_declared_bounds(window):
+def test_scalar_file_limits_are_not_reordered_before_manual_repair():
     run = Run(run_number=1, histograms=[Histogram(np.ones(20), bin_width=0.01)], metadata={})
-    grouping = dict(zip(("first_good_bin", "last_good_bin"), window))
-    with pytest.raises(ValueError, match="window|index"):
-        run_file_good_window(run, grouping, common_t0_bin=0)
+    assert run_file_good_window(
+        run, {"first_good_bin": 7, "last_good_bin": 3}, common_t0_bin=0
+    ) == (7, 3)
+    with pytest.raises(ValueError, match="window"):
+        resolve_good_window(
+            GoodWindowPolicy(), t0_bin=0, file_first_good=7, file_last_good=3, n_bins=20
+        )
+
+
+@pytest.mark.parametrize("window", [("bad", 3), (0, 1.5), (False, 3)])
+def test_scalar_file_limits_reject_noninteger_indices(window):
+    with pytest.raises(ValueError, match="window"):
+        resolve_good_window(
+            GoodWindowPolicy(),
+            t0_bin=0,
+            file_first_good=window[0],
+            file_last_good=window[1],
+            n_bins=20,
+        )
 
 
 def test_grouped_fourier_rejects_a_reversed_background_window():

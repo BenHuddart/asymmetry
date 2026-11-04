@@ -626,7 +626,7 @@ class RootLoader(BaseLoader):
             "backward_group": backward_gid,
             "alpha": alpha,
             "t0_bin": int(common_t0),
-            "t_good_offset": max(0, int(first_good) - int(common_t0)),
+            "t_good_offset": int(first_good) - int(common_t0),
             "first_good_bin": int(first_good),
             "last_good_bin": int(last_good),
             "bin_index_base": 0,
