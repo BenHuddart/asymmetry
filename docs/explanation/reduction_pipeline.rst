@@ -56,8 +56,12 @@ background-estimate components, are combined before the F/B ratio is formed.
 Averaging already formed ratios is a different operation. For example, with
 unity balances, no corrections, and independent Poisson counts, adjacent pairs
 (F, B) = (9, 1) and (1, 1) merge to (10, 2), giving asymmetry 2/3 rather than
-the mean ratio 0.4. The standard reduced curve reports asymmetry and uncertainty
-in percent, and time in μs relative to the selected exact origin. See
+the mean ratio 0.4. The
+``reduce_grouped_asymmetry`` API reports asymmetry
+and uncertainty in percent, and time in μs relative to the selected exact
+origin. The lower-level :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`
+returns fractional asymmetry and uncertainty. See
+:doc:`/reference/asymmetry_units` for API scales and
 :doc:`/reference/data_reduction/binning` for bin edges, partial bins, and errors.
 
 Calibration dependencies
