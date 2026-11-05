@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Automatic timing requires a known strategy and each selected channel’s own
+  estimate, preserves usable file timing, and records effective timing provenance.
+- Period and detector-pair changes retain their own timing availability and exact
+  origins without carrying another selection’s estimated calibration.
+
 - Malformed saved manual windows reopen for repair; selected-period metadata and Good Events follow the reduced observations.
 
 - Keep file-good selections on acquired bins through timing edits; resolve signed manual windows without silently clipping invalid requests.

@@ -2086,3 +2086,13 @@ To average a known fast line away on purpose, for example to study slower
 relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
 "Rebin even when a detected line lies above the new Nyquist frequency,
 deliberately averaging a known fast line away to study slower relaxation".
+
+Automatic timing API
+--------------------
+
+``source_is_pulsed(metadata)`` returns ``None`` for unknown source facts.
+``find_t0_for_run(histograms, metadata, pulsed=True/False)`` accepts an explicit
+supported strategy. ``resolve_selected_timing`` applies that strategy to the
+selected acquired channels and reports unresolved requirements without changing
+raw histograms. Saved policy strategy text alone does not author this override.
+See :ref:`t0-search` for fallback and provenance semantics.

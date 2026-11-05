@@ -798,7 +798,9 @@ def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
     assert ds.metadata["title"] == "V1 Test"
     assert ds.metadata["temperature"] == pytest.approx(5.0)
     assert ds.metadata["field"] == pytest.approx(20.0)
-    assert ds.n_points == 4
+    assert ds.n_points == 0
+    assert "t0" in ds.metadata["correction_error"]
+    assert ds.run.histograms[0].n_bins == 4
     assert ds.run is not None
     assert ds.run.grouping.get("dead_time_us") == pytest.approx([0.015, 0.025])
     assert ds.run.grouping.get("good_frames") == pytest.approx(100000.0)

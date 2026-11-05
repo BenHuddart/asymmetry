@@ -1,16 +1,4 @@
-"""Grouping window: the file/detected time-zero line and its verdict (D11).
-
-Crops to just the t0 row (mode selector, spinbox, Find t0 button) and the
-always-on read-only line beneath it that carries the file t0, the detected
-t0 with its strategy and spread, the signed difference, and the verdict — the
-same line shown in every mode. The synthesised run is a two-detector
-continuous source whose header t0 sits exactly on its own prompt peak and
-whose good window opens clear of it, so the file and detected values agree,
-nothing is analysed on top of the prompt peak, and the verdict is the quiet
-"ok" case — no divergence message and no verdict button. Companion to
-:doc:`/reference/data_reduction/t0_search` and
-:doc:`/reference/detector_grouping`.
-"""
+"""Selected own timing with an unused empty channel and equal file anchors."""
 
 from __future__ import annotations
 
@@ -69,9 +57,10 @@ def _make_prompt_peak_run(seed: int = 2026) -> MuonDataset:
         )
         for _ in range(2)
     ]
+    histograms.append(Histogram(counts=np.zeros(_N_BINS), bin_width=_BIN_WIDTH_US, t0_bin=250))
     grouping = {
-        "groups": {1: [1], 2: [2]},
-        "group_names": {1: "Forward", 2: "Backward"},
+        "groups": {1: [1], 2: [2], 3: [3]},
+        "group_names": {1: "Forward", 2: "Backward", 3: "Unused"},
         "forward_group": 1,
         "backward_group": 2,
         "alpha": 1.0,
@@ -128,6 +117,8 @@ class GroupingWindowT0RowScenario(Scenario):
         )
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog._set_period_mode("green")
+        dialog._set_t0_mode_combo("auto_detect")
+        dialog._on_t0_mode_changed()
         dialog.resize(*dialog.preferred_window_size())
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()

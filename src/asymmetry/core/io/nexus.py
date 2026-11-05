@@ -450,6 +450,8 @@ class NexusLoader(BaseLoader):
 
         nexus_fields = self._extract_tree(entry)
         time_series = self._extract_time_series(entry)
+        if self._safe_str(self._read_optional(entry, "definition")) == "pulsedTD":
+            metadata_base["source_pulsed"] = True
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
@@ -599,6 +601,8 @@ class NexusLoader(BaseLoader):
 
         nexus_fields = self._extract_tree(entry)
         time_series = self._extract_time_series(entry)
+        if self._safe_str(self._read_optional(entry, "definition")) == "pulsedTD":
+            metadata_base["source_pulsed"] = True
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
@@ -679,15 +683,7 @@ class NexusLoader(BaseLoader):
         good_windows: np.ndarray,
         source_file: str,
     ) -> list[MuonDataset]:
-        """Construct one :class:`MuonDataset` per period from detector counts.
-
-        The dataset time axis is stamped from the run's own t0 rather than the
-        file's ``corrected_time``: ``(k + 0.5)·w − t0_time_us``, the bin-centre
-        convention reduction uses. With no exact t0 in the file this is
-        identical to ``(k − t0_bin)·w``; with one it places the axis on the
-        sub-bin position the DAQ recorded. The file's ``corrected_time`` is kept
-        in ``metadata["nexus_fields"]`` for inspection.
-        """
+        """Construct per-period datasets on acquired bin centres minus effective t0."""
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
 
@@ -721,9 +717,11 @@ class NexusLoader(BaseLoader):
                     "groups": {
                         gid: [i + 1 for i in indices] for gid, indices in grouping.groups.items()
                     },
+                    "t0_source": decode.source,
                     "forward_group": grouping.forward_group_id,
                     "backward_group": grouping.backward_group_id,
                 },
+                metadata=metadata_base,
             )
             asymmetry, error = quick.asymmetry, quick.error
             alpha = 1.0

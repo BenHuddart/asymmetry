@@ -107,7 +107,7 @@ def test_source_inference():
     assert source_is_pulsed({"instrument": "EMU", "facility": "Rutherford"})
     assert not source_is_pulsed({"facility": "PSI"})
     assert not source_is_pulsed({"instrument": "LEM"})
-    assert source_is_pulsed({})  # unknown defaults to pulsed
+    assert source_is_pulsed({}) is None
 
 
 def test_run_search_handles_dead_detectors():

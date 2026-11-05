@@ -255,7 +255,11 @@ def test_resolve_fixed_alpha_and_no_corrections():
         "background_correction": False,
         "background_mode": "none",
     }
-    assert resolved == expected | {"good_window_policy": {"mode": "from_file"}}
+    assert resolved == expected | {
+        "good_window_policy": {"mode": "from_file"},
+        "t0_policy": {"mode": "from_file"},
+        "effective_t0_sources": ["file"] * 4,
+    }
 
 
 def test_resolve_calibrated_alpha_carries_provenance():
@@ -746,9 +750,9 @@ def test_t0_auto_detect_records_provenance_even_when_the_delta_is_zero():
     )
     assert resolved["t0_search_strategy"] == "prompt_peak"
     assert resolved["t0_search_spread_bins"] == 0
-    # Nothing else moves: delta is 0, so no override and no t0 rewrite.
+    # Equal numerical anchors still record that the estimates supplied timing.
     assert resolved["t0_bin"] == peak_bin
-    assert EFFECTIVE_DETECTOR_T0_KEY not in resolved
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [peak_bin] * 4
 
 
 # --------------------------------------------------------------------------- #
@@ -828,22 +832,12 @@ def test_auto_detect_gives_every_detector_its_own_t0():
     assert [int(h.t0_bin) for h in run.histograms] == [50, 46, 50, 220]
 
 
-def test_auto_detect_heals_a_failed_detector_with_the_median_shift():
-    """A detector with no counts keeps its file t0 moved by what the others moved."""
+def test_auto_detect_rejects_a_failed_selected_detector():
     run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
-    run.histograms[1] = Histogram(
-        counts=np.zeros(320),
-        bin_width=0.016,
-        t0_bin=46,
-        good_bin_start=56,
-        good_bin_end=319,
-    )
+    run.histograms[1].counts[:] = 0
     profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
-
-    resolved = resolve_effective_grouping(profile, run)
-
-    # Detectors 1, 3, 4 each moved +2; detector 2 takes 46 + 2.
-    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+    with pytest.raises(ValueError, match="selected channels 2"):
+        resolve_effective_grouping(profile, run)
 
 
 def test_auto_detect_on_a_missing_t0_gives_each_detector_its_estimate():
@@ -856,7 +850,7 @@ def test_auto_detect_on_a_missing_t0_gives_each_detector_its_estimate():
 
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
     assert resolved["t0_bin"] == 222
-    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_source"] == "missing"
 
 
 def test_a_manual_offset_on_a_missing_t0_rides_on_the_per_detector_base():
@@ -869,7 +863,7 @@ def test_a_manual_offset_on_a_missing_t0_rides_on_the_per_detector_base():
 
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [55, 51, 54, 225]
     assert resolved["t0_bin"] == 225
-    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_source"] == "missing"
 
 
 # --------------------------------------------------------------------------- #
@@ -949,7 +943,7 @@ def test_t0_from_file_on_a_missing_t0_detects_and_records_provenance():
     resolved = resolve_effective_grouping(_base_profile(), _run_without_file_t0())
 
     assert resolved["t0_bin"] == 7
-    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_source"] == "missing"
     assert resolved["t0_search_strategy"] == "prompt_peak"
     assert resolved["t0_search_spread_bins"] == 0
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 7, 7]
@@ -963,7 +957,7 @@ def test_t0_auto_detect_on_a_missing_t0_also_records_it_as_detected():
     resolved = resolve_effective_grouping(profile, _run_without_file_t0())
 
     assert resolved["t0_bin"] == 7
-    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_source"] == "missing"
 
 
 def test_t0_manual_offset_on_a_missing_t0_applies_to_the_detected_value():
@@ -972,7 +966,7 @@ def test_t0_manual_offset_on_a_missing_t0_applies_to_the_detected_value():
     resolved = resolve_effective_grouping(profile, _run_without_file_t0())
 
     assert resolved["t0_bin"] == 9  # detected 7 + 2, not 0 + 2
-    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_source"] == "missing"
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [9, 9, 9, 9]
 
 

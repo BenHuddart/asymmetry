@@ -253,6 +253,8 @@ class AlignmentCrop:
     length: int
     first_bin: int = 0
     timing_residuals_us: tuple[tuple[int, float], ...] = ()
+    timing_sources: tuple[tuple[int, str], ...] = ()
+    timing_strategy: str = ""
 
     @property
     def timing_spread_us(self) -> float:

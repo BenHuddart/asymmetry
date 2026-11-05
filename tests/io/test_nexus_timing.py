@@ -500,7 +500,8 @@ def test_unusable_file_t0_can_resolve_existing_automatic_search(tmp_path):
     )
     grouping = resolve_effective_grouping(profile, dataset.run)
     assert dataset.run.grouping["t0_source"] == "missing"
-    assert grouping["t0_source"] == "detected"
+    assert grouping["t0_source"] == "missing"
+    assert grouping["effective_t0_sources"] == ["estimated"] * 2
     assert effective_detector_t0_bins(dataset.run.histograms, grouping) == [25, 27]
     for i, hist in enumerate(dataset.run.histograms):
         np.testing.assert_array_equal(hist.counts, counts[i])

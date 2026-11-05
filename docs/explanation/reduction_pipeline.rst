@@ -134,3 +134,9 @@ certify physical timing or every correction and uncertainty model.
   `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 * `Mantid muon reduction tutorial
   <https://docs.mantidproject.org/v6.9.0/tutorials/muon_GUI_course/basics_of_data_reductions.html>`_.
+
+Automatic timing resolves after effective channel selection and exclusions.
+Each required estimated anchor belongs to that acquired channel and period;
+run-wide consensus cannot supply a missing detector delay. Acquired file facts
+remain separate from effective policy outcomes, including numerically equal
+estimates. See :ref:`t0-search`.

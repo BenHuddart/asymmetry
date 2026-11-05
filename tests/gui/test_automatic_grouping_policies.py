@@ -89,8 +89,14 @@ def test_apply_enablement_does_not_write_alpha_form_state(qapp):
 
 
 @pytest.mark.parametrize("mode", ["auto_detect", "from_file"])
-def test_failed_t0_policy_save_reopen_and_file_timing_recovery(qapp, monkeypatch, tmp_path, mode):
-    dataset = _histogram_dataset(forward=np.zeros(6), backward=np.zeros(6))
+@pytest.mark.parametrize("partial", [False, True])
+def test_failed_t0_policy_save_reopen_and_file_timing_recovery(
+    qapp, monkeypatch, tmp_path, mode, partial
+):
+    dataset = _histogram_dataset(
+        forward=np.ones(6) if partial else np.zeros(6), backward=np.zeros(6)
+    )
+    dataset.run.metadata["facility"] = "PSI"
     source = tmp_path / "timing.nxs"
     source.touch()
     dataset.run.source_file = str(source)

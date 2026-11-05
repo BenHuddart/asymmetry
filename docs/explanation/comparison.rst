@@ -763,3 +763,36 @@ Software references:
 For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
 and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
 Press, Oxford, 2022).
+
+.. _comparison-selected-timing:
+
+Selected automatic timing
+-------------------------
+
+Asymmetry retains the continuous maximum and pulsed leading half-height feature
+conventions. WiMDA's **Search for T0** uses a grouped maximum; musrfit 1.12.1
+``musrt0 -g`` writes per-detector prompt maxima. With two unique synthetic
+prompt features at raw bins 20 and 31, musrt0 and Asymmetry's continuous search
+agree exactly (integer-bin tolerance zero). Grouped and detector maxima need
+not agree when channels have different delays. Pulsed maximum and leading
+half-height features also differ by construction; neither certifies physical
+time zero. WiMDA executable/version coverage is unavailable for this comparison.
+
+Mantid 6.16.1 ``MuonPreProcess`` applies supplied time-zero calibration and
+retains shifted spectrum coordinates. Explicit-table checks establish timing
+application, rather than automatic feature detection. Asymmetry uses whole-bin
+transport and carries file fractional residuals; comparisons require matched
+raw observations and origin conventions. See the
+`MuonPreProcess manual <https://docs.mantidproject.org/v6.16.0/algorithms/MuonPreProcess-v1.html>`_,
+`musrfit manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_, and
+`WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`_.
+
+Asymmetry also checks that automatic timing has an established strategy and
+that every required selected channel supplies its own usable estimate. This
+protects the requested detector alignment without making an unsuccessful
+optional search a file-loading failure. Unused failures do not block a valid
+selection. Missing-file fallback retains other usable file anchors and marks
+its own estimates explicitly; unresolved requests preserve raw inspection and
+editable settings. These are Asymmetry safeguards, not a claim about all three
+reference programs' failure policies. Their full unknown-source and partial
+failure behaviour is outside the executed comparison.

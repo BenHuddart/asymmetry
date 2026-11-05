@@ -24,6 +24,7 @@ from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
     reduce_grouped_asymmetry,
 )
+from asymmetry.core.transform.t0 import find_t0_for_run, resolve_selected_timing
 
 __all__ = ["projection_alphas", "reduce_run_projections", "reduction_identity"]
 
@@ -102,11 +103,30 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
     flags = correction_flags_from_grouping(grouping)
     n_histograms = len(source.histograms)
     datasets: dict[str, MuonDataset] = {}
+    search = None
+
+    def search_timing(histograms, metadata, **options):
+        nonlocal search
+        if search is None:
+            search = find_t0_for_run(histograms, metadata, **options)
+        return search
+
     for label, (forward, backward) in pairs.items():
+        selected_grouping = dict(grouping, forward_group=forward, backward_group=backward)
+        if "t0_policy" in grouping:
+            policy = grouping["t0_policy"]
+            resolve_selected_timing(
+                source.histograms,
+                selected_grouping,
+                source.metadata,
+                mode=policy["mode"],
+                offset_bins=policy.get("offset_bins", 0),
+                search_provider=search_timing,
+            )
         result = reduce_grouped_asymmetry(
             histograms=source.histograms,
             binning=binning_spec(grouping),
-            grouping=dict(grouping, forward_group=forward, backward_group=backward),
+            grouping=selected_grouping,
             forward_idx=effective_group_indices(grouping, forward, n_histograms=n_histograms),
             backward_idx=effective_group_indices(grouping, backward, n_histograms=n_histograms),
             alpha=alphas[label],

@@ -957,3 +957,15 @@ See the executable scripts:
 
 * ``examples/basic_dataset_loading.py``
 * ``examples/custom_loader.py``
+
+Selected automatic timing
+-------------------------
+
+Missing t0 does not reject an otherwise readable acquisition. A calibrated
+quick look requires usable timing for every selected acquired channel.
+Known-strategy fallback estimates only required missing anchors; usable file
+anchors remain intact. Unknown strategy or an unsuccessful required estimate
+leaves the quick look unavailable and retains raw histograms for repair.
+Integer-only and legitimate zero calibration remain sufficient. ROOT stores
+per-channel file availability separately from effective timing outcomes.
+See :ref:`t0-search` for source precedence and feature assumptions.

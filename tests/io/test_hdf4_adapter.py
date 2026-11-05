@@ -296,14 +296,14 @@ def test_v1_without_counts_attrs_falls_back_to_full_range() -> None:
     ds = result[0] if isinstance(result, list) else result
 
     g = ds.run.grouping
-    assert g["first_good_bin"] == 0
-    assert g["last_good_bin"] == 7
+    assert [(h.good_bin_start, h.good_bin_end) for h in ds.run.histograms] == [(0, 7)] * 2
     # ISIS bin metadata is 1-based whether or not this file carried any.
     assert g["bin_index_base"] == 1
     assert g["t0_source"] == "missing"
     assert "t0_time_us" not in g
     assert ds.run.histograms[0].t0_bin == 0
-    assert ds.n_points == 8
+    assert ds.n_points == 0
+    assert "t0" in ds.metadata["correction_error"]
 
 
 def test_v1_logged_sample_temperature_from_nxlog_name_child() -> None:

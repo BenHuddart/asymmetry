@@ -513,9 +513,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     alpha._result_label.setText("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12")
     dialog._alpha_card.set_expanded(True)
 
-    worst_case_line = (
-        "File: none (detected) · Detected: bin 1601 (pulse-edge midpoint, spread 12) · Δ +1601"
-    )
+    worst_case_line = "File: none · Detected: bin 1601 (pulse-edge midpoint, spread 12) · Δ +1601"
     t0_label = dialog._t0_detected_label
     t0_label.setText(worst_case_line)
     t0_label.set_hover_text(worst_case_line)
@@ -2521,6 +2519,7 @@ def test_find_t0_fills_spinner_without_applying(qapp: QApplication) -> None:
     dataset.metadata["facility"] = "PSI"
     dataset.run.grouping["last_good_bin"] = 199
     dialog = GroupingDialog([dataset])
+    _wait_for_t0_detection(dialog)
     dialog._on_find_t0()
     # Find fills the absolute bin; nothing is applied until Apply. The outcome
     # is reported by the shared detected line, not a separate result label.
@@ -2608,6 +2607,7 @@ def test_find_t0_skips_excluded_detectors(qapp: QApplication) -> None:
     dataset.run.grouping["last_good_bin"] = 199
     dialog = GroupingDialog([dataset])
     dialog._exclude_edit.setText("2")
+    _wait_for_t0_detection(dialog)
     dialog._on_find_t0()
     assert dialog._t0_spin.value() == 40 + dialog._bin_index_base()
 
@@ -3101,6 +3101,7 @@ def test_t0_manual_mode_enables_spin_and_dirties_draft(qapp: QApplication) -> No
     dialog._draft_dirty = False
     dialog._set_t0_mode_combo("manual")
     dialog._on_t0_mode_changed()
+    _wait_for_t0_detection(dialog)
     assert dialog._t0_spin.isReadOnly() is False
     assert dialog._find_t0_btn.isEnabled() is True
 
@@ -3145,6 +3146,7 @@ def test_t0_auto_detect_shows_detected_value_and_provenance(qapp: QApplication) 
     dialog = GroupingDialog([_detector_t0_dataset()])
     dialog._set_t0_mode_combo("auto_detect")
     dialog._on_t0_mode_changed()
+    _wait_for_t0_detection(dialog)
     assert dialog._t0_spin.isReadOnly() is True
     # PSI (continuous) → prompt-peak argmax. h1 peak at bin 2, h2 peak at bin 3.
     # median consensus rounds to 2 or 3; provenance text names the strategy.
@@ -3340,11 +3342,11 @@ def test_t0_verdict_button_is_tinted_by_severity(qapp: QApplication) -> None:
     dialog.show()
     _wait_for_t0_detection(dialog)
 
-    assert dialog._t0_detected_label.text().startswith("File: none (detected) · Detected: bin 10")
+    assert dialog._t0_detected_label.text().startswith("File: none · Detected: bin 10")
     assert dialog._t0_verdict_button.isVisible()
     assert tokens.ERROR in dialog._t0_verdict_button.styleSheet()
     assert _verdict_menu_entries(dialog) == [
-        "No time zero in the file header; using the detected value"
+        "No time zero in the file header; selected channels require their own estimates"
     ]
     dialog.close()
 
@@ -3447,6 +3449,7 @@ def test_find_t0_stores_the_offset_from_the_file_value(qapp: QApplication) -> No
     dialog._set_t0_mode_combo("manual")
     dialog._on_t0_mode_changed()
 
+    _wait_for_t0_detection(dialog)
     dialog._on_find_t0()
 
     assert dialog._t0_spin.value() == 6

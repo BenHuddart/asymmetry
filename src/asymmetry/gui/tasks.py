@@ -30,6 +30,12 @@ class TaskCancelledError(Exception):
     """Raise from a task function to signal cooperative cancellation."""
 
 
+def check_task_cancelled(worker: TaskWorker) -> None:
+    """Poll cooperative cancellation between independent raw-channel scans."""
+    if worker.is_cancelled():
+        raise TaskCancelledError
+
+
 class _OrphanThreadReaper(QObject):
     """Process-level keep-alive for worker threads that timed out on a bounded wait.
 

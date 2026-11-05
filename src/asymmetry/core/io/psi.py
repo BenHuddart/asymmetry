@@ -1040,7 +1040,8 @@ class PsiLoader(BaseLoader):
                 preset_override
             )
         selection = {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid}
-        quick = quick_asymmetry(histograms, selection)
+        selection["t0_source"] = "missing" if not any(int(v) for v in t0_bins) else "file"
+        quick = quick_asymmetry(histograms, selection, metadata={"facility": "PSI"})
         asymmetry, error, alignment = quick.asymmetry, quick.error, quick.alignment
         common_t0 = quick.common_t0
         first_good, last_good = 0, n_bins - 1
@@ -1126,6 +1127,7 @@ class PsiLoader(BaseLoader):
             "forward_group": forward_gid,
             "backward_group": backward_gid,
             "alpha": alpha,
+            **quick.file_grouping,
             "t0_bin": int(common_t0),
             "t_good_offset": int(first_good) - int(common_t0),
             "first_good_bin": int(first_good),
@@ -1138,10 +1140,7 @@ class PsiLoader(BaseLoader):
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],
-            # PSI headers carry an integer t0 per histogram and nothing finer
-            # (musrfit ignores the float "real t0" at byte 792 too), so the exact
-            # t0 stays the bin centre. An all-zero table means the header never
-            # recorded one — D7 searches for it at resolve time.
+            # Preserve the established all-zero PSI table convention.
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
             # The registry identity and the raw header name have separate provenance.
