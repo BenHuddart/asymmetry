@@ -1,33 +1,9 @@
-"""Period (red/green) selection for multi-period muon data.
+"""Select acquired periods and combine independently reduced red/green curves.
 
-Pulsed-source muon runs can be recorded in *period mode*: a single ``.nxs``
-file holds several period histograms (for example light-OFF / light-ON in a
-photo-µSR experiment, RF-on / RF-off, or ALC steps). The NeXus loader keeps
-the raw per-period histograms on the loaded :class:`~asymmetry.core.data.dataset.Run`
-(see :mod:`asymmetry.core.io.nexus`); this module is the GUI-free, scriptable
-way to *select* a single period from a loaded run.
-
-Two public layers live here:
-
-* **High level** — :func:`select_period` returns a fully reduced
-  :class:`MuonDataset` for one period of a loaded run, preserving provenance.
-  It is what scripts (and :func:`asymmetry.core.io.load` via ``period=``) use.
-* **Low level** — :func:`select_period_histograms` and
-  :func:`combine_period_asymmetry` hold the histogram-selection and the
-  green/red combination arithmetic. The GUI grouping/reduction path calls
-  these so there is a single implementation of the rule rather than a copy in
-  the desktop app.
-
-Period conventions
-------------------
-Periods are numbered from ``1`` (matching ``metadata['period_number']``).
-For the common two-period case the first period (index 0) is labelled
-``"red"`` and the second (index 1) ``"green"`` — the same convention the
-loader and the GUI "RG box" use. In a photo-µSR experiment the **light-OFF**
-spectrum is conventionally *Green* (period 2) and **light-ON** is *Red*
-(period 1); confirm this against the relaxation for a given instrument.
-
-This module must stay free of Qt / matplotlib / ``asymmetry.gui`` imports.
+Periods use 1-based public numbering and 0-based held-array indices. Red is
+period 1; green is period 2. Cached curves do not supply raw histograms for
+an automatic timing search. Selection preserves acquired calibration and
+exposure; authored corrections remain separate from those acquisition facts.
 """
 
 from __future__ import annotations
@@ -141,12 +117,7 @@ def period_count(data: MuonDataset | list[MuonDataset] | Run) -> int:
 
 
 def held_period_count(run: Run) -> int:
-    """How many periods *run* itself holds: both for a combined red/green run, else one.
-
-    Unlike :func:`period_count`, which reports the file's period count, a
-    dataset split off a file of three or more periods holds one period although
-    its metadata names them all.
-    """
+    """Number of raw or cached periods held by this run."""
     reduced = run.grouping.get("period_reduced")
     return len(reduced) if reduced else 1
 
@@ -262,11 +233,7 @@ def select_period(
 
 
 def period_run(combined: Run, index: int) -> Run:
-    """The :class:`Run` of one period (0-based *index*) of a combined multi-period run.
-
-    Carries that period's own histograms, good frames and deadtimes, so a
-    reduction of it is a reduction of that period alone.
-    """
+    """Extract a held period with its acquired timing, exposure, and corrections."""
     grouping = combined.grouping
     from asymmetry.core.project.profiles import GoodWindowPolicy
 
@@ -277,6 +244,9 @@ def period_run(combined: Run, index: int) -> Run:
         period_grouping.pop(key, None)
 
     metadata = dict(combined.metadata)
+    metadata["raw_period_histograms_available"] = (
+        acquired_period_histograms(grouping, index) is not None
+    )
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
     # Each period gets its own encoded run-number key so both survive in the
     # run-number-keyed data browser (otherwise the second add collapses the
@@ -301,11 +271,12 @@ def period_run(combined: Run, index: int) -> Run:
     # Per-detector file facts follow the selected period; scalar-only requests
     # retain their recorded window. Extraction never runs a timing search.
     if (
-        "detector_first_good_bins" in period_grouping
+        metadata["raw_period_histograms_available"]
+        and "detector_first_good_bins" in period_grouping
         and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
         == "from_file"
     ):
-        quick = quick_asymmetry(histograms, period_grouping)
+        quick = quick_asymmetry(histograms, period_grouping, metadata=metadata)
         run.grouping.pop("t0_time_us", None)
         run.grouping.update(quick.file_grouping)
         metadata.pop("correction_error", None)
@@ -325,15 +296,42 @@ def selected_period_index(grouping: dict, mode: str | None = None) -> int | None
     )
 
 
-def select_period_grouping(grouping: dict, period_index: int) -> dict:
-    """Select period exposure and file coefficients without reading count arrays.
-
-    Manual and stored estimates remain authored coefficients. File coefficients
-    follow the selected acquisition period, whose exposure normalises counts.
-    """
-    period_grouping = dict(grouping)
+def _period_timing_facts(grouping: dict, period_index: int) -> dict:
+    """Select acquisition timing status; an absent period table is not inherited."""
+    facts = dict(grouping)
     if "period_t0_sources" in grouping:
-        period_grouping["t0_source"] = grouping["period_t0_sources"][period_index]
+        facts["t0_source"] = grouping["period_t0_sources"][period_index]
+    if "period_detector_t0_sources" in grouping:
+        sources = grouping["period_detector_t0_sources"][period_index]
+        if sources is None:
+            facts.pop("detector_t0_sources", None)
+        else:
+            facts["detector_t0_sources"] = sources
+    return facts
+
+
+def select_period_grouping(grouping: dict, period_index: int) -> dict:
+    """Select acquired calibration and exposure, preserving authored coefficients."""
+    period_grouping = _period_timing_facts(grouping, period_index)
+    origin = _period_timing_facts(grouping, grouping.get("effective_t0_period", period_index))
+    manual_file = grouping.get("t0_policy", {}).get("mode") == "manual" and all(
+        facts.get("t0_source") != "missing"
+        and "missing" not in facts.get("detector_t0_sources", [])
+        for facts in (origin, period_grouping)
+    )
+    if (
+        "effective_t0_period" in grouping
+        and grouping["effective_t0_period"] != period_index
+        and not manual_file
+    ):
+        for key in (
+            "effective_detector_t0_bins",
+            "effective_t0_sources",
+            "effective_t0_period",
+            "t0_search_strategy",
+            "t0_search_spread_bins",
+        ):
+            period_grouping.pop(key, None)
 
     period_good_frames = grouping.get("period_good_frames")
     if isinstance(period_good_frames, list):
@@ -366,36 +364,38 @@ def select_period_histograms(
     grouping: dict,
     period_index: int,
 ) -> tuple[list[Histogram], dict]:
-    """Return period-specific histograms plus effective grouping metadata.
-
-    This is the single source of truth for "pick the histograms for period N
-    and the good-frames / deadtime that go with them" used by both the
-    scriptable API and the GUI grouping/reduction path. Falls back to a clone
-    of ``histograms`` when period data is missing or malformed.
-    """
+    """Select acquired histograms, exposure, and calibration for one period."""
     period_grouping = select_period_grouping(grouping, period_index)
 
     selected = held_period_histograms(histograms, grouping, period_index)
-    return _clone_histograms(selected), histogram_grouping_facts(selected, period_grouping)
+    facts = histogram_grouping_facts(selected, period_grouping)
+    if "effective_t0_sources" in facts:
+        facts["effective_t0_period"] = period_index
+    return _clone_histograms(selected), facts
 
 
 def held_period_histograms(
     histograms: list[Histogram], grouping: dict, period_index: int
 ) -> list[Histogram]:
-    """Read a held acquisition without copying counts; absent periods retain the acquired fallback."""
+    """Read raw counts for a held acquisition, retaining the acquired fallback."""
+    return acquired_period_histograms(grouping, period_index) or histograms
+
+
+def acquired_period_histograms(grouping: dict, period_index: int) -> list[Histogram] | None:
+    """Raw held counts only; cached curves cannot establish an acquired period."""
     period_histograms = grouping.get("period_histograms")
-    selected_period = (
+    selected = (
         period_histograms[period_index]
-        if isinstance(period_histograms, list) and period_index < len(period_histograms)
+        if isinstance(period_histograms, list) and 0 <= period_index < len(period_histograms)
         else None
     )
-    if (
-        isinstance(selected_period, list)
-        and selected_period
-        and all(isinstance(hist, Histogram) for hist in selected_period)
-    ):
-        histograms = selected_period
-    return histograms
+    return (
+        selected
+        if isinstance(selected, list)
+        and selected
+        and all(isinstance(hist, Histogram) for hist in selected)
+        else None
+    )
 
 
 def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dict:
@@ -403,7 +403,17 @@ def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dic
     period_grouping = dict(grouping)
     from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY, detector_t0_overrides
 
-    override = detector_t0_overrides(grouping, len(histograms)) if histograms else None
+    policy = grouping.get("t0_policy", {})
+    sources = grouping.get("effective_t0_sources", [])
+    estimated = (
+        policy.get("mode") == "auto_detect" or "estimated" in sources
+    ) and "effective_t0_period" not in grouping
+    override = (
+        detector_t0_overrides(grouping, len(histograms)) if histograms and not estimated else None
+    )
+    if estimated:
+        period_grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        period_grouping.pop("effective_t0_sources", None)
     anchors = grouping.get("detector_t0_bins")
     if (
         override is not None
@@ -675,6 +685,11 @@ def combine_mapped_periods(
         for periods in (red_periods, green_periods)
         if periods
     ]
+    grouping["period_detector_t0_sources"] = [
+        runs[ps[0] - 1].grouping.get("detector_t0_sources")
+        for ps in (red_periods, green_periods)
+        if ps
+    ]
     grouping["period_good_frames"] = frames
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)
@@ -694,7 +709,7 @@ def combine_mapped_periods(
         grouping=grouping,
         source_file=source_file or base_run.source_file,
     )
-    quick = quick_asymmetry(red_histograms, grouping)
+    quick = quick_asymmetry(red_histograms, grouping, metadata=metadata)
     grouping.pop("t0_time_us", None)
     grouping.update(quick.file_grouping)
     metadata.update(quick.metadata)

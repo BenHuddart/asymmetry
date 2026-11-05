@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -34,7 +35,7 @@ from asymmetry.core.transform.grouping import (
     independent_pair_indices,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
-from asymmetry.core.transform.t0 import effective_detector_t0_bins
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, resolve_selected_timing
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -397,6 +398,7 @@ def reduce_period_asymmetry(
     reference_resolver: ReferenceResolver | None = None,
     allow_incomplete: bool = False,
     context: str = "",
+    timing_search: Callable | None = None,
 ) -> PeriodAsymmetryReduction:
     """Reduce identical raw-bin edges per period before combining G +/- R.
 
@@ -429,6 +431,22 @@ def reduce_period_asymmetry(
             if periods is not None
             else (histograms, grouping)
         )
+        if (
+            periods is not None
+            and "t0_policy" in effective
+            and "effective_t0_sources" not in effective
+        ):
+            policy = effective["t0_policy"]
+            resolve_selected_timing(
+                selected,
+                effective,
+                metadata,
+                mode=policy["mode"],
+                offset_bins=policy.get("offset_bins", 0),
+                search_provider=partial(timing_search, period_index=int(label == PeriodMode.GREEN))
+                if timing_search is not None
+                else None,
+            )
         reduced[label] = reduce_grouped_asymmetry(
             histograms=selected,
             grouping=effective,

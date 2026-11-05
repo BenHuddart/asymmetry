@@ -41,6 +41,7 @@ from PySide6.QtWidgets import QApplication
 import asymmetry.core.project.profiles as profiles_module
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping.profile_bridge as profile_bridge_module
+import asymmetry.gui.windows.grouping.timing_section as timing_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
@@ -56,9 +57,9 @@ class _ResolveCounter:
         self.count = 0
         self._original = profiles_module.resolve_effective_grouping
 
-    def __call__(self, profile, run):
+    def __call__(self, profile, run, **options):
         self.count += 1
-        return self._original(profile, run)
+        return self._original(profile, run, **options)
 
 
 @pytest.fixture
@@ -250,7 +251,12 @@ def _dataset_with_prompt_peak(run_number: int = 4003, n_det: int = 4) -> MuonDat
     run = Run(
         run_number=run_number,
         histograms=histograms,
-        metadata={"run_number": run_number, "instrument": "EMU", "title": "Prompt Peak Perf"},
+        metadata={
+            "run_number": run_number,
+            "instrument": "EMU",
+            "facility": "ISIS",
+            "title": "Prompt Peak Perf",
+        },
         grouping={
             "groups": {1: list(range(1, half + 1)), 2: list(range(half + 1, n_det + 1))},
             "forward_group": 1,
@@ -280,7 +286,7 @@ class _T0ScanCounter:
         self.count = 0
         self._original = profiles_module.find_t0_for_run
 
-    def __call__(self, histograms, metadata=None, *, pulsed=None):
+    def __call__(self, histograms, metadata=None, *, pulsed=None, **options):
         self.count += 1
         return self._original(histograms, metadata, pulsed=pulsed)
 
@@ -291,7 +297,7 @@ def t0_scan_counter(monkeypatch: pytest.MonkeyPatch) -> _T0ScanCounter:
     # find_t0_for_run is bound in profiles (the resolve path) and in the dialog
     # module (the read-only display path); patch both so either call is counted.
     monkeypatch.setattr(profiles_module, "find_t0_for_run", counter, raising=True)
-    monkeypatch.setattr(grouping_dialog_dialog_module, "find_t0_for_run", counter, raising=True)
+    monkeypatch.setattr(timing_module, "find_t0_for_run", counter, raising=True)
     return counter
 
 
@@ -311,6 +317,8 @@ def test_auto_detect_reseed_scans_each_detector_once(
 
     dialog._reload_controls_from_seed()
 
+    assert t0_scan_counter.count == 0
+    _wait_for_t0_detection(dialog)
     assert t0_scan_counter.count == 1
 
 
@@ -338,6 +346,8 @@ def test_auto_detect_display_matches_resolved_t0(qapp: QApplication) -> None:
 
     dialog._reload_controls_from_seed()
 
+    _wait_for_t0_detection(dialog)
+    dialog._reload_controls_from_seed()
     resolved = dialog._last_resolved_seed
     assert resolved is not None
     assert resolved.get("t0_search_strategy")  # the resolve took the auto path
@@ -364,7 +374,12 @@ def test_auto_detect_display_falls_back_when_payload_lacks_t0_bin(
 
     dialog._seed_t0_spin_from_detection()
 
-    assert t0_scan_counter.count == 1  # fast path skipped; scanned instead
+    assert t0_scan_counter.count == 0
+    _wait_for_t0_detection(dialog)
+    dialog._set_t0_mode_combo("auto_detect")
+    dialog._seed_t0_spin_from_detection()
+    _wait_for_t0_detection(dialog)
+    assert t0_scan_counter.count == 1
     base = dialog._bin_index_base()
     expected = t0_scan_counter._original(dialog._run.histograms, dialog._run.metadata or {})
     assert dialog._t0_spin.value() == int(expected.consensus_t0_bin) + base
@@ -383,6 +398,7 @@ def test_toggle_to_auto_detect_scans_once_with_run_metadata(
     dialog._set_t0_mode_combo("auto_detect")
     dialog._apply_t0_mode_to_controls()
 
+    _wait_for_t0_detection(dialog)
     assert t0_scan_counter.count == 1
     base = dialog._bin_index_base()
     expected = t0_scan_counter._original(dialog._run.histograms, dialog._run.metadata or {})
@@ -462,11 +478,11 @@ def test_detected_line_scan_runs_off_the_gui_thread(
     scan_threads: list[threading.Thread] = []
     original = profiles_module.find_t0_for_run
 
-    def _record(histograms, metadata=None, *, pulsed=None):
+    def _record(histograms, metadata=None, *, pulsed=None, **options):
         scan_threads.append(threading.current_thread())
         return original(histograms, metadata, pulsed=pulsed)
 
-    monkeypatch.setattr(grouping_dialog_dialog_module, "find_t0_for_run", _record, raising=True)
+    monkeypatch.setattr(timing_module, "find_t0_for_run", _record, raising=True)
 
     dialog = GroupingDialog([_dataset_with_prompt_peak()])
     _wait_for_t0_detection(dialog)

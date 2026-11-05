@@ -3,220 +3,147 @@
 Time-zero search
 ================
 
-For the operation order and calibration dependencies, see
-:doc:`/explanation/reduction_pipeline`.
+Time zero establishes the origin of the analysis time axis. File timing is an
+instrument calibration; a count feature provides a candidate anchor for review.
+Neither agreement with a feature nor a quiet diagnostic certifies physical time
+zero. Timing offsets change phase and early-time interpretation.
 
-Everything downstream counts time from t0, the moment the muon spin starts
-evolving in the sample. The value stored in a data file is a calibration
-made by the instrument scientist; it is usually right, but the standard
-advice applies — never rely on a stored t0 you did not record yourself.
-A file converted from an old format, a run taken during commissioning, or a
-detector with a shifted cable delay can all carry a wrong t0, which shows up
-downstream as wrong frequencies in TF data and distorted early-time shapes.
+Selected timing
+---------------
 
-Alignment uses whole acquisition bins from the effective selected channels.
-Exact header timing supplies a deterministic selected reference, with ties at
-the maximum integer anchor resolved by acquired-channel ordinal. The result
-records the remaining fractional offsets and their full spread in μs; these
-are alignment diagnostics, not a timing uncertainty or a fractional resampling.
-Only common observed support is reduced, including valid one-bin intersections.
-See :doc:`/reference/detector_grouping` for coordinate and provenance details.
+**From file** retains each selected channel's usable file calibration.
+Integer-only calibration is sufficient, including a legitimate zero. NeXus
+integer/exact conflicts retain usable integer anchors and discard only the
+conflicting exact declaration. Format-specific unspecified markers remain
+separate from explicit zero; see :doc:`/reference/loading_data`.
 
-NeXus uses declared resolution for its fixed-bin width and compares integer
-and exact t0 at stored representation precision. A displaced exact header
-remains advisory with usable integer timing. Secondary coordinate disagreement
-does not discard valid file timing. Unusable optional declarations use remaining
-calibration. Without usable file t0, raw loading remains available and the
-existing automatic search applies; an unresolved physical bin width prevents
-calibrated loading. Conflicts remove exact timing only on affected detectors,
-and two-period selection retains the selected period's calibration status.
-The ``RG Mode`` controls update the file anchor, detected value, and verdict
-for the selected period. Switching periods preserves an authored manual t0
-offset while updating its displayed absolute bin.
-These checks do not establish physical t0 accuracy. See
-:doc:`/reference/loading_data` for the timing and compatibility contract.
+When a required channel has no usable file timing, **From file** searches its
+raw counts under an established source strategy. Other selected channels retain
+their usable file calibration. The fallback records estimated provenance; it
+never relabels the estimate as acquired calibration. **Manual** applies a signed
+whole-bin offset to the resolved base. An offset alone cannot supply a missing
+base. Switching periods reapplies a Manual offset to that period's own resolved
+base; an estimated base from another period is not transferred.
 
-Legacy LEM ROOT ``TLemRunHeader`` v5 supplies per-detector numeric t0 in
-zero-based bins. Asymmetry retains finite nonnegative anchors, including explicit
-zero and fractional bins, with the same bin-centre stamp convention as modern
-ROOT. Negative unspecified or nonfinite entries do not become file calibration. These file
-anchors enter the shared whole-bin alignment; they do not select a different
-search or reduction method.
+**Auto-detect** requests replacement timing for the actual selected acquired
+channels, after exclusions, for each pair and period. Every required channel
+must supply its own usable estimate. A failed unused channel does not block a
+valid pair. A failed selected channel never receives another detector's anchor
+or a median shift. The diagnostic run-wide median is not a detector calibration.
 
-NeXus physical good times are resolved on raw acquisition centres before t0
-is subtracted, and remain attached to each detector and period as inclusive
-raw-bin bounds. Exact sub-bin t0 affects timestamps, never which raw bins
-these declarations select. Initial loading and subsequent file-good reductions
-share that interpretation; see :doc:`/reference/loading_data`.
+Asymmetry also checks that automatic timing has a known source strategy and
+that every required channel resolves. These checks protect the requested
+alignment, rather than file admission. An unresolved request shows
+**Preview unavailable:**, keeps **Apply** disabled, and preserves the acquired
+histograms and editable settings. Repair it by selecting usable channels,
+returning to valid file timing, or supplying supported explicit calibration or
+an API strategy. Valid file timing remains usable when an advisory search fails.
 
-A common timing-only change preserves **From file** raw-bin membership and
-moves timestamps. **Manual** good-window endpoints instead follow effective
-t0 as signed offsets; an omitted endpoint retains its mapped file limit.
-Detector-specific shifts can change the common intersection. See
-:ref:`comparison-file-manual-windows` for matched reference operations.
+Source and feature conventions
+------------------------------
 
-File-good bounds remain attached to raw acquisition bins. Asymmetry converts
-PSI MDU markers before alignment and stores BIN/MDU/ROOT good bounds as
-zero-based inclusive indices. The selected detectors' shifted bounds intersect
-with their common support; a spectator's t0 or good interval does not restrict
-that pair. A native musrfit explicit ``data`` upper bound is exclusive at
-packing one, so equal displayed upper integers need not select equal counts.
-Omitted native ``data`` uses a different fallback from Asymmetry's file-good
-default. See :doc:`/reference/loading_data` and
-:doc:`/explanation/comparison` for examples and comparison limits.
+Known source metadata selects the existing continuous or pulsed strategy.
+NeXus ``definition=pulsedTD`` supplies an explicit pulsed-source fact. Missing
+or ambiguous source facts remain unknown. A filename does not select a strategy.
+The API ``find_t0_for_run(..., pulsed=False)`` explicitly selects the continuous
+strategy; ``pulsed=True`` selects pulsed search and takes precedence over metadata.
+``resolve_selected_timing`` accepts the same explicit argument when resolving a
+selected request. ``T0Policy.strategy`` records a last result for display; it is
+not an authored override of unknown source metadata.
 
-The grouping window's t0 row carries a read-only line, identical whichever
-mode is selected, that shows the file value beside the detected one so you
-never have to take either on faith:
+* Continuous search takes the maximum-count bin of each acquired histogram,
+  choosing the earliest bin on ties. This is a prompt-peak feature, provided
+  that the maximum represents that feature.
+* Pulsed search walks back from the maximum to the adjacent leading
+  half-height crossing, interpolates linearly, and rounds to the nearest bin.
+  An early flash can therefore be separate from the chosen leading edge.
+  A histogram starting above half-height has no supported leading crossing.
+
+These feature definitions do not identify the physical pulse centre for every
+source response. Background, flash, overlap, and detector response can affect
+what feature is found. A physical timing calibration requires independent
+instrument evidence; changing the estimator requires a separate benchmark.
+
+Search uses raw, unbinned acquired counts. Display binning, Fourier crops, and
+good-window choices do not change the feature estimate. The grouping window
+reuses a background raw-channel scan across selections of the same acquisition;
+acceptance follows the current pair and period. Cached-only periods without raw
+histograms are not searched.
+
+Diagnostics and controls
+------------------------
 
 .. figure:: /_generated/screenshots/grouping_window_t0_row.png
    :width: 70%
    :align: center
-   :alt: The grouping window's t0 row with the file/detected/Δ line beneath
-      it, reading "File: bin 40 · Detected: bin 40 (prompt peak, spread 0)
-      · Δ +0".
+   :alt: Auto-detect timing for a selected pair whose own prompt estimates agree
+      with file anchors; an unused empty channel does not block the request.
 
-   The t0 row (mode selector, spinbox, **Find t0**) and the line beneath it.
-   Here the file header and the detected prompt peak agree exactly, so there
-   is no verdict message.
+   **Auto-detect** uses the selected pair's own estimates. Agreement in this
+   synthetic example is a feature check, not physical calibration evidence.
 
-The line is ``" · ".join(...)`` of the file value (``File: bin N``, or
-``File: none (detected)`` when the run's header carried no t0 at all), the
-detection (``Detected: …`` while a background scan is in flight, ``Detected:
-unavailable`` if it failed, or ``Detected: bin M (strategy, spread S)``), and
-the signed difference ``Δ ±d``. The detection itself runs off the GUI thread,
-once per run, so switching between runs already scanned repaints instantly.
+The line shows ``File: bin N`` or ``File: none``, followed by ``Detected: …``
+while the worker is pending, ``Detected: unavailable`` on failure, or
+``Detected: bin M (strategy, spread S)``. The detected bin is the maximum of
+selected own estimates. The signed ``Δ`` diagnostic is the median selected
+``detected_i − file_i`` shift; the spread is the range of those shifts. They are
+different summaries when detector delays differ. A failed selected estimate is
+named in the unavailable diagnostic.
 
-The detected bin and Δ are the file bin plus the **median per-detector shift**
-— the median of ``detected_i − header_i`` over the detectors that resolved —
-and the spread is the *range* of those shifts. On data where detectors
-legitimately sit at different times (PSI headers carry a t0 per detector) the
-median of the raw estimates and the group's header maximum are different
-quantities, so comparing them reported a divergence that was only the
-detectors' real stagger. A run whose every detector lands on its own header
-therefore reads ``Δ +0`` with a spread of a bin or two, however far apart the
-detectors themselves are.
+A ``⚠`` button exposes advisory messages about file disagreement, detector-shift
+spread, and a good window opening on the detected feature. Valid file timing is
+not rejected by these messages. The display threshold is the larger of a family
+floor (two bins continuous, three bins pulsed) and the median feature width.
+Prompt FWHM, pulsed 10–90 % rise width, spread, and thresholds are descriptive
+diagnostics, not confidence intervals, localisation limits, or calibration tests.
 
-Explicit **Auto-detect** requires a successful search. If no detector supplies
-an estimate, the preview reads **Preview unavailable:** and **Apply** stays
-disabled until the request is repaired. A diagnostic mismatch while using valid
-**From file** timing remains advisory.
+**Find t0** fills the **Manual** common offset from the cached selected estimate.
+It is available after the raw scan completes; **Apply** commits the request.
+Use **Auto-detect** to apply each channel's own estimated anchor rather than a
+shared manual offset.
 
-**Verdict levels.** The messages are not on the line: when there is something
-to say, a ``⚠`` button appears beside it, tinted amber for a warning and red
-for an error, with every message in its tooltip and in a click-to-read popup.
-A warning never blocks Apply (it colours the line and is echoed to the
-analysis log when you Apply) — the possible messages are:
+Alignment and windows
+---------------------
 
-* *No time zero in the file header; using the detected value* — the file
-  carried no usable t0 at all; resolution falls back to the detected
-  consensus (this is the only place resolution *must* use the detected
-  value rather than merely display it).
-* *Time zero is bin N, outside the run's M bins* — the header t0 does not
-  point inside the histogram.
-* *Header time_zero disagrees with t0_bin; using t0_bin* — an ISIS file
-  whose two redundant t0 fields disagree; the integer bin wins (see
-  :doc:`/reference/loading_data`).
-* *Detected t0 is bin D, file t0 is bin F — further apart than the N-bin
-  tolerance* — the median shift exceeds the tolerance below, so the whole run
-  sits away from its header.
-* *Detectors 1, 2, … disagree with the other detectors' t0 shift by more than
-  N bins* — those detectors moved by a different amount from the rest, named by
-  1-based detector number. A detector that is far from the others but agrees
-  with its own header is not an outlier.
-* *Detector spread N bins — check the source type* — the per-detector shifts
-  disagree with each other by more than four tolerances, usually because the
-  source was misidentified as pulsed/continuous.
-* *First good bin G is at or before the detected t0 (bin D)* — the analysis
-  window opens on the muon arrival, so the prompt peak is inside the fitted
-  asymmetry. This reads as a spuriously large early-time asymmetry rather than
-  as an error, which is why it is worth saying out loud.
-* *First good bin G is inside the muon pulse (peak at bin P)* — the pulsed
-  equivalent: the window clears the pulse *centre* but not the pulse itself.
-  Raise the t_good offset until it starts after the peak.
+Alignment transports whole acquired bins. Exact file origins retain their
+fractional residuals under integer policy shifts; the search does not estimate
+new fractional calibration. The selected maximum anchor wins, with acquired
+ordinal breaking ties. A pair or projection change resolves the exact origin
+from its own selected reference detector, even when the integer anchor is
+unchanged. Recorded alignment includes the actual selected channel
+origins, effective timing sources, requested search strategy, and residual spread.
+Acquired ``t0_source`` remains a separate file fact, including when estimated
+and file anchors are numerically equal.
 
-Both checks read the resolved ``first_good_bin``, whether the window comes
-from the file or from a Manual offset — see :doc:`/reference/detector_grouping`
-§ "Good-window modes" for how the window itself is chosen and stored.
-
-**Tolerances.** Every check above is judged against the *larger* of two
-numbers: a floor per source family, and the measured width — in bins — of the
-feature t0 was read off (the prompt peak's FWHM, or the pulse's 10 %→90 % rise).
-
-The floors are 2 bins for a continuous source (PSI, TRIUMF) and 3 bins for a
-pulsed one (ISIS). The continuous value follows from the prompt peak itself,
-which fixes t0 to a bin or two, and is checked against PSI GPS data where
-every detector's estimate lands within a bin of its header. The pulsed value
-comes from a 1,245-file ISIS header survey
-(``docs/porting/t0-determination/isis-header-index-base.md``): HiFi and MuSR
-headers sit within a bin of the observed pulse, EMU headers run 1–2 bins late.
-
-The measured width is what keeps those floors meaningful at any binning. A bin
-index cannot name the centre of a prompt peak more precisely than the peak is
-wide, and how wide that is *in bins* depends on the bin width: the same PSI
-peak spans one bin at 1 ns binning and 4–11 at the 98 ps binning a modern GPS
-run uses, so at 98 ps a few tenths of a nanosecond of jitter between detectors
-— entirely inside the peak — would trip a bare 2-bin floor. The tolerance
-therefore follows the data: a run whose peak is 6 bins wide is judged at 6
-bins, an EMU run whose pulse rises over 5 bins at 5. A spread wider than four
-tolerances on a single run's own detectors is a stronger signal than the
-file/detected comparison alone — it means the search itself is confused, not
-just that the header might be wrong.
-
-**Find t0** is the one-shot fill for **Manual** mode: it runs the search on
-the reference run and writes the equivalent offset into the mode's spinbox
-(:doc:`/reference/detector_grouping` § Time-zero (t0) modes) — nothing is
-applied until you press Apply. For a per-run search on every run in scope,
-choose **Auto-detect** instead: it gives *each detector* its own detected t0,
-the model musrfit's ``musrt0 -g`` writes, so a run whose detectors sit at
-genuinely different times keeps that stagger instead of being shifted as one
-block.
-
-Two strategies, chosen automatically from the data's facility:
-
-**Continuous sources (PSI, TRIUMF) — prompt peak.** A single particle
-triggering both the muon and positron counters produces a sharp spike at
-zero time difference, good to a few tenths of a nanosecond. The estimate is
-the maximum-count bin of each histogram — the same convention as WiMDA's
-Search for T0 and musrfit's ``musrt0``.
-
-**Pulsed sources (ISIS) — pulse-edge midpoint.** There is no prompt peak;
-t0 is the *centre* of the muon pulse, found from the half-maximum point of
-the histogram's rising edge. The first *good* bin is later still — analysis
-must not start until the whole pulse has arrived (the t_good offset,
-typically several bins at ISIS) — and the pulse width, not the bin width,
-limits the usable frequency range (about 10 MHz at ISIS). WiMDA uses the
-maximum bin at pulsed sources too, which lands at the pulse *peak* rather
-than its centre; the midpoint convention here follows the textbook
-definition.
-
-*When to use this.* Files with missing or suspect t0 — old conversions,
-commissioning data, instruments without calibration in the header — and as
-a quick cross-check when an analysis produces a mysterious early-time
-distortion or a TF phase that varies linearly with frequency (the signature
-of a t0 error: a phase slope of q degrees per MHz corresponds to a t0 shift
-of q/360 μs). The line above already flags a discrepancy beyond the
-tolerance, so a quiet line is itself the reassurance that the file value is
-trustworthy.
+File-good intervals remain attached to acquired bins. **Manual** good-window
+endpoints follow effective timing as signed offsets; omitted endpoints retain
+mapped file bounds. Only common observed support is reduced. See
+:doc:`/reference/detector_grouping`, :doc:`/reference/project_files`, and
+:doc:`/explanation/reduction_pipeline`.
 
 Compared with other programs
 ----------------------------
 
-WiMDA uses whole-bin alignment. The recorded musrfit 1.12.1 integer grouped-count
-case agrees with Asymmetry when raw-bin selections and timestamps match.
-Mantid 6.16.1 retains shifted spectrum coordinates and offers explicit rebinning
-onto a common grid. Asymmetry records residuals from its integer approximation;
-none of these arithmetic checks establishes the physical origin of a pulse.
-See :doc:`/explanation/comparison` for the versioned scope and sources.
+WiMDA's **Search for T0** finds a grouped maximum, including for pulsed data.
+musrfit 1.12.1 ``musrt0 -g`` writes detector prompt maxima. Unique synthetic
+maxima at bins 20 and 31 agree exactly with Asymmetry's continuous feature.
+Asymmetry's leading half-height feature for pulsed data is a different choice;
+a maximum comparison does not validate physical pulse-centre accuracy.
 
-For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
-1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
-interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
-are not implied by agreement on matched raw observations.
+Mantid 6.16.1 ``MuonPreProcess`` applies a supplied timing table and shifts
+spectrum coordinates. That operation tests timing application, not automatic
+feature detection. Whole-bin Asymmetry alignment and Mantid's retained shifted
+coordinates agree only when selected observations and origin conventions match.
+The per-selected-success safeguard above is an Asymmetry request rule; no claim
+is made that all three programs enforce it. See
+:ref:`comparison-selected-timing` for conditions and limits.
 
-**References**
+References
+----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
-  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
-  time-zero and detector-phase calibration.
-- A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+* S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
+  An Introduction* (Oxford University Press, Oxford, 2022), time-zero calibration.
+* A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+* `musrfit user manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_.
+* `Mantid MuonPreProcess <https://docs.mantidproject.org/v6.16.0/algorithms/MuonPreProcess-v1.html>`_.
+* `WiMDA <https://shadow.nd.rl.ac.uk/wimda/>`_.

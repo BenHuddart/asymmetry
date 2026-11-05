@@ -91,7 +91,9 @@ def instrument_display_for_fingerprint(
     return display
 
 
-def payload_from_profile_for_preview(profile: GroupingProfile, preview_run) -> dict[str, Any]:
+def payload_from_profile_for_preview(
+    profile: GroupingProfile, preview_run, *, timing_search=None
+) -> dict[str, Any]:
     """Resolve *profile* against *preview_run* into a full grouping payload.
 
     This is exactly :func:`resolve_effective_grouping`, exposed under a name that
@@ -100,7 +102,7 @@ def payload_from_profile_for_preview(profile: GroupingProfile, preview_run) -> d
     window, file deadtime, period tables). Changing the preview run therefore
     only changes the per-run facts, never the draft's shareable settings.
     """
-    return resolve_effective_grouping(profile, preview_run)
+    return resolve_effective_grouping(profile, preview_run, timing_search=timing_search)
 
 
 def profile_from_form_payload(

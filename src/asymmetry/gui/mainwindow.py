@@ -610,6 +610,11 @@ ALPHA_PROVENANCE_KEYS = (
     "alpha_z_reference_run",
 )
 REDUCTION_SETTING_KEYS = (
+    "t0_policy",
+    "effective_t0_sources",
+    "effective_t0_period",
+    "t0_search_strategy",
+    "t0_search_spread_bins",
     "good_window_policy",
     "background_mode",
     "background_run",
@@ -5287,6 +5292,8 @@ class MainWindow(QMainWindow):
         "period_histograms",
         "period_reduced",
         "period_t0_sources",
+        "period_detector_t0_sources",
+        "detector_t0_sources",
     )
 
     def _preserve_per_run_normalisers(
@@ -5311,11 +5318,7 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, {}
-        # Grouping is about to be (re)written for this run; drop its cached
-        # reductions up front. The recipe key already embeds the digest (so a
-        # stale entry can never hit), but this removes the dead entries early —
-        # and covers the group-label / metadata keys the digest omits — for both
-        # the histogram and histogram-less branches below.
+        # Rewriting a grouping retires cached reductions of that run.
         self._reduction_cache.invalidate_run(run)
         existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
@@ -5557,17 +5560,12 @@ class MainWindow(QMainWindow):
 
         if not groups:
             return False, {}
-        # Empty after filtering to present, non-excluded detectors: the group
-        # contributes no counts, so an F-B asymmetry cannot be formed (e.g. a
-        # Longitudinal preset's backward ring on a forward-ring-only file).
         if not forward_idx or not backward_idx:
             return False, {}
 
         grouping = dict(existing_grouping)
 
-        # Keep histogram time-zero consistent with grouping metadata. PSI files
-        # can have per-detector t0 values, so preserve relative detector
-        # offsets when the user edits the common t0 control.
+        # Per-detector timing remains attached to this run.
         if isinstance(grouping_result.get("detector_t0_bins"), list):
             grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
         if isinstance(grouping_result.get("detector_first_good_bins"), list):

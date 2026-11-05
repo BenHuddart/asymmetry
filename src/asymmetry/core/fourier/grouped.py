@@ -29,7 +29,11 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
-from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
+from asymmetry.core.transform.t0 import (
+    common_t0_time_us,
+    effective_detector_t0_bins,
+    require_selected_timing,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -325,6 +329,7 @@ def build_group_signal_dataset(
 
     indices = effective_group_indices(grouping, group_id, n_histograms=len(run.histograms))
     histograms = list(run.histograms)
+    require_selected_timing(grouping, indices, len(histograms))
     if not histograms:
         raise ValueError("Run does not contain any histograms.")
 
