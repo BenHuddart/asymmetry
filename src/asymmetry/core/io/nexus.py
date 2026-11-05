@@ -29,6 +29,7 @@ from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
+from asymmetry.core.io.physical_units import physical_unit
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
@@ -390,13 +391,8 @@ class NexusLoader(BaseLoader):
                 self._read_optional(h_data, "deadtime", default=[]),
                 dtype=np.float64,
             )
-        # Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
-        # store the dead-time table at ``instrument/detector/deadtimes`` (plural,
-        # a different group) rather than under ``histogram_data_1``. The nxs4to5
-        # converter maps that location to ``detector_1/dead_time`` (read by
-        # _load_v2), so HDF5 twins are fine; a directly loaded v1 file needs this
-        # fallback or it returns an all-zeros table. (deadtimes is the real key;
-        # dead_time/deadtime are accepted defensively.)
+        # Legacy v1/HDF4 tables can belong to the instrument detector group
+        # rather than histogram_data_1; both locations use fixed μs coefficients.
         for dead_time_key in ("deadtimes", "dead_time", "deadtime"):
             if dead_time_values.size:
                 break
@@ -520,19 +516,21 @@ class NexusLoader(BaseLoader):
             )
         if good_frames_values.size == 0:
             good_frames_values = self._good_frames_from_beam(entry)
-        dead_time_values = np.asarray(
-            self._read_optional(detector, "dead_time", default=[]),
-            dtype=np.float64,
-        )
-        # The converter writes ``dead_time``; accept the ``deadtime``/``deadtimes``
-        # spellings too so a hand-made or partially-converted v2 file still reads.
-        for dead_time_key in ("deadtime", "deadtimes"):
-            if dead_time_values.size:
-                break
-            dead_time_values = np.asarray(
-                self._read_optional(detector, dead_time_key, default=[]),
-                dtype=np.float64,
-            )
+        dead_time_values = np.asarray([], dtype=np.float64)
+        for dead_time_key in ("dead_time", "deadtime", "deadtimes"):
+            node = detector.get(dead_time_key)
+            if node is None:
+                continue
+            dead_time_values = np.asarray(node, dtype=np.float64)
+            if not dead_time_values.size:
+                continue
+            # Only explicit v2 μs/ns declarations override the stored-μs convention.
+            declaration = node.attrs.get("units")
+            if not isinstance(declaration, np.ndarray) or declaration.size == 1:
+                conversion = physical_unit(declaration, dimension="time")
+                if conversion is not None and conversion.symbol in {"us", "ns"}:
+                    dead_time_values = dead_time_values * conversion.factor
+            break
         run_number = self._safe_int(self._read_optional(entry, "run_number"), default=0)
         title = self._safe_str(self._read_optional(entry, "title"))
         started = self._safe_str(self._read_optional(entry, "start_time"))

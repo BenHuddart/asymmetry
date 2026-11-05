@@ -460,6 +460,35 @@ See :doc:`/reference/loading_data`, the `musrfit manual
 <https://docs.mantidproject.org/nightly/algorithms/LoadPSIMuonBin-v1.html>`_,
 and the `WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/>`_.
 
+.. _comparison-deadtime-units:
+
+NeXus deadtime units
+--------------------
+
+WiMDA converts explicitly declared microsecond and nanosecond deadtimes to
+its internal nanosecond scale in its NeXus-v2 path. Asymmetry follows this
+physical interpretation, converting once to its canonical μs coefficients at
+loading. Thus 20 ns and 0.02 μs give identical corrected counts, including
+signed coefficients. WiMDA's legacy v1 path uses a fixed μs convention;
+Asymmetry retains that interpretation for v1/HDF4. Missing and other unit
+declarations retain Asymmetry's stored-value-as-μs behaviour. This limited
+choice does not assert agreement on missing-unit defaults.
+
+The compared **musrfit 1.12.1** (``708f777b``, ROOT 6.40.04) NeXus-v2 path
+uses stored coefficient values as μs regardless of the tested ns declaration.
+Asymmetry intentionally differs on explicitly declared ns values. With
+100000 counts, 0.1 μs bins, 100000 frames, and a 0.02 μs coefficient,
+the analytic inverse gives 125000 counts; an equivalent 20 ns declaration
+has the same meaning in Asymmetry. The
+`musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_
+describes its file deadtime correction option; the
+`WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_
+provides the correction and calibration context.
+
+Numerical WiMDA agreement and native **Mantid 6.16.1** loader unit equivalence
+are not established. The coefficient interpretation does not change the
+correction formula or retained measured/supplied counting variance.
+
 Signed deadtime coefficients
 ----------------------------
 

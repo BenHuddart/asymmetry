@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Honour explicit microsecond/nanosecond NeXus-v2 deadtime units, so equivalent
+  declarations give the same correction; preserve legacy and missing-unit behaviour.
+
 - Load legacy LEM ROOT version-4 numeric calibration, preserving both stored
   decay banks, their identities, and file timing through shared reduction.
 
