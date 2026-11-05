@@ -1061,6 +1061,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             facility=facility,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
+            output_binning=binning_spec(grouping),
         )
 
     corrected = _reduce(use_deadtime, use_background)
@@ -1122,8 +1123,6 @@ def _counts_curves(
     n = int(corrected.forward.counts.size)
     step = _preview_stride(n, _MAX_PREVIEW_POINTS)
     bins = np.arange(0, n, step, dtype=np.float64)
-    # Dropping a correction stage changes neither the histogram lengths nor the
-    # common t0 they are aligned on, so the ghost shares this stride and axis.
     ghost_forward = (
         None if ghost is None else np.asarray(ghost.forward.counts[::step], dtype=np.float64)
     )

@@ -514,9 +514,36 @@ Public context is provided by the `WiMDA documentation <https://shadow.nd.rl.ac.
 and `Mantid correction documentation <https://docs.mantidproject.org/v6.16.0/algorithms/ApplyDeadTimeCorr-v1.html>`_.
 
 Asymmetry also checks non-zero correction exposure and bin width and rejects
-saturated or nonfinite inverses over the histograms passed to preparation.
+saturated or nonfinite inverses over the required F/B observations. Standalone
+full-input preparation checks all supplied histograms.
 Those calculation failures remain errors; missing optional calibration does
 not prevent raw loading or other valid enabled operations.
+
+.. _comparison-deadtime-scope:
+
+Required F/B deadtime observations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA traverses requested groups and bins when grouping with deadtime
+correction. Mantid 6.16.1's standard ``MuonPreProcess`` corrects before cropping;
+its numerical algorithms also permit callers to crop before ``ApplyDeadTimeCorr``.
+The compared musrfit 1.12.1 path corrects selected histograms but visits their
+raw arrays. These workflows do not share a universal observation domain.
+
+Asymmetry deliberately uses the exact required observations for F/B reduction:
+the selected pair and aligned output window, plus active range, tail-fit, and
+reference-background inputs. An unused saturated bin or detector cannot block
+the calculation, and a missing unused File coefficient cannot suppress it.
+A required missing coefficient skips the entire participating sample/reference
+operation with a warning; a required pole remains an error. Original detector
+ordinals and raw-bin coordinates are preserved. See
+:doc:`/reference/detector_grouping` for the inverse and uncertainty convention.
+Grouped raw-count fits, FFT/MaxEnt preparation, and standalone full-input
+preparation retain their full-input scope.
+
+Public workflow context: `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_,
+`musrfit manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_, and
+`Mantid MuonPreProcess <https://docs.mantidproject.org/v6.16.0/algorithms/MuonPreProcess-v1.html>`_.
 
 Signed deadtime coefficients
 ----------------------------

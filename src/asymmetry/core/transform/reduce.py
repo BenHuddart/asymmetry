@@ -28,13 +28,13 @@ from asymmetry.core.transform.corrections import (
 from asymmetry.core.transform.deadtime import (
     deadtime_operation_inputs,
     normalise_deadtime_mode,
-    prepare_histograms_with_deadtime,
 )
-from asymmetry.core.transform.fb_counts import AlignmentCrop, ForwardBackwardCounts
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, ForwardBackwardCounts
+from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair, fb_deadtime_domain
 from asymmetry.core.transform.grouping import (
-    align_forward_backward_counts,
-    group_forward_backward,
     independent_pair_indices,
+    resolve_alignment,
+    resolve_forward_backward_layout,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, resolve_selected_timing
@@ -123,16 +123,27 @@ def corrected_grouped_counts(
     reference_resolver: ReferenceResolver | None = None,
     allow_incomplete: bool = False,
     context: str = "",
+    output_window: BinWindow | None = None,
+    output_binning: BinningSpec | None = None,
+    output_time_range: tuple[float | None, float | None] | None = None,
 ) -> ForwardBackwardCounts:
     """Run the reduction's correction stages up to (not including) the asymmetry.
 
-    Applies, in the order every reference program uses: deadtime correction
+    Applies the detector-first reduction order: deadtime correction
     (per-detector, on raw histograms), forward/backward grouping onto a common
     t0, then optional background subtraction on the grouped counts. The returned
     forward/backward counts are exactly what :func:`reduce_grouped_asymmetry`
     feeds to :func:`binned_fb_asymmetry`, and what the alpha estimate must
     consume so ``alpha`` balances the corrected spectra rather than the raw
     totals (see ``docs/porting/correction-order-alpha-estimation``).
+
+    Only required output samples and active background estimators are
+    deadtime-corrected. ``output_window`` selects native bins;
+    ``output_binning`` and ``output_time_range`` select consumed merged-bin
+    edges and centres without shifting the binning origin. Outside-domain grouped values
+    retain raw context for preview plots; they are not corrected observations.
+    The outcome records the required detector/raw-bin intervals. No scoped
+    detector histograms are exposed for reuse as whole-acquisition preparation.
 
     ``facility`` decides whether a ``range``-mode background window is trimmed to
     whole accelerator periods. The default ``None`` means *derive it* — from
@@ -163,41 +174,78 @@ def corrected_grouped_counts(
             and reference_resolver is not None
             else None
         )
+        grouped = resolve_forward_backward_layout(
+            histograms, grouping, resolved_indices=(forward_idx, backward_idx)
+        )
+        crop = grouped.alignment
+        common_t0, n_grouped, window = grouped.common_t0_bin, crop.length, grouped.window
+        domain = fb_deadtime_domain(
+            grouped,
+            grouping,
+            forward_idx,
+            backward_idx,
+            use_background=use_background,
+            facility=facility,
+            metadata=metadata,
+            output_window=output_window,
+            output_binning=output_binning,
+            output_time_range=output_time_range,
+        )
         inputs = [(histograms, grouping)]
+        domains = [domain]
         if resolved is not None:
-            inputs.append(
-                (
-                    resolved.histograms,
-                    resolved.deadtime_grouping(grouping),
+            reference_crop = resolve_alignment(
+                resolved.histograms,
+                forward_idx,
+                backward_idx,
+                detector_t0_bins=effective_detector_t0_bins(resolved.histograms, grouping),
+                common_t0_bin=common_t0 + crop.first_bin,
+                first_bin=crop.first_bin,
+                sample_length=n_grouped,
+            )
+            inputs.append((resolved.histograms, resolved.deadtime_grouping(grouping)))
+            domains.append(
+                fb_deadtime_domain(
+                    grouped,
+                    grouping,
+                    forward_idx,
+                    backward_idx,
+                    use_background=False,
+                    facility=facility,
+                    metadata=metadata,
+                    alignment=reference_crop,
+                    output_window=output_window,
+                    output_binning=output_binning,
+                    output_time_range=output_time_range,
                 )
             )
-        inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode)
-        working_histograms, deadtime_outcome = prepare_histograms_with_deadtime(
+        inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode, domains=domains)
+        forward, backward, deadtime_outcome = deadtime_corrected_pair(
             *inputs[0],
-            use_deadtime,
+            forward_idx,
+            backward_idx,
+            crop,
+            domain,
+            use_deadtime=use_deadtime,
             mode=deadtime_mode,
-            allow_incomplete=True,
         )
-
-        grouped = group_forward_backward(
-            working_histograms, grouping, resolved_indices=(forward_idx, backward_idx)
-        ).counts
-        forward, backward, crop = grouped.forward, grouped.backward, grouped.alignment
-        common_t0, n_grouped, window = grouped.common_t0_bin, crop.length, grouped.window
 
         background_outcome = CorrectionOutcome("background", "none", CorrectionStatus.OFF)
         if use_background:
-            bin_width = float(working_histograms[forward_idx[0]].bin_width)
+            bin_width = float(histograms[forward_idx[0]].bin_width)
             reference_forward = None
             reference_backward = None
             reference_scale = None
             if resolved is not None:
                 reference_scale = resolved.scale
-                reference_prepared, reference_outcome = prepare_histograms_with_deadtime(
+                reference_forward, reference_backward, reference_outcome = deadtime_corrected_pair(
                     *inputs[1],
-                    use_deadtime,
+                    forward_idx,
+                    backward_idx,
+                    reference_crop,
+                    domains[1],
+                    use_deadtime=use_deadtime,
                     mode=deadtime_mode,
-                    allow_incomplete=True,
                 )
                 if reference_outcome.status in {
                     CorrectionStatus.UNAVAILABLE,
@@ -206,17 +254,6 @@ def corrected_grouped_counts(
                     deadtime_outcome = replace(
                         reference_outcome, reason=f"reference run: {reference_outcome.reason}"
                     )
-                reference_forward, reference_backward, reference_crop = (
-                    align_forward_backward_counts(
-                        reference_prepared,
-                        forward_idx,
-                        backward_idx,
-                        effective_detector_t0_bins(reference_prepared, grouping),
-                        common_t0_bin=common_t0 + crop.first_bin,
-                        first_bin=crop.first_bin,
-                        sample_length=n_grouped,
-                    )
-                )
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -249,7 +286,7 @@ def corrected_grouped_counts(
                     effective["reference"]["deadtime"] = reference_outcome.to_dict()
                 background_outcome = replace(background_outcome, effective=effective)
 
-        bin_width = float(working_histograms[forward_idx[0]].bin_width)
+        bin_width = float(histograms[forward_idx[0]].bin_width)
         t0_time_us = grouped.t0_time_us
         if not use_background:
             forward_counts = forward
@@ -267,7 +304,7 @@ def corrected_grouped_counts(
             forward=forward_counts,
             backward=backward_counts,
             alignment=crop,
-            window=window,
+            window=window if output_window is None else output_window,
             bin_width_us=bin_width,
             t0_time_us=t0_time_us,
             corrections=corrections,
@@ -291,6 +328,7 @@ def reduce_grouped_asymmetry(
     allow_incomplete: bool = False,
     context: str = "",
     beta: float = 1.0,
+    output_time_range: tuple[float | None, float | None] | None = None,
 ) -> GroupedAsymmetryReduction:
     """Reduce grouped histograms to a forward/backward asymmetry curve.
 
@@ -337,12 +375,15 @@ def reduce_grouped_asymmetry(
             reference_resolver=reference_resolver,
             allow_incomplete=allow_incomplete,
             context=context,
+            output_binning=binning,
+            output_time_range=output_time_range,
         )
         time_axis, asymmetry, error = binned_fb_asymmetry(
             corrected,
             binning=binning,
             alpha=alpha,
             beta=beta,
+            time_range=output_time_range,
         )
         perf.detail(
             bins=len(time_axis),
@@ -406,6 +447,7 @@ def reduce_period_asymmetry(
     deadtime_mode: str,
     use_background: bool,
     beta: float = 1.0,
+    output_time_range: tuple[float | None, float | None] | None = None,
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
@@ -443,25 +485,6 @@ def reduce_period_asymmetry(
         else (histograms, grouping)
         for label in labels
     }
-    if combined:
-        inputs = list(selections.values())
-        if (
-            use_background
-            and resolve_background_mode(grouping) == "reference_run"
-            and reference_resolver is not None
-        ):
-            for selected, effective in selections.values():
-                reference = reference_resolver(effective)
-                if reference is not None:
-                    inputs.append(
-                        (
-                            reference.histograms,
-                            reference.deadtime_grouping(effective),
-                        )
-                    )
-        prepared_inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode)
-        selections = dict(zip(labels, prepared_inputs[: len(labels)], strict=True))
-    reduced = {}
     for label, (selected, effective) in selections.items():
         if (
             periods is not None
@@ -479,6 +502,66 @@ def reduce_period_asymmetry(
                 if timing_search is not None
                 else None,
             )
+    if combined:
+        inputs, domains, layouts = [], [], []
+        for selected, effective in selections.values():
+            pair = independent_pair_indices(
+                effective, n_histograms=len(selected), resolved_indices=(forward_idx, backward_idx)
+            )
+            grouped = resolve_forward_backward_layout(selected, effective, resolved_indices=pair)
+            layouts.append((grouped, pair))
+            inputs.append((selected, effective))
+            domains.append(
+                fb_deadtime_domain(
+                    grouped,
+                    effective,
+                    *pair,
+                    use_background=use_background,
+                    facility=facility,
+                    metadata=metadata,
+                    output_binning=binning,
+                    output_time_range=output_time_range,
+                )
+            )
+        if (
+            use_background
+            and resolve_background_mode(grouping) == "reference_run"
+            and reference_resolver is not None
+        ):
+            for (_, effective), (grouped, pair) in zip(selections.values(), layouts, strict=True):
+                reference = reference_resolver(effective)
+                if reference is not None:
+                    crop = grouped.alignment
+                    reference_crop = resolve_alignment(
+                        reference.histograms,
+                        *pair,
+                        detector_t0_bins=effective_detector_t0_bins(
+                            reference.histograms, effective
+                        ),
+                        common_t0_bin=grouped.common_t0_bin + crop.first_bin,
+                        first_bin=crop.first_bin,
+                        sample_length=crop.length,
+                    )
+                    inputs.append((reference.histograms, reference.deadtime_grouping(effective)))
+                    domains.append(
+                        fb_deadtime_domain(
+                            grouped,
+                            effective,
+                            *pair,
+                            use_background=False,
+                            facility=facility,
+                            metadata=metadata,
+                            output_binning=binning,
+                            output_time_range=output_time_range,
+                            alignment=reference_crop,
+                        )
+                    )
+        prepared_inputs = deadtime_operation_inputs(
+            inputs, use_deadtime, deadtime_mode, domains=domains
+        )
+        selections = dict(zip(labels, prepared_inputs[: len(labels)], strict=True))
+    reduced = {}
+    for label, (selected, effective) in selections.items():
         reduced[label] = reduce_grouped_asymmetry(
             histograms=selected,
             grouping=effective,
@@ -490,6 +573,7 @@ def reduce_period_asymmetry(
             deadtime_mode=deadtime_mode,
             use_background=use_background,
             beta=beta,
+            output_time_range=output_time_range,
             facility=facility,
             metadata=metadata,
             reference_resolver=reference_resolver,

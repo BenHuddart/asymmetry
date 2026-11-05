@@ -290,11 +290,11 @@ class DeadtimeSectionWidget(QWidget):
                 return mode
         return "off"
 
-    def _file_available(self) -> bool:
+    def _file_table_complete(self) -> bool:
         return bool(self._file_values_us) and len(self._file_values_us) >= max(1, self._n_detectors)
 
     def _display_values(self) -> list[float]:
-        if self._current_mode() == "file" and self._file_available():
+        if self._current_mode() == "file" and self._file_table_complete():
             return list(self._file_values_us)
         return list(self._manual_values_us)
 
@@ -304,7 +304,6 @@ class DeadtimeSectionWidget(QWidget):
 
     def _on_mode_or_state_changed(self) -> None:
         mode = self._current_mode()
-        self._mode_buttons["file"].setEnabled(self._file_available())
         editable = mode == "manual"
         self._table.setEditTriggers(
             QAbstractItemView.EditTrigger.AllEditTriggers
@@ -315,8 +314,10 @@ class DeadtimeSectionWidget(QWidget):
         self._fill_all_btn.setEnabled(editable)
         self._calibrate_btn.setEnabled(editable and bool(self._source_runs))
         self._estimate_btn.setEnabled(bool(self._source_runs))
-        if mode == "file" and not self._file_available():
-            self._file_hint.setText("The reference run does not provide file deadtime values.")
+        if mode == "file" and not self._file_table_complete():
+            self._file_hint.setText(
+                "The preview reports whether the selected groups have file deadtime values."
+            )
             self._file_hint.setVisible(True)
         elif mode == "off":
             self._file_hint.setText("Deadtime correction is disabled.")
@@ -331,7 +332,7 @@ class DeadtimeSectionWidget(QWidget):
         """Whether the summary/disclosure have per-detector values to show."""
         mode = self._current_mode()
         if mode == "file":
-            return self._file_available()
+            return self._file_table_complete()
         if mode == "estimate":
             return self._n_detectors > 0
         return False
@@ -526,7 +527,7 @@ class DeadtimeSectionWidget(QWidget):
 
     def _refresh_summary(self) -> None:
         mode = self._current_mode()
-        if mode == "off" or (mode == "file" and not self._file_available()):
+        if mode == "off" or (mode == "file" and not self._file_table_complete()):
             self._summary_label.setText("")
             return
         values = self._display_values()

@@ -178,6 +178,7 @@ integrals and a finite positive ratio. An undefined ratio is unavailable;
 it never supplies unity as a default. A fixed alpha of one remains valid.
 **Auto-detect** likewise requires a successful requested t0 search. Diagnostic
 disagreement with usable **From file** timing remains advisory.
+
 * **Background policy** — ``none``, ``range`` (a pre-:math:`t_0` window),
   ``tail_fit`` (a late-time Poisson fit), ``reference_run`` (a dedicated
   background run), or ``fixed`` (constant forward/backward values). See
@@ -885,19 +886,22 @@ Asymmetry follows WiMDA for this explicit v2 convention and intentionally
 differs from the compared musrfit 1.12.1 path; see
 :ref:`comparison-deadtime-units`.
 
-A requested ``File`` correction uses the run's own complete coefficient table,
-including a genuinely supplied all-zero identity. Missing or incomplete file
+A requested ``File`` correction uses the run's own coefficients for the required detectors,
+including a genuinely supplied all-zero identity. Missing or incomplete required file
 coefficients skip the entire deadtime operation; every histogram remains
 uncorrected by that operation, including both periods of a period sum or
 difference, and other enabled operations continue. The
 preview accepts **Apply** and displays:
 ``File deadtime correction not applied: a complete per-detector deadtime table is unavailable. Continuing uncorrected.``
 The request remains ``from_file`` with status ``skipped`` and no applied table.
+**From file** remains selectable for an incomplete or absent acquisition table;
+the preview resolves whether the selected groups have the required coefficients.
+Its card says "The preview reports whether the selected groups have file deadtime values."
 An authored Manual or Estimate table cannot supply missing file coefficients.
 Invalid Manual settings, missing exposure for a non-zero correction, and
 saturation remain errors. ``Off`` explicitly disables correction. Applied
-outcomes record the actual table, frame count, coefficient source, and
-uncertainty convention.
+outcomes record the actual table in original detector order, required raw-bin
+intervals, frame count, coefficient source, and uncertainty convention.
 
 .. image:: /_generated/screenshots/grouping_file_deadtime_warning.png
    :alt: Missing file deadtime warning with a usable preview and enabled Apply.
@@ -933,7 +937,11 @@ per-detector deadtime table, and populates the manual table with those
 calibrated values. The **Max correction at t=0** figure reports the largest
 absolute fractional change at a detector's first good bin, including decreases from negative
 coefficients. This summary helps assess the correction before applying it;
-the reduction checks every raw bin, including those outside the good window.
+the F/B reduction checks the observations required by its output and active
+background estimators, including estimator samples outside the good window.
+The whole-table summary is advisory: a warning about an unused detector does
+not reject the selected reduction. The current F/B preview determines whether
+**Apply** can proceed.
 
 When ``Off`` is selected, deadtime correction is disabled. In ``Estimate``
 mode, press **Estimate** to fit the currently selected source run. Its shared
@@ -984,9 +992,27 @@ Manual entries may have either sign or be zero; the validation message is
 "Manual deadtime values must be finite for every detector."
 
 For a signed coefficient define :math:`x=N t_\mathrm{dead}/(\Delta t
-N_\mathrm{frames})`. Every raw count must be finite and non-negative, and every
-bin of every detector must satisfy :math:`x<1`. Any violation rejects the whole
-reduction, without clipping or masking bins. For example, 10 counts, a
+N_\mathrm{frames})`. F/B reduction first resolves the selected detector pair,
+its integer alignment and inclusive good window. Binning drops incomplete terminal groups, and an
+explicit output time range selects merged-bin centres without moving their
+edges. It corrects only those consumed output
+samples and the exact union of samples required by active range, tail-fit,
+or reference backgrounds. Range samples include beam-period trimming. Inactive
+configured windows, unused detectors, excluded prefixes, and gaps between
+required windows add no correction dependency. Fixed backgrounds add no
+estimation samples. Dedicated timing searches and deadtime calibration fits
+retain their raw inputs.
+
+Asymmetry also checks that the required observations with non-zero correction
+have finite non-negative raw counts, positive exposure and bin width, and
+:math:`x<1` with a finite inverse. A required pole rejects the requested
+calculation; acquired histograms remain available for inspection and editing.
+No observations are clipped, zero-filled, or renumbered. A missing required
+File coefficient instead skips correction for all participating sample/reference
+periods. An unused missing File entry cannot suppress correction. Manual tables
+remain validated for every detector.
+
+For example, 10 counts, a
 0.1 µs coefficient, 1 µs bins and one frame produce:
 
    "Deadtime correction rejected for detector 1: occupancy N·τ/(Δt·F) reaches 1
@@ -1061,7 +1087,8 @@ variance alongside the corrected counts. Integral asymmetry, analytic count-rati
 basis. Shared-background uncertainty remains separate. Fitters receive marginal
 errors rather than a full covariance likelihood.
 The array-level ``apply_deadtime_correction`` returns count values alone;
-``prepare_histograms_with_deadtime`` returns histogram copies with their variance
+``prepare_histograms_with_deadtime`` retains its full-input contract and returns
+histogram copies with their variance
 and the correction outcome for uncertainty-aware scripted reduction.
 See :doc:`/explanation/comparison` for the bounds of the program comparisons.
 
@@ -1094,7 +1121,11 @@ histograms with supplied coefficients while leaving others unchanged; Mantid
 Asymmetry also skips the whole operation for incomplete tables, including
 participating periods and a reference background. It never borrows a reference
 run's coefficients from the sample. Complete zero tables are identities.
-See :ref:`comparison-deadtime-availability` for the scoped comparison.
+See :ref:`comparison-deadtime-availability` for the availability comparison and
+:ref:`comparison-deadtime-scope` for the deliberate F/B observation choice.
+Standalone full-input preparation and grouped raw-count fits, FFT, and MaxEnt
+preparation correct their supplied full inputs; the narrower scope applies to
+F/B reduction, its alpha estimates, previews, and integral consumers.
 
 Asymmetry uses unique acquired-channel membership and requires disjoint,
 nonempty effective F/B pairs for its independent-count model. WiMDA and musrfit
@@ -1314,9 +1345,11 @@ domain, where every one of those settings acts and can be seen directly — a
 redraw of the same reduction, never a recompute, so switching views is
 instant.
 
-Counts plots the *corrected* forward and backward group spectra — deadtime-corrected,
-grouped, background-subtracted, exactly as the reduction forms them — over the
-**full** histogram from bin 0, not just the good window, on a log₁₀ y-axis
+Counts plots the forward and backward group spectra over the **full** observed
+histogram on a log₁₀ y-axis. Deadtime correction covers the required output and
+active background samples; outside that union the plot retains raw grouped
+context. Background subtraction applies across the plot. The good-window
+markers distinguish the samples used for asymmetry
 (a background-subtracted bin at or below zero has no logarithm and is
 drawn on the floor at 1 count). Colour follows the same rule as the Asymmetry
 view — colour is the correction, grey is without it — so here the line style

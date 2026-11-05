@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Limit F/B deadtime correction to required output and active background samples,
+  so unused saturated observations or missing File coefficients do not block it.
+
 - Keep acquired deadtimes separate from authored calibration through NeXus export
   and period mapping; mark spectra stale when reference calibration changes.
 

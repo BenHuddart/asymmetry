@@ -12,6 +12,7 @@ solid, B dashed) drawn on top. Companion to :doc:`/reference/detector_grouping`.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
@@ -34,6 +35,7 @@ class GroupingWindowCountsViewScenario(Scenario):
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.core.project.profiles import (
+            DeadtimePolicy,
             profile_fingerprint_for_run,
             profile_from_payload,
         )
@@ -52,6 +54,12 @@ class GroupingWindowCountsViewScenario(Scenario):
         profile_b = profile_from_payload(
             dict(dataset_b.run.grouping), "Sample B", fingerprint, active=False
         )
+
+        profile_a = replace(
+            profile_a,
+            deadtime_policy=DeadtimePolicy(mode="manual", values=[0.02] * 4),
+        )
+        dataset_a.run.grouping["good_frames"] = 100000000
 
         dialog = GroupingDialog(
             [dataset_a, dataset_b],
@@ -93,6 +101,9 @@ class GroupingWindowCountsViewScenario(Scenario):
             or pane._last_result.counts.background_level is None
         ):
             raise RuntimeError("Counts preview did not complete its background reduction")
+        correction = pane._last_result.corrections[0].deadtime
+        if correction.status != "applied" or "scope" not in correction.effective:
+            raise RuntimeError("Counts preview must record required raw deadtime observations")
         _pump_events(80)
 
         pix = dialog.grab()

@@ -218,12 +218,7 @@ def fit_tail_background(
     source = GroupCounts.from_value(counts)
     n, supplied_variance = source.counts, source.variance
     width = float(bin_width_us)
-    end = int(last_good_bin) if last_good_bin is not None else n.size - 1
-    end = min(end, n.size - 1)
-    start = (
-        int(fit_start_bin) if fit_start_bin is not None else int(t0_bin) + (end - int(t0_bin)) // 2
-    )
-    start = max(start, 0)
+    start, end = tail_background_window(n.size, t0_bin, last_good_bin, fit_start_bin=fit_start_bin)
 
     def _failure(message: str) -> TailFitResult:
         return TailFitResult(
@@ -502,24 +497,11 @@ def apply_grouped_background_correction(
             ranges=None,
         )
 
-    ranges = resolve_background_ranges(grouping, int(t0_bin) + acquisition_start_bin)
-    ranges = tuple(
-        BinWindow(
-            value.first - acquisition_start_bin,
-            value.last - acquisition_start_bin,
-            label="background range",
-        )
-        for value in ranges
-    )
-    ranges[0].validate_length(f.size, label="background range")
-    ranges[1].validate_length(b.size, label="background range")
-    f_range = _adjust_range_for_beam_period(
-        ranges[0],
-        bin_width_us=bin_width_us,
-        facility=facility,
-    )
-    b_range = _adjust_range_for_beam_period(
-        ranges[1],
+    f_range, b_range = grouped_background_ranges(
+        grouping,
+        t0_bin=t0_bin,
+        acquisition_start_bin=acquisition_start_bin,
+        length=f.size,
         bin_width_us=bin_width_us,
         facility=facility,
     )
@@ -550,6 +532,44 @@ def apply_grouped_background_correction(
         mode=mode,
         values=(f_value, b_value),
         ranges=((f_range.first, f_range.last), (b_range.first, b_range.last)),
+    )
+
+
+def tail_background_window(
+    length: int, t0_bin: int, last_good_bin: int | None, *, fit_start_bin: int | None = None
+) -> tuple[int, int]:
+    """Inclusive late-half window shared by dependency selection and the fit."""
+    end = min(length - 1, int(last_good_bin) if last_good_bin is not None else length - 1)
+    start = (
+        int(fit_start_bin) if fit_start_bin is not None else int(t0_bin) + (end - int(t0_bin)) // 2
+    )
+    return max(start, 0), end
+
+
+def grouped_background_ranges(
+    grouping: dict,
+    *,
+    t0_bin: int,
+    acquisition_start_bin: int,
+    length: int,
+    bin_width_us: float,
+    facility: str,
+) -> tuple[BinWindow, BinWindow]:
+    """Resolve observed local ranges, including established beam-period trimming."""
+    ranges = resolve_background_ranges(grouping, int(t0_bin) + acquisition_start_bin)
+    local = tuple(
+        BinWindow(
+            value.first - acquisition_start_bin,
+            value.last - acquisition_start_bin,
+            label="background range",
+        )
+        for value in ranges
+    )
+    for window in local:
+        window.validate_length(length, label="background range")
+    return tuple(
+        _adjust_range_for_beam_period(window, bin_width_us=bin_width_us, facility=facility)
+        for window in local
     )
 
 

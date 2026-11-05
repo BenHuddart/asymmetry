@@ -352,6 +352,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         use_background=flags.use_background,
         metadata=run.metadata,
         context=f"Run {source_run_of(run)}",
+        output_time_range=(settings.t_min, settings.t_max),
     )
     return MuonDataset(
         time=result.time,
@@ -373,7 +374,8 @@ def reduce_run(
     file's own. For :data:`GREEN_MINUS_RED` *run* is the combined two-period
     run and each period is reduced alone before the difference is formed.
     ``rebin`` merges recorded bins at the count level before the ratio is formed;
-    the time window is applied to that final curve. A ``rebin`` that would fold a
+    the time window selects that final curve's bin centres. Correction uses
+    their contributing raw samples plus active estimators. A ``rebin`` that would fold a
     detected line above the new Nyquist frequency raises :class:`ValueError`
     unless *allow_aliasing*.
     """
@@ -382,7 +384,9 @@ def reduce_run(
             f"Run {run.run_number} is not a two-period (red/green) run; there is no green − red difference."
         )
     if settings.rebin > 1 and not allow_aliasing:
-        _check_rebin_bandwidth(_reduce_binned_run(run, settings, 1), settings.rebin)
+        _check_rebin_bandwidth(
+            _reduce_binned_run(run, replace(settings, t_min=None, t_max=None), 1), settings.rebin
+        )
     dataset = _reduce_binned_run(run, settings, settings.rebin)
     if settings.t_min is not None or settings.t_max is not None:
         dataset = dataset.time_range(settings.t_min, settings.t_max)

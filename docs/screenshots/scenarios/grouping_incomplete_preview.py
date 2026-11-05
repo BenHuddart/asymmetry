@@ -53,10 +53,25 @@ class IncompletePreviewScenario(Scenario):
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
+        if self.name == "grouping_file_deadtime_warning":
+            section = dialog._deadtime_section
+            if not section._mode_buttons["file"].isEnabled():
+                raise RuntimeError("From file must remain selectable for a warned skip")
+            section._mode_buttons["off"].click()
+            section._mode_buttons["file"].click()
         pane = dialog._preview_pane
+        _pump_events(80)
         pane.flush()
         _pump_until(
-            lambda: pane._last_result is not None and pane.corrections_complete == self.complete
+            lambda: (
+                pane._last_result is not None
+                and pane._last_result.generation == pane._generation
+                and pane._pending is None
+                and not pane._debounce.isActive()
+                and pane._tasks.active_count == 0
+                and pane.corrections_complete == self.complete
+                and dialog._apply_btn.isEnabled() == self.complete
+            )
         )
         if (
             pane.corrections_complete != self.complete
@@ -65,7 +80,6 @@ class IncompletePreviewScenario(Scenario):
             raise RuntimeError("Correction preview acceptance does not match its outcome")
         if not pane._incomplete_banner.text():
             raise RuntimeError("Correction warning must remain visible")
-        _pump_events(80)
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
         if not dialog.grab().save(str(output), "PNG"):
