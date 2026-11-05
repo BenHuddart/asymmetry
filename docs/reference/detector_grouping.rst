@@ -874,9 +874,9 @@ available:
   itself provide file deadtime values.
 * ``Manual`` shows a per-detector value table, editable directly, and is
   also where calibrated values are stored.
-* ``Estimate`` fits the reference run's early-time average detector rate,
-  following WiMDA's uniform deadtime estimate workflow, then applies that one
-  estimated value to every detector.
+* ``Estimate`` fits each source detector separately, takes the arithmetic mean
+  of the fitted coefficients, and applies that one value to every detector.
+  It does not fit an average detector spectrum.
 
 File coefficients are stored internally in μs. The NeXus-v2 loader converts
 explicit supported μs/ns declarations once, so 20 ns and 0.02 μs produce the
@@ -922,19 +922,63 @@ picker and **Estimate** button.
 **Estimate** and **Cal** run in cancellable background tasks. Both require
 finite positive good-frame exposure; a missing value raises
 "Deadtime correction rejected: good frames must be finite and > 0".
-They fit :math:`M=N/(1+Nd/(\Delta t F))` by weighted least squares with
-standard deviations :math:`\sqrt{\max(M,1)}`, with signed :math:`d` in µs and
-:math:`N` a fixed-lifetime muon exponential. Trial means outside the positive
-denominator domain have infinite cost. The core
-``fit_deadtime_calibration`` API returns an immutable ``DeadtimeCalibration``
-with a coefficient and standard error per detector, method and source run;
-``calibrate_deadtime_from_histograms`` returns its coefficient list and
-``estimate_deadtime_from_histograms`` returns their mean. All three require
-the ``num_good_frames`` keyword.
+For each detector they fit the rational forward mean [isis_deadtime]_
 
-The **Cal** button fits each detector histogram in the selected run separately, produces a resolved
-per-detector deadtime table, and populates the manual table with those
-calibrated values. The **Max correction at t=0** figure reports the largest
+.. math::
+
+   N(t)=N_0\exp(-t/\tau_\mu),\qquad
+   M(t)=\frac{N(t)}{1+N(t)d/(\Delta t F)}.
+
+The free parameters are a non-negative amplitude :math:`N_0` and a signed
+coefficient :math:`d` in µs. The lifetime is fixed to the canonical muon
+lifetime; there is no fitted count background or polarisation term. The
+objective is the sum of squared raw-count residuals divided by
+:math:`\max(M_\mathrm{observed},1)`. These plug-in Poisson weights do not use
+``Histogram.count_variance``. Trial means outside the positive denominator
+domain have infinite cost. The transformed ISIS regression supplies a starting
+point, rather than the fitted objective.
+
+``Cal`` retains the individual coefficients. ``Estimate`` takes their
+unweighted arithmetic mean, regardless of detector rate or fitted precision,
+and broadcasts it. Pooling counts before fitting is a different estimator:
+the rational response is nonlinear, so these operations generally do not
+commute, even for a common coefficient when detector rates differ.
+
+The core ``fit_deadtime_calibration`` API returns an immutable
+``DeadtimeCalibration`` with coefficients, conditional Minuit Hessian standard
+errors, method, and source run. For ``method="estimate"`` the shared error is
+:math:`\sqrt{\sum_i s_i^2}/n`, assuming independent detector fits. This is an
+error on the arithmetic mean, not detector-to-detector scatter or uncertainty
+from choosing a common coefficient. The errors condition on the fixed lifetime,
+exposure, selected bins, and decay model. They exclude model mismatch, physical
+deadtime correlations, and uncertainty in those fixed inputs; neither the mean
+formula nor these errors establish confidence-interval coverage.
+``calibrate_deadtime_from_histograms`` returns the coefficient list and
+``estimate_deadtime_from_histograms`` returns its arithmetic mean. All three
+require the ``num_good_frames`` keyword.
+
+The Grouping dialog offers source runs from the current instrument fingerprint.
+``Estimate`` uses its source-run picker; ``Cal`` uses the preview reference run,
+falling back to the first candidate if it is absent. Both pass **all raw source
+histograms**, including detectors outside the selected groups, and the source
+run's exposure. Each fit starts at that histogram's stored integer t0 and uses
+at most 400 bins, bounded by the array end. These buttons do not pass the
+Grouping dialog's effective t0 overrides, post-t0 offset, or last-good bound.
+
+Scripted callers can supply ``detector_t0_bins``, a non-negative
+``t_good_offset``, an inclusive ``last_good_bin``, and ``max_bins``. The start
+is the supplied or stored t0 plus the offset, bounded below by zero; the end
+is limited by the inclusive bound, array end, and cap. Each detector's time
+starts at zero at its first fitted bin, with amplitude free. Fewer than three
+selected bins or nonzero samples, or an unsuccessful detector fit, returns no
+calibration for the request. Cancellation leaves the existing values intact.
+The Grouping dialog reports failure without replacing its table. These
+one-shot source fits are distinct from automatic policy refresh and Manual
+entries; see :ref:`comparison-calibration-policies`.
+
+The **Cal** button fits each detector histogram in the reference source run
+separately, produces a resolved per-detector deadtime table, and populates the
+manual table with those calibrated values. The **Max correction at t=0** figure reports the largest
 absolute fractional change at a detector's first good bin, including decreases from negative
 coefficients. This summary helps assess the correction before applying it;
 the F/B reduction checks the observations required by its output and active
@@ -945,9 +989,9 @@ not reject the selected reduction. The current F/B preview determines whether
 
 When ``Off`` is selected, deadtime correction is disabled. In ``Estimate``
 mode, press **Estimate** to fit the currently selected source run. Its shared
-coefficient is applied to every run following the profile. ``Cal`` also uses
-the selected run only, but calibrates one deadtime value per detector
-instead of a single shared value. The resolved deadtime values are stored on
+coefficient is applied to every run following the profile. ``Cal`` uses
+the preview reference source run only, but calibrates one deadtime value per
+detector instead of a single shared value. The resolved deadtime values are stored on
 the profile's deadtime policy, so every run following the profile shares the
 same manual, calibrated, or estimated deadtime values, just as they already
 share alpha and grouping.
@@ -966,8 +1010,11 @@ deadtime values from the profile's policy before the correction is applied.
 A non-zero coefficient requires a finite, positive bin width and good-frame
 count :math:`N_\mathrm{frames}` from that dataset. A NeXus file without valid
 frame metadata cannot be corrected. PSI BIN/MDU and MusrRoot/LEM ROOT use the
-explicit convention :math:`N_\mathrm{frames}=1`: the whole run is one
-acquisition, and its coefficient must be calibrated in that normalisation.
+stored normalisation :math:`N_\mathrm{frames}=1`. This is the current
+loader convention, not evidence that the pulsed-source count-loss model
+physically describes a continuous-source acquisition. A coefficient used with
+that normalisation must be supplied consistently; no alternative exposure is
+inferred.
 The scriptable ``apply_deadtime_correction`` function requires the
 ``num_good_frames`` keyword; it has no acquisition default.
 
@@ -976,7 +1023,12 @@ deadtime constants. A requested ``File`` correction then continues uncorrected
 with a warning. Those runs
 can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
 available to populate per-detector manual values from the selected preview
-run. The background correction path remains separate and optional.
+run. Availability of those controls does not validate the physical correction
+for PSI acquisition conditions. Stored ROOT banks can already be preprocessed;
+non-negative values alone do not establish raw Poisson statistics. Nonzero
+continuous-source calibration and corrected-bank statistics need
+acquisition-specific evidence. The background correction path remains separate
+and optional.
 
 Domain of the correction
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1174,11 +1226,15 @@ Mantid fits the transformed regression, so noisy-data estimator equivalence is
 not asserted.
 
 **WiMDA** preserves negative coefficients through NeXus and calibration-text loading,
-manual input, and the standard ISIS correction path. Its automatic and
-per-detector calibration paths also retain signed fit results. No binary numerical agreement or behaviour of the optional extended correction
+manual input, and the standard ISIS correction path. Its uniform estimate
+pools early-time detector observations before fitting; its per-detector
+calibration fits detectors separately. Both retain signed fit
+results. Its dedicated fitting mean differs from Asymmetry's rational mean.
+No binary numerical agreement or behaviour of the optional extended correction
 models is established here. The public manual describes the
 workflows [wimda_deadtime]_. See :doc:`/explanation/comparison` for the bounds of
-these comparisons.
+these comparisons. See :ref:`comparison-deadtime-calibration` for estimator
+and uncertainty distinctions, including Mantid and the compared musrfit option.
 
 .. image:: /_generated/screenshots/signed_deadtime.png
    :alt: Deadtime card showing finite negative and positive manual coefficients
