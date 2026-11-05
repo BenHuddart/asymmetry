@@ -8,6 +8,7 @@ Use the :func:`load` convenience function to auto-detect the format::
 
 from collections.abc import Iterable
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 
@@ -141,6 +142,21 @@ def reference_frame_exposure(
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError("reference background scale must be finite and positive")
     return scale, sample, reference, source
+
+
+def reference_file_identity(payload: dict | None) -> tuple[int, int, int, int] | None:
+    """Read external reference identity without loading counts or validating settings.
+
+    Ordinary writes change size or mtime; replacement also changes inode.
+    Tools preserving all these fields must explicitly invalidate cached spectra.
+    """
+    if not isinstance(payload, dict) or not payload.get("source_file"):
+        return None
+    try:
+        status = Path(str(payload["source_file"])).stat()
+    except (OSError, ValueError):
+        return None
+    return status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns
 
 
 def resolve_background_reference(

@@ -316,45 +316,16 @@ def _background_values_are_list_routed(grouping: dict) -> bool:
 
 
 def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
-    """Return a short, stable digest of the grouping state the FFT input consumes.
+    """Fingerprint the effective grouping inputs without loading acquisitions.
 
-    For the default ``signal_source="grouped_average"`` this captures exactly
-    the keys read by
-    :func:`asymmetry.core.fourier.grouped.build_group_signal_dataset` (and the
-    deadtime/background helpers it calls) so a recipe recorded at compute time
-    can later be compared against the run's *current* grouping to flag a
-    displayed spectrum as stale. Cosmetic keys the FFT input never reads
-    (``group_names``, ``projections``, ``vector_axis``, alpha values) are
-    deliberately excluded — renaming a group must not change the digest.
+    Enabled File correction includes the identity and modification metadata of
+    the external reference file consumed by FFT preparation. This uses metadata
+    only, never loads histograms, and does not validate authored background input.
+    Cosmetic names and inert correction settings are excluded.
 
-    Enabled deadtime includes its requested mode and authoritative coefficient
-    source. Background detail keys matter only while background is enabled;
-    F/B group ids route list-shaped background values and ranges. Inert settings
-    are excluded (see :func:`_background_values_are_list_routed`).
-
-    ``t0_time_us``/``t0_source`` are digested alongside ``t0_bin``: the exact t0
-    sets the origin of every time stamp (D4), and a T0Policy shift or a searched
-    t0 for a ``"missing"`` run moves it without moving the integer bin.
-
-    ``signal_source="fb_asymmetry"`` additionally folds in the keys the
-    forward−backward reduction (:func:`asymmetry.core.simulate.
-    reduce_run_to_dataset` → :func:`asymmetry.core.transform.grouping.
-    group_forward_backward` → :func:`asymmetry.core.transform.rebin.
-    binned_fb_asymmetry`) consumes and the grouped path does not:
-    ``forward_group``/``backward_group`` (with the consumer's 1/2 defaults),
-    ``alpha`` and ``beta`` (normalised exactly as the consumer does —
-    degenerate values fall back to 1.0; ``beta`` digested only when ≠ 1 so
-    pre-beta recorded digests stay valid), per-detector t0 overrides
-    (``effective_detector_t0_bins``, resolved against the histogram count like
-    :func:`detector_t0_overrides`), the resolved ``binning_mode`` (plus
-    ``bin0_us``/``bin10_us`` when a non-fixed mode makes them live), and the
-    two-period selection (``period_mode`` + ``period_histograms``) when a
-    valid two-period payload exists. An alpha edit or an F/B group swap
-    therefore flags an fb-source spectrum stale while leaving a
-    grouped-average digest unchanged.
-
-    Returns ``""`` for ``run is None``, so a not-yet-loaded run trivially
-    compares unequal to any real recorded digest.
+    Exact t0, acquired support, and enabled background settings affect both
+    signal sources. F/B asymmetry also includes its pair, balances, binning,
+    and held periods; grouped averages do not depend on those ratio settings.
     """
     if run is None:
         return ""
@@ -384,6 +355,18 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
             if mode in {"", "file", "from_file"}
             else grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
         )
+
+    if (
+        deadtime_correction
+        and mode in {"", "file", "from_file"}
+        and (
+            grouping.get("background_correction", False)
+            and resolve_background_mode(grouping) == "reference_run"
+        )
+    ):
+        from asymmetry.core.io import reference_file_identity
+
+        payload["reference_file_identity"] = reference_file_identity(grouping.get("background_run"))
 
     background_correction = bool(grouping.get("background_correction", False))
     payload["background_correction"] = background_correction

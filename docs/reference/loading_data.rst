@@ -99,6 +99,12 @@ uses fixed μs coefficients regardless of the attribute. Saved project
 coefficients are already in μs and are not converted again. Acquired counts,
 timing, and counting variance are retained.
 
+NeXus exports retain acquisition deadtime tables separately from authored
+Manual or Estimate calibration. Missing tables are omitted, short supplied
+tables retain their detector entries, and complete zero tables remain
+available identities. Authored coefficients do not become File calibration
+when an exported run is reopened.
+
 NeXus exports declare units on every written physical quantity: sample
 ``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
 ``corrected_time``, ``time_zero``, and ``dead_time`` use ``microseconds``,

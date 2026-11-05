@@ -334,3 +334,39 @@ def test_reference_file_coefficients_are_acquired_from_the_reference():
     )
     np.testing.assert_allclose(actual.forward.counts, [50 / (1 - 0.05) - 20 / (1 - 0.04)])
     assert actual.corrections.deadtime.status == "applied"
+
+
+@pytest.mark.parametrize("mode", ["off", "manual", "file"])
+@pytest.mark.parametrize("payload", [None, {}, {"source_file": "invalid\x00path", "scale": -1}])
+def test_fourier_digest_does_not_validate_broken_reference_requests(mode, payload):
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+
+    run = _run(1, good_frames=1000.0, level=20.0)
+    run.grouping.update(
+        deadtime_correction=mode != "off",
+        deadtime_mode=mode,
+        dead_time_us=[0.001] * 4,
+        background_correction=True,
+        background_mode="reference_run",
+        background_run=payload,
+    )
+    assert fourier_grouping_digest(run) == fourier_grouping_digest(run)
+
+
+@pytest.mark.parametrize("mode", ["off", "manual", "estimate"])
+def test_fourier_digest_skips_external_file_metadata_when_file_mode_is_inert(mode, monkeypatch):
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+
+    monkeypatch.setattr(
+        "asymmetry.core.io.reference_file_identity", lambda _: pytest.fail("inert reference lookup")
+    )
+    run = _run(1, good_frames=1000.0, level=20.0)
+    run.grouping.update(
+        deadtime_correction=mode != "off",
+        deadtime_mode=mode,
+        dead_time_us=[0.001] * 4,
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"source_file": "unused.nxs"},
+    )
+    assert fourier_grouping_digest(run)

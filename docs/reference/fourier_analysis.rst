@@ -26,7 +26,14 @@ attempting an oscillatory time-domain fit (:doc:`fit_functions/oscillation`).
 Grouped spectral inputs use the shared deadtime outcome contract. Missing or
 incomplete File coefficients leave the whole operation unapplied with a
 warning, including any reference background; valid spectral calculation
-continues. Grouped signal and averaged-spectrum metadata record the requested
+continues. FFT preparation reads its reference acquisition from the recorded
+source file. With File correction enabled, file identity, size, and modification
+time mark cached spectra out of date when
+that source is rewritten, as do changes to the sample's calibration. Metadata
+checks do not load counts or validate background settings. External tools that
+preserve file identity, size, and modification time must explicitly invalidate
+the spectrum; edits to an unused in-memory shadow are not FFT input changes.
+Grouped signal and averaged-spectrum metadata record the requested
 and actual decision as ``deadtime_outcome``. A supplied complete zero table
 is identity. Exposure failures for a non-zero correction and saturated inverses
 remain errors. Missing required exposure remains fatal with precomputed inputs.

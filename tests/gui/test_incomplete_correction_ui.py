@@ -310,3 +310,29 @@ def test_released_project_zero_override_cannot_supply_absent_file_table(
         record["deadtime"]["status"] == "skipped"
         for record in fresh.metadata["correction_outcomes"].values()
     )
+
+
+def test_green_apply_uses_green_file_table_and_retains_both_acquisitions(qapp):
+    dataset = _make_two_period_vector_dataset(42)
+    red, green = [0.0001] * 6, [-0.0002] * 6
+    dataset.run.grouping.update(
+        period_good_frames=[1000.0, 2000.0],
+        period_dead_time_us=[red, green],
+        deadtime_file_us=red,
+        dead_time_us=red,
+    )
+    window = MainWindow()
+    applied, outcomes = window._apply_grouping_settings_to_dataset(
+        dataset,
+        dict(
+            dataset.run.grouping,
+            period_mode="green",
+            deadtime_correction=True,
+            deadtime_mode="file",
+            deadtime_method="file",
+        ),
+    )
+    assert applied
+    assert outcomes["green"].deadtime.effective["tau_us"] == tuple(green)
+    assert outcomes["green"].deadtime.effective["good_frames"] == 2000.0
+    assert dataset.run.grouping["period_dead_time_us"] == [red, green]

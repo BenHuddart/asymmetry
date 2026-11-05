@@ -698,7 +698,8 @@ def combine_mapped_periods(
     if frames[0] is not None:
         grouping["good_frames"] = frames[0]
     grouping["deadtime_file_us"] = list(dead_times[0])
-    grouping["dead_time_us"] = list(dead_times[0])
+    if correction_flags_from_grouping(grouping).deadtime_mode not in {"manual", "estimate"}:
+        grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)
 
     red_histograms, grouping = select_period_histograms(red_histograms, grouping, RED_INDEX)

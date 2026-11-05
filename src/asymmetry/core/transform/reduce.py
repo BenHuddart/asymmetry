@@ -27,6 +27,7 @@ from asymmetry.core.transform.corrections import (
 )
 from asymmetry.core.transform.deadtime import (
     deadtime_operation_inputs,
+    normalise_deadtime_mode,
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.fb_counts import AlignmentCrop, ForwardBackwardCounts
@@ -70,8 +71,8 @@ class GroupedAsymmetryReduction:
 class CorrectionFlags:
     """The three correction switches a grouping payload implies.
 
-    ``deadtime_mode`` is normalised (lower-cased, ``load`` folded to ``manual``)
-    so it can be passed straight to :func:`corrected_grouped_counts` /
+    ``deadtime_mode`` uses the core's canonical request names, including
+    ``from_file`` and the authored ``manual`` aliases, for :func:`corrected_grouped_counts` /
     :func:`reduce_grouped_asymmetry`.
     """
 
@@ -100,8 +101,7 @@ def correction_flags_from_grouping(grouping: dict[str, Any] | None) -> Correctio
         .lower()
         or "off"
     )
-    if deadtime_mode == "load":
-        deadtime_mode = "manual"
+    deadtime_mode = normalise_deadtime_mode(deadtime_mode)
     background_mode = resolve_background_mode(grouping)
     use_background = bool(
         grouping.get("background_correction", False) and background_mode != "none"

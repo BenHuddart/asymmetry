@@ -226,3 +226,24 @@ def test_mapped_sets_keep_the_timing_source_of_their_histograms(conflicting_peri
     for index in range(2):
         _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
         assert grouping["t0_source"] == periods[index].run.grouping["t0_source"]
+
+
+@pytest.mark.parametrize(
+    "mode", ["manual", "estimate", "load", "calibrate", "count_fit", "maxent_fit", "value"]
+)
+def test_mapping_keeps_authored_and_acquired_deadtime_tables_separate(mode):
+    periods = _four_periods()[:2]
+    for dataset in periods:
+        dataset.run.grouping.update(
+            deadtime_mode=mode,
+            deadtime_method=mode,
+            dead_time_us=[0.01, -0.02, 0.03],
+            deadtime_file_us=[0.004] * 3,
+        )
+    mapped = combine_mapped_periods(periods, {1: "red", 2: "green"})
+    assert mapped.run.grouping["dead_time_us"] == [0.01, -0.02, 0.03]
+    assert mapped.run.grouping["deadtime_file_us"] == [0.004] * 3
+    for index in (0, 1):
+        _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
+        assert grouping["dead_time_us"] == [0.01, -0.02, 0.03]
+        assert grouping["deadtime_file_us"] == [0.004] * 3

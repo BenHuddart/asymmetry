@@ -164,7 +164,8 @@ Enabled background operations are evaluated on the current inputs with their
 configured mode, window and declared reference source.
 A calibrated beta of exactly one retains its provenance in the form and project.
 The selected period supplies its own exposure for reference-background scaling;
-manual or stored estimated deadtime tables remain unchanged during selection.
+manual or stored estimated deadtime tables remain unchanged during selection
+and period remapping; combined acquisition tables remain separate file facts.
 Apply preserves the acquired histogram set's ``good_frames`` and file
 coefficients. Selected-period exposure and coefficients belong to the effective
 reduction and its correction outcomes; they do not replace acquisition metadata.

@@ -429,20 +429,33 @@ def promote_deadtime_to_grouping(grouping: dict, calibration: DeadtimeCalibratio
     return {"before": before, "after": dict(enumerate(calibration.tau_us))}
 
 
+def normalise_deadtime_mode(value: str) -> str:
+    """Name each accepted request consistently while retaining unknown input for errors."""
+    mode = str(value).strip().lower()
+    return {
+        "file": "from_file",
+        "from_file": "from_file",
+        "": "from_file",
+        "manual": "manual",
+        "load": "manual",
+        "value": "manual",
+        "estimate": "estimate",
+        "calibrate": "manual",
+        "count_fit": "manual",
+        "maxent_fit": "manual",
+        "off": "off",
+        "none": "off",
+    }.get(mode, mode)
+
+
 def file_deadtime_table(grouping: dict):
     """Read acquisition coefficients without borrowing an authored calibration."""
     if "deadtime_file_us" in grouping:
         return grouping["deadtime_file_us"]
-    mode = str(grouping.get("deadtime_mode", "")).strip().lower()
-    if mode in {"manual", "load", "value", "estimate", "calibrate", "count_fit", "maxent_fit"}:
+    mode = normalise_deadtime_mode(grouping.get("deadtime_mode", ""))
+    if mode in {"manual", "estimate"}:
         return []
-    if str(grouping.get("deadtime_method") or mode).strip().lower() in {
-        "",
-        "file",
-        "from_file",
-        "off",
-        "none",
-    }:
+    if normalise_deadtime_mode(grouping.get("deadtime_method") or mode) in {"from_file", "off"}:
         return grouping.get("dead_time_us", grouping.get("deadtime_loaded_us", []))
     return []
 
@@ -454,31 +467,13 @@ def resolve_deadtime(
     if not use:
         return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
     raw_mode = (
-        str(
-            mode
-            if mode is not None
-            else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
-        )
-        .strip()
-        .lower()
+        mode
+        if mode is not None
+        else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
     )
-    modes = {
-        "file": "from_file",
-        "from_file": "from_file",
-        "manual": "manual",
-        "load": "manual",
-        "value": "manual",
-        "estimate": "estimate",
-        "calibrate": "manual",
-        "count_fit": "manual",
-        "maxent_fit": "manual",
-        "off": "off",
-        "none": "off",
-        "": "from_file",
-    }
-    if raw_mode not in modes:
+    requested = normalise_deadtime_mode(raw_mode)
+    if requested not in {"off", "from_file", "manual", "estimate"}:
         raise ValueError(f"unknown deadtime correction mode {raw_mode!r}")
-    requested = modes[raw_mode]
     if requested == "off":
         return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
     table = grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))

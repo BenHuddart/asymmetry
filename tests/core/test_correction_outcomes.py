@@ -479,3 +479,49 @@ def test_combined_file_fallback_preserves_independent_fatal_outcomes(failure):
             deadtime_mode="file",
             use_background=failure == "background",
         )
+
+
+@pytest.mark.parametrize("missing", [0, 1])
+def test_combined_missing_sample_table_also_skips_complete_reference(missing):
+    from asymmetry.core.transform.corrections import BackgroundReference
+    from asymmetry.core.transform.rebin import BinningSpec
+    from asymmetry.core.transform.reduce import reduce_period_asymmetry
+
+    histograms = [
+        Histogram(np.array([100.0, 80.0, 60.0]), 1.0),
+        Histogram(np.array([70.0, 60.0, 50.0]), 1.0),
+    ]
+    reference = BackgroundReference(
+        [Histogram(np.array([20.0, 10.0, 5.0]), 1.0) for _ in range(2)],
+        1.0,
+        good_frames_reference=100.0,
+        file_dead_time_us=(0.1, 0.1),
+    )
+    tables = [[0.1, 0.1], [0.1, 0.1]]
+    tables[missing] = []
+    grouping = {
+        "period_histograms": [histograms, histograms],
+        "period_dead_time_us": tables,
+        "period_good_frames": [100.0, 100.0],
+        "background_mode": "reference_run",
+    }
+    options = dict(
+        histograms=histograms,
+        grouping=grouping,
+        period_mode="green_plus_red",
+        binning=BinningSpec(),
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1.0,
+        deadtime_mode="file",
+        use_background=True,
+        reference_resolver=lambda _: reference,
+    )
+    expected = reduce_period_asymmetry(**options, use_deadtime=False)
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        actual = reduce_period_asymmetry(**options, use_deadtime=True)
+    for field in ("time", "asymmetry", "error"):
+        np.testing.assert_array_equal(getattr(actual, field), getattr(expected, field))
+    for outcome in actual.corrections.values():
+        assert outcome.deadtime.status == "skipped"
+        assert outcome.background.effective["reference"]["deadtime"]["status"] == "skipped"
