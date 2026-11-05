@@ -20,7 +20,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 30
+CURRENT_SCHEMA_VERSION: int = 31
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -157,7 +157,26 @@ def migrate_to_current(data: dict) -> dict:
         version = 29
     if version == 29:
         migrated = dict(migrated, schema_version=30)
+        version = 30
+    if version == 30:
+        migrated = _migrate_v30_to_v31(migrated)
     return migrated
+
+
+def _migrate_v30_to_v31(data: dict) -> dict:
+    """Derive signed displays from recorded effective bounds, retaining their meaning."""
+
+    def visit(value):
+        if isinstance(value, list):
+            return [visit(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: visit(item) for key, item in value.items()}
+        if all(isinstance(result.get(key), int) for key in ("first_good_bin", "t0_bin")):
+            result["t_good_offset"] = result["first_good_bin"] - result["t0_bin"]
+        return result
+
+    return visit(data) | {"schema_version": 31}
 
 
 def _migrate_channel_membership(data: dict) -> dict:
@@ -943,27 +962,7 @@ def _migrate_v15_to_v16(data: dict) -> dict:
 
 
 def _migrate_v16_to_v17(data: dict) -> dict:
-    """Migrate schema v16 project state to v17.
-
-    v17 makes the run→profile link explicit so multiple profiles per
-    fingerprint can be in concurrent use:
-
-    * A dataset already naming a ``profile`` is unchanged — what used to mean
-      "inherits the fingerprint's active profile" is now simply its explicit
-      assignment.
-    * A dataset carrying only ``grouping_overrides`` (a *released* run) gains
-      ``profile: <name>`` — the fingerprint's active profile, i.e. the base
-      profile it was released from and the target Reattach returns it to —
-      while keeping its override payload verbatim (the payload stays
-      authoritative for resolution). When no active profile matches the
-      override's fingerprint, or the fingerprint cannot be inferred, the
-      dataset is left untouched and resolution falls back to the
-      fingerprint's default profile at load time.
-
-    The ``active`` flag on profiles is reinterpreted as "default profile for
-    newly loaded runs" of the fingerprint; its serialized shape is unchanged,
-    so the migration never rewrites the ``grouping_profiles`` block.
-    """
+    """Assign datasets to the active profile matching their recorded fingerprint."""
     migrated = dict(data)
     migrated["schema_version"] = 17
 

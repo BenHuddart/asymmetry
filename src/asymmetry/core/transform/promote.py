@@ -98,9 +98,7 @@ def promote_t0_to_grouping(
       ``new_bin = current − round(t0_us / w)``;
     - **discloses the sub-bin residual** (``residual_us`` in the return) the
       integer t0_bin cannot represent;
-    - shifts ``first_good_bin`` and any ``effective_detector_t0_bins`` override
-      by the same applied delta, so the good window and the per-detector
-      alignment keep their offsets from t0 (the ``_apply_t0_policy`` rule);
+    - shifts effective detector anchors while retaining the selected raw bins;
     - applies the *fitted group's* value run-wide (``t0_bin`` is run-level, not
       per-group) — the caller's suggest dialog says so, and ``group_id`` is
       echoed back for that message.
@@ -125,7 +123,7 @@ def promote_t0_to_grouping(
     if reference_run is not None:
         grouping["t0_reference_run"] = int(reference_run)
     if "first_good_bin" in grouping:
-        grouping["first_good_bin"] = max(0, _as_int(grouping["first_good_bin"], 0) + applied_bins)
+        grouping["t_good_offset"] = int(grouping["first_good_bin"]) - new_bin
     override = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
     if isinstance(override, (list, tuple)):
         grouping[EFFECTIVE_DETECTOR_T0_KEY] = [

@@ -255,7 +255,7 @@ def test_resolve_fixed_alpha_and_no_corrections():
         "background_correction": False,
         "background_mode": "none",
     }
-    assert resolved == expected
+    assert resolved == expected | {"good_window_policy": {"mode": "from_file"}}
 
 
 def test_resolve_calibrated_alpha_carries_provenance():
@@ -637,8 +637,8 @@ def test_t0_manual_shifts_common_t0_and_publishes_effective_bins_non_destructive
     # offset = +3 from this run's own file common t0 of 6.
     assert resolved["t0_bin"] == 9
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [8, 8, 9, 9]
-    # first_good_bin shifts with t0 so the good-window offset is preserved.
-    assert resolved["first_good_bin"] == 7 + 3
+    # Acquired file limits remain in raw-bin coordinates.
+    assert resolved["first_good_bin"] == 7
     # The run's histograms are UNCHANGED — nothing was rewritten.
     assert [int(h.t0_bin) for h in run.histograms] == before == [5, 5, 6, 6]
 
@@ -647,15 +647,15 @@ def test_t0_manual_offset_is_relative_to_each_run_own_file_t0():
     """D3: one profile, two runs with different file t0 — both move by the offset."""
     profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=2))
     early = _run_with_detector_t0([5, 5, 6, 6])  # file common t0 = 6
-    late = _run_with_detector_t0([20, 20, 21, 21])  # file common t0 = 21
+    late = _run_with_detector_t0([10, 10, 11, 11])  # file common t0 = 11
 
     early_resolved = resolve_effective_grouping(profile, early)
     late_resolved = resolve_effective_grouping(profile, late)
 
     assert early_resolved["t0_bin"] == 8
-    assert late_resolved["t0_bin"] == 23
+    assert late_resolved["t0_bin"] == 13
     assert early_resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 8, 8]
-    assert late_resolved[EFFECTIVE_DETECTOR_T0_KEY] == [22, 22, 23, 23]
+    assert late_resolved[EFFECTIVE_DETECTOR_T0_KEY] == [12, 12, 13, 13]
 
 
 def test_t0_manual_negative_offset_moves_t0_earlier():
@@ -819,7 +819,7 @@ def test_auto_detect_gives_every_detector_its_own_t0():
     # The common t0 is the max over the profile's forward+backward detectors.
     assert resolved["t0_bin"] == 222
     # Good window and exact t0 move with it — by +2, not by −168.
-    assert resolved["first_good_bin"] == 232
+    assert resolved["first_good_bin"] == 231
     assert resolved["t0_time_us"] == pytest.approx((220 + 0.5) * 0.016 + 2 * 0.016)
     # The provenance spread is the spread of the SHIFTS (+2, +2, +1, +2 → 1),
     # not of the raw estimates, which span 174 bins on this run.
@@ -954,7 +954,7 @@ def test_t0_from_file_on_a_missing_t0_detects_and_records_provenance():
     assert resolved["t0_search_spread_bins"] == 0
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 7, 7]
     # The good window keeps its offset from t0.
-    assert resolved["first_good_bin"] == 8
+    assert resolved["first_good_bin"] == 1
 
 
 def test_t0_auto_detect_on_a_missing_t0_also_records_it_as_detected():
@@ -1140,8 +1140,7 @@ def test_good_window_from_file_is_bit_identical_on_a_no_tables_run():
     assert default_resolved == explicit_resolved
     assert default_resolved["first_good_bin"] == 9
     assert default_resolved["last_good_bin"] == 17
-    # Untouched: the run's own copied offset, not one derived from the window.
-    assert default_resolved["t_good_offset"] == 1
+    assert default_resolved["t_good_offset"] == 4
 
 
 def test_good_window_manual_offsets_are_relative_to_each_run_own_t0():
@@ -1199,8 +1198,8 @@ def test_good_window_manual_rides_an_auto_detected_t0():
     assert resolved["last_good_bin"] == 282
 
 
-def test_good_window_manual_clamps_to_the_aligned_length():
-    """D7: neither end may leave the aligned group sums, and last >= first."""
+def test_good_window_manual_rejects_unsupported_endpoints():
+    """Explicit requests cannot create observations outside aligned support."""
     run = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # 320 bins aligned
     beyond_end = _base_profile(
         good_window_policy=GoodWindowPolicy(
@@ -1213,13 +1212,13 @@ def test_good_window_manual_clamps_to_the_aligned_length():
         )
     )
 
-    assert resolve_effective_grouping(beyond_end, run)["last_good_bin"] == 319
-    resolved = resolve_effective_grouping(both_beyond, run)
-    assert resolved["first_good_bin"] == resolved["last_good_bin"] == 319
+    for profile in (beyond_end, both_beyond):
+        with pytest.raises(ValueError, match="outside observed support"):
+            resolve_effective_grouping(profile, run)
 
 
 def test_good_window_manual_honours_a_negative_first_offset():
-    """A window that opens before t0 keeps its negative offset; t_good_offset floors at 0."""
+    """A window opening before t0 retains its signed display offset."""
     run = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # file common t0 = 60
     profile = _base_profile(
         good_window_policy=GoodWindowPolicy(
@@ -1230,7 +1229,7 @@ def test_good_window_manual_honours_a_negative_first_offset():
     resolved = resolve_effective_grouping(profile, run)
 
     assert resolved["first_good_bin"] == 55
-    assert resolved["t_good_offset"] == 0
+    assert resolved["t_good_offset"] == -5
 
 
 def test_profile_from_payload_never_infers_a_good_window_policy():

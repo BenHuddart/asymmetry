@@ -30,6 +30,7 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
+    GoodWindowPolicy,
     GroupingProfile,
     ProfileFingerprint,
     profile_from_payload,
@@ -109,6 +110,7 @@ def profile_from_form_payload(
     fingerprint: ProfileFingerprint,
     active: bool = True,
     alpha_policy: AlphaPolicy | None = None,
+    good_window_policy: GoodWindowPolicy | None = None,
 ) -> GroupingProfile:
     """Lift the shareable settings out of a form-built *payload* into a profile.
 
@@ -122,6 +124,8 @@ def profile_from_form_payload(
     profile = profile_from_payload(payload, name, fingerprint, active=active)
     if alpha_policy is not None:
         profile.alpha_policy = alpha_policy
+    if good_window_policy is not None:
+        profile.good_window_policy = good_window_policy
     return profile
 
 

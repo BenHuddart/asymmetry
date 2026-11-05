@@ -91,7 +91,7 @@ def test_applied_exact_timing_uses_selected_reference_after_spectator_and_manual
     payload.update(t0_bin=3)
     assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
     assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.32)
-    np.testing.assert_allclose(dataset.time, [axis[-1] - 0.2], atol=1e-15)
+    np.testing.assert_allclose(dataset.time, axis - 0.2, atol=1e-15)
     for histogram in dataset.run.histograms[1:]:
         histogram.t0_time_us = None
     payload["t0_bin"] = 1

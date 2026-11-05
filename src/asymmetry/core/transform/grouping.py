@@ -330,39 +330,41 @@ def good_event_count(
     histograms: list[Histogram] | None,
     grouping: dict | None,
 ) -> float | None:
-    """Total raw counts in the good-bin range over the forward+backward groups.
+    """Raw F/B observations inside the current aligned window and selected period.
 
-    Mirrors WiMDA's logbook "good events": the sum of
-    detector counts between ``first_good_bin`` and ``last_good_bin`` (inclusive)
-    across the detectors of the forward and backward groups. Returns ``None``
-    when the grouping lacks a good-bin range or named forward/backward groups
-    (e.g. an ungrouped run), so callers can fall back to a total-count display.
-
-    Detector ids in ``grouping['groups']`` are 1-based (WiMDA convention), so
-    histogram index = id − 1. This is the single source of truth for the
-    good-range event total: the data-browser "Good Events" column and the
-    export ``events_grouped`` header both call it, so they agree by construction.
+    Good Events and the export header share this uncorrected observation sum.
+    An unavailable request returns None while acquired counts remain available.
     """
+    from asymmetry.core.utils.constants import PeriodMode
+
     if not histograms or not isinstance(grouping, dict):
         return None
+    if grouping.get("period_mode") in (PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED):
+        return None
+    if (
+        grouping.get("first_good_bin") is None
+        or grouping.get("last_good_bin") is None
+        or not grouping.get("groups")
+    ):
+        return None
+    from asymmetry.core.io.periods import (
+        held_period_histograms,
+        histogram_grouping_facts,
+        selected_period_index,
+    )
 
-    first_good = grouping.get("first_good_bin")
-    last_good = grouping.get("last_good_bin")
-    if first_good is None or last_good is None or not grouping.get("groups"):
-        return None
+    period_index = selected_period_index(grouping)
+    if period_index is not None:
+        histograms = held_period_histograms(histograms, grouping, period_index)
+        grouping = histogram_grouping_facts(histograms, grouping)
     try:
-        lo = max(0, min(int(first_good), int(last_good)))
-        hi = max(int(first_good), int(last_good))
-        selected = [
-            index
-            for key, default in (("forward_group", 1), ("backward_group", 2))
-            for index in effective_group_indices(
-                grouping, grouping.get(key, default), n_histograms=len(histograms)
-            )
-        ]
-    except (TypeError, ValueError):
+        counts = group_forward_backward(histograms, grouping).counts
+    except InvalidGroupingError:
         return None
-    total = sum(float(np.sum(histograms[i].counts[lo : hi + 1])) for i in selected)
+    total = sum(
+        float(np.sum(group.counts[counts.window.slice]))
+        for group in (counts.forward, counts.backward)
+    )
     return total if total > 0 else None
 
 
@@ -588,18 +590,11 @@ def group_forward_backward(
     *,
     resolved_indices: tuple[list[int], list[int]] | None = None,
 ) -> GroupedForwardBackward:
-    """Form aligned forward/backward groups from a (effective) grouping dict.
+    """Resolve a selected pair onto common observations and one typed window.
 
-    This is the shared core of the time-domain F-B asymmetry and the
-    time-integral observable: it resolves the forward/backward group ids to
-    detector indices, aligns each detector to a common ``t0``, sums the groups,
-    and reads the balances ``alpha`` and ``beta`` (leniently, defaulting to
-    ``1.0``).  Callers
-    consume the validated window and time grid in ``counts`` for asymmetry
-    and rebinning, so reductions share the same aligned coordinates.
-
-    Raises :class:`ValueError` when the grouping lacks a ``groups`` definition or
-    the effective forward/backward groups are empty or share acquired channels.
+    Acquired k maps to local r = k + c - t0_i - L. A carried window policy
+    resolves for this actual pair/period, rather than reusing another pair's
+    scalar bounds. Legacy scalars retain their recorded coordinate meaning.
     """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
@@ -626,6 +621,17 @@ def group_forward_backward(
         forward, backward, crop = align_forward_backward_counts(
             histograms, forward_indices, backward_indices, detector_t0_bins
         )
+        window_grouping = grouping
+        if "good_window_policy" in grouping:
+            from asymmetry.core.project.profiles import GoodWindowPolicy, resolve_run_good_window
+
+            first, last = resolve_run_good_window(
+                GoodWindowPolicy.from_dict(grouping["good_window_policy"]),
+                Run(histograms=histograms, grouping=grouping),
+                grouping,
+                alignment=crop,
+            )
+            window_grouping = dict(grouping, first_good_bin=first, last_good_bin=last)
         width = float(histograms[forward_indices[0]].bin_width)
         counts = ForwardBackwardCounts(
             forward,
@@ -637,7 +643,7 @@ def group_forward_backward(
                 selected_indices=sorted(set(forward_indices + backward_indices)),
             ),
             width,
-            crop.window(grouping),
+            crop.window(window_grouping),
             crop,
         )
     except ValueError as exc:

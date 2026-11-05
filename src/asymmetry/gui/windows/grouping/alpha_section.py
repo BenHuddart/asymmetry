@@ -70,7 +70,6 @@ __all__ = [
     "build_alpha_request",
     "build_corrected",
     "correction_note",
-    "good_window",
     "grouping_for_reduction",
     "populate_calibration_run_combo",
     "resolve_reference",
@@ -95,8 +94,6 @@ class AlphaEstimateRequest:
     histograms: list[Histogram]
     grouping: dict[str, Any]
     method: str
-    first_good_bin: int
-    last_good_bin: int
     run_label: str
     resolved_reference: BackgroundReference | None
     facility: str
@@ -196,8 +193,8 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
         corrected.backward,
         method=request.method,
         time_us=time_us,
-        first_good_bin=request.first_good_bin,
-        last_good_bin=request.last_good_bin,
+        first_good_bin=corrected.window.first,
+        last_good_bin=corrected.window.last,
     )
     note_text, note_warn = correction_note(request.grouping, corrected)
     return AlphaEstimateResult(
@@ -318,19 +315,6 @@ def resolve_reference(
     return reference_resolver(grouping)
 
 
-def good_window(grouping: dict[str, Any], n_bins: int) -> tuple[int, int]:
-    """Good-bin ``(first, last)`` from the resolved grouping, clamped to *n_bins*."""
-    try:
-        first = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first = 0
-    try:
-        last = int(grouping.get("last_good_bin", n_bins - 1))
-    except (TypeError, ValueError):
-        last = n_bins - 1
-    return first, last
-
-
 def build_alpha_request(
     *,
     token: int,
@@ -360,15 +344,11 @@ def build_alpha_request(
         excluded_detectors=excluded_detectors,
         correction_provider=correction_provider,
     )
-    n_bins = int(run.histograms[0].n_bins)
-    first_good, last_good = good_window(grouping, n_bins)
     return AlphaEstimateRequest(
         token=token,
         histograms=list(run.histograms),
         grouping=grouping,
         method=method,
-        first_good_bin=first_good,
-        last_good_bin=last_good,
         run_label=str(dataset.run_label),
         resolved_reference=resolve_reference(grouping, reference_resolver),
         facility=str(facility or ""),

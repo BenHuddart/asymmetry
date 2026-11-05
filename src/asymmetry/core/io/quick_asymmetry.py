@@ -44,7 +44,7 @@ class QuickAsymmetry:
             "t0_bin": self.common_t0,
             "first_good_bin": first,
             "last_good_bin": last,
-            "t_good_offset": max(0, first - self.common_t0),
+            "t_good_offset": first - self.common_t0,
         }
 
     @property

@@ -91,8 +91,7 @@ class ReductionSettings:
 
     ``pair`` names the forward and backward groups by the file's group names or
     ids; ``t0_offset_bins`` shifts every detector's file t0; and
-    ``t_good_offset_bins`` puts the first good bin that many bins after the
-    effective t0 — the grouping window's Manual t0 and t_good offset modes.
+    ``t_good_offset_bins`` is a signed first-bin offset from effective t0 — the grouping window's Manual t0 and t_good offset modes.
     ``period`` selects one period, or :data:`GREEN_MINUS_RED` for the
     difference of a two-period run.
     """
@@ -137,10 +136,6 @@ class ReductionSettings:
                 raise ValueError(
                     f"A pair names two different groups, got {forward!r}/{backward!r}."
                 )
-        if self.t_good_offset_bins is not None and self.t_good_offset_bins < 0:
-            raise ValueError(
-                f"The t_good offset counts bins after t0, got {self.t_good_offset_bins}."
-            )
         if isinstance(self.rebin, bool) or not isinstance(self.rebin, Integral) or self.rebin < 1:
             raise ValueError(f"Rebin factor must be an integer >= 1, got {self.rebin!r}.")
         if self.alpha <= 0.0:

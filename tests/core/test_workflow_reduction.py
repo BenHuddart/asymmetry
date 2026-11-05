@@ -173,7 +173,6 @@ def test_settings_round_trip_through_their_dict() -> None:
         {"background": "range", "background_range": (80, 10)},
         {"pair": ("Up", "up")},
         {"pair": ("Up", "")},
-        {"t_good_offset_bins": -1},
         {"rebin": 0},
         {"alpha": 0.0},
         {"t_min": 5.0, "t_max": 1.0},
@@ -213,7 +212,7 @@ def test_t0_and_t_good_offsets_move_the_window(scan_run) -> None:
     file_grouping = resolve_reduction_grouping(scan_run, ReductionSettings())
     shifted = resolve_reduction_grouping(scan_run, ReductionSettings(t0_offset_bins=3))
     assert shifted["t0_bin"] == file_grouping["t0_bin"] + 3
-    assert shifted["first_good_bin"] == file_grouping["first_good_bin"] + 3
+    assert shifted["first_good_bin"] == file_grouping["first_good_bin"]
 
     offset = resolve_reduction_grouping(
         scan_run, ReductionSettings(t0_offset_bins=3, t_good_offset_bins=10)

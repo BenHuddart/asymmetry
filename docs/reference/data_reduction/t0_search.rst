@@ -49,6 +49,12 @@ raw-bin bounds. Exact sub-bin t0 affects timestamps, never which raw bins
 these declarations select. Initial loading and subsequent file-good reductions
 share that interpretation; see :doc:`/reference/loading_data`.
 
+A common timing-only change preserves **From file** raw-bin membership and
+moves timestamps. **Manual** good-window endpoints instead follow effective
+t0 as signed offsets; an omitted endpoint retains its mapped file limit.
+Detector-specific shifts can change the common intersection. See
+:ref:`comparison-file-manual-windows` for matched reference operations.
+
 File-good bounds remain attached to raw acquisition bins. Asymmetry converts
 PSI MDU markers before alignment and stores BIN/MDU/ROOT good bounds as
 zero-based inclusive indices. The selected detectors' shifted bounds intersect

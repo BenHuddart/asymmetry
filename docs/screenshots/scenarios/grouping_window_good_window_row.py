@@ -1,16 +1,4 @@
-"""Grouping window: the good-window mode selector and its provenance line (D8).
-
-Crops to the ``t_good Offset`` row (mode selector, offset spinbox), the
-``Last Good Bin`` row beneath it, and the always-on read-only line beneath
-*that* pair which carries the offset in time and, once Manual is selected,
-the file's own values alongside the edited ones. The synthesised run is a
-two-detector NeXus acquisition with physical file good times (offset 3
-bins from t0, closing at bin 32); the scenario switches the selector to
-Manual and types a different offset (7 bins) so the line shows both the
-edited value and the file's, exactly the comparison Manual mode exists for.
-Companion to :doc:`/reference/detector_grouping` and
-:doc:`/reference/project_files`.
-"""
+"""Show a signed manual offset outside advisory file-good bounds, within raw support."""
 
 from __future__ import annotations
 
@@ -38,10 +26,7 @@ _N0 = 400.0
 #: half reads differently from its "≈ … after t0" half.
 _FILE_FIRST_GOOD_BIN = _T0_BIN + 3
 _FILE_LAST_GOOD_BIN = 32
-#: The offset typed into the Manual spinbox once the mode is switched —
-#: chosen so ``offset * bin_width`` prints a clean, non-round time
-#: (7 * 0.016 = 0.112 µs) and differs from the file's own offset of 3.
-_MANUAL_OFFSET = 7
+_MANUAL_OFFSET = -3
 
 
 def _make_two_detector_run(seed: int = 2026) -> MuonDataset:

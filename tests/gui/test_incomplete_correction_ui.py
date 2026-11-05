@@ -81,8 +81,8 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
             pane.flush()
             wait_for(lambda: pane._last_result is not None and pane._last_result is not old, qapp)
             result = pane._last_result
-            assert result.corrections.complete
-            effective = result.corrections.background.effective
+            assert all(outcome.complete for outcome in result.corrections)
+            effective = result.corrections[0].background.effective
             assert effective["details"]["scale"] == 20 / frames
             np.testing.assert_allclose(
                 result.counts.forward, sample.run.histograms[0].counts - 40 / frames

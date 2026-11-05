@@ -78,7 +78,7 @@ def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = Tr
         default=None,
         dest="t_good_offset",
         metavar="BINS",
-        help="First good bin this many bins after the effective t0 (default: the file's)",
+        help="Signed first-bin offset from effective t0 (default: the file's)",
     )
     parser.add_argument(
         "--period",

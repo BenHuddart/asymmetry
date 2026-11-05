@@ -233,6 +233,56 @@ and `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 The tutorial version is separate from the recorded executable version.
 :doc:`/reference/detector_grouping` gives the selected bins and output mapping.
 
+.. _comparison-file-manual-windows:
+
+File bounds and authored relative windows
+----------------------------------------
+
+Asymmetry keeps acquired detector bounds on raw bins and maps them through
+current selected-channel alignment. **From file** preserves the raw
+observations under a uniform common t0 change; **Manual** stores each supplied
+endpoint as a signed offset from effective t0. An omitted endpoint retains its
+mapped file limit. This separates file facts, timing, and an authored interval.
+
+The closest comparator for preserved observations is musrfit's explicit
+``data`` channels, with timing specified separately in the
+`RUN block <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
+For tagged raw bins 11–14, musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), packing
+one, and no corrections, unchanged ``data 11 15`` preserves counts and Poisson
+errors when integer ``t0`` moves from 10 to 15. Moving the explicitly supplied
+interval to ``data 16 20`` instead matches Asymmetry Manual offsets 1 and 4.
+Counts and errors agree within the native ASCII precision (relative tolerance
+5 × 10⁻⁶). An exact Asymmetry origin of 0.2074 μs differs from musrfit's
+integer-centre origin 0.21 μs by a constant 0.0026 μs; changing t0 by five
+0.02 μs bins preserves that difference. Fit-time limits and omitted ``data``
+defaults are separate operations. Manually matched channels do not establish
+an automatic relative-window policy in musrfit's GUI.
+
+Mantid 6.16.1 ``CreateWorkspace`` and
+`CropWorkspace <https://docs.mantidproject.org/v6.16.1/algorithms/CropWorkspace-v1.html>`_
+provide the closest physical-coordinate comparison. With the same 32 raw
+observations, supplied Poisson variances, and 0.02 μs width, translated axes
+and explicitly matched crop limits retain identical counts and errors.
+Moving both raw crop endpoints by five bins selects 16–19 instead of 11–14.
+Centres agree within 10⁻¹⁵ μs. These constructed workspaces test the selected
+operation, not NeXus loader defaults or Mantid's GUI policy.
+
+WiMDA's **Use File values** controls timing and a shared interval together.
+The interval uses the first histogram's file limits, with a zero-end fallback.
+Its editable start is a t0 offset and its end is an absolute last bin.
+Asymmetry's independent timing/window selectors and two stored relative
+endpoints therefore express a different policy. No WiMDA executable comparison
+is claimed; the `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_
+describes the grouping workflow. No numerical disagreement remains in the
+matched native synthetic operations above; automatic-default equivalence and
+WiMDA numerical agreement remain unverified.
+
+Asymmetry also checks that explicit manual endpoints are ordered and within
+common acquired support. This protects authored selection without inventing
+one-bin observations. The failed calculation remains editable and raw data
+remain available; it does not reject a facility file. This safeguard does
+not assert that all reference programs implement the same validation.
+
 .. _comparison-nexus-good-times:
 
 NeXus physical good-time selection

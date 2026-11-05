@@ -7,6 +7,7 @@ Use the :func:`load` convenience function to auto-detect the format::
 """
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 import numpy as np
 
@@ -92,8 +93,8 @@ def _grouping_good_frames(source: object) -> float | None:
     return good_frames(getattr(source, "grouping", None), default=0.0) or None
 
 
-def _reference_frame_exposure(
-    reference_run: object,
+def reference_frame_exposure(
+    live_reference: float | None,
     sample_good_frames: float | None,
     payload: dict,
 ) -> tuple[float, float | None, float | None, str]:
@@ -105,7 +106,6 @@ def _reference_frame_exposure(
     snapshot, then ``1.0`` — never a live count divided by a stale snapshot from
     a different exposure, which would silently skew the subtraction.
     """
-    live_reference = _grouping_good_frames(reference_run)
     live_sample = (
         float(sample_good_frames)
         if sample_good_frames is not None and float(sample_good_frames) > 0.0
@@ -209,8 +209,8 @@ def resolve_background_reference(
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")
 
-    scale, sample_frames, reference_frames, scale_source = _reference_frame_exposure(
-        reference_run, sample_good_frames, payload
+    scale, sample_frames, reference_frames, scale_source = reference_frame_exposure(
+        _grouping_good_frames(reference_run), sample_good_frames, payload
     )
 
     return BackgroundReference(
@@ -221,6 +221,30 @@ def resolve_background_reference(
         good_frames_reference=reference_frames,
         scale_source=scale_source,
         run_number=None if run_number is None else int(run_number),
+    )
+
+
+def background_reference_for_grouping(
+    reference: BackgroundReference | None, grouping: dict
+) -> BackgroundReference | None:
+    """Use selected live exposure with a reference snapshot from the same request.
+
+    Saved frame pairs retain their epoch; explicit scales and unity assumptions
+    remain authored choices. Only a live-frame snapshot supplies a live denominator.
+    """
+    if reference is None or reference.scale_source != "live_frames":
+        return reference
+    scale, sample, frames, source = reference_frame_exposure(
+        reference.good_frames_reference,
+        good_frames(grouping, default=0.0) or None,
+        grouping.get("background_run", {}),
+    )
+    return replace(
+        reference,
+        scale=scale,
+        good_frames_sample=sample,
+        good_frames_reference=frames,
+        scale_source=source,
     )
 
 
@@ -241,5 +265,6 @@ __all__ = [
     "select_period",
     "load_background_run",
     "resolve_background_reference",
+    "background_reference_for_grouping",
     "BackgroundReference",
 ]
