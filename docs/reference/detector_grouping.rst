@@ -876,6 +876,14 @@ available:
   following WiMDA's uniform deadtime estimate workflow, then applies that one
   estimated value to every detector.
 
+File coefficients are stored internally in μs. The NeXus-v2 loader converts
+explicit supported μs/ns declarations once, so 20 ns and 0.02 μs produce the
+same correction. Missing or other declarations and legacy v1/HDF4 retain their
+stored-value-as-μs convention; project coefficients are not reconverted.
+Asymmetry follows WiMDA for this explicit v2 convention and intentionally
+differs from the compared musrfit 1.12.1 path; see
+:ref:`comparison-deadtime-units`.
+
 A requested ``File`` correction requires a complete, non-zero file table.
 A table marked as a manual or fitted calibration does not satisfy a file
 request. Missing tables and acquisition normalisation block final analysis
