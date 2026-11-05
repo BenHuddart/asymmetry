@@ -51,8 +51,10 @@ def test_manual_fallback_delay_is_not_transferred_to_file_calibrated_period():
     grouping = resolve(run)
     assert grouping["effective_detector_t0_bins"] == [12, 14]
     selected, selected_grouping = select_period_histograms(run.histograms, grouping, 1)
-    assert selected_grouping["effective_detector_t0_bins"] == [22, 27]
-    assert selected_grouping["effective_t0_period"] == 1
+    assert "effective_detector_t0_bins" not in selected_grouping
+    assert selected_grouping["t0_policy"] == {"mode": "manual", "offset_bins": 2}
+    selected_counts = group_forward_backward(selected, selected_grouping).counts
+    assert selected_counts.alignment.common_t0_bin + selected_counts.alignment.first_bin == 27
     result = reduce_period_asymmetry(
         run.histograms,
         grouping,
@@ -120,3 +122,46 @@ def test_changed_pair_uses_its_own_fractional_reference_origin(offset):
     np.testing.assert_allclose(
         (np.arange(8) + 0.5) * 0.1 - counts.t0_time_us, (np.arange(8) + 0.5) * 0.1 - expected
     )
+
+
+def test_repairing_profile_does_not_resolve_superseded_manual_membership():
+    run = period_run()
+    run.grouping.update(
+        groups={1: [1], 2: [1]},
+        t0_source="file",
+        period_t0_sources=["file", "file"],
+        t0_policy={"mode": "manual", "offset_bins": 2},
+    )
+    profile = profile_from_payload(run.grouping, "repair", profile_fingerprint_for_run(run))
+    profile.groups, profile.period_mode = {1: [1], 2: [2]}, "green"
+    profile.t0_policy = T0Policy(mode="from_file")
+    assert resolve_effective_grouping(profile, run)["t0_bin"] == 25
+
+
+def test_unused_missing_timing_cannot_suppress_selected_manual_period_offset():
+    run = period_run()
+    for period in run.grouping["period_histograms"]:
+        period.append(Histogram(np.ones(80), bin_width=0.1, t0_bin=0))
+    run.grouping.update(
+        t0_source="file",
+        period_t0_sources=["file", "file"],
+        detector_t0_sources=["file", "file", "missing"],
+        period_detector_t0_sources=[["file", "file", "missing"]] * 2,
+    )
+    grouping = resolve(run)
+    histograms, selected = select_period_histograms(run.histograms, grouping, 1)
+    counts = group_forward_backward(histograms, selected).counts
+    assert counts.alignment.common_t0_bin + counts.alignment.first_bin == 27
+    assert counts.alignment.timing_sources == ((0, "manual"), (1, "manual"))
+
+
+def test_deferred_manual_offset_uses_explicit_resolved_pair():
+    histograms = [Histogram(np.ones(80), bin_width=0.1, t0_bin=i + 1) for i in range(3)]
+    grouping = {
+        "groups": {1: [1], 2: [2]},
+        "detector_t0_sources": ["missing", "file", "file"],
+        "t0_policy": {"mode": "manual", "offset_bins": 2},
+    }
+    counts = group_forward_backward(histograms, grouping, resolved_indices=([1], [2])).counts
+    assert counts.alignment.common_t0_bin + counts.alignment.first_bin == 5
+    assert counts.alignment.timing_sources == ((1, "manual"), (2, "manual"))

@@ -25,6 +25,7 @@ from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
     effective_t0_sources,
     require_selected_timing,
+    resolve_selected_timing,
     selected_t0_reference,
 )
 
@@ -619,6 +620,21 @@ def group_forward_backward(
         beta = 1.0
 
     try:
+        policy = grouping.get("t0_policy", {})
+        if (
+            isinstance(policy, dict)
+            and policy.get("mode") == "manual"
+            and "offset_bins" in policy
+            and EFFECTIVE_DETECTOR_T0_KEY not in grouping
+        ):
+            grouping = dict(grouping)
+            resolve_selected_timing(
+                histograms,
+                grouping,
+                mode="manual",
+                offset_bins=policy["offset_bins"],
+                resolved_indices=(forward_indices, backward_indices),
+            )
         require_selected_timing(grouping, forward_indices + backward_indices, len(histograms))
         detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
         forward, backward, crop = align_forward_backward_counts(

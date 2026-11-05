@@ -437,19 +437,6 @@ def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dic
     ):
         if key in grouping:
             period_grouping[key] = values
-    if (
-        histograms
-        and override is None
-        and policy.get("mode") == "manual"
-        and "offset_bins" in policy
-        and period_grouping.get("t0_source") != "missing"
-        and "missing" not in period_grouping.get("detector_t0_sources", [])
-    ):
-        from asymmetry.core.transform.t0 import resolve_selected_timing
-
-        resolve_selected_timing(
-            histograms, period_grouping, mode="manual", offset_bins=policy["offset_bins"]
-        )
     return period_grouping
 
 

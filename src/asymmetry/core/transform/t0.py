@@ -445,12 +445,18 @@ def find_t0_for_run(
 
 
 def selected_t0_diagnostics(
-    histograms: list[Histogram], grouping: dict, search: RunT0Search
+    histograms: list[Histogram],
+    grouping: dict,
+    search: RunT0Search,
+    *,
+    resolved_indices: tuple[list[int], list[int]] | None = None,
 ) -> tuple[int, int, int]:
     """Selected median shift, shift range, and median feature width; diagnostics only."""
     from asymmetry.core.transform.grouping import independent_pair_indices
 
-    forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
+    forward, backward = independent_pair_indices(
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+    )
     indices = sorted(set(forward) | set(backward))
     shifts = detector_t0_shifts(histograms, search.estimates)
     delta, spread = shift_statistics([shifts[i] for i in indices])
@@ -512,6 +518,7 @@ def resolve_selected_timing(
     metadata: dict | None = None,
     *,
     mode: str = "from_file",
+    resolved_indices: tuple[list[int], list[int]] | None = None,
     offset_bins: int = 0,
     search: RunT0Search | None = None,
     pulsed: bool | None = None,
@@ -526,7 +533,9 @@ def resolve_selected_timing(
     """
     from asymmetry.core.transform.grouping import independent_pair_indices
 
-    forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
+    forward, backward = independent_pair_indices(
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+    )
     indices = sorted(set(forward) | set(backward))
     for key in (
         EFFECTIVE_DETECTOR_T0_KEY,
@@ -557,7 +566,9 @@ def resolve_selected_timing(
             )
         grouping["t0_search_strategy"] = search.strategy
         grouping["t0_search_spread_bins"] = (
-            selected_t0_diagnostics(histograms, grouping, search)[1]
+            selected_t0_diagnostics(
+                histograms, grouping, search, resolved_indices=resolved_indices
+            )[1]
             if search.strategy != "unknown"
             else 0
         )
