@@ -111,6 +111,7 @@ run's effective t0; ``from_file`` keeps the run's own), and the
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from numbers import Integral
 from typing import Any
@@ -134,11 +135,10 @@ from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
 )
 from asymmetry.core.transform.t0 import (
-    EFFECTIVE_DETECTOR_T0_KEY,
-    detected_detector_t0_bins,
     detector_t0_overrides,
     effective_detector_t0_bins,
     find_t0_for_run,
+    resolve_selected_timing,
 )
 from asymmetry.core.utils.perf import perf_timer
 
@@ -1191,6 +1191,7 @@ def resolve_effective_grouping(
     run: Run,
     *,
     reference_resolver: ReferenceResolver | None = None,
+    timing_search: Callable | None = None,
 ) -> dict[str, Any]:
     """Merge *profile* with *run*'s file-derived facts into a grouping payload.
 
@@ -1262,7 +1263,14 @@ def resolve_effective_grouping(
             grouping["period_mode"] = run_grouping["period_mode"]
 
         try:
-            _apply_t0_policy(grouping, profile.t0_policy, run, n_hist, profile_name=profile.name)
+            _apply_t0_policy(
+                grouping,
+                profile.t0_policy,
+                run,
+                n_hist,
+                profile_name=profile.name,
+                timing_search=timing_search,
+            )
             if run.histograms:
                 first, last = resolve_run_good_window(profile.good_window_policy, run, grouping)
                 grouping.update(
@@ -1308,6 +1316,7 @@ _PER_RUN_FACT_KEYS = (
     "last_good_bin",
     "bin_index_base",
     "detector_t0_bins",
+    "detector_t0_sources",
     "detector_first_good_bins",
     "detector_last_good_bins",
     "histogram_labels",
@@ -1318,6 +1327,7 @@ _PER_RUN_FACT_KEYS = (
     "period_good_frames",
     "period_dead_time_us",
     "period_t0_sources",
+    "period_detector_t0_sources",
     "period_mapping",
 )
 
@@ -1475,6 +1485,7 @@ def _apply_t0_policy(
     n_hist: int,
     *,
     profile_name: str = "",
+    timing_search: Callable | None = None,
 ) -> None:
     """Resolve effective timing while retaining acquired histograms.
 
@@ -1482,54 +1493,19 @@ def _apply_t0_policy(
     Exact timing moves with those anchors while raw window facts stay fixed."""
     if not run.histograms:
         return
-    grouping["t0_bin"] = _file_common_t0(grouping, run, n_hist)
-    t0_missing = grouping.get("t0_source") == "missing"
-    if policy.mode == "from_file" and not t0_missing:
-        return
-
-    offset = 0
-    if policy.mode == "manual":
-        if policy.offset_bins is None:
-            if policy.legacy_value is not None:
-                raise ValueError(
-                    f"Grouping profile {profile_name!r} still carries a pre-v21 absolute "
-                    "manual t0 (`value`). Convert it with T0Policy.from_legacy_value() "
-                    "on project open before resolving."
-                )
-            return
-        offset = int(policy.offset_bins)
-
-    file_bins = [int(hist.t0_bin) for hist in run.histograms]
-    if policy.mode == "auto_detect" or t0_missing:
-        # D7: a file with no t0 has nothing to honour or to offset from, so the
-        # detected per-detector values are the base a manual offset rides on.
-        search = find_t0_for_run(run.histograms, run.metadata)
-        if not search.ok:
-            if policy.mode == "auto_detect":
-                raise InvalidGroupingError(f"Automatic t0 unavailable: {search.message}", grouping)
-            return
-        base_bins = detected_detector_t0_bins(search, file_bins, missing=t0_missing)
-        grouping["t0_search_strategy"] = str(search.strategy)
-        grouping["t0_search_spread_bins"] = int(search.shift_spread_bins)
-    else:
-        base_bins = file_bins
-    if t0_missing:
-        # Whichever mode got here, the run's t0 came from the search, not the
-        # file — the grouping window and run info say so (D7).
-        grouping["t0_source"] = "detected"
-
-    effective_bins = [max(0, value + offset) for value in base_bins]
-    new_common_t0 = _common_t0_over_groups(grouping, run, n_hist, effective_bins)
-
-    if effective_bins != file_bins:
-        # Published, not applied to the histograms: the run's counts and their
-        # file t0 are never touched.
-        grouping[EFFECTIVE_DETECTOR_T0_KEY] = effective_bins
-    grouping["t0_bin"] = new_common_t0
-    t0_time_us = grouping.get("t0_time_us")
-    if t0_time_us is not None:
-        delta = new_common_t0 - _file_common_t0(grouping, run, n_hist)
-        grouping["t0_time_us"] = float(t0_time_us) + delta * float(run.histograms[0].bin_width)
+    if policy.legacy_value is not None:
+        raise ValueError(
+            f"Grouping profile {profile_name!r} still carries a pre-v21 absolute manual t0; "
+            "convert it with T0Policy.from_legacy_value() on project open."
+        )
+    resolve_selected_timing(
+        run.histograms,
+        grouping,
+        run.metadata,
+        mode=policy.mode,
+        offset_bins=policy.offset_bins or 0,
+        search_provider=timing_search or find_t0_for_run,
+    )
 
 
 def resolve_run_good_window(

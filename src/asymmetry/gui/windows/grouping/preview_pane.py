@@ -43,10 +43,11 @@ from asymmetry.core.transform.corrections import (
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_period_asymmetry
+from asymmetry.core.transform.t0 import RunT0Search
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import make_warning_banner
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview as _decimate_for_preview
 from asymmetry.gui.utils.plot_decimation import preview_stride as _preview_stride
 
@@ -173,10 +174,8 @@ class PreviewFacts:
     #: Bunching factor, as the binning row states it.
     bunch: int
     #: Where the previewed t0 came from — ``"from file"``, ``"manual"`` or
-    #: ``"detected"``, as the Counts view's t0 marker names it. A dialog fact:
-    #: the resolved grouping carries the bin, not the policy that chose it.
+    #: ``"detected"``, as the Counts view's t0 marker names it.
     t0_mode_label: str
-    #: Active count-domain corrections, worded as the pipeline chips word them.
     corrections: tuple[str, ...] = ()
     #: In vector mode, the primary projection previewed (e.g. ``"P_z"``); the
     #: other projections are not reduced here. ``None`` outside vector mode.
@@ -186,15 +185,7 @@ class PreviewFacts:
 
 @dataclass(frozen=True)
 class _PreviewRequest:
-    """An immutable snapshot of what to resolve/reduce, built on the GUI thread.
-
-    Everything here is a plain object, so the worker function can run entirely
-    off the GUI thread. Exactly one of two shapes is populated: a pre-resolved
-    ``grouping`` payload, or an unresolved ``profile`` + ``run`` pair that the
-    worker resolves first (the expensive path — auto t0 / per-run alpha scans).
-    Index/alpha/policy extraction from the resolved payload happens in the
-    worker for both shapes.
-    """
+    """Immutable plain inputs for worker resolution and reduction."""
 
     generation: int
     histograms: list[Histogram]
@@ -203,16 +194,10 @@ class _PreviewRequest:
     grouping: dict[str, Any] | None = None
     profile: GroupingProfile | None = None
     run: Run | None = None
-    #: Stage-generic before/after compare (one focused stage at a time). The solid
-    #: curve is always the full configured reduction; the *ghost* removes one
-    #: stage: ``"alpha"``/``"beta"`` ghost that factor at unity from the same
-    #: corrected counts (α also reports the residual baseline), and
-    #: ``"deadtime"``/``"background"`` ghost a *second* corrected pass with that one
-    #: stage dropped. ``None`` draws only the solid curve. Preview-only — it never
-    #: touches the persisted reduction, and it never degrades the solid, so the α
-    #: residual ⟨A⟩ is always read off the fully-corrected curve.
+    #: The ghost omits one stage; the solid always uses the full correction path.
     compare_stage: str | None = None
     resolved_reference: BackgroundReference | None = None
+    timing_search: RunT0Search | None = None
 
 
 @dataclass(frozen=True)
@@ -403,6 +388,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         compare_stage: str | None = None,
         resolved_reference: BackgroundReference | None = None,
+        timing_search: RunT0Search | None = None,
     ) -> None:
         """Queue worker resolution of a copied profile and a read-only run snapshot."""
         histograms = list(run.histograms) if run is not None and run.histograms else []
@@ -423,6 +409,7 @@ class GroupingPreviewPane(QWidget):
                 facts=facts,
                 compare_stage=compare_stage,
                 resolved_reference=resolved_reference,
+                timing_search=timing_search,
             )
         )
 
@@ -991,9 +978,21 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     def resolve_reference(grouping):
         return background_reference_for_grouping(request.resolved_reference, grouping)
 
+    def search_timing(histograms, metadata, **options):
+        if request.timing_search is not None:
+            return request.timing_search
+        from asymmetry.core.transform.t0 import find_t0_for_run
+
+        return find_t0_for_run(
+            histograms, metadata, cancel_check=partial(check_task_cancelled, worker)
+        )
+
     if request.profile is not None:
         grouping = resolve_effective_grouping(
-            request.profile, request.run, reference_resolver=resolve_reference
+            request.profile,
+            request.run,
+            reference_resolver=resolve_reference,
+            timing_search=search_timing,
         )
     else:
         grouping = request.grouping or {}

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Automatic timing requires a known strategy and each selected channel’s own
+  estimate, preserves usable file timing, and records effective timing provenance.
+
 ### Documentation
 
 - Explain the count-based reduction pipeline with a flowchart and a guide to

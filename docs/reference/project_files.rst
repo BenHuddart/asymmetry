@@ -809,3 +809,15 @@ Runnable example
 ----------------
 
 See ``examples/project_files.py`` for a complete executable script.
+
+Timing provenance
+-----------------
+
+Acquired timing status remains distinct from effective file, manual, estimated,
+or unresolved timing. This distinction survives equal numerical anchors.
+Resolved grouping payloads retain the timing policy and per-channel outcomes;
+alignment metadata records the selected channels and search strategy.
+A stored ``T0Policy.strategy`` is descriptive provenance, not an explicit
+strategy override. Released projects retain their recorded scalar file facts
+when no per-channel availability was recorded. Missing provenance alone does
+not reclassify an old valid zero anchor as absent. See :ref:`t0-search`.

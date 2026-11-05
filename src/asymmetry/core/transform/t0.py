@@ -1,25 +1,12 @@
-"""Automatic time-zero search from the prompt peak or pulse rising edge.
+"""Per-channel prompt-maximum and leading half-height timing features.
 
-Two strategies, selected by source type (textbook §14.2/§15.3):
-
-- **continuous** (PSI, TRIUMF) — t0 is the sharp prompt peak from beam
-  positrons triggering both counters: the maximum-count bin (the
-  WiMDA ``SearchT0ButtonClick`` / musrfit ``musrt0`` convention; ties
-  resolve to the earliest bin).
-- **pulsed** (ISIS, J-PARC) — t0 is the *centre* of the muon pulse, found
-  in practice from the midpoint of the histogram's rising edge. WiMDA uses
-  the maximum bin for pulsed data too, which lands at the pulse peak
-  rather than its centre of rise (study divergence D9).
-
-Results are estimates for the user to confirm — a Find t0 action fills the
-grouping override controls and never silently overwrites loader values
-("never rely on information stored in the data file, if you have not
-recorded it yourself" — textbook §15.3, p. 223).
+These features provide candidate integer anchors, not a physical pulse-centre
+certification. Selected automatic requests require each channel's own estimate.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from numbers import Integral
 from typing import Any
@@ -209,8 +196,7 @@ class T0Estimate:
 
     ``width_bins`` is how many bins the feature the estimate was read off
     actually spans — the prompt peak's FWHM, or the pulse's 10 %→90 % rise —
-    and so how precisely a bin index can name it. It is the resolution of the
-    measurement, not of the file: the same PSI prompt peak is 1 bin wide at
+    as a descriptive diagnostic, not a confidence interval: the same PSI prompt peak is 1 bin wide at
     1 ns binning and 10 at 98 ps. ``0`` when the estimate failed.
     """
 
@@ -286,22 +272,19 @@ def shift_statistics(shifts: Sequence[int | None]) -> tuple[int, int]:
     return int(round(float(np.median(values)))), int(max(values) - min(values))
 
 
-def source_is_pulsed(metadata: dict[str, Any] | None) -> bool:
-    """Infer pulsed vs continuous source from run metadata.
-
-    Unknown facilities default to pulsed (the prompt-peak maximum and the
-    pulse peak coincide on continuous data anyway; the edge-midpoint only
-    differs when there is a wide pulse to have a midpoint of).
-    """
+def source_is_pulsed(metadata: dict[str, Any] | None) -> bool | None:
+    """Established source hints, or None when no supported strategy is known."""
     metadata = metadata if isinstance(metadata, dict) else {}
+    if isinstance(metadata.get("source_pulsed"), bool):
+        return metadata["source_pulsed"]
     text = " ".join(
         str(metadata.get(key, "")) for key in ("facility", "instrument", "source", "area")
     ).lower()
-    if any(token in text for token in _CONTINUOUS_TOKENS):
-        return False
-    if any(token in text for token in _PULSED_TOKENS):
-        return True
-    return True
+    continuous = any(token in text for token in _CONTINUOUS_TOKENS)
+    pulsed = any(token in text for token in _PULSED_TOKENS)
+    if continuous == pulsed:
+        return None
+    return pulsed
 
 
 def _peak_fwhm_bins(c: NDArray[np.float64], peak: int) -> int:
@@ -344,15 +327,20 @@ def find_t0(
     Continuous: the maximum-count bin (prompt peak; first occurrence wins on
     ties). Pulsed: the
     half-maximum crossing of the leading edge, linearly interpolated and
-    rounded to the nearest bin — the pulse-centre convention.
+    rounded to the nearest bin.
 
     Each estimate also carries the width of the feature it was read off
-    (:attr:`T0Estimate.width_bins`), which is how precisely a bin index can name
-    that feature and therefore the tolerance every later comparison deserves.
+    (:attr:`T0Estimate.width_bins`), used only for descriptive display thresholds.
     """
     c = np.asarray(counts, dtype=np.float64)
     if c.size == 0 or not np.any(c > 0.0):
-        return T0Estimate(0, "prompt_peak", 0, ok=False, message="Histogram has no counts")
+        return T0Estimate(
+            0,
+            "pulse_edge" if pulsed else "prompt_peak",
+            0,
+            ok=False,
+            message="Histogram has no counts",
+        )
     peak = int(np.argmax(c))
     if not pulsed:
         return T0Estimate(peak, "prompt_peak", peak, ok=True, width_bins=_peak_fwhm_bins(c, peak))
@@ -390,6 +378,7 @@ def find_t0_for_run(
     metadata: dict[str, Any] | None = None,
     *,
     pulsed: bool | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> RunT0Search:
     """Estimate t0 for every histogram of a run, with a consensus.
 
@@ -401,10 +390,28 @@ def find_t0_for_run(
     there — a spread of a few bins in the *shifts* is normal detector-to-detector
     variation, a large one means dead detectors or a wrong strategy.
     """
+    if pulsed is not None and not isinstance(pulsed, bool):
+        raise ValueError("pulsed must be True, False, or None for metadata inference.")
     if pulsed is None:
         pulsed = source_is_pulsed(metadata)
+    if pulsed is None:
+        message = (
+            "Automatic t0 unavailable: requires a known source or an explicit pulsed strategy."
+        )
+        return RunT0Search(
+            [T0Estimate(0, "unknown", 0, False, message) for _ in histograms],
+            0,
+            0,
+            "unknown",
+            False,
+            message,
+        )
     strategy = "pulse_edge" if pulsed else "prompt_peak"
-    estimates = [find_t0(hist.counts, pulsed=pulsed) for hist in histograms]
+    estimates = []
+    for hist in histograms:
+        if cancel_check is not None:
+            cancel_check()
+        estimates.append(find_t0(hist.counts, pulsed=pulsed))
     good = [est.t0_bin for est in estimates if est.ok]
     if not good:
         return RunT0Search(
@@ -431,47 +438,105 @@ def find_t0_for_run(
     )
 
 
-def detected_detector_t0_bins(
-    search: RunT0Search,
-    file_bins: Sequence[int],
+def acquired_t0_sources(grouping: dict, n_histograms: int) -> list[str]:
+    """Per-channel file facts; older projects retain their recorded scalar fact."""
+    sources = grouping.get("detector_t0_sources")
+    if sources is not None:
+        return list(sources)
+    source = "missing" if grouping.get("t0_source") == "missing" else "file"
+    return [source] * n_histograms
+
+
+def effective_t0_sources(grouping: dict, n_histograms: int) -> list[str]:
+    """Effective outcomes, including an explicitly supplied absolute timing table."""
+    if "effective_t0_sources" in grouping:
+        return list(grouping["effective_t0_sources"])
+    if detector_t0_overrides(grouping, n_histograms) is not None:
+        return ["manual"] * n_histograms
+    return acquired_t0_sources(grouping, n_histograms)
+
+
+def require_selected_timing(grouping: dict, indices: Sequence[int], n_histograms: int) -> None:
+    """Reject unresolved required anchors without rejecting the acquired run."""
+    sources = effective_t0_sources(grouping, n_histograms)
+    unresolved = [i + 1 for i in indices if sources[i] in ("missing", "unresolved")]
+    if unresolved:
+        raise ValueError(
+            "Automatic t0 unavailable for selected channels " + ", ".join(map(str, unresolved))
+        )
+
+
+def resolve_selected_timing(
+    histograms: list[Histogram],
+    grouping: dict,
+    metadata: dict | None = None,
     *,
-    missing: bool,
-) -> list[int]:
-    """Each detector's **own** detected t0 — the ``musrt0 -g`` model.
+    mode: str = "from_file",
+    offset_bins: int = 0,
+    search: RunT0Search | None = None,
+    pulsed: bool | None = None,
+    cancel_check: Callable[[], None] | None = None,
+    search_provider: Callable | None = None,
+) -> None:
+    """Resolve only the selected acquired channels, retaining file facts unchanged.
 
-    A run whose detectors genuinely sit at different times (PSI per-detector
-    headers) keeps that stagger: collapsing the estimates into one median and
-    shifting every detector by its distance from the group's header maximum
-    compares two incomparable numbers and moves the whole run.
-
-    A detector whose search failed (no counts, no leading edge) keeps its file
-    t0 moved by the median of the shifts that did resolve, so it stays aligned
-    with its neighbours. On a run with no header t0 at all (*missing*) the file
-    values carry no information, so it takes the median *estimate* instead.
+    Explicit detection replaces required anchors. File/manual policies search
+    only when required file timing is absent; no failed estimate borrows a delay.
+    A supplied search is reusable across selections of the same raw acquisition.
     """
-    bins: list[int] = []
-    for file_bin, estimate in zip(file_bins, search.estimates, strict=True):
-        if estimate.ok:
-            resolved = int(estimate.t0_bin)
-        elif missing:
-            resolved = int(search.consensus_t0_bin)
-        else:
-            resolved = int(file_bin) + int(search.shift_median_bins)
-        bins.append(max(0, resolved))
-    return bins
+    from asymmetry.core.transform.grouping import independent_pair_indices
+
+    forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
+    indices = sorted(set(forward) | set(backward))
+    file_sources = acquired_t0_sources(grouping, len(histograms))
+    bins = [int(hist.t0_bin) for hist in histograms]
+    sources = [
+        "unresolved" if mode == "auto_detect" or source == "missing" else "file"
+        for source in file_sources
+    ]
+    needed = [i for i in indices if mode == "auto_detect" or file_sources[i] == "missing"]
+    for i in indices:
+        if i not in needed:
+            sources[i] = "file"
+    if needed:
+        if search is None:
+            search = (search_provider or find_t0_for_run)(
+                histograms, metadata, pulsed=pulsed, cancel_check=cancel_check
+            )
+        grouping["t0_search_strategy"] = search.strategy
+        grouping["t0_search_spread_bins"] = search.shift_spread_bins
+        for i in needed:
+            if search.strategy != "unknown" and search.estimates[i].ok:
+                bins[i] = search.estimates[i].t0_bin
+                sources[i] = "estimated"
+    grouping["effective_t0_sources"] = sources
+    from asymmetry.core.io.periods import selected_period_index
+
+    if "period_histograms" in grouping:
+        grouping["effective_t0_period"] = selected_period_index(grouping) or 0
+    grouping["t0_policy"] = {
+        "mode": mode,
+        **({"offset_bins": offset_bins} if mode == "manual" else {}),
+    }
+    if needed and search.strategy == "unknown":
+        raise ValueError(search.message)
+    require_selected_timing(grouping, indices, len(histograms))
+    if mode == "manual":
+        for i in indices:
+            bins[i] = max(0, bins[i] + offset_bins)
+            sources[i] = "manual"
+    if mode == "auto_detect" or offset_bins or needed:
+        grouping[EFFECTIVE_DETECTOR_T0_KEY] = bins
+    old_common = max(histograms[i].t0_bin for i in indices)
+    grouping["t0_bin"] = max(bins[i] for i in indices)
+    if grouping.get("t0_time_us") is not None:
+        grouping["t0_time_us"] += (grouping["t0_bin"] - old_common) * histograms[0].bin_width
 
 
 def tolerance_bins(strategy: str, width_bins: int = 0) -> int:
-    """The divergence tolerance in bins for a :func:`find_t0` *strategy* (D8).
+    """Descriptive display threshold: the larger of a family floor and feature width.
 
-    The larger of the source family's floor and the measured width of the
-    feature t0 was read off (``width_bins``; ``0`` when nothing was measured, so
-    the floor applies alone). A bin index cannot name the centre of a prompt peak
-    more precisely than the peak is wide, and how wide that is in *bins* depends
-    on the binning: the D8 floors were calibrated on ~1 ns data, where a PSI
-    prompt peak is a bin or two, but the same peak spans 4–11 bins at the 98 ps
-    binning a modern GPS run uses. A fixed floor there reports jitter of a few
-    tenths of a nanosecond as detectors disagreeing about time zero.
+    This is neither a confidence interval nor a physical calibration test.
     """
     return max(T0_TOLERANCE_BINS[_STRATEGY_FAMILY[strategy]], int(width_bins))
 
@@ -510,17 +575,7 @@ def _good_window_messages(
     file_common: int,
     base: int,
 ) -> list[str]:
-    """Warn when the analysed window opens on top of the muon arrival.
-
-    The failure this catches is silent and expensive: a good window that starts
-    at or before time zero includes the prompt peak (or, at a pulsed source, part
-    of the pulse itself) in the asymmetry, which reads as a spuriously large
-    early asymmetry rather than as an error. The window is judged against the
-    *detected* t0, because that is where the muons actually arrived.
-
-    Nothing to say when the grouping carries no good window (a payload that has
-    not resolved one yet).
-    """
+    """Report overlap with a detected count feature, without certifying arrival time."""
     first_good = grouping.get("first_good_bin")
     if first_good is None:
         return []
@@ -535,10 +590,21 @@ def _good_window_messages(
         return messages
     # Each detector's peak lives on its own bin axis; alignment moves it by
     # ``file_common − t0_i``, so compare on the common axis the window uses.
+    from asymmetry.core.transform.grouping import effective_group_indices
+
+    selected = set(
+        effective_group_indices(
+            grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
+        )
+    ) | set(
+        effective_group_indices(
+            grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
+        )
+    )
     peaks = [
         int(estimate.peak_bin) + file_common - int(hist.t0_bin)
-        for hist, estimate in zip(histograms, search.estimates, strict=True)
-        if estimate.ok
+        for i, (hist, estimate) in enumerate(zip(histograms, search.estimates, strict=True))
+        if i in selected and estimate.ok
     ]
     if peaks and first_good <= max(peaks):
         messages.append(
@@ -591,7 +657,9 @@ def assess_t0(
         return T0Assessment(
             level="error",
             delta_bins=None,
-            messages=("No time zero in the file header; using the detected value",),
+            messages=(
+                "No time zero in the file header; selected channels require their own estimates",
+            ),
             outlier_detectors=(),
         )
 
@@ -612,9 +680,20 @@ def assess_t0(
     outliers: tuple[int, ...] = ()
     if search is not None and search.ok:
         tol = tolerance_bins(search.strategy, search.width_bins)
-        shifts = detector_t0_shifts(histograms, search.estimates)
+        selected = set(forward_idx) | set(backward_idx)
+        shifts = [
+            shift if i in selected else None
+            for i, shift in enumerate(detector_t0_shifts(histograms, search.estimates))
+        ]
         delta, spread = shift_statistics(shifts)
-        detected_common = int(file_common) + delta
+        detected_common = max(
+            (
+                est.t0_bin + file_common - histograms[i].t0_bin
+                for i, est in enumerate(search.estimates)
+                if i in selected and est.ok
+            ),
+            default=file_common,
+        )
         if abs(delta) > tol:
             messages.append(
                 f"Detected t0 is bin {detected_common + base}, file t0 is bin "

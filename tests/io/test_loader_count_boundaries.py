@@ -56,7 +56,9 @@ def test_loader_records_the_named_group_alignment(tmp_path, kind):
         for key in ("forward_group", "backward_group")
     )
     _, _, crop = align_forward_backward(run.histograms, forward, backward)
-    assert dataset.metadata["grouped_alignment"] == crop.to_dict()
+    assert dataset.metadata["grouped_alignment"] == crop.to_dict() | {
+        "timing_sources": tuple((i, "file") for i, _ in crop.detector_offsets)
+    }
 
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,

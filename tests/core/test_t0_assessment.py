@@ -106,7 +106,9 @@ def test_missing_header_t0_is_an_error_naming_the_detected_fallback() -> None:
     )
 
     assert verdict.level == "error"
-    assert verdict.messages == ("No time zero in the file header; using the detected value",)
+    assert verdict.messages == (
+        "No time zero in the file header; selected channels require their own estimates",
+    )
     assert verdict.delta_bins is None
     assert verdict.outlier_detectors == ()
 

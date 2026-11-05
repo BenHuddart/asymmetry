@@ -357,8 +357,10 @@ def test_period_selection_does_not_run_missing_t0_search(tmp_path):
     for period in (1, 2):
         selected = select_period(loaded, period)
         assert selected.run.grouping["t0_source"] == "missing"
-        np.testing.assert_allclose(selected.time, [0.22, 0.24, 0.26, 0.28])
-        np.testing.assert_allclose(reduce_run_to_dataset(selected.run).time, selected.time)
+        assert selected.n_points == 0
+        assert "t0" in selected.metadata["correction_error"]
+        with pytest.raises(ValueError, match="t0"):
+            reduce_run_to_dataset(selected.run)
 
 
 @pytest.mark.parametrize("version", ["v1", "v2"])

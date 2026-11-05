@@ -6,7 +6,7 @@ groups by summing their counts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from numbers import Integral
 
 import numpy as np
@@ -23,6 +23,8 @@ from asymmetry.core.transform.t0 import (
     EFFECTIVE_DETECTOR_T0_KEY,
     common_t0_time_us,
     effective_detector_t0_bins,
+    effective_t0_sources,
+    require_selected_timing,
     selected_t0_reference,
 )
 
@@ -617,9 +619,16 @@ def group_forward_backward(
         beta = 1.0
 
     try:
+        require_selected_timing(grouping, forward_indices + backward_indices, len(histograms))
         detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
         forward, backward, crop = align_forward_backward_counts(
             histograms, forward_indices, backward_indices, detector_t0_bins
+        )
+        sources = effective_t0_sources(grouping, len(histograms))
+        crop = replace(
+            crop,
+            timing_sources=tuple((i, sources[i]) for i, _ in crop.detector_offsets),
+            timing_strategy=grouping.get("t0_search_strategy", ""),
         )
         window_grouping = grouping
         if "good_window_policy" in grouping:

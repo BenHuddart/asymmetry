@@ -34,7 +34,7 @@ from asymmetry.core.transform.grouping import (
     independent_pair_indices,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
-from asymmetry.core.transform.t0 import effective_detector_t0_bins
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, resolve_selected_timing
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -429,6 +429,19 @@ def reduce_period_asymmetry(
             if periods is not None
             else (histograms, grouping)
         )
+        if (
+            periods is not None
+            and "t0_policy" in effective
+            and "effective_t0_sources" not in effective
+        ):
+            policy = effective["t0_policy"]
+            resolve_selected_timing(
+                selected,
+                effective,
+                metadata,
+                mode=policy["mode"],
+                offset_bins=policy.get("offset_bins", 0),
+            )
         reduced[label] = reduce_grouped_asymmetry(
             histograms=selected,
             grouping=effective,

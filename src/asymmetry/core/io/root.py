@@ -33,11 +33,7 @@ from asymmetry.core.io.root_header import (
     read_directory_header,
     read_lem_header,
 )
-from asymmetry.core.transform import (
-    common_t0_time_us,
-)
 from asymmetry.core.transform.fb_counts import validated_count_arrays
-from asymmetry.core.transform.t0 import selected_t0_reference
 from asymmetry.core.utils.perf import perf_timer
 
 _PHYSICAL_HEADER_FIELDS: dict[str, Dimension] = {
@@ -523,10 +519,6 @@ class RootLoader(BaseLoader):
             title=self._object_title(obj),
         )
 
-    # ------------------------------------------------------------------
-    # Dataset construction
-    # ------------------------------------------------------------------
-
     def _build_dataset(
         self,
         path: Path,
@@ -551,22 +543,19 @@ class RootLoader(BaseLoader):
         first_good_bins: list[int] = []
         last_good_bins: list[int] = []
 
-        t0_present = False
+        t0_sources = []
         for hist, counts_array in zip(selected, counts, strict=True):
             detector = self._detector_info(header, hist)
             label = detector.get("Name") or hist.title or f"hDecay{hist.histo_number:03d}"
             t0_value = detector.get("Time Zero Bin")
-            t0_present = t0_present or t0_value is not None
+            t0_sources.append("file" if t0_value is not None else "missing")
             t0 = self._int_from_value(t0_value, default=0)
             first_good = self._int_from_value(detector.get("First Good Bin"), default=t0)
             last_good = self._int_from_value(detector.get("Last Good Bin"), default=max_bin)
             t0 = max(0, min(max_bin, t0))
             first_good = max(0, min(max_bin, first_good))
             last_good = max(first_good, min(max_bin, last_good))
-            # musrfit stores "Time Zero Bin" as a Double_t and centres that bin
-            # on t = 0, so the exact t0 is the centre of the (possibly
-            # fractional) bin it names — kept alongside the integer bin, which
-            # still drives detector alignment and the good window (D4).
+            # ROOT fractional anchors stamp the named bin centre at t = 0.
             t0_time_us = (
                 None
                 if t0_value is None
@@ -592,9 +581,25 @@ class RootLoader(BaseLoader):
         groups, group_names, forward_gid, backward_gid = self._default_groups(
             labels, instrument=str(header.get("RunInfo/Instrument", ""))
         )
+        metadata = self._metadata(
+            path,
+            header,
+            header_kind,
+            labels,
+            root_numbers,
+            quantities,
+            slow_control_logs,
+            run_summary,
+        )
         quick = quick_asymmetry(
             histograms,
-            {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid},
+            {
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "detector_t0_sources": t0_sources,
+            },
+            metadata=metadata,
         )
         asymmetry, error = quick.asymmetry, quick.error
         common_t0 = quick.common_t0
@@ -608,16 +613,6 @@ class RootLoader(BaseLoader):
         asymmetry = asymmetry[window]
         error = error[window]
 
-        metadata = self._metadata(
-            path,
-            header,
-            header_kind,
-            labels,
-            root_numbers,
-            quantities,
-            slow_control_logs,
-            run_summary,
-        )
         metadata.update(quick.metadata)
         grouping = {
             "groups": groups,
@@ -625,6 +620,7 @@ class RootLoader(BaseLoader):
             "forward_group": forward_gid,
             "backward_group": backward_gid,
             "alpha": alpha,
+            **quick.file_grouping,
             "t0_bin": int(common_t0),
             "t_good_offset": int(first_good) - int(common_t0),
             "first_good_bin": int(first_good),
@@ -637,16 +633,12 @@ class RootLoader(BaseLoader):
             "detector_t0_bins": detector_t0_bins,
             "detector_first_good_bins": first_good_bins,
             "detector_last_good_bins": last_good_bins,
-            "t0_source": "file" if t0_present else "missing",
+            "t0_source": "file" if "file" in t0_sources else "missing",
+            "detector_t0_sources": t0_sources,
             "histogram_labels": labels,
             "root_histo_numbers": root_numbers,
             "instrument": str(metadata.get("instrument", "")),
         }
-        if (
-            quick.alignment is not None
-            and histograms[selected_t0_reference(histograms, grouping)].t0_time_us is not None
-        ):
-            grouping["t0_time_us"] = common_t0_time_us(histograms, grouping, common_t0)
 
         run = Run(
             run_number=int(metadata.get("run_number", 0) or 0),

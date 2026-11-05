@@ -565,10 +565,10 @@ format, the verdict messages, and the tolerances.
   preserved and each run is aligned by its own time-zero. The spinbox is
   read-only and shows the selected run's resolved t0; switching the selected
   run updates it. Nothing is stored on the profile — resolution reads each
-  run's file again. A run whose file carries **no** usable t0 at all falls
-  back to the detected value automatically (the line reads ``File: none
-  (detected)`` and a warning names it), so From file always resolves to
-  something even on a header-less run.
+  run's file again. Required missing calibration falls back to the channel's
+  own estimate under a known source strategy. Usable file anchors remain
+  unchanged. An unresolved required channel makes the request unavailable;
+  raw inspection and editing remain available.
 * **Manual** — type a *signed offset*, in bins, from each run's own file t0.
   The spinbox itself shows the selected run's resulting **absolute** bin (so
   it reads the same as From file when the offset is zero), but what a
@@ -586,12 +586,11 @@ format, the verdict messages, and the tolerances.
   musrfit's ``musrt0 -g`` writes. A run whose detectors genuinely sit at
   different times (a PSI file with a t0 per detector) therefore keeps that
   stagger: each detector moves to its own prompt peak rather than the whole
-  run moving by one common amount. A detector whose search failed — no counts,
-  no leading edge — keeps its file t0 moved by the median of the shifts the
-  others resolved, so it stays aligned with its neighbours; on a run with no
-  header t0 at all it takes the median detected bin instead. The spinbox is
-  read-only and shows the selected run's resulting common t0 with its
-  provenance (strategy, and the spread of the per-detector shifts).
+  run moving by one common amount. Each selected channel must have its own
+  successful estimate; no failed channel borrows a neighbour's or median anchor.
+  Unused failures do not block the selected pair. Unknown source metadata does
+  not silently select a strategy. The spinbox is read-only; raw searches run
+  on workers and reuse completed results across selections. See :ref:`t0-search`.
 
 **The payload follows the profile's groups.** A run's t0 and file-derived good
 window are not constants of the file: the common t0 is the maximum over the
@@ -1356,8 +1355,9 @@ values as ``detector_t0_bins`` and aligns each detector histogram to its own
 ``t0`` before summing groups. This avoids shifting all PSI spectra through a
 single global time-zero before grouping. A file whose header ``t0`` is zero
 for every histogram — no calibration was ever written — is treated as having
-none: the run's ``t0_source`` is ``missing`` and From file falls back to the
-detected value (above), rather than aligning every detector on bin zero.
+none: the run's ``t0_source`` is ``missing``. From file requires a successful
+known-strategy estimate for each selected channel; explicit zero in a format
+that records usable zero calibration remains valid.
 
 PSI detector names use the PSI instrument convention: ``Forward`` and
 ``Backward`` are measured along the beam direction. Asymmetry's pair-asymmetry
