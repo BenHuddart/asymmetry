@@ -89,6 +89,16 @@ honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
 unrecognised unit is passed through unchanged — the loader never guesses a
 conversion the file did not declare.
 
+NeXus-v2 file deadtimes with explicit microsecond or nanosecond units are
+converted to μs when loaded: 20 ns and 0.02 μs give the same coefficient.
+The units belong to the selected detector dataset (``dead_time``, ``deadtime``,
+or ``deadtimes``). Supported declarations include ``us``, ``µs``, ``μs``, ``ns``,
+and the singular or plural words, including byte attributes. Missing and other
+unit declarations retain the stored-value-as-μs behaviour. Legacy v1/HDF4
+uses fixed μs coefficients regardless of the attribute. Saved project
+coefficients are already in μs and are not converted again. Acquired counts,
+timing, and counting variance are retained.
+
 NeXus exports declare units on every written physical quantity: sample
 ``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
 ``corrected_time``, ``time_zero``, and ``dead_time`` use ``microseconds``,
@@ -277,6 +287,11 @@ For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
 1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
 interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
 are not implied by agreement on matched raw observations.
+
+For explicit NeXus-v2 deadtime units, Asymmetry follows WiMDA's μs/ns
+conversion. This intentionally differs from musrfit 1.12.1's compared
+stored-value-as-μs convention. Missing units and legacy v1 remain outside
+this conversion; see :ref:`comparison-deadtime-units` for the comparison limits.
 
 Asymmetry also checks that selected channels have compatible bin widths before
 integer alignment, because whole-bin count transport requires one common
