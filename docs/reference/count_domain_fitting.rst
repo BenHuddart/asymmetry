@@ -246,8 +246,14 @@ Count loss and double pulse
   records the ``count_fit`` method and source run. Promotion writes the captured
   total, so repeating it does not add the increment a second time.
 
-  ``FitResult.deadtime_calibration`` holds the immutable total coefficients,
-  errors in µs, method and source run. An error is unknown when a nonzero
+  A successful residual fit does not guarantee a transferable total table.
+  Skipped File correction or unknown unused-detector coefficients leave the
+  fit usable with a warning and no calibration to promote; unknown values are
+  never treated as zero. Explicit ``Off`` retains its supported zero-base
+  residual calibration.
+
+  When available, ``FitResult.deadtime_calibration`` holds the immutable total
+  coefficients, errors in µs, method and source run. An error is unknown when a nonzero
   applied base has no recorded covariance with the residual fit; promotion
   does not invent a total uncertainty.
 
@@ -341,11 +347,18 @@ preprocessing corrects before cropping. These are preparation conventions,
 not agreement claims about each program's count-fit objective. See
 :ref:`comparison-deadtime-scope` and :doc:`detector_grouping`.
 
-Asymmetry's per-detector Estimate/Cal mean is algebraically equivalent to the
-published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`
+The per-detector rational mean used by dedicated Estimate/Cal is algebraically
+equivalent to the published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`
 (Kilcoyne, RAL-94-080, §4). It fits the rational mean to raw counts with
-Poisson standard deviations; it does not fit the transformed correlated
-observables.
+plug-in Poisson standard deviations; it does not fit the transformed correlated
+observables. This algebraic identity does not equate the estimators or their
+errors. Estimate averages fitted detector coefficients, rather than fitting a
+pooled spectrum. The dedicated calibration fixes the lifetime and has no
+background or polarisation term; a count-domain fit instead uses its configured
+physical model, objective, and fit window. A residual DT₀, its rational mean,
+and a complete transferable calibration are distinct quantities. See
+:doc:`detector_grouping` for dedicated source/window and conditional-error
+assumptions, and :ref:`comparison-deadtime-calibration` for reference differences.
 
 A recorded Mantid 6.16.1 ``CalMuonDeadTime`` v1 binary check used noiseless
 coefficients −0.02, 0 and +0.02 µs, :math:`N_0=10000` counts/bin, lifetime

@@ -4,8 +4,66 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.deadtime import calibrate_deadtime_from_histograms
+from asymmetry.core.transform.deadtime import (
+    apply_deadtime_correction,
+    calibrate_deadtime_from_histograms,
+    fit_deadtime_calibration,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
+
+@pytest.mark.parametrize("rates", [(1.0, 1.0), (1.0, 0.25)])
+def test_cal_and_estimate_recover_independent_detector_targets(rates):
+    # The inverse and the local curvature supply independent value/error anchors.
+    width, frames, offset, length = 0.05, 1e5, 4, 120
+    coefficients = (-0.02, 0.06)
+    histograms, truths, variances = [], [], []
+    for index, (rate, coefficient) in enumerate(zip(rates, coefficients, strict=True)):
+        time = np.arange(length) * width
+        decay = np.exp(-time / MUON_LIFETIME_US)
+        amplitude = 1e5 * rate
+        true = amplitude * decay
+        denominator = 1 + true * coefficient / (width * frames)
+        measured = true / denominator
+        start = index + offset
+        histograms.append(
+            Histogram(
+                np.concatenate([np.full(start, 9e6), measured, np.full(10, 9e6)]),
+                bin_width=width,
+                t0_bin=index,
+            )
+        )
+        truths.append(true)
+        # At zero residual, H(chi²)/2 = Jᵀ W J for amplitude and d in µs.
+        jacobian = np.column_stack(
+            [decay / denominator**2, -(true**2) / (width * frames * denominator**2)]
+        )
+        covariance = np.linalg.inv(jacobian.T @ (jacobian / measured[:, None]))
+        variances.append(covariance[1, 1])
+
+    results = {
+        method: fit_deadtime_calibration(
+            histograms,
+            num_good_frames=frames,
+            t_good_offset=offset,
+            max_bins=length,
+            method=method,
+            source_run=7,
+        )
+        for method in ("calibrate", "estimate")
+    }
+    cal, estimate = results["calibrate"], results["estimate"]
+    assert cal.tau_us == pytest.approx(coefficients, abs=1e-9)
+    assert cal.errors_us == pytest.approx(np.sqrt(variances), rel=5e-4)
+    assert estimate.tau_us == pytest.approx([0.02, 0.02], abs=1e-9)
+    assert estimate.errors_us == pytest.approx([np.sqrt(sum(variances)) / 2] * 2, rel=5e-4)
+    assert estimate.source_run == cal.source_run == 7
+    for index, (histogram, coefficient, true) in enumerate(
+        zip(histograms, cal.tau_us, truths, strict=True)
+    ):
+        selected = histogram.counts[index + offset : index + offset + length]
+        corrected = apply_deadtime_correction(selected, coefficient, width, num_good_frames=frames)
+        np.testing.assert_allclose(corrected, true, rtol=1e-8)
 
 
 @pytest.mark.parametrize("coefficient", [-0.02, 0.0, 0.02])
