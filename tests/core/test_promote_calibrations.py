@@ -86,7 +86,7 @@ def test_promote_t0_negative_offset_moves_the_stored_zero_later():
     assert out["residual_us"] == pytest.approx(0.0)
 
 
-def test_promote_t0_shifts_first_good_bin_and_detector_override_with_it():
+def test_promote_t0_keeps_raw_bounds_and_shifts_detector_override():
     """The good window and the per-detector alignment keep their offsets from t0."""
     grouping = {
         "t0_bin": 100,
@@ -95,7 +95,8 @@ def test_promote_t0_shifts_first_good_bin_and_detector_override_with_it():
     }
     promote_t0_to_grouping(grouping, 0.1, bin_width_us=0.05)  # −2 bins
     assert grouping["t0_bin"] == 98
-    assert grouping["first_good_bin"] == 108
+    assert grouping["first_good_bin"] == 110
+    assert grouping["t_good_offset"] == 12
     # Each detector moves by the same delta; the ≥0 clamp holds per entry.
     assert grouping[EFFECTIVE_DETECTOR_T0_KEY] == [96, 98, 0]
 

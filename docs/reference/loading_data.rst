@@ -42,6 +42,12 @@ intersection makes the quick look unavailable, retaining the raw counts and
 per-channel bounds for inspection and repair. See
 :doc:`/reference/detector_grouping` for the exact-reference and raw-bin mapping.
 
+File bounds stay attached to acquired bins through timing edits. Manual
+endpoints are signed offsets from effective t0 and may override advisory file
+limits within observed support; omitted endpoints keep their mapped file limits.
+An invalid authored selection remains editable without changing file loading.
+See :ref:`comparison-file-manual-windows`.
+
 Supported formats
 -----------------
 

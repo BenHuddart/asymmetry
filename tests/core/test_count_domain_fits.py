@@ -1109,4 +1109,5 @@ def test_promote_t0_round_trip_recovers_a_corrupted_time_zero(delta_bins):
     assert abs(grouping["t0_bin"] - truth_bin) <= 1
     applied = grouping["t0_bin"] - out["before"]["t0_bin"]
     assert applied == pytest.approx(-delta_bins, abs=1)
-    assert grouping["first_good_bin"] == first_good_before + applied
+    assert grouping["first_good_bin"] == first_good_before
+    assert grouping["t_good_offset"] == first_good_before - grouping["t0_bin"]

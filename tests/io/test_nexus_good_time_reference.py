@@ -6,11 +6,21 @@ integer channel timing is compared separately from exact NeXus calibration.
 
 import shutil
 import subprocess
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 from asymmetry.core.io.nexus import NexusLoader
+from asymmetry.core.project.profiles import (
+    GoodWindowPolicy,
+    GroupingProfile,
+    ProfileFingerprint,
+    T0Policy,
+    resolve_effective_grouping,
+)
+from asymmetry.core.simulate import reduce_run_to_dataset
+from asymmetry.core.transform.grouping import group_forward_backward
 from tests.io.test_deadtime_reference_programs import _synthetic_nexus
 
 h5py = pytest.importorskip("h5py")
@@ -19,7 +29,8 @@ pytestmark = [pytest.mark.io, pytest.mark.integration]
 
 @pytest.mark.parametrize("exact", [0.2074, 0.21])
 @pytest.mark.parametrize("channel", [1, 2])
-def test_musrfit_matched_explicit_data_channels(tmp_path, channel, exact):
+@pytest.mark.parametrize("shift,manual", [(0, False), (5, False), (5, True)])
+def test_musrfit_matched_explicit_data_channels(tmp_path, channel, exact, shift, manual):
     program = shutil.which("musrfit")
     if program is None:
         pytest.skip("musrfit executable is not installed")
@@ -47,6 +58,7 @@ def test_musrfit_matched_explicit_data_channels(tmp_path, channel, exact):
     (tmp_path / "musrfit_startup.xml").write_text(
         '<?xml version="1.0"?><musrfit><data_path>.</data_path></musrfit>'
     )
+    first, end = (11 + shift, 15 + shift) if manual else (11, 15)
     (tmp_path / "reference.msr").write_text(f"""Synthetic raw observations
 ###############################################################
 FITPARAMETER
@@ -62,8 +74,8 @@ fittype 0
 norm 1
 backgr.fit 2
 forward {channel}
-t0 10
-data 11 15
+t0 {10 + shift}
+data {first} {end}
 fit -1 2
 packing 1
 ###############################################################
@@ -85,11 +97,32 @@ range -1 2
     )
     assert result.returncode == 0, result.stdout + result.stderr
     exported = np.loadtxt(tmp_path / "reference_0.dat", comments="%", delimiter=",")
-    np.testing.assert_allclose(exported[:, 1], raw[channel - 1, 11:15], rtol=5e-6)
-    np.testing.assert_allclose(exported[:, 2], np.sqrt(raw[channel - 1, 11:15]), rtol=5e-6)
+    np.testing.assert_allclose(exported[:, 1], raw[channel - 1, first:end], rtol=5e-6)
+    np.testing.assert_allclose(exported[:, 2], np.sqrt(raw[channel - 1, first:end]), rtol=5e-6)
     loaded = NexusLoader().load(path)
     # The explicit native interval has an exclusive upper channel. Native t0
     # stamps channel 10 at zero; Asymmetry retains the exact raw-edge origin.
-    np.testing.assert_allclose(exported[:, 0], [0.02, 0.04, 0.06, 0.08], atol=1e-15)
-    np.testing.assert_allclose(loaded.time - exported[:, 0], 0.21 - exact, atol=1e-15)
+    profile = GroupingProfile(
+        name="matched",
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", offset_bins=shift),
+        good_window_policy=GoodWindowPolicy(mode="manual", first_offset_bins=1, last_offset_bins=4)
+        if manual
+        else GoodWindowPolicy(),
+    )
+    grouping = resolve_effective_grouping(profile, loaded.run)
+    counts = group_forward_backward(loaded.run.histograms, grouping).counts
+    native_time = (np.arange(first, end) - 10 - shift) * 0.02
+    np.testing.assert_allclose(exported[:, 0], native_time, atol=1e-15)
+    np.testing.assert_allclose(
+        reduce_run_to_dataset(replace(loaded.run, grouping=grouping)).time - exported[:, 0],
+        0.21 - exact,
+        atol=1e-15,
+    )
+    value = (counts.forward, counts.backward)[channel - 1]
+    np.testing.assert_allclose(value.counts[counts.window.slice], exported[:, 1], rtol=5e-6)
+    np.testing.assert_allclose(
+        np.sqrt(value.independent_variance[counts.window.slice]), exported[:, 2], rtol=5e-6
+    )
     assert [(h.good_bin_start, h.good_bin_end) for h in loaded.run.histograms] == [(11, 14)] * 2

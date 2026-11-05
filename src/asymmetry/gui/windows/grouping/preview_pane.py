@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
     ForwardBackwardCounts,
@@ -41,6 +42,8 @@ from asymmetry.core.transform.corrections import (
     CorrectionStatus,
 )
 from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.reduce import reduce_period_asymmetry
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
@@ -214,10 +217,7 @@ class _PreviewRequest:
 
 @dataclass(frozen=True)
 class CountsCurves:
-    """Full grouped spectra on shared decimated bin-centre times in µs.
-
-    Marker edges retain the undecimated acquisition-bin coordinates.
-    """
+    """Decimated observed bin-centre spectra in μs, with undecimated marker edges."""
 
     #: Bin-centre times of the drawn bins, in µs after t0.
     time: np.ndarray
@@ -259,23 +259,13 @@ class _PreviewResult:
     time: np.ndarray
     asymmetry: np.ndarray
     error: np.ndarray
-    #: The same reduction seen in the count domain — one worker pass feeds both
-    #: views, so switching view is a redraw (D8).
-    counts: CountsCurves
-    #: The (α, β) the solid curve was formed with — the caption quotes them.
+    counts: CountsCurves | None
     alpha: float
     beta: float
-    #: Compare extras (all ``None`` unless the request asked for a compare, or
-    #: the focused stage was not applied and so had nothing to remove).
-    #: ``baseline`` is the ghost curve (aligned to ``time``), named by
-    #: ``COMPARE_STAGE_LABELS[compare_stage]``.
     baseline: np.ndarray | None = None
     compare_stage: str | None = None
-    #: Residual baseline ``(⟨A⟩, its error)`` in percent — the α compare only,
-    #: and ``None`` when no point of the curve is finite. One field, because a
-    #: mean without its error is not a state this can be in.
     centre: tuple[float, float] | None = None
-    corrections: CorrectionOutcomes = CorrectionOutcomes()
+    corrections: tuple[CorrectionOutcomes, ...] = (CorrectionOutcomes(),)
 
 
 class GroupingPreviewPane(QWidget):
@@ -447,7 +437,7 @@ class GroupingPreviewPane(QWidget):
             or (
                 self._last_result is not None
                 and self._last_result.generation == self._generation
-                and self._last_result.corrections.complete
+                and all(outcome.complete for outcome in self._last_result.corrections)
             )
         )
 
@@ -532,12 +522,13 @@ class GroupingPreviewPane(QWidget):
         self._state = result
         missing = [
             f"{item.name} ({item.reason})"
-            for item in (result.corrections.deadtime, result.corrections.background)
+            for outcome in result.corrections
+            for item in (outcome.deadtime, outcome.background)
             if item.status in {CorrectionStatus.UNAVAILABLE, CorrectionStatus.FAILED}
         ]
         self._incomplete_banner.setText("Incomplete preview — not applied: " + ", ".join(missing))
         self._incomplete_banner.setVisible(bool(missing))
-        if result.corrections.complete:
+        if all(outcome.complete for outcome in result.corrections):
             self.preview_completed.emit(result.alpha)
         self.preview_changed.emit()
         self._draw(result)
@@ -692,25 +683,19 @@ class GroupingPreviewPane(QWidget):
         result: _PreviewResult,
         preserved: tuple[tuple[float, float], tuple[float, float]] | None,
     ) -> None:
-        """The count domain (D7): corrected F/B spectra with the settings marked.
+        """Draw single-period spectra on their observed bin-centre grid.
 
-        Every count-domain setting the dialog edits acts here and nowhere the
-        asymmetry can show it — t0 shifts the origin, the good window picks the
-        bins the asymmetry is formed from, and the background is a level taken
-        off both spectra. The spectra span decades, so the axis is log₁₀; a
-        background-subtracted bin at or below zero has no logarithm and is drawn
-        on the floor at 1.
-
-        Colour encodes *with* the focused correction and grey its absence (D11);
-        line style encodes the group — F solid, B dashed — so both codings are
-        readable at once.
+        Background-subtracted counts at or below zero use the log-plot floor.
+        Combined asymmetries do not define a single count spectrum.
         """
         counts = result.counts
-        if counts.forward.size == 0:
+        if counts is None or counts.forward.size == 0:
             self._axes.text(
                 0.5,
                 0.5,
-                "No counts in this run's histograms.",
+                "Counts view requires a single selected period."
+                if counts is None
+                else "No counts in this run's histograms.",
                 ha="center",
                 va="center",
                 transform=self._axes.transAxes,
@@ -1002,11 +987,13 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     """Reduce immutable request snapshots off-thread, with cooperative cancellation."""
     if worker.is_cancelled():
         raise TaskCancelledError
+
+    def resolve_reference(grouping):
+        return background_reference_for_grouping(request.resolved_reference, grouping)
+
     if request.profile is not None:
-        # The expensive step for auto-t0 / per-run-alpha policies; must stay
-        # off the GUI thread. The profile is the pane's private deep copy.
         grouping = resolve_effective_grouping(
-            request.profile, request.run, reference_resolver=lambda _: request.resolved_reference
+            request.profile, request.run, reference_resolver=resolve_reference
         )
     else:
         grouping = request.grouping or {}
@@ -1024,13 +1011,46 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
     if worker.is_cancelled():
         raise TaskCancelledError
-    # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
-    # deadtime → grouping → background stages (the expensive part).
     flags = correction_flags_from_grouping(grouping)
-    # The solid curve and its residual always use every configured correction.
     use_deadtime = flags.use_deadtime
     use_background = flags.use_background
     facility = request.facility or resolve_facility(grouping=grouping)
+
+    mode = grouping.get("period_mode", PeriodMode.RED)
+    if mode in (PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED):
+        alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
+        reduced = reduce_period_asymmetry(
+            histograms,
+            grouping,
+            mode,
+            binning=binning_spec(grouping),
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            alpha=alpha,
+            beta=beta,
+            use_deadtime=use_deadtime,
+            deadtime_mode=flags.deadtime_mode,
+            use_background=use_background,
+            facility=facility,
+            reference_resolver=resolve_reference,
+            allow_incomplete=True,
+        )
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        time, asymmetry, error = _decimate_for_preview(
+            reduced.time, reduced.asymmetry, reduced.error, _MAX_PREVIEW_POINTS
+        )
+        return _PreviewResult(
+            generation=request.generation,
+            facts=replace(request.facts, member_counts=(len(forward_idx), len(backward_idx))),
+            time=time,
+            asymmetry=asymmetry,
+            error=error,
+            counts=None,
+            alpha=alpha,
+            beta=beta,
+            corrections=tuple(reduced.corrections.values()),
+        )
 
     def _reduce(dt: bool, bg: bool):
         return corrected_grouped_counts(
@@ -1042,7 +1062,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=bg,
             facility=facility,
-            reference_resolver=lambda _: request.resolved_reference,
+            reference_resolver=resolve_reference,
             allow_incomplete=True,
         )
 
@@ -1055,32 +1075,21 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, beta=beta)
 
-    # Removing a count correction requires another reduction: the corrected
-    # spectrum cannot recover the raw Poisson means. Balance ghosts share it.
     compare = request.compare_stage
     baseline = None
     centre: tuple[float, float] | None = None
-    # The second corrected pass, when the focused stage acts on the counts — it
-    # is the asymmetry ghost AND the Counts view's ghost, never run twice (D8).
     ghost_counts = None
     if compare == "alpha":
-        # Residual baseline (inverse-variance weighted ⟨A⟩) on the full-res curve.
         centre = _weighted_centre(asymmetry, error)
         if abs(alpha - 1.0) > 1e-12:
-            # The ghost removes only α; a configured β stays applied.
             _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, beta=beta)
             _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
     elif compare == "beta" and abs(beta - 1.0) > 1e-12:
-        # β ghost: same corrected counts, α as configured, β removed — the exact
-        # mirror of the α compare (one reduction, two curves).
         _bt, base_asym, _be = _form_asymmetry(corrected, grouping, alpha, beta=1.0)
         _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
     elif (compare == "deadtime" and use_deadtime) or (compare == "background" and use_background):
-        # The ghost is a second full reduction — honour cancellation before it, as
-        # the first pass does, so a shutdown mid-flight stops promptly on big runs.
         if worker.is_cancelled():
             raise TaskCancelledError
-        # The focused stage is dropped; the other keeps its configured state.
         ghost_counts = _reduce(
             use_deadtime and compare != "deadtime",
             use_background and compare != "background",
@@ -1088,9 +1097,6 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         ghost = _form_asymmetry(ghost_counts, grouping, alpha, beta=beta)
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
 
-    # Decimate here, off the GUI thread: bounds both the marshalled payload and
-    # the GUI-thread draw (which is O(points) and the real hang on large runs —
-    # see _MAX_PREVIEW_POINTS).
     time, asymmetry, error = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
     return _PreviewResult(
         generation=request.generation,
@@ -1104,7 +1110,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         baseline=baseline,
         compare_stage=compare,
         centre=centre,
-        corrections=corrected.corrections,
+        corrections=(corrected.corrections,),
     )
 
 
@@ -1115,14 +1121,7 @@ def _counts_curves(
     first_good: int,
     last_good: int,
 ) -> CountsCurves:
-    """The count-domain view of a reduction: full spectra on one shared stride.
-
-    Unlike the asymmetry, this covers the histogram from bin 0 — the pre-t0
-    region the ``range`` background reads, and the bins the good window leaves
-    out, are exactly what the view exists to show. Stamps are bin centres
-    ``(k + ½)·w`` minus the run's exact t0, the same convention the reduction's
-    own axis uses.
-    """
+    """Keep observed centres (k + ½)w − t0 and undecimated window edges in μs."""
     n = int(corrected.forward.counts.size)
     step = _preview_stride(n, _MAX_PREVIEW_POINTS)
     bins = np.arange(0, n, step, dtype=np.float64)

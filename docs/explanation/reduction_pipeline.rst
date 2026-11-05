@@ -66,6 +66,13 @@ returns fractional asymmetry and uncertainty. See
 :doc:`/reference/asymmetry_units` for API scales and
 :doc:`/reference/data_reduction/binning` for bin edges, partial bins, and errors.
 
+File-good limits stay on acquired raw bins through timing edits; selected-channel
+alignment maps them into the common observed interval. Manual window endpoints
+are signed offsets from effective t0, with omitted endpoints retaining mapped
+file limits. The resolved window also supplies finite-window calibration
+integrals. See :ref:`comparison-file-manual-windows` and
+:doc:`/reference/detector_grouping`.
+
 Calibration dependencies
 -------------------------
 

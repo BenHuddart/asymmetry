@@ -111,8 +111,8 @@ options:
                         Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
-  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
-                        the file's)
+  --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the
+                        file's)
   --period RED|GREEN|N|green-red
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-
@@ -164,8 +164,8 @@ options:
                         Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
-  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
-                        the file's)
+  --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the
+                        file's)
   --period RED|GREEN|N|green-red
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-
@@ -231,8 +231,8 @@ options:
                         Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
-  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
-                        the file's)
+  --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the
+                        file's)
   --period RED|GREEN|N|green-red
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-

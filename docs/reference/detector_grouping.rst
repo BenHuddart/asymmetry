@@ -670,29 +670,54 @@ are rejected.
 Good-window modes
 ------------------
 
-The **t_good Offset** row carries the same kind of mode selector (**From
-file** / **Manual**) as the t0 row above, and together with **Last Good
-Bin** it decides where each run's analysed window starts and ends. This
-mirrors WiMDA's *FileValues* checkbox, which governs ``toff`` and
-``tgoodend`` alongside ``tzero`` in its ``.mgp`` grouping record: one
-switch, not two, because the two ends of a window are one analysis choice.
+The **t_good Offset** row selects **From file** or **Manual**. Together with
+**Last Good Bin**, it selects the inclusive analysed interval on the uncropped
+aligned grid. The two modes distinguish acquisition facts from an authored
+selection; the timing row has its own independent selector.
 
-* **From file** (the default) — both spins are read-only and show the
-  selected run's own file-derived good-bin window for the profile's
-  analysis groups (the same re-derivation described above for the t0 row's
-  From file mode: the intersection of the analysed detectors' own
-  windows). Nothing is stored on the profile — resolution reads each run's
-  file again, so a project saved in this mode resolves exactly as it did
-  before this feature existed.
-* **Manual** — both spins become editable, seeded from the file window the
-  moment you switch. What a profile stores is not the absolute bins the
-  spins show but **both ends as signed offsets, in bins, from the run's
-  effective t0** — the t0 the t0 row resolved to, after its own mode has
-  run. One profile therefore gives every run in scope the same window
-  relative to its own t0, and the window rides along automatically when a
-  Manual or Auto-detect t0 shift moves that t0. Last Good Bin shows the
-  resulting absolute bin for the previewed run and is converted back to an
-  offset from that run's t0 on Apply.
+* **From file** — both controls are read-only. Each detector's original raw
+  good-bin bounds are mapped through its current effective alignment shift,
+  then intersected with the selected channels' observed support. A uniform
+  common t0 shift preserves selected raw counts and variances while moving
+  timestamps. Detector-specific timing changes, exclusions, or a different
+  pair can change the common intersection. Missing detector tables retain the
+  recorded scalar interval; they do not establish original per-detector facts.
+* **Manual** — both controls are editable. A profile stores signed offsets
+  from effective t0. **Last Good Bin** displays the resulting absolute bin
+  for the previewed run and converts it back to an offset on Apply. Structured
+  requests may omit either offset: that endpoint retains its corresponding
+  mapped file limit. Negative offsets are valid within observed support, and
+  a deliberate manual interval can extend beyond advisory file-good bounds.
+
+Asymmetry also checks that authored endpoints are ordered and lie within the
+selected channels' common observed support. It reports the requested and
+available ranges instead of clipping or reordering them into observations.
+A genuine one-bin interval remains valid. Malformed saved offsets also reopen
+for repair: **t_good Offset** and **Last Good Bin** retain their authored values
+until an integer edit or selecting **From file** replaces them. Validation occurs
+when the calculation is requested. An unsupported request makes the
+preview unavailable and disables **Apply**; the settings remain editable and
+raw histograms remain available. These are calculation-request checks, not
+new facility-file loading restrictions. Automatic file/support intersection
+is distinct from changing an explicit manual endpoint.
+
+For example, file t0 10 with file bounds 20–80 still selects raw bins 20–80
+after a common +5-bin timing change. Manual offsets 10 and 70 select 25–85
+at effective t0 15. An omitted first offset retains 20; an omitted last offset
+retains 80. Offset −10 selects first bin 5, provided the selected alignment
+actually observes it. ``t_good_offset`` is the signed derived difference
+between the resolved first bound and effective t0; the bounds own selection.
+
+The preview, final reduction, and automatic integral-ratio alpha policy use
+this same resolved window. Independent projections and held periods resolve
+their own selected support; G±R still requires identical reduced grids.
+Fixed and one-shot calibrated coefficients stay
+fixed. The G±R preview uses the final per-period calculation and refuses
+mismatched grids. Reference-background subtraction uses each period's live
+exposure; saved frame pairs and explicit scales retain their recorded meaning.
+Counts and correction-compare curves require a single
+selected period; a combined asymmetry has no single corresponding F/B spectrum. See :ref:`comparison-file-manual-windows` for the related reference
+workflows and their different controls.
 
 A read-only line beneath the pair always shows the t_good offset in time,
 e.g. ``≈ 0.112 µs after t0``, computed from the selected run's own bin
@@ -709,10 +734,18 @@ spins stay plainly editable and nothing is added to its override payload.
    :align: center
    :alt: The grouping window's t_good Offset row with its From file/Manual
       selector, the Last Good Bin row, and the provenance line beneath them
-      reading "≈ 0.112 µs after t0 · File: offset 3 · last bin 32".
+      reading "≈ -0.048 µs after t0 · File: offset 3 · last bin 33".
 
    The t_good Offset row (mode selector, offset spin), the Last Good Bin
    row, and the provenance line below them, here in Manual mode.
+
+The deadtime decay-fit estimator has a separate post-t0 fitting interval.
+Asymmetry also checks that its start offset is non-negative because that
+estimator models the decay after implantation. A valid pre-t0 reduction window
+does not satisfy that estimator's assumption: requesting the fit reports the
+restriction while leaving counts and the reduction settings available. This
+restriction does not apply to manual window selection or fixed deadtime
+coefficients.
 
 Alpha calibration
 ------------------

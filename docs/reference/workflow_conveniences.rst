@@ -13,14 +13,14 @@ The Data Browser shows **Run**, **Title**, **T**, and **B** by default. Right-cl
 any column header and choose **Add column…** to add a run-quality column; the
 chosen set is remembered with the project. Two are worth knowing:
 
-- **Good Events (MEv)** — the total counts inside the good-bin range, summed over
-  the forward and backward groups, in millions of events. This is the number that
-  governs the statistical reach of a run: a fit's parameter errors scale roughly
-  as :math:`1/\sqrt{N}`, so a run with 8 MEv reaches about :math:`\sqrt{8/2}=2\times`
-  tighter than one with 2 MEv. It differs from **Counts (MEv)**, which sums *every*
-  bin including the pre-:math:`t_0` and dead tail — Good Events is what actually
-  enters the asymmetry.
-- **Events/frame** — Good Events divided by the number of acquisition frames, a
+- **Good Events (MEv)** — raw counts in the selected forward/backward
+  observations, using their aligned good-bin window and selected held period.
+  This is the same uncorrected sum written as ``events_grouped`` in exports.
+  Combined G±R asymmetries have no single F/B count spectrum, so Good Events
+  and Events/frame are undetermined. Unavailable selections also leave Good
+  Events undetermined; acquired total counts
+  remain available.
+- **Events/frame** — Good Events divided by the selected acquisition period's frame count, a
   rate-independent measure of how much beam each run collected. Use it to spot a
   short or beam-starved run in a temperature series before you trust its fit.
 

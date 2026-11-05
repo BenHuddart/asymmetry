@@ -226,9 +226,11 @@ and each is printed on the line under the command's table:
   the reason, rather than integrating unsubtracted counts; the GUI's
   Integral scan mode picks up the same grouping background.
 - ``--t0-offset BINS`` shifts every detector's file t0 by a signed number of
-  bins, and ``--t-good-offset BINS`` puts the first good bin that many bins
-  after the effective t0 — the grouping window's Manual t0 and **t_good
-  Offset** modes (see :doc:`detector_grouping`).
+  bins. ``--t-good-offset BINS`` is a signed first-bin offset from effective
+  t0; an omitted option retains the mapped file first limit. Negative offsets
+  and manual overrides outside advisory file-good limits are valid within
+  acquired support. Reversed or unsupported requests report an error without
+  altering raw data (see :doc:`detector_grouping`).
 - ``--period red``, ``--period green`` or ``--period N`` selects one period of
   a multi-period file; ``--period green-red`` reduces each period of a
   two-period run on its own and takes green − red.

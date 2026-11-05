@@ -1043,8 +1043,9 @@ def test_alpha_period_red_reports_the_source_run_number(
     assert data["alpha"]["run_number"] == SCAN_RUNS[0]
 
 
+@pytest.mark.parametrize("offset", [5, -1])
 def test_reduce_with_a_pair_and_offsets_records_them(
-    workflow_folder: Path, tmp_path: Path, capsys
+    workflow_folder: Path, tmp_path: Path, capsys, offset
 ) -> None:
     cli.main(
         [
@@ -1057,16 +1058,17 @@ def test_reduce_with_a_pair_and_offsets_records_them(
             "--t0-offset",
             "2",
             "--t-good-offset",
-            "5",
+            str(offset),
             "--workdir",
             str(tmp_path / "wd"),
         ]
     )
     out = capsys.readouterr().out
-    assert "pair 2/1, t0 offset 2, t_good offset 5" in out
+    assert f"pair 2/1, t0 offset 2, t_good offset {offset}" in out
     entry = json.loads((tmp_path / "wd" / "reduced" / f"{SCAN_RUNS[0]}.json").read_text())
     assert (entry["forward_group"], entry["backward_group"]) == (2, 1)
     assert entry["settings"]["pair"] == ["2", "1"]
+    assert entry["settings"]["t_good_offset_bins"] == offset
 
 
 @pytest.mark.parametrize(

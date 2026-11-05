@@ -1,6 +1,12 @@
 Project files
 =============
 
+Good-window profiles retain their authored signed offsets and omitted endpoints.
+Recorded scalar bounds retain their effective-coordinate meaning; reopening does
+not relabel them as original detector file facts. The signed display offset is
+derived from the recorded first bound and effective t0. Cached-only period views
+remain selectable, with re-reduction limited by the acquired facts available.
+
 The ``.asymp`` project file persists the analysis state of a session:
 which datasets are loaded, how the Data Browser is sorted and filtered,
 the per-run grouping (groups, alpha, bunching, deadtime, background),

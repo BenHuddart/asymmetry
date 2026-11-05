@@ -65,7 +65,12 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io.nexus import active_series_mean
-from asymmetry.core.io.periods import period_count, period_labels
+from asymmetry.core.io.periods import (
+    period_count,
+    period_labels,
+    select_period_grouping,
+    selected_period_index,
+)
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
@@ -3032,8 +3037,7 @@ class DataBrowserPanel(QWidget):
         scored = [
             (score, series_path)
             for series_path in series
-            if (score := self._series_path_score(field_key, series_path, series.get(series_path)))
-            > 0
+            if (score := score_series_path(field_key, series_path, series.get(series_path))) > 0
         ]
         scored.sort(key=lambda item: (-item[0], str(item[1])))
         for _, series_path in scored:
@@ -3046,14 +3050,6 @@ class DataBrowserPanel(QWidget):
             if value is not None:
                 return value
         return None
-
-    def _series_path_score(self, field_key: str, series_path: str, info) -> int:
-        """Score how well a log series matches a browser summary field.
-
-        Delegates to the shared :func:`score_series_path` so this panel and the
-        Run Info dialog rank sensors identically.
-        """
-        return score_series_path(field_key, series_path, info)
 
     def _resolve_run_info_value(self, dataset: MuonDataset, field_key: str):
         """Resolve synthetic ``run_info.*`` keys used by Run Info summary rows."""
@@ -3075,7 +3071,7 @@ class DataBrowserPanel(QWidget):
             return h0.bin_width
 
         if key in ("good_events_mev", "events_per_frame"):
-            grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else None
+            grouping = run.grouping if isinstance(run.grouping, dict) else None
             if grouping is None and isinstance(dataset.metadata.get("grouping"), dict):
                 grouping = dataset.metadata["grouping"]
             good = good_event_count(run.histograms, grouping)
@@ -3083,7 +3079,9 @@ class DataBrowserPanel(QWidget):
                 return None
             if key == "good_events_mev":
                 return good / 1.0e6
-            # Events per frame: good events over the dead-time frame normaliser.
+            period_index = selected_period_index(grouping)
+            if period_index is not None:
+                grouping = select_period_grouping(grouping, period_index)
             frames = good_frames(grouping, 0.0)
             if frames <= 0:
                 return None
@@ -3546,11 +3544,11 @@ class DataBrowserPanel(QWidget):
             except (TypeError, ValueError):
                 raw_t_good = 0
         try:
-            t_good_offset = max(0, int(raw_t_good))
+            t_good_offset = int(raw_t_good)
         except (TypeError, ValueError):
             t_good_offset = 0
 
-        first_good_bin = max(0, t0_bin + t_good_offset)
+        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
         try:
             last_good_bin = int(grouping.get("last_good_bin", last_good_default))
         except (TypeError, ValueError):

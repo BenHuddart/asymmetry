@@ -152,6 +152,9 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     held_period_count,
+    held_period_histograms,
+    histogram_grouping_facts,
+    selected_period_index,
 )
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
@@ -174,7 +177,6 @@ from asymmetry.core.project import (
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
-    aligned_n_bins,
     assigned_profile_for_run,
     default_profile_for_run,
     heal_t0_policies,
@@ -182,8 +184,7 @@ from asymmetry.core.project.profiles import (
     profile_fingerprint_for_run,
     reconcile_instrument_for_payload,
     resolve_effective_grouping,
-    resolve_good_window,
-    run_file_good_window,
+    resolve_run_good_window,
 )
 from asymmetry.core.representation import (
     FitSeries,
@@ -609,6 +610,7 @@ ALPHA_PROVENANCE_KEYS = (
     "alpha_z_reference_run",
 )
 REDUCTION_SETTING_KEYS = (
+    "good_window_policy",
     "background_mode",
     "background_run",
     "excluded_detectors",
@@ -5143,11 +5145,11 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 raw_t_good = 0
         try:
-            t_good_offset = max(0, int(raw_t_good))
+            t_good_offset = int(raw_t_good)
         except (TypeError, ValueError):
             t_good_offset = 0
 
-        first_good_bin = max(0, t0_bin + t_good_offset)
+        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
         try:
             last_good_bin = int(grouping.get("last_good_bin", 0))
         except (TypeError, ValueError):
@@ -5407,7 +5409,6 @@ class MainWindow(QMainWindow):
             t_good_offset = int(raw_t_good_offset)
         except (TypeError, ValueError):
             t_good_offset = 0
-        t_good_offset = max(0, min(max_bin - t0_bin, t_good_offset))
         first_good = t0_bin + t_good_offset
 
         try:
@@ -5428,34 +5429,8 @@ class MainWindow(QMainWindow):
             last_good_raw = int(grouping_result.get("last_good_bin", max_bin))
         except (TypeError, ValueError):
             last_good_raw = max_bin
-        last_good = max(first_good, min(max_bin, last_good_raw))
+        last_good = last_good_raw
 
-        # A payload carrying a good-window policy is the grouping window's
-        # profile broadcast: the absolute window above is the *preview* run's,
-        # and this run gets its own, derived from its own t0 and file window
-        # through the helpers the resolver uses (D6). Payloads without one — a
-        # released run's override, legacy callers — keep the absolute values.
-        # A dataset without raw histograms has no file window to re-derive, so
-        # the broadcast values stand there as they always have.
-        good_window_policy = grouping_result.get("good_window_policy")
-        if good_window_policy is not None and run.histograms:
-            window_grouping = dict(existing_grouping) | {
-                "groups": groups,
-                "forward_group": forward_gid,
-                "backward_group": backward_gid,
-                "excluded_detectors": exclusion_source.get("excluded_detectors", []),
-            }
-            file_first_good, file_last_good = run_file_good_window(
-                run, window_grouping, common_t0_bin=t0_bin
-            )
-            first_good, last_good = resolve_good_window(
-                GoodWindowPolicy.from_dict(good_window_policy),
-                t0_bin=t0_bin,
-                file_first_good=file_first_good,
-                file_last_good=file_last_good,
-                n_bins=aligned_n_bins(window_grouping, run, len(run.histograms), t0_bin),
-            )
-            t_good_offset = max(0, first_good - t0_bin)
         if axis_pairs and vector_axis in vector_alphas:
             alpha = float(vector_alphas[vector_axis])
         else:
@@ -5606,33 +5581,50 @@ class MainWindow(QMainWindow):
         if isinstance(grouping_result.get("histogram_labels"), list):
             grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
-        # A user t0 edit is applied NON-DESTRUCTIVELY (T0Policy semantics): the
-        # run's histograms keep their file-derived t0_bin values, and the effective
-        # common-t0 shift is published as per-detector overrides that the reduction
-        # chokepoints (common_t0_for_groups / apply_grouping_aligned) prefer. A
-        # manual t0 therefore no longer permanently rewrites the loaded histograms.
-        file_common_t0 = (
-            # Explicit ``detector_t0_bins=None``: this establishes the FILE
-            # baseline the new manual delta is measured against, so it must
-            # ignore any override already stored from a previous edit rather
-            # than resolving through it.
-            common_t0_for_groups(run.histograms, forward_idx, backward_idx, detector_t0_bins=None)
-            if run.histograms and (forward_idx or backward_idx)
-            else t0_default
+        timing_histograms = run.histograms
+        period_index = selected_period_index(grouping, period_mode)
+        if period_index is not None:
+            timing_histograms = held_period_histograms(run.histograms, grouping, period_index)
+            grouping = histogram_grouping_facts(timing_histograms, grouping)
+        elif isinstance(grouping.get("detector_t0_bins"), list) and len(
+            grouping["detector_t0_bins"]
+        ) == len(timing_histograms):
+            grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in timing_histograms]
+        # Timing overrides and derived bounds share the selected acquisition grid;
+        # acquired histograms and their period records remain unchanged.
+        file_common_t0 = common_t0_for_groups(
+            timing_histograms, forward_idx, backward_idx, detector_t0_bins=None
         )
         delta = int(t0_bin) - int(file_common_t0)
         if run.histograms and delta != 0:
             grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
-                max(0, int(hist.t0_bin) + delta) for hist in run.histograms
+                max(0, int(hist.t0_bin) + delta) for hist in timing_histograms
             ]
         else:
             grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        if EFFECTIVE_DETECTOR_T0_KEY in grouping_result:
+            grouping[EFFECTIVE_DETECTOR_T0_KEY] = grouping_result[EFFECTIVE_DETECTOR_T0_KEY]
+        policy = grouping_result.get("good_window_policy")
+        if policy is not None:
+            window_grouping = grouping | {
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "excluded_detectors": exclusion_source.get("excluded_detectors", []),
+                "t0_bin": t0_bin,
+            }
+            first_good, last_good = resolve_run_good_window(
+                GoodWindowPolicy.from_dict(policy),
+                replace(run, histograms=timing_histograms),
+                window_grouping,
+            )
+            t_good_offset = first_good - t0_bin
         grouping.pop("t0_time_us", None)
         selected = sorted(set(forward_idx + backward_idx))
-        reference = selected_t0_reference(run.histograms, grouping, selected_indices=selected)
-        if run.histograms[reference].t0_time_us is not None:
+        reference = selected_t0_reference(timing_histograms, grouping, selected_indices=selected)
+        if timing_histograms[reference].t0_time_us is not None:
             grouping["t0_time_us"] = common_t0_time_us(
-                run.histograms, grouping, t0_bin, selected_indices=selected
+                timing_histograms, grouping, t0_bin, selected_indices=selected
             )
 
         if (
@@ -5755,14 +5747,6 @@ class MainWindow(QMainWindow):
             grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
-        # Keep the file-derived per-detector t0 table in sync with the (unmutated)
-        # histograms; a manual t0 shift is carried non-destructively via the
-        # effective-t0 override, never by rewriting these file values.
-        existing_detector_t0 = grouping.get("detector_t0_bins")
-        if isinstance(existing_detector_t0, list) and len(existing_detector_t0) == len(
-            run.histograms
-        ):
-            grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         # Persist group names if provided
         group_names = grouping_result.get("group_names")
         if isinstance(group_names, dict) and group_names:
