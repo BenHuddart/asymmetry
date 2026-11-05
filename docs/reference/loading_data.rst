@@ -688,8 +688,15 @@ project, matching the existing grouping-template workflow.
 
 PSI BIN/MDU and MusrRoot/LEM ROOT files do not normally contain NeXus-style
 file deadtime constants. A requested ``File`` correction continues uncorrected
-with a warning when required coefficients are absent or incomplete. Those formats can still use manual per-detector values, the WiMDA-style ``Cal``
-per-detector calibration routine, or the reference-run deadtime estimate.
+with a warning when required coefficients are absent or incomplete. Those
+formats can still use manual per-detector values, ``Cal`` per-detector fits, or
+``Estimate``. Cal/Estimate fit the rational decay mean separately for every
+raw source detector; Estimate averages the coefficients, rather than fitting
+a pooled spectrum. Their availability does not establish physical suitability
+for continuous PSI acquisitions. The stored unity exposure convention is not
+a measured pulsed frame count. Preprocessed ROOT banks are not automatically
+raw Poisson observations. See :doc:`detector_grouping` for source/window and
+conditional-error assumptions; no different exposure is inferred at loading.
 
 Background correction is a separate Grouping dialog toggle for PSI-style data
 (``.bin``, ``.mdu``, and PSI/LEM ``.root``). It subtracts a count background
@@ -731,12 +738,13 @@ does not invent format rules:
   cycles four of them — ramp up, field on, ramp down, field off, logged
   ``[0, 15000, 0, 15001]`` — into its two data periods. Without that fallback the count defaults to 1 and the correction
   over-normalises by orders of magnitude.
-* The Grouping dialog also exposes WiMDA-style manual, calibrated, and
-  estimated deadtime workflows alongside file-provided deadtimes. ``Estimate``
-  is calculated from the selected reference run only and then broadcast to all
-  selected detectors and runs. ``Cal`` fits each detector separately on that
-  reference run and persists the resulting explicit per-detector table through
-  the manual detector-value editor.
+* The Grouping dialog exposes Manual values, per-detector ``Cal`` fits, and
+  ``Estimate`` alongside file deadtimes. Estimate fits every raw detector of
+  its selected source run, averages the fitted coefficients arithmetically,
+  and broadcasts the result to runs following the profile. Cal uses the preview
+  reference source and persists its individual coefficients through the manual
+  editor. WiMDA pools observations for its uniform estimate; the workflows do
+  not imply equivalent estimators. See :ref:`comparison-deadtime-calibration`.
 * Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
   table with zeros. Asymmetry preserves the actual file-table availability;
   a supplied complete zero table is identity, while an absent table is not

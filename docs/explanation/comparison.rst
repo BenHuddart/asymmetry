@@ -586,6 +586,77 @@ established here. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
 workflows.
 
+.. _comparison-deadtime-calibration:
+
+Deadtime calibration methods
+-----------------------------
+
+A mean response and an estimator are separate choices. Asymmetry's dedicated
+Cal/Estimate fits use the rational forward mean corresponding to the inverse
+above. They minimise raw-count weighted squared residuals separately for each
+detector, with a free non-negative amplitude, signed coefficient, fixed muon
+lifetime, and no count background or polarisation term. Weights use the observed
+count with a floor of one; supplied variance is not used by this calibration
+fit. The published transformed ISIS line is algebraically equivalent to the
+mean, but fitting that line is a different objective. Source histograms and
+windows also matter; :doc:`/reference/detector_grouping` distinguishes the
+Grouping buttons, scripted API, and MaxEnt caller.
+
+**Cal** retains per-detector coefficients. **Estimate** averages those fitted
+coefficients arithmetically and broadcasts the mean. **WiMDA** pools early-time
+detector observations for its uniform estimate and also offers individual
+detector calibration. Its dedicated fitting mean differs from Asymmetry's
+rational forward mean. The `WiMDA manual, v1.2, section 5.9 and Appendix B
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ gives workflow context;
+no executed numerical WiMDA agreement is established here.
+
+For an independent illustration using Asymmetry's rational model, two detectors
+with the same 0.02 µs coefficient and equal rates give 0.02 µs both by averaging
+fits and by fitting their mean observations. With a 4:1 amplitude ratio,
+averaging the independent fits still gives 0.02 µs, while fitting the mean
+observations gives about 0.02636 µs. This noiseless illustration uses amplitudes
+100000 and 25000 counts/bin at time zero, lifetime 2.1969811 µs, 100000 frames,
+0.05 µs bins, and centres 0.525–6.475 µs. It demonstrates noncommuting operations
+for a nonlinear response; it is our own pooling experiment, not WiMDA output
+or a recommendation to change the estimator.
+
+**Mantid 6.16.1 CalMuonDeadTime** v1 fits a transformed line separately for each
+spectrum, using ``goodfrm`` exposure. Its `documented regression
+<https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_
+and Asymmetry's rational fit agree on the signed noiseless inputs above.
+They do not minimise the same noisy-data objective. A bounded synthetic
+sensitivity comparison using matched observations, exposure, and selected bins
+shows method and window dependence under noise, a small constant background,
+and weak polarisation. Independent Poisson draws here are a chosen sensitivity
+model, not certification of physical deadtime statistics, estimator optimality,
+or confidence-interval coverage. A teaching silver-run comparison can show
+behaviour under matched selection; without known detector truth it cannot
+rank accuracy.
+
+**musrfit 1.12.1** (``708f777b``, ROOT 6.40.04) reports the compared
+``deadtime-cor estimate`` option as unimplemented; its file correction is a
+separate operation. This limited observation does not imply that every musrfit
+calibration facility is unimplemented. The `musrfit manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_ describes this option
+for pulsed/ISIS NeXus data.
+
+The matched noiseless calibration is agreement under stated conditions;
+pooling, objectives, and exported count-error conventions are explained
+method differences. Physical continuous-source calibration and corrected ROOT
+bank statistics remain unresolved by these comparisons. Generic availability
+of Cal does not establish PSI applicability or a new exposure interpretation.
+
+Asymmetry's dedicated calibration errors are conditional Hessian errors from
+its chosen objective. Estimate combines independent detector errors in
+quadrature and divides by their number; it does not estimate detector scatter.
+These errors are distinct from the measured/supplied counting variance retained
+during correction below. Coefficient and exposure uncertainty are not propagated
+through that correction. A successful count-domain residual-DT₀ fit also need
+not supply a complete calibration: skipped File correction or unknown unused
+coefficients leaves it usable with a warning and no promotion. Explicit Off
+retains its supported zero-base behaviour; see
+:doc:`/reference/count_domain_fitting`.
+
 Deadtime count errors
 ---------------------
 
