@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep residual-DT₀ fits usable while withholding calibration promotion after a
+  skipped File correction; isolate cached reference runs sharing a source file.
+
+- Limit grouped count fits and FFT/MaxEnt deadtime preparation to required observations,
+  with atomic cohort fallback and source-bound sample/reference preparation.
+
 - Limit F/B deadtime correction to required output and active background samples,
   so unused saturated observations or missing File coefficients do not block it.
 

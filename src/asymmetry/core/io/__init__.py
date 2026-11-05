@@ -164,7 +164,7 @@ def resolve_background_reference(
     *,
     sample_good_frames: float | None = None,
     datasets: Iterable[MuonDataset] = (),
-    cache: dict[str, object] | None = None,
+    cache: dict | None = None,
     allow_file: bool = True,
 ) -> BackgroundReference | None:
     """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
@@ -176,7 +176,7 @@ def resolve_background_reference(
 
     Resolution order: match the reference run number against the already-loaded
     ``datasets`` (reuse an open run); otherwise load the payload's
-    ``source_file`` (cached per source path in ``cache`` when provided, so a
+    ``source_file`` (cached by requested run, path, and file identity, so a
     batch apply loads the reference **once**, not once per sample dataset). The
     scale is sample/reference good frames, falling back to the payload snapshots
     and finally ``1.0``. With ``allow_file=False``, an unloaded reference returns
@@ -193,13 +193,15 @@ def resolve_background_reference(
 
     source_file = str(payload.get("source_file", "") or "")
     run_number = payload.get("run_number")
+    run_number = None if run_number is None else int(run_number)
 
     reference_run = None
-    # A cache hit (per source path) short-circuits BOTH the registry scan and
+    # A hit for the same requested run and source skips the registry scan and
     # the loader, so a batch apply sharing one reference resolves it once
     # instead of re-scanning the registry for every sample dataset.
-    if cache is not None and source_file and source_file in cache:
-        reference_run = cache[source_file]
+    source_key = (source_file, run_number, reference_file_identity(payload))
+    if cache is not None and source_file and source_key in cache:
+        reference_run = cache[source_key]
 
     if reference_run is None and run_number is not None:
         for dataset in datasets:
@@ -221,7 +223,7 @@ def resolve_background_reference(
         # each call so it tracks in-memory edits to that run).
         reference_run = load_background_run(payload).run
         if cache is not None and source_file:
-            cache[source_file] = reference_run
+            cache[source_key] = reference_run
 
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")

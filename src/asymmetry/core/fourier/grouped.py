@@ -4,332 +4,19 @@ from __future__ import annotations
 
 import numpy as np
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.transform.background import (
-    apply_grouped_background_correction,
-    available_background_modes,
-    background_window,
-    resolve_background_mode,
-    resolve_background_ranges,
-)
-from asymmetry.core.transform.corrections import (
-    BackgroundReference,
-    CorrectionOutcome,
-    CorrectionOutcomes,
-    CorrectionStatus,
-)
-from asymmetry.core.transform.deadtime import (
-    deadtime_operation_inputs,
-    prepare_histograms_with_deadtime,
-    resolve_deadtime,
-)
-from asymmetry.core.transform.fb_counts import GroupCounts, linear_combination_variance
+from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.fourier.group_background import _apply_group_background_correction
+from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
+from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
+from asymmetry.core.transform.fb_counts import linear_combination_variance
 from asymmetry.core.transform.grouping import (
-    common_t0_for_groups,
     effective_group_indices,
-    good_frames,
-    group_counts_aligned,
-    group_reference_t0,
-    resolve_alignment,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
-from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.t0 import (
-    common_t0_time_us,
-    effective_detector_t0_bins,
     require_selected_timing,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
-
-
-def _group_background_value_for_group(
-    grouping: dict,
-    group_id: int,
-) -> float | None:
-    """Return a fixed background value for one group when explicitly configured."""
-    raw_values = grouping.get("background_values")
-    if isinstance(raw_values, dict):
-        value = raw_values.get(group_id, raw_values.get(str(group_id)))
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    if not isinstance(raw_values, (list, tuple)):
-        return None
-
-    try:
-        forward_group = int(grouping.get("forward_group"))
-    except (TypeError, ValueError):
-        forward_group = None
-    try:
-        backward_group = int(grouping.get("backward_group"))
-    except (TypeError, ValueError):
-        backward_group = None
-
-    if len(raw_values) >= 2 and forward_group is not None and backward_group is not None:
-        try:
-            if int(group_id) == forward_group:
-                return float(raw_values[0])
-            if int(group_id) == backward_group:
-                return float(raw_values[1])
-        except (TypeError, ValueError):
-            return None
-
-    if len(raw_values) >= 1:
-        try:
-            return float(raw_values[0])
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def _group_background_range_for_group(
-    grouping: dict,
-    group_id: int,
-) -> tuple[int, int] | None:
-    """Return a background range for one group when explicitly configured."""
-
-    def _parse_range(value: object) -> tuple[int, int] | None:
-        if value is None:
-            return None
-        window = background_window(value)
-        return window.first, window.last
-
-    raw_ranges = grouping.get("background_ranges")
-    if isinstance(raw_ranges, dict):
-        direct = _parse_range(raw_ranges.get(group_id, raw_ranges.get(str(group_id))))
-        if direct is not None:
-            return direct
-        forward = _parse_range(raw_ranges.get("forward"))
-        backward = _parse_range(raw_ranges.get("backward"))
-        if forward is not None and backward is not None:
-            try:
-                if int(group_id) == int(grouping.get("forward_group")):
-                    return forward
-                if int(group_id) == int(grouping.get("backward_group")):
-                    return backward
-            except (TypeError, ValueError):
-                pass
-            return forward
-
-    if isinstance(raw_ranges, (list, tuple)) and len(raw_ranges) >= 2:
-        if not isinstance(raw_ranges[0], (list, tuple)):
-            return _parse_range(raw_ranges)
-        first = _parse_range(raw_ranges[0])
-        second = _parse_range(raw_ranges[1])
-        if first is not None and second is not None:
-            try:
-                if int(group_id) == int(grouping.get("forward_group")):
-                    return first
-                if int(group_id) == int(grouping.get("backward_group")):
-                    return second
-            except (TypeError, ValueError):
-                pass
-            return first
-        shared = _parse_range(raw_ranges)
-        if shared is not None:
-            return shared
-
-    shared = _parse_range(grouping.get("background_range"))
-    if shared is not None:
-        return shared
-    if "background_forward_range" in grouping or "background_backward_range" in grouping:
-        pair = resolve_background_ranges(grouping, 0)
-        window = pair[int(group_id == grouping.get("backward_group", 2))]
-        return window.first, window.last
-    return None
-
-
-def resolve_group_deadtime_inputs(run: Run, use_deadtime: bool, cache: dict | None = None):
-    """Resolve sample/reference coefficients before either histogram set is corrected."""
-    from asymmetry.core.io import resolve_background_reference
-
-    grouping = run.grouping
-    reference = None
-    inputs = [(list(run.histograms), grouping)]
-    if (
-        correction_flags_from_grouping(grouping).use_background
-        and resolve_background_mode(grouping) == "reference_run"
-    ):
-        reference = resolve_background_reference(
-            grouping.get("background_run"),
-            sample_good_frames=good_frames(grouping, default=0.0) or None,
-            cache=cache,
-        )
-        inputs.append((reference.histograms, reference.deadtime_grouping(grouping)))
-    return deadtime_operation_inputs(inputs, use_deadtime), reference
-
-
-def _resolve_group_reference_counts(
-    grouping: dict,
-    *,
-    group_indices: list[int],
-    common_t0: int,
-    apply_deadtime: bool,
-    detector_t0_bins: list[int],
-    sample_alignment,
-    cache: dict | None = None,
-    reference: BackgroundReference | None = None,
-    reference_grouping: dict | None = None,
-) -> tuple[GroupCounts | None, float | None]:
-    """Resolve+group a ``reference_run`` background for one detector group.
-
-    Returns the reference run's counts summed over the *same* group indices and
-    aligned to the sample's ``common_t0`` (with the same deadtime treatment —
-    study divergence D6), plus the frame scale. Returns ``(None, None)`` when
-    the mode is not ``reference_run`` or the reference cannot be resolved, so
-    the scripted/core Fourier path satisfies ``reference_run`` exactly like the
-    time-domain reduction instead of silently skipping it.
-
-    ``cache`` (shared across a grouped sweep) is threaded into
-    ``resolve_background_reference`` so the reference run is loaded once, not
-    once per group, and also memoises the deadtime-prepared reference
-    histograms (identical across every group of one run) — only the per-group
-    ``apply_grouping_aligned`` re-runs.
-    """
-    if not bool(grouping.get("background_correction", False)):
-        return None, None
-    if resolve_background_mode(grouping) != "reference_run":
-        return None, None
-
-    # Lazy import: core.io is a heavier sibling and only needed for this mode.
-    from asymmetry.core.io import resolve_background_reference
-
-    cache = cache if cache is not None else {}
-    sample_frames = good_frames(grouping, default=0.0) or None
-    if reference is None:
-        reference = resolve_background_reference(
-            grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
-        )
-    if reference_grouping is None:
-        reference_grouping = reference.deadtime_grouping(grouping)
-
-    # Prepared reference histograms are identical for every group of this run
-    # (same grouping + deadtime flag), so prepare once per sweep.
-    prepared_key = (
-        "_prepared_reference",
-        bool(apply_deadtime),
-        reference.source_file,
-        reference.run_number,
-        reference.good_frames_reference,
-        tuple(reference_grouping.get("deadtime_file_us", ())) if apply_deadtime else (),
-        reference_grouping.get("deadtime_mode"),
-        tuple(reference_grouping.get("dead_time_us", ())) if apply_deadtime else (),
-    )
-    reference_prepared = cache.get(prepared_key)
-    if reference_prepared is None:
-        reference_prepared, _ = prepare_histograms_with_deadtime(
-            reference.histograms,
-            reference_grouping,
-            apply_deadtime,
-        )
-        cache[prepared_key] = reference_prepared
-    reference_alignment = resolve_alignment(
-        reference_prepared,
-        group_indices,
-        common_t0_bin=common_t0 + sample_alignment.first_bin,
-        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
-        first_bin=sample_alignment.first_bin,
-        sample_length=sample_alignment.length,
-    )
-    reference_counts = group_counts_aligned(
-        reference_prepared, group_indices, alignment=reference_alignment
-    )
-    if reference_counts.counts.size == 0:
-        return None, None
-    return reference_counts, reference.scale
-
-
-def _apply_group_background_correction(
-    counts: GroupCounts,
-    *,
-    grouping: dict,
-    group_id: int,
-    t0_bin: int,
-    bin_width: float,
-    metadata: dict,
-    source_file: str,
-    reference_counts: GroupCounts | None = None,
-    reference_scale: float | None = None,
-    background_t0_bin: int | None = None,
-) -> tuple[GroupCounts, bool, float | None]:
-    """Apply optional grouped background subtraction for one detector group."""
-    if not bool(grouping.get("background_correction", False)):
-        return counts, False, None
-
-    mode = resolve_background_mode(grouping)
-    if mode == "reference_run" and reference_counts is not None:
-        length = counts.counts.size
-        if reference_counts.counts.size < length:
-            raise ValueError(
-                f"reference run has {reference_counts.counts.size} aligned bins; sample requires {length}."
-            )
-        variance = reference_counts.variance
-        reference_counts = GroupCounts(
-            reference_counts.counts[:length], None if variance is None else variance[:length]
-        )
-    if mode != "reference_run" and mode not in available_background_modes(
-        metadata=metadata, source_file=source_file
-    ):
-        CorrectionOutcomes(
-            background=CorrectionOutcome(
-                "background",
-                mode,
-                CorrectionStatus.UNAVAILABLE,
-                "mode is unavailable for this acquisition",
-            )
-        ).require_complete()
-
-    payload = dict(grouping)
-    # An acquisition window defines both the level and its shared uncertainty.
-    # Cached levels alone are exact constants, not a substitute for that window.
-    if mode in ("fixed", "range"):
-        selected_value = _group_background_value_for_group(grouping, group_id)
-        selected_range = _group_background_range_for_group(grouping, group_id)
-        source_t0 = t0_bin if background_t0_bin is None else background_t0_bin
-        if mode == "range" and selected_range is None and selected_value is None:
-            window = resolve_background_ranges({}, source_t0)[0]
-            selected_range = window.first, window.last
-        if selected_range is not None and (mode == "range" or selected_value is None):
-            offset = t0_bin - source_t0
-            selected_range = tuple(bound + offset for bound in selected_range)
-            payload["background_ranges"] = [list(selected_range), list(selected_range)]
-            payload["background_mode"] = "range"
-        elif selected_value is not None:
-            payload["background_fixed_values"] = [selected_value, selected_value]
-            payload["background_mode"] = "fixed"
-
-    last_good_bin = payload.get("last_good_bin")
-    try:
-        last_good_bin = int(last_good_bin) if last_good_bin is not None else None
-    except (TypeError, ValueError):
-        last_good_bin = None
-    correction = apply_grouped_background_correction(
-        counts,
-        counts,
-        reference_forward=reference_counts,
-        reference_backward=reference_counts,
-        reference_scale=reference_scale,
-        grouping=payload,
-        t0_bin=int(t0_bin),
-        bin_width_us=float(bin_width),
-        # facility left to derive from the run metadata this helper already has.
-        metadata=metadata,
-        last_good_bin=last_good_bin,
-    )
-    CorrectionOutcomes(background=correction.outcome).require_complete()
-    values = (
-        correction.outcome.effective.get("values")
-        if correction.outcome.effective is not None
-        else None
-    )
-    background_value = values[0] if values is not None else None
-    return (
-        correction.forward,
-        correction.outcome.status == CorrectionStatus.APPLIED,
-        background_value,
-    )
 
 
 def build_group_signal_dataset(
@@ -340,8 +27,9 @@ def build_group_signal_dataset(
     apply_lifetime_correction: bool = True,
     use_deadtime: bool | None = None,
     reference_t0_bin: int | None = None,
-    prepared_histograms: list[Histogram] | None = None,
+    prepared: GroupPreparation | None = None,
     background_reference_cache: dict | None = None,
+    time_range: tuple[float | None, float | None] | None = None,
 ) -> MuonDataset:
     """Build a time-domain grouped detector signal for Fourier analysis.
 
@@ -354,6 +42,8 @@ def build_group_signal_dataset(
     FFT source. This helper mirrors that by default via ``exp(t / tau_mu)``
     before later mean subtraction and FFT filtering.
     """
+    if time_range == (None, None):
+        time_range = None
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
     groups = grouping.get("groups") if isinstance(grouping, dict) else None
     if not isinstance(groups, dict):
@@ -368,64 +58,28 @@ def build_group_signal_dataset(
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     if use_deadtime is not None:
         apply_deadtime = bool(use_deadtime)
-    inputs, reference = resolve_group_deadtime_inputs(
-        run, apply_deadtime, background_reference_cache
-    )
-    histograms, grouping = inputs[0]
-    deadtime = resolve_deadtime(grouping, len(histograms), apply_deadtime)
-    CorrectionOutcomes(deadtime=deadtime).require_complete()
-    if prepared_histograms is None or deadtime.status == CorrectionStatus.SKIPPED:
-        prepared_histograms, deadtime = prepare_histograms_with_deadtime(
-            histograms, grouping, apply_deadtime
+    if prepared is None:
+        prepared = prepare_group_counts(
+            run,
+            [int(group_id)],
+            use_deadtime=apply_deadtime,
+            reference_t0_bin=reference_t0_bin,
+            cache=background_reference_cache,
+            time_range=time_range,
         )
-    else:
-        prepared_histograms = list(prepared_histograms)
-        if not prepared_histograms:
-            raise ValueError("Prepared histograms are empty for Fourier analysis.")
-
-    # One resolved per-detector t0 for every alignment this call makes (D10):
-    # the policy-resolved override when the grouping carries one, else each
-    # histogram's own file t0.
-    detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
-    background_t0 = 0
-    if correction_flags_from_grouping(grouping).use_background:
-        background_t0 = common_t0_for_groups(
-            prepared_histograms,
-            effective_group_indices(
-                grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
-            ),
-            effective_group_indices(
-                grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
-            ),
-            detector_t0_bins=detector_t0_bins,
-        )
-    if reference_t0_bin is None:
-        reference_t0_bin = group_reference_t0(prepared_histograms, grouping)
-    common_t0 = max(0, int(reference_t0_bin))
-    alignment = resolve_alignment(
-        prepared_histograms, indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
-    )
-    group = group_counts_aligned(prepared_histograms, indices, alignment=alignment)
+    prepared.require_request(run, int(group_id), apply_deadtime, reference_t0_bin, time_range)
+    layout = prepared.layouts[int(group_id)]
+    alignment, window = layout.alignment, layout.window
     common_t0 = alignment.common_t0_bin
-    declared_t0 = grouping.get("t0_bin")
-    declared_t0 = common_t0 if declared_t0 is None else int(declared_t0)
-    window = alignment.window(grouping, offset_bins=common_t0 + alignment.first_bin - declared_t0)
-    grouping = dict(
-        grouping, t0_bin=common_t0, first_good_bin=window.first, last_good_bin=window.last
-    )
-
+    grouping = layout.grouping
+    group = prepared.sample.aligned(indices, alignment)
+    reference_counts = None
+    reference_scale = None
+    if prepared.reference is not None:
+        reference_counts = prepared.reference.aligned(indices, layout.reference_alignment)
+        reference_scale = prepared.reference_scale
+    deadtime = prepared.sample.outcome
     source_file = run.source_file
-    reference_counts, reference_scale = _resolve_group_reference_counts(
-        grouping,
-        group_indices=indices,
-        common_t0=common_t0,
-        apply_deadtime=apply_deadtime,
-        detector_t0_bins=detector_t0_bins,
-        sample_alignment=alignment,
-        cache=background_reference_cache,
-        reference=reference,
-        reference_grouping=inputs[1][1] if reference is not None else None,
-    )
     group, background_applied, background_value = _apply_group_background_correction(
         group,
         grouping=grouping,
@@ -433,8 +87,8 @@ def build_group_signal_dataset(
         # Tail fitting uses the signal grid; range windows retain the F/B
         # acquisition samples through a translation from background_t0.
         t0_bin=common_t0,
-        background_t0_bin=background_t0,
-        bin_width=float(prepared_histograms[indices[0]].bin_width),
+        background_t0_bin=layout.background_t0,
+        bin_width=float(histograms[indices[0]].bin_width),
         metadata=run.metadata,
         source_file=source_file,
         reference_counts=reference_counts,
@@ -447,21 +101,14 @@ def build_group_signal_dataset(
     trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
     bunch_factor = binning_spec(grouping).factor
 
-    bin_width = float(prepared_histograms[indices[0]].bin_width)
-    axis_start = first_good - common_t0
-    # Bin centres from the run's exact t0 (D4): the residual is exactly 0.0 when
-    # the run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual_us = (common_t0 + 0.5) * bin_width - common_t0_time_us(
-        prepared_histograms, grouping, common_t0, selected_indices=indices
-    )
-    time = (
-        np.arange(trimmed_counts.size, dtype=float) + float(axis_start)
-    ) * bin_width + residual_us
-    n_output = trimmed_counts.size // bunch_factor
-    edges = first_good + np.arange(n_output + 1) * bunch_factor
-    variance = linear_combination_variance(group, edges) if n_output else np.array([], dtype=float)
+    time, edges = group_time_grid(histograms, grouping, indices, alignment, window)
+    variance = linear_combination_variance(group, edges) if time.size else np.array([], dtype=float)
     if bunch_factor > 1:
-        time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
+        _, trimmed_counts = rebin_counts(
+            np.arange(trimmed_counts.size), trimmed_counts, bunch_factor
+        )
+    mask = time_range_mask(time, time_range)
+    time, trimmed_counts, variance = time[mask], trimmed_counts[mask], variance[mask]
 
     scale = np.ones_like(trimmed_counts, dtype=np.float64)
     if apply_lifetime_correction and trimmed_counts.size > 0:
@@ -486,6 +133,10 @@ def build_group_signal_dataset(
             "run_label": f"{run.run_number} {group_name}",
             "fourier_source": "group_signal",
             "deadtime_outcome": deadtime.to_dict(),
+            "reference_deadtime_outcome": (
+                prepared.reference.outcome.to_dict() if prepared.reference is not None else None
+            ),
+            "reference_file_identity": prepared.identity[0],
             "grouped_alignment": alignment.to_dict(),
             "fourier_lifetime_corrected": bool(apply_lifetime_correction),
             "fourier_background_corrected": bool(background_applied),
