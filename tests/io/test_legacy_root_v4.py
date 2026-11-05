@@ -14,7 +14,11 @@ from tests.io import test_psi_good_intervals
 
 pytestmark = pytest.mark.io
 musrfit_export = test_psi_good_intervals.musrfit_export
-uproot = pytest.importorskip("uproot")
+
+
+@pytest.fixture
+def root_module():
+    return pytest.importorskip("uproot")
 
 
 @pytest.fixture(
@@ -26,7 +30,7 @@ uproot = pytest.importorskip("uproot")
         ),
     ]
 )
-def v4_example(request):
+def v4_example(request, root_module):
     locator = os.environ.get("ASYMMETRY_MUSRFIT_DATA")
     if locator is None:
         pytest.skip("ASYMMETRY_MUSRFIT_DATA not set; genuine serialized v4 unavailable")
@@ -38,8 +42,8 @@ def v4_example(request):
     return path
 
 
-def test_genuine_v4_calibration_and_all_stored_decay_arrays(v4_example):
-    with uproot.open(v4_example) as root:
+def test_genuine_v4_calibration_and_all_stored_decay_arrays(v4_example, root_module):
+    with root_module.open(v4_example) as root:
         record = root["RunInfo"].member("fFolders")[0]
         assert (record.classname, record.class_version) == ("TLemRunHeader", 4)
         assert record.member("fNHist") == 4
@@ -171,13 +175,13 @@ def test_lem_normalisation_boundary_sparse_identity(version, banks):
 
 
 @pytest.mark.parametrize("anchors", [(0.0, 7.25, -1.0, np.nan), (np.inf, -np.inf, 19.5, 0.0)])
-def test_genuine_v4_decoded_edge_payloads(monkeypatch, v4_example, anchors):
+def test_genuine_v4_decoded_edge_payloads(monkeypatch, v4_example, anchors, root_module):
     """Decoded payload injections do not claim additional serialized fixtures."""
-    with uproot.open(v4_example) as root:
+    with root_module.open(v4_example) as root:
         record = root["RunInfo"].member("fFolders")[0]
         record.members["fTimeZero"] = np.array(list(anchors) + [-1.0] * 28)
         record.members["fTimeResolution"] = 25.0
-        monkeypatch.setattr(uproot, "open", lambda path: root)
+        monkeypatch.setattr(root_module, "open", lambda path: root)
         run = load(v4_example).run
     for i, h in enumerate(run.histograms):
         anchor = anchors[i % 4]
