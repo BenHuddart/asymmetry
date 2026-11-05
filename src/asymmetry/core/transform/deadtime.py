@@ -254,6 +254,8 @@ class DeadtimeCalibration:
     ):
         """Compose the fitted residual with the exact table applied to its data."""
         CorrectionOutcomes(deadtime=base).require_complete()
+        if base.status is CorrectionStatus.SKIPPED:
+            raise ValueError("a skipped File correction cannot supply a complete calibration base")
         values = (
             list(base.effective["tau_us"])
             if base.status == CorrectionStatus.APPLIED

@@ -763,8 +763,11 @@ sample/reference input in the requested average or reconstruction. An unused
 missing entry cannot suppress correction; a required inverse pole remains an
 error. Prepared grouped products are bound to their source arrays, scope,
 cohort, and correction settings, and reject reuse for a different request.
-External reference caches track the consumed file's identity and modification
-metadata; edits to an unused loaded copy do not replace that source. This stat
+By default the common spectral t₀ retains the shared grid defined by all effective authored
+groups; unselected timing metadata can define this grid without making those
+counts or deadtime coefficients correction inputs.
+External reference caches identify the requested run as well as the consumed
+file's identity and modification metadata; edits to an unused loaded copy do not replace that source. This stat
 contract cannot detect rewrites preserving all recorded metadata. Resumed
 MaxEnt state also identifies its actual prepared observations.
 

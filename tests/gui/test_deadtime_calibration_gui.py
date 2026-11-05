@@ -89,14 +89,21 @@ def test_unfitted_estimate_keeps_an_incomplete_request(qapp):
     dialog.close()
 
 
-def test_successful_scoped_fit_explains_withheld_promotion(qapp):
+@pytest.mark.parametrize(
+    "coefficients, reason",
+    [
+        ([0.0, 0.0, None, None], "detector(s) 3, 4"),
+        ([0.0, None, 0.0, 0.0], "File deadtime correction was skipped"),
+    ],
+)
+def test_successful_scoped_fit_explains_withheld_promotion(qapp, coefficients, reason):
     from tests.core.test_deadtime_forward_model import _fit_deadtime, _rational_dataset
 
     dataset, n0 = _rational_dataset((0.5, 0.5), (0.5, 0.5))
     dataset.run.grouping.update(
-        deadtime_correction=True, deadtime_mode="file", deadtime_file_us=[0.0, 0.0, None, None]
+        deadtime_correction=True, deadtime_mode="file", deadtime_file_us=coefficients
     )
-    with pytest.warns(UserWarning, match="Deadtime promotion unavailable"):
+    with pytest.warns(UserWarning):
         result = _fit_deadtime(dataset, n0)
     window = MultiGroupFitWindow()
     window.set_dataset(dataset)
@@ -104,5 +111,5 @@ def test_successful_scoped_fit_explains_withheld_promotion(qapp):
     tab._render_count_single_result(dataset, result, 1)
     assert result.success and tab._last_count_deadtime is None
     assert "Deadtime promotion unavailable" in tab._results_card.content_html()
-    assert "detector(s) 3, 4" in tab._results_card.content_html()
+    assert reason in tab._results_card.content_html()
     window.close()

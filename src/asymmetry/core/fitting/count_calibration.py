@@ -7,7 +7,7 @@ from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
 def record_count_deadtime_calibration(result, dataset, groups):
-    """Keep a successful fit usable when unknown unused coefficients prevent promotion."""
+    """Keep a successful fit usable when coefficient availability prevents promotion."""
     if not result.success or "DT0" not in result.parameters:
         return
     base = groups[0].deadtime
@@ -16,12 +16,15 @@ def record_count_deadtime_calibration(result, dataset, groups):
         if base.status is CorrectionStatus.APPLIED
         else []
     )
-    if missing:
-        message = (
-            "Deadtime promotion unavailable: coefficients are unknown for detector(s) "
-            + ", ".join(map(str, missing))
-            + ". Fit results remain usable."
+    reason = None
+    if base.status is CorrectionStatus.SKIPPED:
+        reason = (
+            "File deadtime correction was skipped because required coefficients are unavailable."
         )
+    elif missing:
+        reason = "coefficients are unknown for detector(s) " + ", ".join(map(str, missing)) + "."
+    if reason is not None:
+        message = f"Deadtime promotion unavailable: {reason} Fit results remain usable."
         result.warnings.append(message)
         warnings.warn(message, UserWarning, stacklevel=2)
         return

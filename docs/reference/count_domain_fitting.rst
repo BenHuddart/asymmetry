@@ -86,7 +86,11 @@ When a residual DT₀ fit succeeds but unused File coefficients are unknown,
 the fit remains usable and promotion is withheld. The result reports
 "Deadtime promotion unavailable: coefficients are unknown for detector(s)
 3, 4. Fit results remain usable." (with the actual detector numbers).
-No unknown value is replaced with zero to create a Manual table.
+Promotion is also withheld after a skipped File correction. The warning is
+"Deadtime promotion unavailable: File deadtime correction was skipped because
+required coefficients are unavailable. Fit results remain usable."
+An explicitly disabled correction retains its existing residual-fit calibration
+behaviour. No unknown File value is replaced with zero to create a Manual table.
 Invalid Manual settings, missing required exposure, and saturation remain
 errors. See :doc:`detector_grouping` for the shared correction contract.
 

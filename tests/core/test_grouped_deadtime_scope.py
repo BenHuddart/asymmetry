@@ -325,3 +325,41 @@ def test_fb_fft_held_period_inputs_preserve_atomic_scope(mode):
         )
         if mode == "green_minus_red":
             np.testing.assert_allclose(dataset.asymmetry, 0.0)
+
+
+def test_unselected_timing_metadata_preserves_shared_grid_without_count_dependency():
+    from asymmetry.core.fourier.group_preparation import prepare_group_counts
+
+    run = scoped_run("unused")
+    run.histograms[2].t0_bin = 4
+    prepared = prepare_group_counts(run, [1])
+    assert prepared.reference_t0_bin == 4
+    assert prepared.sample.domain.detector_indices == (0,)
+    signal = build_group_signal_dataset(
+        run, 1, prepared=prepared, center_signal=False, apply_lifetime_correction=False
+    )
+    np.testing.assert_allclose(signal.asymmetry, 10 / 0.99)
+    assert signal.metadata["deadtime_outcome"]["status"] == "applied"
+
+
+def test_empty_time_selection_has_empty_domain_and_reports_no_usable_input():
+    from asymmetry.core.fourier.group_preparation import prepare_group_counts
+
+    run = scoped_run("unused")
+    prepared = prepare_group_counts(run, [1], time_range=(100.0, 110.0))
+    assert prepared.sample.domain.observations == ()
+    dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+    with pytest.raises(ValueError, match="produced no usable bins"):
+        build_count_groups(dataset, [1], t_min=100, t_max=110)
+    config = MaxEntConfig(
+        auto_steer=False,
+        auto_phase_seed=False,
+        auto_window=False,
+        selected_group_ids=[1],
+        t_min_us=100,
+        t_max_us=110,
+        n_spectrum_points=16,
+        f_max_mhz=0.4,
+    )
+    with pytest.raises(ValueError, match="no valid grouped signals"):
+        build_maxent_input(run, config)

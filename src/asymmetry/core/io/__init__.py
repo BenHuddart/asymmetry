@@ -176,7 +176,7 @@ def resolve_background_reference(
 
     Resolution order: match the reference run number against the already-loaded
     ``datasets`` (reuse an open run); otherwise load the payload's
-    ``source_file`` (cached per source path in ``cache`` when provided, so a
+    ``source_file`` (cached by requested run, path, and file identity, so a
     batch apply loads the reference **once**, not once per sample dataset). The
     scale is sample/reference good frames, falling back to the payload snapshots
     and finally ``1.0``. With ``allow_file=False``, an unloaded reference returns
@@ -193,12 +193,13 @@ def resolve_background_reference(
 
     source_file = str(payload.get("source_file", "") or "")
     run_number = payload.get("run_number")
+    run_number = None if run_number is None else int(run_number)
 
     reference_run = None
-    # A cache hit (per source path) short-circuits BOTH the registry scan and
+    # A hit for the same requested run and source skips the registry scan and
     # the loader, so a batch apply sharing one reference resolves it once
     # instead of re-scanning the registry for every sample dataset.
-    source_key = (source_file, reference_file_identity(payload))
+    source_key = (source_file, run_number, reference_file_identity(payload))
     if cache is not None and source_file and source_key in cache:
         reference_run = cache[source_key]
 

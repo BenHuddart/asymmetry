@@ -132,7 +132,7 @@ def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
     """A cached reference (per source path) is reused without scanning the
     registry or re-loading, even when a run_number is present."""
     reference = _run(7, good_frames=100.0, level=2.0)
-    cache = {("/some/ref.nxs", None): reference}
+    cache = {("/some/ref.nxs", 7, None): reference}
 
     def _fail_load(payload):
         raise AssertionError("loader must not run on a cache hit")
@@ -372,3 +372,33 @@ def test_fourier_digest_tracks_consumed_reference_for_every_deadtime_mode(mode, 
     before = fourier_grouping_digest(run)
     identity[3] += 1
     assert fourier_grouping_digest(run) != before
+
+
+def test_cached_file_reference_cannot_shadow_another_loaded_run_from_same_source(monkeypatch):
+    first = _run(7, good_frames=100.0, level=2.0)
+    second = _run(8, good_frames=200.0, level=9.0)
+    loads = []
+
+    def load_reference(payload):
+        loads.append(payload["run_number"])
+        return _dataset(first)
+
+    monkeypatch.setattr("asymmetry.core.io.load_background_run", load_reference)
+    cache = {}
+    source = "/some/ref.nxs"
+    original = resolve_background_reference({"source_file": source, "run_number": 7}, cache=cache)
+    selected = resolve_background_reference(
+        {"source_file": source, "run_number": 8},
+        datasets=[_dataset(second)],
+        sample_good_frames=400.0,
+        cache=cache,
+    )
+    np.testing.assert_array_equal(original.histograms[0].counts, 2.0)
+    np.testing.assert_array_equal(selected.histograms[0].counts, 9.0)
+    assert selected.good_frames_reference == 200.0
+    assert selected.scale == 2.0
+    repeated = resolve_background_reference(
+        {"source_file": source, "run_number": "007"}, cache=cache
+    )
+    np.testing.assert_array_equal(repeated.histograms[0].counts, 2.0)
+    assert loads == [7]
