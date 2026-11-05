@@ -20,7 +20,6 @@ from asymmetry.core.io.psi import (
     header_sensor_rejection,
 )
 from asymmetry.core.transform import (
-    apply_deadtime_correction,
     apply_grouping_aligned,
     common_t0_for_groups,
     prepare_histograms_with_deadtime,
@@ -1077,23 +1076,16 @@ def test_aligned_grouping_preserves_per_detector_t0() -> None:
     )
 
 
-def test_core_deadtime_formula_uses_good_frames() -> None:
-    corrected = apply_deadtime_correction(
-        np.array([100.0]),
-        tau_us=0.01,
-        bin_width_us=0.02,
-        num_good_frames=1000.0,
-    )
-    expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
-    assert corrected[0] == pytest.approx(expected)
-
-
 def test_prepare_deadtime_does_not_estimate_when_file_values_are_absent() -> None:
     observed = np.array([100.0, 95.0, 90.0], dtype=float)
     grouping = {}
 
-    with pytest.raises(ValueError, match="table"):
-        prepare_histograms_with_deadtime([Histogram(observed, bin_width=0.02)], grouping, True)
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        prepared, outcome = prepare_histograms_with_deadtime(
+            [Histogram(observed, bin_width=0.02)], grouping, True
+        )
+    assert outcome.status == "skipped"
+    np.testing.assert_array_equal(prepared[0].counts, observed)
     assert "deadtime_method" not in grouping
     assert "estimated_dead_time_factors" not in grouping
 

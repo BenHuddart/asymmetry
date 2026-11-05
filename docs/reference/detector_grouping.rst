@@ -164,7 +164,8 @@ Enabled background operations are evaluated on the current inputs with their
 configured mode, window and declared reference source.
 A calibrated beta of exactly one retains its provenance in the form and project.
 The selected period supplies its own exposure for reference-background scaling;
-manual or stored estimated deadtime tables remain unchanged during selection.
+manual or stored estimated deadtime tables remain unchanged during selection
+and period remapping; combined acquisition tables remain separate file facts.
 Apply preserves the acquired histogram set's ``good_frames`` and file
 coefficients. Selected-period exposure and coefficients belong to the effective
 reduction and its correction outcomes; they do not replace acquisition metadata.
@@ -884,13 +885,23 @@ Asymmetry follows WiMDA for this explicit v2 convention and intentionally
 differs from the compared musrfit 1.12.1 path; see
 :ref:`comparison-deadtime-units`.
 
-A requested ``File`` correction requires a complete, non-zero file table.
-A table marked as a manual or fitted calibration does not satisfy a file
-request. Missing tables and acquisition normalisation block final analysis
-rather than silently switching the correction off. An all-zero ``Manual`` or
-``Estimate`` table is a valid identity correction; ``Off`` explicitly disables
-correction. Correction preparation preserves the requested settings and records
-the actual table, frame count, coefficient source, and uncertainty convention.
+A requested ``File`` correction uses the run's own complete coefficient table,
+including a genuinely supplied all-zero identity. Missing or incomplete file
+coefficients skip the entire deadtime operation; every histogram remains
+uncorrected by that operation, including both periods of a period sum or
+difference, and other enabled operations continue. The
+preview accepts **Apply** and displays:
+``File deadtime correction not applied: a complete per-detector deadtime table is unavailable. Continuing uncorrected.``
+The request remains ``from_file`` with status ``skipped`` and no applied table.
+An authored Manual or Estimate table cannot supply missing file coefficients.
+Invalid Manual settings, missing exposure for a non-zero correction, and
+saturation remain errors. ``Off`` explicitly disables correction. Applied
+outcomes record the actual table, frame count, coefficient source, and
+uncertainty convention.
+
+.. image:: /_generated/screenshots/grouping_file_deadtime_warning.png
+   :alt: Missing file deadtime warning with a usable preview and enabled Apply.
+   :width: 100%
 
 The section adapts to the selected mode, showing only the controls that mode
 uses so the Corrections column stays readable without scrolling. ``Off`` shows the
@@ -953,7 +964,8 @@ The scriptable ``apply_deadtime_correction`` function requires the
 ``num_good_frames`` keyword; it has no acquisition default.
 
 PSI BIN/MDU and MusrRoot/LEM ROOT data usually do not ship NeXus-style file
-deadtime constants, so ``File`` mode is commonly unavailable there. Those runs
+deadtime constants. A requested ``File`` correction then continues uncorrected
+with a warning. Those runs
 can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
 available to populate per-detector manual values from the selected preview
 run. The background correction path remains separate and optional.
@@ -1074,6 +1086,15 @@ that requires its calibration inputs, uncertainties and fit diagnostics.
 
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Missing File deadtimes give a warned whole-operation uncorrected result,
+closest to WiMDA's missing-calibration result. musrfit 1.12.1 can correct
+histograms with supplied coefficients while leaving others unchanged; Mantid
+6.16.1 distinguishes its numerical algorithm, GUI validation, and loader paths.
+Asymmetry also skips the whole operation for incomplete tables, including
+participating periods and a reference background. It never borrows a reference
+run's coefficients from the sample. Complete zero tables are identities.
+See :ref:`comparison-deadtime-availability` for the scoped comparison.
 
 Asymmetry uses unique acquired-channel membership and requires disjoint,
 nonempty effective F/B pairs for its independent-count model. WiMDA and musrfit
@@ -1764,11 +1785,12 @@ Related topics
 Incomplete corrections
 ----------------------
 
-**Apply** refuses a requested correction when its table, frame exposure,
-reference run, or fixed values are unavailable, or its estimator fails. The run
-keeps its arrays and grouping. A zero File-mode deadtime table is unavailable;
-a zero Manual or Estimate table is an applied identity. The preview labels
-incomplete corrections and disables **Apply**. Restored runs keep their requests
-and display "Corrections incomplete" until a successful apply; fits and exports
-refuse in the meantime. See :doc:`data_reduction/backgrounds` for correction
-outcomes and the reference-preview banner.
+**Apply** refuses unavailable or failed corrections, including missing exposure
+for non-zero coefficients, a missing background reference, or failed estimation.
+The run keeps its arrays and grouping. Missing or incomplete File coefficients
+instead produce an accepted ``skipped`` outcome and a visible warning; a
+complete zero File, Manual, or Estimate table is an applied identity. Restored
+runs with fatal correction failures display "Corrections incomplete" until a
+successful apply; fits and exports refuse in the meantime. Accepted skipped
+results display "Correction warning" and remain usable. See
+:doc:`data_reduction/backgrounds` for correction outcomes.

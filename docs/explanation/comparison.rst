@@ -489,6 +489,35 @@ Numerical WiMDA agreement and native **Mantid 6.16.1** loader unit equivalence
 are not established. The coefficient interpretation does not change the
 correction formula or retained measured/supplied counting variance.
 
+.. _comparison-deadtime-availability:
+
+Optional file deadtime calibration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA searches for an external calibration when internal coefficients are
+absent, then informs the user and turns correction off if none is found.
+Asymmetry follows that whole-operation uncorrected result with an explicit
+warning, preserving requested File versus actual ``skipped`` and making no
+automatic calibration-file search. It applies the same policy to incomplete
+required tables, avoiding a mixture of corrected and uncorrected histograms.
+A genuinely supplied complete zero table is an available identity.
+
+musrfit 1.12.1 warns and leaves histograms without coefficients uncorrected;
+other histograms can still be corrected. Mantid 6.16.1 ``ApplyDeadTimeCorr``
+accepts partial tables, its Muon Analysis GUI requires matching table row
+counts, and requested legacy-loader table paths can reject short tables.
+These are different workflows, rather than a universal missing-table policy.
+The musrfit missing, zero, and short-table count exports agree with these
+statements; Asymmetry deliberately skips the whole operation for a short table.
+Public context is provided by the `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_,
+`musrfit manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_,
+and `Mantid correction documentation <https://docs.mantidproject.org/v6.16.0/algorithms/ApplyDeadTimeCorr-v1.html>`_.
+
+Asymmetry also checks non-zero correction exposure and bin width and rejects
+saturated or nonfinite inverses over the histograms passed to preparation.
+Those calculation failures remain errors; missing optional calibration does
+not prevent raw loading or other valid enabled operations.
+
 Signed deadtime coefficients
 ----------------------------
 

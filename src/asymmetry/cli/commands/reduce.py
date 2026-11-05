@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +100,7 @@ def run(args: argparse.Namespace) -> None:
     """Reduce every named run, caching each result in the work directory."""
     from asymmetry.cli import plots
     from asymmetry.core.io.periods import period_count
+    from asymmetry.core.transform.corrections import correction_warnings
     from asymmetry.core.workflow.reduction import (
         load_reduction_source,
         reduce_run,
@@ -156,6 +158,8 @@ def run(args: argparse.Namespace) -> None:
         if workdir.is_current(run_number, digest):
             dataset = workdir.reduced(run_number)
             entry = workdir.entry(run_number)
+            for message in correction_warnings(dataset.metadata):
+                warnings.warn(message, UserWarning, stacklevel=2)
             recomputed = False
         else:
             try:
@@ -178,7 +182,8 @@ def run(args: argparse.Namespace) -> None:
                 source_file=str(paths[0]),
                 n_points=dataset.n_points,
                 settings=settings,
-                run=row.to_dict(),
+                run=row.to_dict()
+                | {"correction_outcomes": dataset.metadata["correction_outcomes"]},
                 alpha=float(grouping["alpha"]),
                 deadtime_mode=str(grouping["deadtime_mode"]),
                 forward_group=int(grouping["forward_group"]),

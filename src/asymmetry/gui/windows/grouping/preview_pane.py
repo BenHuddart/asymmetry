@@ -39,7 +39,6 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
-    CorrectionStatus,
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_period_asymmetry
@@ -465,15 +464,10 @@ class GroupingPreviewPane(QWidget):
         self._pending = None
         self._tasks.shutdown()
 
-    # -- dispatch + worker ----------------------------------------------
-
     def _dispatch_pending(self) -> None:
         if self._pending is None:
             return
         if self._in_flight:
-            # Coalesce: keep the latest request pending; the finished/error
-            # callback of the running task dispatches it. This bounds the
-            # worker-thread count at one no matter how fast edits arrive.
             return
         request = self._pending
         self._pending = None
@@ -496,20 +490,24 @@ class GroupingPreviewPane(QWidget):
         if result.generation != self._generation:
             return  # superseded by a newer edit
         self._state = result
-        missing = [
-            f"{item.name} ({item.reason})"
+        items = [
+            item
             for outcome in result.corrections
             for item in (outcome.deadtime, outcome.background)
-            if item.status in {CorrectionStatus.UNAVAILABLE, CorrectionStatus.FAILED}
         ]
-        self._incomplete_banner.setText("Incomplete preview — not applied: " + ", ".join(missing))
-        self._incomplete_banner.setVisible(bool(missing))
+        missing = [f"{item.name} ({item.reason})" for item in items if not item.usable]
+        warnings = dict.fromkeys(item.warning for item in items if item.warning is not None)
+        text = (
+            "Incomplete preview — not applied: " + ", ".join(missing)
+            if missing
+            else " ".join(warnings)
+        )
+        self._incomplete_banner.setText(text)
+        self._incomplete_banner.setVisible(bool(text))
         if all(outcome.complete for outcome in result.corrections):
             self.preview_completed.emit(result.alpha)
         self.preview_changed.emit()
         self._draw(result)
-
-    # -- pan/zoom --------------------------------------------------------
 
     def _nav_active(self) -> bool:
         toolbar = self._nav_toolbar

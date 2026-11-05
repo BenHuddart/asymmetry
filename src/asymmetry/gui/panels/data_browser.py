@@ -74,6 +74,7 @@ from asymmetry.core.io.periods import (
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
+from asymmetry.core.transform.corrections import correction_warnings
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K
@@ -1945,20 +1946,11 @@ class DataBrowserPanel(QWidget):
         phase: DataGroup | None = None,
         excluded: bool = False,
     ) -> None:
-        """Render one run row.
-
-        *phase* renders the run under that phase sub-header of *group_id*, one
-        level deeper and striped in the phase colour; *excluded* renders it as a
-        member of *group_id* that the partition claimed for no phase — hatched
-        stripe, italic, and a Title-column badge saying so. The two are mutually
-        exclusive: a run is in a phase or it is excluded (transitions plan, D2).
+        """Render one run row; phase membership and exclusion are mutually exclusive.
+        Each row carries its group identity, annotations, and effective correction status.
         """
         rn = int(dataset.run_number)
         meta = dataset.metadata
-        # A *copy* row (D2): the run rendered under a non-primary group. Its
-        # table key encodes the (run, group) membership so it is addressable
-        # distinctly, and its run label carries a circled-digit marker. A phase
-        # member is never a copy: the phase refines its parent membership.
         is_copy = phase is None and group_id is not None and self._primary_group_id(rn) != group_id
         run_display = str(dataset.run_label)
         if rn in self._combined_datasets:
@@ -1992,7 +1984,6 @@ class DataBrowserPanel(QWidget):
         comment = str(meta.get("comment", ""))
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        # State, comments, and period cues share the Title cell's second line.
         title_item.setData(_COMMENT_ROLE, comment)
         period_note = self._period_note(dataset)
         period_tip = (
@@ -2002,14 +1993,21 @@ class DataBrowserPanel(QWidget):
             else ""
         )
         correction_error = meta.get("correction_error")
-        tooltip_parts = [part for part in (title, comment, period_tip, correction_error) if part]
+        warning = " ".join(correction_warnings(meta))
+        tooltip_parts = [
+            part for part in (title, comment, period_tip, correction_error, warning) if part
+        ]
         if period_note is not None:
             title_item.setData(_PERIOD_ROLE, period_note)
         badge = " · ".join(
             part
             for part in (
                 _EXCLUDED_BADGE if excluded else "",
-                "Corrections incomplete" if correction_error else "",
+                "Corrections incomplete"
+                if correction_error
+                else "Correction warning"
+                if warning
+                else "",
             )
             if part
         )

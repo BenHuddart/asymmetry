@@ -13,11 +13,16 @@ from asymmetry.core.transform.background import (
     resolve_background_ranges,
 )
 from asymmetry.core.transform.corrections import (
+    BackgroundReference,
     CorrectionOutcome,
     CorrectionOutcomes,
     CorrectionStatus,
 )
-from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.deadtime import (
+    deadtime_operation_inputs,
+    prepare_histograms_with_deadtime,
+    resolve_deadtime,
+)
 from asymmetry.core.transform.fb_counts import GroupCounts, linear_combination_variance
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
@@ -136,6 +141,26 @@ def _group_background_range_for_group(
     return None
 
 
+def resolve_group_deadtime_inputs(run: Run, use_deadtime: bool, cache: dict | None = None):
+    """Resolve sample/reference coefficients before either histogram set is corrected."""
+    from asymmetry.core.io import resolve_background_reference
+
+    grouping = run.grouping
+    reference = None
+    inputs = [(list(run.histograms), grouping)]
+    if (
+        correction_flags_from_grouping(grouping).use_background
+        and resolve_background_mode(grouping) == "reference_run"
+    ):
+        reference = resolve_background_reference(
+            grouping.get("background_run"),
+            sample_good_frames=good_frames(grouping, default=0.0) or None,
+            cache=cache,
+        )
+        inputs.append((reference.histograms, reference.deadtime_grouping(grouping)))
+    return deadtime_operation_inputs(inputs, use_deadtime), reference
+
+
 def _resolve_group_reference_counts(
     grouping: dict,
     *,
@@ -145,6 +170,8 @@ def _resolve_group_reference_counts(
     detector_t0_bins: list[int],
     sample_alignment,
     cache: dict | None = None,
+    reference: BackgroundReference | None = None,
+    reference_grouping: dict | None = None,
 ) -> tuple[GroupCounts | None, float | None]:
     """Resolve+group a ``reference_run`` background for one detector group.
 
@@ -171,9 +198,12 @@ def _resolve_group_reference_counts(
 
     cache = cache if cache is not None else {}
     sample_frames = good_frames(grouping, default=0.0) or None
-    reference = resolve_background_reference(
-        grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
-    )
+    if reference is None:
+        reference = resolve_background_reference(
+            grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
+        )
+    if reference_grouping is None:
+        reference_grouping = reference.deadtime_grouping(grouping)
 
     # Prepared reference histograms are identical for every group of this run
     # (same grouping + deadtime flag), so prepare once per sweep.
@@ -183,13 +213,15 @@ def _resolve_group_reference_counts(
         reference.source_file,
         reference.run_number,
         reference.good_frames_reference,
-        tuple(grouping.get("dead_time_us", ())) if apply_deadtime else (),
+        tuple(reference_grouping.get("deadtime_file_us", ())) if apply_deadtime else (),
+        reference_grouping.get("deadtime_mode"),
+        tuple(reference_grouping.get("dead_time_us", ())) if apply_deadtime else (),
     )
     reference_prepared = cache.get(prepared_key)
     if reference_prepared is None:
         reference_prepared, _ = prepare_histograms_with_deadtime(
             reference.histograms,
-            dict(grouping, good_frames=reference.good_frames_reference),
+            reference_grouping,
             apply_deadtime,
         )
         cache[prepared_key] = reference_prepared
@@ -336,8 +368,14 @@ def build_group_signal_dataset(
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     if use_deadtime is not None:
         apply_deadtime = bool(use_deadtime)
-    if prepared_histograms is None:
-        prepared_histograms, _ = prepare_histograms_with_deadtime(
+    inputs, reference = resolve_group_deadtime_inputs(
+        run, apply_deadtime, background_reference_cache
+    )
+    histograms, grouping = inputs[0]
+    deadtime = resolve_deadtime(grouping, len(histograms), apply_deadtime)
+    CorrectionOutcomes(deadtime=deadtime).require_complete()
+    if prepared_histograms is None or deadtime.status == CorrectionStatus.SKIPPED:
+        prepared_histograms, deadtime = prepare_histograms_with_deadtime(
             histograms, grouping, apply_deadtime
         )
     else:
@@ -385,6 +423,8 @@ def build_group_signal_dataset(
         detector_t0_bins=detector_t0_bins,
         sample_alignment=alignment,
         cache=background_reference_cache,
+        reference=reference,
+        reference_grouping=inputs[1][1] if reference is not None else None,
     )
     group, background_applied, background_value = _apply_group_background_correction(
         group,
@@ -445,6 +485,7 @@ def build_group_signal_dataset(
             "run_number": run.run_number,
             "run_label": f"{run.run_number} {group_name}",
             "fourier_source": "group_signal",
+            "deadtime_outcome": deadtime.to_dict(),
             "grouped_alignment": alignment.to_dict(),
             "fourier_lifetime_corrected": bool(apply_lifetime_correction),
             "fourier_background_corrected": bool(background_applied),

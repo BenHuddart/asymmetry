@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep acquired deadtimes separate from authored calibration through NeXus export
+  and period mapping; mark spectra stale when reference calibration changes.
+
+- Preserve optional file deadtimes and continue uncorrected with a warning when
+  File coefficients are missing or incomplete; complete zero tables remain identities.
+
 - Honour explicit microsecond/nanosecond NeXus-v2 deadtime units, so equivalent
   declarations give the same correction; preserve legacy and missing-unit behaviour.
 

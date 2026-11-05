@@ -498,3 +498,49 @@ def test_fb_phase_config_uses_global_spin_not_phase_table(window) -> None:
     assert config.signal_source == "fb_asymmetry"
     assert config.group_phase_degrees
     assert set(config.group_phase_degrees.values()) == {30.0}
+
+
+def test_reference_file_table_change_marks_cached_spectrum_stale(window, tmp_path, qapp):
+    from asymmetry.core.io import load
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+    window, dataset = _computed_window(window)
+    sample = dataset.run
+    reference = _tf_run()
+    reference.run_number = 78
+    for histogram in reference.histograms:
+        histogram.counts = np.rint(histogram.counts / 10)
+    reference.grouping.update(good_frames=1e6, deadtime_file_us=[])
+    path = tmp_path / "reference.nxs"
+    write_nexus_v1(reference, path, effective=True)
+    shadow = load(path)
+    window._data_browser.add_dataset(shadow)
+    sample.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        deadtime_file_us=[0.02, 0.02],
+        good_frames=1e6,
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"run_number": 78, "source_file": str(path)},
+    )
+    window._current_dataset = dataset
+    window._sync_fourier_panel_for_dataset(dataset)
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, qapp, timeout_s=15.0)
+    before = window._cached_frequency_spectra(77, RepresentationType.FREQ_FFT)[0]
+    assert before.metadata["deadtime_outcome"]["status"] == "skipped"
+    assert window._fourier_staleness_for_current_run() == (False, "")
+    # The worker reads the source file, so edits to an unused live shadow are inert.
+    shadow.run.grouping["deadtime_file_us"] = [0.0, 0.0]
+    assert window._fourier_staleness_for_current_run() == (False, "")
+    reference.grouping["deadtime_file_us"] = [0.0, 0.0]
+    write_nexus_v1(reference, path, effective=True)
+    stale, reason = window._fourier_staleness_for_current_run()
+    assert stale and "grouping changed" in reason
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, qapp, timeout_s=15.0)
+    after = window._cached_frequency_spectra(77, RepresentationType.FREQ_FFT)[0]
+    assert after.metadata["deadtime_outcome"]["status"] == "applied"
+    assert not np.allclose(after.asymmetry, before.asymmetry)
+    assert window._fourier_staleness_for_current_run() == (False, "")

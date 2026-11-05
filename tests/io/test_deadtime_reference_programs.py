@@ -69,7 +69,7 @@ def _synthetic_nexus(path, coefficient):
         data["counts"] = counts
 
 
-@pytest.mark.parametrize("coefficient", [-0.02, 0.0, 0.005, 0.02, 0.05])
+@pytest.mark.parametrize("coefficient", [-0.02, 0.0, 0.005, 0.02, 0.05, None, "short"])
 @pytest.mark.parametrize("packing", [1, 4])
 @pytest.mark.parametrize("detectors", ["1", "1 2"])
 def test_musrfit_single_histogram_uncertainty(tmp_path, coefficient, packing, detectors):
@@ -81,7 +81,15 @@ def test_musrfit_single_histogram_uncertainty(tmp_path, coefficient, packing, de
     ).stdout
     if "1.12.1" not in version or "708f777b" not in version:
         pytest.skip("reference requires musrfit 1.12.1, revision 708f777b")
-    _synthetic_nexus(tmp_path / "synthetic.nxs", coefficient)
+    _synthetic_nexus(
+        tmp_path / "synthetic.nxs", 0.02 if coefficient in (None, "short") else coefficient
+    )
+    if coefficient in (None, "short"):
+        with h5py.File(tmp_path / "synthetic.nxs", "r+") as handle:
+            detector = handle["raw_data_1/instrument/detector_1"]
+            del detector["dead_time"]
+            if coefficient == "short":
+                detector["dead_time"] = [0.02]
     (tmp_path / "musrfit_startup.xml").write_text(
         '<?xml version="1.0"?><musrfit><data_path>.</data_path></musrfit>'
     )
@@ -129,13 +137,29 @@ range 0 9
     dataset = load(str(tmp_path / "synthetic.nxs"))
     run = dataset.run
     assert run is not None
-    prepared, _ = prepare_histograms_with_deadtime(
-        run.histograms, run.grouping, True, mode="manual"
-    )
+    if coefficient in (None, "short"):
+        with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+            prepared, outcome = prepare_histograms_with_deadtime(run.histograms, run.grouping, True)
+        assert outcome.status == "skipped"
+    else:
+        prepared, outcome = prepare_histograms_with_deadtime(run.histograms, run.grouping, True)
+        assert outcome.status == "applied"
     indices = [int(detector) - 1 for detector in detectors.split()]
     grouped = apply_grouping_aligned(prepared, indices)
     # The reference fit selects raw bins 1..99; packing drops its incomplete tail.
     time, corrected = rebin_counts(prepared[0].time_axis[1:99], grouped[1:99], packing)
     np.testing.assert_allclose(exported[:, 0], time, rtol=5e-6)
-    np.testing.assert_allclose(exported[:, 1], corrected, rtol=5e-6)
-    np.testing.assert_allclose(exported[:, 2], np.sqrt(corrected), rtol=5e-6)
+    reference_counts = corrected
+    if coefficient == "short":
+        # musrfit applies the supplied first coefficient; Asymmetry skips both.
+        available = run.histograms[0].counts / (
+            1 - run.histograms[0].counts * 0.02 / (0.1 * 100000)
+        )
+        if detectors == "1 2":
+            available = available + run.histograms[1].counts
+        _, reference_counts = rebin_counts(prepared[0].time_axis[1:99], available[1:99], packing)
+        np.testing.assert_allclose(exported[:, 1], reference_counts, rtol=5e-6)
+        assert not np.allclose(exported[:, 1], corrected)
+    else:
+        np.testing.assert_allclose(exported[:, 1], corrected, rtol=5e-6)
+    np.testing.assert_allclose(exported[:, 2], np.sqrt(reference_counts), rtol=5e-6)

@@ -99,6 +99,12 @@ uses fixed μs coefficients regardless of the attribute. Saved project
 coefficients are already in μs and are not converted again. Acquired counts,
 timing, and counting variance are retained.
 
+NeXus exports retain acquisition deadtime tables separately from authored
+Manual or Estimate calibration. Missing tables are omitted, short supplied
+tables retain their detector entries, and complete zero tables remain
+available identities. Authored coefficients do not become File calibration
+when an exported run is reopened.
+
 NeXus exports declare units on every written physical quantity: sample
 ``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
 ``corrected_time``, ``time_zero``, and ``dead_time`` use ``microseconds``,
@@ -681,8 +687,8 @@ resolved payload is also reused for future datasets loaded into the same
 project, matching the existing grouping-template workflow.
 
 PSI BIN/MDU and MusrRoot/LEM ROOT files do not normally contain NeXus-style
-file deadtime constants, so ``File`` mode is often unavailable there. Those
-formats can still use manual per-detector values, the WiMDA-style ``Cal``
+file deadtime constants. A requested ``File`` correction continues uncorrected
+with a warning when required coefficients are absent or incomplete. Those formats can still use manual per-detector values, the WiMDA-style ``Cal``
 per-detector calibration routine, or the reference-run deadtime estimate.
 
 Background correction is a separate Grouping dialog toggle for PSI-style data
@@ -732,8 +738,11 @@ does not invent format rules:
   reference run and persists the resulting explicit per-detector table through
   the manual detector-value editor.
 * Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
-  table with zeros. Asymmetry therefore treats PSI deadtime as absent and uses
-  ``File`` mode only when non-zero file values are actually present.
+  table with zeros. Asymmetry preserves the actual file-table availability;
+  a supplied complete zero table is identity, while an absent table is not
+  manufactured from zeros. Short tables never cycle or borrow coefficients
+  from another detector or period. Missing optional calibration does not block
+  raw loading.
 * PSI ``.mon`` temperature sidecars share channel naming and provenance
   metadata with Mantid ``LoadPSIMuonBin``. Both BIN and MDU runs can load
   sidecars; a sidecar with an inconsistent start timestamp is rejected.

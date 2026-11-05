@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import resolve_group_indices
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
@@ -167,9 +168,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
     counts = np.clip(np.rint(counts), 0, None)
     counts_dtype = np.int32 if counts.max(initial=0.0) <= np.iinfo(np.int32).max else np.int64
 
-    dead_time = np.asarray(grouping.get("dead_time_us", []), dtype=np.float64)
-    if dead_time.size != n_det:
-        dead_time = np.zeros(n_det, dtype=np.float64)
+    dead_time = np.asarray(file_deadtime_table(grouping), dtype=np.float64)
 
     good_frames = grouping.get("good_frames")
 
@@ -220,9 +219,10 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
             "picoseconds"
         )
         h_data.create_dataset("grouping", data=detector_groups)
-        h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
-            "microseconds"
-        )
+        if dead_time.size:
+            h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
+                "microseconds"
+            )
         # time_zero is the exact t0 in µs from the start of acquisition, one
         # value per detector (WiMDA quantised a single value to whole µs here).
         time_zero_ds = h_data.create_dataset("time_zero", data=time_zero)

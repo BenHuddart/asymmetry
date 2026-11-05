@@ -16,6 +16,12 @@ class IncompletePreviewScenario(Scenario):
     name = "grouping_incomplete_preview"
     description = "Missing background reference and disabled Apply."
     size = (1180, 780)
+    complete = False
+    correction_settings = {
+        "background_correction": True,
+        "background_mode": "reference_run",
+        "background_run": {"run_number": 9999},
+    }
 
     def capture(self, ctx: CaptureContext) -> Path:
         # Counts are deterministic Poisson means per acquisition bin; time is in µs.
@@ -33,16 +39,14 @@ class IncompletePreviewScenario(Scenario):
                 "first_good_bin": 0,
                 "last_good_bin": 199,
                 "deadtime_correction": False,
-                "background_correction": True,
-                "background_mode": "reference_run",
-                "background_run": {"run_number": 9999},
+                **self.correction_settings,
             },
         )
         dataset = MuonDataset(
             time,
             np.full(200, 20.0),
             np.ones(200),
-            metadata={"run_number": 8102, "title": "Missing reference (synthetic)"},
+            metadata={"run_number": 8102, "title": self.description + " (synthetic)"},
             run=run,
         )
         dialog = GroupingDialog([dataset])
@@ -51,9 +55,16 @@ class IncompletePreviewScenario(Scenario):
         dialog.show()
         pane = dialog._preview_pane
         pane.flush()
-        _pump_until(lambda: pane._last_result is not None and not pane.corrections_complete)
-        if pane.corrections_complete or dialog._apply_btn.isEnabled():
-            raise RuntimeError("Missing reference preview must disable Apply")
+        _pump_until(
+            lambda: pane._last_result is not None and pane.corrections_complete == self.complete
+        )
+        if (
+            pane.corrections_complete != self.complete
+            or dialog._apply_btn.isEnabled() != self.complete
+        ):
+            raise RuntimeError("Correction preview acceptance does not match its outcome")
+        if not pane._incomplete_banner.text():
+            raise RuntimeError("Correction warning must remain visible")
         _pump_events(80)
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -67,4 +78,12 @@ class IncompletePreviewScenario(Scenario):
         return output
 
 
+class FileDeadtimeWarningScenario(IncompletePreviewScenario):
+    name = "grouping_file_deadtime_warning"
+    description = "Missing file deadtime calibration with enabled Apply."
+    complete = True
+    correction_settings = {"deadtime_correction": True, "deadtime_mode": "file", "dead_time_us": []}
+
+
 register(IncompletePreviewScenario())
+register(FileDeadtimeWarningScenario())

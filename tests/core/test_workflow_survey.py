@@ -28,7 +28,6 @@ from tests.core.conftest import (
     CALIBRATION_ALPHA,
     CALIBRATION_FIELD_G,
     CALIBRATION_RUN,
-    DEADTIME_RUN,
     DECOUPLING_FIELD_G,
     DECOUPLING_RUN,
     ZF_RUNS,
@@ -148,9 +147,9 @@ def test_survey_reports_the_gross_event_total(workflow_folder: Path, survey) -> 
     assert survey.to_dict()["runs"][0]["total_events"] == expected
 
 
-def test_has_file_deadtime_is_true_only_for_the_run_that_carries_values(survey) -> None:
+def test_supplied_zero_file_tables_are_available_identities(survey) -> None:
     flagged = {row.run_number for row in survey.runs if row.has_file_deadtime}
-    assert flagged == {DEADTIME_RUN}
+    assert flagged == set(ALL_RUNS)
 
 
 def test_survey_finds_the_weak_tf_calibration_candidate(survey) -> None:

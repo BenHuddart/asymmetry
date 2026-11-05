@@ -70,6 +70,13 @@ background. Forward and backward here are the two detector groups designated in
 the **Grouping** dialog; sum multi-detector banks into those two groups
 upstream.
 
+Missing or incomplete File deadtime coefficients produce a warned ``skipped``
+outcome and leave the observations uncorrected by that operation. Count fits
+continue under their existing count-source and background requirements;
+the grouped count domain retains the requested and actual deadtime outcome.
+Invalid Manual settings, missing required exposure, and saturation remain
+errors. See :doc:`detector_grouping` for the shared correction contract.
+
 Choosing the cost
 -----------------
 

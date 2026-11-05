@@ -95,6 +95,7 @@ def test_calibration_preserves_sign_and_rejects_nonfinite_results_atomically():
     calibration = deadtime.DeadtimeCalibration((-0.1, 0.1), (None, None), "count_fit", 7)
     deadtime.promote_deadtime_to_grouping(grouping, calibration)
     assert grouping["dead_time_us"] == pytest.approx([-0.1, 0.1])
+    assert grouping["deadtime_file_us"] == [0.1, 0.2]
     before = dict(grouping)
     with pytest.raises(deadtime.DeadtimeCorrectionError):
         deadtime.DeadtimeCalibration((np.inf,), (None,), "count_fit", 7)
@@ -102,8 +103,8 @@ def test_calibration_preserves_sign_and_rejects_nonfinite_results_atomically():
 
 
 @pytest.mark.parametrize("value", [np.nan, "bad", np.inf])
-def test_invalid_resolved_table_is_not_treated_as_absent(value):
-    grouping = {"dead_time_us": [value], "good_frames": 10}
+def test_invalid_manual_table_is_not_treated_as_absent(value):
+    grouping = {"dead_time_us": [value], "good_frames": 10, "deadtime_mode": "manual"}
     with pytest.raises(deadtime.DeadtimeCorrectionError, match="detector 1"):
         deadtime.prepare_histograms_with_deadtime(
             [Histogram(np.ones(2), bin_width=1)], grouping, True

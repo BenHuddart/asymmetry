@@ -274,3 +274,119 @@ def test_fb_mode_returns_none_without_fb_pair_grouped_still_computes():
     )
     grouped = compute_average_group_spectrum(run, GroupSpectrumConfig())
     assert grouped is not None
+
+
+def test_grouped_spectrum_accepts_warned_uncorrected_file_result():
+    import pytest
+
+    run = _run()
+    expected = compute_average_group_spectrum(run, GroupSpectrumConfig())
+    run.grouping.update(deadtime_correction=True, deadtime_mode="file")
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        actual = compute_average_group_spectrum(run, GroupSpectrumConfig())
+    assert actual.metadata["deadtime_outcome"]["status"] == "skipped"
+    np.testing.assert_array_equal(actual.time, expected.time)
+    np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
+
+
+def test_fourier_digest_tracks_file_availability_and_requested_mode():
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+
+    run = _run()
+    run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        dead_time_us=[0.0, 0.0],
+        deadtime_file_us=[],
+        good_frames=100000.0,
+    )
+    skipped = fourier_grouping_digest(run)
+    run.grouping["deadtime_file_us"] = [0.02, 0.02]
+    applied = fourier_grouping_digest(run)
+    assert applied != skipped
+    run.grouping["deadtime_mode"] = "manual"
+    assert fourier_grouping_digest(run) != applied
+
+
+def test_fourier_reference_missing_file_table_skips_both_inputs(monkeypatch):
+    import pytest
+
+    from asymmetry.core.transform.corrections import BackgroundReference
+
+    run = _run()
+    reference = BackgroundReference(
+        [Histogram(h.counts / 4, h.bin_width) for h in run.histograms],
+        1.0,
+        good_frames_reference=100000.0,
+    )
+    monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
+    run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        dead_time_us=[0.02, 0.02],
+        good_frames=100000.0,
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"run_number": 42},
+    )
+    expected = build_group_signal_dataset(
+        run, 1, use_deadtime=False, center_signal=False, apply_lifetime_correction=False
+    )
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        prepared, t0 = precompute_group_fourier_inputs(run)
+        actual = build_group_signal_dataset(
+            run,
+            1,
+            prepared_histograms=prepared,
+            reference_t0_bin=t0,
+            center_signal=False,
+            apply_lifetime_correction=False,
+        )
+    assert actual.metadata["deadtime_outcome"]["status"] == "skipped"
+    np.testing.assert_array_equal(actual.time, expected.time)
+    np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
+    np.testing.assert_array_equal(actual.error, expected.error)
+
+
+def test_precomputed_fourier_counts_do_not_bypass_fatal_deadtime_resolution():
+    import pytest
+
+    run = _run()
+    run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        dead_time_us=[0.02, 0.02],
+        good_frames=100000.0,
+    )
+    prepared, _ = precompute_group_fourier_inputs(run)
+    del run.grouping["good_frames"]
+    with pytest.raises(ValueError, match="good frames"):
+        build_group_signal_dataset(run, 1, prepared_histograms=prepared)
+
+
+def test_reference_cache_tracks_authored_manual_coefficients(monkeypatch):
+    from asymmetry.core.transform.corrections import BackgroundReference
+
+    run = _run()
+    reference = BackgroundReference(
+        [Histogram(h.counts / 4, h.bin_width) for h in run.histograms],
+        1.0,
+        good_frames_reference=100000.0,
+    )
+    monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
+    run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="manual",
+        dead_time_us=[0.02, 0.02],
+        good_frames=100000.0,
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"run_number": 42},
+    )
+    cache = {}
+    build_group_signal_dataset(run, 1, background_reference_cache=cache)
+    run.grouping["dead_time_us"] = [0.04, 0.04]
+    actual = build_group_signal_dataset(run, 1, background_reference_cache=cache)
+    expected = build_group_signal_dataset(run, 1, background_reference_cache={})
+    np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
+    np.testing.assert_array_equal(actual.error, expected.error)

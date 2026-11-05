@@ -195,7 +195,7 @@ def test_photo_musr_trivial_mapping_matches_loader_combination():
     assert grouping["period_good_frames"] == pytest.approx(loader_grouping["period_good_frames"])
 
 
-def test_dead_times_pair_weights_with_their_own_periods():
+def test_missing_contributing_period_prevents_a_combined_calibration():
     """Review fix: a period without a deadtime table must not shift the
     frame weights of the periods that have one."""
     periods = _four_periods()[:3]  # frames 1000, 2000, 3000
@@ -203,20 +203,18 @@ def test_dead_times_pair_weights_with_their_own_periods():
     periods[1].run.grouping.pop("dead_time_us")  # middle period: no table
     periods[2].run.grouping["dead_time_us"] = [0.020, 0.020, 0.020]
     mapped = combine_mapped_periods(periods, {1: "red", 2: "red", 3: "red"})
-    # Weighted by the OWNING periods' frames (1000 and 3000), not period 2's.
-    expected = (0.010 * 1000.0 + 0.020 * 3000.0) / 4000.0
-    assert mapped.run.grouping["dead_time_us"] == pytest.approx([expected] * 3)
+    assert mapped.run.grouping["dead_time_us"] == [None] * 3
 
 
-def test_dead_times_ragged_tables_truncate_instead_of_crashing():
+def test_ragged_contributing_tables_remain_unavailable():
     periods = _four_periods()[:2]
     periods[0].run.grouping["dead_time_us"] = [0.010, 0.010, 0.010]
     periods[1].run.grouping["dead_time_us"] = [0.020, 0.020]  # malformed: short
     mapped = combine_mapped_periods(periods, {1: "red", 2: "red"})
     table = mapped.run.grouping["dead_time_us"]
-    assert len(table) == 2
-    expected = (0.010 * 1000.0 + 0.020 * 2000.0) / 3000.0
-    assert table == pytest.approx([expected] * 2)
+    expected = (0.010 * 1000 + 0.020 * 2000) / 3000
+    assert table[:2] == pytest.approx([expected] * 2)
+    assert table[2] is None
 
 
 @pytest.mark.parametrize("conflicting_period", [0, 1])
@@ -228,3 +226,24 @@ def test_mapped_sets_keep_the_timing_source_of_their_histograms(conflicting_peri
     for index in range(2):
         _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
         assert grouping["t0_source"] == periods[index].run.grouping["t0_source"]
+
+
+@pytest.mark.parametrize(
+    "mode", ["manual", "estimate", "load", "calibrate", "count_fit", "maxent_fit", "value"]
+)
+def test_mapping_keeps_authored_and_acquired_deadtime_tables_separate(mode):
+    periods = _four_periods()[:2]
+    for dataset in periods:
+        dataset.run.grouping.update(
+            deadtime_mode=mode,
+            deadtime_method=mode,
+            dead_time_us=[0.01, -0.02, 0.03],
+            deadtime_file_us=[0.004] * 3,
+        )
+    mapped = combine_mapped_periods(periods, {1: "red", 2: "green"})
+    assert mapped.run.grouping["dead_time_us"] == [0.01, -0.02, 0.03]
+    assert mapped.run.grouping["deadtime_file_us"] == [0.004] * 3
+    for index in (0, 1):
+        _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
+        assert grouping["dead_time_us"] == [0.01, -0.02, 0.03]
+        assert grouping["deadtime_file_us"] == [0.004] * 3

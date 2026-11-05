@@ -25,7 +25,7 @@ from asymmetry.core.fourier.fft import (
     fourier_mode_uses_phase_fit,
     prepare_fft_time_signal,
 )
-from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.grouped import build_group_signal_dataset, resolve_group_deadtime_inputs
 from asymmetry.core.fourier.phase_fit import (
     PHASE_FIT_METHOD,
     PhaseAcquisition,
@@ -37,7 +37,7 @@ from asymmetry.core.fourier.phase_fit import (
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.deadtime import file_deadtime_table, prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     group_names,
     group_reference_t0,
@@ -316,48 +316,16 @@ def _background_values_are_list_routed(grouping: dict) -> bool:
 
 
 def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
-    """Return a short, stable digest of the grouping state the FFT input consumes.
+    """Fingerprint the effective grouping inputs without loading acquisitions.
 
-    For the default ``signal_source="grouped_average"`` this captures exactly
-    the keys read by
-    :func:`asymmetry.core.fourier.grouped.build_group_signal_dataset` (and the
-    deadtime/background helpers it calls) so a recipe recorded at compute time
-    can later be compared against the run's *current* grouping to flag a
-    displayed spectrum as stale. Cosmetic keys the FFT input never reads
-    (``group_names``, ``projections``, ``vector_axis``, alpha values) are
-    deliberately excluded — renaming a group must not change the digest.
+    Enabled File correction includes the identity and modification metadata of
+    the external reference file consumed by FFT preparation. This uses metadata
+    only, never loads histograms, and does not validate authored background input.
+    Cosmetic names and inert correction settings are excluded.
 
-    Parameters that are inert for the current grouping are also excluded, so a
-    change that cannot affect the FFT input does not falsely flag staleness:
-    ``dead_time_us`` only matters when ``deadtime_correction`` is set, the
-    background detail keys only matter when ``background_correction`` is set,
-    and ``forward_group``/``backward_group`` only matter when a *list*-shaped
-    ``background_values``/``background_ranges`` needs them to route entries to
-    groups (see :func:`_background_values_are_list_routed`).
-
-    ``t0_time_us``/``t0_source`` are digested alongside ``t0_bin``: the exact t0
-    sets the origin of every time stamp (D4), and a T0Policy shift or a searched
-    t0 for a ``"missing"`` run moves it without moving the integer bin.
-
-    ``signal_source="fb_asymmetry"`` additionally folds in the keys the
-    forward−backward reduction (:func:`asymmetry.core.simulate.
-    reduce_run_to_dataset` → :func:`asymmetry.core.transform.grouping.
-    group_forward_backward` → :func:`asymmetry.core.transform.rebin.
-    binned_fb_asymmetry`) consumes and the grouped path does not:
-    ``forward_group``/``backward_group`` (with the consumer's 1/2 defaults),
-    ``alpha`` and ``beta`` (normalised exactly as the consumer does —
-    degenerate values fall back to 1.0; ``beta`` digested only when ≠ 1 so
-    pre-beta recorded digests stay valid), per-detector t0 overrides
-    (``effective_detector_t0_bins``, resolved against the histogram count like
-    :func:`detector_t0_overrides`), the resolved ``binning_mode`` (plus
-    ``bin0_us``/``bin10_us`` when a non-fixed mode makes them live), and the
-    two-period selection (``period_mode`` + ``period_histograms``) when a
-    valid two-period payload exists. An alpha edit or an F/B group swap
-    therefore flags an fb-source spectrum stale while leaving a
-    grouped-average digest unchanged.
-
-    Returns ``""`` for ``run is None``, so a not-yet-loaded run trivially
-    compares unequal to any real recorded digest.
+    Exact t0, acquired support, and enabled background settings affect both
+    signal sources. F/B asymmetry also includes its pair, balances, binning,
+    and held periods; grouped averages do not depend on those ratio settings.
     """
     if run is None:
         return ""
@@ -375,17 +343,30 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     deadtime_correction = bool(grouping.get("deadtime_correction", False))
     payload["deadtime_correction"] = deadtime_correction
     if deadtime_correction:
-        dead_time_us = grouping.get("dead_time_us")
-        if isinstance(dead_time_us, (list, tuple)):
-            try:
-                payload["dead_time_us"] = [float(v) for v in dead_time_us]
-            except (TypeError, ValueError):
-                pass
-        elif dead_time_us is not None:
-            try:
-                payload["dead_time_us"] = float(dead_time_us)
-            except (TypeError, ValueError):
-                pass
+        mode = (
+            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "file")))
+            .strip()
+            .lower()
+        )
+        payload["deadtime_mode"] = mode
+        payload["deadtime_method"] = grouping.get("deadtime_method")
+        payload["dead_time_us"] = (
+            file_deadtime_table(grouping)
+            if mode in {"", "file", "from_file"}
+            else grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
+        )
+
+    if (
+        deadtime_correction
+        and mode in {"", "file", "from_file"}
+        and (
+            grouping.get("background_correction", False)
+            and resolve_background_mode(grouping) == "reference_run"
+        )
+    ):
+        from asymmetry.core.io import reference_file_identity
+
+        payload["reference_file_identity"] = reference_file_identity(grouping.get("background_run"))
 
     background_correction = bool(grouping.get("background_correction", False))
     payload["background_correction"] = background_correction
@@ -662,7 +643,8 @@ def precompute_group_fourier_inputs(
         return None, None
 
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    prepared_histograms, _ = prepare_histograms_with_deadtime(histograms, grouping, apply_deadtime)
+    inputs, _ = resolve_group_deadtime_inputs(run, apply_deadtime)
+    prepared_histograms, _ = prepare_histograms_with_deadtime(*inputs[0], apply_deadtime)
 
     return prepared_histograms, group_reference_t0(prepared_histograms, grouping)
 

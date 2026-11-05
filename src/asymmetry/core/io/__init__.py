@@ -8,6 +8,7 @@ Use the :func:`load` convenience function to auto-detect the format::
 
 from collections.abc import Iterable
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 
@@ -24,6 +25,7 @@ from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
 from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
 from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 
 # Register built-in loaders
@@ -142,6 +144,21 @@ def reference_frame_exposure(
     return scale, sample, reference, source
 
 
+def reference_file_identity(payload: dict | None) -> tuple[int, int, int, int] | None:
+    """Read external reference identity without loading counts or validating settings.
+
+    Ordinary writes change size or mtime; replacement also changes inode.
+    Tools preserving all these fields must explicitly invalidate cached spectra.
+    """
+    if not isinstance(payload, dict) or not payload.get("source_file"):
+        return None
+    try:
+        status = Path(str(payload["source_file"])).stat()
+    except (OSError, ValueError):
+        return None
+    return status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns
+
+
 def resolve_background_reference(
     payload: dict | None,
     *,
@@ -215,6 +232,7 @@ def resolve_background_reference(
 
     return BackgroundReference(
         histograms=list(reference_run.histograms),
+        file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scale=float(scale),
         source_file=reference_run.source_file or source_file,
         good_frames_sample=sample_frames,
