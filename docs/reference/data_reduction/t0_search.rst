@@ -22,7 +22,8 @@ raw counts under an established source strategy. Other selected channels retain
 their usable file calibration. The fallback records estimated provenance; it
 never relabels the estimate as acquired calibration. **Manual** applies a signed
 whole-bin offset to the resolved base. An offset alone cannot supply a missing
-base.
+base. Switching periods reapplies a Manual offset to that period's own resolved
+base; an estimated base from another period is not transferred.
 
 **Auto-detect** requests replacement timing for the actual selected acquired
 channels, after exclusions, for each pair and period. Every required channel
@@ -107,7 +108,9 @@ Alignment and windows
 Alignment transports whole acquired bins. Exact file origins retain their
 fractional residuals under integer policy shifts; the search does not estimate
 new fractional calibration. The selected maximum anchor wins, with acquired
-ordinal breaking ties. Recorded alignment includes the actual selected channel
+ordinal breaking ties. A pair or projection change resolves the exact origin
+from its own selected reference detector, even when the integer anchor is
+unchanged. Recorded alignment includes the actual selected channel
 origins, effective timing sources, requested search strategy, and residual spread.
 Acquired ``t0_source`` remains a separate file fact, including when estimated
 and file anchors are numerically equal.

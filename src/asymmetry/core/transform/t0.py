@@ -528,7 +528,6 @@ def resolve_selected_timing(
 
     forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
     indices = sorted(set(forward) | set(backward))
-    previous_common = grouping.get("t0_bin", max(histograms[i].t0_bin for i in indices))
     for key in (
         EFFECTIVE_DETECTOR_T0_KEY,
         "effective_t0_sources",
@@ -586,7 +585,9 @@ def resolve_selected_timing(
         grouping[EFFECTIVE_DETECTOR_T0_KEY] = bins
     grouping["t0_bin"] = max(bins[i] for i in indices)
     if grouping.get("t0_time_us") is not None:
-        grouping["t0_time_us"] += (grouping["t0_bin"] - previous_common) * histograms[0].bin_width
+        grouping["t0_time_us"] = common_t0_time_us(
+            histograms, grouping, grouping["t0_bin"], selected_indices=indices
+        )
 
 
 def tolerance_bins(strategy: str, width_bins: int = 0) -> int:

@@ -296,23 +296,28 @@ def selected_period_index(grouping: dict, mode: str | None = None) -> int | None
     )
 
 
+def _period_timing_facts(grouping: dict, period_index: int) -> dict:
+    """Select acquisition timing status; an absent period table is not inherited."""
+    facts = dict(grouping)
+    if "period_t0_sources" in grouping:
+        facts["t0_source"] = grouping["period_t0_sources"][period_index]
+    if "period_detector_t0_sources" in grouping:
+        sources = grouping["period_detector_t0_sources"][period_index]
+        if sources is None:
+            facts.pop("detector_t0_sources", None)
+        else:
+            facts["detector_t0_sources"] = sources
+    return facts
+
+
 def select_period_grouping(grouping: dict, period_index: int) -> dict:
     """Select acquired calibration and exposure, preserving authored coefficients."""
-    period_grouping = dict(grouping)
-    if "period_t0_sources" in grouping:
-        period_grouping["t0_source"] = grouping["period_t0_sources"][period_index]
-    if (
-        "period_detector_t0_sources" in grouping
-        and grouping["period_detector_t0_sources"][period_index] is not None
-    ):
-        period_grouping["detector_t0_sources"] = grouping["period_detector_t0_sources"][
-            period_index
-        ]
-
-    manual_file = (
-        grouping.get("t0_policy", {}).get("mode") == "manual"
-        and period_grouping.get("t0_source") != "missing"
-        and "missing" not in period_grouping.get("detector_t0_sources", [])
+    period_grouping = _period_timing_facts(grouping, period_index)
+    origin = _period_timing_facts(grouping, grouping.get("effective_t0_period", period_index))
+    manual_file = grouping.get("t0_policy", {}).get("mode") == "manual" and all(
+        facts.get("t0_source") != "missing"
+        and "missing" not in facts.get("detector_t0_sources", [])
+        for facts in (origin, period_grouping)
     )
     if (
         "effective_t0_period" in grouping
@@ -363,7 +368,10 @@ def select_period_histograms(
     period_grouping = select_period_grouping(grouping, period_index)
 
     selected = held_period_histograms(histograms, grouping, period_index)
-    return _clone_histograms(selected), histogram_grouping_facts(selected, period_grouping)
+    facts = histogram_grouping_facts(selected, period_grouping)
+    if "effective_t0_sources" in facts:
+        facts["effective_t0_period"] = period_index
+    return _clone_histograms(selected), facts
 
 
 def held_period_histograms(
@@ -429,6 +437,19 @@ def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dic
     ):
         if key in grouping:
             period_grouping[key] = values
+    if (
+        histograms
+        and override is None
+        and policy.get("mode") == "manual"
+        and "offset_bins" in policy
+        and period_grouping.get("t0_source") != "missing"
+        and "missing" not in period_grouping.get("detector_t0_sources", [])
+    ):
+        from asymmetry.core.transform.t0 import resolve_selected_timing
+
+        resolve_selected_timing(
+            histograms, period_grouping, mode="manual", offset_bins=policy["offset_bins"]
+        )
     return period_grouping
 
 
