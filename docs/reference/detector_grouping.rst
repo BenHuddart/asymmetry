@@ -1394,8 +1394,16 @@ constructing the initial asymmetry. ``Time Zero Bin`` is stored as a
 to the nearest bin. A file with no ``Time Zero Bin`` key at all gets
 ``t0_source = "missing"``, the same fallback as a zero PSI header.
 
-Legacy LEM ``TLemRunHeader`` v5 maps numeric t0 entries to its zero-based
-``hDecay00``, ``hDecay01``, … identities before the same reduction. Modern
+Legacy LEM ``TLemRunHeader`` v4/v5 maps numeric t0 entries before the same
+reduction. The supported v4 four-channel layout uses slots 0–3 for each of
+banks ``hDecay00``–``03`` and ``hDecay20``–``23``. With all eight arrays
+present in numerical order, Asymmetry detector IDs 1–4 select bank 00 and
+5–8 select bank 20; sparse files use the retained ``root_histo_numbers`` to
+identify each ordinal. Choose F/B channels within one bank, since the two
+banks are alternative stored observations of the same detectors. No extra
+pileup correction is applied, and stored PPC counting errors do not establish
+physical correction uncertainty. Version 5 retains direct zero-based mapping.
+Modern
 ``DetectorInfo`` identities, fractional timing, and red/green offsets retain
 their own file mappings. ROOT container terminal bins are retained; selecting
 a common analysis window does not remove them from the acquired histograms.

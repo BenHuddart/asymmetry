@@ -17,6 +17,13 @@ integer/exact conflicts retain usable integer anchors and discard only the
 conflicting exact declaration. Format-specific unspecified markers remain
 separate from explicit zero; see :doc:`/reference/loading_data`.
 
+Legacy LEM ROOT v4/v5 uses numeric file resolution and t0 rather than display
+strings or histogram axes. The supported v4 four-channel NPP/PPC banks share
+header slots 0–3 while retaining separate count arrays. Zero and fractional
+anchors remain usable; negative or nonfinite entries supply no file timing.
+Valid file timing remains usable with unknown source metadata, without an
+automatic search to compensate for a missed header.
+
 When a required channel has no usable file timing, **From file** searches its
 raw counts under an established source strategy. Other selected channels retain
 their usable file calibration. The fallback records estimated provenance; it
