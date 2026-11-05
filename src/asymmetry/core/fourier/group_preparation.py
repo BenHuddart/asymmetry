@@ -1,0 +1,205 @@
+"""Request-bound sample/reference count preparation for spectral consumers."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+
+import numpy as np
+
+from asymmetry.core.data.dataset import Run
+from asymmetry.core.fourier.group_background import group_background_payload
+from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
+from asymmetry.core.transform.background import (
+    grouped_background_ranges,
+    resolve_background_mode,
+    resolve_facility,
+    tail_background_window,
+)
+from asymmetry.core.transform.deadtime import deadtime_operation_inputs
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.transform.grouping import (
+    common_t0_for_groups,
+    effective_group_indices,
+    good_frames,
+    group_reference_t0,
+    resolve_alignment,
+)
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
+from asymmetry.core.transform.scoped_counts import ScopedCounts, observation_domain
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, require_selected_timing
+
+
+def preparation_identity(run: Run) -> tuple:
+    """Bind products to their actual arrays, period and authored reduction settings."""
+    from asymmetry.core.io import reference_file_identity
+
+    return (
+        reference_file_identity(run.grouping.get("background_run"))
+        if correction_flags_from_grouping(run.grouping).use_background
+        and resolve_background_mode(run.grouping) == "reference_run"
+        else None,
+        tuple(
+            (id(h.counts), id(h.count_variance), h.bin_width, h.t0_bin, h.t0_time_us)
+            for h in run.histograms
+        ),
+        json.dumps(run.grouping, default=str),
+        json.dumps(run.metadata, default=str),
+        run.source_file,
+    )
+
+
+@dataclass(frozen=True)
+class GroupLayout:
+    """One group's existing signal grid and active background coordinate."""
+
+    alignment: AlignmentCrop
+    window: BinWindow
+    grouping: dict
+    background_t0: int
+    reference_alignment: AlignmentCrop | None
+
+
+@dataclass(frozen=True)
+class GroupPreparation:
+    """A declared group cohort, with atomic sample/reference deadtime outcomes."""
+
+    identity: tuple
+    use_deadtime: bool
+    reference_t0_bin: int
+    layouts: dict[int, GroupLayout]
+    sample: ScopedCounts
+    reference: ScopedCounts | None
+    reference_scale: float | None
+    time_range: tuple | None
+
+    def require_request(self, run, group_id, use_deadtime, reference_t0_bin, time_range):
+        """Reject stale products or a group outside the prepared cohort."""
+        self.sample.require_source()
+        if self.reference is not None:
+            self.reference.require_source()
+        if (
+            self.time_range != time_range
+            or self.identity != preparation_identity(run)
+            or group_id not in self.layouts
+            or self.use_deadtime != use_deadtime
+            or reference_t0_bin is not None
+            and self.reference_t0_bin != reference_t0_bin
+        ):
+            raise ValueError(
+                "Prepared grouped counts do not match the requested source, scope or correction settings"
+            )
+
+
+def prepare_group_counts(
+    run, group_ids, *, use_deadtime=None, reference_t0_bin=None, cache=None, time_range=None
+):
+    """Resolve all selected and active estimator observations before any inverse."""
+    from asymmetry.core.io import resolve_background_reference
+
+    if time_range == (None, None):
+        time_range = None
+    grouping = run.grouping
+    histograms = list(run.histograms)
+    apply_deadtime = (
+        bool(grouping.get("deadtime_correction", False))
+        if use_deadtime is None
+        else bool(use_deadtime)
+    )
+    common = (
+        group_reference_t0(histograms, grouping)
+        if reference_t0_bin is None
+        else int(reference_t0_bin)
+    )
+    common = max(0, common)
+    detector_t0 = effective_detector_t0_bins(histograms, grouping)
+    background = correction_flags_from_grouping(grouping).use_background
+    background_t0 = 0
+    if background:
+        background_t0 = common_t0_for_groups(
+            histograms,
+            effective_group_indices(
+                grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
+            ),
+            effective_group_indices(
+                grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
+            ),
+            detector_t0_bins=detector_t0,
+        )
+    reference = None
+    if background and resolve_background_mode(grouping) == "reference_run":
+        reference = resolve_background_reference(
+            grouping.get("background_run"),
+            sample_good_frames=good_frames(grouping, default=0.0) or None,
+            cache=cache,
+        )
+    layouts, sample_parts, reference_parts = {}, [], []
+    for group_id in group_ids:
+        indices = effective_group_indices(grouping, group_id, n_histograms=len(histograms))
+        require_selected_timing(grouping, indices, len(histograms))
+        alignment = resolve_alignment(
+            histograms, indices, common_t0_bin=common, detector_t0_bins=detector_t0
+        )
+        t0 = alignment.common_t0_bin
+        declared = grouping.get("t0_bin")
+        declared = t0 if declared is None else int(declared)
+        window = alignment.window(grouping, offset_bins=t0 + alignment.first_bin - declared)
+        local_grouping = dict(
+            grouping, t0_bin=t0, first_good_bin=window.first, last_good_bin=window.last
+        )
+        time, edges = group_time_grid(histograms, local_grouping, indices, alignment, window)
+        mask = time_range_mask(time, time_range)
+        windows = [BinWindow(int(edges[i]), int(edges[i + 1]) - 1) for i in np.flatnonzero(mask)]
+        if background:
+            payload = group_background_payload(local_grouping, group_id, t0, background_t0)
+            mode = resolve_background_mode(payload)
+            if mode == "range":
+                windows.append(
+                    grouped_background_ranges(
+                        payload,
+                        t0_bin=t0,
+                        acquisition_start_bin=0,
+                        length=alignment.length,
+                        bin_width_us=histograms[indices[0]].bin_width,
+                        facility=resolve_facility(metadata=run.metadata, grouping=payload),
+                    )[0]
+                )
+            elif mode == "tail_fit":
+                first, last = tail_background_window(alignment.length, t0, window.last)
+                if first <= last:
+                    windows.append(BinWindow(first, last))
+        sample_parts.append((alignment, indices, windows))
+        reference_alignment = None
+        if reference is not None:
+            reference_alignment = resolve_alignment(
+                reference.histograms,
+                indices,
+                common_t0_bin=t0 + alignment.first_bin,
+                detector_t0_bins=effective_detector_t0_bins(reference.histograms, grouping),
+                first_bin=alignment.first_bin,
+                sample_length=alignment.length,
+            )
+            reference_parts.append((reference_alignment, indices, windows))
+        layouts[int(group_id)] = GroupLayout(
+            alignment, window, local_grouping, background_t0, reference_alignment
+        )
+    domains = [observation_domain(sample_parts)]
+    inputs = [(histograms, grouping)]
+    if reference is not None:
+        inputs.append((reference.histograms, reference.deadtime_grouping(grouping)))
+        domains.append(observation_domain(reference_parts))
+    inputs = deadtime_operation_inputs(inputs, apply_deadtime, domains=domains)
+    products = [
+        ScopedCounts.prepare(h, g, domain, use_deadtime=apply_deadtime)
+        for (h, g), domain in zip(inputs, domains, strict=True)
+    ]
+    return GroupPreparation(
+        preparation_identity(run),
+        apply_deadtime,
+        common,
+        layouts,
+        products[0],
+        products[1] if reference is not None else None,
+        reference.scale if reference is not None else None,
+        time_range,
+    )

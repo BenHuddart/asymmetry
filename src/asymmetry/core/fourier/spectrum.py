@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.burg import burg_spectrum
 from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning, unit_area_normalise
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER, correlation_spectrum
@@ -25,7 +25,8 @@ from asymmetry.core.fourier.fft import (
     fourier_mode_uses_phase_fit,
     prepare_fft_time_signal,
 )
-from asymmetry.core.fourier.grouped import build_group_signal_dataset, resolve_group_deadtime_inputs
+from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
+from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.phase_fit import (
     PHASE_FIT_METHOD,
     PhaseAcquisition,
@@ -37,10 +38,9 @@ from asymmetry.core.fourier.phase_fit import (
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.deadtime import file_deadtime_table, prepare_histograms_with_deadtime
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import (
     group_names,
-    group_reference_t0,
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides
@@ -331,7 +331,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         return ""
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
-    payload: dict[str, object] = {}
+    payload: dict[str, object] = {"deadtime_scope": "required_grouped_observations"}
 
     groups = _digest_groups(grouping.get("groups"))
     if groups is not None:
@@ -349,6 +349,8 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
             .lower()
         )
         payload["deadtime_mode"] = mode
+        if mode not in {"off", "none"}:
+            payload["good_frames"] = grouping.get("good_frames")
         payload["deadtime_method"] = grouping.get("deadtime_method")
         payload["dead_time_us"] = (
             file_deadtime_table(grouping)
@@ -357,16 +359,13 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         )
 
     if (
-        deadtime_correction
-        and mode in {"", "file", "from_file"}
-        and (
-            grouping.get("background_correction", False)
-            and resolve_background_mode(grouping) == "reference_run"
-        )
+        grouping.get("background_correction", False)
+        and resolve_background_mode(grouping) == "reference_run"
     ):
         from asymmetry.core.io import reference_file_identity
 
         payload["reference_file_identity"] = reference_file_identity(grouping.get("background_run"))
+        payload["good_frames"] = grouping.get("good_frames")
 
     background_correction = bool(grouping.get("background_correction", False))
     payload["background_correction"] = background_correction
@@ -629,24 +628,14 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
 
 def precompute_group_fourier_inputs(
     run: Run | None,
-) -> tuple[list[Histogram] | None, int | None]:
-    """Prepare deadtime-corrected histograms and a shared reference t0 once.
-
-    Core and GUI callers share this preparation for every group FFT.
-    """
-    if run is None:
+    selected_group_ids: list[int] | None = None,
+) -> tuple[GroupPreparation | None, int | None]:
+    """Prepare only the declared cohort, retaining its common spectral t0."""
+    if run is None or not run.histograms or not run.grouping.get("groups"):
         return None, None
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups = grouping.get("groups") if isinstance(grouping, dict) else None
-    histograms = list(run.histograms)
-    if not isinstance(groups, dict) or not histograms:
-        return None, None
-
-    apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    inputs, _ = resolve_group_deadtime_inputs(run, apply_deadtime)
-    prepared_histograms, _ = prepare_histograms_with_deadtime(*inputs[0], apply_deadtime)
-
-    return prepared_histograms, group_reference_t0(prepared_histograms, grouping)
+    selected = sorted(group_names(run)) if selected_group_ids is None else selected_group_ids
+    prepared = prepare_group_counts(run, selected)
+    return prepared, prepared.reference_t0_bin
 
 
 def reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:
@@ -724,7 +713,7 @@ def compute_average_group_spectrum(
     run: Run,
     config: GroupSpectrumConfig,
     *,
-    prepared_histograms: list[Histogram] | None = None,
+    prepared: GroupPreparation | None = None,
     reference_t0_bin: int | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> MuonDataset | None:
@@ -764,8 +753,11 @@ def compute_average_group_spectrum(
     apply_diamag = config.remove_diamag and not is_auto_phase
     value_display = "(Power)^1/2" if is_correlation else display
 
-    if prepared_histograms is None or reference_t0_bin is None:
-        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(run)
+    if not is_fb_asymmetry:
+        if prepared is None:
+            prepared, reference_t0_bin = precompute_group_fourier_inputs(run, selected)
+        elif set(prepared.layouts) != set(selected):
+            raise ValueError("Prepared grouped counts do not match the requested cohort")
 
     averaged_values: list[np.ndarray] = []
     imag_values: list[np.ndarray] = []
@@ -782,20 +774,21 @@ def compute_average_group_spectrum(
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
     selected_names: list[str] = []
-    # Shared across the sweep so a reference_run background loads + deadtime-
-    # prepares once, not once per group.
-    background_reference_cache: dict = {}
 
     signal_inputs: list[tuple[int | None, MuonDataset]] = []
     if is_fb_asymmetry:
-        # Imported lazily: simulate imports widely, so a module-level import here
-        # would risk a load cycle (mirrors combine.reduce_combined_run).
-        from asymmetry.core.simulate import reduce_run_to_dataset  # noqa: PLC0415
+        from asymmetry.core.fourier.fb_input import build_fb_signal_dataset
 
-        try:
-            fb_dataset = reduce_run_to_dataset(run)
-        except ValueError:
+        groups = run.grouping["groups"]
+        if any(
+            gid not in groups and str(gid) not in groups
+            for gid in (
+                int(run.grouping.get("forward_group", 1)),
+                int(run.grouping.get("backward_group", 2)),
+            )
+        ):
             return None
+        fb_dataset = build_fb_signal_dataset(run)
         signal_inputs.append((None, fb_dataset))
     else:
         # Every display shares the same aligned good window and timing origin.
@@ -807,8 +800,7 @@ def compute_average_group_spectrum(
                     group_id,
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,
-                    prepared_histograms=prepared_histograms,
-                    background_reference_cache=background_reference_cache,
+                    prepared=prepared,
                 ),
             )
             for group_id in selected

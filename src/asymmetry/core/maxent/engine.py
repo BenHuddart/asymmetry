@@ -21,11 +21,12 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
     seed_peak_parameters_from_dataset,
 )
+from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.maxent.backend import (
@@ -35,7 +36,7 @@ from asymmetry.core.maxent.backend import (
 )
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
-from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.maxent.state_identity import state_signature
 from asymmetry.core.transform.grouping import (
     group_names,
     group_reference_t0,
@@ -228,14 +229,14 @@ class MaxEntConfig:
     specbg_lorentzian_fraction: float = 0.5
     # Display-only: whether the time-domain reconstruction overlay is the active
     # view (vs the spectrum).  It does not change the computation, so it is
-    # absent from ``_state_signature`` (toggling it must not invalidate a
+    # absent from ``state_signature`` (toggling it must not invalidate a
     # resumed run).  Defaults off — the spectrum is MaxEnt's primary output.
     show_reconstruction: bool = False
     # Projection backend for the hot loop: "numpy" (default, CPU, bit-for-bit
     # identical to the historical path), "cuda" (optional CuPy GPU, fp64), or
     # "auto" (CUDA if available, else NumPy).  The math is backend-independent —
     # results agree to solver tolerance — so it is absent from
-    # ``_state_signature``: a resumed run must survive a backend switch.
+    # ``state_signature``: a resumed run must survive a backend switch.
     backend: str = "numpy"
 
     def to_dict(self) -> dict[str, Any]:
@@ -1009,7 +1010,7 @@ def build_maxent_input(
     run: Run,
     config: MaxEntConfig | dict | None = None,
     *,
-    prepared_histograms: list[Histogram] | None = None,
+    prepared: GroupPreparation | None = None,
     reference_t0_bin: int | None = None,
 ) -> MaxEntInput:
     """Build grouped raw-count MaxEnt input from *run* and *config*.
@@ -1032,16 +1033,6 @@ def build_maxent_input(
     if not run.histograms:
         raise ValueError("MaxEnt requires raw detector histograms.")
 
-    if prepared_histograms is None:
-        # The config can disable correction; enabling it honours the run's request.
-        grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        prepared_histograms, _applied = prepare_histograms_with_deadtime(
-            list(run.histograms),
-            grouping,
-            bool(resolved_config.use_deadtime_correction)
-            and bool(grouping.get("deadtime_correction", False)),
-        )
-
     all_ids = sorted(names_by_group)
     if resolved_config.selected_group_ids is None:
         selected = all_ids
@@ -1050,6 +1041,18 @@ def build_maxent_input(
         selected = [gid for gid in all_ids if gid in wanted]
     if not selected:
         raise ValueError("MaxEnt requires at least one selected group.")
+
+    if prepared is None:
+        prepared = prepare_group_counts(
+            run,
+            selected,
+            use_deadtime=resolved_config.use_deadtime_correction
+            and bool(run.grouping.get("deadtime_correction", False)),
+            reference_t0_bin=reference_t0_bin,
+            time_range=(resolved_config.t_min_us, resolved_config.t_max_us),
+        )
+    elif set(prepared.layouts) != set(selected):
+        raise ValueError("Prepared grouped counts do not match the requested cohort")
 
     # ZF/LF mode: exactly two forward/backward groups, phases pinned 0/180, and
     # amplitudes/backgrounds tied through the run's α.
@@ -1074,9 +1077,6 @@ def build_maxent_input(
         if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
             zf_lf_alpha = 1.0
 
-    # Shared across the sweep so a reference_run background loads + deadtime-
-    # prepares once, not once per group.
-    background_reference_cache: dict = {}
     group_signals: list[GroupCountSignal] = []
     for group_id in selected:
         dataset = build_group_signal_dataset(
@@ -1087,8 +1087,8 @@ def build_maxent_input(
             use_deadtime=resolved_config.use_deadtime_correction
             and bool(run.grouping.get("deadtime_correction", False)),
             reference_t0_bin=reference_t0_bin,
-            prepared_histograms=prepared_histograms,
-            background_reference_cache=background_reference_cache,
+            prepared=prepared,
+            time_range=(resolved_config.t_min_us, resolved_config.t_max_us),
         )
         group_signals.append(
             GroupCountSignal(
@@ -1100,7 +1100,7 @@ def build_maxent_input(
             )
         )
 
-    return _maxent_input_from_group_signals(
+    result = _maxent_input_from_group_signals(
         group_signals,
         resolved_config,
         run_number=int(run.run_number),
@@ -1108,6 +1108,18 @@ def build_maxent_input(
         zf_lf_alpha=zf_lf_alpha,
         zf_lf_phase_map=zf_lf_phase_map,
         steered_fields=steered_fields,
+    )
+
+    return replace(
+        result,
+        metadata={
+            **result.metadata,
+            "deadtime_outcome": prepared.sample.outcome.to_dict(),
+            "reference_deadtime_outcome": prepared.reference.outcome.to_dict()
+            if prepared.reference is not None
+            else None,
+            "reference_file_identity": prepared.identity[0],
+        },
     )
 
 
@@ -1553,48 +1565,6 @@ def reconstruct_group_signals(
     return reconstructions
 
 
-def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[Any, ...]:
-    # ``config.backend`` is deliberately absent: the projection math is
-    # backend-independent (results agree to solver tolerance), so a state built
-    # on one backend must resume on another without a forced restart.
-    return (
-        int(maxent_input.run_number),
-        tuple(group.group_id for group in maxent_input.groups),
-        int(maxent_input.n_spectrum_points),
-        round(float(maxent_input.f_min_mhz), 12),
-        round(float(maxent_input.f_max_mhz), 12),
-        round(float(config.default_level), 12),
-        bool(config.fit_phases),
-        bool(config.fit_amplitudes),
-        bool(config.fit_backgrounds),
-        bool(config.fit_constant_background),
-        # Data-preparation settings: changing any of these reshapes or rescales
-        # the observed signals, so a resumed state would silently iterate a
-        # stale spectrum against incompatible data.
-        bool(config.use_deadtime_correction),
-        None if config.t_min_us is None else round(float(config.t_min_us), 12),
-        None if config.t_max_us is None else round(float(config.t_max_us), 12),
-        int(config.time_binning_factor),
-        # Pulse-shape response and the interior exclusion window both reshape the
-        # forward model / the data weighting, so a resumed state with a changed
-        # setting would iterate a stale spectrum against an incompatible model.
-        str(config.pulse_mode),
-        round(float(config.pulse_half_width_us), 12),
-        round(float(config.pulse_separation_us), 12),
-        None if config.exclude_t_min_us is None else round(float(config.exclude_t_min_us), 12),
-        None if config.exclude_t_max_us is None else round(float(config.exclude_t_max_us), 12),
-        # ZF/LF mode ties group amplitudes/backgrounds and pins phases, so it
-        # reshapes the fit; a changed mode must invalidate a resumed state.
-        str(config.mode),
-        # Effective phase seeds: ``state.phases`` is seeded from these at
-        # initialisation and a resumed state never re-reads the config, so an
-        # edited seed must force a restart or it would be silently ignored
-        # (with ``fit_phases`` off, permanently; with it on, the ±4°/cycle
-        # refinement cannot follow a large seed change either).
-        tuple(round(float(group.phase_degrees), 9) for group in maxent_input.groups),
-    )
-
-
 def _initial_spectrum(
     maxent_input: MaxEntInput,
     *,
@@ -1641,7 +1611,7 @@ def initialize_state(
         phases=phases,
         amplitudes=amplitudes,
         backgrounds=backgrounds,
-        signature=_state_signature(maxent_input, resolved_config),
+        signature=state_signature(maxent_input, resolved_config),
     )
 
 
@@ -1932,7 +1902,7 @@ def run_cycles(
     """
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     active_state = state or initialize_state(maxent_input, resolved_config)
-    signature = _state_signature(maxent_input, resolved_config)
+    signature = state_signature(maxent_input, resolved_config)
     if active_state.signature and active_state.signature != signature:
         raise ValueError("MaxEnt state is incompatible with the current configuration; restart.")
     active_state.signature = signature

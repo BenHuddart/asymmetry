@@ -6,6 +6,8 @@ this file depends on measured data.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -103,9 +105,10 @@ def test_input_from_counts_matches_the_run_path_exactly() -> None:
     for expected, actual in zip(from_run.groups, from_counts.groups, strict=True):
         assert actual.group_id == expected.group_id
         assert actual.group_name == expected.group_name
-        assert np.array_equal(actual.time_us, expected.time_us)
-        assert np.array_equal(actual.signal, expected.signal)
-        assert np.array_equal(actual.sigma, expected.sigma)
+        # Endpoint limits select identical observations on the original time grid.
+        assert np.array_equal(actual.time_us[actual.mask], expected.time_us[expected.mask])
+        assert np.array_equal(actual.signal[actual.mask], expected.signal[expected.mask])
+        assert np.array_equal(actual.sigma[actual.mask], expected.sigma[expected.mask])
         assert np.array_equal(actual.mask, expected.mask)
         assert actual.phase_degrees == expected.phase_degrees
         assert actual.amplitude == expected.amplitude
@@ -114,7 +117,7 @@ def test_input_from_counts_matches_the_run_path_exactly() -> None:
 
 def test_maxent_from_counts_matches_maxent_exactly() -> None:
     run = _synthetic_run()
-    config = _config()
+    config = replace(_config(), t_min_us=0.2, t_max_us=6.0)
 
     from_run = maxent(run, config, cycles=3, early_stop=False)
     counts, cfg, kwargs = _from_counts(run, config)
@@ -151,9 +154,10 @@ def test_equivalence_holds_across_configurations(overrides: dict) -> None:
     assert from_counts.n_spectrum_points == from_run.n_spectrum_points
     assert [g.group_id for g in from_counts.groups] == [g.group_id for g in from_run.groups]
     for expected, actual in zip(from_run.groups, from_counts.groups, strict=True):
-        assert np.array_equal(actual.time_us, expected.time_us)
-        assert np.array_equal(actual.signal, expected.signal)
-        assert np.array_equal(actual.sigma, expected.sigma)
+        # Endpoint limits select identical observations on the original time grid.
+        assert np.array_equal(actual.time_us[actual.mask], expected.time_us[expected.mask])
+        assert np.array_equal(actual.signal[actual.mask], expected.signal[expected.mask])
+        assert np.array_equal(actual.sigma[actual.mask], expected.sigma[expected.mask])
         assert actual.phase_degrees == pytest.approx(expected.phase_degrees)
 
 

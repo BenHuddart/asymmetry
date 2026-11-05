@@ -15,6 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.count_calibration import record_count_deadtime_calibration
 from asymmetry.core.fitting.engine import (
     FitResult,
     _make_cancel_guard,
@@ -38,7 +39,7 @@ from asymmetry.core.fitting.likelihood import (
     poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.deadtime import DeadtimeCalibration, _deadtime_number
+from asymmetry.core.transform.deadtime import _deadtime_number
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
@@ -456,19 +457,6 @@ def _result_from_minuit(
     )
 
 
-def _record_deadtime_calibration(result, dataset, groups):
-    """Capture the applied base and fitted detectors before mutable GUI edits."""
-    if result.success and "DT0" in result.parameters:
-        result.deadtime_calibration = DeadtimeCalibration.from_increment(
-            groups[0].deadtime,
-            result.parameters["DT0"].value,
-            n_histograms=len(dataset.run.histograms),
-            detector_indices=sorted({i for group in groups for i in group.detector_indices}),
-            error_us=result.uncertainties.get("DT0"),
-            source_run=dataset.run_number,
-        )
-
-
 # --- dpsep refinement -------------------------------------------------------
 
 #: Grid sizes for the coarse -> fine dpsep scan. The second-pulse onset gate is
@@ -688,7 +676,7 @@ def fit_single_histogram(
         success_message="Single-histogram count fit successful",
         failure_prefix="Single-histogram count fit failed",
     )
-    _record_deadtime_calibration(result, dataset, [group])
+    record_count_deadtime_calibration(result, dataset, [group])
     return result
 
 
@@ -928,7 +916,7 @@ def fit_fb_alpha(
     minimum = min(minima) if all(value is not None for value in minima) else None
     for result in (result_f, result_b):
         result.minimum_expected_count = minimum
-        _record_deadtime_calibration(result, dataset, [g_fwd, g_bwd])
+        record_count_deadtime_calibration(result, dataset, [g_fwd, g_bwd])
 
     shared_parameters = ParameterSet()
     # Every free parameter except the two per-side backgrounds is shared: the

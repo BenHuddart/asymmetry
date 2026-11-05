@@ -13,7 +13,7 @@ Grouped time-domain fitting
 *resolves), and the fit dock has auto-engaged the* **Multi-Group Fit**
 *window. The grouped fit of the damped-precession polarisation model*
 ``cos(2*pi*gamma_mu*field*t + phase) * exp(-Lambda*t)`` *has*
-*completed — the log reports* ``average χ²ᵣ = 0.997`` *and each subplot*
+*completed using* **Gaussian √N** *weighting, and each subplot*
 *carries its fitted count curve. Per-group N₀, background, amplitude and*
 *phase fit as local nuisance parameters while the field magnitude and*
 *damping are shared — the canonical workflow for extracting the muon*
@@ -155,13 +155,20 @@ Grouped time-domain mode follows the same GUI data-preparation conventions as
 the existing fit path where practical:
 
 * grouping definitions come from the active dataset's **Grouping** payload
-* detector deadtime correction is applied first when the grouping payload has it enabled
+* detector deadtime correction is applied to the requested cohort before summation
+  when the grouping payload has it enabled
 * grouped detector traces honour the grouping good-bin limits and bunching factor
 * the active fit range still decides which part of the active dataset is sent to the grouped fitter
 
 The grouped plot view itself shows the grouped lifetime-corrected traces built
 from the current grouped analysis dataset, while the grouped fit uses the
-active fit-range restricted dataset.
+active fit-range restricted dataset. Required native bins follow merged-bin
+centres and fit exclusions, together with active background dependencies.
+Missing required File coefficients leave the whole joint fit cohort uncorrected;
+unused missing entries and inverse poles outside the required union do not
+block it. Applied correction retains measured or supplied variance and original
+detector/coefficient ordinals. See :ref:`comparison-deadtime-scope` for the
+reference-program preparation differences.
 
 .. _grouped-cross-run-global-api:
 

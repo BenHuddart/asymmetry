@@ -607,6 +607,18 @@ class ForwardBackwardLayout:
         return self.alignment.common_t0_bin
 
 
+def grouping_balances(grouping: dict) -> tuple[float, float]:
+    """Resolve finite positive F/B balances under the existing unity fallback."""
+    balances = []
+    for key in ("alpha", "beta"):
+        try:
+            value = float(grouping.get(key, 1.0))
+        except (TypeError, ValueError):
+            value = 1.0
+        balances.append(value if np.isfinite(value) and value > 0.0 else 1.0)
+    return tuple(balances)
+
+
 def resolve_forward_backward_layout(
     histograms: list[Histogram],
     grouping: dict,
@@ -624,20 +636,7 @@ def resolve_forward_backward_layout(
     forward_indices, backward_indices = independent_pair_indices(
         grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
     )
-    try:
-        alpha = float(grouping.get("alpha", 1.0))
-    except (TypeError, ValueError):
-        alpha = 1.0
-    # A degenerate balance (non-finite or non-positive) is meaningless; fall back
-    # to 1.0 rather than propagate NaN/0 into the asymmetry.
-    if not np.isfinite(alpha) or alpha <= 0.0:
-        alpha = 1.0
-    try:
-        beta = float(grouping.get("beta", 1.0))
-    except (TypeError, ValueError):
-        beta = 1.0
-    if not np.isfinite(beta) or beta <= 0.0:
-        beta = 1.0
+    alpha, beta = grouping_balances(grouping)
 
     try:
         policy = grouping.get("t0_policy", {})

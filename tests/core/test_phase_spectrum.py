@@ -51,7 +51,9 @@ def _phase_run(monkeypatch, *, count_scale=1.0):
         histograms=[Histogram(counts=np.ones(n), bin_width=dt, t0_bin=0)],
         grouping={"groups": {1: [1], 2: [1]}, "group_names": {1: "F", 2: "B"}},
     )
-    monkeypatch.setattr(spectrum_module, "precompute_group_fourier_inputs", lambda run: ([], 0))
+    monkeypatch.setattr(
+        spectrum_module, "precompute_group_fourier_inputs", lambda run, selected=None: (None, 0)
+    )
     monkeypatch.setattr(
         spectrum_module, "build_group_signal_dataset", lambda run, gid, **kwargs: signals[gid]
     )
@@ -237,9 +239,9 @@ def test_auto_fb_uses_percent_asymmetry_without_fractional_baseline(monkeypatch)
     sampled = signals[1]
     fractional = (sampled.asymmetry / 1000.0 - 1) * 100.0
     fb = MuonDataset(time=sampled.time, asymmetry=fractional, error=np.full(len(fractional), 0.01))
-    import asymmetry.core.simulate as simulate
+    from asymmetry.core.fourier import fb_input
 
-    monkeypatch.setattr(simulate, "reduce_run_to_dataset", lambda run: fb)
+    monkeypatch.setattr(fb_input, "build_fb_signal_dataset", lambda run: fb)
     monkeypatch.setattr(
         spectrum_module, "fit_fft_phase", lambda *args, **kwargs: _estimate(phases[0])
     )

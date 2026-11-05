@@ -1,36 +1,60 @@
-"""Check background availability for count domains without inventing an F/B pair."""
+"""Background dependencies and availability for grouped count domains."""
 
-from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.background import apply_grouped_background_correction
+from asymmetry.core.transform.background import (
+    apply_grouped_background_correction,
+    grouped_background_ranges,
+    resolve_background_mode,
+    resolve_facility,
+    tail_background_window,
+)
 from asymmetry.core.transform.corrections import CorrectionOutcomes
-from asymmetry.core.transform.grouping import align_forward_backward_counts
+from asymmetry.core.transform.fb_counts import BinWindow
+from asymmetry.core.transform.grouping import resolve_alignment
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
 
-def require_count_background(
-    histograms: list[Histogram],
-    grouping: dict,
-    group_specs: list[tuple[int, list[int]]],
-    metadata: dict,
-) -> None:
-    """Check the requested background on count groups, which may be the same group.
-
-    This operation checks correction availability only; it never forms a ratio
-    or assumes that the two selections are independent observations.
-    """
-    forward, backward, crop = align_forward_backward_counts(
-        histograms,
-        group_specs[0][1],
-        group_specs[-1][1],
-        effective_detector_t0_bins(histograms, grouping),
+def count_background_domain(histograms, grouping, group_specs, metadata):
+    """Retain observations consumed by the existing count-background availability check."""
+    groups = [group_specs[0][1], group_specs[-1][1]]
+    crop = resolve_alignment(
+        histograms, *groups, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
     )
+    mode = resolve_background_mode(grouping)
+    windows = [[], []]
+    if mode == "range":
+        ranges = grouped_background_ranges(
+            grouping,
+            t0_bin=crop.common_t0_bin,
+            acquisition_start_bin=crop.first_bin,
+            length=crop.length,
+            bin_width_us=histograms[groups[0][0]].bin_width,
+            facility=resolve_facility(metadata=metadata, grouping=grouping),
+        )
+        windows = [[window] for window in ranges]
+    elif mode == "tail_fit":
+        first, last = tail_background_window(
+            crop.length, crop.common_t0_bin, crop.window(grouping).last
+        )
+        if first <= last:
+            windows = [[BinWindow(first, last)] for _ in groups]
+    return [(crop, indices, required) for indices, required in zip(groups, windows, strict=True)]
+
+
+def require_count_background(prepared, grouping, group_specs, metadata):
+    """Check availability on corrected count groups without inventing a ratio."""
+    histograms = prepared.histograms
+    groups = [group_specs[0][1], group_specs[-1][1]]
+    crop = resolve_alignment(
+        histograms, *groups, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
+    )
+    forward, backward = [prepared.aligned(indices, crop) for indices in groups]
     background = apply_grouped_background_correction(
         forward,
         backward,
         grouping=grouping,
         t0_bin=crop.common_t0_bin,
         acquisition_start_bin=crop.first_bin,
-        bin_width_us=histograms[group_specs[0][1][0]].bin_width,
+        bin_width_us=histograms[groups[0][0]].bin_width,
         last_good_bin=crop.window(grouping).last,
         metadata=metadata,
     )

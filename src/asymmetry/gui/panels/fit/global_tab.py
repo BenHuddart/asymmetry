@@ -126,6 +126,7 @@ from asymmetry.gui.styles.widgets import (
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.utils.count_results import count_result_rows
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.fit_results_card import (
     TONE_COLOURS,
@@ -3724,7 +3725,7 @@ class GlobalFitTab(FitTabBase):
         self._store_count_fb_extras(dataset, result, forward, backward)
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
-        rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
+        rows = count_result_rows(fwd, self._fmt_value)
         fwd_summary = _fit_summary(fwd)
         chip = fit_quality_chip_html(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         detail = (
@@ -3768,7 +3769,7 @@ class GlobalFitTab(FitTabBase):
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
-        rows = [self._count_param_row(result, name) for name in result.parameters.names]
+        rows = count_result_rows(result, self._fmt_value)
         summary = _fit_summary(result)
         chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
         detail = (
@@ -4034,16 +4035,6 @@ class GlobalFitTab(FitTabBase):
         )
         if self._current_dataset is not None:
             self.count_grouping_promoted.emit(self._current_dataset)
-
-    def _count_param_row(self, fit_result, name: str) -> str:
-        value = fit_result.parameters[name].value
-        err = fit_result.uncertainties.get(name)
-        row = f"{format_param_label(name)} = {self._fmt_value(value, err)}"
-        minos = (getattr(fit_result, "minos_errors", None) or {}).get(name)
-        if minos is not None and len(minos) == 2:
-            lower, upper = float(minos[0]), float(minos[1])
-            row += f" (+{upper:.2g} / {lower:.2g})"
-        return row
 
     @staticmethod
     def _fmt_value(value: float, err: float | None) -> str:

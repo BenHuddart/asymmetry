@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import replace
-
-import numpy as np
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.background import (
@@ -14,19 +11,18 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
+from asymmetry.core.transform.corrections import CorrectionOutcome
 from asymmetry.core.transform.deadtime import (
     DeadtimeDomain,
-    apply_deadtime_correction,
-    resolve_deadtime,
 )
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
     BinWindow,
     GroupCounts,
 )
-from asymmetry.core.transform.grouping import ForwardBackwardLayout, sum_aligned_counts
+from asymmetry.core.transform.grouping import ForwardBackwardLayout
 from asymmetry.core.transform.rebin import BinningSpec, fb_binning_edges
+from asymmetry.core.transform.scoped_counts import ScopedCounts
 
 
 def fb_deadtime_domain(
@@ -122,48 +118,11 @@ def deadtime_corrected_pair(
     context plots. They are never returned as corrected detector histograms.
     Only the F/B window and active estimators consume corrected samples.
     """
-    outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode, domain=domain)
-    if outcome.warning is not None:
-        warnings.warn(outcome.warning, UserWarning, stacklevel=2)
-    applies = outcome.status == CorrectionStatus.APPLIED and any(
-        outcome.effective["tau_us"][i] != 0 for i in domain.detector_indices
+    prepared = ScopedCounts.prepare(
+        histograms, grouping, domain, use_deadtime=use_deadtime, mode=mode, allow_incomplete=True
     )
-    offsets = dict(alignment.detector_offsets)
-    required = dict(domain.observations)
-    groups = []
-    retain_variance = applies or any(
-        histograms[i].count_variance is not None for i in (*forward_idx, *backward_idx)
+    return (
+        prepared.aligned(list(forward_idx), alignment),
+        prepared.aligned(list(backward_idx), alignment),
+        prepared.outcome,
     )
-    for indices in (forward_idx, backward_idx):
-        total = np.zeros(alignment.length, dtype=np.float64)
-        for index in indices:
-            histogram = histograms[index]
-            start = -offsets[index]
-            values = np.asarray(
-                histogram.counts[start : start + alignment.length], dtype=np.float64
-            ).copy()
-            if applies and index in required:
-                coefficient = outcome.effective["tau_us"][index]
-                bins = np.concatenate(
-                    [
-                        np.arange(window.first, window.last + 1, dtype=np.intp)
-                        for window in required[index]
-                    ]
-                )
-                if coefficient != 0:
-                    values[bins + offsets[index]] = apply_deadtime_correction(
-                        histogram.counts[bins],
-                        coefficient,
-                        histogram.bin_width,
-                        num_good_frames=outcome.effective["good_frames"],
-                        detector=index,
-                        raw_bin_indices=bins,
-                    )
-            total += values
-        variance = (
-            sum_aligned_counts(histograms, list(indices), alignment, variance=True)
-            if retain_variance
-            else None
-        )
-        groups.append(GroupCounts(total, variance))
-    return groups[0], groups[1], outcome

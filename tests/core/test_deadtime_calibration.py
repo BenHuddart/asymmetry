@@ -146,3 +146,54 @@ def test_applied_base_outcome_survives_worker_serialization():
     assert restored == original
     with pytest.raises(TypeError):
         restored.effective["tau_us"] = [0.0, 0.0]
+
+
+def test_scoped_residual_fit_keeps_success_when_unused_file_coefficients_prevent_promotion():
+    from tests.core.test_deadtime_forward_model import _fit_deadtime, _rational_dataset
+
+    dataset, n0 = _rational_dataset((0.5, 0.5), (0.5, 0.5))
+    dataset.run.grouping.update(
+        deadtime_correction=True, deadtime_mode="file", deadtime_file_us=[0.0, 0.0, None, None]
+    )
+    with pytest.warns(UserWarning, match="Deadtime promotion unavailable"):
+        result = _fit_deadtime(dataset, n0)
+    assert result.success
+    assert result.parameters["DT0"].value == pytest.approx(0.02, rel=1e-4)
+    assert result.deadtime_calibration is None
+    assert result.warnings == [
+        "Deadtime promotion unavailable: coefficients are unknown for detector(s) 3, 4. Fit results remain usable."
+    ]
+    assert dataset.run.grouping["deadtime_file_us"] == [0.0, 0.0, None, None]
+
+
+def test_skipped_file_correction_keeps_residual_fit_but_withholds_promotion():
+    from tests.core.test_deadtime_forward_model import _fit_deadtime, _rational_dataset
+
+    dataset, n0 = _rational_dataset((0.5, 0.5), (0.5, 0.5))
+    dataset.run.grouping.update(
+        deadtime_correction=True, deadtime_mode="file", deadtime_file_us=[0.0, None, 0.0, 0.0]
+    )
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        result = _fit_deadtime(dataset, n0)
+    assert result.success
+    assert result.parameters["DT0"].value == pytest.approx(0.02, rel=1e-4)
+    assert result.deadtime_calibration is None
+    assert result.warnings == [
+        "Deadtime promotion unavailable: File deadtime correction was skipped because required coefficients are unavailable. Fit results remain usable."
+    ]
+
+
+def test_skipped_base_cannot_construct_a_complete_calibration():
+    from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
+    from asymmetry.core.transform.deadtime import DeadtimeCalibration
+
+    base = CorrectionOutcome(
+        "deadtime",
+        "from_file",
+        CorrectionStatus.SKIPPED,
+        "a complete per-detector deadtime table is unavailable.",
+    )
+    with pytest.raises(ValueError, match="skipped"):
+        DeadtimeCalibration.from_increment(
+            base, 0.02, n_histograms=4, detector_indices=[0, 1], error_us=0.001, source_run=7
+        )

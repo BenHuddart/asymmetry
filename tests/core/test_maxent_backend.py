@@ -31,8 +31,8 @@ from asymmetry.core.maxent.engine import (
     _chunk_rows,
     _project_adjoint,
     _project_forward,
-    _state_signature,
 )
+from asymmetry.core.maxent.state_identity import state_signature
 from tests.core.test_maxent import _synthetic_run
 
 
@@ -106,7 +106,7 @@ def test_backend_absent_from_state_signature() -> None:
     prepared = build_maxent_input(run, numpy_config)
     # The backend must not enter the resume signature: switching it must not
     # invalidate a resumed state (the projection math is backend-independent).
-    assert _state_signature(prepared, numpy_config) == _state_signature(prepared, cuda_config)
+    assert state_signature(prepared, numpy_config) == state_signature(prepared, cuda_config)
 
     # And a run resuming under a different backend value must not trip the
     # "restart required" guard.  Use "auto", which resolves to numpy here (CPU),

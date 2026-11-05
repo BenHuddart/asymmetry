@@ -1884,9 +1884,9 @@ class TestMainWindowFourier:
         _compute_fourier_sync(mainwindow)
 
         assert len(build_calls) == 2
-        first_prepared = build_calls[0].get("prepared_histograms")
+        first_prepared = build_calls[0]["prepared"]
         assert first_prepared is not None
-        assert build_calls[1].get("prepared_histograms") is first_prepared
+        assert build_calls[1]["prepared"] is first_prepared
         first_t0 = build_calls[0].get("reference_t0_bin")
         assert first_t0 is not None
         assert build_calls[1].get("reference_t0_bin") == first_t0

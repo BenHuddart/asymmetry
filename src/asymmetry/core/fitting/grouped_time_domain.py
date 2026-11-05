@@ -15,7 +15,12 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.count_corrections import require_count_background
+from asymmetry.core.fitting.count_inputs import (
+    _build_one_count_group,
+    _count_group_context,
+    _count_group_setup,
+    _resolve_group_indices,
+)
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
     CostFactory,
@@ -37,18 +42,10 @@ from asymmetry.core.fitting.series_seeding import recommend_series_seeding
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     CorrectionStatus,
-    require_complete_dataset,
 )
-from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.fb_counts import AlignmentCrop
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
-    group_counts_aligned,
-    resolve_alignment,
 )
-from asymmetry.core.transform.rebin import binning_spec, rebin_counts
-from asymmetry.core.transform.reduce import correction_flags_from_grouping
-from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
 
@@ -212,191 +209,6 @@ def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
         return False
 
 
-@dataclass
-class _CountGroupContext:
-    """Shared detector alignment, window, correction, and bunching settings."""
-
-    run: Any
-    prepared_histograms: list[Any]
-    deadtime: CorrectionOutcome
-    alignment: AlignmentCrop
-    first_good: int
-    last_good: int
-    bunch_factor: int
-    bin_width: float
-    axis_start: float
-    #: Exact-t0 residual from the common bin centre, in µs.
-    t0_residual_us: float
-    group_names: dict[Any, Any]
-
-
-def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
-    """Require histograms and a grouping at the count-fit input boundary."""
-    run = dataset.run
-    if run is None:
-        raise ValueError("Grouped time-domain fitting requires a dataset with a source run")
-    if not run.histograms:
-        raise ValueError("Grouped time-domain fitting requires detector histograms")
-
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups_raw = grouping.get("groups")
-    if not isinstance(groups_raw, dict) or not groups_raw:
-        raise ValueError("Grouped time-domain fitting requires grouping definitions")
-    included_raw = grouping.get("included_groups")
-    included_groups = included_raw if isinstance(included_raw, dict) else {}
-    return run, grouping, groups_raw, included_groups
-
-
-def _resolve_group_indices(
-    grouping: dict, groups_raw: dict, included_groups: dict, n_histograms: int
-) -> list[tuple[int, list[int]]]:
-    """Return ``(group_id, detector_indices)`` for every included, non-empty group."""
-    groups: list[tuple[int, list[int]]] = []
-    for raw_group_id in sorted(groups_raw, key=str):
-        try:
-            group_id = int(raw_group_id)
-        except (TypeError, ValueError):
-            continue
-        if not bool(included_groups.get(group_id, True)):
-            continue
-        indices = effective_group_indices(grouping, group_id, n_histograms=n_histograms)
-        groups.append((group_id, indices))
-    return groups
-
-
-def _count_group_context(
-    dataset: MuonDataset,
-    grouping: dict,
-    run: Any,
-    group_specs: list[tuple[int, list[int]]],
-) -> _CountGroupContext:
-    require_complete_dataset(dataset)
-    apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    prepared_histograms, deadtime = prepare_histograms_with_deadtime(
-        list(run.histograms), grouping, apply_deadtime
-    )
-    if correction_flags_from_grouping(grouping).use_background:
-        require_count_background(prepared_histograms, grouping, group_specs, run.metadata)
-    detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
-    alignment = resolve_alignment(
-        prepared_histograms,
-        *(indices for _, indices in group_specs),
-        detector_t0_bins=detector_t0_bins,
-    )
-    window = alignment.window(grouping)
-    first_good, last_good = window.first, window.last
-    bunch_factor = binning_spec(grouping).factor
-    selected = sorted({i for _, indices in group_specs for i in indices})
-    bin_width = float(prepared_histograms[selected[0]].bin_width)
-    axis_start = first_good - alignment.common_t0_bin
-    t0_residual_us = (alignment.common_t0_bin + 0.5) * bin_width - common_t0_time_us(
-        prepared_histograms,
-        grouping,
-        alignment.common_t0_bin,
-        selected_indices=selected,
-    )
-    group_names = (
-        grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
-    )
-    return _CountGroupContext(
-        run=run,
-        prepared_histograms=prepared_histograms,
-        deadtime=deadtime,
-        alignment=alignment,
-        first_good=first_good,
-        last_good=last_good,
-        bunch_factor=bunch_factor,
-        bin_width=bin_width,
-        axis_start=axis_start,
-        t0_residual_us=t0_residual_us,
-        group_names=group_names,
-    )
-
-
-def _build_one_count_group(
-    ctx: _CountGroupContext,
-    group_id: int,
-    indices: list[int],
-    *,
-    t_min: float | None,
-    t_max: float | None,
-    lifetime_corrected: bool,
-    exclude: tuple[float, float] | None = None,
-) -> GroupedTimeDomainGroup | None:
-    """Align counts and measured variance before bunching and masking."""
-    run = ctx.run
-    aligned = [
-        group_counts_aligned(
-            ctx.prepared_histograms,
-            [index],
-            alignment=ctx.alignment,
-        )
-        for index in indices
-    ]
-    terminal_bin = min(ctx.last_good + 1, *(trace.counts.size for trace in aligned))
-    detector_counts = np.asarray([trace.counts[ctx.first_good : terminal_bin] for trace in aligned])
-    counts = detector_counts.sum(axis=0)
-    if counts.size == 0:
-        return None
-    variance = counts
-    if any(trace.variance is not None for trace in aligned):
-        variance = np.sum(
-            [trace.independent_variance[ctx.first_good : terminal_bin] for trace in aligned], axis=0
-        )
-    trimmed_counts = counts
-    bunch_factor = ctx.bunch_factor if counts.size >= ctx.bunch_factor else 1
-    time = (
-        np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
-    ) * ctx.bin_width + ctx.t0_residual_us
-    if bunch_factor > 1:
-        _, variance = rebin_counts(time, variance, bunch_factor)
-        detector_counts = np.asarray(
-            [rebin_counts(time, trace, bunch_factor)[1] for trace in detector_counts]
-        )
-        time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
-
-    scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
-    out_counts = trimmed_counts * scale
-    errors = np.sqrt(np.clip(variance, 1.0, None)) * scale
-
-    mask = np.ones_like(time, dtype=bool)
-    if t_min is not None:
-        mask &= time >= float(t_min)
-    if t_max is not None:
-        mask &= time <= float(t_max)
-    if exclude is not None:
-        ex0, ex1 = float(exclude[0]), float(exclude[1])
-        if ex1 > ex0:
-            mask &= ~((time >= ex0) & (time <= ex1))
-    if not np.any(mask):
-        return None
-
-    group_name = ctx.group_names.get(group_id, f"Group {group_id}")
-    metadata = dict(run.metadata)
-    metadata.update(
-        {
-            "group_id": int(group_id),
-            "group_name": str(group_name),
-            "grouped_time_domain": True,
-            "grouped_alignment": ctx.alignment.to_dict(),
-            "grouped_time_domain_bunch_factor": bunch_factor,
-            "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
-        }
-    )
-    return GroupedTimeDomainGroup(
-        group_id=int(group_id),
-        group_name=str(group_name),
-        time=np.asarray(time[mask], dtype=float).copy(),
-        counts=np.asarray(out_counts[mask], dtype=float).copy(),
-        error=np.asarray(errors[mask], dtype=float).copy(),
-        detector_counts=detector_counts[:, mask].copy(),
-        deadtime=ctx.deadtime,
-        detector_indices=tuple(indices),
-        source_run_number=int(run.run_number),
-        metadata=metadata,
-    )
-
-
 def build_grouped_time_domain_groups(
     dataset: MuonDataset,
     *,
@@ -412,7 +224,7 @@ def build_grouped_time_domain_groups(
         raise ValueError(
             "Grouped time-domain fitting requires at least two included detector groups"
         )
-    ctx = _count_group_context(dataset, grouping, run, specs)
+    ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
 
     built_groups: list[GroupedTimeDomainGroup] = []
     for group_id, indices in specs:
@@ -453,7 +265,7 @@ def build_count_groups(
         gid = int(raw_gid)
         indices = effective_group_indices(grouping, gid, n_histograms=len(run.histograms))
         specs.append((gid, indices))
-    ctx = _count_group_context(dataset, grouping, run, specs)
+    ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
 
     built: list[GroupedTimeDomainGroup] = []
     for gid, indices in specs:

@@ -6861,9 +6861,7 @@ class MainWindow(QMainWindow):
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
-        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
-        # Shared so a reference_run background loads + deadtime-prepares once
-        # across the phase sweep, not once per group.
+        prepared, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
         background_reference_cache: dict = {}
         for group_id in self._fourier_group_names_for_dataset(dataset):
             group_dataset = build_group_signal_dataset(
@@ -6871,7 +6869,7 @@ class MainWindow(QMainWindow):
                 group_id,
                 center_signal=False,
                 reference_t0_bin=reference_t0_bin,
-                prepared_histograms=prepared_histograms,
+                prepared=prepared,
                 background_reference_cache=background_reference_cache,
             )
             phases[group_id] = self._estimate_dataset_fourier_phase(
@@ -8364,9 +8362,9 @@ class MainWindow(QMainWindow):
         """
         if dataset.run is None or not selected_group_ids:
             return None
-        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
-        # Shared so a reference_run background loads + deadtime-prepares once
-        # across the group sweep, not once per group.
+        prepared, reference_t0_bin = precompute_group_fourier_inputs(
+            dataset.run, selected_group_ids
+        )
         background_reference_cache: dict = {}
         magnitudes: list[np.ndarray] = []
         freqs: np.ndarray | None = None
@@ -8377,7 +8375,7 @@ class MainWindow(QMainWindow):
                 group_id,
                 center_signal=False,
                 reference_t0_bin=reference_t0_bin,
-                prepared_histograms=prepared_histograms,
+                prepared=prepared,
                 background_reference_cache=background_reference_cache,
             )
             group_freqs, spectrum = fft_complex_asymmetry(

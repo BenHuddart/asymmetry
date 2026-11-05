@@ -530,16 +530,24 @@ its numerical algorithms also permit callers to crop before ``ApplyDeadTimeCorr`
 The compared musrfit 1.12.1 path corrects selected histograms but visits their
 raw arrays. These workflows do not share a universal observation domain.
 
-Asymmetry deliberately uses the exact required observations for F/B reduction:
-the selected pair and aligned output window, plus active range, tail-fit, and
+Asymmetry deliberately uses the exact required observations for F/B reduction,
+grouped raw-count fits, grouped Fourier inputs, and MaxEnt: the requested
+detectors and contributing raw bins, plus active range, tail-fit, and
 reference-background inputs. An unused saturated bin or detector cannot block
 the calculation, and a missing unused File coefficient cannot suppress it.
 A required missing coefficient skips the entire participating sample/reference
 operation with a warning; a required pole remains an error. Original detector
 ordinals and raw-bin coordinates are preserved. See
 :doc:`/reference/detector_grouping` for the inverse and uncertainty convention.
-Grouped raw-count fits, FFT/MaxEnt preparation, and standalone full-input
-preparation retain their full-input scope.
+One joint count fit, selected Fourier average, or MaxEnt reconstruction is
+one cohort for File fallback. A final exclusion does not remove samples used
+by earlier normalisation, background estimation, conditioning, or phase fits.
+In particular, MaxEnt interior exclusions follow its weighted-baseline estimate;
+FFT preparation retains the input needed by its upstream conditioning.
+F/B-asymmetry FFT uses the F/B preparation directly; its group selector is inert.
+Standalone full-input preparation still checks every supplied observation.
+These preparation choices do not establish identical solver inputs or statistics
+across all three reference programs.
 
 Public workflow context: `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_,
 `musrfit manual <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_, and

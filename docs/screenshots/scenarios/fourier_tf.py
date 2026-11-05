@@ -28,6 +28,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_ybco_vortex_lattice
+from ..data.required_observations import with_unused_saturated_detector
 from ._base import Scenario, _process_events_for, register
 
 
@@ -65,7 +66,7 @@ class FourierTfScenario(Scenario):
         window._on_fourier()
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        dataset = make_ybco_vortex_lattice()
+        dataset = with_unused_saturated_detector(make_ybco_vortex_lattice())
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         _process_events_for(milliseconds=120)
