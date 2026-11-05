@@ -350,8 +350,9 @@ not agreement claims about each program's count-fit objective. See
 The per-detector rational mean used by dedicated Estimate/Cal is algebraically
 equivalent to the published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`
 (Kilcoyne, RAL-94-080, §4). It fits the rational mean to raw counts with
-plug-in Poisson standard deviations; it does not fit the transformed correlated
-observables. This algebraic identity does not equate the estimators or their
+plug-in standard deviations :math:`\sqrt{\max(M_\mathrm{observed},1)}`,
+using a one-count floor; it does not fit the transformed correlated observables.
+This algebraic identity does not equate the estimators or their
 errors. Estimate averages fitted detector coefficients, rather than fitting a
 pooled spectrum. The dedicated calibration fixes the lifetime and has no
 background or polarisation term; a count-domain fit instead uses its configured

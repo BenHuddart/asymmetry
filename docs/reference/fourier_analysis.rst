@@ -1908,11 +1908,12 @@ Deadtime calibration tasks
 The MaxEnt deadtime calibration fits a signed rational coefficient for each
 detector in the active run, using all its raw histograms rather than only the
 selected MaxEnt groups. It passes effective detector t0 values, the post-t0
-offset, and the inclusive last-good bound, with the API cap of 400 bins per
-detector. This differs from Grouping Cal/Estimate, which uses stored t0 and the
-default unbounded end. It is a dedicated fixed-lifetime decay fit with no
-fitted background or polarisation, not a fit of a residual DT₀ in the MaxEnt
-reconstruction. Its errors are conditional Hessian errors.
+offset, and the inclusive last-good bound. The caller omits ``max_bins``, so
+the API default limits each detector to 400 bins; scripted callers can supply
+a different ``max_bins`` value. This differs from Grouping Cal/Estimate, which
+uses stored t0 and the default unbounded end. It is a dedicated fixed-lifetime
+decay fit with no fitted background or polarisation, not a fit of a residual
+DT₀ in the MaxEnt reconstruction. Its errors are conditional Hessian errors.
 
 The fit runs in a background task. While it runs, the panel displays
 "Fitting deadtime…". A finite positive good-frame count is required. Applying
