@@ -742,6 +742,37 @@ comparisons of published formulations; they do not establish numerical
 agreement with a particular release of another program. Manual phase-table
 and maximum-entropy workflows remain separate analyses.
 
+Required observations and prepared inputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Grouped Fourier averages prepare the selected group cohort together, including
+all raw bins consumed by background estimation and upstream conditioning,
+normalisation, centring, and phase fitting. A final time or frequency display
+exclusion does not automatically remove these dependencies. **F−B asymmetry**
+uses the existing F/B reduction directly and ignores the group selector.
+
+MaxEnt resolves selected groups and its effective time binning before preparation.
+Endpoint time limits select merged-bin centres on the existing grid. Interior
+exclusions still contribute to the weighted baseline before their errors are
+inflated. Active background estimator samples remain required even outside the
+selected time segment. Neither this scope nor the retained measured/supplied
+variance introduces a new likelihood or a physical deadtime uncertainty model.
+
+A missing required File coefficient skips correction for every participating
+sample/reference input in the requested average or reconstruction. An unused
+missing entry cannot suppress correction; a required inverse pole remains an
+error. Prepared grouped products are bound to their source arrays, scope,
+cohort, and correction settings, and reject reuse for a different request.
+External reference caches track the consumed file's identity and modification
+metadata; edits to an unused loaded copy do not replace that source. This stat
+contract cannot detect rewrites preserving all recorded metadata. Resumed
+MaxEnt state also identifies its actual prepared observations.
+
+WiMDA traverses requested group/bin observations; Mantid 6.16.1 standard
+``MuonPreProcess`` corrects before cropping, and the compared musrfit 1.12.1 path
+visits selected raw arrays. These differences do not imply matching FFT or
+MaxEnt preparation or solvers. See :ref:`comparison-deadtime-scope`.
+
 Normalisation
 ~~~~~~~~~~~~~
 

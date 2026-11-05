@@ -1,13 +1,19 @@
 Data processing
 ===============
 
-F/B reduction resolves detector membership, alignment, and required output and
+F/B reduction and grouped count/spectral preparation resolve detector membership,
+alignment, and required output and
 active-background samples before deadtime availability and correction. Unused
 File coefficients and saturated observations outside that union do not affect
 the result. In scripted reduction, explicit time limits select final bin
 centres; only their contributing native bins enter correction, together with
 active estimator samples. A requested rebin aliasing check still consumes its
-full unmerged spectrum. See :ref:`comparison-deadtime-scope` for the workflow convention.
+full unmerged spectrum. Grouped fits select merged-bin centres before resolving
+the contributing raw bins, including disjoint fit exclusions. Spectral preparation
+also retains active baseline, conditioning, phase, and background dependencies;
+a final display crop alone does not remove those observations. Shared preparation
+is bound to the requested cohort and actual sample/reference sources.
+See :ref:`comparison-deadtime-scope` for the workflow convention.
 
 The processing tools in this chapter act on a loaded dataset before it
 reaches the fit engine: rebinning to trade time resolution for statistics,

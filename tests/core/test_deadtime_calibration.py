@@ -146,3 +146,21 @@ def test_applied_base_outcome_survives_worker_serialization():
     assert restored == original
     with pytest.raises(TypeError):
         restored.effective["tau_us"] = [0.0, 0.0]
+
+
+def test_scoped_residual_fit_keeps_success_when_unused_file_coefficients_prevent_promotion():
+    from tests.core.test_deadtime_forward_model import _fit_deadtime, _rational_dataset
+
+    dataset, n0 = _rational_dataset((0.5, 0.5), (0.5, 0.5))
+    dataset.run.grouping.update(
+        deadtime_correction=True, deadtime_mode="file", deadtime_file_us=[0.0, 0.0, None, None]
+    )
+    with pytest.warns(UserWarning, match="Deadtime promotion unavailable"):
+        result = _fit_deadtime(dataset, n0)
+    assert result.success
+    assert result.parameters["DT0"].value == pytest.approx(0.02, rel=1e-4)
+    assert result.deadtime_calibration is None
+    assert result.warnings == [
+        "Deadtime promotion unavailable: coefficients are unknown for detector(s) 3, 4. Fit results remain usable."
+    ]
+    assert dataset.run.grouping["deadtime_file_us"] == [0.0, 0.0, None, None]

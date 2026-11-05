@@ -44,7 +44,7 @@ def _golden_average(run: Run, config: GroupSpectrumConfig) -> np.ndarray:
     values = []
     for gid in (1, 2):
         gds = build_group_signal_dataset(
-            run, gid, center_signal=False, reference_t0_bin=ref_t0, prepared_histograms=prepared
+            run, gid, center_signal=False, reference_t0_bin=ref_t0, prepared=prepared
         )
         freqs, spectrum = fft_complex_asymmetry(
             gds,
@@ -337,7 +337,7 @@ def test_fourier_reference_missing_file_table_skips_both_inputs(monkeypatch):
         actual = build_group_signal_dataset(
             run,
             1,
-            prepared_histograms=prepared,
+            prepared=prepared,
             reference_t0_bin=t0,
             center_signal=False,
             apply_lifetime_correction=False,
@@ -360,8 +360,8 @@ def test_precomputed_fourier_counts_do_not_bypass_fatal_deadtime_resolution():
     )
     prepared, _ = precompute_group_fourier_inputs(run)
     del run.grouping["good_frames"]
-    with pytest.raises(ValueError, match="good frames"):
-        build_group_signal_dataset(run, 1, prepared_histograms=prepared)
+    with pytest.raises(ValueError, match="requested source, scope or correction settings"):
+        build_group_signal_dataset(run, 1, prepared=prepared)
 
 
 def test_reference_cache_tracks_authored_manual_coefficients(monkeypatch):
@@ -390,3 +390,14 @@ def test_reference_cache_tracks_authored_manual_coefficients(monkeypatch):
     expected = build_group_signal_dataset(run, 1, background_reference_cache={})
     np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
     np.testing.assert_array_equal(actual.error, expected.error)
+
+
+def test_fb_fft_normalises_numeric_designated_group_ids():
+    run = _fb_pair_run()
+    config = GroupSpectrumConfig(signal_source="fb_asymmetry")
+    expected = compute_average_group_spectrum(run, config)
+    run.grouping.update(forward_group="01", backward_group="02")
+    actual = compute_average_group_spectrum(run, config)
+    assert actual is not None
+    np.testing.assert_array_equal(actual.time, expected.time)
+    np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)

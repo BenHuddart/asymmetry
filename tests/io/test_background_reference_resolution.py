@@ -132,7 +132,7 @@ def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
     """A cached reference (per source path) is reused without scanning the
     registry or re-loading, even when a run_number is present."""
     reference = _run(7, good_frames=100.0, level=2.0)
-    cache: dict[str, object] = {"/some/ref.nxs": reference}
+    cache = {("/some/ref.nxs", None): reference}
 
     def _fail_load(payload):
         raise AssertionError("loader must not run on a cache hit")
@@ -268,8 +268,7 @@ def test_invalid_reference_scale_does_not_become_unity(scale):
 
 
 def test_fourier_reference_deadtime_uses_reference_frames(monkeypatch):
-    from asymmetry.core.fourier.grouped import _resolve_group_reference_counts
-    from asymmetry.core.transform.grouping import resolve_alignment
+    from asymmetry.core.fourier.group_preparation import prepare_group_counts
 
     reference = BackgroundReference(
         [Histogram(np.array([20 / 1.4]), 1.0)],
@@ -278,23 +277,25 @@ def test_fourier_reference_deadtime_uses_reference_frames(monkeypatch):
         good_frames_reference=5.0,
     )
     monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
-    counts, scale = _resolve_group_reference_counts(
-        {
+    run = Run(
+        histograms=[Histogram(np.array([10.0]), 1.0)],
+        grouping={
+            "groups": {1: [1]},
+            "forward_group": 1,
+            "backward_group": 1,
             "background_correction": True,
             "background_mode": "reference_run",
+            "deadtime_correction": True,
             "deadtime_mode": "manual",
             "dead_time_us": [0.1],
             "good_frames": 10.0,
         },
-        group_indices=[0],
-        common_t0=0,
-        apply_deadtime=True,
-        detector_t0_bins=[0],
-        sample_alignment=resolve_alignment(reference.histograms, [0]),
     )
+    prepared = prepare_group_counts(run, [1])
+    counts = prepared.reference.aligned([0], prepared.layouts[1].reference_alignment)
     np.testing.assert_allclose(counts.counts, [20.0], rtol=1e-12)
     np.testing.assert_allclose(counts.variance, [20 / 1.4], rtol=1e-12)
-    assert scale == 2.0
+    assert prepared.reference_scale == 2.0
 
 
 def test_reference_file_coefficients_are_acquired_from_the_reference():
@@ -354,12 +355,11 @@ def test_fourier_digest_does_not_validate_broken_reference_requests(mode, payloa
 
 
 @pytest.mark.parametrize("mode", ["off", "manual", "estimate"])
-def test_fourier_digest_skips_external_file_metadata_when_file_mode_is_inert(mode, monkeypatch):
+def test_fourier_digest_tracks_consumed_reference_for_every_deadtime_mode(mode, monkeypatch):
     from asymmetry.core.fourier.spectrum import fourier_grouping_digest
 
-    monkeypatch.setattr(
-        "asymmetry.core.io.reference_file_identity", lambda _: pytest.fail("inert reference lookup")
-    )
+    identity = [1, 2, 3, 4]
+    monkeypatch.setattr("asymmetry.core.io.reference_file_identity", lambda _: tuple(identity))
     run = _run(1, good_frames=1000.0, level=20.0)
     run.grouping.update(
         deadtime_correction=mode != "off",
@@ -369,4 +369,6 @@ def test_fourier_digest_skips_external_file_metadata_when_file_mode_is_inert(mod
         background_mode="reference_run",
         background_run={"source_file": "unused.nxs"},
     )
-    assert fourier_grouping_digest(run)
+    before = fourier_grouping_digest(run)
+    identity[3] += 1
+    assert fourier_grouping_digest(run) != before

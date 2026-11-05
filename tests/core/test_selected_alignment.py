@@ -186,7 +186,7 @@ def test_archived_musrfit_integer_grouped_count_anchor():
 
 
 def test_count_fit_background_rejects_unobserved_cropped_range():
-    from asymmetry.core.fitting.count_corrections import require_count_background
+    from asymmetry.core.fitting.count_corrections import count_background_domain
 
     histograms = [Histogram(np.arange(8.0) + 10.0, 0.1, n) for n in (1, 3)]
     grouping = {
@@ -196,7 +196,7 @@ def test_count_fit_background_rejects_unobserved_cropped_range():
         "background_range": [1, 2],
     }
     with pytest.raises(ValueError, match="background range"):
-        require_count_background(histograms, grouping, [(1, [0]), (2, [1])], {"facility": "PSI"})
+        count_background_domain(histograms, grouping, [(1, [0]), (2, [1])], {"facility": "PSI"})
 
 
 def test_single_group_fourier_is_invariant_to_pair_and_excluded_spectators():

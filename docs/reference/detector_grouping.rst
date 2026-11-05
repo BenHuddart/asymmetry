@@ -1009,7 +1009,7 @@ have finite non-negative raw counts, positive exposure and bin width, and
 calculation; acquired histograms remain available for inspection and editing.
 No observations are clipped, zero-filled, or renumbered. A missing required
 File coefficient instead skips correction for all participating sample/reference
-periods. An unused missing File entry cannot suppress correction. Manual tables
+periods or requested group cohort. An unused missing File entry cannot suppress correction. Manual tables
 remain validated for every detector.
 
 For example, 10 counts, a
@@ -1122,10 +1122,13 @@ Asymmetry also skips the whole operation for incomplete tables, including
 participating periods and a reference background. It never borrows a reference
 run's coefficients from the sample. Complete zero tables are identities.
 See :ref:`comparison-deadtime-availability` for the availability comparison and
-:ref:`comparison-deadtime-scope` for the deliberate F/B observation choice.
-Standalone full-input preparation and grouped raw-count fits, FFT, and MaxEnt
-preparation correct their supplied full inputs; the narrower scope applies to
-F/B reduction, its alpha estimates, previews, and integral consumers.
+:ref:`comparison-deadtime-scope` for the deliberate observation choice.
+Grouped raw-count fits, FFT, and MaxEnt resolve their actual requested group
+cohort before preparation. A joint fit, selected Fourier average, or MaxEnt
+reconstruction uses one atomic sample/reference decision. Single-group requests
+need only that group. Prepared grouped counts carry their domain and source;
+a subset cannot serve another group or a larger cohort. Standalone
+``prepare_histograms_with_deadtime`` still corrects every supplied observation.
 
 Asymmetry uses unique acquired-channel membership and requires disjoint,
 nonempty effective F/B pairs for its independent-count model. WiMDA and musrfit

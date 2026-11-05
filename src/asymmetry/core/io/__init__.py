@@ -164,7 +164,7 @@ def resolve_background_reference(
     *,
     sample_good_frames: float | None = None,
     datasets: Iterable[MuonDataset] = (),
-    cache: dict[str, object] | None = None,
+    cache: dict | None = None,
     allow_file: bool = True,
 ) -> BackgroundReference | None:
     """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
@@ -198,8 +198,9 @@ def resolve_background_reference(
     # A cache hit (per source path) short-circuits BOTH the registry scan and
     # the loader, so a batch apply sharing one reference resolves it once
     # instead of re-scanning the registry for every sample dataset.
-    if cache is not None and source_file and source_file in cache:
-        reference_run = cache[source_file]
+    source_key = (source_file, reference_file_identity(payload))
+    if cache is not None and source_file and source_key in cache:
+        reference_run = cache[source_key]
 
     if reference_run is None and run_number is not None:
         for dataset in datasets:
@@ -221,7 +222,7 @@ def resolve_background_reference(
         # each call so it tracks in-memory edits to that run).
         reference_run = load_background_run(payload).run
         if cache is not None and source_file:
-            cache[source_file] = reference_run
+            cache[source_key] = reference_run
 
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")

@@ -33,6 +33,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_ybco_knight_grouped
+from ..data.required_observations import with_unused_saturated_detector
 from ._base import Scenario, _process_events_for, register
 
 
@@ -51,7 +52,7 @@ class GroupedFitYbcoKnightScenario(Scenario):
         window = MainWindow()
         window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
-        dataset = make_ybco_knight_grouped()
+        dataset = with_unused_saturated_detector(make_ybco_knight_grouped())
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         _process_events_for(milliseconds=120)
@@ -91,6 +92,7 @@ class GroupedFitYbcoKnightScenario(Scenario):
         # model pathway (the multiplicative chain shares one amplitude,
         # which the grouped surface hides in favour of the per-group
         # amplitude nuisance).
+        window._multi_group_fit_window._cost_combo.setCurrentIndex(1)
         single_fit_tab = window._multi_group_fit_window._single_fit_tab
         single_fit_tab._set_composite_model(
             CompositeModel(["OscillatoryField", "Exponential"], operators=["*"])
@@ -104,8 +106,13 @@ class GroupedFitYbcoKnightScenario(Scenario):
         # field when the table was built above, so a single fit call
         # converges and the parameter table reads as a completed workflow
         # instead of pre-fit defaults.
+        completed = []
+        single_fit_tab.grouped_fit_completed.connect(
+            lambda datasets, results: completed.append(results)
+        )
         single_fit_tab._run_global_fit()
         single_fit_tab.wait_for_fit()
+        assert completed and all(result[0].success for result in completed[0].values())
         _process_events_for(milliseconds=80)
         return window
 

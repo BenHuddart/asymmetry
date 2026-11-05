@@ -70,10 +70,23 @@ background. Forward and backward here are the two detector groups designated in
 the **Grouping** dialog; sum multi-detector banks into those two groups
 upstream.
 
-Missing or incomplete File deadtime coefficients produce a warned ``skipped``
+Raw-count preparation uses the requested groups, good-bin limits, bunching,
+and fit masks. Every native bin contributing to a retained merged bin is
+corrected before summation; incomplete terminal bunches and unconsumed excluded
+bins add no dependency. Active background checks retain their estimator samples.
+Explicit single-group fits remain available when that group is not included in
+a multi-group fit.
+
+Missing or incomplete required File deadtime coefficients produce a warned ``skipped``
 outcome and leave the observations uncorrected by that operation. Count fits
 continue under their existing count-source and background requirements;
 the grouped count domain retains the requested and actual deadtime outcome.
+A joint fit skips deadtime for its whole requested cohort.
+When a residual DT₀ fit succeeds but unused File coefficients are unknown,
+the fit remains usable and promotion is withheld. The result reports
+"Deadtime promotion unavailable: coefficients are unknown for detector(s)
+3, 4. Fit results remain usable." (with the actual detector numbers).
+No unknown value is replaced with zero to create a Manual table.
 Invalid Manual settings, missing required exposure, and saturation remain
 errors. See :doc:`detector_grouping` for the shared correction contract.
 
@@ -315,6 +328,14 @@ References
 
 Compared with other programs
 ----------------------------
+
+Asymmetry uses required observations for grouped count preparation, preserving
+measured or supplied count variance with fixed coefficients and exposure.
+WiMDA traverses requested group/bin observations; the compared musrfit 1.12.1
+path visits the selected histograms' raw arrays. Mantid 6.16.1 standard muon
+preprocessing corrects before cropping. These are preparation conventions,
+not agreement claims about each program's count-fit objective. See
+:ref:`comparison-deadtime-scope` and :doc:`detector_grouping`.
 
 Asymmetry's per-detector Estimate/Cal mean is algebraically equivalent to the
 published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`

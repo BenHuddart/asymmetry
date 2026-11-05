@@ -510,6 +510,10 @@ def test_reference_file_table_change_marks_cached_spectrum_stale(window, tmp_pat
     reference.run_number = 78
     for histogram in reference.histograms:
         histogram.counts = np.rint(histogram.counts / 10)
+    # The consumed reference and sample both carry an unused saturated channel.
+    for run in (sample, reference):
+        histogram = run.histograms[0]
+        run.histograms.append(Histogram(np.full(histogram.n_bins, 1e12), histogram.bin_width))
     reference.grouping.update(good_frames=1e6, deadtime_file_us=[])
     path = tmp_path / "reference.nxs"
     write_nexus_v1(reference, path, effective=True)
@@ -543,4 +547,28 @@ def test_reference_file_table_change_marks_cached_spectrum_stale(window, tmp_pat
     after = window._cached_frequency_spectra(77, RepresentationType.FREQ_FFT)[0]
     assert after.metadata["deadtime_outcome"]["status"] == "applied"
     assert not np.allclose(after.asymmetry, before.asymmetry)
+    assert window._fourier_staleness_for_current_run() == (False, "")
+
+
+def test_sample_exposure_change_marks_scoped_fft_stale_then_recomputes(window, qapp):
+    window, dataset = _computed_window(window)
+    dataset.run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        deadtime_file_us=[0.02, 0.02],
+        good_frames=1e6,
+    )
+    window._sync_fourier_panel_for_dataset(dataset)
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, qapp, timeout_s=15.0)
+    before = window._cached_frequency_spectra(77, RepresentationType.FREQ_FFT)[0]
+    assert window._fourier_staleness_for_current_run() == (False, "")
+    dataset.run.grouping["good_frames"] = 2e6
+    stale, reason = window._fourier_staleness_for_current_run()
+    assert stale and "grouping changed" in reason
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, qapp, timeout_s=15.0)
+    after = window._cached_frequency_spectra(77, RepresentationType.FREQ_FFT)[0]
+    assert not np.array_equal(after.asymmetry, before.asymmetry)
+    assert after.metadata["deadtime_outcome"]["effective"]["good_frames"] == 2e6
     assert window._fourier_staleness_for_current_run() == (False, "")
