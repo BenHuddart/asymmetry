@@ -1,6 +1,14 @@
 Data processing
 ===============
 
+F/B reduction resolves detector membership, alignment, and required output and
+active-background samples before deadtime availability and correction. Unused
+File coefficients and saturated observations outside that union do not affect
+the result. In scripted reduction, explicit time limits select final bin
+centres; only their contributing native bins enter correction, together with
+active estimator samples. A requested rebin aliasing check still consumes its
+full unmerged spectrum. See :ref:`comparison-deadtime-scope` for the workflow convention.
+
 The processing tools in this chapter act on a loaded dataset before it
 reaches the fit engine: rebinning to trade time resolution for statistics,
 restricting the time range, applying the grouping defined in the Grouping

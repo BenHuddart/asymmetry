@@ -17,8 +17,31 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     CorrectionStatus,
 )
+from asymmetry.core.transform.fb_counts import BinWindow
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
+
+
+@dataclass(frozen=True)
+class DeadtimeDomain:
+    """Original detector ordinals and disjoint inclusive raw-bin intervals."""
+
+    observations: tuple[tuple[int, tuple[BinWindow, ...]], ...]
+
+    @property
+    def detector_indices(self) -> tuple[int, ...]:
+        """Required ordinals, without compacting a coefficient table."""
+        return tuple(index for index, _ in self.observations)
+
+    def to_dict(self) -> dict:
+        """Record raw coordinates beside the effective correction."""
+        return {
+            "raw_bin_ranges": {
+                str(index): [[window.first, window.last] for window in windows]
+                for index, windows in self.observations
+            },
+            "detector_index_base": 0,
+        }
 
 
 class DeadtimeCorrectionError(ValueError):
@@ -69,7 +92,9 @@ class DeadtimeCorrection:
         return cls(tuple(grouping["dead_time_us"][:n_histograms]), grouping.get("good_frames"))
 
 
-def deadtime_occupancy(counts, tau_us, bin_width_us, good_frames, *, detector=None):
+def deadtime_occupancy(
+    counts, tau_us, bin_width_us, good_frames, *, detector=None, raw_bin_indices=None
+):
     """Return N·τ/(Δt·F) for valid raw counts and an invertible signed correction."""
     tau = _deadtime_number(tau_us, "deadtime coefficient (µs)", detector=detector)
     width = _deadtime_number(bin_width_us, "bin width (µs)", detector=detector, positive=True)
@@ -91,6 +116,7 @@ def deadtime_occupancy(counts, tau_us, bin_width_us, good_frames, *, detector=No
     if np.any(saturated):
         index = int(np.argmax(occupancy))
         peak = float(occupancy[index])
+        index = index if raw_bin_indices is None else int(raw_bin_indices[index])
         raise DeadtimeCorrectionError(
             f"occupancy N·τ/(Δt·F) reaches {peak:.6g} at bin {index} "
             f"({np.count_nonzero(saturated)} bins at or above 1); "
@@ -109,6 +135,7 @@ def apply_deadtime_correction(
     *,
     num_good_frames: float,
     detector: int | None = None,
+    raw_bin_indices=None,
 ):
     """Invert the non-paralysable model on every raw bin, rejecting N·τ/(Δt·F) ≥ 1.
 
@@ -116,7 +143,14 @@ def apply_deadtime_correction(
     """
     # ISIS calibration coefficients are signed fit parameters, in µs. A negative
     # coefficient reduces counts; it is not a negative physical recovery interval.
-    occupancy = deadtime_occupancy(counts, tau_us, bin_width_us, num_good_frames, detector=detector)
+    occupancy = deadtime_occupancy(
+        counts,
+        tau_us,
+        bin_width_us,
+        num_good_frames,
+        detector=detector,
+        raw_bin_indices=raw_bin_indices,
+    )
     with np.errstate(over="ignore"):
         corrected = np.asarray(counts, dtype=np.float64) / (1 - occupancy)
     if not np.all(np.isfinite(corrected)):
@@ -461,7 +495,12 @@ def file_deadtime_table(grouping: dict):
 
 
 def resolve_deadtime(
-    grouping: dict, n_histograms: int, use: bool, mode: str | None = None
+    grouping: dict,
+    n_histograms: int,
+    use: bool,
+    mode: str | None = None,
+    *,
+    domain: DeadtimeDomain | None = None,
 ) -> CorrectionOutcome:
     """Resolve one request without mutating its table or coefficient provenance."""
     if not use:
@@ -479,15 +518,16 @@ def resolve_deadtime(
     table = grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
     if requested == "from_file":
         table = file_deadtime_table(grouping)
+    required = tuple(range(n_histograms)) if domain is None else domain.detector_indices
+    # Authored Manual settings remain a whole-table input contract. Optional
+    # acquisition entries are needed only at the original requested ordinals.
+    checked = required if requested == "from_file" else tuple(range(n_histograms))
     if (
         not isinstance(table, (list, tuple))
-        or len(table) < n_histograms
+        or any(i >= len(table) for i in checked)
         or (
             requested == "from_file"
-            and any(
-                not isinstance(value, Real) or not np.isfinite(value)
-                for value in table[:n_histograms]
-            )
+            and any(not isinstance(table[i], Real) or not np.isfinite(table[i]) for i in checked)
         )
     ):
         return CorrectionOutcome(
@@ -496,21 +536,39 @@ def resolve_deadtime(
             CorrectionStatus.SKIPPED if requested == "from_file" else CorrectionStatus.UNAVAILABLE,
             "a complete per-detector deadtime table is unavailable.",
         )
-    if any(value != 0 for value in table[:n_histograms]) and grouping.get("good_frames") is None:
+    if requested != "from_file":
+        table = tuple(
+            _deadtime_number(table[i], "deadtime coefficient (µs)", detector=i) for i in checked
+        )
+    else:
+        for i in required:
+            _deadtime_number(table[i], "deadtime coefficient (µs)", detector=i)
+    coefficients = tuple(
+        table[i]
+        if i < len(table) and isinstance(table[i], Real) and np.isfinite(table[i])
+        else None
+        for i in range(n_histograms)
+    )
+    nonzero = any(coefficients[i] != 0 for i in required)
+    frames = grouping.get("good_frames")
+    if nonzero and frames is None:
         return CorrectionOutcome(
             "deadtime",
             requested,
             CorrectionStatus.UNAVAILABLE,
             "good frames must be finite and > 0; acquisition normalisation is unavailable",
         )
-    correction = DeadtimeCorrection(tuple(table[:n_histograms]), grouping.get("good_frames"))
+    if nonzero:
+        frames = _deadtime_number(frames, "good frames", positive=True)
+
     return CorrectionOutcome(
         "deadtime",
         requested,
         CorrectionStatus.APPLIED,
         effective={
-            "tau_us": correction.tau_us,
-            "good_frames": correction.good_frames if any(correction.tau_us) else None,
+            "tau_us": coefficients,
+            "good_frames": frames if nonzero else None,
+            **({"scope": domain.to_dict()} if domain is not None else {}),
             "source": "file"
             if requested == "from_file"
             else str(grouping.get("deadtime_method") or requested).strip().lower(),
@@ -520,7 +578,11 @@ def resolve_deadtime(
 
 
 def deadtime_operation_inputs(
-    inputs: list[tuple[list[Histogram], dict]], use: bool, mode: str | None = None
+    inputs: list[tuple[list[Histogram], dict]],
+    use: bool,
+    mode: str | None = None,
+    *,
+    domains: list[DeadtimeDomain] | None = None,
 ) -> list[tuple[list[Histogram], dict]]:
     """Withhold File correction from every participant if any lacks coefficients.
 
@@ -528,7 +590,14 @@ def deadtime_operation_inputs(
     remain intact. Fatal resolution outcomes keep their existing error paths.
     """
     outcomes = [
-        resolve_deadtime(grouping, len(histograms), use, mode) for histograms, grouping in inputs
+        resolve_deadtime(
+            grouping,
+            len(histograms),
+            use,
+            mode,
+            domain=None if domains is None else domains[index],
+        )
+        for index, (histograms, grouping) in enumerate(inputs)
     ]
     if any(item.status == CorrectionStatus.SKIPPED for item in outcomes) and all(
         item.usable for item in outcomes

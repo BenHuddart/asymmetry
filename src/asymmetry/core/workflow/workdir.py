@@ -255,6 +255,7 @@ def reduction_digest(
     """The digest a reduced entry is keyed on: every source file it was reduced from."""
     payload = {
         "schema": SCHEMA,
+        "deadtime_scope": "required_fb_observations",
         "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),
