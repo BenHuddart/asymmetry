@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Load legacy LEM ROOT version-4 numeric calibration, preserving both stored
+  decay banks, their identities, and file timing through shared reduction.
+
 - Automatic timing requires a known strategy and each selected channel’s own
   estimate, preserves usable file timing, and records effective timing provenance.
 - Period and detector-pair changes retain their own timing availability and exact

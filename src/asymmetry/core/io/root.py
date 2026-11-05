@@ -27,6 +27,7 @@ from asymmetry.core.io.physical_units import (
 )
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.io.root_header import (
+    LEM_HEADER_BANKS,
     LEM_HEADER_UNITS,
     parse_header_value,
     parse_musrroot_string,
@@ -80,14 +81,13 @@ class RootLoader(BaseLoader):
             with uproot.open(path) as root_file:
                 header, header_kind, run_summary = self._read_header(root_file)
                 root_histograms = self._read_histograms(root_file)
+                conventions = LEM_HEADER_UNITS.get(header.get("RunInfo/Header Class"), {})
                 quantities = {
                     name: parse_quantity(
                         header.get(f"RunInfo/{name}"),
                         dimension,
                         context=f"{path}: RunInfo/{name}",
-                        convention=LEM_HEADER_UNITS.get(name)
-                        if header_kind == "lem-root-v5"
-                        else None,
+                        convention=conventions.get(name),
                         default=None if dimension == "time" else 0.0,
                     )
                     for name, dimension in _PHYSICAL_HEADER_FIELDS.items()
@@ -124,12 +124,8 @@ class RootLoader(BaseLoader):
                 header = self._read_directory_tree(root_file, "RunInfo")
             else:
                 header = self._read_folder_section(run_info, "RunInfo")
-            kind = (
-                "lem-root-v5"
-                if header.get("RunInfo/Header Class") == "TLemRunHeader v5"
-                else "lem-root-folder"
-            )
-            return header, kind, None
+            kind = header.get("RunInfo/Header Class", "").replace("TLemRunHeader v", "lem-root-v")
+            return header, kind or "lem-root-folder", None
 
         raise ValueError("ROOT file does not contain a RunHeader or RunInfo header")
 
@@ -162,10 +158,11 @@ class RootLoader(BaseLoader):
     def _read_folder_section(self, section, prefix: str) -> dict[str, str]:
         header: dict[str, str] = {}
         for item in self._children(section):
-            if self._object_class(item) == "TLemRunHeader" and item.class_version == 5:
+            item_class = self._object_class(item)
+            if item_class == "TLemRunHeader" and item.class_version in LEM_HEADER_BANKS:
                 header.update(read_lem_header(item))
                 continue
-            if self._object_class(item) == "TObjString":
+            if item_class == "TObjString":
                 parsed = parse_musrroot_string(str(item))
                 if parsed is not None:
                     key, value = parsed
@@ -693,6 +690,8 @@ class RootLoader(BaseLoader):
                     if item_key.startswith(prefix)
                 }
 
+        if header.get("RunInfo/Header Class") == "TLemRunHeader v4":
+            return {}
         candidates = [
             f"DetectorInfo/Detector{hist.histo_number:03d}/",
             f"DetectorInfo/Detector{hist.histo_number:02d}/",

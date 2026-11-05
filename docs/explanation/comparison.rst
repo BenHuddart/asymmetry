@@ -82,9 +82,9 @@ below; different defaults must be matched before judging numerical agreement.
      - Explicit musrfit endpoints and omitted defaults differ; WiMDA uses a
        shared interval. See :ref:`comparison-psi-intervals`.
    * - ROOT calibration and coverage
-     - Legacy v5 and modern layouts use common reduction; closest to musrfit
-     - v4 remains unsupported; acquired-example checks and the directory-case
-       limit have distinct scopes. See :ref:`comparison-root`.
+     - Legacy v4/v5 and modern layouts use common reduction; closest to musrfit
+     - Stored bank selection, PPC uncertainty, and the directory-case limit
+       have distinct scopes. See :ref:`comparison-root`.
 
 Agreement means agreement for matched observations and uncertainty conventions,
 within the stated storage or export precision. Explained convention differences
@@ -341,7 +341,7 @@ usable interpretation remains; see :doc:`/reference/loading_data`.
 PSI legacy ROOT calibration
 ---------------------------
 
-Asymmetry adopts musrfit's numeric ``TLemRunHeader`` v5 calibration for legacy
+Asymmetry adopts musrfit's numeric ``TLemRunHeader`` v4/v5 calibration for legacy
 LEM ROOT: ns resolution and zero-based per-detector t0, followed by the shared
 count reduction. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) gives identical
 selected counts, times, and errors for equivalent synthetic BIN, legacy ROOT,
@@ -360,8 +360,32 @@ variant uses ``decayAnaModule``, while this musrfit reader requests
 native numerical comparison for it. WiMDA and Mantid coverage of this legacy
 class is unverified. The legacy v5 agreement above uses synthetic files;
 the modern acquired examples below extend a different part of ROOT coverage.
-Two legacy v4 examples remain loading failures, outside the supported numeric
-v5 decoder. See :doc:`/reference/loading_data` and the
+Two acquired v4 examples in the musrfit ``708f777b`` example set extend legacy
+coverage: all eight decay arrays retain their 66,601 stored bins, numeric
+0.1953125 ns width, identities, and available calibration. Header slots 0–3
+calibrate both bank 00 (NPP) and bank 20 (PPC); musrfit's ``ROOT-NPP`` and
+``ROOT-PPC`` select the respective stored bank. Distinct-anchor checks also
+confirm that the timing follows header slots rather than histogram ordinals.
+The `musrfit LEM format description
+<https://lmu.pages.psi.ch/musrfit-docu/file-formats.html>`_ names these banks.
+
+With channels 1/3, raw bins 3500–3539, packing one, alpha=beta=1, no added
+correction, and zero background, summed counts agree exactly. Times, F/B
+values, and counting errors agree within relative :math:`5\times10^{-6}`
+ASCII precision, allowing absolute :math:`5\times10^{-7}` for F/B values
+near zero. Both file t0 3419 and explicit t0 3429 are compared. The PPC check
+uses stored observations and the declared square-root-count error convention;
+it does not validate pileup physics, likelihood, or corrected-count covariance.
+The banks must not be combined as independent observations. The initial pairs
+in these two v4 files select bank-00 left/right; this is no general default
+geometry certification. Version 5 extra-bank calibration is outside this check.
+
+Serialized v4 regression inputs remain optional external examples. Always-on
+normalisation tests cover sparse/reordered identities and unavailable anchors,
+but no independently authored serialized-v4 CI fixture is supplied. Loading
+checks over 37 external ROOT files establish compatibility and retained data,
+not numerical certification of every layout or default reduction. See
+:doc:`/reference/loading_data` and the
 `musrfit RUN settings <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
 
 .. _comparison-psi-intervals:
@@ -374,7 +398,7 @@ and intersects them after whole-bin alignment over the selected detectors.
 BIN upper values at or beyond histogram length are clipped to the final
 stored index; interior values are retained. MDU M3/T4/T5 markers are converted
 at their hardware scale before clipping. Modern ROOT per-detector bounds use
-the same inclusive representation; legacy LEM v5 without good fields defaults
+the same inclusive representation; legacy LEM v4/v5 without good fields defaults
 from each detector's t0 through its final stored bin. Container-added bins
 remain stored, independently of their counts or the selected interval.
 

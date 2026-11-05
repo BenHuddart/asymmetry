@@ -88,7 +88,11 @@ ROOT loader
 Loads MusrRoot/LEM ROOT histograms and header metadata. MusrRoot slow-control
 histograms under ``histos/SCAnaModule`` are exposed through
 ``metadata["nexus_time_series"]`` and Get Info, including sample-temperature
-logs such as ``hSampleTemperature``.
+logs such as ``hSampleTemperature``. Serialized LEM headers support numeric
+v4/v5 calibration; ``metadata["root_format"]`` retains the actual version,
+``declared_units`` records its format units, and ``root_histo_numbers`` maps
+stored arrays to detector ordinals. See :doc:`/reference/loading_data` for
+supported v4 banks and unavailable timing.
 
 .. autoclass:: asymmetry.core.io.root.RootLoader
    :members:

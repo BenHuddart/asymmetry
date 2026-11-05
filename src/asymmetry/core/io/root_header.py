@@ -8,13 +8,18 @@ from typing import Any
 
 from asymmetry.core.io.physical_units import UnitConvention
 
+# Supported serialized layouts: timing slots index active channels within a bank.
+LEM_HEADER_BANKS = {4: (range(4), range(20, 24)), 5: (range(32),)}
 LEM_HEADER_UNITS = {
-    name: UnitConvention(unit, "TLemRunHeader v5; musrfit 1.12.1 ROOT-NPP")
-    for name, unit in (
-        ("Time Resolution", "ns"),
-        ("Sample Temperature", "K"),
-        ("Sample Magnetic Field", "G"),
-    )
+    f"TLemRunHeader v{version}": {
+        name: UnitConvention(unit, f"TLemRunHeader v{version}; musrfit 1.12.1 ROOT-NPP")
+        for name, unit in (
+            ("Time Resolution", "ns"),
+            ("Sample Temperature", "K"),
+            ("Sample Magnetic Field", "G"),
+        )
+    }
+    for version in LEM_HEADER_BANKS
 }
 
 
@@ -94,10 +99,11 @@ def parse_header_value(value: Any) -> str:
 
 
 def read_lem_header(record) -> dict[str, str]:
-    """Decode TLemRunHeader v5 numeric calibration, not its display strings.
+    """Decode supported TLemRunHeader numeric calibration, not its display strings.
 
     LEM stores resolution in ns, field in G, temperature in K, and t0 in
-    zero-based bins indexed by hDecay00, hDecay01, ... . Negative or nonfinite
+    zero-based active-channel bins. Version 4 banks 00/20 share slots; v5
+    retains direct numbering. Negative or nonfinite
     t0 entries supply no usable calibration; histogram axes do not supply calibration.
     """
     header = {
@@ -109,7 +115,7 @@ def read_lem_header(record) -> dict[str, str]:
             ("Sample Magnetic Field", "fSampleBField"),
         )
     }
-    header["RunInfo/Header Class"] = "TLemRunHeader v5"
+    header["RunInfo/Header Class"] = f"TLemRunHeader v{record.class_version}"
     for key, member in (
         ("Run Title", "fRunTitle"),
         ("Setup", "fLemSetup"),
@@ -117,9 +123,10 @@ def read_lem_header(record) -> dict[str, str]:
         ("Run Stop Time", "fStopTimeString"),
     ):
         header[f"RunInfo/{key}"] = str(record.member(member)).partition(":")[2].strip()
-    for number, t0 in enumerate(record.member("fTimeZero")[: record.member("fNHist")]):
-        prefix = f"DetectorInfo/Detector{number:03d}"
-        header[f"{prefix}/Histo Number"] = str(number)
-        if isfinite(t0) and t0 >= 0:
-            header[f"{prefix}/Time Zero Bin"] = str(t0)
+    for bank in LEM_HEADER_BANKS[record.class_version]:
+        for number, t0 in zip(bank, record.member("fTimeZero")[: record.member("fNHist")]):
+            prefix = f"DetectorInfo/Detector{number:03d}"
+            header[f"{prefix}/Histo Number"] = str(number)
+            if isfinite(t0) and t0 >= 0:
+                header[f"{prefix}/Time Zero Bin"] = str(t0)
     return header
