@@ -1033,14 +1033,7 @@ def build_maxent_input(
         raise ValueError("MaxEnt requires raw detector histograms.")
 
     if prepared_histograms is None:
-        # ``use_deadtime_correction`` means "honour the run's existing deadtime
-        # setting": correction applies only when the config flag AND the run's
-        # grouping flag agree.  This keeps MaxEnt input consistent with the FFT
-        # path (which follows the grouping flag alone) in the default state
-        # where loaders populate ``dead_time_us`` but leave the grouping flag
-        # off, while still letting the panel checkbox force correction off.
-        # ``reference_t0_bin`` (when not supplied) is derived from these
-        # prepared histograms inside ``build_group_signal_dataset``.
+        # The config can disable correction; enabling it honours the run's request.
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
         prepared_histograms, _applied = prepare_histograms_with_deadtime(
             list(run.histograms),
@@ -1091,7 +1084,8 @@ def build_maxent_input(
             group_id,
             center_signal=False,
             apply_lifetime_correction=True,
-            use_deadtime=resolved_config.use_deadtime_correction,
+            use_deadtime=resolved_config.use_deadtime_correction
+            and bool(run.grouping.get("deadtime_correction", False)),
             reference_t0_bin=reference_t0_bin,
             prepared_histograms=prepared_histograms,
             background_reference_cache=background_reference_cache,

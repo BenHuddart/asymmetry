@@ -32,10 +32,12 @@ def test_prepare_deadtime_uses_file_values_only() -> None:
     assert resolve_deadtime(grouping, 1, True, "from_file").status == "applied"
 
 
-def test_prepare_deadtime_without_file_values_refuses_final_analysis() -> None:
+def test_prepare_deadtime_without_file_values_warns_and_skips() -> None:
     histogram = Histogram(np.array([100.0, 200.0]), bin_width=0.02)
-    with pytest.raises(ValueError, match="table"):
-        prepare_histograms_with_deadtime([histogram], {}, use_deadtime=True)
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        prepared, outcome = prepare_histograms_with_deadtime([histogram], {}, use_deadtime=True)
+    assert outcome.status == "skipped"
+    np.testing.assert_array_equal(prepared[0].counts, histogram.counts)
 
 
 def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> None:
@@ -55,7 +57,7 @@ def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> No
     assert applied.status == "applied"
     assert grouping["deadtime_method"] == "estimate"
     assert resolve_deadtime(grouping, 1, True, "manual").status == "applied"
-    assert resolve_deadtime(grouping, 1, True, "from_file").status == "unavailable"
+    assert resolve_deadtime(grouping, 1, True, "from_file").status == "skipped"
     assert corrected[0].counts[0] > histogram.counts[0]
 
 

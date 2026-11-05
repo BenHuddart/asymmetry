@@ -36,22 +36,29 @@ fixed and one-shot calibrated alpha values remain stored choices.
 Correction outcomes
 -------------------
 
-A requested correction must be available before final reduction, calibration,
-or fitting can use the run. A missing reference, absent fixed values, or a
+An unavailable or failed correction prevents final reduction, calibration,
+or fitting. Missing or incomplete File deadtime coefficients instead yield a
+usable uncorrected result with a warning; background failures remain fatal. A missing reference, absent fixed values, or a
 failed tail fit raises an error; it does not produce an unsubtracted spectrum
 labelled as corrected. Malformed fixed values and invalid background ranges
 raise input errors, as do invalid reference scales or frame counts. Disabling the correction is an explicit valid choice.
 
 The core API returns ``corrections`` on grouped counts and grouped asymmetry
 results. Each ``CorrectionOutcome`` records its name, requested mode, status
-(``off``, ``applied``, ``unavailable``, or ``failed``), and any failure reason.
+(``off``, ``applied``, ``skipped``, ``unavailable``, or ``failed``), and any failure reason.
 Applied outcomes carry the effective settings and uncertainty convention:
 levels and errors, effective estimation ranges, tail-fit diagnostics, or the
 reference identity, frame counts, scale, and detector alignment. Reference
 scaling records whether it uses live frame counts, saved frame counts, an
 explicit scale, or a unity assumption when exposure metadata is absent. These records
 are immutable; ``CorrectionOutcomes.to_dict()`` exports an independent JSON
-snapshot. ``require_complete()`` rejects unavailable or failed corrections.
+snapshot. ``complete`` and ``require_complete()`` describe calculation acceptance,
+including a warned ``skipped`` File deadtime outcome. They reject unavailable
+or failed corrections. Only ``applied`` carries effective coefficients.
+A File request uses the sample and reference acquisitions' own tables; if
+either is incomplete, both remain uncorrected by deadtime while reference
+background subtraction still proceeds. Manual coefficients remain the shared
+authored table, with each acquisition's own frame exposure.
 
 A preview may request ``allow_incomplete=True`` and inspect the outcome.
 The grouping preview uses already-loaded reference runs without reading files.

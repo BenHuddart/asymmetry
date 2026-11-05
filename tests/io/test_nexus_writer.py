@@ -370,3 +370,29 @@ def test_corpus_psi_bin_template_writes_nexus(tmp_path) -> None:
     assert len(reloaded.histograms) == len(run.histograms)
     for original, again in zip(run.histograms, reloaded.histograms, strict=True):
         assert np.array_equal(again.counts, original.counts)
+
+
+@pytest.mark.parametrize("table", [None, [], [0.0, 0.0], [0.01], [0.01, -0.02]])
+@pytest.mark.parametrize("authored", [False, True])
+def test_round_trip_preserves_acquired_deadtime_table(tmp_path, table, authored):
+    from asymmetry.core.transform.deadtime import resolve_deadtime
+
+    run = _template()
+    run.grouping.pop("dead_time_us")
+    if table is not None:
+        run.grouping["dead_time_us"] = list(table)
+    if authored:
+        run.grouping.update(
+            deadtime_mode="manual", deadtime_method="manual", dead_time_us=[0.03, 0.03]
+        )
+        if table is not None:
+            run.grouping["deadtime_file_us"] = list(table)
+    path = tmp_path / "calibration.nxs"
+    write_nexus_v1(run, path)
+    restored = load(path).run
+    expected = [] if table is None else table
+    assert restored.grouping["deadtime_file_us"] == expected
+    outcome = resolve_deadtime(restored.grouping, 2, True, "file")
+    assert outcome.status == ("applied" if len(expected) == 2 else "skipped")
+    if len(expected) == 2:
+        np.testing.assert_array_equal(outcome.effective["tau_us"], expected)

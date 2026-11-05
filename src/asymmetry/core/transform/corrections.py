@@ -17,6 +17,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset
 class CorrectionStatus(StrEnum):
     OFF = "off"
     APPLIED = "applied"
+    SKIPPED = "skipped"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
 
@@ -74,10 +75,19 @@ class CorrectionOutcome:
             raise ValueError("correction uncertainty status must be a string")
         if self.effective is not None and not isinstance(self.effective, Mapping):
             raise ValueError("effective correction values require a mapping")
-        incomplete = status in {CorrectionStatus.UNAVAILABLE, CorrectionStatus.FAILED}
-        if (incomplete and not self.reason) or (not incomplete and self.reason is not None):
+        if status == CorrectionStatus.SKIPPED and (self.name, self.requested) != (
+            "deadtime",
+            "from_file",
+        ):
+            raise ValueError("only unavailable File deadtime calibration can be skipped")
+        needs_reason = status in {
+            CorrectionStatus.SKIPPED,
+            CorrectionStatus.UNAVAILABLE,
+            CorrectionStatus.FAILED,
+        }
+        if (needs_reason and not self.reason) or (not needs_reason and self.reason is not None):
             raise ValueError(
-                "an incomplete correction requires a reason; other outcomes forbid one"
+                "skipped, unavailable, or failed corrections require a reason; other outcomes forbid one"
             )
         applied = status == CorrectionStatus.APPLIED
         if (
@@ -88,6 +98,22 @@ class CorrectionOutcome:
             raise ValueError("effective values and uncertainty belong only to applied corrections")
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "effective", _freeze_effective(self.effective))
+
+    @property
+    def usable(self) -> bool:
+        """Whether this outcome permits calculation, independently of application."""
+        return self.status in {
+            CorrectionStatus.OFF,
+            CorrectionStatus.APPLIED,
+            CorrectionStatus.SKIPPED,
+        }
+
+    @property
+    def warning(self) -> str | None:
+        """The shared warning for an accepted uncorrected File result."""
+        if self.status == CorrectionStatus.SKIPPED:
+            return f"File deadtime correction not applied: {self.reason} Continuing uncorrected."
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -128,14 +154,11 @@ class CorrectionOutcomes:
 
     @property
     def complete(self) -> bool:
-        return all(
-            outcome.status in {CorrectionStatus.OFF, CorrectionStatus.APPLIED}
-            for outcome in (self.deadtime, self.background)
-        )
+        return all(outcome.usable for outcome in (self.deadtime, self.background))
 
     def require_complete(self, *, context: str = "") -> None:
         for outcome in (self.deadtime, self.background):
-            if outcome.status in {CorrectionStatus.UNAVAILABLE, CorrectionStatus.FAILED}:
+            if not outcome.usable:
                 raise CorrectionUnavailableError(
                     (f"{context}: " if context else "")
                     + f"{outcome.name} correction requested ({outcome.requested}) "
@@ -164,11 +187,21 @@ class BackgroundReference:
     good_frames_sample: float | None = None
     good_frames_reference: float | None = None
     scale_source: str = "explicit_scale"
+    file_dead_time_us: tuple[float | None, ...] = ()
 
     def __post_init__(self):
         object.__setattr__(self, "source_file", Path(self.source_file).name)
+        object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
         if not isfinite(self.scale) or self.scale <= 0:
             raise ValueError("reference background scale must be finite and positive")
+
+    def deadtime_grouping(self, sample_grouping: dict) -> dict:
+        """Use this reference's acquisition facts with the shared authored request."""
+        return dict(
+            sample_grouping,
+            good_frames=self.good_frames_reference,
+            deadtime_file_us=self.file_dead_time_us,
+        )
 
 
 def require_complete_dataset(dataset: MuonDataset) -> None:
@@ -202,3 +235,15 @@ def background_grouping_metadata(outcomes: Mapping[str, CorrectionOutcomes]) -> 
     else:
         result["background_details"] = {"periods": applied}
     return result
+
+
+def correction_warnings(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    """Recover accepted correction warnings from immutable result provenance."""
+    return tuple(
+        dict.fromkeys(
+            outcome.warning
+            for record in metadata.get("correction_outcomes", {}).values()
+            for outcome in (CorrectionOutcomes.from_dict(record).deadtime,)
+            if outcome.warning is not None
+        )
+    )

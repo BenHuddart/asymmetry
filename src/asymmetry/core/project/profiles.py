@@ -120,6 +120,7 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.fb_counts import AlignmentCrop
 from asymmetry.core.transform.grouping import (
     InvalidGroupingError,
@@ -1343,6 +1344,7 @@ _PER_RUN_FACT_KEYS = (
     "period_reduced",
     "period_good_frames",
     "period_dead_time_us",
+    "deadtime_file_us",
     "period_t0_sources",
     "period_detector_t0_sources",
     "period_mapping",
@@ -1354,7 +1356,7 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
     for key in _PER_RUN_FACT_KEYS:
         if key in run_grouping:
             grouping[key] = run_grouping[key]
-    # Missing run-level anchors use the first acquired histogram.
+    grouping["deadtime_file_us"] = list(file_deadtime_table(run_grouping))
     if "t0_bin" not in grouping and run.histograms:
         grouping["t0_bin"] = int(run.histograms[0].t0_bin)
 
@@ -1663,13 +1665,7 @@ def _apply_deadtime_policy(
     if policy.mode == "from_file":
         grouping["deadtime_mode"] = "file"
         grouping["deadtime_method"] = "file"
-        # The reduction reads the run's own file deadtime values under
-        # ``dead_time_us``; carry them through from the run so the "file" mode
-        # remains driven by per-run facts.
-        if isinstance(run_grouping.get("dead_time_us"), (list, tuple)):
-            grouping["dead_time_us"] = list(run_grouping["dead_time_us"])
-        elif isinstance(run_grouping.get("deadtime_loaded_us"), (list, tuple)):
-            grouping["dead_time_us"] = list(run_grouping["deadtime_loaded_us"])
+        grouping["dead_time_us"] = list(file_deadtime_table(run_grouping))
         return
 
     if policy.mode == "manual":
@@ -1691,7 +1687,6 @@ def _apply_deadtime_policy(
         tau = policy.estimated_us
         if tau is not None:
             grouping["deadtime_estimated_us"] = float(tau)
-            # Broadcast the single estimated value across this run's detectors.
             grouping["dead_time_us"] = [float(tau)] * n_hist
         elif policy.values:
             grouping["dead_time_us"] = [float(v) for v in policy.values]

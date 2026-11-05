@@ -221,9 +221,6 @@ def test_assigned_profile_prefers_assignment_and_falls_back_to_default():
 
 # --------------------------------------------------------------------------- #
 # Resolution: byte-identical payloads per policy mode
-# --------------------------------------------------------------------------- #
-
-
 def test_resolve_fixed_alpha_and_no_corrections():
     run = _run(grouping=_per_run_facts())
     profile = _base_profile(alpha_policy=AlphaPolicy(mode="fixed", value=1.5))
@@ -256,6 +253,7 @@ def test_resolve_fixed_alpha_and_no_corrections():
         "background_mode": "none",
     }
     assert resolved == expected | {
+        "deadtime_file_us": [],
         "good_window_policy": {"mode": "from_file"},
         "t0_policy": {"mode": "from_file"},
         "effective_t0_sources": ["file"] * 4,

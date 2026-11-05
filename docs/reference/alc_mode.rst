@@ -30,7 +30,9 @@ Asymmetry also checks that enabled background correction produces a constant
 subtracted level, as in range, tail-fit, or fixed mode. Reference-run subtraction
 is unavailable for this run-level operation because it does not resolve a
 reference spectrum.
-An unavailable correction prevents an integral value rather than silently
+Missing or incomplete File deadtimes leave the entire deadtime operation
+unapplied with a warning and permit integral preparation.
+An unavailable or failed correction prevents an integral value rather than silently
 integrating unsubtracted counts; raw histograms and the grouping remain
 available for repair.
 

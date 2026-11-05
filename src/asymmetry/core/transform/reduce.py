@@ -26,6 +26,8 @@ from asymmetry.core.transform.corrections import (
     CorrectionStatus,
 )
 from asymmetry.core.transform.deadtime import (
+    deadtime_operation_inputs,
+    normalise_deadtime_mode,
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.fb_counts import AlignmentCrop, ForwardBackwardCounts
@@ -69,8 +71,8 @@ class GroupedAsymmetryReduction:
 class CorrectionFlags:
     """The three correction switches a grouping payload implies.
 
-    ``deadtime_mode`` is normalised (lower-cased, ``load`` folded to ``manual``)
-    so it can be passed straight to :func:`corrected_grouped_counts` /
+    ``deadtime_mode`` uses the core's canonical request names, including
+    ``from_file`` and the authored ``manual`` aliases, for :func:`corrected_grouped_counts` /
     :func:`reduce_grouped_asymmetry`.
     """
 
@@ -99,8 +101,7 @@ def correction_flags_from_grouping(grouping: dict[str, Any] | None) -> Correctio
         .lower()
         or "off"
     )
-    if deadtime_mode == "load":
-        deadtime_mode = "manual"
+    deadtime_mode = normalise_deadtime_mode(deadtime_mode)
     background_mode = resolve_background_mode(grouping)
     use_background = bool(
         grouping.get("background_correction", False) and background_mode != "none"
@@ -155,9 +156,24 @@ def corrected_grouped_counts(
             n_histograms=len(histograms),
             resolved_indices=(forward_idx, backward_idx),
         )
+        resolved = (
+            reference_resolver(grouping)
+            if use_background
+            and resolve_background_mode(grouping) == "reference_run"
+            and reference_resolver is not None
+            else None
+        )
+        inputs = [(histograms, grouping)]
+        if resolved is not None:
+            inputs.append(
+                (
+                    resolved.histograms,
+                    resolved.deadtime_grouping(grouping),
+                )
+            )
+        inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode)
         working_histograms, deadtime_outcome = prepare_histograms_with_deadtime(
-            histograms,
-            grouping,
+            *inputs[0],
             use_deadtime,
             mode=deadtime_mode,
             allow_incomplete=True,
@@ -175,40 +191,32 @@ def corrected_grouped_counts(
             reference_forward = None
             reference_backward = None
             reference_scale = None
-            resolved = None
-            if (
-                resolve_background_mode(grouping) == "reference_run"
-                and reference_resolver is not None
-            ):
-                resolved = reference_resolver(grouping)
-                if resolved is not None:
-                    reference_scale = resolved.scale
-                    reference_grouping = dict(grouping, good_frames=resolved.good_frames_reference)
-                    reference_prepared, reference_outcome = prepare_histograms_with_deadtime(
-                        resolved.histograms,
-                        reference_grouping,
-                        use_deadtime,
-                        mode=deadtime_mode,
-                        allow_incomplete=True,
+            if resolved is not None:
+                reference_scale = resolved.scale
+                reference_prepared, reference_outcome = prepare_histograms_with_deadtime(
+                    *inputs[1],
+                    use_deadtime,
+                    mode=deadtime_mode,
+                    allow_incomplete=True,
+                )
+                if reference_outcome.status in {
+                    CorrectionStatus.UNAVAILABLE,
+                    CorrectionStatus.FAILED,
+                }:
+                    deadtime_outcome = replace(
+                        reference_outcome, reason=f"reference run: {reference_outcome.reason}"
                     )
-                    if reference_outcome.status in {
-                        CorrectionStatus.UNAVAILABLE,
-                        CorrectionStatus.FAILED,
-                    }:
-                        deadtime_outcome = replace(
-                            reference_outcome, reason=f"reference run: {reference_outcome.reason}"
-                        )
-                    reference_forward, reference_backward, reference_crop = (
-                        align_forward_backward_counts(
-                            reference_prepared,
-                            forward_idx,
-                            backward_idx,
-                            effective_detector_t0_bins(reference_prepared, grouping),
-                            common_t0_bin=common_t0 + crop.first_bin,
-                            first_bin=crop.first_bin,
-                            sample_length=n_grouped,
-                        )
+                reference_forward, reference_backward, reference_crop = (
+                    align_forward_backward_counts(
+                        reference_prepared,
+                        forward_idx,
+                        backward_idx,
+                        effective_detector_t0_bins(reference_prepared, grouping),
+                        common_t0_bin=common_t0 + crop.first_bin,
+                        first_bin=crop.first_bin,
+                        sample_length=n_grouped,
                     )
+                )
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -237,6 +245,8 @@ def corrected_grouped_counts(
                     "good_frames_sample": resolved.good_frames_sample,
                     "good_frames_reference": resolved.good_frames_reference,
                 }
+                if use_deadtime:
+                    effective["reference"]["deadtime"] = reference_outcome.to_dict()
                 background_outcome = replace(background_outcome, effective=effective)
 
         bin_width = float(working_histograms[forward_idx[0]].bin_width)
@@ -377,6 +387,9 @@ class PeriodAsymmetryReduction:
             result["period_alignments"] = {
                 label: value.to_dict() for label, value in self.alignments.items()
             }
+        result["correction_outcomes"] = {
+            label: item.to_dict() for label, item in self.corrections.items()
+        }
         return result
 
 
@@ -424,13 +437,32 @@ def reduce_period_asymmetry(
         for period in periods
     ):
         raise ValueError("Held periods must contain nonempty histogram lists.")
+    selections = {
+        label: select_period_histograms(histograms, grouping, int(label == PeriodMode.GREEN))
+        if periods is not None
+        else (histograms, grouping)
+        for label in labels
+    }
+    if combined:
+        inputs = list(selections.values())
+        if (
+            use_background
+            and resolve_background_mode(grouping) == "reference_run"
+            and reference_resolver is not None
+        ):
+            for selected, effective in selections.values():
+                reference = reference_resolver(effective)
+                if reference is not None:
+                    inputs.append(
+                        (
+                            reference.histograms,
+                            reference.deadtime_grouping(effective),
+                        )
+                    )
+        prepared_inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode)
+        selections = dict(zip(labels, prepared_inputs[: len(labels)], strict=True))
     reduced = {}
-    for label in labels:
-        selected, effective = (
-            select_period_histograms(histograms, grouping, int(label == PeriodMode.GREEN))
-            if periods is not None
-            else (histograms, grouping)
-        )
+    for label, (selected, effective) in selections.items():
         if (
             periods is not None
             and "t0_policy" in effective

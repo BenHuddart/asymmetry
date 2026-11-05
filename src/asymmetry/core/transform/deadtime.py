@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from concurrent.futures import CancelledError
 from dataclasses import dataclass, replace
+from numbers import Real
 
 import numpy as np
 from iminuit import Minuit
@@ -411,6 +413,7 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
 
 def promote_deadtime_to_grouping(grouping: dict, calibration: DeadtimeCalibration) -> dict:
     """Write one validated total table atomically, enabling its manual correction."""
+    grouping.setdefault("deadtime_file_us", list(file_deadtime_table(grouping)))
     old = grouping.get("dead_time_us", [])
     before = {i: old[i] if i < len(old) else 0.0 for i in range(len(calibration.tau_us))}
     grouping.update(
@@ -426,24 +429,13 @@ def promote_deadtime_to_grouping(grouping: dict, calibration: DeadtimeCalibratio
     return {"before": before, "after": dict(enumerate(calibration.tau_us))}
 
 
-def resolve_deadtime(
-    grouping: dict, n_histograms: int, use: bool, mode: str | None = None
-) -> CorrectionOutcome:
-    """Resolve one request without mutating its table or coefficient provenance."""
-    if not use:
-        return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
-    raw_mode = (
-        str(
-            mode
-            if mode is not None
-            else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
-        )
-        .strip()
-        .lower()
-    )
-    modes = {
+def normalise_deadtime_mode(value: str) -> str:
+    """Name each accepted request consistently while retaining unknown input for errors."""
+    mode = str(value).strip().lower()
+    return {
         "file": "from_file",
         "from_file": "from_file",
+        "": "from_file",
         "manual": "manual",
         "load": "manual",
         "value": "manual",
@@ -453,27 +445,57 @@ def resolve_deadtime(
         "maxent_fit": "manual",
         "off": "off",
         "none": "off",
-        "": "from_file",
-    }
-    if raw_mode not in modes:
+    }.get(mode, mode)
+
+
+def file_deadtime_table(grouping: dict):
+    """Read acquisition coefficients without borrowing an authored calibration."""
+    if "deadtime_file_us" in grouping:
+        return grouping["deadtime_file_us"]
+    mode = normalise_deadtime_mode(grouping.get("deadtime_mode", ""))
+    if mode in {"manual", "estimate"}:
+        return []
+    if normalise_deadtime_mode(grouping.get("deadtime_method") or mode) in {"from_file", "off"}:
+        return grouping.get("dead_time_us", grouping.get("deadtime_loaded_us", []))
+    return []
+
+
+def resolve_deadtime(
+    grouping: dict, n_histograms: int, use: bool, mode: str | None = None
+) -> CorrectionOutcome:
+    """Resolve one request without mutating its table or coefficient provenance."""
+    if not use:
+        return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
+    raw_mode = (
+        mode
+        if mode is not None
+        else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
+    )
+    requested = normalise_deadtime_mode(raw_mode)
+    if requested not in {"off", "from_file", "manual", "estimate"}:
         raise ValueError(f"unknown deadtime correction mode {raw_mode!r}")
-    requested = modes[raw_mode]
     if requested == "off":
         return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
     table = grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
-    reason = None
-    if not isinstance(table, (list, tuple)) or len(table) < n_histograms:
-        reason = "a complete per-detector deadtime table is unavailable."
-    elif requested == "from_file" and str(
-        grouping.get("deadtime_method", "")
-    ).strip().lower() not in {
-        "",
-        "file",
-        "from_file",
-    }:
-        reason = "the deadtime table is not from the file."
-    if reason is not None:
-        return CorrectionOutcome("deadtime", requested, CorrectionStatus.UNAVAILABLE, reason)
+    if requested == "from_file":
+        table = file_deadtime_table(grouping)
+    if (
+        not isinstance(table, (list, tuple))
+        or len(table) < n_histograms
+        or (
+            requested == "from_file"
+            and any(
+                not isinstance(value, Real) or not np.isfinite(value)
+                for value in table[:n_histograms]
+            )
+        )
+    ):
+        return CorrectionOutcome(
+            "deadtime",
+            requested,
+            CorrectionStatus.SKIPPED if requested == "from_file" else CorrectionStatus.UNAVAILABLE,
+            "a complete per-detector deadtime table is unavailable.",
+        )
     if any(value != 0 for value in table[:n_histograms]) and grouping.get("good_frames") is None:
         return CorrectionOutcome(
             "deadtime",
@@ -482,13 +504,6 @@ def resolve_deadtime(
             "good frames must be finite and > 0; acquisition normalisation is unavailable",
         )
     correction = DeadtimeCorrection(tuple(table[:n_histograms]), grouping.get("good_frames"))
-    if requested == "from_file" and not any(correction.tau_us):
-        return CorrectionOutcome(
-            "deadtime",
-            requested,
-            CorrectionStatus.UNAVAILABLE,
-            "the file has no non-zero per-detector deadtime table.",
-        )
     return CorrectionOutcome(
         "deadtime",
         requested,
@@ -496,10 +511,32 @@ def resolve_deadtime(
         effective={
             "tau_us": correction.tau_us,
             "good_frames": correction.good_frames if any(correction.tau_us) else None,
-            "source": str(grouping.get("deadtime_method") or requested).strip().lower(),
+            "source": "file"
+            if requested == "from_file"
+            else str(grouping.get("deadtime_method") or requested).strip().lower(),
         },
         uncertainty="measured-count variance retained; coefficient and exposure uncertainty excluded",
     )
+
+
+def deadtime_operation_inputs(
+    inputs: list[tuple[list[Histogram], dict]], use: bool, mode: str | None = None
+) -> list[tuple[list[Histogram], dict]]:
+    """Withhold File correction from every participant if any lacks coefficients.
+
+    Only computation copies change; acquisition tables and authored settings
+    remain intact. Fatal resolution outcomes keep their existing error paths.
+    """
+    outcomes = [
+        resolve_deadtime(grouping, len(histograms), use, mode) for histograms, grouping in inputs
+    ]
+    if any(item.status == CorrectionStatus.SKIPPED for item in outcomes) and all(
+        item.usable for item in outcomes
+    ):
+        return [
+            (histograms, dict(grouping, deadtime_file_us=[])) for histograms, grouping in inputs
+        ]
+    return inputs
 
 
 def prepare_histograms_with_deadtime(
@@ -515,6 +552,8 @@ def prepare_histograms_with_deadtime(
         "core.deadtime.prepare", n_detectors=len(histograms), use_deadtime=use_deadtime
     ) as perf:
         outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode)
+        if outcome.warning is not None:
+            warnings.warn(outcome.warning, UserWarning, stacklevel=2)
         if not allow_incomplete:
             CorrectionOutcomes(deadtime=outcome).require_complete()
         perf.detail(applied=outcome.status == CorrectionStatus.APPLIED)
