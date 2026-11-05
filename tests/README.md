@@ -110,6 +110,17 @@ They compare omitted and matched explicit selections, exact counts, timestamps,
 and positive-count F/B errors; no acquisition data are copied into this repository.
 Cases skip when the optional ROOT dependency or their external example is absent.
 
+The same locator enables ``tests/io/test_legacy_root_v4.py`` for genuine
+serialized TLemRunHeader v4 in ``lem08_his_2279.root`` and the registered
+sibling ``../BMWlibs/data/lem09_his_0916.root``. Loader cases verify all stored
+arrays, numeric calibration, units, identities, and availability. Native
+integration cases compare NPP/PPC selected counts, times, and positive-count
+F/B values/errors with file and explicit t0. PPC checks cover stored observations
+under the counting-error convention, not physical correction uncertainty.
+Always-on boundary tests use independently authored fields, not serialized-v4
+fixtures. The installed reference writer emits v5; no safe synthetic serialized
+v4 fixture is supplied, so genuine-v4 decoding skips without the external files.
+
 The synthetic NeXus good-time comparison uses musrfit 1.12.1, revision
 ``708f777b``, on ``PATH``. Run
 ``python tools/harness.py test -- tests/io/test_nexus_good_time_reference.py``.

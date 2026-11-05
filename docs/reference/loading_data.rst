@@ -350,7 +350,7 @@ The SI temperature relation and prefixes follow the
 
 Modern ROOT text headers require a declared unit for present numeric temperature
 and field, and a finite, positive ``RunInfo/Time Resolution``. Legacy
-``TLemRunHeader`` v5 numeric members use their format units (ns, G, and K),
+``TLemRunHeader`` v4/v5 numeric members use their format units (ns, G, and K),
 recorded as ``source = "format"`` in ``declared_units``. Missing resolution
 raises ``missing time value.`` rather than inventing a bin width. Incompatible
 units raise an error naming the file, header field, token, and supported units,
@@ -592,7 +592,7 @@ and musrfit's legacy ROOT calibration conventions:
   in ``RunInfo/Sample Temperature`` so the Get Info temperature row still opens
   the corresponding log plot.
 
-Legacy LEM ROOT files can carry a serialized ``TLemRunHeader`` version 5 in
+Legacy LEM ROOT files can carry a serialized ``TLemRunHeader`` version 4 or 5 in
 ``RunInfo``. Asymmetry reads its numeric resolution in ns and per-detector t0
 in zero-based bins, then uses the same unit conversion, alignment, and reduction
 as modern ROOT and PSI BIN. Histogram numbers (including ``hDecay00``), titles,
@@ -601,7 +601,21 @@ calibration; histogram axes do not supply a missing physical width. Negative
 unspecified and nonfinite t0 entries supply no file anchor for that detector. The legacy
 header does not supply detector good-bin bounds, so the initial window uses
 the existing t0-to-end defaults; an explicit analysis window remains editable.
-Other legacy class versions are outside this supported layout.
+Version 4's supported four-channel layout maps header slots 0–3 to
+``hDecay00``–``03`` and ``hDecay20``–``23``, respectively. All eight stored
+arrays remain separate; the active header count does not select or truncate
+them. Other histogram numbers retain counts but have no assigned v4 timing.
+Version 5 retains its direct zero-based mapping. Other legacy class versions
+are outside these supported layouts. ``root_format`` records ``lem-root-v4``
+or ``lem-root-v5`` and format-unit provenance names the actual class version.
+
+The `musrfit LEM format description
+<https://lmu.pages.psi.ch/musrfit-docu/file-formats.html>`_ identifies bank 00
+as non-post-pileup (NPP) and bank 20 as post-pileup-corrected (PPC). Choose
+channels within one bank; the banks are alternative stored observations, not
+independent detectors to combine. Loading applies no further pileup correction.
+For the two tested v4 examples the initial pair is bank-00 left/right; other
+bank/default-layout behaviour and physical grouping require separate checking.
 
 For the matched synthetic PSI comparison, musrfit 1.12.1 (``708f777b``, ROOT
 6.40.04) reads BIN, legacy LEM ROOT, and modern MusrRoot ``TFolder`` with
@@ -622,8 +636,18 @@ separately; matched counts agree exactly, with times and applicable errors
 agreeing at ASCII export precision. The HiFi error comparison uses a populated
 pair in addition to the initial pair containing an empty channel. See
 :doc:`/explanation/comparison` for uncertainty scope and remaining coverage
-limits. Legacy ``TLemRunHeader`` v4 calibration remains unsupported by the
-numeric decoder; those loading failures are a separate compatibility gap.
+limits.
+
+Two acquired legacy v4 examples from the same musrfit revision also load with
+all eight decay arrays and 66,601 stored bins per array retained. Matched NPP
+and PPC channels 1/3 select bank 00 and bank 20 respectively, using file t0 or
+an explicit override. Raw bins 3500–3539 give exact summed counts and F/B
+values, times, and counting errors agreeing within relative
+:math:`5\times10^{-6}` ASCII precision (F/B absolute tolerance
+:math:`5\times10^{-7}`). PPC comparisons treat the stored values as
+observations under the declared counting-error model; they do not validate
+pileup physics or corrected-count covariance. See
+:ref:`comparison-root` for the comparison and fixture limits.
 
 Asymmetry also checks that the resolved physical width is finite and positive
 before calibrated loading, because its fixed-bin time axis requires it. Without
