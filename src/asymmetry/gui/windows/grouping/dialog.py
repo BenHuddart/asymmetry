@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     GENERIC_INSTRUMENT,
@@ -64,7 +64,6 @@ from asymmetry.core.instrument import (
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     held_period_histograms,
-    histogram_grouping_facts,
     select_period_grouping,
     selected_period_index,
 )
@@ -83,15 +82,11 @@ from asymmetry.core.project.profiles import (
 )
 from asymmetry.core.transform import (
     RunT0Search,
-    T0Assessment,
-    assess_t0,
     available_background_modes,
     binning_spec,
-    common_t0_for_groups,
     effective_detector_t0_bins,
     effective_group_indices,
     excluded_detector_indices,
-    find_t0_for_run,
     format_detector_list,
     good_frames,
     parse_detector_list,
@@ -99,7 +94,6 @@ from asymmetry.core.transform import (
     resolve_background_mode,
     resolve_facility,
     resolve_selected_timing,
-    source_is_pulsed,
 )
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
@@ -115,7 +109,7 @@ from asymmetry.gui.styles.widgets import (
     make_section_header,
     make_warning_banner,
 )
-from asymmetry.gui.tasks import TaskRunner, check_task_cancelled
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.profile_colors import (
     effective_profile_color,
     next_profile_color,
@@ -172,6 +166,7 @@ from asymmetry.gui.windows.grouping.profile_bridge import (
     profile_from_form_payload,
 )
 from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
+from asymmetry.gui.windows.grouping.timing_section import TimingControls
 
 #: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
 #: ("off") is always available; the rest are gated by `_compare_stage_available`.
@@ -224,7 +219,6 @@ _DETECTORS_CELL_TIP = "Detector ids for this group, e.g. 1-16, 33. Double-click 
 _T0_DETECT_DEBOUNCE_MS = 300
 
 #: Display names for the two :func:`~asymmetry.core.transform.find_t0` strategies.
-_T0_STRATEGY_LABELS = {"prompt_peak": "prompt peak", "pulse_edge": "pulse-edge midpoint"}
 
 #: The longest line ``_refresh_t0_line`` can produce: the longest file part
 #: ("File: none"), the longest strategy name ("pulse-edge
@@ -261,7 +255,7 @@ def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
     )
 
 
-class GroupingDialog(QDialog):
+class GroupingDialog(TimingControls, QDialog):
     """Profile editor for detector grouping.
 
     The dialog edits an in-memory *draft* grouping profile (a
@@ -1692,9 +1686,21 @@ class GroupingDialog(QDialog):
             # Override drafts retain edits across target switches.
             payload = dict(self._override_draft_for(int(target)))
         else:
+            seed_profile = self._draft
+            if seed_profile.alpha_policy.mode == "per_run_estimate":
+                seed_profile = replace(
+                    seed_profile, alpha_policy=AlphaPolicy(value=seed_profile.alpha_policy.value)
+                )
+            raw = self._run.histograms
+            index = selected_period_index(self._run.grouping, seed_profile.period_mode)
+            if index is not None:
+                raw = held_period_histograms(raw, self._run.grouping, index)
+            key = self._raw_timing_key(raw, self._run.metadata)
             try:
                 payload = payload_from_profile_for_preview(
-                    self._draft, self._run, timing_search=self._cached_t0_search
+                    seed_profile,
+                    self._run,
+                    timing_search=partial(self._cached_t0_search, acquisition_key=key),
                 )
             except InvalidGroupingError as exc:
                 payload = exc.grouping
@@ -2607,7 +2613,7 @@ class GroupingDialog(QDialog):
                 mode=self._current_t0_mode(),
                 offset_bins=int(self._t0_spin.value())
                 - self._bin_index_base()
-                - self._file_common_t0_for_preview_run()
+                - self._timing_base_for_preview_run()
                 if self._current_t0_mode() == "manual"
                 else 0,
                 search_provider=self._cached_t0_search,
@@ -2814,7 +2820,7 @@ class GroupingDialog(QDialog):
             resolved = (
                 policy.legacy_value
                 if policy.legacy_value is not None
-                else self._file_common_t0_for_preview_run() + int(policy.offset_bins)
+                else self._timing_base_for_preview_run() + int(policy.offset_bins)
             )
             blocked = self._t0_spin.blockSignals(True)
             try:
@@ -2835,9 +2841,7 @@ class GroupingDialog(QDialog):
             base = self._bin_index_base()
             max_bin = self._max_bin_index_for_reference_dataset()
             value = max(0, min(max_bin, int(self._t0_spin.value()) - base))
-            return T0Policy(
-                mode="manual", offset_bins=value - self._file_common_t0_for_preview_run()
-            )
+            return T0Policy(mode="manual", offset_bins=value - self._timing_base_for_preview_run())
         return T0Policy(mode=mode)
 
     def _apply_t0_mode_to_controls(self) -> None:
@@ -2877,254 +2881,6 @@ class GroupingDialog(QDialog):
         self.layout().activate()
         grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
         return self.minimumSizeHint().width() + 2 * grouping_room, 780
-
-    def _t0_preview_run(self, period_mode: str | None = None) -> Run:
-        """Read selected acquired timing without copying count arrays."""
-        run = self._run
-        index = selected_period_index(run.grouping, period_mode or self._current_period_mode())
-        if index is None:
-            return run
-        histograms = held_period_histograms(run.histograms, run.grouping, index)
-        return replace(
-            run,
-            histograms=histograms,
-            grouping=histogram_grouping_facts(
-                histograms, select_period_grouping(run.grouping, index)
-            ),
-        )
-
-    def _common_t0_for_preview_run(
-        self, detector_t0_bins: list[int] | None, *, period_mode: str | None = None
-    ) -> int:
-        """Resolve the selected period's anchor over live, non-excluded groups.
-
-        With unavailable membership, the acquired maximum remains the editing
-        base while the requested reduction stays unavailable."""
-        if self._run is None or not self._run.histograms:
-            return 0
-        run = self._t0_preview_run(period_mode)
-        try:
-            forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
-            backward_idx = self._filtered_group_indices(
-                int(self._backward_combo.currentData() or 2)
-            )
-        except InvalidGroupingError:
-            return common_t0_for_groups(
-                run.histograms,
-                list(range(len(run.histograms))),
-                detector_t0_bins=detector_t0_bins,
-            )
-        return common_t0_for_groups(
-            run.histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
-        )
-
-    def _detected_common_t0_for_preview_run(self, search: RunT0Search) -> int:
-        """Align detected per-detector anchors over the live selected groups."""
-        run = self._t0_preview_run()
-        grouping = self._t0_assessment_grouping()
-        resolve_selected_timing(
-            run.histograms, grouping, run.metadata, mode="auto_detect", search=search
-        )
-        return int(grouping["t0_bin"])
-
-    def _seed_t0_spin_from_preview(self) -> None:
-        """Show the acquired selected anchor while retaining unresolved raw data."""
-        self._set_t0_spin_bin(self._file_common_t0_for_preview_run())
-
-    def _cached_t0_search(self, histograms, metadata, **options) -> RunT0Search:
-        """Only completed raw scans seed controls or previews on the GUI thread."""
-        search = self._t0_search_cache.get(self._raw_timing_key(histograms, metadata))
-        if search is None:
-            raise ValueError("Automatic t0 pending raw-channel search.")
-        return search
-
-    def _seed_t0_spin_from_detection(self) -> None:
-        """Show selected own estimates only after the raw worker completes."""
-        cached = self._t0_search_cache.get(self._t0_cache_key())
-        if cached is None:
-            self._schedule_t0_detection()
-            return
-        try:
-            common = self._detected_common_t0_for_preview_run(cached)
-        except ValueError:
-            return
-        self._set_t0_spin_bin(common)
-
-    def _set_t0_spin_bin(self, consensus_t0: int) -> None:
-        """Display a zero-based t0 in the file's bin-number convention."""
-        blocked = self._t0_spin.blockSignals(True)
-        try:
-            self._t0_spin.setValue(consensus_t0 + self._bin_index_base())
-        finally:
-            self._t0_spin.blockSignals(blocked)
-        with QSignalBlocker(self._last_good_spin), QSignalBlocker(self._t_good_offset_spin):
-            self._on_t0_changed()
-
-    # -- the always-on file / detected / Δ line (D11) --------------------
-
-    def _raw_timing_key(self, histograms, metadata) -> tuple:
-        """Acquired arrays are unchanged by editing; source facts and anchors may change."""
-        return (
-            id(self._run),
-            source_is_pulsed(metadata),
-            tuple((id(hist.counts), hist.t0_bin, hist.bin_width) for hist in histograms),
-        )
-
-    def _t0_cache_key(self) -> tuple:
-        """Cache identity of the selected acquired period and strategy facts."""
-        run = self._t0_preview_run()
-        return self._raw_timing_key(run.histograms, run.metadata)
-
-    def _schedule_t0_detection(self) -> None:
-        """Queue the preview run's detection unless it is cached or in flight."""
-        key = self._t0_cache_key()
-        if key in self._t0_search_cache or key == self._t0_detection_key:
-            return
-        self._t0_detect_timer.start()
-
-    def _start_t0_detection(self) -> None:
-        """Run :func:`find_t0_for_run` for the preview run on a worker thread.
-
-        Single-flight: one scan at a time, keyed on the run. A preview-run switch
-        while one is in flight is picked up by :meth:`_on_t0_detection_finished`,
-        which re-queues for whatever run is current when the result lands.
-        """
-        key = self._t0_cache_key()
-        if key in self._t0_search_cache or self._t0_detection_key is not None:
-            return
-        self._t0_detection_key = key
-        run = self._t0_preview_run()
-        histograms = list(run.histograms)
-        metadata = dict(run.metadata)
-        # Shutdown cancellation is cooperative between acquired-channel scans.
-        self._tasks.start(
-            lambda worker: find_t0_for_run(
-                histograms, metadata, cancel_check=partial(check_task_cancelled, worker)
-            ),
-            on_finished=self._on_t0_detection_finished,
-            on_error=self._on_t0_detection_error,
-        )
-
-    def _on_t0_detection_error(self, message: str) -> None:
-        """Retire failed scans through the same current-acquisition barrier."""
-        self._on_t0_detection_finished(RunT0Search([], 0, 0, "unknown", False, message))
-
-    def _on_t0_detection_finished(self, result: object) -> None:
-        """Store a finished detection and repaint the line (GUI thread)."""
-        key, self._t0_detection_key = self._t0_detection_key, None
-        assert isinstance(result, RunT0Search)
-        assert key is not None
-        self._t0_search_cache[key] = result
-        if key == self._t0_cache_key():
-            if self._current_t0_mode() == "auto_detect":
-                self._seed_t0_spin_from_detection()
-            self._refresh_preview()
-        else:
-            self._refresh_t0_line()
-
-    def _t0_assessment_grouping(self) -> dict[str, Any]:
-        """Compare live groups with the selected period's acquired t0.
-
-        Effective policy overrides cannot move the file baseline. Display-base
-        bin numbers and live good-window controls keep the verdict in the
-        coordinates of the edited request."""
-        run_grouping = self._t0_preview_run().grouping
-        grouping: dict[str, Any] = {
-            "groups": {
-                gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
-            },
-            "forward_group": int(self._forward_combo.currentData() or 1),
-            "backward_group": int(self._backward_combo.currentData() or 2),
-            "bin_index_base": self._bin_index_base(),
-            "first_good_bin": self._resolve_good_bin_limits_from_controls()[2],
-        } | self._exclusion_payload()
-        if run_grouping.get("t0_source") is not None:
-            grouping["t0_source"] = run_grouping["t0_source"]
-        return grouping
-
-    def _current_t0_verdict(self) -> T0Assessment:
-        """The live t0 verdict for the preview run (D8), from the cached detection."""
-        return assess_t0(
-            self._t0_preview_run().histograms,
-            self._t0_assessment_grouping(),
-            self._t0_search_cache.get(self._t0_cache_key()),
-        )
-
-    def _refresh_t0_line(self) -> None:
-        """Repaint the file / detected / Δ line and its verdict button (D8, D11).
-
-        Cheap by construction — a cache read plus :func:`assess_t0`, which is
-        O(detectors) — so it is safe on the per-edit refresh seam. The scan it
-        displays is the debounced worker's, never this call's.
-
-        The detected bin is the file bin plus the **median per-detector shift**,
-        and the spread is the range of those shifts, not of the raw estimates:
-        on per-detector-t0 data (PSI) the raw median and the group's header
-        maximum are different quantities, so quoting them side by side reported
-        a divergence that was only the detectors' real stagger.
-        """
-        if self._run is None or not self._run.histograms:
-            self._t0_detected_label.setText("")
-            self._t0_verdict_button.hide()
-            return
-        self._schedule_t0_detection()
-        search = self._t0_search_cache.get(self._t0_cache_key())
-        self._find_t0_btn.setEnabled(self._current_t0_mode() == "manual" and search is not None)
-        verdict = self._current_t0_verdict()
-
-        base = self._bin_index_base()
-        file_common = self._file_common_t0_for_preview_run()
-        source = self._t0_preview_run().grouping.get("t0_source")
-        if source in ("detected", "missing"):
-            file_part = "File: none"
-        else:
-            file_part = f"File: bin {file_common + base}"
-        if search is None:
-            detected_part = "Detected: …"
-        elif not search.ok:
-            detected_part = "Detected: unavailable"
-        else:
-            try:
-                detected = self._detected_common_t0_for_preview_run(search)
-            except ValueError as exc:
-                detected_part = f"Detected: unavailable ({exc})"
-            else:
-                strategy = _T0_STRATEGY_LABELS[search.strategy]
-                detected_part = f"Detected: bin {detected + base} ({strategy}, spread {int(search.shift_spread_bins)})"
-        parts = [file_part, detected_part]
-        if verdict.delta_bins is not None:
-            parts.append(f"Δ {verdict.delta_bins:+d}")
-        text = " · ".join(parts)
-        # The label is an ElidedLabel: it elides itself to whatever width the
-        # row is actually given (down to its own readable-prefix floor), so a
-        # run with unusually long bin numbers no longer needs a manual elide
-        # here. set_hover_text (not the default elision-only tooltip) always
-        # shows the untruncated line on hover, even when the current width
-        # happens to fit it — matching the line's previous, always-on tooltip.
-        self._t0_detected_label.setText(text)
-        self._t0_detected_label.set_hover_text(text)
-        color = {"error": tokens.ERROR, "warn": tokens.WARN}.get(verdict.level, tokens.TEXT_MUTED)
-        self._t0_detected_label.set_pen_color(color)
-        self._refresh_t0_verdict_button(verdict)
-
-    def _refresh_t0_verdict_button(self, verdict: T0Assessment) -> None:
-        """Show (or hide) the ⚠ button carrying the verdict messages.
-
-        Hidden at level ``ok`` — a clean run says nothing. Otherwise the button
-        is tinted by severity and holds every message twice over: in the tooltip,
-        for a hover, and as *disabled* menu entries, so a click parks them on
-        screen to be read while nothing about them is clickable.
-        """
-        self._t0_verdict_menu.clear()
-        if verdict.level == "ok":
-            self._t0_verdict_button.hide()
-            return
-        tint = tokens.ERROR if verdict.level == "error" else tokens.WARN
-        self._t0_verdict_button.setStyleSheet(f"color: {tint};")
-        self._t0_verdict_button.setToolTip("\n".join(verdict.messages))
-        for message in verdict.messages:
-            self._t0_verdict_menu.addAction(message).setEnabled(False)
-        self._t0_verdict_button.show()
 
     def _on_t0_mode_changed(self, *args: object) -> None:
         """React to a t0 mode change: gate controls, then refresh the preview."""
@@ -4156,16 +3912,24 @@ class GroupingDialog(QDialog):
         # compare's residual-⟨A⟩ acceptance number is always read off the
         # fully-corrected curve. Preview-only — `compare_stage` never reaches the
         # persisted reduction.
-        search = self._t0_search_cache.get(self._t0_cache_key())
-        if search is None and (
+        searches = {
+            int(mode == "green"): self._t0_search_cache.get(self._t0_cache_key(mode))
+            for mode in self._timing_period_modes()
+        }
+        if any(search is None for search in searches.values()) and (
             profile.t0_policy.mode == "auto_detect"
-            or self._t0_preview_run().grouping.get("t0_source") == "missing"
-            or "missing" in self._t0_preview_run().grouping.get("detector_t0_sources", [])
+            or any(
+                self._t0_preview_run(mode).grouping.get("t0_source") == "missing"
+                or "missing" in self._t0_preview_run(mode).grouping.get("detector_t0_sources", [])
+                for mode in self._timing_period_modes()
+            )
         ):
             pane.show_error("Automatic t0 pending raw-channel search.")
             return
         pane.request_preview_from_profile(
-            timing_search=search,
+            timing_searches={
+                index: search for index, search in searches.items() if search is not None
+            },
             profile=profile,
             run=run,
             facility=facility,
@@ -5630,8 +5394,8 @@ class GroupingDialog(QDialog):
         if not checked:
             if mode == "manual":
                 offset = int(self._t0_spin.value()) - self._bin_index_base()
-                offset -= self._common_t0_for_preview_run(None, period_mode=previous_mode)
-                self._set_t0_spin_bin(self._file_common_t0_for_preview_run() + offset)
+                offset -= self._timing_base_for_preview_run(period_mode=previous_mode)
+                self._set_t0_spin_bin(self._timing_base_for_preview_run() + offset)
             return
         self._last_resolved_seed = None
         if mode == "from_file":

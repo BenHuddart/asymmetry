@@ -394,15 +394,19 @@ def find_t0_for_run(
         raise ValueError("pulsed must be True, False, or None for metadata inference.")
     if pulsed is None:
         pulsed = source_is_pulsed(metadata)
-    if pulsed is None:
+    metadata = metadata or {}
+    if pulsed is None or metadata.get("raw_period_histograms_available") is False:
+        strategy = "unknown" if pulsed is None else "pulse_edge" if pulsed else "prompt_peak"
         message = (
-            "Automatic t0 unavailable: requires a known source or an explicit pulsed strategy."
+            "Automatic t0 unavailable: selected period has no acquired histograms."
+            if metadata.get("raw_period_histograms_available") is False
+            else "Automatic t0 unavailable: requires a known source or an explicit pulsed strategy."
         )
         return RunT0Search(
-            [T0Estimate(0, "unknown", 0, False, message) for _ in histograms],
+            [T0Estimate(0, strategy, 0, False, message) for _ in histograms],
             0,
             0,
-            "unknown",
+            strategy,
             False,
             message,
         )
@@ -438,10 +442,32 @@ def find_t0_for_run(
     )
 
 
+def selected_t0_diagnostics(
+    histograms: list[Histogram], grouping: dict, search: RunT0Search
+) -> tuple[int, int, int]:
+    """Selected median shift, shift range, and median feature width; diagnostics only."""
+    from asymmetry.core.transform.grouping import independent_pair_indices
+
+    forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
+    indices = sorted(set(forward) | set(backward))
+    shifts = detector_t0_shifts(histograms, search.estimates)
+    delta, spread = shift_statistics([shifts[i] for i in indices])
+    widths = [search.estimates[i].width_bins for i in indices if search.estimates[i].ok]
+    return delta, spread, int(round(float(np.median(widths)))) if widths else 0
+
+
 def acquired_t0_sources(grouping: dict, n_histograms: int) -> list[str]:
     """Per-channel file facts; older projects retain their recorded scalar fact."""
     sources = grouping.get("detector_t0_sources")
     if sources is not None:
+        if (
+            not isinstance(sources, (list, tuple))
+            or len(sources) != n_histograms
+            or any(source not in ("file", "missing", "conflict") for source in sources)
+        ):
+            raise ValueError(
+                "Detector timing sources must name one file/missing status per acquired histogram."
+            )
         return list(sources)
     source = "missing" if grouping.get("t0_source") == "missing" else "file"
     return [source] * n_histograms
@@ -450,7 +476,19 @@ def acquired_t0_sources(grouping: dict, n_histograms: int) -> list[str]:
 def effective_t0_sources(grouping: dict, n_histograms: int) -> list[str]:
     """Effective outcomes, including an explicitly supplied absolute timing table."""
     if "effective_t0_sources" in grouping:
-        return list(grouping["effective_t0_sources"])
+        sources = grouping["effective_t0_sources"]
+        if (
+            not isinstance(sources, (list, tuple))
+            or len(sources) != n_histograms
+            or any(
+                source not in ("file", "manual", "estimated", "unresolved", "missing")
+                for source in sources
+            )
+        ):
+            raise ValueError(
+                "Effective timing sources must name one outcome per acquired histogram."
+            )
+        return list(sources)
     if detector_t0_overrides(grouping, n_histograms) is not None:
         return ["manual"] * n_histograms
     return acquired_t0_sources(grouping, n_histograms)
@@ -488,6 +526,14 @@ def resolve_selected_timing(
 
     forward, backward = independent_pair_indices(grouping, n_histograms=len(histograms))
     indices = sorted(set(forward) | set(backward))
+    previous_common = grouping.get("t0_bin", max(histograms[i].t0_bin for i in indices))
+    for key in (
+        EFFECTIVE_DETECTOR_T0_KEY,
+        "effective_t0_sources",
+        "t0_search_strategy",
+        "t0_search_spread_bins",
+    ):
+        grouping.pop(key, None)
     file_sources = acquired_t0_sources(grouping, len(histograms))
     bins = [int(hist.t0_bin) for hist in histograms]
     sources = [
@@ -499,12 +545,21 @@ def resolve_selected_timing(
         if i not in needed:
             sources[i] = "file"
     if needed:
+        if metadata is not None and metadata.get("raw_period_histograms_available") is False:
+            grouping["effective_t0_sources"] = sources
+            raise ValueError(
+                "Automatic t0 unavailable: selected period has no acquired histograms."
+            )
         if search is None:
             search = (search_provider or find_t0_for_run)(
                 histograms, metadata, pulsed=pulsed, cancel_check=cancel_check
             )
         grouping["t0_search_strategy"] = search.strategy
-        grouping["t0_search_spread_bins"] = search.shift_spread_bins
+        grouping["t0_search_spread_bins"] = (
+            selected_t0_diagnostics(histograms, grouping, search)[1]
+            if search.strategy != "unknown"
+            else 0
+        )
         for i in needed:
             if search.strategy != "unknown" and search.estimates[i].ok:
                 bins[i] = search.estimates[i].t0_bin
@@ -527,10 +582,9 @@ def resolve_selected_timing(
             sources[i] = "manual"
     if mode == "auto_detect" or offset_bins or needed:
         grouping[EFFECTIVE_DETECTOR_T0_KEY] = bins
-    old_common = max(histograms[i].t0_bin for i in indices)
     grouping["t0_bin"] = max(bins[i] for i in indices)
     if grouping.get("t0_time_us") is not None:
-        grouping["t0_time_us"] += (grouping["t0_bin"] - old_common) * histograms[0].bin_width
+        grouping["t0_time_us"] += (grouping["t0_bin"] - previous_common) * histograms[0].bin_width
 
 
 def tolerance_bins(strategy: str, width_bins: int = 0) -> int:
@@ -679,13 +733,13 @@ def assess_t0(
     delta: int | None = None
     outliers: tuple[int, ...] = ()
     if search is not None and search.ok:
-        tol = tolerance_bins(search.strategy, search.width_bins)
+        delta, spread, width = selected_t0_diagnostics(histograms, grouping, search)
+        tol = tolerance_bins(search.strategy, width)
         selected = set(forward_idx) | set(backward_idx)
         shifts = [
             shift if i in selected else None
             for i, shift in enumerate(detector_t0_shifts(histograms, search.estimates))
         ]
-        delta, spread = shift_statistics(shifts)
         detected_common = max(
             (
                 est.t0_bin + file_common - histograms[i].t0_bin

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -397,6 +398,7 @@ def reduce_period_asymmetry(
     reference_resolver: ReferenceResolver | None = None,
     allow_incomplete: bool = False,
     context: str = "",
+    timing_search: Callable | None = None,
 ) -> PeriodAsymmetryReduction:
     """Reduce identical raw-bin edges per period before combining G +/- R.
 
@@ -441,6 +443,9 @@ def reduce_period_asymmetry(
                 metadata,
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
+                search_provider=partial(timing_search, period_index=int(label == PeriodMode.GREEN))
+                if timing_search is not None
+                else None,
             )
         reduced[label] = reduce_grouped_asymmetry(
             histograms=selected,

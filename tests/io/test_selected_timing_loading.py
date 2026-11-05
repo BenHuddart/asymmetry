@@ -96,3 +96,26 @@ def test_root_mixed_timing_retains_usable_file_anchor(tmp_path, failed):
         assert loaded.run.grouping["effective_detector_t0_bins"] == [2, 2]
         assert loaded.run.grouping["effective_t0_sources"] == ["file", "estimated"]
         np.testing.assert_allclose(reduce_run_to_dataset(loaded.run).time, loaded.time)
+
+
+def test_cached_only_period_never_searches_fallback_counts(monkeypatch):
+    from asymmetry.core.io.periods import period_run
+    from asymmetry.core.transform import t0
+    from tests.core.test_selected_timing_policy import timing_run
+
+    run = timing_run()
+    run.grouping.update(
+        detector_first_good_bins=[0] * 4,
+        detector_last_good_bins=[39] * 4,
+        period_t0_sources=["file", "missing"],
+        period_reduced=[(np.arange(40), np.zeros(40), np.ones(40))] * 2,
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Searched another period's raw histograms")
+
+    monkeypatch.setattr(t0, "find_t0_for_run", forbidden)
+    selected = period_run(run, 1)
+    assert not selected.metadata["raw_period_histograms_available"]
+    with pytest.raises(ValueError, match="no acquired histograms"):
+        resolve(selected, "auto_detect", pair=(1, 3))

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import QApplication
 import asymmetry.core.project.profiles as profiles_module
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping.profile_bridge as profile_bridge_module
+import asymmetry.gui.windows.grouping.timing_section as timing_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
@@ -296,7 +297,7 @@ def t0_scan_counter(monkeypatch: pytest.MonkeyPatch) -> _T0ScanCounter:
     # find_t0_for_run is bound in profiles (the resolve path) and in the dialog
     # module (the read-only display path); patch both so either call is counted.
     monkeypatch.setattr(profiles_module, "find_t0_for_run", counter, raising=True)
-    monkeypatch.setattr(grouping_dialog_dialog_module, "find_t0_for_run", counter, raising=True)
+    monkeypatch.setattr(timing_module, "find_t0_for_run", counter, raising=True)
     return counter
 
 
@@ -481,7 +482,7 @@ def test_detected_line_scan_runs_off_the_gui_thread(
         scan_threads.append(threading.current_thread())
         return original(histograms, metadata, pulsed=pulsed)
 
-    monkeypatch.setattr(grouping_dialog_dialog_module, "find_t0_for_run", _record, raising=True)
+    monkeypatch.setattr(timing_module, "find_t0_for_run", _record, raising=True)
 
     dialog = GroupingDialog([_dataset_with_prompt_peak()])
     _wait_for_t0_detection(dialog)

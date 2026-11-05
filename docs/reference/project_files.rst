@@ -821,3 +821,8 @@ A stored ``T0Policy.strategy`` is descriptive provenance, not an explicit
 strategy override. Released projects retain their recorded scalar file facts
 when no per-channel availability was recorded. Missing provenance alone does
 not reclassify an old valid zero anchor as absent. See :ref:`t0-search`.
+
+A selected cached-only period retains its cached curve and inspection fallback,
+but records that acquired histograms for that period are unavailable. That
+fallback cannot supply an automatic timing estimate. Reopening does not borrow
+another held period's delay or reinterpret saved strategy text as an override.

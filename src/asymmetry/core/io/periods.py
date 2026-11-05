@@ -244,6 +244,9 @@ def period_run(combined: Run, index: int) -> Run:
         period_grouping.pop(key, None)
 
     metadata = dict(combined.metadata)
+    metadata["raw_period_histograms_available"] = (
+        acquired_period_histograms(grouping, index) is not None
+    )
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
     # Each period gets its own encoded run-number key so both survive in the
     # run-number-keyed data browser (otherwise the second add collapses the
@@ -268,7 +271,8 @@ def period_run(combined: Run, index: int) -> Run:
     # Per-detector file facts follow the selected period; scalar-only requests
     # retain their recorded window. Extraction never runs a timing search.
     if (
-        "detector_first_good_bins" in period_grouping
+        metadata["raw_period_histograms_available"]
+        and "detector_first_good_bins" in period_grouping
         and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
         == "from_file"
     ):
@@ -366,19 +370,24 @@ def held_period_histograms(
     histograms: list[Histogram], grouping: dict, period_index: int
 ) -> list[Histogram]:
     """Read raw counts for a held acquisition, retaining the acquired fallback."""
+    return acquired_period_histograms(grouping, period_index) or histograms
+
+
+def acquired_period_histograms(grouping: dict, period_index: int) -> list[Histogram] | None:
+    """Raw held counts only; cached curves cannot establish an acquired period."""
     period_histograms = grouping.get("period_histograms")
-    selected_period = (
+    selected = (
         period_histograms[period_index]
-        if isinstance(period_histograms, list) and period_index < len(period_histograms)
+        if isinstance(period_histograms, list) and 0 <= period_index < len(period_histograms)
         else None
     )
-    if (
-        isinstance(selected_period, list)
-        and selected_period
-        and all(isinstance(hist, Histogram) for hist in selected_period)
-    ):
-        histograms = selected_period
-    return histograms
+    return (
+        selected
+        if isinstance(selected, list)
+        and selected
+        and all(isinstance(hist, Histogram) for hist in selected)
+        else None
+    )
 
 
 def histogram_grouping_facts(histograms: list[Histogram], grouping: dict) -> dict:

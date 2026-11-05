@@ -1215,7 +1215,11 @@ def resolve_effective_grouping(
         deadtime_mode=profile.deadtime_policy.mode,
     ) as perf:
         run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        from asymmetry.core.io.periods import select_period_histograms, selected_period_index
+        from asymmetry.core.io.periods import (
+            acquired_period_histograms,
+            select_period_histograms,
+            selected_period_index,
+        )
 
         period_index = selected_period_index(run_grouping, profile.period_mode)
         if period_index is not None:
@@ -1224,7 +1228,20 @@ def resolve_effective_grouping(
                 dict(run_grouping, deadtime_mode=profile.deadtime_policy.mode),
                 period_index,
             )
-            run = replace(run, histograms=histograms, grouping=run_grouping)
+            run = replace(
+                run,
+                histograms=histograms,
+                grouping=run_grouping,
+                metadata=dict(
+                    run.metadata,
+                    raw_period_histograms_available=acquired_period_histograms(
+                        run.grouping, period_index
+                    )
+                    is not None,
+                ),
+            )
+        if "period_reduced" in run_grouping and "period_histograms" not in run_grouping:
+            run = replace(run, metadata=dict(run.metadata, raw_period_histograms_available=False))
         n_hist = len(run.histograms)
 
         grouping: dict[str, Any] = {

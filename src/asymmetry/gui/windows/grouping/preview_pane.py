@@ -8,7 +8,7 @@ outputs. One result supplies both views; incomplete corrections remain labelled.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from html import escape
 from typing import Any, NamedTuple
@@ -160,25 +160,14 @@ _TEXT_BBOX = {
 
 @dataclass(frozen=True)
 class PreviewFacts:
-    """What the status strip says the preview is showing (D1).
+    """Immutable run, pair, and binning labels carried with the worker request."""
 
-    Plain values read off the draft on the GUI thread and carried through the
-    worker untouched, so the strip can never name a different run, pair or
-    binning than the curve beside it.
-    """
-
-    #: The reference dataset's user-facing run label ("7101", "3039 + 3040").
     run_label: str
     forward_name: str
     backward_name: str
-    #: Bunching factor, as the binning row states it.
     bunch: int
-    #: Where the previewed t0 came from — ``"from file"``, ``"manual"`` or
-    #: ``"detected"``, as the Counts view's t0 marker names it.
     t0_mode_label: str
     corrections: tuple[str, ...] = ()
-    #: In vector mode, the primary projection previewed (e.g. ``"P_z"``); the
-    #: other projections are not reduced here. ``None`` outside vector mode.
     vector_pair: str | None = None
     member_counts: tuple[int, int] | None = None
 
@@ -197,7 +186,7 @@ class _PreviewRequest:
     #: The ghost omits one stage; the solid always uses the full correction path.
     compare_stage: str | None = None
     resolved_reference: BackgroundReference | None = None
-    timing_search: RunT0Search | None = None
+    timing_searches: dict[int, RunT0Search] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -388,7 +377,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         compare_stage: str | None = None,
         resolved_reference: BackgroundReference | None = None,
-        timing_search: RunT0Search | None = None,
+        timing_searches: dict[int, RunT0Search] | None = None,
     ) -> None:
         """Queue worker resolution of a copied profile and a read-only run snapshot."""
         histograms = list(run.histograms) if run is not None and run.histograms else []
@@ -409,7 +398,7 @@ class GroupingPreviewPane(QWidget):
                 facts=facts,
                 compare_stage=compare_stage,
                 resolved_reference=resolved_reference,
-                timing_search=timing_search,
+                timing_searches=dict(timing_searches or {}),
             )
         )
 
@@ -978,9 +967,18 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     def resolve_reference(grouping):
         return background_reference_for_grouping(request.resolved_reference, grouping)
 
-    def search_timing(histograms, metadata, **options):
-        if request.timing_search is not None:
-            return request.timing_search
+    def search_timing(histograms, metadata, *, period_index=None, **options):
+        from asymmetry.core.io.periods import selected_period_index
+
+        if period_index is None:
+            period_index = (
+                selected_period_index(request.run.grouping, request.profile.period_mode)
+                if request.profile is not None
+                else 0
+            )
+        cached = request.timing_searches.get(period_index or 0)
+        if cached is not None:
+            return cached
         from asymmetry.core.transform.t0 import find_t0_for_run
 
         return find_t0_for_run(
@@ -1031,6 +1029,8 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=use_background,
             facility=facility,
+            metadata=request.run.metadata if request.run is not None else {},
+            timing_search=search_timing,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
         )

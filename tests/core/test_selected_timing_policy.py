@@ -221,3 +221,17 @@ def test_raw_search_cancels_between_detectors_without_mutating_counts():
     assert calls == 2
     for hist, counts in zip(run.histograms, original, strict=True):
         np.testing.assert_array_equal(hist.counts, counts)
+
+
+def test_returning_to_file_timing_clears_prior_effective_override_and_strategy():
+    from asymmetry.core.transform.t0 import effective_detector_t0_bins, resolve_selected_timing
+
+    run = timing_run()
+    grouping = dict(run.grouping, backward_group=3)
+    resolve_selected_timing(run.histograms, grouping, run.metadata, mode="auto_detect")
+    assert effective_detector_t0_bins(run.histograms, grouping)[0] == 10
+    resolve_selected_timing(run.histograms, grouping, run.metadata, mode="from_file")
+    assert effective_detector_t0_bins(run.histograms, grouping)[0] == 4
+    assert "effective_detector_t0_bins" not in grouping
+    assert "t0_search_strategy" not in grouping
+    assert grouping["effective_t0_sources"] == ["file"] * 4
