@@ -235,3 +235,10 @@ def test_returning_to_file_timing_clears_prior_effective_override_and_strategy()
     assert "effective_detector_t0_bins" not in grouping
     assert "t0_search_strategy" not in grouping
     assert grouping["effective_t0_sources"] == ["file"] * 4
+
+
+@pytest.mark.parametrize("source", ["General laboratory", "Problem detector"])
+def test_unrelated_metadata_words_cannot_establish_a_strategy(source):
+    run = timing_run(source=source)
+    with pytest.raises(ValueError, match="source|strategy"):
+        resolve(run, pair=(1, 3))

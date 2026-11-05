@@ -442,3 +442,10 @@ def test_a_failed_search_contributes_no_verdict() -> None:
 
     assert verdict.level == "ok"
     assert verdict.delta_bins is None
+
+
+def test_overlapping_pair_returns_a_repairable_error_assessment():
+    histograms = _histograms([10, 10])
+    verdict = assess_t0(histograms, {"groups": {1: [1], 2: [1]}}, _search([10, 10]))
+    assert verdict.level == "error"
+    assert "overlap" in verdict.messages[0].lower() or "disjoint" in verdict.messages[0].lower()

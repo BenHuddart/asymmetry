@@ -6,6 +6,7 @@ certification. Selected automatic requests require each channel's own estimate.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from numbers import Integral
@@ -280,11 +281,12 @@ def source_is_pulsed(metadata: dict[str, Any] | None) -> bool | None:
     text = " ".join(
         str(metadata.get(key, "")) for key in ("facility", "instrument", "source", "area")
     ).lower()
-    continuous = any(token in text for token in _CONTINUOUS_TOKENS)
-    pulsed = any(token in text for token in _PULSED_TOKENS)
-    if continuous == pulsed:
-        return None
-    return pulsed
+    matches = [
+        pulsed
+        for pulsed, tokens in ((False, _CONTINUOUS_TOKENS), (True, _PULSED_TOKENS))
+        if re.search(r"(?<![a-z0-9])(?:" + "|".join(tokens) + r")(?![a-z0-9])", text)
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _peak_fwhm_bins(c: NDArray[np.float64], peak: int) -> int:
@@ -688,19 +690,14 @@ def assess_t0(
     """
     # Imported here, not at module scope: grouping.py imports this module for
     # the resolver, so a top-level import would close the cycle.
-    from asymmetry.core.transform.grouping import common_t0_for_groups, effective_group_indices
+    from asymmetry.core.transform.grouping import common_t0_for_groups, independent_pair_indices
 
     grouping = grouping if isinstance(grouping, dict) else {}
     n_hist = len(histograms)
     base = int(grouping.get("bin_index_base", 0))
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
     try:
-        forward_idx = effective_group_indices(
-            grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
-        )
-        backward_idx = effective_group_indices(
-            grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
-        )
+        forward_idx, backward_idx = independent_pair_indices(grouping, n_histograms=n_hist)
     except ValueError as exc:
         return T0Assessment("error", None, (str(exc),), ())
     file_common = common_t0_for_groups(
