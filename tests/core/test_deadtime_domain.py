@@ -5,7 +5,6 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import deadtime
-from asymmetry.core.transform.rebin import binning_spec
 
 
 @pytest.mark.parametrize(
@@ -121,9 +120,7 @@ def test_invalid_indexed_coefficient_cannot_become_a_zero_entry():
         deadtime.parse_deadtime_calibration_text("2\n1 invalid\n2 0.1", n_histograms=2)
 
 
-def test_reduction_rejects_a_saturated_unused_detector_outside_the_good_window():
-    from asymmetry.core.transform import reduce_grouped_asymmetry
-
+def test_standalone_preparation_keeps_its_full_input_contract():
     histograms = [
         Histogram(np.array(counts), bin_width=1, good_bin_end=1)
         for counts in ([5, 5], [4, 4], [10, 0])
@@ -135,17 +132,7 @@ def test_reduction_rejects_a_saturated_unused_detector_outside_the_good_window()
         "last_good_bin": 1,
     }
     with pytest.raises(deadtime.DeadtimeCorrectionError, match="detector 3") as error:
-        reduce_grouped_asymmetry(
-            histograms=histograms,
-            binning=binning_spec(grouping),
-            grouping=grouping,
-            forward_idx=[0],
-            backward_idx=[1],
-            alpha=1,
-            use_deadtime=True,
-            deadtime_mode="file",
-            use_background=False,
-        )
+        deadtime.prepare_histograms_with_deadtime(histograms, grouping, True, mode="file")
     assert error.value.bin_index == 0
 
 

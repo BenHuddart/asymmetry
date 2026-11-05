@@ -70,6 +70,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry_with_count_errors,
 )
 from asymmetry.core.transform.fb_counts import (
+    BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
     linear_combination_variance,
@@ -78,7 +79,7 @@ from asymmetry.core.transform.fb_counts import (
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
     effective_grouping,
-    group_forward_backward,
+    resolve_forward_backward_layout,
 )
 from asymmetry.core.transform.reduce import (
     corrected_grouped_counts,
@@ -280,7 +281,9 @@ def integrate_run(
     """
     _validate_method(method)
     run = _resolve_run(data)
-    time, counts, alpha_used, beta_used, good = _reduce_run_to_fb(run, alpha, grouping_ref)
+    time, counts, alpha_used, beta_used, good = _reduce_run_to_fb(
+        run, alpha, grouping_ref, t_min=t_min, t_max=t_max
+    )
 
     if t_min is None:
         t_min = float(time[good[0]])
@@ -619,6 +622,9 @@ def _reduce_run_to_fb(
     run: Run,
     alpha: float | None,
     grouping_ref: dict | None,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
 ) -> tuple[NDArray[np.float64], ForwardBackwardCounts, float, float, tuple[int, int]]:
     """Form the corrected forward/backward counts + time axis + good-bin range of a run.
 
@@ -641,8 +647,21 @@ def _reduce_run_to_fb(
         raise ValueError("Integral reduction requires detector histograms.")
 
     grouping = effective_grouping(run, grouping_ref)
-    fb = group_forward_backward(histograms, grouping)  # raises on missing/empty grouping
+    fb = resolve_forward_backward_layout(histograms, grouping)  # raises on missing/empty grouping
     flags = correction_flags_from_grouping(grouping)
+    raw = fb
+    width = raw.bin_width_us
+    residual = (raw.common_t0_bin + 0.5) * width - raw.t0_time_us
+    time = (
+        np.arange(raw.alignment.length, dtype=np.float64) - raw.common_t0_bin
+    ) * width + residual
+    lower = float(time[raw.window.first]) if t_min is None else t_min
+    upper = float(time[raw.window.last]) if t_max is None else t_max
+    _validate_window(lower, upper)
+    selected = np.flatnonzero(_window_mask(time, lower, upper, time.size))
+    if not selected.size:
+        raise ValueError("Integration window contains no bins.")
+    output_window = BinWindow(int(selected[0]), int(selected[-1]))
     counts = corrected_grouped_counts(
         histograms=histograms,
         grouping=grouping,
@@ -654,14 +673,13 @@ def _reduce_run_to_fb(
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
         metadata=run.metadata,
+        output_window=output_window,
     )
     if flags.use_background and counts.background_level is None:
         raise ValueError(
             "The grouping's background left no constant subtracted level "
             f"({counts.corrections.background.to_dict()}); the integral takes a constant background only."
         )
-
-    n = counts.forward.counts.size
 
     # alpha: explicit value is validated (user error surface); otherwise take the
     # effective grouping's value leniently, exactly as the time-domain path does.
@@ -671,9 +689,6 @@ def _reduce_run_to_fb(
         alpha_used = float(alpha)
         _validate_alpha(alpha_used)
 
-    width = counts.bin_width_us
-    residual = (counts.common_t0_bin + 0.5) * width - counts.t0_time_us
-    time = (np.arange(n, dtype=np.float64) - counts.common_t0_bin) * width + residual
     return time, counts, alpha_used, fb.beta, (counts.window.first, counts.window.last)
 
 

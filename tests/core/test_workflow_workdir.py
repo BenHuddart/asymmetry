@@ -548,3 +548,26 @@ def test_fitted_coadd_covers_its_members_but_reduction_alone_does_not(reduced) -
     assert workdir.fitted_runs() == set()
     workdir.write_fit(entry.run_number, "coadd", {"fit": {"success": False}})
     assert workdir.fitted_runs() == set(members)
+
+
+def test_full_input_deadtime_cache_is_stale_but_historical_result_remains_readable(reduced):
+    import hashlib
+
+    from asymmetry.core.workflow.workdir import _canonical
+
+    workdir, dataset, entry, path, grouping, settings = reduced
+    legacy = {
+        "schema": SCHEMA,
+        "files": [file_fingerprint(path)],
+        "grouping": _canonical(grouping),
+        "settings": settings.to_dict(),
+    }
+    old_digest = hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    old_entry = dataclasses.replace(entry, digest=old_digest)
+    workdir.write_reduced(dataset, old_entry)
+    assert not workdir.is_current(entry.run_number, entry.digest)
+    restored = workdir.reduced(entry.run_number)
+    np.testing.assert_array_equal(restored.time, dataset.time)
+    np.testing.assert_array_equal(restored.asymmetry, dataset.asymmetry)

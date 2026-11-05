@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,6 +21,10 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_combination_variance
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
+if TYPE_CHECKING:
+    from asymmetry.core.transform.grouping import ForwardBackwardLayout
+
 
 BINNING_MODES = ("fixed", "variable", "constant_error")
 
@@ -161,16 +165,44 @@ def _target_width_us(mode: str, t_us: float, bin0_us: float, bin10_us: float) ->
     return bin0_us * np.exp(max(t_us, 0.0) / MUON_LIFETIME_US)
 
 
+def fb_binning_edges(
+    counts: ForwardBackwardCounts | ForwardBackwardLayout,
+    binning: BinningSpec,
+    *,
+    time_range: tuple[float | None, float | None] | None = None,
+) -> tuple[NDArray[np.intp], float]:
+    """Resolve consumed local acquisition edges and the first bin's timestamp."""
+    window = counts.window
+    width = counts.bin_width_us
+    residual = (counts.common_t0_bin + 0.5) * width - counts.t0_time_us
+    t_start = (window.first - counts.common_t0_bin) * width + residual
+    edges = binning.edges(window.last - window.first + 1, width, t_start)
+    if time_range is not None and edges.size > 1:
+        times = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * width
+        lower, upper = time_range
+        mask = np.ones(times.shape, dtype=bool)
+        if lower is not None:
+            mask &= times >= lower
+        if upper is not None:
+            mask &= times <= upper
+        selected = np.flatnonzero(mask)
+        edges = edges[:1] if not selected.size else edges[selected[0] : selected[-1] + 2]
+    return edges + window.first, t_start
+
+
 def binned_fb_asymmetry(
     counts: ForwardBackwardCounts,
     *,
     binning: BinningSpec,
     alpha: float,
     beta: float = 1.0,
+    time_range: tuple[float | None, float | None] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
-    The validated spec selects raw edges inside the good-bin window, then
+    ``time_range`` optionally selects complete output bins by their centres;
+    it never moves the bin edges. The validated spec selects raw edges inside
+    the good-bin window, then
     merges ``binning.merge`` recorded output bins. Counts and their full
     variance model are summed before the ratio is formed. Fixed binning drops
     a partial raw group; variable modes keep their last partial bin. An
@@ -194,10 +226,8 @@ def binned_fb_asymmetry(
     f = counts.forward.counts[window.slice]
     b = counts.backward.counts[window.slice]
     bin_width_us = counts.bin_width_us
-    residual_us = (counts.common_t0_bin + 0.5) * bin_width_us - counts.t0_time_us
-    t_start = (window.first - counts.common_t0_bin) * bin_width_us + residual_us
-
-    edges = binning.edges(f.size, float(bin_width_us), t_start)
+    absolute_edges, t_start = fb_binning_edges(counts, binning, time_range=time_range)
+    edges = absolute_edges - window.first
     if edges.size < 2:
         empty = np.array([], dtype=np.float64)
         return empty, empty.copy(), empty.copy()
@@ -207,7 +237,6 @@ def binned_fb_asymmetry(
     starts = edges[:-1]
     f_out = np.add.reduceat(f, starts)
     b_out = np.add.reduceat(b, starts)
-    absolute_edges = edges + window.first
     vf = linear_combination_variance(counts.forward, absolute_edges)
     vb = linear_combination_variance(counts.backward, absolute_edges)
     asymmetry, error = compute_asymmetry_with_count_errors(

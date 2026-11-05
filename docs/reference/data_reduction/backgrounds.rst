@@ -56,9 +56,19 @@ snapshot. ``complete`` and ``require_complete()`` describe calculation acceptanc
 including a warned ``skipped`` File deadtime outcome. They reject unavailable
 or failed corrections. Only ``applied`` carries effective coefficients.
 A File request uses the sample and reference acquisitions' own tables; if
-either is incomplete, both remain uncorrected by deadtime while reference
+either lacks a required detector coefficient, both remain uncorrected by deadtime while reference
 background subtraction still proceeds. Manual coefficients remain the shared
 authored table, with each acquisition's own frame exposure.
+
+For F/B reduction, correction dependencies include the output samples and the
+active estimator's samples only. Range estimation uses its beam-period-trimmed
+window; tail fitting uses its established late-half window. Disjoint output and
+range windows leave an unused gap uncorrected and unchecked by the inverse.
+Reference samples use the sample output window through the reference's own
+alignment, table, and exposure. Fixed levels add no acquisition samples.
+Inactive configured ranges do not participate. Required sample/reference
+coefficients are resolved together before any inverse is applied; grouping,
+timing, and background errors remain independent failures.
 
 A preview may request ``allow_incomplete=True`` and inspect the outcome.
 The grouping preview uses already-loaded reference runs without reading files.

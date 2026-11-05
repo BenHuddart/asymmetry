@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
+    BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
     count_timing,
@@ -587,12 +588,31 @@ class GroupedForwardBackward:
         return self.counts.common_t0_bin
 
 
-def group_forward_backward(
+@dataclass(frozen=True)
+class ForwardBackwardLayout:
+    """Resolved F/B timing, windows, and balances without evaluating count sums."""
+
+    t0_time_us: float
+    bin_width_us: float
+    window: BinWindow
+    alignment: AlignmentCrop
+    alpha: float
+    beta: float
+    forward_gid: int
+    backward_gid: int
+
+    @property
+    def common_t0_bin(self) -> int:
+        """Local integer anchor owned by the alignment."""
+        return self.alignment.common_t0_bin
+
+
+def resolve_forward_backward_layout(
     histograms: list[Histogram],
     grouping: dict,
     *,
     resolved_indices: tuple[list[int], list[int]] | None = None,
-) -> GroupedForwardBackward:
+) -> ForwardBackwardLayout:
     """Resolve a selected pair onto common observations and one typed window.
 
     Acquired k maps to local r = k + c - t0_i - L. A carried window policy
@@ -637,8 +657,8 @@ def group_forward_backward(
             )
         require_selected_timing(grouping, forward_indices + backward_indices, len(histograms))
         detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-        forward, backward, crop = align_forward_backward_counts(
-            histograms, forward_indices, backward_indices, detector_t0_bins
+        crop = resolve_alignment(
+            histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
         )
         sources = effective_t0_sources(grouping, len(histograms))
         crop = replace(
@@ -658,9 +678,7 @@ def group_forward_backward(
             )
             window_grouping = dict(grouping, first_good_bin=first, last_good_bin=last)
         width = float(histograms[forward_indices[0]].bin_width)
-        counts = ForwardBackwardCounts(
-            forward,
-            backward,
+        layout = ForwardBackwardLayout(
             common_t0_time_us(
                 histograms,
                 grouping,
@@ -670,13 +688,39 @@ def group_forward_backward(
             width,
             crop.window(window_grouping),
             crop,
+            alpha,
+            beta,
+            forward_gid,
+            backward_gid,
         )
     except ValueError as exc:
         raise InvalidGroupingError(str(exc), grouping) from exc
+    return layout
+
+
+def group_forward_backward(
+    histograms: list[Histogram],
+    grouping: dict,
+    *,
+    resolved_indices: tuple[list[int], list[int]] | None = None,
+) -> GroupedForwardBackward:
+    """Resolve the selected pair's layout, then sum its observed counts."""
+    pair = independent_pair_indices(
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+    )
+    layout = resolve_forward_backward_layout(histograms, grouping, resolved_indices=pair)
+    groups = [
+        group_counts_aligned(histograms, list(indices), alignment=layout.alignment)
+        for indices in pair
+    ]
+    if any(group.variance is not None for group in groups):
+        groups = [GroupCounts(group.counts, group.independent_variance) for group in groups]
     return GroupedForwardBackward(
-        counts=counts,
-        alpha=alpha,
-        forward_gid=forward_gid,
-        backward_gid=backward_gid,
-        beta=beta,
+        counts=ForwardBackwardCounts(
+            *groups, layout.t0_time_us, layout.bin_width_us, layout.window, layout.alignment
+        ),
+        alpha=layout.alpha,
+        beta=layout.beta,
+        forward_gid=layout.forward_gid,
+        backward_gid=layout.backward_gid,
     )

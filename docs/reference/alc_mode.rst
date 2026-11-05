@@ -36,6 +36,13 @@ An unavailable or failed correction prevents an integral value rather than silen
 integrating unsubtracted counts; raw histograms and the grouping remain
 available for repair.
 
+Deadtime correction uses only the selected F/B detectors and native samples
+inside the requested integral window, together with any active background
+estimator samples. Unused detectors, prefixes, and gaps cannot block the
+inverse or suppress File correction. Required poles remain errors, and missing
+required File coefficients keep the whole-operation warned skip. The acquired
+histograms, original timing, and measured/supplied variance remain unchanged.
+
 The integral-asymmetry observable
 ---------------------------------
 

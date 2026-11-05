@@ -74,7 +74,13 @@ def test_prepare_and_reduction_agree_without_mutation(histograms, mode, table, e
         deadtime_mode=mode,
         use_background=False,
     )
-    assert outcome == reduced.corrections.deadtime
+    actual = reduced.corrections.deadtime.to_dict()
+    if actual["effective"] is not None:
+        assert actual["effective"].pop("scope")["raw_bin_ranges"] == {
+            "0": [[0, 99]],
+            "1": [[0, 99]],
+        }
+    assert outcome.to_dict() == actual
     assert outcome.status == expected
     assert reduced.corrections.complete
     np.testing.assert_array_equal(reduced.forward.counts, prepared[0].counts)
