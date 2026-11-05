@@ -8,13 +8,14 @@ exposure; authored corrections remain separate from those acquisition facts.
 
 from __future__ import annotations
 
+from itertools import zip_longest
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
+from asymmetry.core.transform.deadtime import DeadtimeCorrectionError, file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
     _X_LABELS,
@@ -341,20 +342,13 @@ def select_period_grouping(grouping: dict, period_index: int) -> dict:
 
     period_dead_time_us = grouping.get("period_dead_time_us")
     stored = correction_flags_from_grouping(grouping).deadtime_mode in {"manual", "estimate"}
-    if (
-        not stored
-        and isinstance(period_dead_time_us, list)
-        and period_index < len(period_dead_time_us)
-    ):
-        raw_deadtime = period_dead_time_us[period_index]
-        if isinstance(raw_deadtime, list):
-            cleaned_deadtime: list[float] = []
-            for value in raw_deadtime:
-                try:
-                    cleaned_deadtime.append(float(value))
-                except (TypeError, ValueError):
-                    continue
-            period_grouping["dead_time_us"] = cleaned_deadtime
+    if isinstance(period_dead_time_us, list):
+        values = (
+            period_dead_time_us[period_index] if period_index < len(period_dead_time_us) else []
+        )
+        period_grouping["deadtime_file_us"] = list(values) if isinstance(values, list) else []
+        if not stored:
+            period_grouping["dead_time_us"] = list(period_grouping["deadtime_file_us"])
 
     return period_grouping
 
@@ -589,35 +583,41 @@ def _sum_period_good_frames(runs: list[Run], periods: list[int]) -> float | None
     return float(sum(frames)) if all(value > 0 for value in frames) else None
 
 
-def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float]:
-    """One deadtime table for the summed period set.
-
-    Equal per-period tables pass through verbatim; differing tables get a
-    frame-weighted mean (the best single table for the summed counts). Each
-    surviving table keeps ITS period's frame weight, so periods without a table
-    do not shift the others. Ragged tables (malformed metadata) reduce to their
-    common detector count rather than crashing.
-    """
-    tables: list[tuple[list[float], float | None]] = []
-    for p in periods:
-        grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
-        values = grouping.get("dead_time_us")
-        if isinstance(values, list) and values:
-            tables.append(([float(v) for v in values], _sum_period_good_frames(runs, [p])))
-    if not tables:
-        return []
-    n_detectors = min(len(values) for values, _ in tables)
-    reference = tables[0][0][:n_detectors]
-    if all(np.allclose(values[:n_detectors], reference) for values, _ in tables[1:]):
-        return list(reference)
-    stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
-    weights = [frames for _, frames in tables]
-    if None in weights:
-        raise DeadtimeCorrectionError(
-            "combining different period coefficients requires good frames"
+def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float | None]:
+    """Keep detector positions, combining only coefficients supplied by every period."""
+    tables = [file_deadtime_table(runs[p - 1].grouping) for p in periods]
+    if len(tables) == 1:
+        return list(tables[0])
+    weights = [_sum_period_good_frames(runs, [p]) for p in periods]
+    if (
+        tables
+        and len({len(table) for table in tables}) == 1
+        and all(
+            isinstance(value, (int, float)) and np.isfinite(value)
+            for table in tables
+            for value in table
         )
-    table = np.average(stacked, axis=0, weights=weights)
-    return [float(v) for v in table]
+    ):
+        if all(np.allclose(table, tables[0]) for table in tables[1:]):
+            return list(tables[0])
+        if None in weights:
+            raise DeadtimeCorrectionError(
+                "combining different period coefficients requires good frames"
+            )
+        return np.average(tables, axis=0, weights=weights).tolist()
+    combined = []
+    for column in zip_longest(*tables):
+        if any(not isinstance(v, (int, float)) or not np.isfinite(v) for v in column):
+            combined.append(None)
+        elif np.allclose(column, column[0]):
+            combined.append(float(column[0]))
+        elif None in weights:
+            raise DeadtimeCorrectionError(
+                "combining different period coefficients requires good frames"
+            )
+        else:
+            combined.append(float(np.average(column, weights=weights)))
+    return combined
 
 
 def combine_mapped_periods(
@@ -697,8 +697,8 @@ def combine_mapped_periods(
     grouping.pop("good_frames", None)
     if frames[0] is not None:
         grouping["good_frames"] = frames[0]
-    if dead_times[0]:
-        grouping["dead_time_us"] = list(dead_times[0])
+    grouping["deadtime_file_us"] = list(dead_times[0])
+    grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)
 
     red_histograms, grouping = select_period_histograms(red_histograms, grouping, RED_INDEX)

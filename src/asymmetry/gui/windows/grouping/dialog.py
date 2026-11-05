@@ -96,6 +96,7 @@ from asymmetry.core.transform import (
     resolve_selected_timing,
 )
 from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 from asymmetry.core.utils.constants import PeriodMode
@@ -3047,23 +3048,6 @@ class GroupingDialog(TimingControls, QDialog):
         if hasattr(self, "_preview_pane"):
             self._refresh_preview()
 
-    def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
-        """Return whether the reference run provides file deadtime values."""
-        values = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
-        if not isinstance(values, list):
-            return False
-        n_histograms = len(self._run.histograms) if self._run is not None else 0
-        required = max(1, n_histograms)
-        if len(values) < required:
-            return False
-        for value in values:
-            try:
-                if float(value) != 0.0:
-                    return True
-            except (TypeError, ValueError):
-                continue
-        return False
-
     def _default_deadtime_mode(self, grouping: dict[str, Any]) -> str:
         """Return preferred deadtime mode for the current grouping state."""
         mode = (
@@ -3121,9 +3105,7 @@ class GroupingDialog(TimingControls, QDialog):
         """Return file deadtime values for the current reference run, if any."""
         if grouping is None:
             grouping = self._run.grouping if self._run is not None else {}
-        if not self._reference_has_file_deadtime(grouping or {}):
-            return []
-        return self._normalize_deadtime_values((grouping or {}).get("dead_time_us"))
+        return self._normalize_deadtime_values(file_deadtime_table(grouping or {}))
 
     def _initial_manual_deadtime_values(self, grouping: dict[str, Any]) -> list[float]:
         """Return initial explicit deadtime values for manual editing."""
@@ -3148,19 +3130,10 @@ class GroupingDialog(TimingControls, QDialog):
         if mode == "off":
             return {"deadtime_correction": False, "deadtime_mode": "off"}
 
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
         n_histograms = len(self._run.histograms) if self._run is not None else 0
         payload: dict[str, Any] = {"deadtime_correction": True, "deadtime_mode": mode}
 
         if mode == "file":
-            if not self._reference_has_file_deadtime(grouping):
-                if show_warnings:
-                    QMessageBox.warning(
-                        self,
-                        "Deadtime Unavailable",
-                        "The reference run does not provide file deadtime values.",
-                    )
-                return None
             payload["deadtime_method"] = "file"
             return payload
 

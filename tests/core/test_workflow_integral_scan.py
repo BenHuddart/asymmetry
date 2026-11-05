@@ -179,11 +179,14 @@ def test_an_integral_scan_takes_the_settings_pair_and_deadtime(workflow_folder) 
     corrected = build_integral_scan(
         datasets, ReductionSettings(deadtime="from_file"), order_key="run"
     )
-    assert list(corrected.run_numbers) == [DEADTIME_RUN]
+    assert list(corrected.run_numbers) == list(SCAN_RUNS)
     baseline = dict(zip(plain.run_numbers, plain.value, strict=True))
-    assert corrected.value[0] != baseline[DEADTIME_RUN]
-    assert {run for run, _reason in corrected.excluded} == set(SCAN_RUNS) - {DEADTIME_RUN}
-    assert all("deadtime correction requested" in reason for _run, reason in corrected.excluded)
+    for run, value in zip(corrected.run_numbers, corrected.value, strict=True):
+        if run == DEADTIME_RUN:
+            assert value != baseline[run]
+        else:
+            assert value == baseline[run]
+    assert not corrected.excluded
 
 
 def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:

@@ -231,3 +231,82 @@ def test_obsolete_worker_error_cannot_replace_a_newer_preview(qapp):
         assert pane.corrections_complete
     finally:
         pane.shutdown()
+
+
+@pytest.mark.parametrize("table", [[], [0.01], [0.0, 0.0]])
+def test_file_calibration_preview_is_usable_and_apply_preserves_policy(qapp, table):
+    dataset = _histogram_dataset()
+    dataset.run.grouping.update(
+        dead_time_us=table,
+        deadtime_file_us=table,
+        deadtime_correction=True,
+        deadtime_mode="file",
+        deadtime_method="file",
+    )
+    dialog = GroupingDialog([dataset])
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        wait_for(lambda: pane._last_result is not None, qapp)
+        assert pane.corrections_complete
+        assert dialog._apply_btn.isEnabled()
+        assert ("File deadtime correction not applied" in pane._incomplete_banner.text()) == (
+            len(table) < 2
+        )
+        window = MainWindow()
+        applied, outcomes = window._apply_grouping_settings_to_dataset(
+            dataset, dict(dataset.run.grouping)
+        )
+        assert applied and all(item.complete for item in outcomes.values())
+        assert dataset.run.grouping["deadtime_mode"] == "file"
+        assert "correction_error" not in dataset.metadata
+        assert list(dataset.metadata["correction_outcomes"].values())[0]["deadtime"]["status"] == (
+            "skipped" if len(table) < 2 else "applied"
+        )
+        # Changing the supplied file fact replaces the skipped decision on replay.
+        dataset.run.grouping["deadtime_file_us"] = [0.0, 0.0]
+        _, outcomes = window._apply_grouping_settings_to_dataset(
+            dataset, dict(dataset.run.grouping)
+        )
+        assert all(item.deadtime.status == "applied" for item in outcomes.values())
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_released_project_zero_override_cannot_supply_absent_file_table(
+    qapp, tmp_path, monkeypatch
+):
+    from asymmetry.core.io import load
+    from asymmetry.core.project.schema import load_project, save_project
+    from tests.io.test_nexus_loader import _write_v2_file
+
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "sample.nxs"
+    _write_v2_file(path)
+    with h5py.File(path, "r+") as handle:
+        del handle["raw_data_1/instrument/detector_1/dead_time"]
+    dataset = load(path)
+    window = MainWindow()
+    window._data_browser.add_dataset(dataset)
+    state = window.collect_project_state()
+    state["schema_version"] = 31
+    state["datasets"][0]["grouping_overrides"] = dict(
+        dataset.run.grouping,
+        deadtime_correction=True,
+        deadtime_mode="file",
+        dead_time_us=[0.0, 0.0],
+    )
+    state["datasets"][0]["grouping_overrides"].pop("deadtime_file_us", None)
+    project = tmp_path / "released.asymp"
+    save_project(state, project)
+    fresh = load(path)
+    restored = MainWindow()
+    monkeypatch.setattr(restored, "_load_file", lambda _: fresh)
+    restored.restore_project_state(load_project(project), str(project))
+    assert fresh.run.grouping["deadtime_file_us"] == []
+    assert "correction_error" not in fresh.metadata
+    assert all(
+        record["deadtime"]["status"] == "skipped"
+        for record in fresh.metadata["correction_outcomes"].values()
+    )

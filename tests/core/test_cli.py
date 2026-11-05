@@ -87,22 +87,42 @@ def test_version_flag_exits_with_version(capsys) -> None:
     assert f"asymmetry {cli.__version__}" in out
 
 
-def test_reduce_refuses_requested_file_deadtime_without_a_table(workflow_folder, tmp_path, capsys):
-    with pytest.raises(SystemExit) as error:
-        cli.main(
-            [
-                "reduce",
-                str(workflow_folder),
-                "--runs",
-                "101",
-                "--deadtime",
-                "from_file",
-                "--workdir",
-                str(tmp_path / "workdir"),
-            ]
-        )
-    assert error.value.code == 1
-    assert capsys.readouterr().err.strip() == (
-        "asymmetry: Run 101: deadtime correction requested (from_file) but not applied: "
-        "the file has no non-zero per-detector deadtime table."
-    )
+def test_reduce_warns_and_caches_requested_file_deadtime_without_a_table(
+    workflow_folder, tmp_path, capsys
+):
+    import json
+    import shutil
+
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    h5py = pytest.importorskip("h5py")
+    folder = tmp_path / "raw"
+    folder.mkdir()
+    source = folder / "SIM00000101.nxs"
+    shutil.copy2(workflow_folder / source.name, source)
+    with h5py.File(source, "r+") as handle:
+        del handle["run/histogram_data_1/dead_time"]
+    workdir = tmp_path / "workdir"
+    args = [
+        "reduce",
+        str(folder),
+        "--runs",
+        "101",
+        "--deadtime",
+        "from_file",
+        "--workdir",
+        str(workdir),
+        "--json",
+    ]
+    for recomputed in (True, False):
+        cli.main(args)
+        captured = capsys.readouterr()
+        assert "File deadtime correction not applied" in captured.err
+        result = json.loads(captured.out)
+        row = result["entries"][0]
+        assert row["recomputed"] is recomputed
+        outcomes = row["run"]["correction_outcomes"]
+        assert next(iter(outcomes.values()))["deadtime"]["status"] == "skipped"
+    restored = WorkDir(workdir).reduced(101)
+    assert "correction_error" not in restored.metadata
+    assert restored.metadata["correction_outcomes"] == outcomes

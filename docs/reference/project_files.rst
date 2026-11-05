@@ -610,7 +610,10 @@ is preserved without re-running the Grouping dialog.
 
 On restore, correction outcomes are recomputed from the saved request. A run
 whose requested correction cannot be applied stays in the project with its
-request intact and a "Corrections incomplete" badge. Fits and data, plot and
+request intact and a "Corrections incomplete" badge. Missing or incomplete File
+deadtimes instead produce a usable, warned ``skipped`` result. Source file
+calibration is restored from the acquisition; saved zero values alone do not
+establish historical file-table presence. Fits and data, plot and
 fit-report exports refuse while the run is incomplete. A successful **Apply**
 clears the error. The project stores the request, rather than a second copy of
 the effective correction outcome.

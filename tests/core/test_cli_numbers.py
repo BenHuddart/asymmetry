@@ -70,11 +70,10 @@ def test_audit_reads_the_output_every_command_logged(
     out = capsys.readouterr().out
     assert "'999.25'" in out
     assert f"'{SCAN_RUNS[0]}'" not in out
-    assert "Then run audit again" in out
+    assert "then run audit again" in out.lower()
     # The audit's own report is not logged, so it can never verify itself.
-    assert "999.25" not in (tmp_path / "asymmetry-work" / "cli-output.log").read_text(
-        encoding="utf-8"
-    )
+    recorded = (tmp_path / "asymmetry-work" / "cli-output.log").read_text(encoding="utf-8")
+    assert "999.25" not in recorded
 
 
 def test_audit_without_any_log_says_what_to_do(tmp_path: Path, monkeypatch, capsys) -> None:

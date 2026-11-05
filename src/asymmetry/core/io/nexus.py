@@ -767,6 +767,7 @@ class NexusLoader(BaseLoader):
                     ).tolist()
                 ],
             }
+            run_grouping["deadtime_file_us"] = list(run_grouping["dead_time_us"])
             if good_frames_periods[period_idx - 1] is not None:
                 run_grouping["good_frames"] = good_frames_periods[period_idx - 1]
 
@@ -904,34 +905,23 @@ class NexusLoader(BaseLoader):
         n_detectors: int,
     ) -> list[np.ndarray]:
         """Normalise optional per-detector vectors into one vector per period."""
-        if values.size == 0:
-            return [np.zeros(n_detectors, dtype=np.float64) for _ in range(n_periods)]
-
         arr = np.asarray(values, dtype=np.float64)
+        if arr.size == 0:
+            return [np.array([], dtype=np.float64) for _ in range(n_periods)]
         if arr.ndim == 1:
-            if arr.size == n_detectors:
+            if arr.size <= n_detectors:
                 return [arr.copy() for _ in range(n_periods)]
             if arr.size == n_periods * n_detectors:
                 return [
                     arr[i * n_detectors : (i + 1) * n_detectors].copy() for i in range(n_periods)
                 ]
-            return [
-                np.resize(arr, n_detectors).astype(np.float64, copy=False) for _ in range(n_periods)
-            ]
-
         if arr.ndim >= 2:
-            if arr.shape[0] == n_periods:
-                return [
-                    np.resize(np.asarray(arr[i], dtype=np.float64), n_detectors)
-                    for i in range(n_periods)
-                ]
-            if arr.shape[-1] == n_detectors:
-                base = np.asarray(arr.reshape(-1, n_detectors)[0], dtype=np.float64)
-                return [base.copy() for _ in range(n_periods)]
-
-        flat = np.asarray(arr, dtype=np.float64).ravel()
-        resized = np.resize(flat, n_detectors).astype(np.float64, copy=False)
-        return [resized.copy() for _ in range(n_periods)]
+            if arr.shape[0] == n_periods and arr[0].size <= n_detectors:
+                return [row.ravel().copy() for row in arr]
+            if arr.shape[-1] == n_detectors and arr.size == n_detectors:
+                return [arr.ravel().copy() for _ in range(n_periods)]
+        # Unsupported shapes cannot establish detector/period correspondence.
+        return [np.array([], dtype=np.float64) for _ in range(n_periods)]
 
     def _split_period_scalars(
         self,

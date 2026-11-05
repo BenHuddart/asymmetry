@@ -37,8 +37,7 @@ def test_v2_equivalent_units_reach_the_same_correction(tmp_path, micro, nano, co
         run = load(path).run
         np.testing.assert_array_equal(run.grouping["dead_time_us"], [coefficient, 0.0])
         raw = [h.counts.copy() for h in run.histograms]
-        # Manual permits an all-zero identity; File availability is separate.
-        grouping = {**run.grouping, "deadtime_mode": "file" if coefficient else "manual"}
+        grouping = {**run.grouping, "deadtime_mode": "file"}
         corrected, applied = prepare_histograms_with_deadtime(run.histograms, grouping, True)
         assert applied.status.value == "applied"
         for before, original, after, deadtime in zip(
@@ -59,12 +58,18 @@ def test_v2_equivalent_units_reach_the_same_correction(tmp_path, micro, nano, co
 
 
 @pytest.mark.parametrize("location", ["dead_time", "deadtime", "deadtimes"])
-@pytest.mark.parametrize("layout", ["shared", "table", "flat"])
+@pytest.mark.parametrize("layout", ["shared", "table", "flat", "shared_3d", "table_3d"])
 def test_v2_selected_dataset_owns_units_before_period_mapping(tmp_path, location, layout):
     path = tmp_path / "periods.nxs"
     _write_v2_file(path, multiperiod=True)
     table = np.array([[20.0, -10.0], [0.0, 30.0]])
-    values = table[0] if layout == "shared" else table.ravel() if layout == "flat" else table
+    values = {
+        "shared": table[0],
+        "table": table,
+        "flat": table.ravel(),
+        "shared_3d": table[0].reshape(1, 1, 2),
+        "table_3d": table.reshape(2, 1, 2),
+    }[layout]
     with h5py.File(path, "r+") as handle:
         detector = handle["raw_data_1/instrument/detector_1"]
         del detector["dead_time"]
@@ -77,7 +82,7 @@ def test_v2_selected_dataset_owns_units_before_period_mapping(tmp_path, location
     combined = load(path)
     for index in range(2):
         selected = select_period(combined, index + 1)
-        expected = table[0 if layout == "shared" else index] * 0.001
+        expected = table[0 if layout.startswith("shared") else index] * 0.001
         np.testing.assert_array_equal(selected.run.grouping["dead_time_us"], expected)
         corrected, applied = prepare_histograms_with_deadtime(
             selected.run.histograms, selected.run.grouping, True

@@ -225,7 +225,6 @@ from asymmetry.core.transform import (
     good_frames,
     reduce_period_asymmetry,
     resolve_background_mode,
-    resolve_deadtime,
     resolve_facility,
 )
 from asymmetry.core.transform.corrections import (
@@ -236,6 +235,7 @@ from asymmetry.core.transform.corrections import (
 )
 from asymmetry.core.transform.deadtime import (
     DeadtimeCalibration,
+    file_deadtime_table,
     fit_deadtime_calibration,
     promote_deadtime_to_grouping,
 )
@@ -5625,13 +5625,7 @@ class MainWindow(QMainWindow):
                 timing_histograms, grouping, t0_bin, selected_indices=selected
             )
 
-        if (
-            resolve_deadtime(existing_grouping, len(run.histograms), True, "from_file").status
-            == CorrectionStatus.APPLIED
-        ):
-            grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
-        elif isinstance(existing_grouping.get("deadtime_file_us"), list):
-            grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
+        grouping["deadtime_file_us"] = list(file_deadtime_table(existing_grouping))
 
         grouping["deadtime_mode"] = deadtime_mode
         if grouping_result.get("deadtime_method"):

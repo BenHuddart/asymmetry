@@ -24,6 +24,7 @@ from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
 from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
 from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 
 # Register built-in loaders
@@ -215,6 +216,7 @@ def resolve_background_reference(
 
     return BackgroundReference(
         histograms=list(reference_run.histograms),
+        file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scale=float(scale),
         source_file=reference_run.source_file or source_file,
         good_frames_sample=sample_frames,
