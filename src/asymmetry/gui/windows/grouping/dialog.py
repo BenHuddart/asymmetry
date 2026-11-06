@@ -64,6 +64,7 @@ from asymmetry.core.instrument import (
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     held_period_histograms,
+    reference_mapping_requires_replay,
     select_period_grouping,
     selected_period_index,
 )
@@ -3288,7 +3289,7 @@ class GroupingDialog(TimingControls, QDialog):
             for ds in self._datasets
             if ds.run is not None
             and ds.run.histograms
-            and not ds.run.grouping.get("period_mapping")
+            and not reference_mapping_requires_replay(ds.run.grouping.get("period_mapping"))
             for source, number, period in reference_observations(ds.run)
             if (source, number, period) not in sample
         ]
@@ -3844,7 +3845,6 @@ class GroupingDialog(TimingControls, QDialog):
             pane.show_unavailable()
             return
         try:
-            # Snapshot form inputs; count-dependent resolution belongs on the worker.
             payload = self._current_grouping_payload()
             profile = profile_from_form_payload(
                 payload,

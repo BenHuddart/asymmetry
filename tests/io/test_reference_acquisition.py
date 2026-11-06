@@ -35,8 +35,12 @@ def test_live_selected_input_wins_after_disk_cache_fill(monkeypatch):
     np.testing.assert_array_equal(result.histograms[0].counts, 13)
 
 
-def test_disk_and_loaded_selected_period_agree(monkeypatch):
+@pytest.mark.parametrize("identity_mapping", [False, True])
+def test_disk_and_loaded_selected_period_agree(monkeypatch, identity_mapping):
     combined = _combined_two_period()
+    if identity_mapping:
+        for facts in (combined.run.grouping, combined.run.metadata):
+            facts["period_mapping"] = {"1": "red", "2": "green"}
     green = select_period(combined, 2)
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
     payload = {"source_file": combined.run.source_file, "run_number": 12345, "period_number": 2}
@@ -311,3 +315,24 @@ def test_released_mapped_reference_remains_explicitly_unavailable():
     request = migrate_to_current(state)["background_run"]
     with pytest.raises(ValueError, match="mapped.*acquired period"):
         resolve_background_reference(request, datasets=[_combined_two_period()], allow_file=False)
+
+
+def test_released_identity_mapping_keeps_acquired_reference_available(monkeypatch):
+    from asymmetry.core.project.schema import migrate_to_current
+
+    combined = _combined_two_period()
+    state = {
+        "schema_version": 31,
+        "datasets": [
+            {
+                "run_number": 12345,
+                "source_file": "synthetic.nxs",
+                "grouping_overrides": {"period_mapping": {"1": "red", "2": "green"}},
+            }
+        ],
+        "background_run": {"run_number": 12345002, "source_file": "synthetic.nxs"},
+    }
+    request = migrate_to_current(state)["background_run"]
+    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    reference = resolve_background_reference(request)
+    assert reference.period_number == 2

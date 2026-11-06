@@ -7,6 +7,7 @@ from pathlib import Path
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.io.periods import (
     acquired_period_histograms,
+    reference_mapping_requires_replay,
     select_period_grouping,
     selected_period_index,
     source_run_of,
@@ -92,7 +93,7 @@ def select_reference_run(run: Run, payload: dict) -> Run | None:
 
 def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
     """Prefer a live selected view of the same acquisition; reject ambiguity."""
-    if payload.get("period_mapping"):
+    if reference_mapping_requires_replay(payload.get("period_mapping")):
         raise ValueError("a mapped reference is not one acquired period; select an acquired period")
     matches, seen, mapped = {}, set(), []
     for run in runs:
@@ -102,7 +103,9 @@ def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
         selected = select_reference_run(run, payload)
         if selected is None:
             continue
-        if selected.grouping.get("period_mapping") or selected.metadata.get("period_mapping"):
+        if reference_mapping_requires_replay(
+            selected.grouping.get("period_mapping", selected.metadata.get("period_mapping"))
+        ):
             mapped.append(selected)
             continue
         selection = reference_selection(selected)

@@ -1,7 +1,11 @@
 """Convert released reference declarations using acquired source facts at restore."""
 
 from asymmetry.core.data.dataset import Run
-from asymmetry.core.io.periods import encode_period_run_number, source_run_of
+from asymmetry.core.io.periods import (
+    encode_period_run_number,
+    reference_mapping_requires_replay,
+    source_run_of,
+)
 
 
 def migrate_reference_declarations(value):
@@ -25,7 +29,7 @@ def migrate_reference_declarations(value):
             number = payload.pop("run_number", None)
             payload["legacy_run_number"] = number
             mapping = mapped.get((payload.get("source_file"), number))
-            if mapping:
+            if reference_mapping_requires_replay(mapping):
                 payload["period_mapping"] = mapping
         return result
 

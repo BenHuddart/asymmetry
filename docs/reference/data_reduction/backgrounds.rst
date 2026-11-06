@@ -275,8 +275,8 @@ The **Background run** selection records the source acquisition and its acquired
 period. Choosing a loaded green period keeps its counts, calibration, and exposure
 when resolved from disk or reopened in a project. **Browse for file…** selects
 period 1; load the required period first to choose another period in the picker.
-The picker offers acquired periods. Mapped period sums cannot be replayed as one
-acquired reference period and remain explicitly unavailable as references;
+The picker offers acquired periods. Nontrivial mapped selections cannot be
+replayed as one acquired reference period and remain explicitly unavailable;
 choose the original acquired period rows instead.
 A matching live loaded input takes precedence over a cached disk snapshot,
 including in-memory count edits. A declared file cannot be replaced by another

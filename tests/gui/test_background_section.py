@@ -228,6 +228,7 @@ def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
     sample, reference = _combined_two_period(), _combined_two_period()
     reference.run.source_file = "another.nxs"
     reference.run.grouping["period_mode"] = "green"
+    reference.run.grouping["period_mapping"] = {"1": "red", "2": "green"}
     dialog = GroupingDialog([sample, reference], selected_run_number=sample.run_number)
     candidate = next(
         c for c in dialog._background_reference_candidates() if c.source_file == "another.nxs"
