@@ -1736,6 +1736,13 @@ raises an amber banner directly above the action footer::
 
    Spectrum out of date — <what changed>. Compute FFT to refresh.
 
+The recorded identity includes each histogram's integer and exact time zero,
+native bin width, and observed length. In-place edits to these acquisition
+fields invalidate cached grouped-count views and mark recorded spectra out of
+date, including when a range background's selected observations or automatic
+period adjustment changes. Checking this identity reads scalar metadata and array
+lengths; it does not scan count values or load acquisition files.
+
 The banner names what changed (for example ``zero-pad factor, apodisation
 changed``) and clears on the next ``Compute FFT``. Nothing recomputes
 automatically for these two triggers — the displayed spectrum is never

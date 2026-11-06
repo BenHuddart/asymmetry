@@ -25,7 +25,11 @@ from asymmetry.core.fourier.fft import (
     fourier_mode_uses_phase_fit,
     prepare_fft_time_signal,
 )
-from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
+from asymmetry.core.fourier.group_preparation import (
+    GroupPreparation,
+    histogram_grid_identity,
+    prepare_group_counts,
+)
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.phase_fit import (
     PHASE_FIT_METHOD,
@@ -254,13 +258,7 @@ def _coerce_exclusion_ranges(value: object) -> list[tuple[float, float]]:
 
 
 def _digest_groups(groups: object) -> dict[int, list[int]] | None:
-    """Normalise a ``grouping["groups"]`` payload to ``{gid: sorted detector ids}``.
-
-    Entries may be plain detector numbers or ``[detector, weight]`` pairs (only
-    the detector number is grouping-relevant to the FFT input); unparseable
-    group ids or entries are dropped rather than raising, since a digest must
-    tolerate whatever a run happens to carry.
-    """
+    """Normalise parseable group/detector IDs for metadata-only cache comparisons."""
     if not isinstance(groups, dict):
         return None
     normalized: dict[int, list[int]] = {}
@@ -312,6 +310,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     payload: dict[str, object] = {
         "deadtime_scope": "required_grouped_observations",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
+        "histogram_grid": histogram_grid_identity(run.histograms),
     }
 
     groups = _digest_groups(grouping.get("groups"))

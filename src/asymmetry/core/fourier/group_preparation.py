@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from asymmetry.core.data.dataset import Run
+from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fourier.group_background import (
     _apply_group_background_correction,
     group_background_payload,
@@ -36,6 +36,11 @@ from asymmetry.core.transform.scoped_counts import ScopedCounts, observation_dom
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, require_selected_timing
 
 
+def histogram_grid_identity(histograms: list[Histogram]) -> tuple:
+    """Snapshot raw-bin timing and observed support without reading count values."""
+    return tuple((h.t0_bin, h.t0_time_us, h.bin_width, h.n_bins) for h in histograms)
+
+
 def preparation_identity(run: Run) -> tuple:
     """Bind products to their actual arrays, period and authored reduction settings."""
     from asymmetry.core.io import reference_file_identity
@@ -45,10 +50,8 @@ def preparation_identity(run: Run) -> tuple:
         if correction_flags_from_grouping(run.grouping).use_background
         and resolve_background_mode(run.grouping) == "reference_run"
         else None,
-        tuple(
-            (id(h.counts), id(h.count_variance), h.bin_width, h.t0_bin, h.t0_time_us)
-            for h in run.histograms
-        ),
+        tuple((id(h.counts), id(h.count_variance)) for h in run.histograms),
+        histogram_grid_identity(run.histograms),
         json.dumps(run.grouping, default=str),
         json.dumps(run.metadata, default=str),
         run.source_file,
