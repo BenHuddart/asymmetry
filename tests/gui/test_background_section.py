@@ -158,3 +158,96 @@ def test_separate_aliases_are_described_as_explicit():
         details={"background_forward_range": [1, 71], "background_backward_range": [10, 60]},
     )
     assert background_status_text(policy) == "Background: explicit range [[1, 71], [10, 60]]"
+
+
+def test_selected_green_period_is_persisted_and_displayed(qapp, monkeypatch):
+    section = BackgroundSectionWidget(
+        lambda: [BackgroundReferenceRunCandidate(42, "42/2", "reference.nxs", 75, period_number=2)]
+    )
+    section.configure(
+        available_modes=("reference_run",),
+        has_fixed_values=False,
+        mode="none",
+        background_run_payload=None,
+    )
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("42/2", True))
+    section._mode_combo.setCurrentIndex(section._mode_combo.findData("reference_run"))
+    assert section.background_run_payload() == {
+        "run_number": 42,
+        "source_file": "reference.nxs",
+        "period_number": 2,
+        "good_frames_reference": 75,
+    }
+    assert "period 2" in section._status_label.text()
+
+
+def test_reference_candidates_keep_same_number_other_sources_and_periods(qapp):
+    from asymmetry.core.io import select_period
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from tests.io.test_period_selection import _combined_two_period
+
+    combined = _combined_two_period()
+    red, green = [select_period(combined, period) for period in (1, 2)]
+    other = select_period(combined, 1)
+    other.run.source_file = "different.nxs"
+    dialog = GroupingDialog([red, green, other], selected_run_number=red.run_number)
+    candidates = dialog._background_reference_candidates()
+    assert {(candidate.source_file, candidate.period_number) for candidate in candidates} == {
+        ("synthetic.nxs", 2),
+        ("different.nxs", 1),
+    }
+    dialog._clear_dirty()
+    dialog.close()
+    dialog.deleteLater()
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("green", {1}), ("green_plus_red", set()), ("green_minus_red", set())]
+)
+def test_reference_picker_uses_draft_sample_periods(qapp, mode, expected):
+    from asymmetry.core.io import select_period
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from tests.io.test_period_selection import _combined_two_period
+
+    combined = _combined_two_period()
+    green = select_period(combined, 2)
+    dialog = GroupingDialog([combined, green], selected_run_number=combined.run_number)
+    dialog._set_period_mode(mode)
+    assert {
+        candidate.period_number for candidate in dialog._background_reference_candidates()
+    } == expected
+    dialog._clear_dirty()
+    dialog.close()
+    dialog.deleteLater()
+
+
+def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample, reference = _combined_two_period(), _combined_two_period()
+    reference.run.source_file = "another.nxs"
+    reference.run.grouping["period_mode"] = "green"
+    dialog = GroupingDialog([sample, reference], selected_run_number=sample.run_number)
+    candidate = next(
+        c for c in dialog._background_reference_candidates() if c.source_file == "another.nxs"
+    )
+    assert candidate.period_number == 2
+    assert candidate.good_frames == 20
+    dialog._background_section.configure(
+        available_modes=("reference_run",),
+        has_fixed_values=False,
+        mode="reference_run",
+        background_run_payload={
+            "source_file": "another.nxs",
+            "run_number": 12345,
+            "period_number": 2,
+            "good_frames_reference": 20,
+        },
+    )
+    dialog._set_period_mode("green")
+    dialog._on_background_changed()
+    assert dialog._background_run_payload["good_frames_sample"] == 20
+    dialog._clear_dirty()
+    dialog.close()
+    dialog.deleteLater()

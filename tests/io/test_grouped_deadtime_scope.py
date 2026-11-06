@@ -125,7 +125,7 @@ def test_external_reference_cache_reuses_only_matching_source_and_scope(tmp_path
     sample.grouping.update(
         background_correction=True,
         background_mode="reference_run",
-        background_run={"source_file": str(path), "run_number": 123, "scale": 1.0},
+        background_run={"source_file": str(path), "run_number": reference.run_number, "scale": 1.0},
     )
     cache = {}
     first = build_group_signal_dataset(

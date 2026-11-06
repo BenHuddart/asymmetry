@@ -264,10 +264,7 @@ class GroupingPreviewPane(QWidget):
         self._tasks = TaskRunner(self)
         self._generation = 0
         self._pending: _PreviewRequest | None = None
-        #: Coalescing guard: at most one reduction runs at a time. While a task
-        #: is in flight, newer requests wait in ``_pending`` (latest wins) and
-        #: are dispatched from the finished/error callback instead of spawning
-        #: concurrent worker threads.
+        #: One worker runs; only the latest pending request is dispatched next.
         self._in_flight = False
 
         self._debounce = QTimer(self)
@@ -546,14 +543,8 @@ class GroupingPreviewPane(QWidget):
         if generation == self._generation:
             self.show_error(f"Preview unavailable: {message}")
 
-    # -- drawing ---------------------------------------------------------
-
     def _draw(self, result: _PreviewResult) -> None:
-        """Redraw the preview in the current view; the status strip is shared.
-
-        Once the user pans/zooms, their view is preserved verbatim across
-        redraws until Home (or a view switch) resets it.
-        """
+        """Redraw the current view, preserving user limits until Home or a view switch."""
         if self._axes is None or self._canvas is None:
             return
         # Never clear the axes under a live pan/zoom rubber band — park the
@@ -561,12 +552,7 @@ class GroupingPreviewPane(QWidget):
         if self._drag_in_progress():
             self._deferred_result = result
             return
-        # A user-chosen pan/zoom view survives the debounced redraws — an edit
-        # mid-inspection must not yank the axes back — until Home resets it.
-        # `_user_view` is the stored drag result, deliberately NOT re-read from
-        # the axes here: the error/empty paths clear() the axes back to default
-        # limits, and re-capturing those would freeze the preview on a garbage
-        # (0..1) view — the "strange state" this guards against.
+        # User limits come from the drag, not from error/empty redraws.
         preserved = self._user_view
         # The axes rectangle is part of the user's chosen view: while they hold a
         # pan/zoom, tight layout must not re-fit it around the tick and marker
@@ -997,6 +983,17 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     period_index = selected_period_index(grouping)
     if period_index is not None:
         histograms, grouping = select_period_histograms(histograms, grouping, period_index)
+    metadata = (
+        dict(
+            request.run.metadata,
+            source_file=request.run.source_file,
+            run_number=request.run.run_number,
+        )
+        if request.run is not None
+        else {}
+    )
+    if period_index is not None:
+        metadata["period_number"] = period_index + 1
     n_hist = len(histograms)
     forward_gid = _as_int(grouping.get("forward_group"), 1)
     backward_gid = _as_int(grouping.get("backward_group"), 2)
@@ -1025,7 +1022,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=use_background,
             facility=facility,
-            metadata=request.run.metadata if request.run is not None else {},
+            metadata=metadata,
             timing_search=search_timing,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
@@ -1057,6 +1054,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=bg,
             facility=facility,
+            metadata=metadata,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
             output_binning=binning_spec(grouping),

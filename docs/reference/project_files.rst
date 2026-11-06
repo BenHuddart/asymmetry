@@ -58,6 +58,14 @@ hand-editable ``.msr`` text format (the import of ``.msr`` into
 ``.asymp`` is a roadmap candidate; see :doc:`/explanation/comparison`)
 and from Mantid's binary HDF5 ``.mantid`` files.
 
+Reference-background requests persist their declared source acquisition and
+acquired period through grouping overrides and profiles. Released declarations
+are restored using the source run number and available acquired periods; an
+encoded browser key is interpreted only when those facts establish its meaning.
+An unresolved request remains explicit and prevents a corrected result from
+being accepted. The raw acquisition remains available for inspection and repair.
+Reopening never substitutes another file merely because its run number matches.
+
 What is stored
 --------------
 

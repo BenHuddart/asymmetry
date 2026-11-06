@@ -11,6 +11,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
+
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
 TAIL_BACKGROUND_POLICY_REVISION = 2
@@ -192,12 +194,46 @@ class BackgroundReference:
     good_frames_reference: float | None = None
     scale_source: str = "explicit_scale"
     file_dead_time_us: tuple[float | None, ...] = ()
+    period_number: int = 1
 
     def __post_init__(self):
-        object.__setattr__(self, "source_file", Path(self.source_file).name)
         object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
         if not isfinite(self.scale) or self.scale <= 0:
             raise ValueError("reference background scale must be finite and positive")
+
+    def require_independent(
+        self, histograms: list[Histogram], metadata: dict | None, indices: list[int]
+    ) -> None:
+        """Reject identical acquired observations before using independent variances."""
+        metadata = metadata or {}
+        source = metadata.get("source_file", "")
+        same_source = (
+            bool(source and self.source_file)
+            and Path(source).resolve() == Path(self.source_file).resolve()
+        )
+        same_period = metadata.get("period_number", 1) == self.period_number
+        same_run = metadata.get("source_run_number", metadata.get("run_number")) == self.run_number
+        shared = all(
+            np.shares_memory(histograms[index].counts, self.histograms[index].counts)
+            for index in indices
+        )
+        if shared or (same_source and same_run and same_period):
+            raise ValueError(
+                "reference background cannot subtract identical observations as independent inputs"
+            )
+
+    def provenance(self) -> dict:
+        """Report the acquisition actually consumed, independently of the request."""
+        return {
+            "run_number": self.run_number,
+            "period_number": self.period_number,
+            "file_name": Path(self.source_file).name,
+            "source_file": self.source_file,
+            "scale": self.scale,
+            "scale_source": self.scale_source,
+            "good_frames_sample": self.good_frames_sample,
+            "good_frames_reference": self.good_frames_reference,
+        }
 
     def deadtime_grouping(self, sample_grouping: dict) -> dict:
         """Use this reference's acquisition facts with the shared authored request."""

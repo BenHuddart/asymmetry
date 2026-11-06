@@ -67,6 +67,7 @@ from asymmetry.core.io.periods import (
     select_period_grouping,
     selected_period_index,
 )
+from asymmetry.core.io.reference_selection import reference_observations
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
@@ -3274,20 +3275,22 @@ class GroupingDialog(TimingControls, QDialog):
         self._refresh_preview()
 
     def _background_reference_candidates(self) -> list[BackgroundReferenceRunCandidate]:
-        """Reference-run candidates for the background picker (excludes the preview run)."""
+        """Offer acquired selections other than the current sample observations."""
+        sample = reference_observations(self._run, self._current_period_mode())
         return [
             BackgroundReferenceRunCandidate(
-                run_number=int(ds.run_number),
-                label=f"{ds.run_label} (run {ds.run_number})",
-                source_file=str(ds.run.source_file or "") if ds.run is not None else "",
-                good_frames=(ds.run.grouping or {}).get("good_frames")
-                if ds.run is not None and isinstance(ds.run.grouping, dict)
-                else None,
+                run_number=number,
+                period_number=period,
+                label=f"{ds.run_label} (period {period})",
+                source_file=ds.run.source_file,
+                good_frames=select_period_grouping(ds.run.grouping, period - 1).get("good_frames"),
             )
             for ds in self._datasets
             if ds.run is not None
             and ds.run.histograms
-            and int(ds.run_number) != int(self._reference_dataset.run_number)
+            and not ds.run.grouping.get("period_mapping")
+            for source, number, period in reference_observations(ds.run)
+            if (source, number, period) not in sample
         ]
 
     def _background_has_fixed_values(self) -> bool:
@@ -3311,9 +3314,10 @@ class GroupingDialog(TimingControls, QDialog):
                 if self._run is not None and isinstance(self._run.grouping, dict)
                 else {}
             )
+            index = selected_period_index(reference_grouping, self._current_period_mode())
+            if index is not None:
+                reference_grouping = select_period_grouping(reference_grouping, index)
             payload = dict(self._background_section.background_run_payload() or {})
-            # Attach the sample side's good_frames so the frame-ratio scale can be
-            # shown immediately (the reduction resolves it either way).
             payload["good_frames_sample"] = reference_grouping.get("good_frames")
             self._background_run_payload = payload
         self._mark_dirty()
@@ -3874,11 +3878,6 @@ class GroupingDialog(TimingControls, QDialog):
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
         self._sync_compare_surfaces()
-        # Compare view: the focused stage (if any) draws its before/after ghost over
-        # the solid full-pipeline curve. The solid is never degraded, so the α
-        # compare's residual-⟨A⟩ acceptance number is always read off the
-        # fully-corrected curve. Preview-only — `compare_stage` never reaches the
-        # persisted reduction.
         searches = {
             int(mode == "green"): self._t0_search_cache.get(self._t0_cache_key(mode))
             for mode in self._timing_period_modes()
@@ -5371,7 +5370,7 @@ class GroupingDialog(TimingControls, QDialog):
             self._seed_t0_spin_from_preview()
         elif mode == "auto_detect" and self._t0_cache_key() in self._t0_search_cache:
             self._seed_t0_spin_from_detection()
-        self._refresh_preview()
+        self._on_background_changed()
 
     def _current_period_mode(self) -> str:
         """Return key for the selected period mode."""

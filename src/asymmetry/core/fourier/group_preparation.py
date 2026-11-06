@@ -204,6 +204,11 @@ def prepare_group_counts(
         layouts[int(group_id)] = GroupLayout(
             alignment, window, local_grouping, background_t0, reference_alignment
         )
+    if reference is not None:
+        indices = sorted({index for _, selected, _ in sample_parts for index in selected})
+        reference.require_independent(
+            histograms, dict(run.metadata, source_file=run.source_file), indices
+        )
     domains = [observation_domain(sample_parts)]
     inputs = [(histograms, grouping)]
     if reference is not None:
@@ -232,6 +237,17 @@ def prepare_group_counts(
             else None,
             reference_scale=reference.scale if reference is not None else None,
         )
+    if reference is not None:
+        backgrounds = {
+            gid: replace(
+                result,
+                outcome=replace(
+                    result.outcome,
+                    effective=dict(result.outcome.effective, reference=reference.provenance()),
+                ),
+            )
+            for gid, result in backgrounds.items()
+        }
     skip = result_tail_skip({str(gid): result.outcome for gid, result in backgrounds.items()})
     if skip is not None:
         warnings.warn(skip.warning, UserWarning, stacklevel=2)
