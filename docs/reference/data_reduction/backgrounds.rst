@@ -149,38 +149,71 @@ shared uncertainty unchanged.
 Tail fit (late-time)
 --------------------
 
-Fits the late half of the good-data window with the muon decay plus a flat
-rate,
+Fits native acquisition bins from the integer midpoint of time zero and
+last good bin through last good bin, inclusive, with a fixed-lifetime muon
+decay plus a flat rate,
 
 .. math::
 
    C(t) = \left[ p_1\, e^{-t/\tau_\mu}\,
           \frac{\sinh(w/2\tau_\mu)}{w/2\tau_\mu} + p_2 \right] w,
 
-where :math:`w` is the bin width (the bracketed factor averages the
-exponential across each bin), and subtracts the flat rate :math:`p_2`. The
-fit maximises the Poisson likelihood for raw counts, including the late-time
-bins that hold only a handful of counts. For deadtime-corrected observations
+where :math:`w` is the bin width, :math:`t` is the bin centre relative to
+time zero, and the bracketed factor averages the exponential across each bin.
+Both the amplitude :math:`p_1` at time zero and flat rate :math:`p_2` are
+nonnegative and expressed in counts/μs; subtraction removes :math:`w p_2`
+counts per native bin. The fit maximises the Poisson histogram likelihood
+[BakerCousins1984]_, including zero-count bins. For deadtime-corrected observations
 this is an estimating objective; its uncertainty uses the supplied count
 variance through the estimator's linearised influence. The fitted rate is reported with its
 uncertainty, e.g. 0.23(11) counts/μs, and flagged when it is consistent
 with zero.
 
-*When to use this.* Pulsed-source (ISIS) data analysed to long times. The
-expected result at ISIS is a rate consistent with zero — the duty factor
-suppresses the background below measurability in most runs — so treat a
-significantly non-zero rate as a diagnostic worth understanding (light
-leak, detector noise, upstream stops) rather than as routine. Two caveats:
-the asymmetry must have relaxed away by the fit window (a persistent
-oscillation or slow relaxation biases :math:`p_2`), and the window needs
-enough bins to constrain two parameters; both produce explicit failure
-messages rather than silent numbers.
+This mode is useful for pulsed-source data analysed to long times. Persistent
+polarisation or another departure from the exponential-plus-flat model can
+change the estimated level even when the numerical optimum is well determined.
+Convergence does not detect that model error. Asymmetry requires at least five
+observations, a positive total, identifiable expected information, and finite
+positive propagated uncertainty. A positive decay amplitude that cannot be
+represented at the declared time zero also fails, preserving the meaning of
+the returned physical parameters. The five-bin minimum is a conservative
+implementation rule, not a universal statistical requirement. These checks
+establish numerical estimability; they do not certify the physical model or
+interval coverage at a parameter boundary.
 
-This is WiMDA's auto BG mode (and equivalent to Mantid's "Auto" flat +
-exp-decay correction). WiMDA weights bins by :math:`\sqrt{N}` and deletes
-bins holding ≤ 4 counts, which removes essentially the whole tail at fine
-binning; the Poisson-likelihood fit needs no such surgery (study record:
-divergence D4).
+.. dropdown:: Stable likelihood optimisation
+
+   Write the expected counts as :math:`\mu_i=T p_i(f)`, where
+   :math:`p_i(f)=f d_i+(1-f)/m`, :math:`d_i` is the exponential shape normalised
+   over the :math:`m` selected bins, and :math:`0\leq f\leq1`. The total
+   expected count has the analytic optimum :math:`\hat T=\sum_i n_i`.
+   The remaining log likelihood is concave in :math:`f`; its monotone score
+   determines either a bracketed root or a boundary optimum. Normalising the
+   shape on the selected bins makes the fitted flat rate invariant under an
+   equivalent time-origin/amplitude change on identical observations.
+   Expected-information uncertainty is evaluated in anchored count coordinates
+   before conversion to rate units. The reported amplitude retains its meaning
+   at time zero.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA 1.326 **Auto BG** fits a fixed-lifetime exponential plus flat rate to
+the late half of grouped output points, using count-error weighting and
+negligible weight for observations with at most four counts. In Mantid 6.16.1,
+the Muon automatic correction uses ``FlatBackground + ExpDecayMuon`` with a
+fixed lifetime and default weighted least squares; its caller does not impose
+nonnegative parameters. These objectives and selected observations can differ
+from Asymmetry's native-bin constrained Poisson estimate. Noisy-data results
+need not agree, even when exact exponential-plus-flat means do.
+
+musrfit 1.12.1 (``708f777b``) averages a selected region in its asymmetry
+preparation. A fitted background in a single-histogram count fit is part of a
+joint model, rather than an equivalent automatic tail-subtraction step.
+Asymmetry also retains the level shared by corrected bins and its covariance
+with the estimating observations. Matching a central level does not establish
+matching corrected errors. See :ref:`comparison-count-backgrounds` for the
+comparison's scope and uncertainty differences.
 
 Background run
 --------------
@@ -336,3 +369,7 @@ treats its points as independent and does not carry these shared components.
 
 .. [Fisher1922] R. A. Fisher, Philos. Trans. R. Soc. A **222**,
    309–368 (1922). `doi:10.1098/rsta.1922.0009 <https://doi.org/10.1098/rsta.1922.0009>`_.
+
+.. [BakerCousins1984] S. Baker and R. D. Cousins, Nucl. Instrum. Methods **221**,
+   437–442 (1984). `doi:10.1016/0167-5087(84)90016-4
+   <https://doi.org/10.1016/0167-5087(84)90016-4>`_.

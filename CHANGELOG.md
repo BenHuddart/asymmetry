@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stabilise Poisson tail-background fits across equivalent time origins and count
+  scales, retaining native-bin estimates and shared uncertainty propagation.
+
 - Keep residual-DT₀ fits usable while withholding calibration promotion after a
   skipped File correction; isolate cached reference runs sharing a source file.
 

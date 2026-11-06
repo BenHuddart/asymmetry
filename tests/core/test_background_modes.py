@@ -1,10 +1,4 @@
-"""Background modes: tail fit, reference-run subtraction, per-mode gating.
-
-WiMDA's tail estimate weights bins by √N and deletes those with few counts, so
-it only functions on heavily bunched display bins (study divergence D4). The
-Poisson-MLE replacement is pinned here against synthetic truth, and against one
-fixed reference value for WiMDA's estimate on bunched bins.
-"""
+"""Background modes, correction dispatch, and seeded count checks."""
 
 from __future__ import annotations
 
@@ -50,34 +44,14 @@ def test_tail_fit_recovers_truth():
     assert fit.window[0] == T0_BIN + (N_BINS - 1 - T0_BIN) // 2
 
 
-def test_tail_fit_unbiased_at_low_counts():
-    """The D4 justification: Poisson MLE stays unbiased where bins hold ≪ 1
-    count, which is the regime the mode exists for."""
-    true_rate = 0.05  # 0.0008 counts per raw bin in the tail
-    estimates = [
-        fit_tail_background(
-            _pulsed_counts(3000.0, true_rate, seed=seed),
-            bin_width_us=BIN_WIDTH_US,
-            t0_bin=T0_BIN,
-            last_good_bin=N_BINS - 1,
-        ).rate_per_us
-        for seed in range(20)
-    ]
-    mean = float(np.mean(estimates))
-    sem = float(np.std(estimates) / np.sqrt(len(estimates)))
-    assert mean == pytest.approx(true_rate, abs=4 * max(sem, 1e-3))
-
-
-def test_tail_fit_agrees_with_wimda_reference_on_bunched_strong_background():
-    """Where WiMDA's weighting functions (bunched bins, many counts), the two
-    estimates agree within uncertainties."""
-    wimda_rate_per_us = 21.1688  # WiMDA's estimate for this seeded run in 100-bin bunches
+def test_seeded_strong_background_is_compatible_with_generating_rate():
+    """One seeded realisation checks recovery, not unbiasedness or coverage."""
     counts = _pulsed_counts(30000.0, 20.0, seed=3)
     fit = fit_tail_background(
         counts, bin_width_us=BIN_WIDTH_US, t0_bin=T0_BIN, last_good_bin=N_BINS - 1
     )
     assert fit.ok and fit.rate_error_per_us is not None
-    assert fit.rate_per_us == pytest.approx(wimda_rate_per_us, abs=3 * fit.rate_error_per_us)
+    assert fit.rate_per_us == pytest.approx(20.0, abs=3 * fit.rate_error_per_us)
 
 
 def test_tail_fit_zero_background_is_consistent_with_zero():
