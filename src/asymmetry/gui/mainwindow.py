@@ -314,7 +314,7 @@ from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_edi
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
-from asymmetry.gui.utils.reduction_cache import ReductionCache
+from asymmetry.gui.utils.reduction_cache import ReductionCache, histogram_content_key
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -9811,7 +9811,7 @@ class MainWindow(QMainWindow):
         )
         self._set_fourier_status(
             f"MaxEnt batch: reconstructed {sent} run(s); moments sent to trend."
-            + " ".join(messages)
+            + (" " + " ".join(messages) if messages else "")
         )
 
     def _abort_maxent_batch(self) -> None:
@@ -16090,11 +16090,7 @@ class MainWindow(QMainWindow):
         *,
         lifetime_corrected: bool = True,
     ) -> list[MuonDataset]:
-        """Return grouped time-domain display datasets for the active dataset.
-
-        ``lifetime_corrected=False`` yields the Raw counts view's uncorrected
-        per-group histograms.
-        """
+        """Return grouped displays; Raw counts omit lifetime scaling."""
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
@@ -16110,7 +16106,10 @@ class MainWindow(QMainWindow):
         if run is None or not run.histograms:
             return []
 
-        key = (*self._grouped_time_domain_cache_key(run, lifetime_corrected), display_factor)
+        recipe = self._grouped_time_domain_cache_key(run, lifetime_corrected)
+        if recipe is None:
+            return []
+        key = (*recipe, display_factor)
 
         def _compute() -> list[MuonDataset]:
             return build_grouped_time_domain_datasets(
@@ -16130,16 +16129,15 @@ class MainWindow(QMainWindow):
         # display/RRF consumers may transform arrays in place.
         return [_copy_grouped_dataset(ds) for ds in cached]
 
-    def _grouped_time_domain_cache_key(self, run: object, lifetime_corrected: bool) -> tuple:
-        """Key grouped counts by recipe, source arrays, timing and exposure.
-
-        Array replacement changes both observations and supplied variance;
-        grouping edits alone cannot identify those changes.
-        """
-        grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else {}
+    def _grouped_time_domain_cache_key(self, run: Run, lifetime_corrected: bool) -> tuple | None:
+        """Key grouped counts by full source contents, recipe, timing and exposure."""
+        content = histogram_content_key(run.histograms, self)
+        if content is None:
+            return None
+        grouping = run.grouping
         return (
             fourier_grouping_digest(run),
-            tuple((id(h.counts), id(h.count_variance)) for h in run.histograms),
+            content,
             bool(lifetime_corrected),
             _included_groups_key(grouping),
             grouping.get("good_frames"),

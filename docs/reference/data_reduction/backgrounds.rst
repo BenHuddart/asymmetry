@@ -101,7 +101,10 @@ corrected analysis. Final reduction requires complete outcomes by default.
 An accepted tail skip keeps **Apply** enabled and displays "Correction warning"
 on the resulting dataset. Cached and restored results retain requested mode,
 status, and reason; changing the data or selection recomputes the decision and
-clears stale fitted levels. Automatic alpha calibration uses the same contributing
+clears stale fitted levels. Grouped count displays compare the contents of count
+and supplied-variance arrays, including in-place edits. Large input checks show
+"Checking histogram data…" with **Cancel** while the interface remains responsive;
+a cancelled check does not populate the cache. Automatic alpha calibration uses the same contributing
 period decision; fixed and one-shot calibrated values remain authored.
 
 .. image:: /_generated/screenshots/grouping_tail_background_warning.png

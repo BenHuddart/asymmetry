@@ -158,3 +158,63 @@ def test_maxent_completion_and_cached_display_show_actual_skip(qapp):
         assert "background subtraction skipped" in window.statusBar().currentMessage()
     finally:
         window.close()
+
+
+def test_in_place_count_edit_refreshes_grouped_data_and_tail_warning(qapp):
+    dataset = _histogram_dataset(forward=np.full(200, 100.0), backward=np.full(200, 80.0))
+    dataset.run.grouping.update(background_correction=True, background_mode="tail_fit")
+    window = MainWindow()
+    try:
+        first = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+        assert not correction_warnings(first[0].metadata)
+        counts = dataset.run.histograms[1].counts
+        counts[99:] = 0
+        skipped = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+        assert dataset.run.histograms[1].counts is counts
+        assert correction_warnings(skipped[0].metadata)
+        np.testing.assert_array_equal(skipped[1].asymmetry, counts)
+        counts[99:] = 80
+        recovered = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+        assert not correction_warnings(recovered[0].metadata)
+    finally:
+        window.close()
+
+
+def test_in_place_supplied_variance_edit_refreshes_grouped_errors(qapp):
+    dataset = _histogram_dataset(forward=np.full(200, 100.0), backward=np.full(200, 80.0))
+    variance = np.full(200, 4.0)
+    dataset.run.histograms[0].count_variance = variance
+    window = MainWindow()
+    try:
+        first = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+        variance[:] = 9
+        changed = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+        np.testing.assert_array_equal(first[0].error, 2)
+        np.testing.assert_array_equal(changed[0].error, 3)
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize("has_warning", [False, True])
+def test_maxent_batch_completion_separates_warning_without_trailing_space(
+    qapp, monkeypatch, has_warning
+):
+    from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionOutcomes
+
+    dataset = _histogram_dataset()
+    if has_warning:
+        outcome = CorrectionOutcome("background", "tail_fit", "skipped", "empty tail")
+        dataset.metadata["correction_outcomes"] = {
+            "red": CorrectionOutcomes(background=outcome).to_dict()
+        }
+    window = MainWindow()
+    try:
+        monkeypatch.setattr(window._data_browser, "get_selected_datasets", lambda: [dataset])
+        monkeypatch.setattr(window, "_frequency_spectra_from_cache", lambda *args: [dataset])
+        window._maxent_batch_done = 1
+        window._advance_maxent_batch()
+        message = window.statusBar().currentMessage()
+        completion = "MaxEnt batch: reconstructed 1 run(s); moments sent to trend."
+        assert message == completion + (" " + outcome.warning if has_warning else "")
+    finally:
+        window.close()
