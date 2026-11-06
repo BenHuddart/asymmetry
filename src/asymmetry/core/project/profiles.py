@@ -132,7 +132,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
     ReferenceResolver,
-    corrected_grouped_counts,
+    corrected_period_counts,
     correction_flags_from_grouping,
 )
 from asymmetry.core.transform.t0 import (
@@ -1613,33 +1613,30 @@ def _estimate_run_alpha(
     *,
     reference_resolver: ReferenceResolver | None = None,
 ) -> float:
-    """Forward/backward integral-ratio alpha for this run (Mantid ``AlphaCalc``).
+    """Estimate native-window alpha after the contributing-period correction decision.
 
-    Estimates on the *corrected* forward/backward counts — deadtime-corrected,
-    grouped and background-subtracted by :func:`corrected_grouped_counts`, exactly
-    the spectra the reduction forms the asymmetry from — so the balance centres
-    the reduced (background-subtracted) asymmetry rather than the raw totals (see
-    the correction-order reference). Deadtime and background policies must
-    already be resolved. An unusable ratio retains the request for repair.
+    Both groups use actual available counts; fixed/calibrated policies bypass
+    this estimator. Native binning retains trailing bins for the integral ratio.
     """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
     flags = correction_flags_from_grouping(grouping)
-    corrected = corrected_grouped_counts(
-        histograms=run.histograms,
-        grouping=grouping,
+    periods = corrected_period_counts(
+        run.histograms,
+        grouping,
+        str(grouping.get("period_mode", "red")),
+        binning=BinningSpec(),
         forward_idx=forward_idx,
         backward_idx=backward_idx,
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        # facility left to derive from the run's own metadata (falling back to
-        # the grouping's canonical instrument name).
         metadata=run.metadata,
         reference_resolver=reference_resolver,
     )
+    corrected = next(iter(periods.values()))
     return estimate_alpha(
         corrected.forward.counts,
         corrected.backward.counts,

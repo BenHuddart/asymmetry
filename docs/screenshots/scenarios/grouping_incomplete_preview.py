@@ -17,6 +17,7 @@ class IncompletePreviewScenario(Scenario):
     description = "Missing background reference and disabled Apply."
     size = (1180, 780)
     complete = False
+    count_levels = (120.0, 80.0)
     correction_settings = {
         "background_correction": True,
         "background_mode": "reference_run",
@@ -28,7 +29,9 @@ class IncompletePreviewScenario(Scenario):
         time = np.arange(200) * 0.02
         run = Run(
             run_number=8102,
-            histograms=[Histogram(np.full(200, level), bin_width=0.02) for level in (120.0, 80.0)],
+            histograms=[
+                Histogram(np.full(200, level), bin_width=0.02) for level in self.count_levels
+            ],
             grouping={
                 "instrument": "generic_layout",
                 "groups": {1: [1], 2: [2]},
@@ -99,5 +102,14 @@ class FileDeadtimeWarningScenario(IncompletePreviewScenario):
     correction_settings = {"deadtime_correction": True, "deadtime_mode": "file", "dead_time_us": []}
 
 
+class TailBackgroundWarningScenario(IncompletePreviewScenario):
+    name = "grouping_tail_background_warning"
+    description = "Unusable automatic tail with visible warning and enabled Apply."
+    complete = True
+    count_levels = (120.0, 0.0)
+    correction_settings = {"background_correction": True, "background_mode": "tail_fit"}
+
+
+register(TailBackgroundWarningScenario())
 register(IncompletePreviewScenario())
 register(FileDeadtimeWarningScenario())

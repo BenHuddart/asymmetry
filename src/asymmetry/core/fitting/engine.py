@@ -23,7 +23,11 @@ from asymmetry.core.fitting.likelihood import (
     poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.corrections import require_complete_dataset
+from asymmetry.core.transform.corrections import (
+    correction_metadata,
+    correction_warnings,
+    require_complete_dataset,
+)
 from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
@@ -624,6 +628,7 @@ class FitResult:
     minos_errors: dict[str, tuple[float, float]] | None = None
     #: Fit warnings are both retained here and emitted through Python warnings.
     warnings: list[str] = field(default_factory=list)
+    correction_metadata: dict = field(default_factory=dict)
     deadtime_calibration: DeadtimeCalibration | None = None
     #: Minimum over the whole minimized objective, shared by coupled members.
     minimum_expected_count: float | None = None
@@ -1486,7 +1491,7 @@ def _pack_coupled_block(
         dataset_dof = ndata - nfree
         red_chi2 = dataset_chi2 / max(dataset_dof, 1)
         minos_errors_result = minos_errors or None
-        dataset_warnings: list[str] = []
+        dataset_warnings = list(correction_warnings(ds.metadata))
         if error_oversampling > 1.0:
             (
                 dataset_chi2,
@@ -1535,6 +1540,7 @@ def _pack_coupled_block(
             dof=dataset_dof,
             minos_errors=minos_errors_result,
             warnings=dataset_warnings,
+            correction_metadata=correction_metadata(ds.metadata),
         )
 
     return results, fitted_global, global_uncertainties
@@ -1658,39 +1664,15 @@ class FitEngine:
             it is bit-for-bit identical to wrapping ``model_fn`` with
             :func:`~asymmetry.core.fitting.rrf_offset.rrf_offset_model`.
         error_oversampling : float, optional
-            Correction for correlated samples, keyword-only, default ``1.0`` (no
-            correction). A zero-padded FFT spectrum is sinc-interpolated: padding
-            by a factor ``s`` densifies the sampled points but does not add
-            independent information, so only ``~1/s`` of the points are
-            statistically independent. Fitting every sample as if independent
-            overcounts the χ² sum by ``~s`` and underestimates parameter
-            uncertainties by ``~√s``. Pass the spectrum's zero-padding factor
-            (``metadata["fourier_padding"]`` from
-            :func:`asymmetry.core.fourier.spectrum.compute_average_group_spectrum`)
-            here; for time-domain or count fits this correction is meaningless
-            and callers pass the default ``1.0``.
-
-            WiMDA's precedent is to divide the reported
-            dof by the zero-pad factor but leaves χ²
-            and the parameter errors untouched. This implementation is the fully
-            consistent version: when ``error_oversampling`` (``s``) is greater
-            than 1,
-
-            * the effective point count is
-              ``ndata_eff = max(round(ndata / s), 1)``;
-            * ``dof = max(ndata_eff - nfree, 1)``;
-            * the minimised χ² summed ``s×`` too many correlated terms, so
-              ``chi_squared = m.fval / s`` and
-              ``reduced_chi_squared = chi_squared / dof``;
-            * Minuit's HESSE/MINOS errors come from the curvature of the
-              *overcounted* χ², so every entry of ``uncertainties`` is scaled by
-              ``√s``, the ``covariance`` matrix by ``s``, and every
-              ``minos_errors`` bound by ``√s``;
-            * the fitted parameter *values* are untouched — the overcounting
-              scales the curvature, not the location of the minimum.
-
-            A ``FitResult.warnings`` advisory records the applied correction so
-            it stays visible wherever the fit result is surfaced.
+            For zero-padded FFT data, pass the spectrum's padding factor ``s``
+            (``metadata["fourier_padding"]``); native time/count fits use ``1.0``.
+            Interpolation adds samples without independent information. For
+            ``s > 1``, the effective point count is ``max(round(ndata / s), 1)``
+            and ``dof = max(ndata_eff - nfree, 1)``. The reported chi-squared is
+            ``m.fval / s``; reduced chi-squared uses that value and effective dof.
+            HESSE/MINOS errors scale by ``sqrt(s)`` and covariance by ``s``;
+            fitted parameter values remain unchanged. ``FitResult.warnings``
+            records this approximate correction for correlated observations.
 
         Returns
         -------
@@ -1805,7 +1787,7 @@ class FitEngine:
         error_oversampling: float,
         field_source: MuonDataset | None,
     ) -> FitResult:
-        """Minimize a checked observation value; metadata supplies only field advisories."""
+        """Minimize checked observations, retaining field advisories and correction provenance."""
         cost_factory = (
             GAUSSIAN_COST if isinstance(observations, GaussianObservations) else POISSON_COST
         )
@@ -1891,10 +1873,7 @@ class FitEngine:
 
         # Create Minuit object
         initial_values = [p.value for p in free]
-        # Run the advisory guards under a recording catch so their warnings can
-        # be carried back on the FitResult for the GUI to surface — then re-emit
-        # each, so stderr/logging and any outer catch_warnings still observe them
-        # exactly as before (the engine stays a transparent pass-through).
+        # Retain fit advisories while re-emitting every warning to the caller.
         with warnings.catch_warnings(record=True) as caught_advisories:
             warnings.simplefilter("always")
             # Advisory guard: flag the percent-vs-fraction trap before fitting.
@@ -1908,12 +1887,7 @@ class FitEngine:
             # compare a pinned frequency against.
             if not frequency_offsets and field_source is not None:
                 _warn_on_fixed_frequency_far_from_field(field_source, parameters)
-        # Carry only the two advisory categories to the GUI — the scale guard
-        # evaluates the seeded model inside this block, so an incidental numerical
-        # warning (e.g. a RuntimeWarning from overflow in exp at a poor seed) must
-        # not masquerade as a fit advisory. Re-emit *every* captured warning,
-        # though, so non-advisory ones still propagate to stderr/logging exactly
-        # as they did before this block existed.
+        # Numerical seed warnings are re-emitted but are not fit advisories.
         advisory_warnings = [
             str(w.message)
             for w in caught_advisories
@@ -2080,7 +2054,18 @@ class FitEngine:
         dof = ndata - nfree
         covariance = m.covariance if m.valid else None
         minos_errors_result = minos_errors or None
-        result_warnings = list(advisory_warnings)
+        result_warnings = list(
+            dict.fromkeys(
+                [
+                    *advisory_warnings,
+                    *(
+                        correction_warnings(field_source.metadata)
+                        if field_source is not None
+                        else []
+                    ),
+                ]
+            )
+        )
         if error_oversampling > 1.0:
             (
                 chi_squared,
@@ -2131,6 +2116,9 @@ class FitEngine:
             dof=dof,
             minos_errors=minos_errors_result,
             warnings=result_warnings,
+            correction_metadata=correction_metadata(field_source.metadata)
+            if field_source is not None
+            else {},
         )
 
     # --- global fit -----------------------------------------------------
@@ -2963,7 +2951,7 @@ class FitEngine:
             dataset_chi2 = float(inner.chi_squared)
             dataset_dof = ndata - nfree
             dataset_reduced_chi2 = dataset_chi2 / max(dataset_dof, 1)
-            dataset_warnings: list[str] = []
+            dataset_warnings = list(correction_warnings(ds.metadata))
             if error_oversampling > 1.0:
                 (
                     dataset_chi2,
@@ -3007,6 +2995,7 @@ class FitEngine:
                 covariance_accurate=covariance_accurate,
                 dof=dataset_dof,
                 warnings=dataset_warnings,
+                correction_metadata=correction_metadata(ds.metadata),
             )
 
         return results, fitted_global

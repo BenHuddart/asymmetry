@@ -17,6 +17,14 @@ fit:
   the natural mode for continuous-source data where a single detector already
   carries the full decay envelope.
 
+The grouping background preflight retains its typed decisions as
+``count_background_preflight``. An unusable automatic tail is a warned skip,
+coordinated over the count groups contributing to the fit. Count inputs retain
+their full background: the joint count model still owns its background nuisance.
+Fit warnings and saved summaries retain the preflight request, status, and
+reason; an applied preflight records an available estimate, not subtraction
+from the joint model's observations.
+
 *When to use this.* Reach for the **free-α** fit whenever you need a defensible α from a
 calibration measurement and want its uncertainty and — importantly — its
 correlation with the signal amplitude. In a transverse field the count balance

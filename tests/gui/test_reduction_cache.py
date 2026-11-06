@@ -564,3 +564,88 @@ def test_rebunch_keys_each_periods_exposure(mainwindow):
     second = mainwindow._counts_first_rebunched_arrays(dataset, 2)
     assert calls["n"] == 2
     assert not np.array_equal(first[1], second[1])
+
+
+def test_large_histogram_fingerprint_runs_off_thread_with_modal_wait(qapp):
+    import threading
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QWidget
+
+    from asymmetry.gui.utils import reduction_cache
+
+    parent = QWidget()
+    parent.show()
+    histogram = Histogram(np.arange(20000, dtype=float), 0.1)
+    original = reduction_cache._histogram_array_fingerprints
+    threads, modal = [], []
+    gui_thread = threading.get_ident()
+
+    def scan(arrays, worker=None):
+        threads.append(threading.get_ident())
+        return original(arrays, worker)
+
+    def inspect_modal():
+        modal.append(QApplication.activeModalWidget().parent() is parent)
+
+    QTimer.singleShot(0, inspect_modal)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(reduction_cache, "_histogram_array_fingerprints", scan)
+        first = reduction_cache.histogram_content_key([histogram], parent)
+    assert threads and all(thread != gui_thread for thread in threads)
+    assert modal == [True]
+    histogram.counts[-1] += 1
+    assert reduction_cache.histogram_content_key([histogram], parent) != first
+    parent.close()
+
+
+@pytest.mark.parametrize("action", ["button", "escape", "reject", "close"])
+def test_large_histogram_fingerprint_cancellation_does_not_return_a_key(qapp, monkeypatch, action):
+    import time
+
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton, QWidget
+
+    from asymmetry.gui.tasks import check_task_cancelled
+    from asymmetry.gui.utils import reduction_cache
+
+    parent = QWidget()
+    parent.show()
+
+    def wait_for_cancel(arrays, worker):
+        while not worker.is_cancelled():
+            time.sleep(0.001)
+        check_task_cancelled(worker)
+
+    def cancel():
+        dialog = QApplication.activeModalWidget()
+        if action == "button":
+            dialog.findChild(QPushButton).click()
+        elif action == "escape":
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+        elif action == "reject":
+            dialog.reject()
+        else:
+            dialog.close()
+        assert dialog.isVisible()
+        assert QApplication.activeModalWidget() is dialog
+
+    monkeypatch.setattr(reduction_cache, "_histogram_array_fingerprints", wait_for_cancel)
+    QTimer.singleShot(0, cancel)
+    assert reduction_cache.histogram_content_key([Histogram(np.zeros(20000), 0.1)], parent) is None
+    parent.close()
+
+
+def test_histogram_fingerprint_covers_layout_and_absent_variance(qapp):
+    from asymmetry.gui.utils.reduction_cache import histogram_content_key
+
+    values = np.arange(30, dtype=float)[::2]
+    raw = Histogram(values, 0.1)
+    baseline = histogram_content_key([raw], None)
+    assert histogram_content_key([Histogram(values.copy(), 0.1)], None) == baseline
+    values[-1] += 1
+    assert histogram_content_key([raw], None) != baseline
+    assert histogram_content_key(
+        [Histogram(values, 0.1, count_variance=values)], None
+    ) != histogram_content_key([raw], None)

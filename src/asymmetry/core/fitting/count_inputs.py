@@ -12,7 +12,10 @@ from asymmetry.core.fitting.count_corrections import (
     count_background_domain,
     require_count_background,
 )
-from asymmetry.core.transform.corrections import require_complete_dataset
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    require_complete_dataset,
+)
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import effective_group_indices, resolve_alignment
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
@@ -57,6 +60,7 @@ class _CountGroupContext:
     #: Exact-t0 residual from the common bin centre, in µs.
     t0_residual_us: float
     group_names: dict[Any, Any]
+    background_preflight: dict[str, CorrectionOutcome]
 
 
 def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
@@ -152,8 +156,9 @@ def _count_group_context(
         domain,
         use_deadtime=bool(grouping.get("deadtime_correction", False)),
     )
+    background = {}
     if correction_flags_from_grouping(grouping).use_background:
-        require_count_background(prepared, grouping, group_specs, run.metadata)
+        background = require_count_background(prepared, grouping, group_specs, run.metadata)
     return _CountGroupContext(
         run=run,
         prepared=prepared,
@@ -165,6 +170,7 @@ def _count_group_context(
         axis_start=axis_start,
         t0_residual_us=t0_residual_us,
         group_names=group_names,
+        background_preflight=background,
     )
 
 
@@ -230,6 +236,9 @@ def _build_one_count_group(
             "group_id": int(group_id),
             "group_name": str(group_name),
             "grouped_time_domain": True,
+            "count_background_preflight": {
+                label: outcome.to_dict() for label, outcome in ctx.background_preflight.items()
+            },
             "grouped_alignment": ctx.alignment.to_dict(),
             "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),

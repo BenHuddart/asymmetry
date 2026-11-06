@@ -8,6 +8,7 @@ exposure; authored corrections remain separate from those acquisition facts.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import zip_longest
 from typing import TYPE_CHECKING
 
@@ -482,14 +483,7 @@ def combine_period_asymmetry(
 
 
 def _clone_histogram(hist: Histogram) -> Histogram:
-    return Histogram(
-        counts=np.asarray(hist.counts, dtype=np.float64).copy(),
-        bin_width=float(hist.bin_width),
-        t0_bin=int(hist.t0_bin),
-        good_bin_start=int(hist.good_bin_start),
-        good_bin_end=int(hist.good_bin_end),
-        t0_time_us=hist.t0_time_us,
-    )
+    return replace(hist, counts=np.asarray(hist.counts, dtype=np.float64).copy())
 
 
 def _clone_histograms(histograms: list[Histogram]) -> list[Histogram]:

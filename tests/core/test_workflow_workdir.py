@@ -58,7 +58,8 @@ def reduced(workflow_folder: Path, tmp_path: Path):
             prefix="SIM",
             run_number=run_number,
             precession=precession_evidence(dataset, dataset_in.field),
-        ).to_dict(),
+        ).to_dict()
+        | {"correction_outcomes": dataset.metadata["correction_outcomes"]},
         alpha=float(grouping["alpha"]),
         deadtime_mode=str(grouping["deadtime_mode"]),
         forward_group=int(grouping["forward_group"]),
@@ -571,3 +572,16 @@ def test_full_input_deadtime_cache_is_stale_but_historical_result_remains_readab
     restored = workdir.reduced(entry.run_number)
     np.testing.assert_array_equal(restored.time, dataset.time)
     np.testing.assert_array_equal(restored.asymmetry, dataset.asymmetry)
+
+
+def test_tail_policy_invalidates_old_cache_but_preserves_readable_results(reduced, monkeypatch):
+    import asymmetry.core.workflow.workdir as module
+
+    workdir, dataset, entry, path, grouping, settings = reduced
+    with monkeypatch.context() as old:
+        old.setattr(module, "TAIL_BACKGROUND_POLICY_REVISION", 0)
+        digest = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+    workdir.write_reduced(dataset, dataclasses.replace(entry, digest=digest))
+    current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+    assert not workdir.is_current(entry.run_number, current)
+    np.testing.assert_array_equal(workdir.reduced(entry.run_number).asymmetry, dataset.asymmetry)

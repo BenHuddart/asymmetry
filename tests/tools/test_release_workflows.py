@@ -202,3 +202,15 @@ def test_standard_ci_uses_the_native_per_test_watchdog() -> None:
     run = next(step["run"] for step in steps if step.get("name") == "Run test suite")
     options = shlex.split(run.partition(" -- ")[2])
     assert ("-o", "faulthandler_timeout=600") in tuple(zip(options, options[1:]))
+
+
+def test_pages_allows_slow_sync_with_a_bounded_job_and_cleanup() -> None:
+    job = _workflow("docs-pages.yml")["jobs"]["deploy-pages"]
+    deploy = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/deploy-pages@")
+    )
+    timeout_ms = int(deploy.get("with", {}).get("timeout", 600000))
+    assert timeout_ms > 600000
+    assert timeout_ms < job["timeout-minutes"] * 60000 <= 30 * 60000
+    cleanup = next(step for step in job["steps"] if step["name"] == "Delete github-pages artifact")
+    assert cleanup["if"] == "always()"

@@ -13,6 +13,8 @@ from typing import Any
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
+TAIL_BACKGROUND_POLICY_REVISION = 1
+
 
 class CorrectionStatus(StrEnum):
     OFF = "off"
@@ -75,11 +77,11 @@ class CorrectionOutcome:
             raise ValueError("correction uncertainty status must be a string")
         if self.effective is not None and not isinstance(self.effective, Mapping):
             raise ValueError("effective correction values require a mapping")
-        if status == CorrectionStatus.SKIPPED and (self.name, self.requested) != (
-            "deadtime",
-            "from_file",
-        ):
-            raise ValueError("only unavailable File deadtime calibration can be skipped")
+        if status == CorrectionStatus.SKIPPED and (self.name, self.requested) not in {
+            ("deadtime", "from_file"),
+            ("background", "tail_fit"),
+        }:
+            raise ValueError("only File deadtime and automatic tail background can be skipped")
         needs_reason = status in {
             CorrectionStatus.SKIPPED,
             CorrectionStatus.UNAVAILABLE,
@@ -110,7 +112,9 @@ class CorrectionOutcome:
 
     @property
     def warning(self) -> str | None:
-        """The shared warning for an accepted uncorrected File result."""
+        """Describe the accepted skip without hiding other applied corrections."""
+        if self.status == CorrectionStatus.SKIPPED and self.name == "background":
+            return f"Automatic tail background subtraction skipped: {self.reason} Background remains unsubtracted for the entire result."
         if self.status == CorrectionStatus.SKIPPED:
             return f"File deadtime correction not applied: {self.reason} Continuing uncorrected."
         return None
@@ -239,11 +243,41 @@ def background_grouping_metadata(outcomes: Mapping[str, CorrectionOutcomes]) -> 
 
 def correction_warnings(metadata: Mapping[str, Any]) -> tuple[str, ...]:
     """Recover accepted correction warnings from immutable result provenance."""
-    return tuple(
-        dict.fromkeys(
-            outcome.warning
-            for record in metadata.get("correction_outcomes", {}).values()
-            for outcome in (CorrectionOutcomes.from_dict(record).deadtime,)
-            if outcome.warning is not None
+    outcomes = [
+        outcome
+        for record in metadata.get("correction_outcomes", {}).values()
+        for outcome in (
+            CorrectionOutcomes.from_dict(record).deadtime,
+            CorrectionOutcomes.from_dict(record).background,
         )
+    ]
+    outcomes.extend(
+        CorrectionOutcome.from_dict(record)
+        for record in metadata.get("count_background_preflight", {}).values()
     )
+    return tuple(
+        dict.fromkeys(outcome.warning for outcome in outcomes if outcome.warning is not None)
+    )
+
+
+def result_tail_skip(outcomes: Mapping[str, CorrectionOutcome]) -> CorrectionOutcome | None:
+    """One scientific result cannot mix applied and skipped automatic backgrounds."""
+    if any(not outcome.usable for outcome in outcomes.values()):
+        return None
+    reasons = [
+        f"{label}: {outcome.reason}"
+        for label, outcome in outcomes.items()
+        if outcome.name == "background" and outcome.status == CorrectionStatus.SKIPPED
+    ]
+    if not reasons:
+        return None
+    return CorrectionOutcome("background", "tail_fit", CorrectionStatus.SKIPPED, "; ".join(reasons))
+
+
+def correction_metadata(metadata: Mapping[str, Any]) -> dict:
+    """Copy correction provenance independently of transient display metadata."""
+    return {
+        key: _export_effective(_freeze_effective(metadata[key]))
+        for key in ("correction_outcomes", "count_background_preflight")
+        if key in metadata
+    }

@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from asymmetry.core.data.dataset import Run
-from asymmetry.core.fourier.group_background import group_background_payload
+from asymmetry.core.fourier.group_background import (
+    _apply_group_background_correction,
+    group_background_payload,
+)
 from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
 from asymmetry.core.transform.background import (
+    BackgroundCorrectionResult,
     grouped_background_ranges,
     resolve_background_mode,
     resolve_facility,
     tail_background_window,
 )
+from asymmetry.core.transform.corrections import CorrectionOutcomes, result_tail_skip
 from asymmetry.core.transform.deadtime import deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import (
@@ -72,6 +78,16 @@ class GroupPreparation:
     reference: ScopedCounts | None
     reference_scale: float | None
     time_range: tuple | None
+    backgrounds: dict[int, BackgroundCorrectionResult]
+
+    def correction_metadata(self) -> dict:
+        """Expose actual outcomes for every contributing group, including skips."""
+        return {
+            "correction_outcomes": {
+                str(gid): CorrectionOutcomes(self.sample.outcome, result.outcome).to_dict()
+                for gid, result in self.backgrounds.items()
+            }
+        }
 
     def require_request(self, run, group_id, use_deadtime, reference_t0_bin, time_range):
         """Reject stale products or a group outside the prepared cohort."""
@@ -193,6 +209,31 @@ def prepare_group_counts(
         ScopedCounts.prepare(h, g, domain, use_deadtime=apply_deadtime)
         for (h, g), domain in zip(inputs, domains, strict=True)
     ]
+    backgrounds, original = {}, {}
+    for group_id, layout in layouts.items():
+        indices = effective_group_indices(grouping, group_id, n_histograms=len(histograms))
+        original[group_id] = products[0].aligned(indices, layout.alignment)
+        backgrounds[group_id] = _apply_group_background_correction(
+            original[group_id],
+            grouping=layout.grouping,
+            group_id=group_id,
+            t0_bin=layout.alignment.common_t0_bin,
+            background_t0_bin=layout.background_t0,
+            bin_width=histograms[indices[0]].bin_width,
+            metadata=run.metadata,
+            source_file=run.source_file,
+            reference_counts=products[1].aligned(indices, layout.reference_alignment)
+            if reference is not None
+            else None,
+            reference_scale=reference.scale if reference is not None else None,
+        )
+    skip = result_tail_skip({str(gid): result.outcome for gid, result in backgrounds.items()})
+    if skip is not None:
+        warnings.warn(skip.warning, UserWarning, stacklevel=2)
+        backgrounds = {
+            gid: replace(result, forward=original[gid], backward=original[gid], outcome=skip)
+            for gid, result in backgrounds.items()
+        }
     return GroupPreparation(
         preparation_identity(run),
         apply_deadtime,
@@ -202,4 +243,5 @@ def prepare_group_counts(
         products[1] if reference is not None else None,
         reference.scale if reference is not None else None,
         time_range,
+        backgrounds,
     )

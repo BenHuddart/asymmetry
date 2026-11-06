@@ -69,11 +69,13 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
 )
+from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
 from asymmetry.core.transform.fb_counts import (
-    BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
     linear_combination_variance,
+    native_count_time,
+    native_time_window,
     validated_count_arrays,
 )
 from asymmetry.core.transform.grouping import (
@@ -81,12 +83,14 @@ from asymmetry.core.transform.grouping import (
     effective_grouping,
     resolve_forward_backward_layout,
 )
+from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.reduce import (
     corrected_grouped_counts,
+    corrected_period_counts,
     correction_flags_from_grouping,
 )
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
-from asymmetry.core.utils.constants import ORDER_KEYS
+from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable
@@ -232,6 +236,15 @@ def integrate_curve(
     return _mean_over_window(a[:n], e[:n], mask)
 
 
+@dataclass(frozen=True)
+class IntegralReduction:
+    """Integral value and error with the correction decisions that produced them."""
+
+    value: float
+    error: float
+    corrections: CorrectionOutcomes
+
+
 def integrate_run(
     data: MuonDataset | Run,
     *,
@@ -241,6 +254,22 @@ def integrate_run(
     alpha: float | None = None,
     grouping_ref: dict | None = None,
 ) -> tuple[float, float]:
+    """Return fractional integral asymmetry and error, warning for accepted skips."""
+    result = reduce_integral_run(
+        data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
+    )
+    return result.value, result.error
+
+
+def reduce_integral_run(
+    data: MuonDataset | Run,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    method: str = "integral",
+    alpha: float | None = None,
+    grouping_ref: dict | None = None,
+) -> IntegralReduction:
     """Reduce a loaded run to a single integral-asymmetry ``(value, error)``.
 
     The run's forward/backward groups are formed through the same shared path as
@@ -291,7 +320,7 @@ def integrate_run(
         t_max = float(time[good[1]])
     _validate_window(t_min, t_max)
 
-    return integrate_asymmetry(
+    value, error = integrate_asymmetry(
         counts.forward,
         counts.backward,
         alpha=alpha_used,
@@ -300,6 +329,71 @@ def integrate_run(
         t_min=t_min,
         t_max=t_max,
         method=method,
+    )
+
+    return IntegralReduction(value, error, counts.corrections)
+
+
+@dataclass(frozen=True)
+class PeriodIntegralReduction:
+    """A period integral combination and every contributing correction decision."""
+
+    value: float
+    error: float
+    corrections: dict[str, CorrectionOutcomes]
+
+
+def reduce_period_integral(
+    data, *, t_min=None, t_max=None, method="integral", alpha=None, grouping_ref=None
+):
+    """Coordinate background before integrating held-period sums or differences."""
+    run = _resolve_run(data)
+    grouping = effective_grouping(run, grouping_ref)
+    mode = PeriodMode(grouping.get("period_mode", "red"))
+    if mode not in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}:
+        result = reduce_integral_run(
+            data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
+        )
+        return PeriodIntegralReduction(result.value, result.error, {str(mode): result.corrections})
+    fb = resolve_forward_backward_layout(run.histograms, grouping)
+    flags = correction_flags_from_grouping(grouping)
+    counts = corrected_period_counts(
+        run.histograms,
+        grouping,
+        str(mode),
+        binning=BinningSpec(),
+        forward_idx=effective_group_indices(
+            grouping, fb.forward_gid, n_histograms=len(run.histograms)
+        ),
+        backward_idx=effective_group_indices(
+            grouping, fb.backward_gid, n_histograms=len(run.histograms)
+        ),
+        use_deadtime=flags.use_deadtime,
+        deadtime_mode=flags.deadtime_mode,
+        use_background=flags.use_background,
+        metadata=run.metadata,
+        native_time_range=(t_min, t_max),
+    )
+    values = {}
+    for label, pair in counts.items():
+        time = native_count_time(
+            pair.forward.counts.size, pair.bin_width_us, pair.common_t0_bin, pair.t0_time_us
+        )
+        values[label] = integrate_asymmetry(
+            pair.forward,
+            pair.backward,
+            alpha=fb.alpha if alpha is None else alpha,
+            beta=fb.beta,
+            time=time,
+            t_min=time[pair.window.first] if t_min is None else t_min,
+            t_max=time[pair.window.last] if t_max is None else t_max,
+            method=method,
+        )
+    red, green = values["red"], values["green"]
+    return PeriodIntegralReduction(
+        green[0] + (-1 if mode == PeriodMode.GREEN_MINUS_RED else 1) * red[0],
+        float(np.hypot(red[1], green[1])),
+        {label: pair.corrections for label, pair in counts.items()},
     )
 
 
@@ -320,6 +414,7 @@ class FieldScanPoint:
     value: float
     error: float
     label: str = ""
+    corrections: dict[str, CorrectionOutcomes] = field(default_factory=dict)
 
 
 @dataclass
@@ -358,6 +453,7 @@ class FieldScan:
     #: fraction *per x-unit* (:func:`differentiate_scan` divides by Δx, which
     #: leaves the asymmetry scale untouched).
     units: AsymmetryUnit = ASYMMETRY_FRACTION
+    correction_outcomes: dict[int, dict[str, CorrectionOutcomes]] = field(default_factory=dict)
 
     @property
     def n_points(self) -> int:
@@ -371,6 +467,7 @@ class FieldScan:
                 x=float(self.x[i]),
                 value=float(self.value[i]),
                 error=float(self.error[i]),
+                corrections=self.correction_outcomes.get(self.run_numbers[i], {}),
             )
             for i in range(self.n_points)
         ]
@@ -466,7 +563,7 @@ def build_field_scan(
             excluded.append((run_number, f"no {order_key} value"))
             continue
         try:
-            value, error = integrate_run(
+            reduced = reduce_period_integral(
                 run,
                 t_min=t_min,
                 t_max=t_max,
@@ -477,7 +574,11 @@ def build_field_scan(
         except ValueError as exc:
             excluded.append((run_number, str(exc)))
             continue
-        points.append(FieldScanPoint(run_number=run_number, x=x_value, value=value, error=error))
+        points.append(
+            FieldScanPoint(
+                run_number, x_value, reduced.value, reduced.error, corrections=reduced.corrections
+            )
+        )
 
     points.sort(key=lambda p: (p.x, p.run_number))
     return FieldScan(
@@ -490,6 +591,7 @@ def build_field_scan(
         x_label=_X_LABELS[order_key],
         excluded=excluded,
         units=ASYMMETRY_FRACTION,
+        correction_outcomes={p.run_number: p.corrections for p in points},
     )
 
 
@@ -537,6 +639,7 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
         x_label=scan.x_label,
         y_label=f"d({scan.y_label})/d{scan.order_key}",
         excluded=list(scan.excluded),
+        correction_outcomes=dict(scan.correction_outcomes),
         units=scan.units,
     )
 
@@ -637,10 +740,8 @@ def _reduce_run_to_fb(
     ``(time, counts, alpha_used, beta_used, (good_start, good_end))`` where the
     good indices are 0-based into the counts' full-length arrays.
 
-    Raises when the grouping asks for a background that left no constant
-    subtracted level (a failed estimate, or a reference run, which needs a
-    loader this transform does not have), rather than integrating
-    unsubtracted counts.
+    Accepted tail skips integrate unsubtracted counts. Applied reference-run
+    backgrounds without a constant level are unsupported by this transform.
     """
     histograms = list(run.histograms)
     if not histograms:
@@ -651,17 +752,8 @@ def _reduce_run_to_fb(
     flags = correction_flags_from_grouping(grouping)
     raw = fb
     width = raw.bin_width_us
-    residual = (raw.common_t0_bin + 0.5) * width - raw.t0_time_us
-    time = (
-        np.arange(raw.alignment.length, dtype=np.float64) - raw.common_t0_bin
-    ) * width + residual
-    lower = float(time[raw.window.first]) if t_min is None else t_min
-    upper = float(time[raw.window.last]) if t_max is None else t_max
-    _validate_window(lower, upper)
-    selected = np.flatnonzero(_window_mask(time, lower, upper, time.size))
-    if not selected.size:
-        raise ValueError("Integration window contains no bins.")
-    output_window = BinWindow(int(selected[0]), int(selected[-1]))
+    time = native_count_time(raw.alignment.length, width, raw.common_t0_bin, raw.t0_time_us)
+    output_window = native_time_window(time, raw.window, (t_min, t_max))
     counts = corrected_grouped_counts(
         histograms=histograms,
         grouping=grouping,
@@ -675,7 +767,10 @@ def _reduce_run_to_fb(
         metadata=run.metadata,
         output_window=output_window,
     )
-    if flags.use_background and counts.background_level is None:
+    if (
+        counts.corrections.background.status == CorrectionStatus.APPLIED
+        and counts.background_level is None
+    ):
         raise ValueError(
             "The grouping's background left no constant subtracted level "
             f"({counts.corrections.background.to_dict()}); the integral takes a constant background only."

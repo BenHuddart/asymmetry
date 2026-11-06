@@ -2099,3 +2099,16 @@ supported strategy. ``resolve_selected_timing`` applies that strategy to the
 selected acquired channels and reports unresolved requirements without changing
 raw histograms. Saved policy strategy text alone does not author this override.
 See :ref:`t0-search` for fallback and provenance semantics.
+
+Automatic-tail skips
+--------------------
+
+``--background tail_fit`` warns and continues when an optional estimate is
+unusable. Both F/B groups and all contributing periods remain background-unsubtracted.
+JSON output and stored reductions retain ``requested: tail_fit``,
+``status: skipped``, and the reason in ``correction_outcomes``. A warm cache
+preserves the same warning; it does not convert the request to ``none``.
+Integral scans retain per-point, per-period correction outcomes, including
+accepted skips, in their saved payloads. Missing references and invalid authored
+settings retain their errors. Grouped count fits retain a background preflight
+without subtracting it from their joint-model inputs.

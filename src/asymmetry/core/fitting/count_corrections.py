@@ -7,7 +7,7 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcomes
+from asymmetry.core.transform.corrections import CorrectionOutcomes, result_tail_skip
 from asymmetry.core.transform.fb_counts import BinWindow
 from asymmetry.core.transform.grouping import resolve_alignment
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
@@ -15,12 +15,16 @@ from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
 def count_background_domain(histograms, grouping, group_specs, metadata):
     """Retain observations consumed by the existing count-background availability check."""
-    groups = [group_specs[0][1], group_specs[-1][1]]
+    groups = (
+        [indices for _, indices in group_specs]
+        if resolve_background_mode(grouping) == "tail_fit"
+        else [group_specs[0][1], group_specs[-1][1]]
+    )
     crop = resolve_alignment(
         histograms, *groups, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
     )
     mode = resolve_background_mode(grouping)
-    windows = [[], []]
+    windows = [[] for _ in groups]
     if mode == "range":
         ranges = grouped_background_ranges(
             grouping,
@@ -43,19 +47,30 @@ def count_background_domain(histograms, grouping, group_specs, metadata):
 def require_count_background(prepared, grouping, group_specs, metadata):
     """Check availability on corrected count groups without inventing a ratio."""
     histograms = prepared.histograms
-    groups = [group_specs[0][1], group_specs[-1][1]]
+    groups = (
+        [indices for _, indices in group_specs]
+        if resolve_background_mode(grouping) == "tail_fit"
+        else [group_specs[0][1], group_specs[-1][1]]
+    )
     crop = resolve_alignment(
         histograms, *groups, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
     )
-    forward, backward = [prepared.aligned(indices, crop) for indices in groups]
-    background = apply_grouped_background_correction(
-        forward,
-        backward,
-        grouping=grouping,
-        t0_bin=crop.common_t0_bin,
-        acquisition_start_bin=crop.first_bin,
-        bin_width_us=histograms[groups[0][0]].bin_width,
-        last_good_bin=crop.window(grouping).last,
-        metadata=metadata,
-    )
-    CorrectionOutcomes(background=background.outcome).require_complete()
+    pairs = [("pair", groups[0], groups[-1])]
+    if resolve_background_mode(grouping) == "tail_fit":
+        pairs = [(str(gid), indices, indices) for gid, indices in group_specs]
+    outcomes = {}
+    for label, forward, backward in pairs:
+        background = apply_grouped_background_correction(
+            prepared.aligned(forward, crop),
+            prepared.aligned(backward, crop),
+            grouping=grouping,
+            t0_bin=crop.common_t0_bin,
+            acquisition_start_bin=crop.first_bin,
+            bin_width_us=histograms[groups[0][0]].bin_width,
+            last_good_bin=crop.window(grouping).last,
+            metadata=metadata,
+        )
+        CorrectionOutcomes(background=background.outcome).require_complete()
+        outcomes[label] = background.outcome
+    skip = result_tail_skip(outcomes)
+    return {label: skip or outcome for label, outcome in outcomes.items()}
