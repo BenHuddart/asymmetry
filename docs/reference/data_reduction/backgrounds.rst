@@ -172,9 +172,9 @@ with zero.
 This mode is useful for pulsed-source data analysed to long times. Persistent
 polarisation or another departure from the exponential-plus-flat model can
 change the estimated level even when the numerical optimum is well determined.
-Convergence does not detect that model error. Asymmetry requires at least five
-observations, a positive total, identifiable expected information, and finite
-positive propagated uncertainty. A positive decay amplitude that cannot be
+Convergence does not detect that model error. Asymmetry requires a finite positive
+native bin width, at least five observations, a positive total, identifiable
+expected information, and finite positive propagated uncertainty. A positive decay amplitude that cannot be
 represented at the declared time zero also fails, preserving the meaning of
 the returned physical parameters. The five-bin minimum is a conservative
 implementation rule, not a universal statistical requirement. These checks

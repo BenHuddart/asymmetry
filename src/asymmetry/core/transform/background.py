@@ -229,8 +229,8 @@ def fit_tail_background(
             message=message,
         )
 
-    if width <= 0.0:
-        return _failure("Bin width must be positive")
+    if not np.isfinite(width) or width <= 0.0:
+        return _failure("Bin width must be finite and positive")
     if end - start + 1 < 5:
         return _failure("Tail-fit window has fewer than 5 bins")
     window = np.clip(n[start : end + 1], 0.0, None)

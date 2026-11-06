@@ -180,3 +180,28 @@ def test_identical_bins_preserve_fitted_uncertainty_under_origin_change(origin):
     assert shifted.amplitude_per_us * np.exp(origin * width / MUON_LIFETIME_US) == pytest.approx(
         base.amplitude_per_us, rel=1e-13
     )
+
+
+@pytest.mark.parametrize("width", [np.nan, np.inf, -np.inf, 0.0, -0.1])
+def test_invalid_bin_width_returns_a_failed_fit_without_changing_observations(width):
+    from asymmetry.core.transform.background import apply_grouped_background_correction
+
+    counts = np.arange(1, 101, dtype=float)
+    before = counts.copy()
+    with np.errstate(all="raise"):
+        fitted = fit_tail_background(counts, bin_width_us=width, t0_bin=0)
+        correction = apply_grouped_background_correction(
+            counts,
+            counts,
+            grouping={"background_mode": "tail_fit"},
+            bin_width_us=width,
+            t0_bin=0,
+        )
+    assert not fitted.ok
+    assert fitted.message == "Bin width must be finite and positive"
+    assert fitted.rate_error_per_us is None
+    assert correction.outcome.status == "failed"
+    assert "Bin width must be finite and positive" in correction.outcome.reason
+    np.testing.assert_array_equal(counts, before)
+    np.testing.assert_array_equal(correction.forward.counts, before)
+    np.testing.assert_array_equal(correction.backward.counts, before)
