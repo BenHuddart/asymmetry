@@ -1036,8 +1036,20 @@ Asymmetry also checks sufficient fit support, expected-information rank, and
 finite positive uncertainty. These checks prevent a numerically unestimable
 level from being reported as usable, even when a solver might report success;
 they do not test residual physical polarisation or impose a chi-squared gate.
-Its linearised boundary errors do not promise calibrated coverage. Failed
-background estimates block final reduction under the current correction
-contract. File loading remains independent of this estimator's usability.
+Its linearised boundary errors do not promise calibrated coverage. An unusable
+automatic estimate, including a signed selected tail, leaves the whole requested
+result background-unsubtracted with a warning and recorded reason. A genuine
+zero-background optimum remains successful. Valid deadtime correction and
+supplied variance are retained; loading remains independent of estimability.
+
+Mantid's Muon caller skips per run/group when reduced chi-squared exceeds 10
+or the status contains ``Failed to converge``; literal ``success`` is not
+required. Asymmetry adds result-wide F/B and contributing-period consistency
+without adopting that threshold. WiMDA's automatic path uses its returned level
+without an equivalent fit-status skip check. Its negligible low-count weights
+also attenuate negative observations. musrfit's region and joint-count operations
+do not supply an equivalent automatic-tail failure policy. Finite uncertainty
+and information checks in Asymmetry protect downstream covariance even when a
+solver might claim success; none establishes physical model adequacy.
 See :doc:`/reference/data_reduction/backgrounds` for the model, current window,
 and covariance equations.

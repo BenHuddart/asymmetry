@@ -167,6 +167,8 @@ def fit_result_summary(
     }
     return {
         "success": bool(fit_result.success),
+        "correction_metadata": dict(fit_result.correction_metadata),
+        "warnings": list(fit_result.warnings),
         "objective": fit_result.objective.value,
         "minimum_expected_count": (
             None

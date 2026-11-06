@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.fourier.group_background import _apply_group_background_correction
 from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
 from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
 from asymmetry.core.transform.fb_counts import linear_combination_variance
@@ -70,30 +69,12 @@ def build_group_signal_dataset(
     prepared.require_request(run, int(group_id), apply_deadtime, reference_t0_bin, time_range)
     layout = prepared.layouts[int(group_id)]
     alignment, window = layout.alignment, layout.window
-    common_t0 = alignment.common_t0_bin
     grouping = layout.grouping
-    group = prepared.sample.aligned(indices, alignment)
-    reference_counts = None
-    reference_scale = None
-    if prepared.reference is not None:
-        reference_counts = prepared.reference.aligned(indices, layout.reference_alignment)
-        reference_scale = prepared.reference_scale
+    correction = prepared.backgrounds[int(group_id)]
+    group = correction.forward
     deadtime = prepared.sample.outcome
-    source_file = run.source_file
-    group, background_applied, background_value = _apply_group_background_correction(
-        group,
-        grouping=grouping,
-        group_id=int(group_id),
-        # Tail fitting uses the signal grid; range windows retain the F/B
-        # acquisition samples through a translation from background_t0.
-        t0_bin=common_t0,
-        background_t0_bin=layout.background_t0,
-        bin_width=float(histograms[indices[0]].bin_width),
-        metadata=run.metadata,
-        source_file=source_file,
-        reference_counts=reference_counts,
-        reference_scale=reference_scale,
-    )
+    values = correction.outcome.effective.get("values") if correction.outcome.effective else None
+    background_value = values[0] if values is not None else None
 
     counts = group.counts
     first_good, last_good = window.first, window.last
@@ -139,7 +120,8 @@ def build_group_signal_dataset(
             "reference_file_identity": prepared.identity[0],
             "grouped_alignment": alignment.to_dict(),
             "fourier_lifetime_corrected": bool(apply_lifetime_correction),
-            "fourier_background_corrected": bool(background_applied),
+            **prepared.correction_metadata(),
+            "fourier_background_corrected": correction.outcome.status == "applied",
             "fourier_background_value": (
                 float(background_value) if background_value is not None else None
             ),

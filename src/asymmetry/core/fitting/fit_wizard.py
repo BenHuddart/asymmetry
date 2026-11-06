@@ -3928,18 +3928,15 @@ def _persisted_curve_list(values: object, *, stride: int = 1, compact: bool = Fa
 def _serialize_fit_result(
     result: FitResult, *, include_residuals: bool = True
 ) -> dict[str, object]:
-    """Serialise a fit result; ``include_residuals=False`` drops the residual array.
+    """Persist parameters, advisories and corrections; optionally omit residuals.
 
-    A persisted wizard cache drops it: the residual *series* is only used to
-    draw the answer card's residual panel, while every number computed from it
-    (RMS, runs z-score, autocorrelation, FFT peak SNR, and the gate reasons
-    derived from them) is already stored on the assessment. It is the second
-    largest array in the payload and cannot be decimated — it is paired with a
-    rebinned time axis at display time, so a strided copy would plot against
-    the wrong times.
+    Cached diagnostics own their scalar residual statistics. Decimating residuals
+    would mismatch the cached time grid, so compact caches omit that array.
     """
     return {
         "success": bool(result.success),
+        "warnings": list(result.warnings),
+        "correction_metadata": dict(result.correction_metadata),
         "chi_squared": float(result.chi_squared),
         "reduced_chi_squared": float(result.reduced_chi_squared),
         "parameters": _serialize_parameter_set(result.parameters),
@@ -3974,6 +3971,8 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
             residuals = None
     return FitResult(
         objective=Objective.GAUSSIAN,
+        warnings=list(payload.get("warnings", [])),
+        correction_metadata=dict(payload.get("correction_metadata", {})),
         success=bool(payload.get("success", False)),
         chi_squared=float(payload.get("chi_squared", 0.0)),
         reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),

@@ -2,12 +2,23 @@
 
 import warnings
 
-from asymmetry.core.transform.corrections import CorrectionStatus
+from asymmetry.core.transform.corrections import (
+    CorrectionStatus,
+    correction_metadata,
+    correction_warnings,
+)
 from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
 def record_count_deadtime_calibration(result, dataset, groups):
     """Keep a successful fit usable when coefficient availability prevents promotion."""
+    result.correction_metadata = correction_metadata(groups[0].metadata)
+    for message in dict.fromkeys(
+        w for group in groups for w in correction_warnings(group.metadata)
+    ):
+        if message not in result.warnings:
+            result.warnings.append(message)
+            warnings.warn(message, UserWarning, stacklevel=2)
     if not result.success or "DT0" not in result.parameters:
         return
     base = groups[0].deadtime

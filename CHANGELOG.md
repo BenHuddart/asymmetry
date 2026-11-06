@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve unusable automatic tail observations and warn while leaving the whole
+  result background-unsubtracted, retaining valid deadtime correction and provenance.
+- Allow slow GitHub Pages deployments up to 20 minutes, within a bounded job.
+
 - Stabilise Poisson tail-background fits across equivalent origins and count scales,
   retaining shared uncertainty; non-finite bin widths report a failed estimate.
 

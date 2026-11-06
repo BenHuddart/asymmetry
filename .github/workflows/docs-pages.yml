@@ -241,6 +241,7 @@ jobs:
 
   deploy-pages:
     name: Deploy to GitHub Pages
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     needs: build-docs
     # Deploy for releases (version tag), pushes to main, or a deliberate manual
@@ -270,6 +271,8 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          timeout: 1200000
 
       # The Pages deploy has consumed the artifact; delete it so it does not sit
       # in the run's storage for the default retention period. Runs even if the

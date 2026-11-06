@@ -25,12 +25,10 @@ from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, sug
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
-    GREEN_INDEX,
-    RED_INDEX,
     period_count,
-    period_run,
     source_run_of,
 )
+from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.integral import FieldScan, build_field_scan
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
@@ -68,44 +66,27 @@ def build_integral_scan(
         )
         return _decoded(scan, _source_run_numbers(resolved))
     two_period = [run for run in runs if period_count(run) == 2]
-    # Each period is reduced as the single-period run it is.
-    per_period = replace(settings, period=None)
-    red_periods = [period_run(run, RED_INDEX) for run in two_period]
-    green_periods = [period_run(run, GREEN_INDEX) for run in two_period]
-    sources = _source_run_numbers(red_periods + green_periods)
-    red, green = (
-        _decoded(
-            build_field_scan(
-                [_resolved(period, per_period) for period in periods],
-                t_min=t_min,
-                t_max=t_max,
-                method=method,
-                order_key=order_key,
+    resolved = [
+        replace(
+            run,
+            grouping=dict(
+                resolve_reduction_grouping(run, settings),
+                period_mode=GREEN_MINUS_RED,
+                period_histograms=run.grouping["period_histograms"],
             ),
-            sources,
         )
-        for periods in (red_periods, green_periods)
-    )
-    # Both periods of a run share its field, temperature and window, so the two
-    # scans list the same source runs in the same order.
-    if red.run_numbers != green.run_numbers:
-        raise ValueError("The red and green scans of the same runs came out in different orders.")
-    return FieldScan(
-        x=red.x,
-        value=green.value - red.value,
-        error=np.hypot(red.error, green.error),
-        run_numbers=red.run_numbers,
-        order_key=red.order_key,
-        method=red.method,
-        x_label=red.x_label,
+        for run in two_period
+    ]
+    scan = build_field_scan(resolved, t_min=t_min, t_max=t_max, method=method, order_key=order_key)
+    return replace(
+        _decoded(scan, _source_run_numbers(resolved)),
         y_label="Integral asymmetry (Green − Red)",
         excluded=[
             (int(run.run_number), "not a two-period (red/green) run")
             for run in runs
             if period_count(run) != 2
         ]
-        + [*red.excluded, *green.excluded],
-        units=red.units,
+        + scan.excluded,
     )
 
 
@@ -150,6 +131,9 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
         scan,
         x=np.asarray(run_numbers, dtype=float) if scan.order_key == "run" else scan.x,
         run_numbers=run_numbers,
+        correction_outcomes={
+            sources[number]: outcomes for number, outcomes in scan.correction_outcomes.items()
+        },
         excluded=[(sources[number], reason) for number, reason in scan.excluded],
     )
 
@@ -189,6 +173,9 @@ def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
                 "x": point.x,
                 "value": point.value,
                 "error": point.error,
+                "correction_outcomes": {
+                    label: record.to_dict() for label, record in point.corrections.items()
+                },
             }
             for point in scan.points
         ],
@@ -214,6 +201,13 @@ def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
         y_label=data["y_label"],
         units=AsymmetryUnit(data["units"]),
         excluded=[(entry["run"], entry["reason"]) for entry in data["excluded"]],
+        correction_outcomes={
+            int(point["run"]): {
+                label: CorrectionOutcomes.from_dict(record)
+                for label, record in point.get("correction_outcomes", {}).items()
+            }
+            for point in points
+        },
     )
 
 

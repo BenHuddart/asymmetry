@@ -42,6 +42,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _clone_parameter_set,
     _curve_parameter_values,
     _dense_fit_curves,
+    _deserialize_fit_result,
     _execute_assessment_task,
     _field_seed_context,
     _initial_parameters_for_template,
@@ -54,6 +55,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_diagnostics,
     _residual_gate_reasons,
     _scipy_fit_fallback,
+    _serialize_fit_result,
     _template_cost_rank,
     _template_family_map,
     analysis_rebin_factor,
@@ -4300,38 +4302,6 @@ def _deserialize_parameter_set(payload: object) -> ParameterSet:
     return parameters
 
 
-def _serialize_fit_result(result: FitResult) -> dict[str, object]:
-    return {
-        "success": bool(result.success),
-        "chi_squared": float(result.chi_squared),
-        "reduced_chi_squared": float(result.reduced_chi_squared),
-        "parameters": _serialize_parameter_set(result.parameters),
-        "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
-        "message": result.message,
-    }
-
-
-def _deserialize_fit_result(payload: object) -> FitResult | None:
-    if not isinstance(payload, dict):
-        return None
-    try:
-        uncertainties = {
-            str(name): float(value)
-            for name, value in (payload.get("uncertainties", {}) or {}).items()
-        }
-    except (TypeError, ValueError):
-        uncertainties = {}
-    return FitResult(
-        objective=Objective.GAUSSIAN,
-        success=bool(payload.get("success", False)),
-        chi_squared=float(payload.get("chi_squared", 0.0)),
-        reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
-        parameters=_deserialize_parameter_set(payload.get("parameters", [])),
-        uncertainties=uncertainties,
-        message=str(payload.get("message", "")),
-    )
-
-
 def _serialize_run_residual_diagnostic(diagnostic: RunResidualDiagnostic) -> dict[str, object]:
     return {
         "run_number": diagnostic.run_number,
@@ -4473,7 +4443,7 @@ def _serialize_global_candidate_assessment(
     return {
         "template": _serialize_candidate_template(assessment.template),
         "fit_results_by_run": {
-            str(run_number): _serialize_fit_result(result)
+            str(run_number): _serialize_fit_result(result, include_residuals=False)
             for run_number, result in assessment.fit_results_by_run.items()
         },
         "global_parameters": _serialize_parameter_set(assessment.global_parameters),
