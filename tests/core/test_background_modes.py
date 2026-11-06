@@ -41,7 +41,7 @@ def test_tail_fit_recovers_truth():
     assert fit.rate_per_us == pytest.approx(0.8, abs=3 * fit.rate_error_per_us)
     assert not fit.consistent_with_zero
     # Default window is the late half of (t0, last_good).
-    assert fit.window[0] == T0_BIN + (N_BINS - 1 - T0_BIN) // 2
+    assert fit.window[0] == T0_BIN + (N_BINS - T0_BIN) // 2
 
 
 def test_seeded_strong_background_is_compatible_with_generating_rate():
@@ -114,7 +114,7 @@ def test_subtract_scaled_counts_rejects_different_shapes():
 
 def test_available_modes_pulsed_vs_continuous():
     pulsed = available_background_modes(metadata={"facility": "ISIS"}, source_file="run.nxs")
-    assert "range" not in pulsed
+    assert "range" in pulsed
     assert {"fixed", "tail_fit", "reference_run"} <= set(pulsed)
     continuous = available_background_modes(metadata={"facility": "PSI"}, source_file="run.bin")
     assert "range" in continuous
@@ -255,8 +255,8 @@ def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
     np.testing.assert_array_equal(result.forward.counts, counts)
 
 
-def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
-    """A cached level without an estimation window is a fixed per-group constant."""
+def test_fourier_group_path_reestimates_range_despite_cached_values():
+    """Range mode estimates its automatic interval and ignores cached levels."""
     from asymmetry.core.fourier.group_background import _apply_group_background_correction
     from asymmetry.core.transform.fb_counts import GroupCounts
 
@@ -271,15 +271,17 @@ def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
     result = _apply_group_background_correction(
         GroupCounts(counts),
         grouping=grouping,
-        group_id=2,  # backward group must get ITS value, not the forward one
+        group_id=2,
         t0_bin=20,
         bin_width=BIN_WIDTH_US,
         metadata={"facility": "PSI"},
         source_file="run.bin",
     )
     assert result.outcome.status == "applied"
-    assert result.outcome.effective["values"][0] == pytest.approx(3.0)
-    np.testing.assert_allclose(result.forward.counts, counts - 3.0)
+    assert result.outcome.requested == "range"
+    assert result.outcome.effective["values"][0] == pytest.approx(80.0)
+    assert result.forward.shared[0].variance > 0
+    np.testing.assert_allclose(result.forward.counts, counts - 80.0)
 
 
 def test_fourier_group_path_applies_tail_fit_on_pulsed_data():

@@ -80,7 +80,10 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
         _pump_until(
             lambda: (
                 pane._tasks.active_count == 0
+                and pane._pending is None
+                and not pane._debounce.isActive()
                 and pane._last_result is not None
+                and pane._last_result.generation == pane._generation
                 and len(pane._last_result.corrections) == 1
                 and pane._last_result.counts.background_mode == "tail_fit"
                 and pane._last_result.counts.background_level is not None
@@ -109,6 +112,14 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             if not np.isfinite(rate) or rate < 0 or not np.isfinite(error) or error <= 0:
                 raise RuntimeError("Preview tail-background rate or uncertainty is unusable")
         _pump_events(80)
+        _pump_until(
+            lambda: (
+                pane._tasks.active_count == 0
+                and pane._pending is None
+                and not pane._debounce.isActive()
+                and pane._last_result.generation == pane._generation
+            )
+        )
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
         if not dialog.grab().save(str(output), "PNG"):

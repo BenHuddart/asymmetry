@@ -1076,7 +1076,6 @@ def test_reduce_with_a_pair_and_offsets_records_them(
     [
         (["--pair", "Up/Down"], "no group 'Up'"),
         (["--pair", "Up"], "--pair takes FWD/BWD"),
-        (["--background", "range"], "no pre-t0 region"),
         (["--background", "range:9"], "FIRST:LAST"),
         (["--background", "fixed"], "Unknown background mode 'fixed'"),
     ],

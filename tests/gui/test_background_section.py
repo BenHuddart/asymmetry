@@ -102,3 +102,59 @@ def test_status_text_helper() -> None:
     assert "tail fit" in background_status_text(BackgroundPolicy(mode="tail_fit")).lower()
     ref = BackgroundPolicy(mode="reference_run", details={"background_run": {"run_number": 42}})
     assert "42" in background_status_text(ref)
+
+
+def test_explicit_separate_intervals_are_retained_and_editable(qapp, monkeypatch):
+    section = BackgroundSectionWidget(_candidates)
+    details = {"background_ranges": {"forward": [1, 71], "backward": [10, 60]}}
+    section.configure(
+        available_modes=("range",),
+        has_fixed_values=False,
+        mode="range",
+        background_run_payload=None,
+        details=details,
+    )
+    section._set_mode("none")
+    section._set_mode("range")
+    assert section.details() == details
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("2,72; 11,61", True))
+    section._edit_range_btn.click()
+    assert section.details()["background_ranges"] == [[2, 72], [11, 61]]
+    assert "explicit range" in section._status_label.text()
+
+
+def test_cancelled_interval_edit_preserves_authored_bounds(qapp, monkeypatch):
+    section = BackgroundSectionWidget(_candidates)
+    details = {"background_range": [0, 0]}
+    section.configure(
+        available_modes=("range",),
+        has_fixed_values=False,
+        mode="range",
+        background_run_payload=None,
+        details=details,
+    )
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
+    section._edit_range_btn.click()
+    assert section.details() == details
+
+
+def test_invalid_loaded_interval_can_be_replaced(qapp, monkeypatch):
+    section = BackgroundSectionWidget(_candidates)
+    section.configure(
+        available_modes=("range",),
+        has_fixed_values=False,
+        mode="range",
+        background_run_payload=None,
+        details={"background_range": [4, 1]},
+    )
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("1,4; 2,5", True))
+    section._edit_range_btn.click()
+    assert section.details() == {"background_ranges": [[1, 4], [2, 5]]}
+
+
+def test_separate_aliases_are_described_as_explicit():
+    policy = BackgroundPolicy(
+        mode="range",
+        details={"background_forward_range": [1, 71], "background_backward_range": [10, 60]},
+    )
+    assert background_status_text(policy) == "Background: explicit range [[1, 71], [10, 60]]"

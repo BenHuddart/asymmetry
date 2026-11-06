@@ -5838,14 +5838,7 @@ class MainWindow(QMainWindow):
 
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
-        run = getattr(dataset, "run", None)
-        metadata = dict(getattr(dataset, "metadata", {}) or {})
-        if run is not None:
-            metadata.update(getattr(run, "metadata", {}) or {})
-        source_file = str(getattr(run, "source_file", "") if run is not None else "")
-        if not source_file:
-            source_file = str(metadata.get("source_file", ""))
-        return str(mode) in available_background_modes(metadata=metadata, source_file=source_file)
+        return str(mode) in available_background_modes()
 
     def _create_period_mapped_dataset(self, request: dict, grouping_result: dict) -> None:
         """Build and register the combined red/green dataset for a mapping."""

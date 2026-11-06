@@ -53,13 +53,7 @@ from asymmetry.core.fourier.units import (
     shift_axis_label,
 )
 from asymmetry.core.fourier.units import convert as convert_field_unit
-from asymmetry.core.transform.background import (
-    apply_grouped_background_correction,
-    available_background_modes,
-    resolve_background_mode,
-    resolve_facility,
-)
-from asymmetry.core.transform.corrections import CorrectionStatus
+from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -6584,63 +6578,40 @@ class PlotPanel(QWidget):
             )
         forward, backward = fb.forward, fb.backward
         alpha = fb.alpha
-        common_t0 = fb.common_t0
-
-        if bool(grouping.get("background_correction", False)):
-            run_metadata = getattr(run, "metadata", None)
-            metadata = run_metadata if isinstance(run_metadata, dict) else {}
-            source_file = str(
-                getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
+        # Final correction records own fitted levels and result-wide skips.
+        # Multiple period ratios and deadtime-corrected counts have no raw
+        # denominator refinement; their plotted asymmetry still supplies the mask.
+        records = reference_dataset.metadata.get("correction_outcomes", {})
+        if len(records) > 1:
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated, source_dataset=reference_dataset, analysis_dataset=dataset
             )
-            # This display mask uses only backgrounds with resolved inputs.
-            mode = resolve_background_mode(grouping)
-            available = available_background_modes(metadata=metadata, source_file=source_file)
-            if mode in available:
-                bin_width = float(run.histograms[0].bin_width) if run.histograms else 1.0
-                facility = resolve_facility(
-                    metadata=metadata, grouping=grouping
-                ) or resolve_facility(metadata=reference_dataset.metadata)
-                bkg_result = apply_grouped_background_correction(
-                    forward,
-                    backward,
-                    grouping=grouping,
-                    t0_bin=common_t0,
-                    bin_width_us=bin_width,
-                    facility=facility,
+        if records:
+            corrections = CorrectionOutcomes.from_dict(next(iter(records.values())))
+            deadtime = corrections.deadtime
+            if deadtime.status == CorrectionStatus.APPLIED and any(
+                value != 0 for value in deadtime.effective["tau_us"] if value is not None
+            ):
+                return self._project_source_mask_to_analysis_dataset(
+                    source_mask=saturated,
+                    source_dataset=reference_dataset,
+                    analysis_dataset=dataset,
                 )
-                if bkg_result.outcome.status == CorrectionStatus.APPLIED:
-                    forward = bkg_result.forward.counts
-                    backward = bkg_result.backward.counts
-
-        denominator = np.asarray(forward + alpha * backward, dtype=float)
-        if denominator.size == 0:
+            background = corrections.background
+            if background.status == CorrectionStatus.APPLIED:
+                if "values" not in background.effective:
+                    return self._project_source_mask_to_analysis_dataset(
+                        source_mask=saturated,
+                        source_dataset=reference_dataset,
+                        analysis_dataset=dataset,
+                    )
+                f_level, b_level = background.effective["values"]
+                forward, backward = forward - f_level, backward - b_level
+        elif bool(grouping.get("background_correction", False)):
             return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
+                source_mask=saturated, source_dataset=reference_dataset, analysis_dataset=dataset
             )
-
-        lo_default = 0
-        hi_default = denominator.size - 1
-        try:
-            lo = int(grouping.get("first_good_bin", lo_default))
-        except (TypeError, ValueError):
-            lo = lo_default
-        try:
-            hi = int(grouping.get("last_good_bin", hi_default))
-        except (TypeError, ValueError):
-            hi = hi_default
-
-        lo = max(0, min(lo, hi_default))
-        hi = max(0, min(hi, hi_default))
-        if lo > hi:
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-
-        denominator = denominator[lo : hi + 1]
+        denominator = np.asarray(forward + alpha * backward, dtype=float)[fb.counts.window.slice]
         reliable = denominator > 0.0
         source_low = saturated.copy()
         if reliable.shape == source_low.shape:

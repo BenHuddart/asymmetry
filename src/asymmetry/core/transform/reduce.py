@@ -215,15 +215,10 @@ def prepare_grouped_corrections(
     The outcome records the required detector/raw-bin intervals. No scoped
     detector histograms are exposed for reuse as whole-acquisition preparation.
 
-    ``facility`` decides whether a ``range``-mode background window is trimmed to
-    whole accelerator periods. The default ``None`` means *derive it* — from
-    ``metadata`` when given (pass ``run.metadata``; this function receives
-    histograms rather than a run, so it cannot fetch them itself), otherwise from
-    the grouping payload's canonical instrument name. Pass ``""`` for the explicit
-    "no facility, no trimming" opt-out. It used to default to ``""``, so a script
-    that did not know to pass a facility silently reduced with an untrimmed
-    window while the GUI, which does pass one, trimmed — the same run reduced two
-    ways.
+    ``facility`` guides native-bin period adjustment of automatic range defaults;
+    authored intervals remain exact. ``None`` derives the label from ``metadata``
+    (pass ``run.metadata``) or the grouping instrument. An empty string disables
+    that automatic adjustment; a nonempty string overrides the metadata.
     """
     with perf_timer(
         "core.reduce.corrected_counts",
@@ -333,6 +328,7 @@ def prepare_grouped_corrections(
                 bin_width_us=bin_width,
                 facility=facility,
                 metadata=metadata,
+                first_good_bin=window.first,
                 last_good_bin=window.last,
                 reference_forward=reference_forward,
                 reference_backward=reference_backward,

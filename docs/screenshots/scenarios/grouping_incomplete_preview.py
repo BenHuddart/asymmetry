@@ -113,3 +113,45 @@ class TailBackgroundWarningScenario(IncompletePreviewScenario):
 register(TailBackgroundWarningScenario())
 register(IncompletePreviewScenario())
 register(FileDeadtimeWarningScenario())
+
+
+class ExplicitBackgroundRangeScenario(Scenario):
+    name = "grouping_explicit_background_range"
+    description = "Separate authored background intervals in the grouping editor."
+    size = (1180, 780)
+
+    def capture(self, ctx: CaptureContext) -> Path:
+        from ..data import make_ybco_knight_grouped
+
+        dataset = make_ybco_knight_grouped()
+        dataset.run.grouping.update(
+            background_correction=True,
+            background_mode="range",
+            background_ranges=[[10, 60], [11, 61]],
+        )
+        dialog = GroupingDialog([dataset])
+        dialog.resize(*self.size)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialog.show()
+        pane = dialog._preview_pane
+        pane.flush()
+        _pump_until(
+            lambda: (
+                pane._last_result is not None and pane._last_result.generation == pane._generation
+            )
+        )
+        if not pane.corrections_complete:
+            raise RuntimeError("Explicit background interval preview did not complete")
+        output = ctx.output_dir / f"{self.name}.png"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if not dialog._background_card.grab().save(str(output), "PNG"):
+            raise RuntimeError("Could not save background interval controls")
+        _optimize_png(output)
+        dialog._clear_dirty()
+        dialog.close()
+        dialog.deleteLater()
+        _pump_events(40)
+        return output
+
+
+register(ExplicitBackgroundRangeScenario())

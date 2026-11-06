@@ -23,7 +23,7 @@ but "nearly nothing" can still matter when fitting weak relaxation out to
 20–32 μs, which is exactly the regime pulsed sources exist for.
 
 The grouping dialog's **Background** selector chooses the mode per dataset;
-modes that cannot apply to the data type are greyed out. The correction is
+facility and instrument labels guide defaults and advice, rather than method access. The correction is
 applied to the grouped forward/backward counts before the asymmetry ratio,
 with the subtraction's shared uncertainty propagated through the merged counts.
 
@@ -72,8 +72,9 @@ background subtraction still proceeds. Manual coefficients remain the shared
 authored table, with each acquisition's own frame exposure.
 
 For F/B reduction, correction dependencies include the output samples and the
-active estimator's samples only. Range estimation uses its beam-period-trimmed
-window; tail fitting uses its established late-half window. Disjoint output and
+active estimator's samples only. Range estimation uses the exact explicit
+interval or its resolved automatic default; tail fitting uses the late half of
+selected good-data support. Disjoint output and
 range windows leave an unused gap uncorrected and unchecked by the inverse.
 Reference samples use the sample output window through the reference's own
 alignment, table, and exposure. Fixed levels add no acquisition samples.
@@ -119,43 +120,47 @@ Data in hand                Mode
 ==========================  =====================================================
 Continuous-source data      **Range average** — the pre-t0 bins measure the
                             uncorrelated rate directly
-Pulsed-source data          **Tail fit** — no pre-t0 region exists; estimate
+Pulsed-source data          **Tail fit** — estimate a flat rate
                             from the late-time spectrum
 Dedicated reference run     **Background run** — sample-holder / silver /
                             laser-off measurement
 Known constants             **Fixed values** (from a stored grouping)
 ==========================  =====================================================
 
-Range average (pre-t0)
-----------------------
+Range average
+-------------
 
-The mean count over a window of bins *before* time zero, subtracted per
-group — the musrfit convention, with its default window from
-:math:`0.1\,t_0` to :math:`0.6\,t_0` and beam-period-aware trimming at PSI
-and TRIUMF. Only continuous-source data have a pre-t0 region: muons arrive
-continuously, so the histogram records the uncorrelated rate before each
-muon's own clock starts. Pulsed files begin at the muon pulse, so this mode
-is unavailable for them.
+The arithmetic mean of aligned grouped counts over a signal-free interval is
+subtracted from each group. Explicit intervals are available through the API,
+CLI, and GUI for any supported histogram acquisition, including files with blank
+facility metadata. A label or file extension cannot establish whether the chosen
+interval contains only background.
 
-*When to use this.* The default for PSI/TRIUMF data. It is a direct
-measurement, not a fit — prefer it over the tail fit whenever a pre-t0
-region exists.
+In the **Background** card choose **Range average**, then **Edit intervals…**.
+The **Background intervals** dialog accepts separate forward and backward bounds
+as ``first,last; first,last``, in inclusive, zero-based acquisition bins. For
+example, ``1,71; 2,63`` selects 71 forward and 62 backward observations. The
+preview shows the resulting subtraction; **Apply** retains the authored bounds.
+Cancelling the editor or changing modes preserves them. The CLI accepts a shared
+interval as ``--background range:1:71``; API grouping accepts ``background_range``
+or separate ``background_ranges``. Choose bounds that lie within the observed
+aligned support; loading a file does not enable subtraction.
 
-.. note::
+With no authored interval, the automatic suggestion is ``int(0.1 * t0)`` through
+``int(0.6 * t0)``. A usable pre-t0 interval is often available at continuous
+sources. At ``t0=0`` no such default exists: the preview asks
+"Select an explicit background interval; no pre-t0 default is available."
+The method remains accessible and the file remains inspectable. Supply an interval
+only when the acquisition provides a suitable signal-free region.
 
-   *Scripting note: the beam-period trimming engages by itself.* Trimming the
-   window to a whole number of accelerator periods needs to know the facility,
-   and :func:`~asymmetry.core.transform.background.apply_grouped_background_correction`,
-   :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts` and
-   :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry` used to take
-   a ``facility`` string defaulting to ``""`` — no facility, no trimming, no
-   warning. The GUI passed it; a script that did not know to reduced the same run
-   with an untrimmed window. The default is now ``None``, meaning *derive it*:
-   pass ``metadata=run.metadata`` (the reduction functions receive histograms
-   rather than a run, so they cannot fetch it themselves) and the label resolves
-   through :func:`~asymmetry.core.transform.background.resolve_facility`, exactly
-   as the GUI's explicit string always did. ``facility=""`` remains available as
-   the deliberate "no trimming" opt-out, and any non-empty string still overrides.
+Every valid explicit interval is used exactly, including separate F/B bounds and
+values equal to the automatic suggestion. Only automatic defaults use the
+PSI/TRIUMF accelerator-period convention, rounded using native bin width before
+output merging. Defaults shorter than one period are not shortened. Inclusive
+endpoints and integer rounding do not imply exact whole-cycle exposure or removal
+of periodic-background bias. Pass ``metadata=run.metadata`` to histogram-level
+reduction APIs to resolve the facility; ``facility=""`` opts out of this default
+adjustment and a nonempty value overrides the metadata.
 
 Declared range endpoints are inclusive acquisition-bin integers. The window
 must be ordered and contained in the aligned count record. For example,
@@ -173,9 +178,17 @@ shared uncertainty unchanged.
 Tail fit (late-time)
 --------------------
 
-Fits native acquisition bins from the integer midpoint of time zero and
-last good bin through last good bin, inclusive, with a fixed-lifetime muon
-decay plus a flat rate,
+Fits the late half of the resolved selected good-data support on native bins.
+For inclusive support :math:`[a,b]`, the start is
+:math:`a+\lfloor(b-a+1)/2\rfloor`, retaining the middle bin for odd lengths.
+For example, selected ``[40,99]`` fits ``[70,99]``; selected ``[40,98]`` fits
+``[69,98]``. Alignment and detector timing map those same observations to raw
+bins for deadtime correction, signed-input decisions, previews, and downstream
+preparation. Output merging does not change the fit support.
+The lower-level ``fit_tail_background`` API defaults an omitted ``first_good_bin``
+to time zero (clipped to observed support); explicit ``fit_start_bin`` overrides
+the midpoint. Reduction callers supply both resolved good endpoints.
+The fixed-lifetime muon decay plus flat-rate model is
 
 .. math::
 
@@ -221,6 +234,14 @@ interval coverage at a parameter boundary.
 
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Asymmetry's selected-good-window tail follows Mantid's declared late-half
+selection. Exact explicit intervals follow WiMDA/Mantid interval control.
+Asymmetry retains aligned grouped arithmetic, closest to musrfit, whereas WiMDA's
+region uses original detector bins. musrfit 1.12.1 can shorten explicit intervals
+and its selection can depend on requested packing; Asymmetry confines that
+convention to automatic defaults at native width. Different selected observations
+can produce different means even with identical arithmetic.
 
 WiMDA 1.326 **Auto BG** fits a fixed-lifetime exponential plus flat rate to
 the late half of grouped output points, using count-error weighting and

@@ -633,6 +633,11 @@ the effective correction outcome.
     values were calculated from background bin ranges. Unavailable or failed
     corrections prevent Apply; invalid ranges raise an input error.
 
+Authored background intervals remain explicit even when equal to an automatic
+suggestion. Default resolution does not write derived bounds into the policy.
+Correction outcomes record local and acquisition bounds and selection provenance;
+loading preserves authored bounds without requiring a new project schema.
+
 ``background_ranges``
     Optional inclusive background-bin ranges for forward and backward grouped
     histograms, stored as ``[[forward_start, forward_end],

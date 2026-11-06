@@ -335,7 +335,7 @@ draft is what gets applied to every run following the profile.
   hidden in vector mode, where per-projection reductions stay at β = 1)
   — each previewed against the same corrected
   reduction. A card's header row shows a disclosure arrow,
-  the title, and a live status summary (e.g. "off", "pre-t0 range",
+  the title, and a live status summary (e.g. "off", "range average",
   "1.2692 · Diamagnetic (TF)"), so a collapsed card still reports what its stage
   is doing; clicking anywhere on the header expands or collapses the body. At
   open, a card is expanded exactly when its stage is active (deadtime on,
@@ -1049,7 +1049,7 @@ its integer alignment and inclusive good window. Binning drops incomplete termin
 explicit output time range selects merged-bin centres without moving their
 edges. It corrects only those consumed output
 samples and the exact union of samples required by active range, tail-fit,
-or reference backgrounds. Range samples include beam-period trimming. Inactive
+or reference backgrounds. Range samples retain exact explicit bounds; only automatic defaults receive beam-period trimming. Inactive
 configured windows, unused detectors, excluded prefixes, and gaps between
 required windows add no correction dependency. Fixed backgrounds add no
 estimation samples. Dedicated timing searches and deadtime calibration fits
@@ -1259,8 +1259,7 @@ Background correction
 ----------------------
 
 The **Background** card of the Corrections column configures the
-profile's background policy inline for PSI-style raw histogram formats,
-including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
+profile's background policy inline for supported raw histogram formats. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
 grouped raw forward/backward histograms before the asymmetry is calculated.
 
@@ -1268,8 +1267,10 @@ Histograms are first grouped into forward and backward sums, then background is 
 then asymmetry is calculated. The section's modes are:
 
 * ``None`` — no correction.
-* ``Range`` — the background is estimated as the mean count in an inclusive
-  pre-:math:`t_0` bin range. If no range is given, it uses musrfit's fallback
+* ``Range average`` — the background is estimated as the mean count in an
+  inclusive signal-free acquisition-bin interval. **Edit intervals…** accepts
+  separate F/B bounds as ``first,last; first,last`` (zero-based). Explicit
+  bounds are retained exactly. If no range is given, it uses musrfit's fallback
   range from ``0.1 * t0`` to ``0.6 * t0``.
 * ``Tail fit`` — a Poisson maximum-likelihood fit of the late-time count
   level, for runs where a fixed pre-:math:`t_0` window is not representative.
@@ -1288,12 +1289,20 @@ Background subtraction can make late-time corrected forward/backward sums
 very small or negative. Those bins may therefore produce asymmetries at or
 beyond ``+/-100%``. The plot keeps such low-confidence PSI points visible in
 grey, matching the low-count visual treatment used for raw grouped data, and
-excludes them from automatic Y-axis scaling.
+excludes them from automatic Y-axis scaling. The count-denominator display
+refinement uses final applied levels without refitting; for combined periods or
+nonzero applied deadtime, the display uses the plotted-asymmetry mask.
 
-The correction is off by default and disabled for ISIS/NeXus data, where
-deadtime correction is the file-metadata correction path. When enabled for
-PSI data, the applied method, estimated values, and ranges are stored on the
-profile's background policy.
+The correction is off by default. Facility labels guide automatic defaults,
+without restricting explicit intervals. If ``t0=0`` has no automatic pre-t0
+support, choose an explicit interval before applying Range average. Only automatic
+defaults receive native-bin beam-period adjustment. Authored bounds persist in the
+profile; the correction outcome records the effective bounds, levels, and whether
+the selection was explicit or automatic. See :doc:`data_reduction/backgrounds`.
+
+.. image:: /_generated/screenshots/grouping_explicit_background_range.png
+   :alt: Range average with retained separate F/B acquisition intervals and an Edit intervals button.
+   :width: 100%
 
 Comparing a correction's effect
 -------------------------------
@@ -1431,7 +1440,7 @@ Four markers show what the asymmetry never does:
 
 For the three constant-level background modes — Fixed, Range, Tail fit — a
 dashed rule at the subtracted level is labelled "background level · F 7119.0
-/ B 7168.3 counts per bin (tail fit)" (or "(fixed)" / "(pre-t0 range)"); a
+/ B 7168.3 counts per bin (tail fit)" (or "(fixed)" / "(range average)"); a
 reference-run background subtracts a spectrum rather than a level and draws
 no rule.
 

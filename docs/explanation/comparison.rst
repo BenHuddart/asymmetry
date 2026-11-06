@@ -1023,6 +1023,18 @@ different operation. See the `musrfit RUN settings
 Asymmetry's aligned grouped-region mean can differ from WiMDA's configured
 original-detector region when detector timing or corrections differ.
 
+Asymmetry selects the late half of resolved good-data support on native bins,
+closest to Mantid's declared selection. For inclusive ``[a,b]`` it starts at
+``a + (b-a+1)//2``. WiMDA selects the late half of grouped output points, so
+output merging can also change the observations. Asymmetry honours explicit
+shared/separate intervals exactly, including values equal to defaults, following
+WiMDA/Mantid interval control. musrfit's compared region selection can shorten
+explicit intervals and depend on requested packing. Asymmetry applies its
+musrfit-inspired period convention only to automatic defaults using native width;
+shorter-than-period defaults remain intact. Integer rounding and inclusive
+endpoints do not establish exact whole-cycle exposure. Facility labels provide
+advice and defaults, without vetoing supported explicit selections.
+
 Asymmetry propagates a shared estimated level and count-estimator covariance
 through merged counts. WiMDA's compared background subtraction leaves exported
 count errors unchanged; Mantid adds the fitted level error to each bin without

@@ -13,7 +13,7 @@ from typing import Any
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
-TAIL_BACKGROUND_POLICY_REVISION = 1
+TAIL_BACKGROUND_POLICY_REVISION = 2
 
 
 class CorrectionStatus(StrEnum):

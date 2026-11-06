@@ -1168,8 +1168,9 @@ def _deadtime_policy_from_payload(payload: dict[str, Any]) -> DeadtimePolicy:
 
 def _background_policy_from_payload(payload: dict[str, Any]) -> BackgroundPolicy:
     """Derive a :class:`BackgroundPolicy` from a payload's background keys."""
+    details = {key: payload[key] for key in _BACKGROUND_DETAIL_KEYS if key in payload}
     if not bool(payload.get("background_correction", False)):
-        return BackgroundPolicy(mode="none")
+        return BackgroundPolicy(mode="none", details=details)
     mode = str(payload.get("background_mode", "")).strip().lower()
     if mode not in BACKGROUND_POLICY_MODES or mode == "none":
         # Fall back to the same heuristic transform.background uses.
@@ -1178,7 +1179,6 @@ def _background_policy_from_payload(payload: dict[str, Any]) -> BackgroundPolicy
             for key in ("background_fixed_values", "background_fix", "bkg_fix")
         )
         mode = "fixed" if has_fixed else "range"
-    details = {key: payload[key] for key in _BACKGROUND_DETAIL_KEYS if key in payload}
     return BackgroundPolicy(mode=mode, details=details)
 
 
@@ -1694,14 +1694,11 @@ def _apply_deadtime_policy(
 
 def _apply_background_policy(grouping: dict[str, Any], policy: BackgroundPolicy) -> None:
     """Write background keys into the grouping per the policy."""
-    if policy.mode == "none":
-        grouping["background_correction"] = False
-        grouping["background_mode"] = "none"
-        return
-    grouping["background_correction"] = True
+    grouping["background_correction"] = policy.mode != "none"
     grouping["background_mode"] = policy.mode
-    for key, value in policy.details.items():
-        grouping[key] = value
+    for key in _BACKGROUND_DETAIL_KEYS:
+        grouping.pop(key, None)
+    grouping.update(policy.details)
 
 
 # --------------------------------------------------------------------------- #

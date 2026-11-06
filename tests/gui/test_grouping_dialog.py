@@ -1096,11 +1096,11 @@ def test_calibrate_deadtime_populates_explicit_table(
     assert payload["deadtime_reference_run"] == 4001
 
 
-def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> None:
+def test_background_range_mode_available_for_non_psi_data(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
     available = dialog._available_background_modes()
-    assert "range" not in available
+    assert "range" in available
     # Tail fit and background-run modes stay available on pulsed data.
     assert "tail_fit" in available
     assert "reference_run" in available

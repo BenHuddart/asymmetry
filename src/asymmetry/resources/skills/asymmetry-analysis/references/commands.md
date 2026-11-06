@@ -106,9 +106,9 @@ options:
                         the groups)
   --background none|tail_fit|range[:FIRST:LAST]
                         Background subtraction: tail_fit fits a flat rate under the
-                        late-time decay (pulsed sources); range averages a pre-t0 bin
-                        range (continuous sources; default range 0.1·t0–0.6·t0).
-                        Default: none
+                        late-time decay; range averages an exact inclusive acquisition
+                        interval. Use range:FIRST:LAST in zero-based bins; absent
+                        bounds require a usable pre-t0 default. Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
   --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the
@@ -159,9 +159,9 @@ options:
                         the groups)
   --background none|tail_fit|range[:FIRST:LAST]
                         Background subtraction: tail_fit fits a flat rate under the
-                        late-time decay (pulsed sources); range averages a pre-t0 bin
-                        range (continuous sources; default range 0.1·t0–0.6·t0).
-                        Default: none
+                        late-time decay; range averages an exact inclusive acquisition
+                        interval. Use range:FIRST:LAST in zero-based bins; absent
+                        bounds require a usable pre-t0 default. Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
   --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the
@@ -226,9 +226,9 @@ options:
                         the groups)
   --background none|tail_fit|range[:FIRST:LAST]
                         Background subtraction: tail_fit fits a flat rate under the
-                        late-time decay (pulsed sources); range averages a pre-t0 bin
-                        range (continuous sources; default range 0.1·t0–0.6·t0).
-                        Default: none
+                        late-time decay; range averages an exact inclusive acquisition
+                        interval. Use range:FIRST:LAST in zero-based bins; absent
+                        bounds require a usable pre-t0 default. Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
   --t-good-offset BINS  Signed first-bin offset from effective t0 (default: the

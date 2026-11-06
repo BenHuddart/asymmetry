@@ -579,7 +579,7 @@ def test_tail_policy_invalidates_old_cache_but_preserves_readable_results(reduce
 
     workdir, dataset, entry, path, grouping, settings = reduced
     with monkeypatch.context() as old:
-        old.setattr(module, "TAIL_BACKGROUND_POLICY_REVISION", 0)
+        old.setattr(module, "TAIL_BACKGROUND_POLICY_REVISION", 1)
         digest = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     workdir.write_reduced(dataset, dataclasses.replace(entry, digest=digest))
     current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)

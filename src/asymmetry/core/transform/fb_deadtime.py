@@ -74,7 +74,10 @@ def fb_deadtime_domain(
                 required.append(window)
         elif mode == "tail_fit":
             first, last = tail_background_window(
-                counts.alignment.length, counts.common_t0_bin, counts.window.last
+                counts.alignment.length,
+                counts.common_t0_bin,
+                counts.window.last,
+                first_good_bin=counts.window.first,
             )
             if first <= last:
                 for required in windows:

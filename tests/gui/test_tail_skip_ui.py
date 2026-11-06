@@ -218,3 +218,104 @@ def test_maxent_batch_completion_separates_warning_without_trailing_space(
         assert message == completion + (" " + outcome.warning if has_warning else "")
     finally:
         window.close()
+
+
+def test_good_support_edits_refresh_cold_warm_skip_decisions(qapp):
+    dataset = _histogram_dataset(forward=np.full(200, 100.0), backward=np.full(200, 80.0))
+    dataset.run.histograms[1].counts[120] = -1
+    for histogram in dataset.run.histograms:
+        histogram.count_variance = np.abs(histogram.counts) + 1
+    dataset.run.grouping.update(
+        background_correction=True, background_mode="tail_fit", first_good_bin=100
+    )
+    window = MainWindow()
+    try:
+        for first, skipped in ((100, False), (0, True), (100, False)):
+            dataset.run.grouping["first_good_bin"] = first
+            cold = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+            warm = window._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+            assert bool(correction_warnings(cold[0].metadata)) == skipped
+            assert correction_warnings(cold[0].metadata) == correction_warnings(warm[0].metadata)
+        assert dataset.run.grouping["alpha"] == 1.0
+    finally:
+        window.close()
+
+
+def test_range_preview_and_apply_retain_exact_endpoints(qapp, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    dataset = _histogram_dataset(forward=np.arange(200.0) + 10, backward=np.arange(200.0) + 20)
+    dataset.run.metadata["facility"] = "ISIS"
+    dialog, window = GroupingDialog([dataset]), MainWindow()
+    try:
+        section = dialog._background_section
+        section._mode_combo.setCurrentIndex(section._mode_combo.findData("range"))
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("1,71; 2,63", True))
+        section._edit_range_btn.click()
+        pane = dialog._preview_pane
+        pane.flush()
+        wait_for(
+            lambda: (
+                pane._last_result is not None and pane._last_result.generation == pane._generation
+            ),
+            qapp,
+        )
+        assert pane.corrections_complete
+        expected = (
+            (dataset.run.histograms[0].counts[1:72]).mean(),
+            (dataset.run.histograms[1].counts[2:64]).mean(),
+        )
+        assert pane._last_result.counts.background_level == pytest.approx(expected)
+        payload = dialog._current_grouping_payload()
+        assert payload["background_ranges"] == [[1, 71], [2, 63]]
+        applied, outcomes = window._apply_grouping_settings_to_dataset(dataset, payload)
+        assert applied
+        assert next(iter(outcomes.values())).background.effective["values"] == pytest.approx(
+            expected
+        )
+        assert dataset.run.grouping["background_ranges"] == [[1, 71], [2, 63]]
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+        window.close()
+
+
+@pytest.mark.parametrize("applied", [False, True])
+def test_low_confidence_mask_uses_final_outcome_without_refitting(qapp, applied):
+    from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionOutcomes
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    dataset = _histogram_dataset(forward=np.arange(1.0, 5.0), backward=np.arange(1.0, 5.0))
+    dataset.run.grouping.update(background_correction=True, background_mode="tail_fit")
+    skipped = CorrectionOutcomes(
+        background=CorrectionOutcome(
+            "background", "tail_fit", "skipped", "other period has no counts"
+        )
+    )
+    if applied:
+        record = CorrectionOutcomes(
+            background=CorrectionOutcome(
+                "background",
+                "range",
+                "applied",
+                effective={"values": [3.0, 3.0]},
+                uncertainty="shared estimated level",
+            )
+        )
+        dataset.metadata["correction_outcomes"] = {"red": record.to_dict()}
+    else:
+        dataset.metadata["correction_outcomes"] = {
+            "red": skipped.to_dict(),
+            "green": skipped.to_dict(),
+        }
+    panel = PlotPanel()
+    try:
+        # A combined result has no single count denominator to refine.
+        np.testing.assert_array_equal(
+            panel._low_confidence_mask_for_dataset(dataset),
+            np.array([True, True, True, False])
+            if applied
+            else np.zeros(dataset.n_points, dtype=bool),
+        )
+    finally:
+        panel.close()

@@ -25,7 +25,11 @@ from asymmetry.core.fourier.fft import (
     fourier_mode_uses_phase_fit,
     prepare_fft_time_signal,
 )
-from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
+from asymmetry.core.fourier.group_preparation import (
+    GroupPreparation,
+    histogram_grid_identity,
+    prepare_group_counts,
+)
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.phase_fit import (
     PHASE_FIT_METHOD,
@@ -37,7 +41,11 @@ from asymmetry.core.fourier.phase_fit import (
     fit_fft_phase,
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
-from asymmetry.core.transform.background import resolve_background_mode
+from asymmetry.core.transform.background import (
+    background_range_is_explicit,
+    resolve_background_mode,
+    resolve_facility,
+)
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import (
@@ -250,13 +258,7 @@ def _coerce_exclusion_ranges(value: object) -> list[tuple[float, float]]:
 
 
 def _digest_groups(groups: object) -> dict[int, list[int]] | None:
-    """Normalise a ``grouping["groups"]`` payload to ``{gid: sorted detector ids}``.
-
-    Entries may be plain detector numbers or ``[detector, weight]`` pairs (only
-    the detector number is grouping-relevant to the FFT input); unparseable
-    group ids or entries are dropped rather than raising, since a digest must
-    tolerate whatever a run happens to carry.
-    """
+    """Normalise parseable group/detector IDs for metadata-only cache comparisons."""
     if not isinstance(groups, dict):
         return None
     normalized: dict[int, list[int]] = {}
@@ -299,29 +301,8 @@ def _digest_int(value: object) -> int | None:
         return None
 
 
-def _background_values_are_list_routed(grouping: dict) -> bool:
-    """Only positional background lists depend on the selected F/B routing.
-
-    Group-keyed dictionaries retain their routing when a projection changes
-    the selected F/B pair; that change must not perturb their digest.
-    """
-    values = grouping.get("background_values")
-    ranges = grouping.get("background_ranges")
-    return isinstance(values, (list, tuple)) or isinstance(ranges, (list, tuple))
-
-
 def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
-    """Fingerprint the effective grouping inputs without loading acquisitions.
-
-    Enabled File correction includes the identity and modification metadata of
-    the external reference file consumed by FFT preparation. This uses metadata
-    only, never loads histograms, and does not validate authored background input.
-    Cosmetic names and inert correction settings are excluded.
-
-    Exact t0, acquired support, and enabled background settings affect both
-    signal sources. F/B asymmetry also includes its pair, balances, binning,
-    and held periods; grouped averages do not depend on those ratio settings.
-    """
+    """Fingerprint enabled settings, including default-range facility and F/B mapping."""
     if run is None:
         return ""
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
@@ -329,6 +310,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     payload: dict[str, object] = {
         "deadtime_scope": "required_grouped_observations",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
+        "histogram_grid": histogram_grid_identity(run.histograms),
     }
 
     groups = _digest_groups(grouping.get("groups"))
@@ -356,30 +338,44 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
             else grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
         )
 
-    if (
-        grouping.get("background_correction", False)
-        and resolve_background_mode(grouping) == "reference_run"
-    ):
-        from asymmetry.core.io import reference_file_identity
-
-        payload["reference_file_identity"] = reference_file_identity(grouping.get("background_run"))
-        payload["good_frames"] = grouping.get("good_frames")
-
     background_correction = bool(grouping.get("background_correction", False))
     payload["background_correction"] = background_correction
     if background_correction:
-        payload["background_mode"] = resolve_background_mode(grouping)
+        mode = resolve_background_mode(grouping)
+        payload["background_mode"] = mode
+        if mode == "reference_run":
+            from asymmetry.core.io import reference_file_identity
+
+            payload["reference_file_identity"] = reference_file_identity(
+                grouping.get("background_run")
+            )
+            payload["good_frames"] = grouping.get("good_frames")
+        elif mode == "range" and not background_range_is_explicit(grouping):
+            payload["background_facility"] = resolve_facility(
+                metadata=run.metadata, grouping=grouping
+            )
         for key in (
             "background_values",
             "background_ranges",
             "background_range",
+            "background_forward_range",
+            "background_backward_range",
+            "background_fixed_values",
+            "background_fix",
+            "bkg_fix",
             "background_run",
         ):
             if key in grouping:
                 payload[key] = grouping[key]
-        if _background_values_are_list_routed(grouping):
-            forward_group = _digest_int(grouping.get("forward_group"))
-            backward_group = _digest_int(grouping.get("backward_group"))
+        if (
+            mode == "range"
+            or isinstance(grouping.get("background_values"), (list, tuple))
+            or any(
+                key in grouping for key in ("background_fixed_values", "background_fix", "bkg_fix")
+            )
+        ):
+            forward_group = _digest_int(grouping.get("forward_group", 1))
+            backward_group = _digest_int(grouping.get("backward_group", 2))
             if forward_group is not None:
                 payload["forward_group"] = forward_group
             if backward_group is not None:
@@ -399,8 +395,8 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
 
     if signal_source == "fb_asymmetry":
         payload["signal_source"] = "fb_asymmetry"
-        forward_group = _digest_int(grouping.get("forward_group"))
-        backward_group = _digest_int(grouping.get("backward_group"))
+        forward_group = _digest_int(grouping.get("forward_group", 1))
+        backward_group = _digest_int(grouping.get("backward_group", 2))
         payload["fb_forward_group"] = forward_group if forward_group is not None else 1
         payload["fb_backward_group"] = backward_group if backward_group is not None else 2
         # Normalise alpha/beta exactly as group_forward_backward does:
