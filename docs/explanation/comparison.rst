@@ -90,10 +90,11 @@ Agreement means agreement for matched observations and uncertainty conventions,
 within the stated storage or export precision. Explained convention differences
 are identified separately. Unverified paths and unresolved uncertainty
 comparisons remain limits; acceptance of a selection alone does not establish
-correct covariance or physical calibration. WiMDA behaviour below has no
-identified executable release version or binary numerical comparison; the
-`author's homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_ describe
-its workflows without supplying a version for these observations.
+correct covariance or physical calibration. Versioned WiMDA numerical checks
+are limited to the background cases explicitly identified below. Other WiMDA
+descriptions compare workflows without claiming executable numerical agreement;
+the `author's homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_
+provide general context.
 
 .. _comparison-membership:
 
@@ -236,7 +237,7 @@ The tutorial version is separate from the recorded executable version.
 .. _comparison-file-manual-windows:
 
 File bounds and authored relative windows
-----------------------------------------
+-----------------------------------------
 
 Asymmetry keeps acquired detector bounds on raw bins and maps them through
 current selected-channel alignment. **From file** preserves the raw
@@ -984,3 +985,59 @@ its own estimates explicitly; unresolved requests preserve raw inspection and
 editable settings. These are Asymmetry safeguards, not a claim about all three
 reference programs' failure policies. Their full unknown-source and partial
 failure behaviour is outside the executed comparison.
+
+.. _comparison-count-backgrounds:
+
+Count-background estimates
+--------------------------
+
+Asymmetry fits one nonnegative exponential-plus-flat Poisson estimating
+objective on native bins. The exponential lifetime is fixed, and its shape
+is averaged across each bin. Profiling the total expected count and solving
+the bounded mixture score makes equivalent origins on identical observations
+return the same flat level and likelihood. Output bin merging does not refit
+this native-bin estimator. On deadtime-corrected or supplied-variance counts,
+the objective is an estimating convention, not a claim of raw Poisson statistics.
+
+WiMDA 1.326 **Auto BG** uses count-error weighting on grouped output points,
+with negligible weight for observations at or below four counts. In Mantid
+6.16.1, the Muon automatic correction fits ``FlatBackground + ExpDecayMuon``
+by default weighted least squares without nonnegative parameter constraints.
+A matched Mantid executable check on an independently generated dense exact
+exponential-plus-flat mean agrees with Asymmetry. Separate noisy-data checks
+with WiMDA and Mantid show different estimates and sensitivity to grouping,
+selected support, and supplied zero-bin errors. The WiMDA checks use paired
+corrected/uncorrected exports of seeded Poisson draws; Mantid checks use its
+public ``Fit`` algorithm with explicitly supplied count errors.
+These are selected calculations, not a statistical bias or coverage study or
+a full Mantid Muon GUI validation. The `WiMDA homepage
+<https://shadow.nd.rl.ac.uk/wimda/>`_ describes the program; the
+`Mantid Corrections tab documentation
+<https://mantidproject.github.io/docs-versioned/v6.11.0/interfaces/muon/muon_corrections_tab.html>`_
+is version 6.11.0 and is distinct from the compared runtime.
+
+In musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), asymmetry preparation uses an
+arithmetic region mean. A jointly fitted single-histogram background is a
+different operation. See the `musrfit RUN settings
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
+Asymmetry's aligned grouped-region mean can differ from WiMDA's configured
+original-detector region when detector timing or corrections differ.
+
+Asymmetry propagates a shared estimated level and count-estimator covariance
+through merged counts. WiMDA's compared background subtraction leaves exported
+count errors unchanged; Mantid adds the fitted level error to each bin without
+retaining the full shared covariance in the count workspace. musrfit's compared
+region-error propagation adds level-estimation variance but does not retain the
+full shared/overlap covariance. These differences are deliberate uncertainty
+conventions. Supplied variances in Asymmetry enter the fitted estimator's
+linearised influence; they do not change its central estimating objective.
+
+Asymmetry also checks sufficient fit support, expected-information rank, and
+finite positive uncertainty. These checks prevent a numerically unestimable
+level from being reported as usable, even when a solver might report success;
+they do not test residual physical polarisation or impose a chi-squared gate.
+Its linearised boundary errors do not promise calibrated coverage. Failed
+background estimates block final reduction under the current correction
+contract. File loading remains independent of this estimator's usability.
+See :doc:`/reference/data_reduction/backgrounds` for the model, current window,
+and covariance equations.

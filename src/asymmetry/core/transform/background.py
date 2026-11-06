@@ -10,8 +10,7 @@ Four modes are supported, selected by the ``background_mode`` grouping key
 - ``"tail_fit"`` — a pulsed-source background mode:
   a bin-integrated muon exponential plus a flat rate fitted to the late-time
   spectrum; the flat rate is subtracted. Asymmetry fits by Poisson maximum
-  likelihood instead of WiMDA's √N weights (study divergence D4) and reports
-  the rate with an uncertainty.
+  likelihood on native bins and reports the rate with an uncertainty.
 - ``"reference_run"`` — WiMDA's File BG: subtract a designated reference
   run's grouped counts scaled by the good-frame ratio (sample holder /
   silver / laser-off references), with error propagation (divergence D7).
@@ -24,7 +23,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize
+from scipy.optimize import brentq
 
 from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
 from asymmetry.core.transform.fb_counts import (
@@ -205,11 +204,9 @@ def fit_tail_background(
         µ_i = [p₁ · e^{−t_i/τ_µ} · sinh(w/2τ_µ)/(w/2τ_µ) + p₂] · w
 
     with w the bin width and t_i the bin centre relative to t0. Estimation is
-    by Poisson maximum likelihood — the intensity is linear in (p₁, p₂), so
-    the negative log-likelihood is convex and the minimum unique. WiMDA
-    instead weights by √N and deletes bins with ≤ 4 counts, which biases the
-    rate low exactly where this fit operates (study divergence D4). The rate
-    uncertainty comes from the expected information matrix for raw counts.
+    by nonnegative Poisson maximum likelihood, profiling the total expected
+    count and solving the remaining monotone mixture score on [0, 1].
+    The rate uncertainty comes from the expected information for raw counts.
     With GroupCounts, propagate supplied variance through the estimator's
     linearised influence, including its covariance with the input bins.
 
@@ -232,50 +229,57 @@ def fit_tail_background(
             message=message,
         )
 
-    if width <= 0.0:
-        return _failure("Bin width must be positive")
+    if not np.isfinite(width) or width <= 0.0:
+        return _failure("Bin width must be finite and positive")
     if end - start + 1 < 5:
         return _failure("Tail-fit window has fewer than 5 bins")
     window = np.clip(n[start : end + 1], 0.0, None)
     if float(np.sum(window)) <= 0.0:
         return _failure("Tail-fit window contains no counts")
 
-    t = (np.arange(start, end + 1, dtype=np.float64) - float(t0_bin)) * width
+    # Normalised component shapes remove the origin/amplitude scale. For
+    # mu_i = T p_i(f), sum(p)=1 implies T_hat=sum(n); the mixture log
+    # likelihood is concave, so its score root or an endpoint is the optimum.
     x = width / MUON_LIFETIME_US
-    bin_factor = float(np.sinh(x / 2.0) / (x / 2.0)) if x > 0.0 else 1.0
-    shape = np.exp(-t / MUON_LIFETIME_US) * bin_factor
+    shape = np.exp(-np.arange(window.size, dtype=np.float64) * x)
+    decay = shape / np.sum(shape)
+    flat = np.full(window.size, 1.0 / window.size)
+    delta = decay - flat
+    total = float(np.sum(window))
+    positive = window > 0
 
-    def negative_log_likelihood(params: np.ndarray) -> tuple[float, np.ndarray]:
-        p1, p2 = params
-        mu = np.maximum((p1 * shape + p2) * width, 1e-12)
-        nll = float(np.sum(mu - window * np.log(mu)))
-        residual = 1.0 - window / mu
-        grad = np.array(
-            [
-                float(np.sum(residual * shape * width)),
-                float(np.sum(residual * width)),
-            ]
+    def mixture_score(fraction: float) -> float:
+        probability = (1.0 - fraction) * flat[positive] + fraction * decay[positive]
+        return float(np.sum((window[positive] / total) * delta[positive] / probability))
+
+    if mixture_score(0.0) <= 0.0:
+        fraction = 0.0
+    elif mixture_score(1.0) >= 0.0:
+        fraction = 1.0
+    else:
+        fraction = brentq(mixture_score, 0.0, 1.0, xtol=1e-15)
+    mu = total * ((1.0 - fraction) * flat + fraction * decay)
+    if not np.all(np.isfinite(mu)) or np.any(mu <= 0.0):
+        return _failure("Tail-fit expected counts must be finite and positive")
+    p2 = total * (1.0 - fraction) / window.size / width
+    # Restore the exponential rate at t0, including the bin-average factor.
+    log_bin_factor = x / 2.0 + np.log(-np.expm1(-x) / x)
+    p1 = 0.0
+    if fraction > 0.0:
+        log_amplitude = (
+            np.log(total * fraction / np.sum(shape) / width)
+            + (start - float(t0_bin)) * x
+            - log_bin_factor
         )
-        return nll, grad
+        limits = np.finfo(float)
+        if not np.log(limits.smallest_subnormal) <= log_amplitude <= np.log(limits.max):
+            return _failure("Tail-fit amplitude at time zero is not representable")
+        p1 = float(np.exp(log_amplitude))
 
-    mean_rate = float(np.mean(window)) / width
-    p1_init = max(mean_rate / max(float(np.mean(shape)), 1e-12), 1e-6)
-    initial = np.array([p1_init, max(0.1 * mean_rate, 1e-9)])
-    result = minimize(
-        negative_log_likelihood,
-        initial,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=[(0.0, None), (0.0, None)],
-    )
-    if not result.success:
-        return _failure(f"Tail fit did not converge: {result.message}")
-    p1, p2 = (float(v) for v in result.x)
-
-    # Expected information for the linear-intensity Poisson model.
-    mu = np.maximum((p1 * shape + p2) * width, 1e-12)
-    j1 = shape * width
-    j2 = np.full_like(mu, width)
+    # Information in anchored counts/bin coordinates avoids origin and width
+    # scaling in the rank check; convert the flat-count influence to counts/us.
+    j1 = shape
+    j2 = np.ones_like(mu)
     info = np.array(
         [
             [float(np.sum(j1 * j1 / mu)), float(np.sum(j1 * j2 / mu))],
@@ -290,9 +294,8 @@ def fit_tail_background(
         return _failure("Tail-fit information matrix is singular")
     if not np.all(np.isfinite(covariance)) or covariance[1, 1] <= 0:
         return _failure("Tail-fit information matrix is not positive definite")
-    rate_error = float(np.sqrt(covariance[1, 1]))
-    # Cov(raw count j, fitted rate) = J_j · I⁻¹[:, rate] for Poisson ML.
-    count_covariance = j1 * covariance[0, 1] + j2 * covariance[1, 1]
+    rate_error = float(np.sqrt(covariance[1, 1])) / width
+    count_covariance = (j1 * covariance[0, 1] + j2 * covariance[1, 1]) / width
     if supplied_variance is not None:
         influence = count_covariance / mu
         source_variance = supplied_variance[start : end + 1]
