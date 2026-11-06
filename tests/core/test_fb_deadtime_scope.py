@@ -290,9 +290,12 @@ def test_tail_estimator_samples_outside_output_are_required_but_inactive_ranges_
     )
     result = corrected_grouped_counts(**options, use_background=False)
     assert result.corrections.deadtime.status == "applied"
+    result = corrected_grouped_counts(**options, use_background=True)
+    assert result.corrections.background.status == "skipped"
+    histograms[0].counts[28] = 100
     with pytest.raises(DeadtimeCorrectionError) as error:
         corrected_grouped_counts(**options, use_background=True)
-    assert error.value.bin_index == 15
+    assert error.value.bin_index == 28
 
 
 def test_unused_manual_values_remain_validated_but_exposure_is_only_required_for_nonzero_selected_coefficients():
@@ -351,16 +354,15 @@ def test_active_background_pole_remains_required():
     assert error.value.bin_index == 0
 
 
-def test_beam_trim_excludes_only_samples_not_used_by_range_estimator():
-    histograms = [Histogram(np.full(70, level), 0.001) for level in (2.0, 1.0)]
-    histograms[0].counts[45] = 100
+def test_automatic_beam_trim_excludes_only_samples_not_used_by_range_estimator():
+    histograms = [Histogram(np.full(100, level), 0.001, 82) for level in (2.0, 1.0)]
+    histograms[0].counts[48] = 100
     grouping = {
         "first_good_bin": 60,
         "last_good_bin": 69,
         "dead_time_us": [1, 1],
         "good_frames": 100000,
         "background_mode": "range",
-        "background_range": [0, 49],
     }
     options = dict(
         histograms=histograms,
@@ -373,14 +375,17 @@ def test_beam_trim_excludes_only_samples_not_used_by_range_estimator():
     )
     result = corrected_grouped_counts(**options, facility="PSI")
     np.testing.assert_allclose(result.forward.counts[result.window.slice], 0)
-    assert result.corrections.background.effective["ranges"] == ((0, 39), (0, 39))
+    assert result.corrections.background.effective["ranges"] == ((8, 47), (8, 47))
     assert result.corrections.deadtime.effective["scope"]["raw_bin_ranges"]["0"] == (
-        (0, 39),
+        (8, 47),
         (60, 69),
     )
     with pytest.raises(DeadtimeCorrectionError) as error:
         corrected_grouped_counts(**options, facility="")
-    assert error.value.bin_index == 45
+    assert error.value.bin_index == 48
+    grouping["background_range"] = [8, 49]
+    with pytest.raises(DeadtimeCorrectionError):
+        corrected_grouped_counts(**options, facility="PSI")
 
 
 @pytest.mark.parametrize("unused", [float("nan"), float("inf"), "unavailable"])

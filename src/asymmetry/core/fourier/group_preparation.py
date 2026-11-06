@@ -167,21 +167,23 @@ def prepare_group_counts(
         mask = time_range_mask(time, time_range)
         windows = [BinWindow(int(edges[i]), int(edges[i + 1]) - 1) for i in np.flatnonzero(mask)]
         if background:
-            payload = group_background_payload(local_grouping, group_id, t0, background_t0)
+            payload = group_background_payload(local_grouping, group_id)
             mode = resolve_background_mode(payload)
             if mode == "range":
                 windows.append(
                     grouped_background_ranges(
                         payload,
                         t0_bin=t0,
-                        acquisition_start_bin=0,
+                        acquisition_start_bin=background_t0 - t0,
                         length=alignment.length,
                         bin_width_us=histograms[indices[0]].bin_width,
                         facility=resolve_facility(metadata=run.metadata, grouping=payload),
                     )[0]
                 )
             elif mode == "tail_fit":
-                first, last = tail_background_window(alignment.length, t0, window.last)
+                first, last = tail_background_window(
+                    alignment.length, t0, window.last, first_good_bin=window.first
+                )
                 if first <= last:
                     windows.append(BinWindow(first, last))
         sample_parts.append((alignment, indices, windows))

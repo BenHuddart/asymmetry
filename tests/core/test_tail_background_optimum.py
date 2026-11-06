@@ -124,12 +124,12 @@ def test_supplied_variance_and_shared_covariance_match_independent_weighted_desi
     assert poisson.rate_error_per_us == pytest.approx(
         np.linalg.norm(influence * np.sqrt(raw)) / width, rel=1e-12
     )
-    # The default fit window is [199,399]; reconstruct that influence independently.
+    # The default fit window is [200,399]; reconstruct that influence independently.
     result = apply_grouped_background_correction(
         source, source, grouping={"background_mode": "tail_fit"}, t0_bin=0, bin_width_us=width
     )
     assert result.outcome.status == "applied"
-    start = 199
+    start = 200
     local_design = design[start:]
     local_influence = np.linalg.pinv(local_design / np.sqrt(raw[start:, None]))[1] / np.sqrt(
         raw[start:]

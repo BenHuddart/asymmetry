@@ -37,7 +37,10 @@ def count_background_domain(histograms, grouping, group_specs, metadata):
         windows = [[window] for window in ranges]
     elif mode == "tail_fit":
         first, last = tail_background_window(
-            crop.length, crop.common_t0_bin, crop.window(grouping).last
+            crop.length,
+            crop.common_t0_bin,
+            crop.window(grouping).last,
+            first_good_bin=crop.window(grouping).first,
         )
         if first <= last:
             windows = [[BinWindow(first, last)] for _ in groups]
@@ -67,6 +70,7 @@ def require_count_background(prepared, grouping, group_specs, metadata):
             t0_bin=crop.common_t0_bin,
             acquisition_start_bin=crop.first_bin,
             bin_width_us=histograms[groups[0][0]].bin_width,
+            first_good_bin=crop.window(grouping).first,
             last_good_bin=crop.window(grouping).last,
             metadata=metadata,
         )

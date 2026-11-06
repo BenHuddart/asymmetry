@@ -425,7 +425,7 @@ def test_build_group_signal_dataset_applies_group_background_correction() -> Non
             "last_good_bin": 3,
             "deadtime_correction": False,
             "background_correction": True,
-            "background_values": [12.0, 21.0],
+            "background_range": [0, 1],
         },
         metadata={"run_number": 46, "facility": "PSI"},
     )

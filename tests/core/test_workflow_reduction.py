@@ -248,9 +248,17 @@ def test_a_range_background_restores_the_diluted_asymmetry() -> None:
         assert np.mean(restored.asymmetry[:50]) > np.mean(diluted.asymmetry[:50]) + 2.0
 
 
-def test_a_pulsed_run_has_no_range_background(scan_run) -> None:
-    with pytest.raises(ValueError, match="no pre-t0 region"):
-        resolve_reduction_grouping(scan_run, ReductionSettings(background="range"))
+def test_a_pulsed_run_accepts_an_explicit_range_background(scan_run) -> None:
+    grouping = resolve_reduction_grouping(
+        scan_run, ReductionSettings(background="range", background_range=(1, 5))
+    )
+    assert grouping["background_range"] == [1, 5]
+    assert (
+        reduce_run(
+            scan_run, ReductionSettings(background="range", background_range=(1, 5))
+        ).n_points
+        > 0
+    )
 
 
 def test_a_tail_fit_background_is_subtracted_or_the_reduction_says_why() -> None:

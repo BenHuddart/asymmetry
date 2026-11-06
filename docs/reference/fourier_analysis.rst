@@ -554,16 +554,19 @@ Which background option when:
   Introduction* (Oxford University Press, Oxford, 2022), §14.3). Start here.
 * **Tail fit** — fits a muon exponential plus a flat rate to the late-time
   counts and subtracts the flat part. This is the option for **pulsed data**,
-  where there is no pre-t0 region: the spectrum starts at the muon pulse, so
-  the background can only be read off the long counting tail. Asymmetry fits it
+  when no suitable signal-free interval is available. The fitted observations
+  are the late half of selected good-data support on native bins. Asymmetry fits it
   by Poisson maximum likelihood (correct for the few-count late-time bins) and
   flags a result below two standard errors as consistent with zero — at ISIS
   expect exactly that, with a significantly non-zero value being a diagnostic
   (dark counts, light leaks, surviving upstream decays).
-* **Pre-t0 range** — averages a band of pre-trigger bins. The natural estimate
+* **Range average** — averages an explicitly selected signal-free interval. The natural estimate
   at a **continuous source**, where the muon arrives at a sharp prompt peak and
-  the bins before it measure the background directly. Unavailable for pulsed
-  files (no pre-t0 region to average).
+  the bins before it can measure the background directly. Explicit intervals
+  remain available regardless of source identity; a zero-t0 acquisition requires
+  an authored interval. Only automatic defaults receive native-bin period
+  adjustment. Grouped Fourier translates the same acquisition bounds to its
+  signal grid without changing observation membership.
 * **Fixed** — subtracts a per-group constant you supply, for when the level is
   known independently.
 * **Reference run** — subtracts a separately measured reference (sample holder,

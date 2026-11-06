@@ -4,9 +4,8 @@ Four modes are supported, selected by the ``background_mode`` grouping key
 (with back-compatible derivation from the older keys when absent):
 
 - ``"fixed"`` — subtract user-supplied per-group constants.
-- ``"range"`` — a pre-t0 background convention: the mean count over
-  a pre-t0 bin range (fallback range ``0.1·t0`` to ``0.6·t0``), only
-  meaningful at continuous sources where a pre-t0 region exists.
+- ``"range"`` — the mean over an explicit observed interval, or an
+  automatic pre-t0 default when that support exists.
 - ``"tail_fit"`` — a pulsed-source background mode:
   a bin-integrated muon exponential plus a flat rate fitted to the late-time
   spectrum; the flat rate is subtracted. Asymmetry fits by Poisson maximum
@@ -117,10 +116,8 @@ def resolve_facility(
     grouping payload's ``instrument`` — the canonical registry identity the
     loaders stamp there — is the last resort.
 
-    The string matters because :func:`apply_grouped_background_correction` trims
-    a pre-t0 background window to whole accelerator periods only for facilities
-    it recognises (see :func:`_beam_period_us`). It used to be the caller's job
-    to pass it, and a caller who did not know that silently lost the trimming.
+    This label guides period adjustment of automatic pre-t0 defaults only;
+    explicit intervals remain exactly as authored.
     """
     metadata = metadata if isinstance(metadata, dict) else {}
     grouping = grouping if isinstance(grouping, dict) else {}
@@ -140,21 +137,12 @@ def supports_background_correction(
     metadata: dict[str, Any] | None = None,
     source_file: str = "",
 ) -> bool:
-    """Return whether pre-t0 range-average background subtraction applies.
+    """Range estimation is available when an observed interval is supplied.
 
-    Kept for back-compatibility: this is the gate for the ``"range"`` mode
-    only. Use :func:`available_background_modes` for the full mode list.
+    Identity and filenames guide automatic defaults, not method access.
+    Observation support is checked by :func:`grouped_background_ranges`.
     """
-    metadata = metadata if isinstance(metadata, dict) else {}
-    facility = str(metadata.get("facility", "")).lower()
-    instrument = str(metadata.get("instrument", "")).lower()
-    if "psi" in facility or instrument == "lem":
-        return True
-    if metadata.get("psi_format"):
-        return True
-    path = str(source_file or metadata.get("source_file", "") or "").lower()
-    is_psi_root = "psi" in facility or instrument == "lem" or metadata.get("root_format")
-    return path.endswith((".bin", ".mdu")) or (path.endswith(".root") and bool(is_psi_root))
+    return True
 
 
 def available_background_modes(
@@ -162,16 +150,8 @@ def available_background_modes(
     metadata: dict[str, Any] | None = None,
     source_file: str = "",
 ) -> tuple[str, ...]:
-    """Background modes applicable to a dataset.
-
-    ``fixed``, ``tail_fit`` and ``reference_run`` apply everywhere; ``range``
-    needs a pre-t0 region, which only continuous-source data provide (pulsed
-    ISIS files start at the muon pulse).
-    """
-    modes = ["fixed", "tail_fit", "reference_run"]
-    if supports_background_correction(metadata=metadata, source_file=source_file):
-        modes.insert(0, "range")
-    return tuple(modes)
+    """Methods offered independently of facility or filename conventions."""
+    return ("range", "fixed", "tail_fit", "reference_run")
 
 
 def resolve_background_mode(grouping: dict[str, Any] | None) -> str:
@@ -185,7 +165,7 @@ def resolve_background_mode(grouping: dict[str, Any] | None) -> str:
     explicit = str(grouping.get("background_mode", "")).strip().lower()
     if explicit in BACKGROUND_MODES:
         return explicit
-    if _fixed_background_values(grouping) is not None:
+    if fixed_background_values(grouping) is not None:
         return "fixed"
     return "range"
 
@@ -195,6 +175,7 @@ def fit_tail_background(
     *,
     bin_width_us: float,
     t0_bin: int,
+    first_good_bin: int | None = None,
     last_good_bin: int | None = None,
     fit_start_bin: int | None = None,
 ) -> TailFitResult:
@@ -211,12 +192,16 @@ def fit_tail_background(
     With GroupCounts, propagate supplied variance through the estimator's
     linearised influence, including its covariance with the input bins.
 
-    The default window is the late half of (t0, last_good), on acquisition bins.
+    The default window is the late half of inclusive selected good support,
+    on native bins. An omitted first good defaults to t0, clipped to observed
+    support; an explicit fit start overrides the midpoint.
     """
     source = GroupCounts.from_value(counts)
     n, supplied_variance = source.counts, source.variance
     width = float(bin_width_us)
-    start, end = tail_background_window(n.size, t0_bin, last_good_bin, fit_start_bin=fit_start_bin)
+    start, end = tail_background_window(
+        n.size, t0_bin, last_good_bin, first_good_bin=first_good_bin, fit_start_bin=fit_start_bin
+    )
 
     def _failure(message: str, *, invalid_input: bool = False) -> TailFitResult:
         return TailFitResult(
@@ -356,6 +341,7 @@ def apply_grouped_background_correction(
     bin_width_us: float,
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
+    first_good_bin: int | None = None,
     last_good_bin: int | None = None,
     reference_forward: NDArray[np.float64] | GroupCounts | None = None,
     reference_backward: NDArray[np.float64] | GroupCounts | None = None,
@@ -379,16 +365,15 @@ def apply_grouped_background_correction(
     bin_width_us
         Histogram bin width in microseconds.
     facility
-        Facility label. PSI and TRIUMF ``range``-mode windows are shortened to
-        an integer number of accelerator periods, following musrfit. The default
+        Facility label. Only automatic PSI/TRIUMF ``range`` defaults are shortened to
+        the accelerator-period convention inspired by musrfit. The default
         ``None`` means *derive it* from ``metadata``/``grouping`` via
-        :func:`resolve_facility` — the trimming used to be silently skipped for
-        every caller who did not know to pass this. Pass ``""`` to opt out
+        :func:`resolve_facility`. Pass ``""`` to opt out
         explicitly (no facility, no trimming); any non-empty string overrides.
     metadata
         Run metadata, used only to resolve ``facility`` when it is not given.
-    last_good_bin
-        End of the good window; bounds the tail-fit window.
+    first_good_bin, last_good_bin
+        Inclusive selected good support bounding the native tail-fit window.
     reference_forward, reference_backward, reference_scale
         Grouped counts of the resolved background reference run and the
         good-frame ratio, required by the ``reference_run`` mode (resolution
@@ -413,12 +398,14 @@ def apply_grouped_background_correction(
             f_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
+            first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
         )
         backward_fit = fit_tail_background(
             b_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
+            first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
         )
         if not forward_fit.ok or not backward_fit.ok:
@@ -467,6 +454,11 @@ def apply_grouped_background_correction(
             values=(f_value, b_value),
             ranges=(forward_fit.window, backward_fit.window),
             details={
+                "selection": "selected_good_tail",
+                "acquisition_ranges": [
+                    [bound + acquisition_start_bin for bound in fit.window]
+                    for fit in (forward_fit, backward_fit)
+                ],
                 "forward_rate_per_us": forward_fit.rate_per_us,
                 "forward_rate_error_per_us": forward_fit.rate_error_per_us,
                 "backward_rate_per_us": backward_fit.rate_per_us,
@@ -495,7 +487,7 @@ def apply_grouped_background_correction(
         )
 
     if mode == "fixed":
-        fixed = _fixed_background_values(grouping)
+        fixed = fixed_background_values(grouping)
         if fixed is None:
             # An explicit fixed mode without usable values must not silently
             # degrade to a range estimate the user never asked for.
@@ -549,17 +541,31 @@ def apply_grouped_background_correction(
         mode=mode,
         values=(f_value, b_value),
         ranges=((f_range.first, f_range.last), (b_range.first, b_range.last)),
+        details={
+            "selection": "explicit" if background_range_is_explicit(grouping) else "automatic",
+            "acquisition_ranges": [
+                [window.first + acquisition_start_bin, window.last + acquisition_start_bin]
+                for window in (f_range, b_range)
+            ],
+        },
     )
 
 
 def tail_background_window(
-    length: int, t0_bin: int, last_good_bin: int | None, *, fit_start_bin: int | None = None
+    length: int,
+    t0_bin: int,
+    last_good_bin: int | None,
+    *,
+    first_good_bin: int | None = None,
+    fit_start_bin: int | None = None,
 ) -> tuple[int, int]:
-    """Inclusive late-half window shared by dependency selection and the fit."""
+    """Inclusive late half of selected support; absent first good defaults to t0.
+
+    An odd window retains its middle bin. Explicit fit starts override the half.
+    """
     end = min(length - 1, int(last_good_bin) if last_good_bin is not None else length - 1)
-    start = (
-        int(fit_start_bin) if fit_start_bin is not None else int(t0_bin) + (end - int(t0_bin)) // 2
-    )
+    first = max(0, int(t0_bin) if first_good_bin is None else int(first_good_bin))
+    start = int(fit_start_bin) if fit_start_bin is not None else first + (end - first + 1) // 2
     return max(start, 0), end
 
 
@@ -572,8 +578,15 @@ def grouped_background_ranges(
     bin_width_us: float,
     facility: str,
 ) -> tuple[BinWindow, BinWindow]:
-    """Resolve observed local ranges, including established beam-period trimming."""
+    """Map authored acquisition bounds exactly; adjust only automatic defaults."""
     ranges = resolve_background_ranges(grouping, int(t0_bin) + acquisition_start_bin)
+    if not background_range_is_explicit(grouping) and any(
+        value.first < acquisition_start_bin or value.last >= acquisition_start_bin + length
+        for value in ranges
+    ):
+        raise ValueError(
+            "Select an explicit background interval; the pre-t0 default is outside observed support."
+        )
     local = tuple(
         BinWindow(
             value.first - acquisition_start_bin,
@@ -584,6 +597,8 @@ def grouped_background_ranges(
     )
     for window in local:
         window.validate_length(length, label="background range")
+    if background_range_is_explicit(grouping):
+        return local
     return tuple(
         _adjust_range_for_beam_period(window, bin_width_us=bin_width_us, facility=facility)
         for window in local
@@ -666,7 +681,7 @@ def _estimated_background_group(
     )
 
 
-def _fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | None:
+def fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | None:
     for key in ("background_fixed_values", "background_fix", "bkg_fix"):
         candidate = grouping.get(key)
         if isinstance(candidate, (list, tuple)) and len(candidate) == 2:
@@ -689,6 +704,19 @@ def background_window(value: object) -> BinWindow:
     return BinWindow(*value, label="background range")
 
 
+def background_range_is_explicit(grouping: dict[str, Any]) -> bool:
+    """Key presence preserves authorship, including values equal to defaults."""
+    return any(
+        key in grouping
+        for key in (
+            "background_ranges",
+            "background_range",
+            "background_forward_range",
+            "background_backward_range",
+        )
+    )
+
+
 def resolve_background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
     """Resolve both inclusive background windows on the declared acquisition grid."""
     if "background_ranges" in grouping:
@@ -707,6 +735,10 @@ def resolve_background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[Bi
     elif "background_range" in grouping:
         shared = background_window(grouping["background_range"])
     else:
+        if t0_bin <= 0:
+            raise ValueError(
+                "Select an explicit background interval; no pre-t0 default is available."
+            )
         shared = BinWindow(int(0.1 * t0_bin), int(0.6 * t0_bin))
     return shared, shared
 
