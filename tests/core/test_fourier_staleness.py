@@ -183,15 +183,16 @@ def test_digest_unchanged_axis_switch_background_disabled():
 
 
 def test_digest_unchanged_axis_switch_dict_shaped_background_values():
-    """Dict-shaped background_values/ranges key by group id directly, so they do
-    not need forward_group/backward_group to route entries."""
+    """Group-keyed fixed levels do not depend on F/B interval coordinates."""
     base = _base_grouping()
     base["background_correction"] = True
+    base["background_mode"] = "fixed"
     base["background_values"] = {1: 10.0, 2: 20.0}
     base["forward_group"] = 1
     base["backward_group"] = 2
     switched = _base_grouping()
     switched["background_correction"] = True
+    switched["background_mode"] = "fixed"
     switched["background_values"] = {1: 10.0, 2: 20.0}
     switched["forward_group"] = 2
     switched["backward_group"] = 1

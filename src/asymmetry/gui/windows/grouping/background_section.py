@@ -24,12 +24,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from asymmetry.core.project.profiles import BackgroundPolicy
+from asymmetry.core.transform.background import (
+    background_range_is_explicit,
+    resolve_background_ranges,
+)
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 
 __all__ = ["BackgroundReferenceRunCandidate", "BackgroundSectionWidget", "background_status_text"]
@@ -38,10 +43,10 @@ __all__ = ["BackgroundReferenceRunCandidate", "BackgroundSectionWidget", "backgr
 _MODE_ITEMS = (
     ("None", "none", "No background subtraction."),
     (
-        "Range average (pre-t0)",
+        "Range average",
         "range",
-        "Mean count over a pre-t0 bin window (musrfit convention) — "
-        "continuous-source data only; pulsed files have no pre-t0 region.",
+        "Mean count over an inclusive acquisition-bin interval. "
+        "Choose a signal-free interval; facility labels only guide defaults.",
     ),
     (
         "Tail fit (late-time)",
@@ -81,10 +86,15 @@ def background_status_text(policy: BackgroundPolicy) -> str:
     if policy.mode == "none":
         return "Background: none"
     if policy.mode == "range":
-        ranges = policy.details.get("background_ranges") or policy.details.get("background_range")
-        if ranges:
-            return f"Background: pre-t0 range {ranges}"
-        return "Background: pre-t0 range"
+        if background_range_is_explicit(policy.details):
+            ranges = policy.details.get("background_ranges", policy.details.get("background_range"))
+            if ranges is None:
+                ranges = [
+                    policy.details.get("background_forward_range"),
+                    policy.details.get("background_backward_range"),
+                ]
+            return f"Background: explicit range {ranges}"
+        return "Background: automatic pre-t0 interval, when available; otherwise choose an interval"
     if policy.mode == "tail_fit":
         return "Background: tail fit (late-time)"
     if policy.mode == "reference_run":
@@ -128,6 +138,7 @@ class BackgroundSectionWidget(QWidget):
         self._candidates_provider = candidates_provider
         self._available_modes: set[str] = {"none"}
         self._has_fixed_values = False
+        self._details: dict[str, Any] = {}
         self._background_run_payload: dict[str, Any] | None = None
 
         root = QVBoxLayout(self)
@@ -145,6 +156,10 @@ class BackgroundSectionWidget(QWidget):
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         root.addWidget(self._status_label)
+        self._edit_range_btn = QPushButton("Edit intervals…")
+        self._edit_range_btn.setAutoDefault(False)
+        self._edit_range_btn.clicked.connect(self._edit_intervals)
+        root.addWidget(self._edit_range_btn)
 
         self._reference_row = QWidget()
         reference_layout = QHBoxLayout(self._reference_row)
@@ -168,8 +183,23 @@ class BackgroundSectionWidget(QWidget):
         has_fixed_values: bool,
         mode: str,
         background_run_payload: dict[str, Any] | None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """(Re)seed the section for the current dataset/draft, without emitting."""
+        self._details = {
+            key: value
+            for key, value in (details or {}).items()
+            if key
+            in (
+                "background_ranges",
+                "background_range",
+                "background_forward_range",
+                "background_backward_range",
+                "background_fixed_values",
+                "background_fix",
+                "bkg_fix",
+            )
+        }
         self._available_modes = set(available_modes) | {"none"}
         self._has_fixed_values = bool(has_fixed_values)
         self._background_run_payload = (
@@ -204,6 +234,32 @@ class BackgroundSectionWidget(QWidget):
     def background_run_payload(self) -> dict[str, Any] | None:
         """The selected reference-run payload (``reference_run`` mode)."""
         return dict(self._background_run_payload) if self._background_run_payload else None
+
+    def details(self) -> dict[str, Any]:
+        """Authored bounds and fixed levels, retained even while subtraction is off."""
+        return dict(self._details)
+
+    def _edit_intervals(self) -> None:
+        text, accepted = QInputDialog.getText(
+            self,
+            "Background intervals",
+            "Inclusive acquisition bins (zero-based). Enter forward first,last; backward first,last:",
+        )
+        if not accepted:
+            return
+        try:
+            pairs = [[int(value.strip()) for value in pair.split(",")] for pair in text.split(";")]
+            if len(pairs) != 2:
+                raise ValueError("Enter two intervals separated by a semicolon.")
+            resolve_background_ranges({"background_ranges": pairs}, 0)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid background interval", str(exc))
+            return
+        for key in ("background_range", "background_forward_range", "background_backward_range"):
+            self._details.pop(key, None)
+        self._details["background_ranges"] = pairs
+        self._refresh_visibility_and_status()
+        self.changed.emit()
 
     # -- reactions -------------------------------------------------------
 
@@ -267,6 +323,7 @@ class BackgroundSectionWidget(QWidget):
     def _refresh_visibility_and_status(self) -> None:
         mode = self.mode()
         self._reference_row.setVisible(mode == "reference_run")
+        self._edit_range_btn.setVisible(mode == "range")
         if mode == "reference_run":
             payload = self._background_run_payload or {}
             run_number = payload.get("run_number")
@@ -278,7 +335,7 @@ class BackgroundSectionWidget(QWidget):
         mode = self.mode()
         if mode == "none":
             return BackgroundPolicy(mode="none")
-        details: dict[str, Any] = {}
+        details = self.details()
         if mode == "reference_run" and self._background_run_payload:
             details["background_run"] = dict(self._background_run_payload)
         return BackgroundPolicy(mode=mode, details=details)

@@ -1243,7 +1243,7 @@ class GroupingDialog(TimingControls, QDialog):
         corrections_col_layout.addWidget(self._corrections_scroll)
 
         self._update_deadtime_status()
-        self._update_background_status()
+        self._update_background_status(grouping)
         self._update_alpha_section()
         self._update_beta_section()
 
@@ -3018,7 +3018,7 @@ class GroupingDialog(TimingControls, QDialog):
             if bool(grouping.get("background_correction", False))
             else "none"
         )
-        self._update_background_status()
+        self._update_background_status(grouping)
         self._update_alpha_section()
         self._update_beta_section()
         binning = binning_spec(grouping)
@@ -3321,24 +3321,19 @@ class GroupingDialog(TimingControls, QDialog):
         self._refresh_alpha_staleness()
 
     def _available_background_modes(self) -> tuple[str, ...]:
-        metadata: dict[str, Any] = {}
-        if self._reference_dataset is not None:
-            metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
-        if self._run is not None:
-            metadata.update(getattr(self._run, "metadata", {}) or {})
-        source_file = str(getattr(self._run, "source_file", "") or metadata.get("source_file", ""))
-        return available_background_modes(metadata=metadata, source_file=source_file)
+        return available_background_modes()
 
     def _current_background_mode(self) -> str:
         return self._background_mode
 
-    def _update_background_status(self) -> None:
+    def _update_background_status(self, grouping: dict | None = None) -> None:
         """Re-seed the inline background section from the current draft state."""
         self._background_section.configure(
             available_modes=self._available_background_modes(),
             has_fixed_values=self._background_has_fixed_values(),
             mode=self._background_mode,
             background_run_payload=self._background_run_payload,
+            details=self._background_section.details() if grouping is None else grouping,
         )
 
     def _on_apply(self) -> None:
@@ -3632,13 +3627,12 @@ class GroupingDialog(TimingControls, QDialog):
             stale_suffix = " · stale" if self._beta_is_stale() else ""
             return beta_status_text(self._beta_section.value()) + stale_suffix
         if stage == "background":
-            details = (
-                {"background_run": self._background_run_payload}
-                if self._background_run_payload
-                else {}
-            )
             return background_status_text(
-                BackgroundPolicy(mode=self._current_background_mode(), details=details)
+                BackgroundPolicy(
+                    mode=self._current_background_mode(),
+                    details=self._background_section.details()
+                    | {"background_run": self._background_run_payload},
+                )
             )
         value = float(self._alpha_spin.value())
         stale_suffix = " · stale" if self._alpha_is_stale() else ""
@@ -5095,6 +5089,8 @@ class GroupingDialog(TimingControls, QDialog):
         "background_fixed_values",
         "background_ranges",
         "background_range",
+        "background_forward_range",
+        "background_backward_range",
         "background_run",
     )
 
@@ -5447,6 +5443,7 @@ class GroupingDialog(TimingControls, QDialog):
                 "period_mode": self._current_period_mode(),
                 "bin_index_base": self._bin_index_base(),
             }
+            | self._background_section.details()
             | self._binning_payload()
             | self._exclusion_payload()
             | (

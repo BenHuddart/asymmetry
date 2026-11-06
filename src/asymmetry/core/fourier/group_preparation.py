@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from asymmetry.core.data.dataset import Run
+from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fourier.group_background import (
     _apply_group_background_correction,
     group_background_payload,
@@ -36,6 +36,11 @@ from asymmetry.core.transform.scoped_counts import ScopedCounts, observation_dom
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, require_selected_timing
 
 
+def histogram_grid_identity(histograms: list[Histogram]) -> tuple:
+    """Snapshot raw-bin timing and observed support without reading count values."""
+    return tuple((h.t0_bin, h.t0_time_us, h.bin_width, h.n_bins) for h in histograms)
+
+
 def preparation_identity(run: Run) -> tuple:
     """Bind products to their actual arrays, period and authored reduction settings."""
     from asymmetry.core.io import reference_file_identity
@@ -45,10 +50,8 @@ def preparation_identity(run: Run) -> tuple:
         if correction_flags_from_grouping(run.grouping).use_background
         and resolve_background_mode(run.grouping) == "reference_run"
         else None,
-        tuple(
-            (id(h.counts), id(h.count_variance), h.bin_width, h.t0_bin, h.t0_time_us)
-            for h in run.histograms
-        ),
+        tuple((id(h.counts), id(h.count_variance)) for h in run.histograms),
+        histogram_grid_identity(run.histograms),
         json.dumps(run.grouping, default=str),
         json.dumps(run.metadata, default=str),
         run.source_file,
@@ -167,21 +170,23 @@ def prepare_group_counts(
         mask = time_range_mask(time, time_range)
         windows = [BinWindow(int(edges[i]), int(edges[i + 1]) - 1) for i in np.flatnonzero(mask)]
         if background:
-            payload = group_background_payload(local_grouping, group_id, t0, background_t0)
+            payload = group_background_payload(local_grouping, group_id)
             mode = resolve_background_mode(payload)
             if mode == "range":
                 windows.append(
                     grouped_background_ranges(
                         payload,
                         t0_bin=t0,
-                        acquisition_start_bin=0,
+                        acquisition_start_bin=background_t0 - t0,
                         length=alignment.length,
                         bin_width_us=histograms[indices[0]].bin_width,
                         facility=resolve_facility(metadata=run.metadata, grouping=payload),
                     )[0]
                 )
             elif mode == "tail_fit":
-                first, last = tail_background_window(alignment.length, t0, window.last)
+                first, last = tail_background_window(
+                    alignment.length, t0, window.last, first_good_bin=window.first
+                )
                 if first <= last:
                     windows.append(BinWindow(first, last))
         sample_parts.append((alignment, indices, windows))

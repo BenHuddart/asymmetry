@@ -100,7 +100,7 @@ def _range_window(**kwargs):
     result = apply_grouped_background_correction(
         counts,
         counts,
-        grouping=kwargs.pop("grouping", {"background_range": [0, 100]}),
+        grouping=kwargs.pop("grouping", {}),
         t0_bin=150,
         # 0.005 µs bins: the PSI 0.01975 µs period spans just under four bins, so
         # a 100-bin window trims visibly.
@@ -155,11 +155,10 @@ def test_unknown_facility_leaves_the_window_alone() -> None:
         assert _range_window(metadata=metadata) == untrimmed
 
 
-def test_background_support_is_limited_to_psi_style_formats() -> None:
+def test_background_support_is_independent_of_identity() -> None:
     assert supports_background_correction(metadata={"facility": "PSI"}) is True
     assert supports_background_correction(metadata={"instrument": "LEM"}) is True
     assert supports_background_correction(metadata={}, source_file="run.bin") is True
     assert (
-        supports_background_correction(metadata={"facility": "ISIS"}, source_file="run.nxs")
-        is False
+        supports_background_correction(metadata={"facility": "ISIS"}, source_file="run.nxs") is True
     )

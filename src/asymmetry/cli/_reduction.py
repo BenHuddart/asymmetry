@@ -60,8 +60,9 @@ def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = Tr
         metavar="none|tail_fit|range[:FIRST:LAST]",
         help=(
             "Background subtraction: tail_fit fits a flat rate under the late-time "
-            "decay (pulsed sources); range averages a pre-t0 bin range (continuous "
-            "sources; default range 0.1·t0–0.6·t0). Default: none"
+            "decay; range averages an exact inclusive acquisition interval. "
+            "Use range:FIRST:LAST in zero-based bins; absent bounds require a usable pre-t0 default. "
+            "Default: none"
         ),
     )
     parser.add_argument(

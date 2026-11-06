@@ -1666,11 +1666,11 @@ class TestPlotPanel:
             mask, np.array([False, False, False, False, False, True, True, True, False, False])
         )
 
-    def test_low_count_mask_uses_background_corrected_psi_denominator(
+    def test_low_count_mask_without_provenance_uses_plotted_asymmetry(
         self,
         panel: PlotPanel,
     ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+        if not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
         f_raw = np.array([10.0, 10.0, 110.0, 80.0, 50.0, 25.0, 13.0, 10.1, 9.9, 10.2])
@@ -1713,7 +1713,7 @@ class TestPlotPanel:
 
         assert np.array_equal(
             mask,
-            np.array([True, True, False, False, False, False, False, True, True, True]),
+            np.array([False, False, False, False, False, False, False, False, True, True]),
         )
 
     def test_low_count_mask_projects_saturated_source_bins_after_rebin(

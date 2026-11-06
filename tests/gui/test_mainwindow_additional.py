@@ -3827,11 +3827,11 @@ class TestMainWindowBasic:
         )
         np.testing.assert_allclose(dataset.error, [expected_error, expected_error])
 
-    def test_background_requested_for_non_psi_data_is_not_applied(
+    def test_explicit_background_for_non_psi_data_is_applied(
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """Background correction is the PSI path, not an ISIS grouping fallback."""
+        """An explicit supported interval is available independently of facility."""
         dataset = _make_dataset(7397, with_grouping=False)
         dataset.run.metadata["facility"] = "ISIS"
         dataset.metadata["facility"] = "ISIS"
@@ -3856,9 +3856,9 @@ class TestMainWindowBasic:
         applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        assert dataset.run.grouping["background_correction"] is False
-        assert "background_method" not in dataset.run.grouping
-        np.testing.assert_allclose(dataset.asymmetry, [100.0 / 9.0, 100.0 / 9.0])
+        assert dataset.run.grouping["background_correction"] is True
+        assert dataset.run.grouping["background_method"] == "estimated"
+        np.testing.assert_allclose(dataset.asymmetry, [20.0, 20.0])
 
     def test_background_off_preserves_raw_isis_grouping_behavior(
         self,

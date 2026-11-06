@@ -786,15 +786,18 @@ The PSI support is deliberately tied to existing muon-analysis implementations:
 Raw-count background correction uses this ordering:
 group forward/backward histograms first, subtract fixed or estimated
 background next, then calculate asymmetry. Estimated background values are the
-mean counts in an inclusive background-bin range. When no range is supplied,
-Asymmetry uses musrfit's fallback `0.1 * t0` to `0.6 * t0` range. PSI and
-TRIUMF background ranges are adjusted toward complete accelerator periods using
-the musrfit constants (`0.01975 us` and `0.04337 us` respectively).
+mean counts in an inclusive acquisition-bin range. Every valid authored interval
+is used exactly, including separate F/B bounds and values equal to defaults.
+Absent intervals use the pre-t0 fraction suggestion when supported; only these
+automatic defaults receive the native-bin PSI/TRIUMF period convention.
+Tail fitting uses the late half of resolved selected good-data support on native
+bins, sharing that selection with required deadtime observations.
 
-The toggle is off by default and exposed only for PSI-style raw data
-(`.bin`, `.mdu`, and PSI/LEM `.root`). Existing ISIS/NeXus raw grouping remains
-on the file-deadtime path, and Asymmetry does not use background subtraction as
-an ISIS deadtime fallback.
+The correction is off by default. Explicit interval selection is available
+regardless of facility labels, through API, CLI, and the grouping editor.
+A zero-t0 acquisition without a usable automatic interval requires authored
+bounds; inspection remains available. Background subtraction and detector
+deadtime correction retain distinct purposes and outcomes.
 
 Binning follows the same counts-first order in every mode (fixed bunching
 included): counts are summed onto the output bins and the asymmetry formed

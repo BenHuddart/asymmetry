@@ -45,7 +45,7 @@ from asymmetry.core.project.profiles import (
     profile_from_payload,
     resolve_effective_grouping,
 )
-from asymmetry.core.transform.background import available_background_modes
+from asymmetry.core.transform.background import background_window
 from asymmetry.core.transform.grouping import effective_group_indices, group_names
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
@@ -59,8 +59,8 @@ from asymmetry.core.utils.constants import PeriodMode
 #: The manual/estimate modes are grouping-window work, not CLI work.
 DEADTIME_MODES = ("off", "from_file")
 
-#: Background treatments. ``range`` is the mean over a pre-t0 bin range
-#: (continuous sources only; musrfit's fallback range when none is given);
+#: Background treatments. ``range`` averages exact authored acquisition bins
+#: or a supported automatic pre-t0 default;
 #: ``tail_fit`` fits a flat rate under the late-time decay (pulsed sources).
 #: The fixed and reference-run modes are grouping-window work, not CLI work.
 BACKGROUND_MODES = ("none", "range", "tail_fit")
@@ -125,11 +125,7 @@ class ReductionSettings:
         if self.background_range is not None:
             if self.background != "range":
                 raise ValueError("A background bin range applies only to the range background.")
-            first, last = self.background_range
-            if not 0 <= first < last:
-                raise ValueError(
-                    f"Background range {first}:{last} must be two bins with 0 <= first < last."
-                )
+            background_window(self.background_range)
         if self.pair is not None:
             forward, backward = self.pair
             if not forward or not backward or forward.casefold() == backward.casefold():
@@ -220,12 +216,6 @@ def _background_policy(run: Run, settings: ReductionSettings) -> BackgroundPolic
     """The background policy *settings* ask for, checked against what *run* can supply."""
     if settings.background == "none":
         return BackgroundPolicy(mode="none")
-    available = available_background_modes(metadata=run.metadata, source_file=run.source_file)
-    if settings.background not in available:
-        raise ValueError(
-            "There is no pre-t0 region for a range background (a pulsed source starts "
-            "at the muon pulse); use tail_fit."
-        )
     details = (
         {}
         if settings.background_range is None

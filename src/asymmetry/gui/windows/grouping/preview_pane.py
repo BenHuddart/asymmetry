@@ -126,12 +126,10 @@ COMPARE_STAGE_LABELS: dict[str, str] = {
 #: Counts view has no ghost to draw for them and says so instead.
 _ASYMMETRY_STAGE_SYMBOLS: dict[str, str] = {"alpha": "α", "beta": "β"}
 
-#: How the Counts view words each constant-level background mode. Only these
-#: modes subtract a level (``reference_run`` subtracts a spectrum, so
-#: ``background_level`` is ``None`` and no line is drawn).
+#: Constant-level subtraction draws a rule; a reference spectrum has no level.
 _BACKGROUND_MODE_LABELS: dict[str, str] = {
     "fixed": "fixed",
-    "range": "pre-t0 range",
+    "range": "range average",
     "tail_fit": "tail fit",
 }
 

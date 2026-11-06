@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refresh cached count views and flag Fourier spectra after in-place histogram
+  timing, native bin-width, or observed-length edits.
+
+- Fit backgrounds on the late half of selected good data, retain exact explicit
+  intervals, and allow range selection through API, CLI, and the grouping editor.
+
 - Preserve unusable automatic tail observations and warn while leaving the whole
   result background-unsubtracted, retaining valid deadtime correction and provenance.
 - Refresh grouped counts, errors and correction warnings after in-place source edits.

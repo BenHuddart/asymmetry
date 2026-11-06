@@ -212,12 +212,14 @@ and each is printed on the line under the command's table:
   The usable result records requested ``from_file`` and actual ``skipped`` in
   its correction outcomes, including cached work-directory results. A supplied
   complete zero table is an applied identity.
-- ``--background tail_fit`` fits a flat rate under the late-time decay and
-  subtracts it (pulsed sources); ``--background range`` subtracts the mean
-  over a pre-t0 bin range, ``0.1·t0``–``0.6·t0`` unless a range is given as
-  ``range:FIRST:LAST`` in bins (continuous sources only — a pulsed run has no
-  pre-t0 region and is refused). A background the reduction cannot subtract
-  is an error, never a silent unsubtracted spectrum. ``integral-scan`` takes
+- ``--background tail_fit`` fits the late half of selected good-data support
+  on native bins and subtracts the flat rate. ``--background range:FIRST:LAST``
+  averages that exact inclusive zero-based acquisition interval, independently
+  of facility labels. Without bounds, ``range`` uses the pre-t0 fraction
+  suggestion where supported; a zero-t0 acquisition requires explicit bounds.
+  Only automatic defaults receive native-bin period adjustment. An unusable
+  automatic tail warns and leaves the whole result background-unsubtracted;
+  invalid authored intervals retain errors. ``integral-scan`` takes
   the same ``--background``: the grouping's constant subtracted level is
   removed from the forward and backward window sums before they are
   combined into the integral asymmetry, and its correlated error (one level
