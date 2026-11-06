@@ -2,7 +2,8 @@
 
 Poisson means are muon decay plus flat counts per acquisition bin; the time
 axis is in μs. Fixed bunching exposes the shared level's contribution to the
-asymmetry error bars without an oscillation in the tail-fit window.
+asymmetry error bars without an oscillation in the tail-fit window. The
+fitted rate and propagated uncertainty must be finite in the completed preview.
 """
 
 from __future__ import annotations
@@ -99,6 +100,14 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             or pane._last_result.corrections[0].deadtime.effective["good_frames"] != 2000.0
         ):
             raise RuntimeError("Preview did not apply manual deadtime and complete its tail fit")
+        background = pane._last_result.corrections[0].background
+        if background.status != CorrectionStatus.APPLIED:
+            raise RuntimeError("Preview did not apply its tail-background estimate")
+        details = background.effective["details"]
+        for group in ("forward", "backward"):
+            rate, error = (details[f"{group}_{name}_per_us"] for name in ("rate", "rate_error"))
+            if not np.isfinite(rate) or rate < 0 or not np.isfinite(error) or error <= 0:
+                raise RuntimeError("Preview tail-background rate or uncertainty is unusable")
         _pump_events(80)
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
