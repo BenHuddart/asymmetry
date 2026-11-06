@@ -21,7 +21,11 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcomes, result_tail_skip
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcomes,
+    reference_observation_metadata,
+    result_tail_skip,
+)
 from asymmetry.core.transform.deadtime import deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import (
@@ -204,6 +208,9 @@ def prepare_group_counts(
         layouts[int(group_id)] = GroupLayout(
             alignment, window, local_grouping, background_t0, reference_alignment
         )
+    if reference is not None:
+        indices = sorted({index for _, selected, _ in sample_parts for index in selected})
+        reference.require_independent(histograms, reference_observation_metadata(run), indices)
     domains = [observation_domain(sample_parts)]
     inputs = [(histograms, grouping)]
     if reference is not None:
@@ -232,6 +239,17 @@ def prepare_group_counts(
             else None,
             reference_scale=reference.scale if reference is not None else None,
         )
+    if reference is not None:
+        backgrounds = {
+            gid: replace(
+                result,
+                outcome=replace(
+                    result.outcome,
+                    effective=dict(result.outcome.effective, reference=reference.provenance()),
+                ),
+            )
+            for gid, result in backgrounds.items()
+        }
     skip = result_tail_skip({str(gid): result.outcome for gid, result in backgrounds.items()})
     if skip is not None:
         warnings.warn(skip.warning, UserWarning, stacklevel=2)

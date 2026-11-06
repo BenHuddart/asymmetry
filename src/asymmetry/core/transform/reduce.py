@@ -268,6 +268,7 @@ def prepare_grouped_corrections(
                 first_bin=crop.first_bin,
                 sample_length=n_grouped,
             )
+            resolved.require_independent(histograms, metadata, forward_idx + backward_idx)
             inputs.append((resolved.histograms, resolved.deadtime_grouping(grouping)))
             domains.append(
                 fb_deadtime_domain(
@@ -340,14 +341,7 @@ def prepare_grouped_corrections(
             if resolved is not None and background_outcome.status == CorrectionStatus.APPLIED:
                 effective = background_outcome.to_dict()["effective"]
                 effective["reference_alignment"] = reference_crop.to_dict()
-                effective["reference"] = {
-                    "run_number": resolved.run_number,
-                    "file_name": resolved.source_file,
-                    "scale": resolved.scale,
-                    "scale_source": resolved.scale_source,
-                    "good_frames_sample": resolved.good_frames_sample,
-                    "good_frames_reference": resolved.good_frames_reference,
-                }
+                effective["reference"] = resolved.provenance()
                 if use_deadtime:
                     effective["reference"]["deadtime"] = reference_outcome.to_dict()
                 background_outcome = replace(background_outcome, effective=effective)
@@ -646,7 +640,9 @@ def corrected_period_counts(
             use_background=use_background,
             output_time_range=output_time_range,
             facility=facility,
-            metadata=metadata,
+            metadata=dict(metadata or {}, period_number=int(label == PeriodMode.GREEN) + 1)
+            if periods is not None
+            else metadata,
             reference_resolver=reference_resolver,
             allow_incomplete=allow_incomplete,
             context=f"{context} {label}".strip() if combined else context,

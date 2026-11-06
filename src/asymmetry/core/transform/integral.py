@@ -69,7 +69,11 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcomes, CorrectionStatus
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcomes,
+    CorrectionStatus,
+    reference_observation_metadata,
+)
 from asymmetry.core.transform.fb_counts import (
     ForwardBackwardCounts,
     GroupCounts,
@@ -371,7 +375,7 @@ def reduce_period_integral(
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=run.metadata,
+        metadata=reference_observation_metadata(run),
         native_time_range=(t_min, t_max),
     )
     values = {}
@@ -764,7 +768,7 @@ def _reduce_run_to_fb(
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=run.metadata,
+        metadata=reference_observation_metadata(run),
         output_window=output_window,
     )
     if (

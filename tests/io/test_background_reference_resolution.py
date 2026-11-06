@@ -78,6 +78,7 @@ def test_resolve_falls_back_to_payload_frames_then_scale():
 def test_resolve_cache_reused_across_calls(monkeypatch):
     """Loader fallback loads once per source path when a cache is supplied."""
     reference = _run(7, good_frames=100.0, level=2.0)
+    reference.source_file = "/some/ref.nxs"
     calls = {"n": 0}
 
     def _fake_load(payload):
@@ -128,29 +129,14 @@ def test_resolve_does_not_mix_live_reference_with_stale_sample_snapshot():
     assert result.scale_source == "saved_frames"
 
 
-def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
-    """A cached reference (per source path) is reused without scanning the
-    registry or re-loading, even when a run_number is present."""
+def test_advisory_resolution_does_not_consume_disk_cache(monkeypatch):
     reference = _run(7, good_frames=100.0, level=2.0)
-    cache = {("/some/ref.nxs", 7, None): reference}
-
-    def _fail_load(payload):
-        raise AssertionError("loader must not run on a cache hit")
-
-    monkeypatch.setattr("asymmetry.core.io.load_background_run", _fail_load)
-
-    class _ExplodingRegistry:
-        def __iter__(self):
-            raise AssertionError("registry must not be scanned on a cache hit")
-
-    result = resolve_background_reference(
-        {"run_number": 7, "source_file": "/some/ref.nxs"},
-        sample_good_frames=200.0,
-        datasets=_ExplodingRegistry(),
-        cache=cache,
-    )
-    assert result.scale == pytest.approx(2.0)
-    assert result.source_file == "ref.nxs"
+    reference.source_file = "/some/ref.nxs"
+    monkeypatch.setattr("asymmetry.core.io.load_background_run", lambda _: _dataset(reference))
+    cache = {}
+    payload = {"run_number": 7, "source_file": reference.source_file}
+    resolve_background_reference(payload, cache=cache)
+    assert resolve_background_reference(payload, cache=cache, allow_file=False) is None
 
 
 @pytest.mark.parametrize("reference_length", [40, 80])
@@ -386,6 +372,7 @@ def test_cached_file_reference_cannot_shadow_another_loaded_run_from_same_source
     monkeypatch.setattr("asymmetry.core.io.load_background_run", load_reference)
     cache = {}
     source = "/some/ref.nxs"
+    first.source_file = second.source_file = source
     original = resolve_background_reference({"source_file": source, "run_number": 7}, cache=cache)
     selected = resolve_background_reference(
         {"source_file": source, "run_number": 8},

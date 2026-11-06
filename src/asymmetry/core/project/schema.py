@@ -20,7 +20,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 31
+CURRENT_SCHEMA_VERSION: int = 32
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -160,6 +160,11 @@ def migrate_to_current(data: dict) -> dict:
         version = 30
     if version == 30:
         migrated = _migrate_v30_to_v31(migrated)
+        version = 31
+    if version == 31:
+        from asymmetry.core.project.reference_restore import migrate_reference_declarations
+
+        migrated = migrate_reference_declarations(migrated) | {"schema_version": 32}
     return migrated
 
 
@@ -514,20 +519,6 @@ def _migrate_v5_to_v6(data: dict) -> dict:
     v6 introduces first-class, recipe-only representations.  Each dataset gains
     a ``representations`` map and the project gains a top-level ``batches`` list.
 
-    This migration is **additive and lossless**: the existing global
-    ``single_fit_state`` / ``global_fit_state`` / ``multi_group_fit_state`` /
-    ``frequency_fit_state`` / ``fourier_state`` blobs are preserved so projects
-    still open on the pre-redesign code paths during the transition.
-
-    Population is faithful to what v5 actually persisted:
-
-    * per-run time single fits  → ``time_fb_asymmetry.fit``
-    * per-run frequency single fits → ``freq_fft.fit``
-    * the (global) ``fourier_state`` → ``freq_fft.recipe.fourier_config``
-
-    Global/grouped fits are *not* reconstructed into batches: v5 never persisted
-    their member runs or per-run results, so there is nothing faithful to carry
-    over.  ``batches`` is therefore initialised empty.
     """
     migrated = dict(data)
     migrated["schema_version"] = 6

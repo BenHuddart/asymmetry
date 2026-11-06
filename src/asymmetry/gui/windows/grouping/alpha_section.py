@@ -45,7 +45,11 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.corrections import BackgroundReference, CorrectionStatus
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionStatus,
+    reference_observation_metadata,
+)
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
@@ -97,6 +101,7 @@ class AlphaEstimateRequest:
     run_label: str
     resolved_reference: BackgroundReference | None
     facility: str
+    metadata: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -119,12 +124,22 @@ def build_corrected(
     grouping: dict[str, Any],
     resolved_reference: BackgroundReference | None,
     facility: str,
+    metadata: dict[str, Any] | None = None,
 ) -> ForwardBackwardCounts:
     """Deadtime-correct, group and background-subtract F/B for the estimate.
 
     Pure (no widgets). Raises :class:`ValueError` when the groups reference no
     present detectors, matching the grouping dialog's guard.
     """
+    from asymmetry.core.io import background_reference_for_grouping
+    from asymmetry.core.io.periods import select_period_histograms, selected_period_index
+
+    metadata = dict(metadata or {})
+    index = selected_period_index(grouping)
+    if index is not None:
+        histograms, grouping = select_period_histograms(histograms, grouping, index)
+        metadata["period_number"] = index + 1
+    resolved_reference = background_reference_for_grouping(resolved_reference, grouping)
     n = len(histograms)
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
@@ -141,6 +156,7 @@ def build_corrected(
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
         facility=facility,
+        metadata=metadata,
         reference_resolver=resolver,
     )
 
@@ -171,7 +187,11 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     if worker.is_cancelled():
         raise TaskCancelledError
     corrected = build_corrected(
-        request.histograms, request.grouping, request.resolved_reference, request.facility
+        request.histograms,
+        request.grouping,
+        request.resolved_reference,
+        request.facility,
+        request.metadata,
     )
     forward = corrected.forward.counts
     common_t0 = corrected.common_t0_bin
@@ -352,6 +372,7 @@ def build_alpha_request(
         run_label=str(dataset.run_label),
         resolved_reference=resolve_reference(grouping, reference_resolver),
         facility=str(facility or ""),
+        metadata=reference_observation_metadata(run),
     )
 
 

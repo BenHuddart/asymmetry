@@ -21,7 +21,7 @@ class IncompletePreviewScenario(Scenario):
     correction_settings = {
         "background_correction": True,
         "background_mode": "reference_run",
-        "background_run": {"run_number": 9999},
+        "background_run": {"run_number": 9999, "period_number": 2},
     }
 
     def capture(self, ctx: CaptureContext) -> Path:

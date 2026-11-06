@@ -7,7 +7,7 @@ Pulsed-source runs can interleave acquisition conditions frame by frame —
 laser on/off at half the muon pulse rate in photo-μSR, RF on/off
 alternating every few seconds, stepped delays in pump–probe sequences. Each
 condition accumulates into its own *period* histogram set within one file,
-sharing the beam exposure bookkeeping exactly. Two-period files load as a
+retaining its own beam exposure bookkeeping. Two-period files load as a
 single dataset with the Red/Green selector (Red, Green, G−R, G+R) in the
 grouping dialog; this page covers runs with **more than two** periods.
 
@@ -34,9 +34,9 @@ single-set run and the G±R modes do not apply.
 condition — e.g. a laser-delay scan where periods 1 and 3 are light-off and
 2 and 4 are light-on at different delays: map {1, 3} → red and {2} → green
 to compare one delay against the off reference, then remap for the next
-delay without reloading anything. Because periods share exposure, the
-difference needs no scaling — this is the preferred way to subtract an
-off-state, ahead of background-run subtraction between separate runs.
+delay without reloading anything. Each period retains its own measured
+good-frame count. G±R combines independently reduced asymmetries; it does not
+assume equal exposure or subtract raw counts without normalisation.
 Summing periods with *different* conditions into one set is statistically
 fine but physically meaningless — the sums are labelled by your mapping,
 not by what the hardware did, so record the period legend (the acquisition
@@ -44,6 +44,16 @@ log's period table) with the analysis.
 
 Periods recorded as dwell (beam-off) intervals carry no muon data; the
 acquisition marks them and they are fixed to Ignore.
+
+Reference-background selection
+------------------------------
+
+A **Background run** chosen from a loaded period retains that acquired period
+when loaded from its source file or reopened in a project. Period exposure is
+selected with its histograms, and need not equal another period's exposure.
+Distinct acquired periods in one file may serve as independent inputs;
+selecting the identical observations as an independent reference is refused.
+See :doc:`backgrounds` for the selection and uncertainty contract.
 
 **References**
 
