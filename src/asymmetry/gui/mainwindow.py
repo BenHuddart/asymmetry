@@ -35,6 +35,7 @@ from concurrent.futures import CancelledError
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -147,7 +148,7 @@ from asymmetry.core.instrument import (
     projection_memberships,
     recommend_grouping_preset_for_run,
 )
-from asymmetry.core.io import resolve_background_reference
+from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
@@ -156,6 +157,7 @@ from asymmetry.core.io.periods import (
     histogram_grouping_facts,
     selected_period_index,
 )
+from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -316,6 +318,7 @@ from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache, histogram_content_key
+from asymmetry.gui.utils.reference_timing import prepare_reference_timing
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -5769,6 +5772,7 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None or not run.histograms:
             raise ValueError("Counts-first display bunching requires raw histograms.")
+        refresh_reference_timing_requests(self._data_browser.get_all_datasets())
         grouping = run.grouping
         binning = replace(binning_spec(grouping), merge=extra_bunch_factor)
         forward_gid, backward_gid = (
@@ -5781,18 +5785,27 @@ class MainWindow(QMainWindow):
         backward_idx = effective_group_indices(
             grouping, backward_gid, n_histograms=len(run.histograms)
         )
-        if not forward_idx or not backward_idx:
-            raise ValueError(
-                "Counts-first display bunching requires a nonempty forward/backward pair."
-            )
         alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
         flags = correction_flags_from_grouping(grouping)
         period_mode = str(grouping.get("period_mode", PeriodMode.RED))
         facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
             metadata=dataset.metadata
         )
+        reference = (
+            self._resolve_background_reference(grouping)
+            if flags.use_background and resolve_background_mode(grouping) == "reference_run"
+            else None
+        )
+        reference_content = (
+            histogram_content_key(reference.histograms, self) if reference is not None else ()
+        )
+        if reference_content is None:
+            raise ValueError("Reference input check cancelled")
         key = (
             fourier_grouping_digest(run),
+            reference_content,
+            reference.timing if reference is not None else None,
+            reference.resolved_timing if reference is not None else None,
             binning,
             forward_gid,
             backward_gid,
@@ -5825,7 +5838,7 @@ class MainWindow(QMainWindow):
                 use_background=flags.use_background,
                 facility=facility,
                 metadata=reference_observation_metadata(run),
-                reference_resolver=self._resolve_background_reference,
+                reference_resolver=partial(background_reference_for_grouping, reference),
             )
             return reduced.time, reduced.asymmetry, reduced.error
 
@@ -5873,18 +5886,15 @@ class MainWindow(QMainWindow):
         )
 
     def _resolve_background_reference(self, grouping: dict) -> BackgroundReference | None:
-        """Resolve against loaded runs and the per-window file cache.
-
-        Input and I/O failures propagate to the user-boundary error handler;
-        a final reduction cannot substitute unsubtracted counts.
-        """
-        sample_frames = good_frames(grouping, default=0.0) or None
-        return resolve_background_reference(
+        """Resolve live source facts and prepare timing without GUI-thread searches."""
+        reference = resolve_background_reference(
             grouping.get("background_run"),
-            sample_good_frames=sample_frames,
+            sample_good_frames=good_frames(grouping, default=0.0) or None,
             datasets=self._data_browser.get_all_datasets(),
             cache=self._background_run_cache,
         )
+
+        return prepare_reference_timing(reference, grouping, self, cache=self._reduction_cache)
 
     def _maybe_apply_comment_field(
         self,
@@ -8878,17 +8888,11 @@ class MainWindow(QMainWindow):
         return False
 
     def _invalidate_fft_after_regroup(self, run_numbers: list[int]) -> None:
-        """Discard regrouped runs' FFT spectra and recipes; recompute a live view.
-
-        A spectrum computed under the old grouping is wrong, not merely
-        outdated — and its recipe is too: the recorded ``selected_group_ids``
-        and phases described groups that may no longer exist. Dropping both
-        lets compute-on-view synthesize a fresh recipe against the NEW grouping
-        (the panel widgets, not the recipe, carry the user's global settings),
-        exactly as the time-domain plot re-renders after a regroup. Parameter
-        edits, by contrast, only flag via the staleness banner — an explicit
-        Compute stays the only way a settings change replaces a spectrum.
-        """
+        """Discard changed reductions and reference dependants before spectral reuse."""
+        run_numbers = sorted(
+            set(run_numbers)
+            | set(refresh_reference_timing_requests(self._data_browser.get_all_datasets()))
+        )
         cache = self._frequency_cache(RepresentationType.FREQ_FFT)
         pending, failures = self._ensure_recompute_tracking()
         invalidated = 0
@@ -16583,14 +16587,7 @@ class MainWindow(QMainWindow):
         self._schedule_memory_settle()
 
     def collect_project_state(self) -> dict:
-        """Return a full serialisable snapshot of the current application state.
-
-        Returns
-        -------
-        dict
-            Project state suitable for passing to
-            :func:`~asymmetry.core.project.save_project`.
-        """
+        """Snapshot current application state with live reference timing requests."""
         from asymmetry import __version__
 
         # Build dataset list (source files + field overrides).

@@ -152,6 +152,7 @@ def test_reference_provenance_records_scale_and_public_identity(histograms):
         "scale_source": "explicit_scale",
         "good_frames_sample": 1000.0,
         "good_frames_reference": 500.0,
+        "timing": {"t0_policy": {"mode": "from_file"}},
     }
 
 

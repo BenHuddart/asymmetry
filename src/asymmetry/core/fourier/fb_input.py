@@ -12,7 +12,7 @@ from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import correction_flags_from_grouping, reduce_period_asymmetry
 
 
-def build_fb_signal_dataset(run):
+def build_fb_signal_dataset(run, *, cancel_check=None):
     """Preserve F/B coordinates, correction outcomes and atomic held-period fallback."""
     grouping = run.grouping
     histograms = list(run.histograms)
@@ -42,6 +42,7 @@ def build_fb_signal_dataset(run):
         use_background=flags.use_background,
         metadata=reference_observation_metadata(run),
         reference_resolver=reference,
+        cancel_check=cancel_check,
     )
     return MuonDataset(
         time=result.time,

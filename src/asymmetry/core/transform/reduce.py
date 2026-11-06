@@ -42,11 +42,10 @@ from asymmetry.core.transform.fb_counts import (
 from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair, fb_deadtime_domain
 from asymmetry.core.transform.grouping import (
     independent_pair_indices,
-    resolve_alignment,
     resolve_forward_backward_layout,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
-from asymmetry.core.transform.t0 import effective_detector_t0_bins, resolve_selected_timing
+from asymmetry.core.transform.t0 import resolve_selected_timing
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -149,6 +148,7 @@ def corrected_grouped_counts(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    cancel_check: Callable[[], None] | None = None,
     allow_incomplete: bool = False,
     context: str = "",
     output_window: BinWindow | None = None,
@@ -167,6 +167,7 @@ def corrected_grouped_counts(
         facility=facility,
         metadata=metadata,
         reference_resolver=reference_resolver,
+        cancel_check=cancel_check,
         allow_incomplete=allow_incomplete,
         context=context,
         output_window=output_window,
@@ -191,6 +192,7 @@ def prepare_grouped_corrections(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    cancel_check: Callable[[], None] | None = None,
     allow_incomplete: bool = False,
     context: str = "",
     output_window: BinWindow | None = None,
@@ -259,14 +261,8 @@ def prepare_grouped_corrections(
         inputs = [(histograms, grouping)]
         domains = [domain]
         if resolved is not None:
-            reference_crop = resolve_alignment(
-                resolved.histograms,
-                forward_idx,
-                backward_idx,
-                detector_t0_bins=effective_detector_t0_bins(resolved.histograms, grouping),
-                common_t0_bin=common_t0 + crop.first_bin,
-                first_bin=crop.first_bin,
-                sample_length=n_grouped,
+            reference_crop = resolved.alignment(
+                histograms, grouping, crop, forward_idx, backward_idx, cancel_check=cancel_check
             )
             resolved.require_independent(histograms, metadata, forward_idx + backward_idx)
             inputs.append((resolved.histograms, resolved.deadtime_grouping(grouping)))
@@ -386,6 +382,7 @@ def reduce_grouped_asymmetry(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    cancel_check: Callable[[], None] | None = None,
     allow_incomplete: bool = False,
     context: str = "",
     beta: float = 1.0,
@@ -434,6 +431,7 @@ def reduce_grouped_asymmetry(
             facility=facility,
             metadata=metadata,
             reference_resolver=reference_resolver,
+            cancel_check=cancel_check,
             allow_incomplete=allow_incomplete,
             context=context,
             output_binning=binning,
@@ -504,6 +502,7 @@ def corrected_period_counts(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    cancel_check: Callable[[], None] | None = None,
     allow_incomplete: bool = False,
     context: str = "",
     timing_search: Callable | None = None,
@@ -591,21 +590,14 @@ def corrected_period_counts(
             and resolve_background_mode(grouping) == "reference_run"
             and reference_resolver is not None
         ):
-            for (label, (_, effective)), (grouped, pair) in zip(
+            for (label, (selected, effective)), (grouped, pair) in zip(
                 selections.items(), layouts, strict=True
             ):
                 reference = reference_resolver(effective)
                 if reference is not None:
                     crop = grouped.alignment
-                    reference_crop = resolve_alignment(
-                        reference.histograms,
-                        *pair,
-                        detector_t0_bins=effective_detector_t0_bins(
-                            reference.histograms, effective
-                        ),
-                        common_t0_bin=grouped.common_t0_bin + crop.first_bin,
-                        first_bin=crop.first_bin,
-                        sample_length=crop.length,
+                    reference_crop = reference.alignment(
+                        selected, effective, crop, *pair, cancel_check=cancel_check
                     )
                     inputs.append((reference.histograms, reference.deadtime_grouping(effective)))
                     domains.append(
@@ -644,6 +636,7 @@ def corrected_period_counts(
             if periods is not None
             else metadata,
             reference_resolver=reference_resolver,
+            cancel_check=cancel_check,
             allow_incomplete=allow_incomplete,
             context=f"{context} {label}".strip() if combined else context,
         )
@@ -672,6 +665,7 @@ def reduce_period_asymmetry(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
+    cancel_check: Callable[[], None] | None = None,
     allow_incomplete: bool = False,
     context: str = "",
     timing_search: Callable | None = None,
@@ -701,6 +695,7 @@ def reduce_period_asymmetry(
         facility=facility,
         metadata=metadata,
         reference_resolver=reference_resolver,
+        cancel_check=cancel_check,
         allow_incomplete=allow_incomplete,
         context=context,
         timing_search=timing_search,

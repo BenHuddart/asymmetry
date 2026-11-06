@@ -519,6 +519,7 @@ def resolve_selected_timing(
     *,
     mode: str = "from_file",
     resolved_indices: tuple[list[int], list[int]] | None = None,
+    selected_indices: Sequence[int] | None = None,
     offset_bins: int = 0,
     search: RunT0Search | None = None,
     pulsed: bool | None = None,
@@ -533,10 +534,12 @@ def resolve_selected_timing(
     """
     from asymmetry.core.transform.grouping import independent_pair_indices
 
-    forward, backward = independent_pair_indices(
-        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
-    )
-    indices = sorted(set(forward) | set(backward))
+    if selected_indices is None:
+        forward, backward = independent_pair_indices(
+            grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+        )
+        selected_indices = forward + backward
+    indices = sorted(set(selected_indices))
     for key in (
         EFFECTIVE_DETECTOR_T0_KEY,
         "effective_t0_sources",
@@ -565,13 +568,10 @@ def resolve_selected_timing(
                 histograms, metadata, pulsed=pulsed, cancel_check=cancel_check
             )
         grouping["t0_search_strategy"] = search.strategy
-        grouping["t0_search_spread_bins"] = (
-            selected_t0_diagnostics(
-                histograms, grouping, search, resolved_indices=resolved_indices
-            )[1]
-            if search.strategy != "unknown"
-            else 0
-        )
+        grouping["t0_search_spread_bins"] = 0
+        if search.strategy != "unknown":
+            shifts = detector_t0_shifts(histograms, search.estimates)
+            grouping["t0_search_spread_bins"] = shift_statistics([shifts[i] for i in indices])[1]
         for i in needed:
             if search.strategy != "unknown" and search.estimates[i].ok:
                 bins[i] = search.estimates[i].t0_bin

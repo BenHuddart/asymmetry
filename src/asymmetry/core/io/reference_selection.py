@@ -52,7 +52,7 @@ def reference_observations(run: Run, mode: str | None = None) -> frozenset[tuple
     )
 
 
-def select_reference_run(run: Run, payload: dict) -> Run | None:
+def select_reference_run(run: Run, payload: dict, *, advisory: bool = False) -> Run | None:
     """Match the declared source, acquisition, and period before consuming counts."""
     source = str(payload.get("source_file") or "")
     if source and reference_source(source) != reference_source(run.source_file):
@@ -74,6 +74,8 @@ def select_reference_run(run: Run, payload: dict) -> Run | None:
             return None
         histograms = acquired_period_histograms(run.grouping, period - 1)
         if histograms is None:
+            if advisory:
+                return None
             raise ValueError(
                 "the reference acquired period has no raw histograms; reload its source"
             )
@@ -93,16 +95,20 @@ def select_reference_run(run: Run, payload: dict) -> Run | None:
     return run
 
 
-def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
+def resolve_loaded_reference(
+    runs: Iterable[Run], payload: dict, *, advisory: bool = False
+) -> Run | None:
     """Prefer a live selected view of the same acquisition; reject ambiguity."""
     if reference_mapping_requires_replay(payload.get("period_mapping")):
+        if advisory:
+            return None
         raise ValueError("a mapped reference is not one acquired period; select an acquired period")
     matches, seen, mapped = {}, set(), set()
     for run in runs:
         if id(run) in seen:
             continue
         seen.add(id(run))
-        selected = select_reference_run(run, payload)
+        selected = select_reference_run(run, payload, advisory=advisory)
         if selected is None:
             continue
         selection = reference_selection(selected)
@@ -120,9 +126,46 @@ def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
         (direct if selected is run else held).append(selected)
     candidates = [run for direct, held in matches.values() for run in (direct or held)]
     if len(candidates) > 1 or len(matches.keys() | mapped) > 1:
+        if advisory:
+            return None
         raise ValueError(
             "the reference acquisition/period is ambiguous; declare a unique source and period"
         )
     if not candidates and mapped:
+        if advisory:
+            return None
         raise ValueError("a mapped reference is not one acquired period; select an acquired period")
     return candidates[0] if candidates else None
+
+
+def refresh_reference_timing_requests(datasets) -> list[int]:
+    """Capture usable live source timing before cache keys and worker requests."""
+    from copy import deepcopy
+
+    from asymmetry.core.transform.reference_timing import ReferenceTiming
+
+    runs = [dataset.run for dataset in datasets if dataset.run is not None]
+    requests = [
+        (
+            run,
+            run.grouping["background_run"],
+            deepcopy(run.grouping["background_run"].get("timing")),
+        )
+        for run in runs
+        if run.grouping.get("background_correction", True)
+        and run.grouping.get("background_mode") == "reference_run"
+        and isinstance(run.grouping.get("background_run"), dict)
+        and run.grouping["background_run"].get("source_file")
+        and isinstance(run.grouping["background_run"].get("period_number"), int)
+        and not isinstance(run.grouping["background_run"]["period_number"], bool)
+        and run.grouping["background_run"]["period_number"] > 0
+    ]
+    for _, payload, _ in requests:
+        selected = resolve_loaded_reference(runs, payload, advisory=True)
+        if selected is not None:
+            payload["timing"] = ReferenceTiming.from_grouping(
+                selected.histograms, selected.grouping, selected.metadata
+            ).request()
+    return [
+        run.run_number for run, payload, previous in requests if payload.get("timing") != previous
+    ]

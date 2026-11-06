@@ -649,3 +649,97 @@ def test_histogram_fingerprint_covers_layout_and_absent_variance(qapp):
     assert histogram_content_key(
         [Histogram(values, 0.1, count_variance=values)], None
     ) != histogram_content_key([raw], None)
+
+
+def test_live_reference_timing_refreshes_warm_rebunch_and_spectral_request(mainwindow):
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 2}
+    sample.grouping["background_run"] = {
+        "run_number": 2,
+        "source_file": reference.source_file,
+        "period_number": 1,
+    }
+    datasets = [
+        MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        for run in (sample, reference)
+    ]
+    for ds in datasets:
+        mainwindow._data_browser.add_dataset(ds)
+    first = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    repeat = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    np.testing.assert_array_equal(first[1], repeat[1])
+    reference.grouping["t0_policy"]["offset_bins"] = 4
+    mainwindow._invalidate_fft_after_regroup([2])
+    assert sample.grouping["background_run"]["timing"] == {
+        "t0_policy": {"mode": "manual", "offset_bins": 4}
+    }
+    second = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    assert not np.array_equal(first[1], second[1])
+
+
+def test_final_reference_auto_search_runs_on_worker_and_reuses_bound_cache(mainwindow, monkeypatch):
+    from PySide6.QtCore import QThread
+
+    from asymmetry.core.transform import t0
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    reference.metadata["facility"] = "PSI"
+    reference.grouping["t0_policy"] = {"mode": "auto_detect"}
+    for h in reference.histograms:
+        h.counts[6] = 1000
+    sample.grouping["background_run"] = {
+        "run_number": 2,
+        "source_file": reference.source_file,
+        "period_number": 1,
+    }
+    for run in (sample, reference):
+        mainwindow._data_browser.add_dataset(
+            MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        )
+    original = t0.find_t0_for_run
+    scans = []
+
+    def scan(*args, **kwargs):
+        assert QThread.currentThread() != mainwindow.thread()
+        scans.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(t0, "find_t0_for_run", scan)
+    first = mainwindow._resolve_background_reference(sample.grouping)
+    second = mainwindow._resolve_background_reference(sample.grouping)
+    assert len(scans) == 1
+    assert first.resolved_timing.bins == second.resolved_timing.bins == (6, 6)
+    reference.histograms[0].counts[16] = 2000
+    third = mainwindow._resolve_background_reference(sample.grouping)
+    assert len(scans) == 2
+    assert third.resolved_timing.bins[0] == 16
+    reference.metadata["facility"] = "ISIS"
+    fourth = mainwindow._resolve_background_reference(sample.grouping)
+    assert len(scans) == 3
+    assert fourth.resolved_timing.strategy == "pulse_edge"
+
+
+def test_inactive_mapped_reference_does_not_block_unrelated_render_or_save(mainwindow):
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    sample.grouping.update(
+        background_correction=False,
+        background_run={
+            "source_file": reference.source_file,
+            "run_number": 2,
+            "period_number": 1,
+            "period_mapping": {"1": "red", "2": "green", "3": "red"},
+        },
+    )
+    for run in (sample, reference):
+        mainwindow._data_browser.add_dataset(
+            MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        )
+    plain = _multi_group_dataset()
+    mainwindow._counts_first_rebunched_arrays(plain, 2)
+    state = mainwindow.collect_project_state()
+    assert len(state["datasets"]) == 2

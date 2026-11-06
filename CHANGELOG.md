@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reference subtraction keeps sample and reference timing independent in F/B and
+  spectral preparation, checking compatible native grids without resampling.
+
 - Require sample identity for resolved reference previews and retain canonical run
   identity through GUI, integral, and workflow reduction boundaries.
 
