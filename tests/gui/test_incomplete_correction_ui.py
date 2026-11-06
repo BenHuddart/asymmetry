@@ -78,6 +78,7 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
                 grouping=grouping,
                 facts=_facts(),
                 resolved_reference=resolved,
+                run=sample.run,
             )
             pane.flush()
             wait_for(lambda: pane._last_result is not None and pane._last_result is not old, qapp)
@@ -412,3 +413,57 @@ def test_alpha_request_retains_sample_acquisition_identity(qapp, reference_perio
             request.histograms, request.grouping, reference, "", request.metadata
         )
         assert corrected.corrections.complete
+
+
+def test_reference_preview_requires_sample_identity_before_copying_periods(qapp):
+    from tests.gui.test_grouping_preview_pane import _reduce_preview
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    sample.run.grouping.update(
+        period_mode="green", background_mode="reference_run", background_correction=True
+    )
+    reference = resolve_background_reference(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}, datasets=[sample]
+    )
+    with pytest.raises(ValueError, match="sample Run"):
+        _reduce_preview(sample, resolved_reference=reference)
+
+
+@pytest.mark.parametrize("consumer", ["apply", "rebunch"])
+def test_gui_final_reduction_uses_canonical_run_identity(qapp, tmp_path, consumer):
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+    dataset = _histogram_dataset(run_number=42)
+    dataset.run.metadata = {}
+    dataset.run.source_file = str(tmp_path / "sample.nxs")
+    write_nexus_v1(dataset.run, dataset.run.source_file, effective=True)
+    dataset.run.grouping.update(
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={
+            "source_file": dataset.run.source_file,
+            "run_number": 42,
+            "period_number": 1,
+        },
+    )
+    window = MainWindow()
+    with pytest.raises(ValueError, match="identical observations"):
+        if consumer == "apply":
+            window._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
+        else:
+            window._counts_first_rebunched_arrays(dataset, 2)
+
+
+def test_inactive_reference_does_not_require_run_identity(qapp):
+    from tests.gui.test_grouping_preview_pane import _reduce_preview
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    sample.run.grouping.update(background_correction=False, background_mode="reference_run")
+    reference = resolve_background_reference(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}, datasets=[sample]
+    )
+    result = _reduce_preview(sample, resolved_reference=reference)
+    assert all(outcome.complete for outcome in result.corrections)
+    assert result.corrections[0].background.status == "off"

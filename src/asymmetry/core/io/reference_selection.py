@@ -34,6 +34,8 @@ def reference_observations(run: Run, mode: str | None = None) -> frozenset[tuple
     """Acquired selections represented by a live single-period or G±R view."""
     from asymmetry.core.utils.constants import PeriodMode
 
+    if run.metadata.get("raw_period_histograms_available") is False:
+        return frozenset()
     selection = reference_selection(run)
     active = mode or run.grouping.get("period_mode")
     if run.grouping.get("period_histograms") and active in {
@@ -95,7 +97,7 @@ def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
     """Prefer a live selected view of the same acquisition; reject ambiguity."""
     if reference_mapping_requires_replay(payload.get("period_mapping")):
         raise ValueError("a mapped reference is not one acquired period; select an acquired period")
-    matches, seen, mapped = {}, set(), []
+    matches, seen, mapped = {}, set(), set()
     for run in runs:
         if id(run) in seen:
             continue
@@ -103,21 +105,21 @@ def resolve_loaded_reference(runs: Iterable[Run], payload: dict) -> Run | None:
         selected = select_reference_run(run, payload)
         if selected is None:
             continue
-        if reference_mapping_requires_replay(
-            selected.grouping.get("period_mapping", selected.metadata.get("period_mapping"))
-        ):
-            mapped.append(selected)
-            continue
         selection = reference_selection(selected)
         key = (
             reference_source(selected.source_file) or id(run),
             selection["run_number"],
             selection["period_number"],
         )
+        if reference_mapping_requires_replay(
+            selected.grouping.get("period_mapping", selected.metadata.get("period_mapping"))
+        ):
+            mapped.add(key)
+            continue
         direct, held = matches.setdefault(key, ([], []))
         (direct if selected is run else held).append(selected)
     candidates = [run for direct, held in matches.values() for run in (direct or held)]
-    if len(candidates) > 1:
+    if len(candidates) > 1 or len(matches.keys() | mapped) > 1:
         raise ValueError(
             "the reference acquisition/period is ambiguous; declare a unique source and period"
         )

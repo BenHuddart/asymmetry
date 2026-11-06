@@ -385,3 +385,70 @@ def test_scripted_run_identity_does_not_depend_on_optional_metadata(tmp_path, co
                 sample,
                 reference_resolver=lambda g: resolve_background_reference(g["background_run"]),
             )
+
+
+@pytest.mark.parametrize("same_source", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_mapped_match_cannot_hide_another_acquisition_collision(same_source, reverse):
+    mapped = _combined_two_period()
+    mapped.run.grouping["period_mapping"] = {"1": "red", "2": "green", "3": "red"}
+    ordinary = select_period(_combined_two_period(), 1)
+    if not same_source:
+        ordinary.run.source_file = "different.nxs"
+    datasets = [mapped, ordinary]
+    if reverse:
+        datasets.reverse()
+    payload = {"run_number": 12345, "period_number": 1}
+    if same_source:
+        result = resolve_background_reference(payload, datasets=datasets, allow_file=False)
+        np.testing.assert_array_equal(
+            result.histograms[0].counts, ordinary.run.histograms[0].counts
+        )
+    else:
+        with pytest.raises(ValueError, match="ambiguous"):
+            resolve_background_reference(payload, datasets=datasets, allow_file=False)
+
+
+def test_wrapped_combined_file_reference_selects_the_acquired_period(monkeypatch):
+    combined = _combined_two_period()
+    monkeypatch.setattr("asymmetry.core.io.load", lambda _: [combined])
+    result = load_background_run(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
+    )
+    np.testing.assert_array_equal(
+        result.run.histograms[0].counts, select_period(combined, 2).run.histograms[0].counts
+    )
+
+
+@pytest.mark.parametrize("consumer", ["integral", "period_integral", "workflow"])
+def test_run_reduction_boundaries_preserve_canonical_identity(monkeypatch, consumer):
+    from asymmetry.core.transform import integral
+    from asymmetry.core.workflow import reduction
+
+    sample = _combined_two_period().run
+    sample.metadata = {}
+    sample.grouping["period_mode"] = "green_plus_red" if consumer == "period_integral" else "red"
+    captured = []
+    owner = reduction if consumer == "workflow" else integral
+    name = {
+        "workflow": "reduce_period_asymmetry",
+        "integral": "corrected_grouped_counts",
+        "period_integral": "corrected_period_counts",
+    }[consumer]
+    original = getattr(owner, name)
+
+    def record(*args, **kwargs):
+        captured.append(kwargs["metadata"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, record)
+    if consumer == "workflow":
+        reduction.reduce_run(sample, reduction.ReductionSettings(pair=("1", "2")))
+    else:
+        integral.reduce_period_integral(sample)
+    assert captured
+    assert all(
+        item.get("source_file") == sample.source_file
+        and item.get("run_number") == sample.run_number
+        for item in captured
+    )

@@ -1,8 +1,6 @@
-"""Preview count reductions without modifying runs.
+"""Preview counts off-thread, preserving incomplete correction outcomes.
 
-Resolution and reduction run in TaskRunner; the GUI snapshots inputs and draws.
-Time axes are in µs and asymmetry is in percent. Generation ids discard obsolete
-outputs. One result supplies both views; incomplete corrections remain labelled.
+Time is in µs and asymmetry in percent; generations discard obsolete results.
 """
 
 from __future__ import annotations
@@ -203,13 +201,10 @@ class CountsCurves:
     t0_bin: int
     first_good: int
     last_good: int
-    #: The constant level subtracted from (F, B), for the modes that subtract
-    #: one; ``None`` for ``reference_run`` (a spectrum) and for no background.
+    #: Constant F/B counts per bin; None for reference spectra or no subtraction.
     background_level: tuple[float, float] | None
     background_mode: str
-    #: The compare pass' spectra, on the same stride — the deadtime and
-    #: background compares only, whose second corrected pass already ran for the
-    #: asymmetry ghost. ``None`` for α/β (they do not touch the counts) and off.
+    #: Only deadtime/background ghosts alter counts; all views share one stride.
     ghost_forward: np.ndarray | None = None
     ghost_backward: np.ndarray | None = None
 
@@ -331,8 +326,6 @@ class GroupingPreviewPane(QWidget):
                 status_row.addWidget(button)
         layout.addLayout(status_row)
 
-    # -- public API ------------------------------------------------------
-
     def request_preview(
         self,
         *,
@@ -342,6 +335,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         compare_stage: str | None = None,
         resolved_reference: BackgroundReference | None = None,
+        run: Run | None = None,
     ) -> None:
         """Queue a resolved draft and its reference snapshot for worker reduction."""
         if not histograms:
@@ -356,6 +350,7 @@ class GroupingPreviewPane(QWidget):
                 generation=self._next_generation(),
                 histograms=list(histograms),
                 grouping=dict(grouping),
+                run=run,
                 facility=str(facility or "") or resolve_facility(grouping=grouping),
                 facts=facts,
                 compare_stage=compare_stage,
@@ -374,7 +369,7 @@ class GroupingPreviewPane(QWidget):
         resolved_reference: BackgroundReference | None = None,
         timing_searches: dict[int, RunT0Search] | None = None,
     ) -> None:
-        """Queue worker resolution of a copied profile and a read-only run snapshot."""
+        """Queue worker resolution of a copied profile and run snapshot."""
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
             self.show_unavailable()
@@ -948,6 +943,10 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         raise TaskCancelledError
 
     def resolve_reference(grouping):
+        if request.resolved_reference is not None and request.run is None:
+            raise ValueError(
+                "Reference-background preview requires the sample Run to identify its observations"
+            )
         return background_reference_for_grouping(request.resolved_reference, grouping)
 
     def search_timing(histograms, metadata, *, period_index=None, **options):

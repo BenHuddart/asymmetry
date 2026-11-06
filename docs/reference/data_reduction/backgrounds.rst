@@ -293,6 +293,11 @@ The picker excludes the selected sample acquisition/period. An invalid scripted
 request raises an error before corrected arrays are returned. Missing references
 retain the incomplete preview and final-reduction failure described above;
 loading and inspecting the raw acquisition remains available.
+Histogram-only scripted previews of a resolved reference must also supply the
+sample ``Run``. Without it, the preview reports
+"Reference-background preview requires the sample Run to identify its observations"
+and cannot be accepted. Run-based reduction and calibration paths use the run's
+source and number even when optional metadata omits those fields.
 
 WiMDA 1.326 disables same-run **FileBG**. That behaviour does not establish
 an equivalent external-reference operation or error policy in Mantid or musrfit.

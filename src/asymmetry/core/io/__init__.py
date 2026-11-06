@@ -75,6 +75,8 @@ def load_background_run(payload: dict) -> MuonDataset:
     if not isinstance(payload, dict) or not payload.get("source_file"):
         raise ValueError("background_run payload has no source_file")
     result = load(str(payload["source_file"]))
+    if isinstance(result, list) and len(result) == 1:
+        result = result[0]
     candidates = result if isinstance(result, list) else [result]
     selected = resolve_loaded_reference(
         (ds.run for ds in candidates if ds.run is not None), payload

@@ -252,3 +252,18 @@ def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
     dialog._clear_dirty()
     dialog.close()
     dialog.deleteLater()
+
+
+def test_reference_picker_omits_cached_only_period_fallbacks(qapp):
+    from asymmetry.core.io import select_period
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    cached = select_period(sample, 2)
+    cached.run.metadata["raw_period_histograms_available"] = False
+    dialog = GroupingDialog([sample, cached], selected_run_number=sample.run_number)
+    assert not dialog._background_reference_candidates()
+    dialog._clear_dirty()
+    dialog.close()
+    dialog.deleteLater()
