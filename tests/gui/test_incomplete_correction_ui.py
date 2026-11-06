@@ -55,6 +55,7 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
         backward=np.full(6, 3.0),
         grouping_extra={"good_frames": 10},
     )
+    reference.run.source_file = "unreadable.nxs"
     payload = {"run_number": 99, "source_file": "unreadable.nxs"}
     monkeypatch.setattr(io, "load_background_run", lambda _: pytest.fail("preview read disk"))
     assert resolve_background_reference(payload, allow_file=False) is None
@@ -77,6 +78,7 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
                 grouping=grouping,
                 facts=_facts(),
                 resolved_reference=resolved,
+                run=sample.run,
             )
             pane.flush()
             wait_for(lambda: pane._last_result is not None and pane._last_result is not old, qapp)
@@ -336,3 +338,132 @@ def test_green_apply_uses_green_file_table_and_retains_both_acquisitions(qapp):
     assert outcomes["green"].deadtime.effective["tau_us"] == tuple(green)
     assert outcomes["green"].deadtime.effective["good_frames"] == 2000.0
     assert dataset.run.grouping["period_dead_time_us"] == [red, green]
+
+
+@pytest.mark.parametrize("sample_period", [1, 2])
+def test_held_period_preview_enforces_reference_independence(qapp, sample_period):
+    from tests.gui.test_grouping_preview_pane import _reduce_preview
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    sample.run.metadata["source_file"] = sample.run.source_file
+    sample.run.grouping.update(
+        period_mode="red" if sample_period == 1 else "green",
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2},
+    )
+    reference = resolve_background_reference(
+        sample.run.grouping["background_run"],
+        datasets=[sample],
+        sample_good_frames=20,
+        allow_file=False,
+    )
+    if sample_period == 2:
+        with pytest.raises(ValueError, match="identical observations"):
+            _reduce_preview(sample, run=sample.run, resolved_reference=reference)
+    else:
+        result = _reduce_preview(sample, run=sample.run, resolved_reference=reference)
+        assert all(outcome.complete for outcome in result.corrections)
+        assert result.corrections[0].background.effective["reference"]["period_number"] == 2
+
+
+@pytest.mark.parametrize("reference_period", [1, 2])
+def test_alpha_request_retains_sample_acquisition_identity(qapp, reference_period):
+    from copy import deepcopy
+
+    from asymmetry.gui.windows.grouping.alpha_section import build_alpha_request, run_alpha_estimate
+    from tests.gui.test_grouping_preview_pane import _StubWorker
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    source = deepcopy(sample)
+    grouping = dict(
+        sample.run.grouping,
+        background_correction=True,
+        background_mode="reference_run",
+        period_mode="green",
+    )
+    reference = resolve_background_reference(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": reference_period},
+        datasets=[source],
+        sample_good_frames=20,
+    )
+    request = build_alpha_request(
+        token=1,
+        dataset=sample,
+        groups={1: [0], 2: [1]},
+        forward_gid=1,
+        backward_gid=2,
+        excluded_detectors=[],
+        method="integral",
+        correction_provider=lambda _: grouping,
+        reference_resolver=lambda _: reference,
+        facility="",
+    )
+    if reference_period == 2:
+        with pytest.raises(ValueError, match="identical observations"):
+            run_alpha_estimate(_StubWorker(), request)
+    else:
+        # Independent red reference yields a complete count preparation; the
+        # calibration estimator itself retains its existing method contract.
+        from asymmetry.gui.windows.grouping.alpha_section import build_corrected
+
+        corrected = build_corrected(
+            request.histograms, request.grouping, reference, "", request.metadata
+        )
+        assert corrected.corrections.complete
+
+
+def test_reference_preview_requires_sample_identity_before_copying_periods(qapp):
+    from tests.gui.test_grouping_preview_pane import _reduce_preview
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    sample.run.grouping.update(
+        period_mode="green", background_mode="reference_run", background_correction=True
+    )
+    reference = resolve_background_reference(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}, datasets=[sample]
+    )
+    with pytest.raises(ValueError, match="sample Run"):
+        _reduce_preview(sample, resolved_reference=reference)
+
+
+@pytest.mark.parametrize("consumer", ["apply", "rebunch"])
+def test_gui_final_reduction_uses_canonical_run_identity(qapp, tmp_path, consumer):
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+    dataset = _histogram_dataset(run_number=42)
+    dataset.run.metadata = {}
+    dataset.run.source_file = str(tmp_path / "sample.nxs")
+    write_nexus_v1(dataset.run, dataset.run.source_file, effective=True)
+    dataset.run.grouping.update(
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={
+            "source_file": dataset.run.source_file,
+            "run_number": 42,
+            "period_number": 1,
+        },
+    )
+    window = MainWindow()
+    with pytest.raises(ValueError, match="identical observations"):
+        if consumer == "apply":
+            window._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
+        else:
+            window._counts_first_rebunched_arrays(dataset, 2)
+
+
+def test_inactive_reference_does_not_require_run_identity(qapp):
+    from tests.gui.test_grouping_preview_pane import _reduce_preview
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample = _combined_two_period()
+    sample.run.grouping.update(background_correction=False, background_mode="reference_run")
+    reference = resolve_background_reference(
+        {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}, datasets=[sample]
+    )
+    result = _reduce_preview(sample, resolved_reference=reference)
+    assert all(outcome.complete for outcome in result.corrections)
+    assert result.corrections[0].background.status == "off"

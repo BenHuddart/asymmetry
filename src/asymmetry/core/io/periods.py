@@ -51,6 +51,7 @@ __all__ = [
     "period_count",
     "period_labels",
     "resolve_period_index",
+    "reference_mapping_requires_replay",
     "selected_period_index",
     "select_period",
     "select_period_histograms",
@@ -287,6 +288,19 @@ def period_run(combined: Run, index: int) -> Run:
 
 
 # --- low-level helpers shared with the GUI reduction path ---------------------
+
+
+def reference_mapping_requires_replay(mapping: dict | None) -> bool:
+    """Whether held red/green arrays cannot name the same acquired period on disk.
+
+    Ordinary two-period loading also records the identity mapping. A nontrivial
+    mapping needs its contributor recipe, rather than an acquired-period ordinal.
+    """
+    return any(
+        str(number) != {"red": "1", "green": "2"}.get(target)
+        for number, target in (mapping or {}).items()
+        if target != "ignore"
+    )
 
 
 def selected_period_index(grouping: dict, mode: str | None = None) -> int | None:

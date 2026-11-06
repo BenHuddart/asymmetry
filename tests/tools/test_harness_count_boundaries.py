@@ -24,6 +24,12 @@ def test_repository_uses_the_count_boundary() -> None:
         ("binned_fb_asymmetry(counts, binning=spec, alpha=alpha)", False),
         ("effective_group_indices(grouping, 1)", True),
         ("effective_group_indices(grouping, 1, n_histograms=3)", False),
+        ("corrected_grouped_counts(metadata=run.metadata)", True),
+        ("corrected_period_counts(metadata=run.metadata)", True),
+        ("reduce_period_asymmetry(metadata=run.metadata)", True),
+        ("engine.reduce_period_asymmetry(metadata=run.metadata)", True),
+        ("corrected_period_counts(metadata=reference_observation_metadata(run))", False),
+        ("corrected_grouped_counts(metadata=metadata)", False),
     ],
 )
 def test_ratchet_distinguishes_reduction_from_alignment_and_metadata(

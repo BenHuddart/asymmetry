@@ -1,8 +1,6 @@
-"""Preview count reductions without modifying runs.
+"""Preview counts off-thread, preserving incomplete correction outcomes.
 
-Resolution and reduction run in TaskRunner; the GUI snapshots inputs and draws.
-Time axes are in µs and asymmetry is in percent. Generation ids discard obsolete
-outputs. One result supplies both views; incomplete corrections remain labelled.
+Time is in µs and asymmetry in percent; generations discard obsolete results.
 """
 
 from __future__ import annotations
@@ -39,6 +37,7 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
+    reference_observation_metadata,
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_period_asymmetry
@@ -202,13 +201,10 @@ class CountsCurves:
     t0_bin: int
     first_good: int
     last_good: int
-    #: The constant level subtracted from (F, B), for the modes that subtract
-    #: one; ``None`` for ``reference_run`` (a spectrum) and for no background.
+    #: Constant F/B counts per bin; None for reference spectra or no subtraction.
     background_level: tuple[float, float] | None
     background_mode: str
-    #: The compare pass' spectra, on the same stride — the deadtime and
-    #: background compares only, whose second corrected pass already ran for the
-    #: asymmetry ghost. ``None`` for α/β (they do not touch the counts) and off.
+    #: Only deadtime/background ghosts alter counts; all views share one stride.
     ghost_forward: np.ndarray | None = None
     ghost_backward: np.ndarray | None = None
 
@@ -264,10 +260,7 @@ class GroupingPreviewPane(QWidget):
         self._tasks = TaskRunner(self)
         self._generation = 0
         self._pending: _PreviewRequest | None = None
-        #: Coalescing guard: at most one reduction runs at a time. While a task
-        #: is in flight, newer requests wait in ``_pending`` (latest wins) and
-        #: are dispatched from the finished/error callback instead of spawning
-        #: concurrent worker threads.
+        #: One worker runs; only the latest pending request is dispatched next.
         self._in_flight = False
 
         self._debounce = QTimer(self)
@@ -333,8 +326,6 @@ class GroupingPreviewPane(QWidget):
                 status_row.addWidget(button)
         layout.addLayout(status_row)
 
-    # -- public API ------------------------------------------------------
-
     def request_preview(
         self,
         *,
@@ -344,6 +335,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         compare_stage: str | None = None,
         resolved_reference: BackgroundReference | None = None,
+        run: Run | None = None,
     ) -> None:
         """Queue a resolved draft and its reference snapshot for worker reduction."""
         if not histograms:
@@ -358,6 +350,7 @@ class GroupingPreviewPane(QWidget):
                 generation=self._next_generation(),
                 histograms=list(histograms),
                 grouping=dict(grouping),
+                run=run,
                 facility=str(facility or "") or resolve_facility(grouping=grouping),
                 facts=facts,
                 compare_stage=compare_stage,
@@ -376,7 +369,7 @@ class GroupingPreviewPane(QWidget):
         resolved_reference: BackgroundReference | None = None,
         timing_searches: dict[int, RunT0Search] | None = None,
     ) -> None:
-        """Queue worker resolution of a copied profile and a read-only run snapshot."""
+        """Queue worker resolution of a copied profile and run snapshot."""
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
             self.show_unavailable()
@@ -546,14 +539,8 @@ class GroupingPreviewPane(QWidget):
         if generation == self._generation:
             self.show_error(f"Preview unavailable: {message}")
 
-    # -- drawing ---------------------------------------------------------
-
     def _draw(self, result: _PreviewResult) -> None:
-        """Redraw the preview in the current view; the status strip is shared.
-
-        Once the user pans/zooms, their view is preserved verbatim across
-        redraws until Home (or a view switch) resets it.
-        """
+        """Redraw the current view, preserving user limits until Home or a view switch."""
         if self._axes is None or self._canvas is None:
             return
         # Never clear the axes under a live pan/zoom rubber band — park the
@@ -561,12 +548,7 @@ class GroupingPreviewPane(QWidget):
         if self._drag_in_progress():
             self._deferred_result = result
             return
-        # A user-chosen pan/zoom view survives the debounced redraws — an edit
-        # mid-inspection must not yank the axes back — until Home resets it.
-        # `_user_view` is the stored drag result, deliberately NOT re-read from
-        # the axes here: the error/empty paths clear() the axes back to default
-        # limits, and re-capturing those would freeze the preview on a garbage
-        # (0..1) view — the "strange state" this guards against.
+        # User limits come from the drag, not from error/empty redraws.
         preserved = self._user_view
         # The axes rectangle is part of the user's chosen view: while they hold a
         # pan/zoom, tight layout must not re-fit it around the tick and marker
@@ -961,6 +943,10 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         raise TaskCancelledError
 
     def resolve_reference(grouping):
+        if request.resolved_reference is not None and request.run is None:
+            raise ValueError(
+                "Reference-background preview requires the sample Run to identify its observations"
+            )
         return background_reference_for_grouping(request.resolved_reference, grouping)
 
     def search_timing(histograms, metadata, *, period_index=None, **options):
@@ -997,6 +983,9 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     period_index = selected_period_index(grouping)
     if period_index is not None:
         histograms, grouping = select_period_histograms(histograms, grouping, period_index)
+    metadata = reference_observation_metadata(request.run) if request.run is not None else {}
+    if period_index is not None:
+        metadata["period_number"] = period_index + 1
     n_hist = len(histograms)
     forward_gid = _as_int(grouping.get("forward_group"), 1)
     backward_gid = _as_int(grouping.get("backward_group"), 2)
@@ -1025,7 +1014,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=use_background,
             facility=facility,
-            metadata=request.run.metadata if request.run is not None else {},
+            metadata=metadata,
             timing_search=search_timing,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
@@ -1057,6 +1046,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=bg,
             facility=facility,
+            metadata=metadata,
             reference_resolver=resolve_reference,
             allow_incomplete=True,
             output_binning=binning_spec(grouping),

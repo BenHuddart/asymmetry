@@ -69,25 +69,28 @@ def load(
 
 
 def load_background_run(payload: dict) -> MuonDataset:
-    """Load the reference run named by a ``background_run`` grouping payload.
+    """Load exactly the declared reference acquisition and acquired period."""
+    from asymmetry.core.io.reference_selection import reference_selection, resolve_loaded_reference
 
-    The payload (written by the grouping dialog and persisted with the
-    grouping) carries ``source_file`` and ``run_number``. Multi-period files
-    resolve to their first period, matching the red-period default of the
-    reduction path. Raises ``ValueError`` when the payload is unusable so
-    callers can surface the problem instead of silently skipping the
-    subtraction.
-    """
-    if not isinstance(payload, dict):
-        raise ValueError("background_run payload must be a dict")
-    source_file = str(payload.get("source_file", "") or "")
-    if not source_file:
+    if not isinstance(payload, dict) or not payload.get("source_file"):
         raise ValueError("background_run payload has no source_file")
-    result = load(source_file)
-    dataset = result[0] if isinstance(result, list) else result
-    if dataset.run is None or not dataset.run.histograms:
-        raise ValueError(f"Background run {source_file!r} has no histograms")
-    return dataset
+    result = load(str(payload["source_file"]))
+    if isinstance(result, list) and len(result) == 1:
+        result = result[0]
+    candidates = result if isinstance(result, list) else [result]
+    selected = resolve_loaded_reference(
+        (ds.run for ds in candidates if ds.run is not None), payload
+    )
+    if selected is None or not selected.histograms:
+        raise ValueError(
+            "the declared reference acquisition/period is unavailable in the source file"
+        )
+    dataset = (
+        select_period(result, reference_selection(selected)["period_number"])
+        if isinstance(result, list) or result.run.grouping.get("period_histograms") is not None
+        else result
+    )
+    return replace(dataset, run=selected, metadata=selected.metadata)
 
 
 def _grouping_good_frames(source: object) -> float | None:
@@ -167,67 +170,63 @@ def resolve_background_reference(
     cache: dict | None = None,
     allow_file: bool = True,
 ) -> BackgroundReference | None:
-    """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
+    """Resolve declared source/period, preferring live inputs over disk snapshots.
 
-    This is the single home for reference-run resolution so the same logic
-    serves the GUI, scripted core reductions, and the grouped Fourier path
-    (previously it lived only in ``MainWindow`` and ``reference_run`` silently
-    no-op'd everywhere else).
-
-    Resolution order: match the reference run number against the already-loaded
-    ``datasets`` (reuse an open run); otherwise load the payload's
-    ``source_file`` (cached by requested run, path, and file identity, so a
-    batch apply loads the reference **once**, not once per sample dataset). The
-    scale is sample/reference good frames, falling back to the payload snapshots
-    and finally ``1.0``. With ``allow_file=False``, an unloaded reference returns
-    ``None`` without disk I/O, for advisory previews.
-
-    Raises
-    ------
-    ValueError
-        With a human-readable message when the reference cannot be resolved, so
-        callers can surface it. (Loader I/O failures propagate as ``OSError``.)
+    Number-only requests must be unambiguous. Advisory ``allow_file=False``
+    resolution uses loaded inputs only, including when a disk cache exists.
+    File cache entries retain source-stat invalidation and consumed selection.
     """
+    from asymmetry.core.io.reference_selection import (
+        reference_selection,
+        reference_source,
+        resolve_loaded_reference,
+    )
+
     if not isinstance(payload, dict):
         raise ValueError("no reference is recorded")
-
-    source_file = str(payload.get("source_file", "") or "")
-    run_number = payload.get("run_number")
-    run_number = None if run_number is None else int(run_number)
-
-    reference_run = None
-    # A hit for the same requested run and source skips the registry scan and
-    # the loader, so a batch apply sharing one reference resolves it once
-    # instead of re-scanning the registry for every sample dataset.
-    source_key = (source_file, run_number, reference_file_identity(payload))
-    if cache is not None and source_file and source_key in cache:
-        reference_run = cache[source_key]
-
-    if reference_run is None and run_number is not None:
-        for dataset in datasets:
-            run = getattr(dataset, "run", None)
-            try:
-                matches = run is not None and int(dataset.run_number) == int(run_number)
-            except (TypeError, ValueError, AttributeError):
-                matches = False
-            if matches:
-                reference_run = run
-                break
-
+    source_file = str(payload.get("source_file") or "")
+    if (
+        not source_file
+        and payload.get("run_number") is None
+        and payload.get("legacy_run_number") is None
+    ):
+        raise ValueError("no reference is recorded")
+    reference_run = resolve_loaded_reference(
+        (ds.run for ds in datasets if ds.run is not None), payload
+    )
     if reference_run is None:
         if not allow_file:
             return None
         if not source_file:
             raise ValueError("the reference is not loaded and no source file is recorded")
-        # Cache only loader-loaded references (an in-registry run is reused live
-        # each call so it tracks in-memory edits to that run).
-        reference_run = load_background_run(payload).run
-        if cache is not None and source_file:
-            cache[source_key] = reference_run
+        file_identity = reference_file_identity(payload)
+        if cache is not None:
+            reference_run = resolve_loaded_reference(
+                (
+                    cached
+                    for (path, _, _, identity), cached in cache.items()
+                    if path == reference_source(source_file) and identity == file_identity
+                ),
+                payload,
+            )
+        if reference_run is None:
+            reference_run = load_background_run(payload).run
+            if cache is not None and reference_run is not None:
+                selection = reference_selection(reference_run)
+                source_key = (
+                    reference_source(reference_run.source_file),
+                    selection["run_number"],
+                    selection["period_number"],
+                    file_identity,
+                )
+                cache[source_key] = reference_run
 
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")
 
+    from asymmetry.core.project.reference_restore import complete_reference_restore
+
+    complete_reference_restore(payload, reference_run)
     scale, sample_frames, reference_frames, scale_source = reference_frame_exposure(
         _grouping_good_frames(reference_run), sample_good_frames, payload
     )
@@ -240,7 +239,8 @@ def resolve_background_reference(
         good_frames_sample=sample_frames,
         good_frames_reference=reference_frames,
         scale_source=scale_source,
-        run_number=None if run_number is None else int(run_number),
+        run_number=reference_selection(reference_run)["run_number"],
+        period_number=reference_selection(reference_run)["period_number"],
     )
 
 

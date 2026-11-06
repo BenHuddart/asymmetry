@@ -72,13 +72,19 @@ class BackgroundReferenceRunCandidate:
     """One candidate run offered for the reference-run background pick."""
 
     def __init__(
-        self, run_number: int, label: str, source_file: str, good_frames: float | None
+        self,
+        run_number: int,
+        label: str,
+        source_file: str,
+        good_frames: float | None,
+        period_number: int = 1,
     ) -> None:
         """Store the candidate's run number, display label, source file, and good frames."""
         self.run_number = run_number
         self.label = label
         self.source_file = source_file
         self.good_frames = good_frames
+        self.period_number = period_number
 
 
 def background_status_text(policy: BackgroundPolicy) -> str:
@@ -101,7 +107,8 @@ def background_status_text(policy: BackgroundPolicy) -> str:
         run_payload = policy.details.get("background_run") or {}
         run_number = run_payload.get("run_number")
         label = f"run {run_number}" if run_number else str(run_payload.get("source_file", ""))
-        return f"Background: reference {label}".rstrip()
+        period = run_payload.get("period_number")
+        return f"Background: reference {label}" + (f", period {period}" if period else "")
     if policy.mode == "fixed":
         values = policy.details.get("background_fixed_values")
         if values:
@@ -298,12 +305,17 @@ class BackgroundSectionWidget(QWidget):
             if not path:
                 self._set_mode("none")
                 return
-            self._background_run_payload = {"run_number": None, "source_file": path}
+            self._background_run_payload = {
+                "run_number": None,
+                "source_file": path,
+                "period_number": 1,
+            }
         else:
             candidate = candidates[labels.index(choice)]
             self._background_run_payload = {
                 "run_number": int(candidate.run_number),
                 "source_file": candidate.source_file,
+                "period_number": candidate.period_number,
                 "good_frames_reference": candidate.good_frames,
             }
         self._refresh_visibility_and_status()
@@ -328,6 +340,8 @@ class BackgroundSectionWidget(QWidget):
             payload = self._background_run_payload or {}
             run_number = payload.get("run_number")
             label = f"run {run_number}" if run_number else str(payload.get("source_file", ""))
+            period = payload.get("period_number")
+            label += f", period {period}" if period else ""
             self._reference_summary_label.setText(f"Selected: {label}" if label else "")
         self._status_label.setText(background_status_text(self._policy()))
 

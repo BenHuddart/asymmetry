@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require sample identity for resolved reference previews and retain canonical run
+  identity through GUI, integral, and workflow reduction boundaries.
+
+- Preserve reference source and acquired period across live inputs, disk caches, and
+  reopened projects; reject ambiguous selections and identical-observation subtraction.
+
 - Refresh cached count views and flag Fourier spectra after in-place histogram
   timing, native bin-width, or observed-length edits.
 

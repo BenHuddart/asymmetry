@@ -46,6 +46,7 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.background import background_window
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, group_names
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
@@ -340,7 +341,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=run.metadata,
+        metadata=reference_observation_metadata(run),
         context=f"Run {source_run_of(run)}",
         output_time_range=(settings.t_min, settings.t_max),
     )

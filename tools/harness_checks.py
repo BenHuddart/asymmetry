@@ -162,14 +162,21 @@ def find_physical_constant_duplicate_violations(
 
 
 def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
-    """Keep shape truncation and repeated F/B window parsing at a count of zero."""
+    """Keep count-boundary and canonical acquisition-identity bypasses at zero."""
     failures: list[HarnessFailure] = []
     for path in sorted((root / "src/asymmetry").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
         transform = path.parent.name == "transform"
         if not transform and not any(
             name in source
-            for name in ("binned_fb_asymmetry", "slice_to_good_window", "effective_group_indices")
+            for name in (
+                "binned_fb_asymmetry",
+                "slice_to_good_window",
+                "effective_group_indices",
+                "corrected_grouped_counts",
+                "corrected_period_counts",
+                "reduce_period_asymmetry",
+            )
         ):
             continue
         tree = ast.parse(source)
@@ -183,6 +190,21 @@ def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
                 for call in calls
             )
             for call in calls:
+                if ast.unparse(call.func).rsplit(".", 1)[-1] in {
+                    "corrected_grouped_counts",
+                    "corrected_period_counts",
+                    "reduce_period_asymmetry",
+                } and any(
+                    keyword.arg == "metadata" and ast.unparse(keyword.value) == "run.metadata"
+                    for keyword in call.keywords
+                ):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            call.lineno,
+                            "Run-based reduction requires reference_observation_metadata(run); optional metadata can omit canonical identity.",
+                        )
+                    )
                 if (
                     isinstance(call.func, ast.Name)
                     and call.func.id == "effective_group_indices"

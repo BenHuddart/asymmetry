@@ -233,6 +233,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionStatus,
     background_grouping_metadata,
     correction_warnings,
+    reference_observation_metadata,
 )
 from asymmetry.core.transform.deadtime import (
     DeadtimeCalibration,
@@ -5319,7 +5320,6 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, {}
-        # Rewriting a grouping retires cached reductions of that run.
         self._reduction_cache.invalidate_run(run)
         existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
@@ -5703,7 +5703,7 @@ class MainWindow(QMainWindow):
             deadtime_mode=deadtime_mode,
             use_background=use_background,
             facility=facility,
-            metadata=run.metadata,
+            metadata=reference_observation_metadata(run),
             reference_resolver=self._resolve_background_reference,
         )
         time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
@@ -5740,7 +5740,6 @@ class MainWindow(QMainWindow):
             grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
-        # Persist group names if provided
         group_names = grouping_result.get("group_names")
         if isinstance(group_names, dict) and group_names:
             grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
@@ -5825,7 +5824,7 @@ class MainWindow(QMainWindow):
                 deadtime_mode=flags.deadtime_mode,
                 use_background=flags.use_background,
                 facility=facility,
-                metadata=run.metadata,
+                metadata=reference_observation_metadata(run),
                 reference_resolver=self._resolve_background_reference,
             )
             return reduced.time, reduced.asymmetry, reduced.error

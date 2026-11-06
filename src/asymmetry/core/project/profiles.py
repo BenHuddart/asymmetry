@@ -1613,11 +1613,9 @@ def _estimate_run_alpha(
     *,
     reference_resolver: ReferenceResolver | None = None,
 ) -> float:
-    """Estimate native-window alpha after the contributing-period correction decision.
+    """Estimate native-window alpha from corrected contributing-period counts."""
+    from asymmetry.core.transform.corrections import reference_observation_metadata
 
-    Both groups use actual available counts; fixed/calibrated policies bypass
-    this estimator. Native binning retains trailing bins for the integral ratio.
-    """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
@@ -1633,7 +1631,7 @@ def _estimate_run_alpha(
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=run.metadata,
+        metadata=reference_observation_metadata(run),
         reference_resolver=reference_resolver,
     )
     corrected = next(iter(periods.values()))

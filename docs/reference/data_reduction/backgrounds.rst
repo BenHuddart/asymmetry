@@ -271,6 +271,37 @@ comparison's scope and uncertainty differences.
 Background run
 --------------
 
+The **Background run** selection records the source acquisition and its acquired
+period. Choosing a loaded green period keeps its counts, calibration, and exposure
+when resolved from disk or reopened in a project. **Browse for file…** selects
+period 1; load the required period first to choose another period in the picker.
+The picker offers acquired periods. Nontrivial mapped selections cannot be
+replayed as one acquired reference period and remain explicitly unavailable;
+choose the original acquired period rows instead.
+A matching live loaded input takes precedence over a cached disk snapshot,
+including in-memory count edits. A declared file cannot be replaced by another
+file with the same run number. Number-only requests must identify a unique loaded
+acquisition and period. Applied provenance records the actual source, source run
+number, and acquired period rather than the browser's encoded row key.
+
+Asymmetry also checks that a reference does not contain the identical acquired
+observations as the sample: the independent-input variance formula below would
+be invalid for self-subtraction. Different acquired periods in one file remain
+eligible. This checks the resolved acquisition/period and directly shared count
+arrays; it does not establish arbitrary covariance or detector correspondence.
+The picker excludes the selected sample acquisition/period. An invalid scripted
+request raises an error before corrected arrays are returned. Missing references
+retain the incomplete preview and final-reduction failure described above;
+loading and inspecting the raw acquisition remains available.
+Histogram-only scripted previews of a resolved reference must also supply the
+sample ``Run``. Without it, the preview reports
+"Reference-background preview requires the sample Run to identify its observations"
+and cannot be accepted. Run-based reduction and calibration paths use the run's
+source and number even when optional metadata omits those fields.
+
+WiMDA 1.326 disables same-run **FileBG**. That behaviour does not establish
+an equivalent external-reference operation or error policy in Mantid or musrfit.
+
 Subtracts a designated reference run — an empty sample holder, a silver
 plate, or the laser-off partner of a photo-excitation measurement — from
 the data, scaled by the ratio of good frames:
@@ -296,7 +327,7 @@ full time-dependent spectrum of the unwanted component, which neither
 constant mode can do. The cost is doubled statistical noise where the
 reference dominates: the errors grow by the second term above. For
 period-mode data (light on/off within one run), prefer period mapping —
-periods share the exposure exactly, with no scaling assumption.
+each acquired period retains its own exposure; those exposures need not be equal.
 
 WiMDA's File BG subtracts the raw reference counts from deadtime-corrected
 sample counts and leaves the error bars untouched; both are corrected here

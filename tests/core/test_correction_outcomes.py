@@ -132,7 +132,7 @@ def test_outcomes_round_trip_and_own_nested_provenance():
 def test_reference_provenance_records_scale_and_public_identity(histograms):
     from asymmetry.core.transform.corrections import BackgroundReference
 
-    reference = BackgroundReference(histograms, 2.0, 42, "reference.nxs", 1000.0, 500.0)
+    reference = BackgroundReference(deepcopy(histograms), 2.0, 42, "reference.nxs", 1000.0, 500.0)
     result = corrected_grouped_counts(
         histograms=histograms,
         grouping={"background_mode": "reference_run"},
@@ -146,6 +146,8 @@ def test_reference_provenance_records_scale_and_public_identity(histograms):
     assert result.corrections.background.effective["reference"] == {
         "run_number": 42,
         "file_name": "reference.nxs",
+        "source_file": "reference.nxs",
+        "period_number": 1,
         "scale": 2.0,
         "scale_source": "explicit_scale",
         "good_frames_sample": 1000.0,
