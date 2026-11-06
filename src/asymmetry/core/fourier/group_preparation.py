@@ -21,7 +21,11 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcomes, result_tail_skip
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcomes,
+    reference_observation_metadata,
+    result_tail_skip,
+)
 from asymmetry.core.transform.deadtime import deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import (
@@ -206,9 +210,7 @@ def prepare_group_counts(
         )
     if reference is not None:
         indices = sorted({index for _, selected, _ in sample_parts for index in selected})
-        reference.require_independent(
-            histograms, dict(run.metadata, source_file=run.source_file), indices
-        )
+        reference.require_independent(histograms, reference_observation_metadata(run), indices)
     domains = [observation_domain(sample_parts)]
     inputs = [(histograms, grouping)]
     if reference is not None:

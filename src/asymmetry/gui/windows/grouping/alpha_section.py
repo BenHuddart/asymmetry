@@ -45,7 +45,11 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.corrections import BackgroundReference, CorrectionStatus
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionStatus,
+    reference_observation_metadata,
+)
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
@@ -368,7 +372,7 @@ def build_alpha_request(
         run_label=str(dataset.run_label),
         resolved_reference=resolve_reference(grouping, reference_resolver),
         facility=str(facility or ""),
-        metadata=dict(run.metadata, source_file=run.source_file, run_number=run.run_number),
+        metadata=reference_observation_metadata(run),
     )
 
 

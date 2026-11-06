@@ -39,6 +39,7 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
+    reference_observation_metadata,
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_period_asymmetry
@@ -983,15 +984,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     period_index = selected_period_index(grouping)
     if period_index is not None:
         histograms, grouping = select_period_histograms(histograms, grouping, period_index)
-    metadata = (
-        dict(
-            request.run.metadata,
-            source_file=request.run.source_file,
-            run_number=request.run.run_number,
-        )
-        if request.run is not None
-        else {}
-    )
+    metadata = reference_observation_metadata(request.run) if request.run is not None else {}
     if period_index is not None:
         metadata["period_number"] = period_index + 1
     n_hist = len(histograms)

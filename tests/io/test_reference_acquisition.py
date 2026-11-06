@@ -336,3 +336,52 @@ def test_released_identity_mapping_keeps_acquired_reference_available(monkeypatc
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
     reference = resolve_background_reference(request)
     assert reference.period_number == 2
+
+
+@pytest.mark.parametrize("consumer", ["group", "fb", "automatic_alpha"])
+def test_scripted_run_identity_does_not_depend_on_optional_metadata(tmp_path, consumer):
+    from dataclasses import replace
+
+    from asymmetry.core.fourier.fb_input import build_fb_signal_dataset
+    from asymmetry.core.fourier.grouped import build_group_signal_dataset
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from asymmetry.core.project.profiles import (
+        AlphaPolicy,
+        ProfileFingerprint,
+        profile_from_payload,
+        resolve_effective_grouping,
+    )
+
+    sample = _run(42, good_frames=100, level=50)
+    sample.metadata = {}
+    sample.grouping.update(
+        groups={1: [1], 2: [2]},
+        forward_group=1,
+        backward_group=2,
+        alpha=1,
+        first_good_bin=8,
+        last_good_bin=63,
+    )
+    source = tmp_path / "sample.nxs"
+    sample.source_file = str(source)
+    write_nexus_v1(sample, source, effective=True)
+    sample.grouping.update(
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"source_file": str(source), "run_number": 42, "period_number": 1},
+    )
+    with pytest.raises(ValueError, match="identical observations"):
+        if consumer == "group":
+            build_group_signal_dataset(
+                sample, 1, center_signal=False, apply_lifetime_correction=False
+            )
+        elif consumer == "fb":
+            build_fb_signal_dataset(sample)
+        else:
+            profile = profile_from_payload(sample.grouping, "Own", ProfileFingerprint("", 4))
+            profile = replace(profile, alpha_policy=AlphaPolicy(mode="per_run_estimate"))
+            resolve_effective_grouping(
+                profile,
+                sample,
+                reference_resolver=lambda g: resolve_background_reference(g["background_run"]),
+            )

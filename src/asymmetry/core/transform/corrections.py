@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 
 TAIL_BACKGROUND_POLICY_REVISION = 2
 
@@ -242,6 +242,11 @@ class BackgroundReference:
             good_frames=self.good_frames_reference,
             deadtime_file_us=self.file_dead_time_us,
         )
+
+
+def reference_observation_metadata(run: Run) -> dict[str, Any]:
+    """Carry canonical Run identity even when optional acquisition metadata is empty."""
+    return dict(run.metadata, source_file=run.source_file, run_number=run.run_number)
 
 
 def require_complete_dataset(dataset: MuonDataset) -> None:

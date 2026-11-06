@@ -2,6 +2,7 @@
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io import resolve_background_reference
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.grouping import (
     good_frames,
     grouping_balances,
@@ -39,7 +40,7 @@ def build_fb_signal_dataset(run):
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=run.metadata,
+        metadata=reference_observation_metadata(run),
         reference_resolver=reference,
     )
     return MuonDataset(
