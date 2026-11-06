@@ -36,12 +36,23 @@ fixed and one-shot calibrated alpha values remain stored choices.
 Correction outcomes
 -------------------
 
-An unavailable or failed correction prevents final reduction, calibration,
-or fitting. Missing or incomplete File deadtime coefficients instead yield a
-usable uncorrected result with a warning; background failures remain fatal. A missing reference, absent fixed values, or a
-failed tail fit raises an error; it does not produce an unsubtracted spectrum
-labelled as corrected. Malformed fixed values and invalid background ranges
-raise input errors, as do invalid reference scales or frame counts. Disabling the correction is an explicit valid choice.
+An unusable automatic **Tail fit** estimate produces a usable ``skipped``
+background outcome. Asymmetry preserves negative observations in the actual
+selected tail; it never clips them into a Poisson estimate. If either F/B group
+or any contributing period cannot support the estimate, background remains
+unsubtracted for the entire requested result. Correctly applied detector
+deadtime correction and supplied variances remain intact. The warning says
+"Automatic tail background subtraction skipped:" followed by the attributed
+reason and "Background remains unsubtracted for the entire result."
+
+A successful zero-background optimum remains applied. Negative observations
+outside the actual fit window, or values made negative by successful subtraction,
+do not trigger a skip. The configured mode stays ``tail_fit``; a skipped result
+has no effective fitted levels and is never labelled background-corrected.
+Missing or incomplete File deadtime coefficients have their separate accepted
+skip policy. Missing reference runs, absent fixed values, invalid manual
+settings, unsupported authored ranges, and saturated required deadtime inverses
+retain their errors. File loading does not depend on tail estimability.
 
 The core API returns ``corrections`` on grouped counts and grouped asymmetry
 results. Each ``CorrectionOutcome`` records its name, requested mode, status
@@ -53,7 +64,7 @@ scaling records whether it uses live frame counts, saved frame counts, an
 explicit scale, or a unity assumption when exposure metadata is absent. These records
 are immutable; ``CorrectionOutcomes.to_dict()`` exports an independent JSON
 snapshot. ``complete`` and ``require_complete()`` describe calculation acceptance,
-including a warned ``skipped`` File deadtime outcome. They reject unavailable
+including warned ``skipped`` File deadtime and automatic-tail outcomes. They reject unavailable
 or failed corrections. Only ``applied`` carries effective coefficients.
 A File request uses the sample and reference acquisitions' own tables; if
 either lacks a required detector coefficient, both remain uncorrected by deadtime while reference
@@ -86,6 +97,19 @@ are recomputed from the current time zero; they do not become explicit requests.
 
 Such arrays are incomplete diagnostic results and must not be promoted as a
 corrected analysis. Final reduction requires complete outcomes by default.
+
+An accepted tail skip keeps **Apply** enabled and displays "Correction warning"
+on the resulting dataset. Cached and restored results retain requested mode,
+status, and reason; changing the data or selection recomputes the decision and
+clears stale fitted levels. Grouped count displays compare the contents of count
+and supplied-variance arrays, including in-place edits. Large input checks show
+"Checking histogram data…" with **Cancel** while the interface remains responsive;
+a cancelled check does not populate the cache. Automatic alpha calibration uses the same contributing
+period decision; fixed and one-shot calibrated values remain authored.
+
+.. image:: /_generated/screenshots/grouping_tail_background_warning.png
+   :alt: Automatic tail skip warning with an unsubtracted preview and enabled Apply.
+   :width: 100%
 
 Choosing a mode
 ---------------
@@ -173,7 +197,7 @@ This mode is useful for pulsed-source data analysed to long times. Persistent
 polarisation or another departure from the exponential-plus-flat model can
 change the estimated level even when the numerical optimum is well determined.
 Convergence does not detect that model error. Asymmetry requires a finite positive
-native bin width, at least five observations, a positive total, identifiable
+native bin width, at least five nonnegative observations, a positive total, identifiable
 expected information, and finite positive propagated uncertainty. A positive decay amplitude that cannot be
 represented at the declared time zero also fails, preserving the meaning of
 the returned physical parameters. The five-bin minimum is a conservative
@@ -206,6 +230,14 @@ fixed lifetime and default weighted least squares; its caller does not impose
 nonnegative parameters. These objectives and selected observations can differ
 from Asymmetry's native-bin constrained Poisson estimate. Noisy-data results
 need not agree, even when exact exponential-plus-flat means do.
+
+Mantid's Muon caller skips an automatic fit when its reduced chi-squared exceeds
+10 or its status contains ``Failed to converge``; it does not demand a literal
+``success`` status. This is a per-run/group policy. Asymmetry retains its own
+Poisson objective without that chi-squared threshold and coordinates the whole
+requested result. WiMDA's automatic path uses the returned weighted-fit level
+without an equivalent fit-status skip check; its low-count weighting also
+attenuates signed observations. These are distinct statistical conventions.
 
 musrfit 1.12.1 (``708f777b``) averages a selected region in its asymmetry
 preparation. A fitted background in a single-histogram count fit is part of a

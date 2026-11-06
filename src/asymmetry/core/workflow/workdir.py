@@ -61,6 +61,7 @@ import numpy as np
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
+from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionSettings
@@ -256,6 +257,7 @@ def reduction_digest(
     payload = {
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
+        "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
         "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),
@@ -527,7 +529,12 @@ class WorkDir:
             asymmetry=np.asarray(dataset.asymmetry, dtype=np.float64),
             error=np.asarray(dataset.error, dtype=np.float64),
         )
-        _write_json(json_path, entry.to_dict())
+        record = entry.to_dict()
+        if "correction_outcomes" in dataset.metadata:
+            record["run"] = dict(
+                record["run"], correction_outcomes=dataset.metadata["correction_outcomes"]
+            )
+        _write_json(json_path, record)
         return array_path
 
     def entry(self, run_number: int) -> ReducedEntry:

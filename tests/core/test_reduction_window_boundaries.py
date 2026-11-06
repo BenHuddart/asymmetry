@@ -50,7 +50,7 @@ def test_scalar_file_limits_reject_noninteger_indices(window):
 
 
 def test_grouped_fourier_rejects_a_reversed_background_window():
-    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.fourier.group_background import _apply_group_background_correction
 
     with pytest.raises(ValueError, match="background range.*reversed"):
         _apply_group_background_correction(

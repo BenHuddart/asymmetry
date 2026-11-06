@@ -38,6 +38,7 @@ from asymmetry.core.fourier.phase_fit import (
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
+from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import (
     group_names,
@@ -299,16 +300,10 @@ def _digest_int(value: object) -> int | None:
 
 
 def _background_values_are_list_routed(grouping: dict) -> bool:
-    """Return whether ``forward_group``/``backward_group`` route background values.
+    """Only positional background lists depend on the selected F/B routing.
 
-    ``background_values``/``background_ranges`` keyed by group id (a ``dict``)
-    address a group directly; only the *list*-shaped form (WiMDA's positional
-    ``[forward, backward]`` convention — see
-    :func:`asymmetry.core.fourier.grouped._group_background_value_for_group`)
-    needs ``forward_group``/``backward_group`` to know which entry belongs to
-    which group. Switching a projection's polarisation axis rewrites
-    ``forward_group``/``backward_group`` on every dataset, so that rewrite must
-    not perturb the digest unless a list-routed background is actually in play.
+    Group-keyed dictionaries retain their routing when a projection changes
+    the selected F/B pair; that change must not perturb their digest.
     """
     values = grouping.get("background_values")
     ranges = grouping.get("background_ranges")
@@ -331,7 +326,10 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         return ""
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
-    payload: dict[str, object] = {"deadtime_scope": "required_grouped_observations"}
+    payload: dict[str, object] = {
+        "deadtime_scope": "required_grouped_observations",
+        "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
+    }
 
     groups = _digest_groups(grouping.get("groups"))
     if groups is not None:

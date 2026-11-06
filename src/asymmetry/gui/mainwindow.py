@@ -232,6 +232,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     CorrectionStatus,
     background_grouping_metadata,
+    correction_warnings,
 )
 from asymmetry.core.transform.deadtime import (
     DeadtimeCalibration,
@@ -313,7 +314,7 @@ from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_edi
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
-from asymmetry.gui.utils.reduction_cache import ReductionCache
+from asymmetry.gui.utils.reduction_cache import ReductionCache, histogram_content_key
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -6537,13 +6538,7 @@ class MainWindow(QMainWindow):
         )
 
     def _fourier_background_hint_for_dataset(self, dataset: MuonDataset | None) -> str | None:
-        """Return a label for the grouping background the FFT inherits, or ``None``.
-
-        Mirrors the Fourier input path's gate (``core/fourier/grouped.py``):
-        the background is applied pre-FFT only when the grouping has
-        ``background_correction`` on and the resolved mode is available for the
-        dataset. Surfaces the otherwise-invisible inheritance (F3).
-        """
+        """Name the requested grouping background; results carry actual outcomes."""
         run = getattr(dataset, "run", None)
         grouping = getattr(run, "grouping", None) if run is not None else None
         if not isinstance(grouping, dict) or not grouping.get("background_correction", False):
@@ -6551,9 +6546,6 @@ class MainWindow(QMainWindow):
         mode = resolve_background_mode(grouping)
         if mode == "none" or not self._dataset_allows_background_mode(dataset, mode):
             return None
-        # reference_run is "available" everywhere but applies nothing unless a
-        # background run is actually configured; don't claim an inheritance the
-        # FFT input will not apply (grouped.py returns applied=False otherwise).
         if mode == "reference_run" and not grouping.get("background_run"):
             return None
         return {
@@ -7327,6 +7319,10 @@ class MainWindow(QMainWindow):
             self._refresh_spectral_moments()
             return
 
+        messages = dict.fromkeys(
+            w for spectrum in spectra for w in correction_warnings(spectrum.metadata)
+        )
+        self._set_fourier_status(" ".join(messages))
         if len(spectra) == 1:
             self._frequency_plot_panel.plot_dataset(spectra[0])
         else:
@@ -9048,6 +9044,10 @@ class MainWindow(QMainWindow):
         if total_skipped:
             message += f" ({total_skipped} skipped)"
         message += "."
+        if active_spectrum is not None and (
+            messages := correction_warnings(active_spectrum.metadata)
+        ):
+            message += " " + " ".join(messages)
         diamag_skipped = (
             active_spectrum.metadata.get("fourier_diamag_skipped")
             if active_spectrum is not None
@@ -9555,18 +9555,12 @@ class MainWindow(QMainWindow):
             enabled.add("maxent")
             enabled.add("reconstruction")
             self._plot_workspace.set_available_views(sorted(enabled))
-        # Jump to the result only while the computed run is still the browser
-        # selection; if the user navigated elsewhere mid-compute, leave both
-        # their view and plot alone (the result stays cached for later).
+        # A switched-away run keeps its result cached without changing the view.
         current_run = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         if current_run == int(run_number):
-            # The spectrum is MaxEnt's primary output, so land there after a
-            # run — unless the user is already viewing the reconstruction
-            # overlay, in which case stay and refresh it.  set_active_view is a
-            # no-op on the already-active view and skips its render signal, so
-            # re-render explicitly in that case.
+            # Refresh an already-active result view explicitly; activation is otherwise a no-op.
             staying_on_recon = self._plot_workspace.active_view() == "reconstruction" and bool(
                 self._maxent_reconstruction_datasets(int(run_number))
             )
@@ -9578,11 +9572,7 @@ class MainWindow(QMainWindow):
             elif already_active and target_view == "reconstruction":
                 self._render_maxent_reconstruction_plot()
             self._show_panel("fourier")
-        # Surface the engine's early-stop verdict.  Drive it off the result's
-        # own flags rather than the requested cycle count: state.cycle is
-        # cumulative across the incremental cycle buttons, so a per-call request
-        # would read "cycle 26 of 1" on a resumed run.  Divergence is a visible
-        # warning; a plain early stop reports the cycle it settled on.
+        # Cycle counts are cumulative across resumed requests.
         ran = int(result.state.cycle)
         if getattr(result, "diverged", False):
             maxent_input = getattr(result, "maxent_input", None)
@@ -9606,6 +9596,10 @@ class MainWindow(QMainWindow):
         else:
             message = f"Computed MaxEnt spectrum for run {run_number} through cycle {ran}."
             self._set_fourier_status(message, success=True)
+        if messages := correction_warnings(result.metadata):
+            message += " " + " ".join(messages)
+            self._maxent_panel.set_status(message, warning=True)
+            self.statusBar().showMessage(message)
         self._log_panel.log(message)
         self._log_maxent_perf()
         self._finish_maxent()
@@ -9711,16 +9705,9 @@ class MainWindow(QMainWindow):
     _MAXENT_BATCH_CYCLES = 50
 
     def _on_maxent_batch_reconstruct_and_send(self, widget) -> None:
-        """Reconstruct the selected runs' MaxEnt spectra, then send their moments.
+        """Reconstruct missing selected spectra with each run's own stored settings.
 
-        Closes the spectral-moments gap that MaxEnt's per-run, lazy
-        reconstruction leaves: a multi-run moments send records only runs whose
-        reconstruction already exists. This queues the missing reconstructions —
-        driving the single-run worker one run at a time, reusing each run's
-        resumable state and its **own** stored MaxEnt settings (falling back to
-        the current panel settings for runs that have none) — then performs the
-        moments send, so a B_rms(T) series builds in one action. Cancel from the
-        MaxEnt panel aborts the whole queue.
+        Cancel aborts the queue; completed spectra remain resumable and cached.
         """
         if self._maxent_active or self._maxent_batch_active:
             self._set_fourier_status("A MaxEnt calculation is already running.")
@@ -9814,8 +9801,17 @@ class MainWindow(QMainWindow):
         self._maxent_batch_config = None
         if widget is not None:
             self._on_moments_send_to_trend(widget)
+        messages = dict.fromkeys(
+            w
+            for ds in self._data_browser.get_selected_datasets()
+            for spectrum in self._frequency_spectra_from_cache(
+                int(ds.run_number), RepresentationType.FREQ_MAXENT
+            )
+            for w in correction_warnings(spectrum.metadata)
+        )
         self._set_fourier_status(
             f"MaxEnt batch: reconstructed {sent} run(s); moments sent to trend."
+            + (" " + " ".join(messages) if messages else "")
         )
 
     def _abort_maxent_batch(self) -> None:
@@ -12233,11 +12229,7 @@ class MainWindow(QMainWindow):
 
         rf_mode = self._alc_fit_panel.rf_difference_enabled()
         try:
-            # order_key="run" includes every integrable run; the scan view picks
-            # the displayed x-axis (field / temperature / run). A run is only
-            # dropped here if it cannot be integrated at all (no grouping). In RF
-            # mode each run is reduced to its (Green − Red) period difference
-            # instead of a single integral (non-two-period runs are excluded).
+            # Run ordering retains points whose displayed field/temperature is absent.
             if rf_mode:
                 scan = build_rf_difference_scan(runs, t_min=t_min, t_max=t_max, order_key="run")
             else:
@@ -12250,9 +12242,7 @@ class MainWindow(QMainWindow):
             )
             return
         if scan.n_points < 2:
-            # A failed rebuild leaves the previous scan on screen; do NOT update
-            # _alc_rf_mode here, or it would desync from the still-displayed scan
-            # and let an RF fit run against a stale plain-integral observable.
+            # A failed rebuild must retain the displayed scan's RF mode.
             self._guidance_message(
                 "Integral scan", "The scan has too few usable points to plot.", warning=True
             )
@@ -12264,26 +12254,36 @@ class MainWindow(QMainWindow):
         if scan.excluded:
             dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
             self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
-        # Click-exclusions are keyed by run so they survive a rebuild over the
-        # same selection; prune ones no longer in the scan.
+        # Run-keyed exclusions survive rebuilds over the same selection.
         self._alc_excluded_runs &= {int(run) for run in scan.run_numbers}
 
-        # Per-run scan data (fractional value + the run's field/temperature) for
-        # re-rendering when the x-axis / derivative options change.
+        # Native integral values are fractions; display conversion happens later.
         runs_by_number = {
             int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
         }
         self._alc_scan_points = [
-            self._alc_scan_point(run_number, value, error, runs_by_number.get(int(run_number)))
+            self._alc_scan_point(
+                run_number,
+                value,
+                error,
+                runs_by_number.get(int(run_number)),
+                {
+                    label: record.to_dict()
+                    for label, record in scan.correction_outcomes.get(run_number, {}).items()
+                },
+            )
             for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
         ]
 
-        # Record the scan as a model-less FitSeries (percent units) for
-        # persistence / series management.
+        # FitSeries stores scan values in percent; native integrals are fractions.
         quantity = self._SCAN_QUANTITY
         results_by_run = {
             int(run_number): {
                 "success": True,
+                "correction_outcomes": {
+                    label: record.to_dict()
+                    for label, record in scan.correction_outcomes.get(run_number, {}).items()
+                },
                 "parameters": {quantity: float(value) * 100.0},
                 "uncertainties": {quantity: float(error) * 100.0},
                 "chi_squared": 0.0,
@@ -12304,8 +12304,7 @@ class MainWindow(QMainWindow):
         )
         self._next_scan_index += 1
         series.sort_members(runs_by_number)
-        # Replace the previous ALC scan rather than accumulating one series per
-        # rebuild (the window is tweaked iteratively).
+        # One scan series owns the active integration window.
         if self._alc_scan_series_id and self._project_model.batch(self._alc_scan_series_id):
             self._project_model.remove_batch(self._alc_scan_series_id)
         self._project_model.add_batch(series)
@@ -12313,17 +12312,12 @@ class MainWindow(QMainWindow):
         # A built scan is persistent work (P0-2): flag the session modified.
         self._mark_dirty()
 
-        # A freshly-built scan is a new field span; its old regions/peaks (in the
-        # previous scan's x units) no longer apply and would distort the new
-        # scatter's auto-range, so drop them before rendering. The baseline model
-        # choice is axis-independent and deliberately kept.
+        # Regions/peaks use the old x units; a new scan requires new selections.
         self._alc_scan_view.clear_analysis()
         self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
-        # The scan renders in the central panel; raise the Parameters dock
-        # (the Baseline/Peaks/RF analysis controls) as the natural next step,
-        # clearing any closed-tab memory.
+        # Parameters holds the scan's Baseline/Peaks/RF controls.
         self._show_panel("fit_parameters")
 
     # x-axis key → (display label, derivative unit label).
@@ -12331,14 +12325,9 @@ class MainWindow(QMainWindow):
     _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
 
     def _render_alc_scan(self, *, reset_view: bool = True) -> None:
-        """Render the current ALC scan in the chosen x-axis / derivative view.
+        """Render the scan's selected axis and derivative in percent units.
 
-        Reads the per-run scan data (``_alc_scan_points``) and the scan view's
-        options, maps each run to the selected x (field / temperature / run),
-        scales to percent, optionally takes the dA/dB derivative, and feeds the
-        view. Re-invoked whenever the scan or its view options change.
-        *reset_view* is forwarded to :meth:`ALCScanView.show_scan`; pass False
-        for a same-scan re-render (click-exclude) so a manual zoom is kept.
+        Same-scan click exclusions retain manual zoom when reset_view is False.
         """
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
@@ -12417,12 +12406,7 @@ class MainWindow(QMainWindow):
         self._update_alc_provenance(shown_runs=scan.run_numbers, x_label=x_label)
 
     def _update_alc_provenance(self, *, shown_runs: list[int], x_label: str) -> None:
-        """Refresh the scan's contributors/exclusions read-out under the plot.
-
-        Surfaces what previously went only to the log: how many runs
-        contribute, which the user excluded by clicking, which were dropped at
-        build time (with reasons), and which lack the displayed x-axis log.
-        """
+        """Show contributing runs, exclusions and retained correction warnings."""
         member_runs = {p["run"] for p in self._alc_scan_points}
         # Count each run in exactly one bucket: a click-excluded run missing
         # the displayed axis has no greyed point to restore, so it reports
@@ -12443,6 +12427,16 @@ class MainWindow(QMainWindow):
         if self._alc_build_excluded:
             parts.append(f"{len(self._alc_build_excluded)} dropped at build")
             tooltip_lines.extend(f"Run {run}: {reason}" for run, reason in self._alc_build_excluded)
+        messages = dict.fromkeys(
+            warning
+            for point in self._alc_scan_points
+            for warning in correction_warnings(
+                {"correction_outcomes": point.get("correction_outcomes", {})}
+            )
+        )
+        if messages:
+            parts.append("Correction warning")
+            tooltip_lines.extend(messages)
         self._alc_scan_view.set_provenance(" · ".join(parts), "\n".join(tooltip_lines))
 
     def _on_alc_point_toggled(self, run_number: int) -> None:
@@ -12490,13 +12484,7 @@ class MainWindow(QMainWindow):
             strip.show_dataset(dataset.time, dataset.asymmetry, label=f"run {dataset.run_label}")
 
     def _alc_display_scan(self, x_key: str, *, include_excluded: bool = False) -> FieldScan | None:
-        """Build the current scan as a FieldScan vs *x_key* (percent units).
-
-        Maps each stored run to the chosen x (dropping runs missing that log),
-        sorts, and returns a :class:`FieldScan`; ``None`` when fewer than two
-        points remain. User-excluded runs are dropped unless *include_excluded*
-        (the renderer shows them greyed; the fits never see them).
-        """
+        """Build the displayed percent scan, retaining selected points' provenance."""
         selected = []
         for point in self._alc_scan_points:
             if not include_excluded and point["run"] in self._alc_excluded_runs:
@@ -12517,6 +12505,14 @@ class MainWindow(QMainWindow):
             run_numbers=[s[3] for s in selected],
             order_key=x_key,
             method="integral",
+            correction_outcomes={
+                point["run"]: {
+                    label: CorrectionOutcomes.from_dict(record)
+                    for label, record in point.get("correction_outcomes", {}).items()
+                }
+                for point in self._alc_scan_points
+                if point["run"] in {s[3] for s in selected}
+            },
             x_label=self._ALC_X_LABELS[x_key],
             # This scan is displayed in percent (the ×100 above), unlike the
             # fraction-scale scans build_field_scan returns — state it rather than
@@ -16094,11 +16090,7 @@ class MainWindow(QMainWindow):
         *,
         lifetime_corrected: bool = True,
     ) -> list[MuonDataset]:
-        """Return grouped time-domain display datasets for the active dataset.
-
-        ``lifetime_corrected=False`` yields the Raw counts view's uncorrected
-        per-group histograms.
-        """
+        """Return grouped displays; Raw counts omit lifetime scaling."""
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
@@ -16114,7 +16106,10 @@ class MainWindow(QMainWindow):
         if run is None or not run.histograms:
             return []
 
-        key = (*self._grouped_time_domain_cache_key(run, lifetime_corrected), display_factor)
+        recipe = self._grouped_time_domain_cache_key(run, lifetime_corrected)
+        if recipe is None:
+            return []
+        key = (*recipe, display_factor)
 
         def _compute() -> list[MuonDataset]:
             return build_grouped_time_domain_datasets(
@@ -16134,21 +16129,15 @@ class MainWindow(QMainWindow):
         # display/RRF consumers may transform arrays in place.
         return [_copy_grouped_dataset(ds) for ds in cached]
 
-    def _grouped_time_domain_cache_key(self, run: object, lifetime_corrected: bool) -> tuple:
-        """Recipe key for the grouped-count build.
-
-        The grouping digest covers groups, exclusions, deadtime, background,
-        first/last good bin and the base bunching factor. The build additionally
-        reads ``included_groups`` (which groups are drawn) and ``good_frames``
-        (its deadtime preparation), neither of which the digest captures — so
-        both are keyed explicitly. Per-detector t0 overrides are keyed too
-        (the sibling rebunch path reads them; the build does not, so this is a
-        harmless-but-safe extra component). ``lifetime_corrected`` selects the
-        Groups vs Raw-counts scaling.
-        """
-        grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else {}
+    def _grouped_time_domain_cache_key(self, run: Run, lifetime_corrected: bool) -> tuple | None:
+        """Key grouped counts by full source contents, recipe, timing and exposure."""
+        content = histogram_content_key(run.histograms, self)
+        if content is None:
+            return None
+        grouping = run.grouping
         return (
             fourier_grouping_digest(run),
+            content,
             bool(lifetime_corrected),
             _included_groups_key(grouping),
             grouping.get("good_frames"),
@@ -16982,15 +16971,20 @@ class MainWindow(QMainWindow):
                 # Mirror the build path, which reads the Run's metadata (the
                 # field/temperature log may live there, not on the dataset).
                 run_obj = getattr(dataset, "run", None) or dataset
-            points.append(self._alc_scan_point(run, value, error, run_obj))
+            points.append(
+                self._alc_scan_point(
+                    run, value, error, run_obj, summary.get("correction_outcomes", {})
+                )
+            )
         return points
 
     @staticmethod
-    def _alc_scan_point(run_number, value: float, error: float, run_obj) -> dict:
+    def _alc_scan_point(run_number, value: float, error: float, run_obj, corrections=None) -> dict:
         """Build one ALC scan point (fractional value + the run's field/temperature)."""
-        meta = getattr(run_obj, "metadata", {}) or {}
+        meta = run_obj.metadata if run_obj is not None else {}
         return {
             "run": int(run_number),
+            "correction_outcomes": {} if corrections is None else corrections,
             "value": float(value),
             "error": float(error),
             "field": _safe_float(meta.get("field")),

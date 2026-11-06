@@ -20,14 +20,11 @@ def histograms():
         ({"dead_time_us": [0.01]}, "manual", False, "table"),
         ({"background_mode": "reference_run"}, "off", True, "reference"),
         ({"background_mode": "fixed"}, "off", True, "fixed"),
-        ({"background_mode": "tail_fit"}, "off", True, "counts"),
     ],
 )
 def test_unavailable_correction_blocks_final_but_labels_preview(
     histograms, grouping, dt_mode, background, reason
 ):
-    if grouping.get("background_mode") == "tail_fit":
-        histograms = [Histogram(np.zeros(100), 0.016, t0_bin=20) for _ in range(2)]
     options = dict(
         histograms=histograms,
         grouping=grouping,

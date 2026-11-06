@@ -357,3 +357,21 @@ class ForwardBackwardCounts:
             return None
         forward, backward = effective["values"]
         return float(forward), float(backward)
+
+
+def native_time_window(time, good_window: BinWindow, bounds) -> BinWindow:
+    """Select inclusive native observations, using good support for omitted bounds."""
+    lower = time[good_window.first] if bounds[0] is None else float(bounds[0])
+    upper = time[good_window.last] if bounds[1] is None else float(bounds[1])
+    if lower > upper:
+        raise ValueError("Integration window requires t_min <= t_max.")
+    selected = np.flatnonzero((time >= lower) & (time <= upper))
+    if not selected.size:
+        raise ValueError("Integration window contains no bins.")
+    return BinWindow(int(selected[0]), int(selected[-1]))
+
+
+def native_count_time(length, bin_width_us, common_t0_bin, t0_time_us):
+    """Stamp native bin centres using the local anchor plus exact-t0 residual."""
+    residual = (common_t0_bin + 0.5) * bin_width_us - t0_time_us
+    return (np.arange(length, dtype=np.float64) - common_t0_bin) * bin_width_us + residual

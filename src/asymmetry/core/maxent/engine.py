@@ -1054,8 +1054,6 @@ def build_maxent_input(
     elif set(prepared.layouts) != set(selected):
         raise ValueError("Prepared grouped counts do not match the requested cohort")
 
-    # ZF/LF mode: exactly two forward/backward groups, phases pinned 0/180, and
-    # amplitudes/backgrounds tied through the run's α.
     zf_lf_phase_map: dict[int, float] = {}
     zf_lf_alpha: float | None = None
     if resolved_config.mode == "zf_lf":
@@ -1114,6 +1112,7 @@ def build_maxent_input(
         result,
         metadata={
             **result.metadata,
+            **prepared.correction_metadata(),
             "deadtime_outcome": prepared.sample.outcome.to_dict(),
             "reference_deadtime_outcome": prepared.reference.outcome.to_dict()
             if prepared.reference is not None

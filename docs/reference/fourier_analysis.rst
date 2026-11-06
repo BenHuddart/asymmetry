@@ -38,6 +38,17 @@ and actual decision as ``deadtime_outcome``. A supplied complete zero table
 is identity. Exposure failures for a non-zero correction and saturated inverses
 remain errors. Missing required exposure remains fatal with precomputed inputs.
 
+Automatic tail background subtraction uses one decision for all groups selected
+for a spectrum. If any selected tail is unusable, every contributing signal
+remains background-unsubtracted, retaining valid deadtime correction. Unselected
+groups do not affect that decision. F/B spectra also coordinate contributing
+periods. Grouped signals, FFT spectra, and MaxEnt inputs/results retain the
+requested mode, skipped status, and reason in ``correction_outcomes``; a skip
+has no fitted background value. The completion status includes
+"Automatic tail background subtraction skipped:" with the reason, and cached
+results preserve the same warning. The inherited background hint names the
+request; the result's outcomes say whether it was applied.
+
 Apodisation trades frequency resolution for reduced leakage. An exponential
 (Lorentzian) window is matched to exponential relaxation, and a Gaussian
 window to Gaussian broadening; both broaden the Fourier line. ``None`` is

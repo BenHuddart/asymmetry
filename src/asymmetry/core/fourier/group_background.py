@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from asymmetry.core.transform.background import (
+    BackgroundCorrectionResult,
     apply_grouped_background_correction,
     available_background_modes,
     background_window,
@@ -153,10 +154,12 @@ def _apply_group_background_correction(
     reference_counts: GroupCounts | None = None,
     reference_scale: float | None = None,
     background_t0_bin: int | None = None,
-) -> tuple[GroupCounts, bool, float | None]:
+) -> BackgroundCorrectionResult:
     """Apply optional grouped background subtraction for one detector group."""
     if not bool(grouping.get("background_correction", False)):
-        return counts, False, None
+        return BackgroundCorrectionResult(
+            counts, counts, CorrectionOutcome("background", "none", CorrectionStatus.OFF)
+        )
 
     mode = resolve_background_mode(grouping)
     if mode == "reference_run" and reference_counts is not None:
@@ -201,14 +204,4 @@ def _apply_group_background_correction(
         last_good_bin=last_good_bin,
     )
     CorrectionOutcomes(background=correction.outcome).require_complete()
-    values = (
-        correction.outcome.effective.get("values")
-        if correction.outcome.effective is not None
-        else None
-    )
-    background_value = values[0] if values is not None else None
-    return (
-        correction.forward,
-        correction.outcome.status == CorrectionStatus.APPLIED,
-        background_value,
-    )
+    return correction

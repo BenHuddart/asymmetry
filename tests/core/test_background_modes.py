@@ -257,7 +257,7 @@ def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
 
 def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
     """A cached level without an estimation window is a fixed per-group constant."""
-    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.fourier.group_background import _apply_group_background_correction
     from asymmetry.core.transform.fb_counts import GroupCounts
 
     counts = np.full(200, 80.0)
@@ -268,7 +268,7 @@ def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
         "forward_group": 1,
         "backward_group": 2,
     }
-    corrected, applied, value = _apply_group_background_correction(
+    result = _apply_group_background_correction(
         GroupCounts(counts),
         grouping=grouping,
         group_id=2,  # backward group must get ITS value, not the forward one
@@ -277,15 +277,15 @@ def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
         metadata={"facility": "PSI"},
         source_file="run.bin",
     )
-    assert applied
-    assert value == pytest.approx(3.0)
-    np.testing.assert_allclose(corrected.counts, counts - 3.0)
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["values"][0] == pytest.approx(3.0)
+    np.testing.assert_allclose(result.forward.counts, counts - 3.0)
 
 
 def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
     """Review fix: pulsed data with tail-fit background corrects the Fourier
     input too (the old range-only gate skipped it)."""
-    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.fourier.group_background import _apply_group_background_correction
     from asymmetry.core.transform.fb_counts import GroupCounts
 
     counts = _pulsed_counts(5000.0, 0.8, seed=7)
@@ -294,7 +294,7 @@ def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
         "background_mode": "tail_fit",
         "last_good_bin": N_BINS - 1,
     }
-    corrected, applied, value = _apply_group_background_correction(
+    result = _apply_group_background_correction(
         GroupCounts(counts),
         grouping=grouping,
         group_id=1,
@@ -303,13 +303,13 @@ def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
         metadata={"facility": "ISIS"},
         source_file="run.nxs",
     )
-    assert applied
-    assert value is not None and value > 0.0
-    assert float(np.sum(corrected.counts)) < float(np.sum(counts))
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["values"][0] > 0.0
+    assert float(np.sum(result.forward.counts)) < float(np.sum(counts))
 
 
 def test_fourier_group_path_refuses_missing_reference():
-    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+    from asymmetry.core.fourier.group_background import _apply_group_background_correction
 
     with pytest.raises(ValueError, match="reference run is not loaded"):
         _apply_group_background_correction(

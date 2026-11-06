@@ -75,6 +75,7 @@ class TailFitResult:
 
     count_covariance: NDArray[np.float64] | None = None
     expected_counts: NDArray[np.float64] | None = None
+    invalid_input: bool = False
 
     def __post_init__(self) -> None:
         if not self.ok:
@@ -217,7 +218,7 @@ def fit_tail_background(
     width = float(bin_width_us)
     start, end = tail_background_window(n.size, t0_bin, last_good_bin, fit_start_bin=fit_start_bin)
 
-    def _failure(message: str) -> TailFitResult:
+    def _failure(message: str, *, invalid_input: bool = False) -> TailFitResult:
         return TailFitResult(
             rate_per_us=0.0,
             rate_error_per_us=None,
@@ -227,13 +228,18 @@ def fit_tail_background(
             ok=False,
             consistent_with_zero=True,
             message=message,
+            invalid_input=invalid_input,
         )
 
     if not np.isfinite(width) or width <= 0.0:
-        return _failure("Bin width must be finite and positive")
+        return _failure("Bin width must be finite and positive", invalid_input=True)
     if end - start + 1 < 5:
         return _failure("Tail-fit window has fewer than 5 bins")
-    window = np.clip(n[start : end + 1], 0.0, None)
+    window = n[start : end + 1]
+    if np.any(window < 0):
+        return _failure(
+            "Tail-fit window contains negative observations; Poisson estimation is unusable"
+        )
     if float(np.sum(window)) <= 0.0:
         return _failure("Tail-fit window contains no counts")
 
@@ -420,8 +426,16 @@ def apply_grouped_background_correction(
                 f_input,
                 b_input,
                 mode,
-                status=CorrectionStatus.FAILED,
-                reason=f"{forward_fit.message}; {backward_fit.message}",
+                status=(
+                    CorrectionStatus.FAILED
+                    if forward_fit.invalid_input or backward_fit.invalid_input
+                    else CorrectionStatus.SKIPPED
+                ),
+                reason="; ".join(
+                    f"{name}: {fit.message}"
+                    for name, fit in (("forward", forward_fit), ("backward", backward_fit))
+                    if not fit.ok
+                ),
             )
         f_value = forward_fit.rate_per_us * bin_width_us
         b_value = backward_fit.rate_per_us * bin_width_us

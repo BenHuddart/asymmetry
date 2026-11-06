@@ -1878,11 +1878,15 @@ Incomplete corrections
 ----------------------
 
 **Apply** refuses unavailable or failed corrections, including missing exposure
-for non-zero coefficients, a missing background reference, or failed estimation.
+for non-zero coefficients, a missing background reference, or invalid manual settings.
 The run keeps its arrays and grouping. Missing or incomplete File coefficients
 instead produce an accepted ``skipped`` outcome and a visible warning; a
 complete zero File, Manual, or Estimate table is an applied identity. Restored
 runs with fatal correction failures display "Corrections incomplete" until a
 successful apply; fits and exports refuse in the meantime. Accepted skipped
-results display "Correction warning" and remain usable. See
+results display "Correction warning" and remain usable. An unusable automatic
+**Tail fit** also skips background subtraction for both F/B groups and every
+contributing period, retaining valid deadtime correction. The preview keeps
+**Apply** enabled and shows "Automatic tail background subtraction skipped:"
+with the reason. No fitted level is drawn for that result. See
 :doc:`data_reduction/backgrounds` for correction outcomes.

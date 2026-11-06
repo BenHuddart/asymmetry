@@ -829,3 +829,13 @@ A selected cached-only period retains its cached curve and inspection fallback,
 but records that acquired histograms for that period are unavailable. That
 fallback cannot supply an automatic timing estimate. Reopening does not borrow
 another held period's delay or reinterpret saved strategy text as an override.
+
+Automatic-tail correction outcomes
+----------------------------------
+
+An unusable automatic tail remains a ``tail_fit`` request after save and restore.
+Its ``skipped`` outcome and reason accompany usable unsubtracted results;
+valid detector deadtime correction remains recorded separately. Reapplying a
+changed input or selection recomputes the outcome and clears stale fitted levels
+and correction errors. Count-fit summaries retain their background preflight
+separately from the joint model's fitted background.
