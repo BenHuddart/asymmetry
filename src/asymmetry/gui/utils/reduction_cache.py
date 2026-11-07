@@ -42,11 +42,10 @@ from functools import partial
 from typing import TypeVar
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, Qt
-from PySide6.QtWidgets import QProgressDialog
 
 from asymmetry.core.utils.perf import perf_logging_enabled
-from asymmetry.gui.tasks import TaskRunner, check_task_cancelled
+from asymmetry.gui.tasks import check_task_cancelled
+from asymmetry.gui.utils.scientific_input import ScientificInputDialog
 
 logger = logging.getLogger("asymmetry.perf")
 
@@ -213,9 +212,9 @@ def histogram_content_key(histograms, parent):
     arrays = tuple(array for hist in histograms for array in (hist.counts, hist.count_variance))
     if sum(array.nbytes for array in arrays if array is not None) <= 64 * 1024:
         return _histogram_array_fingerprints(arrays)
-    dialog = _HistogramFingerprintDialog(parent)
+    dialog = ScientificInputDialog(parent, "Checking histogram data…", "Histogram content check")
     try:
-        return dialog.scan(arrays)
+        return dialog.run(partial(_histogram_array_fingerprints, arrays))
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -241,48 +240,3 @@ def _histogram_array_fingerprints(arrays, worker=None):
     if worker is not None:
         check_task_cancelled(worker)
     return tuple(records)
-
-
-class _HistogramFingerprintDialog(QProgressDialog):
-    """An immediately modal worker boundary for a synchronous source-content check."""
-
-    def __init__(self, parent):
-        super().__init__("Checking histogram data…", "Cancel", 0, 0, parent)
-        self.setWindowModality(Qt.WindowModality.WindowModal)
-        self.setMinimumDuration(0)
-        self._loop = QEventLoop(self)
-        self._tasks = TaskRunner(self)
-        self._outcome: tuple | str | None = None
-
-    def scan(self, arrays):
-        self.show()
-        self._worker = self._tasks.start(
-            partial(_histogram_array_fingerprints, arrays),
-            on_finished=self._on_finished,
-            on_error=self._on_error,
-            on_cancelled=self._loop.quit,
-        )
-        self.canceled.connect(self._on_cancel)
-        self.rejected.connect(self._on_cancel)
-        try:
-            self._loop.exec()
-        finally:
-            self.canceled.disconnect(self._on_cancel)
-            self.rejected.disconnect(self._on_cancel)
-            self._tasks.shutdown()
-        if isinstance(self._outcome, str):
-            raise ValueError(f"Histogram content check failed: {self._outcome}")
-        return self._outcome
-
-    def _on_cancel(self):
-        self._worker.cancel()
-        self.show()
-
-    def _on_finished(self, fingerprint):
-        if not self._worker.is_cancelled():
-            self._outcome = fingerprint
-        self._loop.quit()
-
-    def _on_error(self, message):
-        self._outcome = message
-        self._loop.quit()

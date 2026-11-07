@@ -36,6 +36,18 @@ def migrate_reference_declarations(value):
     return visit(value)
 
 
+def migrate_reference_timing_declarations(value):
+    """Released requests defer timing to their source; sample timing is never reference intent."""
+    if isinstance(value, list):
+        return [migrate_reference_timing_declarations(child) for child in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: migrate_reference_timing_declarations(child) for key, child in value.items()}
+    if isinstance(result.get("background_run"), dict):
+        result["background_run"].setdefault("timing", None)
+    return result
+
+
 def restore_reference_selection(payload: dict, run: Run) -> dict:
     """Decode only keys established by this source's number and acquired periods."""
     if "legacy_run_number" not in payload:

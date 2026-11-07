@@ -242,3 +242,14 @@ def test_unrelated_metadata_words_cannot_establish_a_strategy(source):
     run = timing_run(source=source)
     with pytest.raises(ValueError, match="source|strategy"):
         resolve(run, pair=(1, 3))
+
+
+def test_failed_search_without_estimates_retains_recorded_reason():
+    from asymmetry.core.transform.t0 import RunT0Search, resolve_selected_timing
+
+    run = timing_run()
+    search = RunT0Search([], 0, 0, "unknown", False, "Raw timing scan failed")
+    with pytest.raises(ValueError, match="Raw timing scan failed"):
+        resolve_selected_timing(
+            run.histograms, dict(run.grouping), mode="auto_detect", search=search
+        )

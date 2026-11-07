@@ -93,6 +93,12 @@ def _validated_group_indices(group_indices: list[int], n_histograms: int) -> lis
     return list(membership.indices(n_histograms))
 
 
+def require_compatible_bin_width(width: float, current: float) -> None:
+    """One float64 ULP admits representation rounding on native acquisition edges."""
+    if abs(current - width) > max(np.spacing(current), np.spacing(width)):
+        raise ValueError("Selected observations require a compatible native acquisition grid.")
+
+
 def resolve_alignment(
     histograms: list[Histogram],
     *group_indices: list[int],
@@ -113,10 +119,7 @@ def resolve_alignment(
     width = count_timing(histograms[selected[0]].bin_width, bins[selected[0]], None)[0]
     for i in selected:
         current, _ = count_timing(histograms[i].bin_width, bins[i], histograms[i].t0_time_us)
-        # Widths are canonical float64 scalars on zero-origin acquisition edges.
-        # One ULP admits representation rounding, not different acquisition grids.
-        if abs(current - width) > max(np.spacing(current), np.spacing(width)):
-            raise ValueError("Selected channels require a compatible acquisition grid.")
+        require_compatible_bin_width(width, current)
     common = max(bins[i] for i in selected) if common_t0_bin is None else common_t0_bin
     count_timing(width, common, None)
     shifts = {i: common - bins[i] for i in selected}

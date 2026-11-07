@@ -623,12 +623,14 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
 def precompute_group_fourier_inputs(
     run: Run | None,
     selected_group_ids: list[int] | None = None,
+    *,
+    cancel_check=None,
 ) -> tuple[GroupPreparation | None, int | None]:
-    """Prepare only the declared cohort, retaining its common spectral t0."""
+    """Prepare the declared cohort on its common spectral grid."""
     if run is None or not run.histograms or not run.grouping.get("groups"):
         return None, None
     selected = sorted(group_names(run)) if selected_group_ids is None else selected_group_ids
-    prepared = prepare_group_counts(run, selected)
+    prepared = prepare_group_counts(run, selected, cancel_check=cancel_check)
     return prepared, prepared.reference_t0_bin
 
 
@@ -712,8 +714,12 @@ def compute_average_group_spectrum(
     cancel_callback: Callable[[], bool] | None = None,
 ) -> MuonDataset | None:
     """Return the selected groups' measured display channels, averaged after correction."""
-    if cancel_callback is not None and cancel_callback():
-        raise PhaseFitCancelled("FFT phase fitting cancelled.")
+
+    def check_cancel():
+        if cancel_callback is not None and cancel_callback():
+            raise PhaseFitCancelled("FFT phase fitting cancelled.")
+
+    check_cancel()
     names_by_group = group_names(run)
     if not names_by_group:
         return None
@@ -722,8 +728,6 @@ def compute_average_group_spectrum(
 
     all_ids = sorted(names_by_group)
     if is_fb_asymmetry:
-        # Group inclusion is inert in fb-asymmetry mode: a single forward−backward
-        # curve is transformed regardless of which groups the table selects.
         selected: list[int] = []
     else:
         if config.selected_group_ids is None:
@@ -741,7 +745,6 @@ def compute_average_group_spectrum(
     is_real_imag = canonical == "real_imag"
     is_burg = canonical == "burg"
     is_correlation = canonical == "correlation"
-    # Auto phase uses calibrated observed FFTs and bypasses optional conditioning.
     is_derived_mode = is_auto_phase or is_burg or is_correlation
     calibrate = not (is_burg or is_correlation)
     apply_diamag = config.remove_diamag and not is_auto_phase
@@ -749,7 +752,9 @@ def compute_average_group_spectrum(
 
     if not is_fb_asymmetry:
         if prepared is None:
-            prepared, reference_t0_bin = precompute_group_fourier_inputs(run, selected)
+            prepared, reference_t0_bin = precompute_group_fourier_inputs(
+                run, selected, cancel_check=check_cancel
+            )
         elif set(prepared.layouts) != set(selected):
             raise ValueError("Prepared grouped counts do not match the requested cohort")
 
@@ -762,8 +767,6 @@ def compute_average_group_spectrum(
     diamag_fit_curve: tuple[np.ndarray, np.ndarray] | None = None
     diamag_seed_fields: list[float | None] = []
     diamag_fit_failed = False
-    # When calibrating, count groups whose fractional footing hit the degenerate
-    # baseline guard so a partly-uncalibrated average can be disclosed.
     fractional_guard_hits = 0
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
@@ -782,10 +785,9 @@ def compute_average_group_spectrum(
             )
         ):
             return None
-        fb_dataset = build_fb_signal_dataset(run)
+        fb_dataset = build_fb_signal_dataset(run, cancel_check=check_cancel)
         signal_inputs.append((None, fb_dataset))
     else:
-        # Every display shares the same aligned good window and timing origin.
         signal_inputs = [
             (
                 group_id,
@@ -801,8 +803,7 @@ def compute_average_group_spectrum(
         ]
 
     for group_id, group_dataset in signal_inputs:
-        if cancel_callback is not None and cancel_callback():
-            raise PhaseFitCancelled("FFT phase fitting cancelled.")
+        check_cancel()
         if apply_diamag:
             seed_field = reference_field_gauss(run, group_dataset)
             diamag_seed_fields.append(seed_field)
@@ -966,8 +967,7 @@ def compute_average_group_spectrum(
         else:
             averaged_values.append(fourier_display_values(spectrum, display=value_display))
 
-    if cancel_callback is not None and cancel_callback():
-        raise PhaseFitCancelled("FFT phase fitting cancelled.")
+    check_cancel()
     if average_freqs is None:
         return None
 
@@ -975,8 +975,6 @@ def compute_average_group_spectrum(
     if averaged_values:
         averaged_display, averaged_error = average_fourier_display_values(
             averaged_values,
-            # Correlation discards the averaged error below (it carries no
-            # per-bin uncertainty), so don't spend the estimation pass for it.
             estimate_error=config.estimate_average_error and not is_correlation,
         )
         if is_real_imag and imag_values:

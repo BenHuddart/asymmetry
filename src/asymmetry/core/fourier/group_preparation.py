@@ -26,7 +26,7 @@ from asymmetry.core.transform.corrections import (
     reference_observation_metadata,
     result_tail_skip,
 )
-from asymmetry.core.transform.deadtime import deadtime_operation_inputs
+from asymmetry.core.transform.deadtime import DeadtimeDomain, deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
@@ -36,7 +36,12 @@ from asymmetry.core.transform.grouping import (
     resolve_alignment,
 )
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
-from asymmetry.core.transform.scoped_counts import ScopedCounts, observation_domain
+from asymmetry.core.transform.reference_timing import ReferenceTiming
+from asymmetry.core.transform.scoped_counts import (
+    ScopedCounts,
+    observation_domain,
+    scoped_source_digest,
+)
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, require_selected_timing
 
 
@@ -45,10 +50,14 @@ def histogram_grid_identity(histograms: list[Histogram]) -> tuple:
     return tuple((h.t0_bin, h.t0_time_us, h.bin_width, h.n_bins) for h in histograms)
 
 
-def preparation_identity(run: Run) -> tuple:
+def preparation_identity(
+    run: Run, reference: ScopedCounts | None = None, timing: ReferenceTiming | None = None
+) -> tuple:
     """Bind products to their actual arrays, period and authored reduction settings."""
     from asymmetry.core.io import reference_file_identity
 
+    if (reference is None) != (timing is None):
+        raise ValueError("Prepared reference counts and timing request must be supplied together")
     return (
         reference_file_identity(run.grouping.get("background_run"))
         if correction_flags_from_grouping(run.grouping).use_background
@@ -59,6 +68,22 @@ def preparation_identity(run: Run) -> tuple:
         json.dumps(run.grouping, default=str),
         json.dumps(run.metadata, default=str),
         run.source_file,
+        scoped_source_digest(
+            reference.histograms,
+            DeadtimeDomain(
+                tuple(
+                    (i, (BinWindow(0, reference.histograms[i].n_bins - 1),))
+                    for i in timing.search_indices(reference.domain.detector_indices)
+                )
+            ),
+        )
+        if reference is not None
+        else None,
+        histogram_grid_identity(
+            [reference.histograms[i] for i in reference.domain.detector_indices]
+        )
+        if reference is not None
+        else None,
     )
 
 
@@ -83,6 +108,7 @@ class GroupPreparation:
     layouts: dict[int, GroupLayout]
     sample: ScopedCounts
     reference: ScopedCounts | None
+    reference_timing: ReferenceTiming | None
     reference_scale: float | None
     time_range: tuple | None
     backgrounds: dict[int, BackgroundCorrectionResult]
@@ -103,7 +129,7 @@ class GroupPreparation:
             self.reference.require_source()
         if (
             self.time_range != time_range
-            or self.identity != preparation_identity(run)
+            or self.identity != preparation_identity(run, self.reference, self.reference_timing)
             or group_id not in self.layouts
             or self.use_deadtime != use_deadtime
             or reference_t0_bin is not None
@@ -115,7 +141,14 @@ class GroupPreparation:
 
 
 def prepare_group_counts(
-    run, group_ids, *, use_deadtime=None, reference_t0_bin=None, cache=None, time_range=None
+    run,
+    group_ids,
+    *,
+    use_deadtime=None,
+    reference_t0_bin=None,
+    cache=None,
+    time_range=None,
+    cancel_check=None,
 ):
     """Resolve all selected and active estimator observations before any inverse."""
     from asymmetry.core.io import resolve_background_reference
@@ -155,6 +188,22 @@ def prepare_group_counts(
             grouping.get("background_run"),
             sample_good_frames=good_frames(grouping, default=0.0) or None,
             cache=cache,
+        )
+    group_ids = list(group_ids)
+    reference_timing = None
+    if reference is not None:
+        from asymmetry.core.transform.grouping import ChannelMembership
+
+        selected = sorted(
+            {
+                i
+                for gid in group_ids
+                for i in effective_group_indices(grouping, gid, n_histograms=len(histograms))
+            }
+        )
+        ChannelMembership(tuple(i + 1 for i in selected)).indices(len(reference.histograms))
+        reference_timing = reference.timing.resolve(
+            reference.histograms, [selected], cancel_check=cancel_check
         )
     layouts, sample_parts, reference_parts = {}, [], []
     for group_id in group_ids:
@@ -196,13 +245,8 @@ def prepare_group_counts(
         sample_parts.append((alignment, indices, windows))
         reference_alignment = None
         if reference is not None:
-            reference_alignment = resolve_alignment(
-                reference.histograms,
-                indices,
-                common_t0_bin=t0 + alignment.first_bin,
-                detector_t0_bins=effective_detector_t0_bins(reference.histograms, grouping),
-                first_bin=alignment.first_bin,
-                sample_length=alignment.length,
+            reference_alignment = reference.alignment(
+                histograms, grouping, alignment, indices, timing_grouping=reference_timing
             )
             reference_parts.append((reference_alignment, indices, windows))
         layouts[int(group_id)] = GroupLayout(
@@ -245,7 +289,11 @@ def prepare_group_counts(
                 result,
                 outcome=replace(
                     result.outcome,
-                    effective=dict(result.outcome.effective, reference=reference.provenance()),
+                    effective=dict(
+                        result.outcome.effective,
+                        reference=reference.provenance(),
+                        reference_alignment=layouts[gid].reference_alignment.to_dict(),
+                    ),
                 ),
             )
             for gid, result in backgrounds.items()
@@ -258,12 +306,17 @@ def prepare_group_counts(
             for gid, result in backgrounds.items()
         }
     return GroupPreparation(
-        preparation_identity(run),
+        preparation_identity(
+            run,
+            products[1] if reference is not None else None,
+            reference.timing if reference is not None else None,
+        ),
         apply_deadtime,
         common,
         layouts,
         products[0],
         products[1] if reference is not None else None,
+        reference.timing if reference is not None else None,
         reference.scale if reference is not None else None,
         time_range,
         backgrounds,
