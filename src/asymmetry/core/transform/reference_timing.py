@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from numbers import Integral
 from typing import TYPE_CHECKING
@@ -20,6 +21,16 @@ from asymmetry.core.transform.t0 import (
 
 if TYPE_CHECKING:
     from asymmetry.core.transform.fb_counts import AlignmentCrop
+
+
+def reference_timing_request(grouping):
+    """Copy authored source intent without validating an advisory save/refresh boundary."""
+    policy = grouping.get("t0_policy")
+    if policy is not None:
+        return {"t0_policy": deepcopy(policy)}
+    if "effective_detector_t0_bins" in grouping:
+        return {"effective_detector_t0_bins": deepcopy(grouping["effective_detector_t0_bins"])}
+    return {"t0_policy": {"mode": "from_file"}}
 
 
 @dataclass(frozen=True)
@@ -82,10 +93,11 @@ class ReferenceTiming:
     @classmethod
     def from_grouping(cls, histograms, grouping, metadata):
         """Capture only timing facts and intent, without searching count arrays."""
-        policy = grouping.get("t0_policy")
+        request = reference_timing_request(grouping)
+        policy = request.get("t0_policy")
         mode, offset, absolute = "from_file", 0, None
         if policy is None:
-            bins = detector_t0_overrides(grouping, len(histograms))
+            bins = detector_t0_overrides(request, len(histograms))
             absolute = tuple(bins) if bins is not None else None
         else:
             if not isinstance(policy, dict) or "mode" not in policy:

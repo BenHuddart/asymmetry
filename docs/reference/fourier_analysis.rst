@@ -320,6 +320,11 @@ from F−B asymmetry is labelled ``<run> F−B`` rather than ``<run> Average``, 
 a multi-run overlay's legend (`GUI Fourier workflow`_) shows at a glance which
 runs used which source.
 
+Group-phase estimation and matched apodisation preparation honour worker
+cancellation while resolving reference timing and between groups. A cancelled
+job leaves the phase table or filter settings unchanged and clears its busy
+status; it does not publish a partial suggestion.
+
 Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
 

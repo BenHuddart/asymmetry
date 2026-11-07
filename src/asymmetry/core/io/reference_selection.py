@@ -54,6 +54,13 @@ def reference_observations(run: Run, mode: str | None = None) -> frozenset[tuple
 
 def select_reference_run(run: Run, payload: dict, *, advisory: bool = False) -> Run | None:
     """Match the declared source, acquisition, and period before consuming counts."""
+    if advisory:
+        for key in ("run_number", "legacy_run_number"):
+            if payload.get(key) is not None:
+                try:
+                    int(payload[key])
+                except (TypeError, ValueError, OverflowError):
+                    return None
     source = str(payload.get("source_file") or "")
     if source and reference_source(source) != reference_source(run.source_file):
         return None
@@ -63,11 +70,15 @@ def select_reference_run(run: Run, payload: dict, *, advisory: bool = False) -> 
         return None
     held = run.grouping.get("period_histograms")
     if "period_number" not in selection and held is not None and len(held) > 1:
+        if advisory:
+            return None
         raise ValueError("the reference acquired period is ambiguous; declare a period")
     if run.metadata.get("raw_period_histograms_available") is False:
         return None
     period = selection.get("period_number", run.metadata.get("period_number", 1))
     if isinstance(period, bool) or not isinstance(period, int) or period < 1:
+        if advisory:
+            return None
         raise ValueError("reference acquired period must be a positive integer")
     if held is not None:
         if period > len(held):
@@ -138,34 +149,30 @@ def resolve_loaded_reference(
     return candidates[0] if candidates else None
 
 
-def refresh_reference_timing_requests(datasets) -> list[int]:
-    """Capture usable live source timing before cache keys and worker requests."""
+def refresh_reference_timing_requests(datasets, *, groupings=()) -> list[int]:
+    """Capture uniquely resolved live timing in runtime and authored grouping requests."""
     from copy import deepcopy
 
-    from asymmetry.core.transform.reference_timing import ReferenceTiming
+    from asymmetry.core.transform.reference_timing import reference_timing_request
 
     runs = [dataset.run for dataset in datasets if dataset.run is not None]
     requests = [
-        (
-            run,
-            run.grouping["background_run"],
-            deepcopy(run.grouping["background_run"].get("timing")),
+        (grouping["background_run"], deepcopy(grouping["background_run"].get("timing")))
+        for grouping in [*(run.grouping for run in runs), *groupings]
+        if grouping.get("background_correction", True)
+        and grouping.get("background_mode") == "reference_run"
+        and isinstance(grouping.get("background_run"), dict)
+        and (
+            grouping["background_run"].get("source_file")
+            or any(
+                grouping["background_run"].get(key) is not None
+                for key in ("run_number", "legacy_run_number")
+            )
         )
-        for run in runs
-        if run.grouping.get("background_correction", True)
-        and run.grouping.get("background_mode") == "reference_run"
-        and isinstance(run.grouping.get("background_run"), dict)
-        and run.grouping["background_run"].get("source_file")
-        and isinstance(run.grouping["background_run"].get("period_number"), int)
-        and not isinstance(run.grouping["background_run"]["period_number"], bool)
-        and run.grouping["background_run"]["period_number"] > 0
     ]
-    for _, payload, _ in requests:
+    for payload, _ in requests:
         selected = resolve_loaded_reference(runs, payload, advisory=True)
         if selected is not None:
-            payload["timing"] = ReferenceTiming.from_grouping(
-                selected.histograms, selected.grouping, selected.metadata
-            ).request()
-    return [
-        run.run_number for run, payload, previous in requests if payload.get("timing") != previous
-    ]
+            payload["timing"] = reference_timing_request(selected.grouping)
+    changed = {id(payload) for payload, previous in requests if payload.get("timing") != previous}
+    return [run.run_number for run in runs if id(run.grouping.get("background_run")) in changed]

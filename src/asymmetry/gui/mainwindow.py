@@ -306,7 +306,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_cell_qss,
     build_segmented_container_qss,
 )
-from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -5088,17 +5088,7 @@ class MainWindow(QMainWindow):
         )
 
     def _grouping_persistence_for_dataset(self, dataset) -> dict:
-        """Return the per-dataset grouping-persistence fragment (schema v17).
-
-        A run *following a profile* stores ``profile: <name>`` — its recorded
-        assignment, falling back to the fingerprint's default profile when no
-        assignment is recorded (or the assigned name no longer resolves) — and
-        no override. A *released* run stores its ``grouping_overrides`` payload
-        (authoritative for resolution) **plus** the same ``profile`` name as
-        its base — the reattach target. A run of a fingerprint with no profile
-        keeps only its ``grouping_overrides`` payload (as before v12), so it
-        round-trips unchanged and joins a profile only once one is created.
-        """
+        """Store the assigned profile, or authoritative run overrides with their base profile."""
         run = getattr(dataset, "run", None)
         profile = None
         if run is not None:
@@ -6846,18 +6836,19 @@ class MainWindow(QMainWindow):
         return 0.0, None
 
     def _estimate_group_fourier_phases(
-        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
+        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET, cancel_check=None
     ) -> dict[int, float]:
-        """Estimate one phase correction per detector group.
-
-        ``plot_window`` snapshots the frequency-plot view for off-thread use.
-        """
+        """Estimate group phases from snapshotted inputs on a cancellable worker."""
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
-        prepared, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
+        prepared, reference_t0_bin = precompute_group_fourier_inputs(
+            dataset.run, cancel_check=cancel_check
+        )
         background_reference_cache: dict = {}
         for group_id in self._fourier_group_names_for_dataset(dataset):
+            if cancel_check is not None:
+                cancel_check()
             group_dataset = build_group_signal_dataset(
                 dataset.run,
                 group_id,
@@ -6869,6 +6860,8 @@ class MainWindow(QMainWindow):
             phases[group_id] = self._estimate_dataset_fourier_phase(
                 group_dataset, state, plot_window=plot_window
             )
+        if cancel_check is not None:
+            cancel_check()
         return phases
 
     def _fourier_display_ylabel(self, display: str) -> str:
@@ -8300,27 +8293,27 @@ class MainWindow(QMainWindow):
         if self._fourier_phase_estimate_active:
             self._set_fourier_status("Phase estimation is already running.")
             return
-        # Preserve any live panel edits across the cascaded re-sync below. The
-        # sync restores both tables from their per-run stores, so live edits the
-        # stores haven't captured yet (e.g. Include-column toggles, which do not
-        # fire a store) would otherwise be clobbered — re-checking groups the
-        # user just disabled. Snapshot the live state into the stores first so
-        # the re-sync is a no-op for those edits.
+        # Store current inclusion and phase choices before synchronising the panel.
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
-        # Snapshot launch-time context on the GUI thread; the estimation (FFT per
-        # group + a reference-run load) runs on the shared TaskRunner.
+        # Workers consume launch-time data and plot-window snapshots.
         dataset = self._current_dataset
         plot_window = self._capture_fourier_plot_window(dataset)
         self._fourier_phase_estimate_active = True
         self._set_status_state("Estimating phases…")
         self._tasks.start(
             lambda w, dataset=dataset, state=state, plot_window=plot_window: (
-                self._estimate_group_fourier_phases(dataset, state, plot_window=plot_window)
+                self._estimate_group_fourier_phases(
+                    dataset,
+                    state,
+                    plot_window=plot_window,
+                    cancel_check=partial(check_task_cancelled, w),
+                )
             ),
             on_finished=self._on_fourier_phase_estimate_finished,
             on_error=self._on_fourier_phase_estimate_error,
+            on_cancelled=self._on_fourier_phase_estimate_cancelled,
         )
 
     def _on_fourier_phase_estimate_finished(self, phases: dict) -> None:
@@ -8343,31 +8336,33 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(f"Phase estimation failed: {message}")
         self._log_panel.log(f"Phase estimation failed: {message}")
 
+    def _on_fourier_phase_estimate_cancelled(self) -> None:
+        self._fourier_phase_estimate_active = False
+        self._clear_status_state_if_idle()
+        self._set_fourier_status("Phase estimation cancelled.")
+
     def _compute_apodisation_suggestion(
         self,
         dataset: MuonDataset,
         state: dict,
         selected_group_ids: list[int],
         plot_window,
+        *,
+        cancel_check=None,
     ) -> ApodisationSuggestion | None:
-        """Estimate the matched-filter apodisation for one run (off-thread; pure).
-
-        Transforms the UNAPODISED spectrum (``window="none"``) regardless of the
-        panel's own filter-mode setting — the estimator's contract requires the
-        unfiltered line shape, not an already-filtered one. Takes ``dataset``,
-        ``selected_group_ids``, and ``plot_window`` explicitly (rather than
-        reading live widgets) so it is safe to run on a worker thread.
-        """
+        """Estimate a matched filter from unapodised spectra on a cancellable worker."""
         if dataset.run is None or not selected_group_ids:
             return None
         prepared, reference_t0_bin = precompute_group_fourier_inputs(
-            dataset.run, selected_group_ids
+            dataset.run, selected_group_ids, cancel_check=cancel_check
         )
         background_reference_cache: dict = {}
         magnitudes: list[np.ndarray] = []
         freqs: np.ndarray | None = None
         padding_factor = max(4, int(state.get("padding", 1)))
         for group_id in selected_group_ids:
+            if cancel_check is not None:
+                cancel_check()
             group_dataset = build_group_signal_dataset(
                 dataset.run,
                 group_id,
@@ -8393,13 +8388,10 @@ class MainWindow(QMainWindow):
             dataset, freqs, plot_window=plot_window
         )
         window_kind = "gaussian" if str(state.get("window")) == "gaussian" else "lorentzian"
-        # freqs is the zero-padded axis: the unpadded (intrinsic) bin spacing
-        # is padding_factor x wider, since padding multiplies the transform
-        # length without changing the underlying record length (module
-        # docstring in core/fourier/apodisation.py).
+        # Zero padding refines the frequency grid without extending observed time support.
         bin_width = float(np.median(np.diff(freqs))) if freqs.size > 1 else 0.0
         intrinsic_resolution_mhz = bin_width * padding_factor if bin_width > 0.0 else None
-        return suggest_matched_apodisation(
+        suggestion = suggest_matched_apodisation(
             freqs,
             averaged_magnitude,
             window=window_kind,
@@ -8407,6 +8399,9 @@ class MainWindow(QMainWindow):
             max_frequency_mhz=max_frequency,
             intrinsic_resolution_mhz=intrinsic_resolution_mhz,
         )
+        if cancel_check is not None:
+            cancel_check()
+        return suggestion
 
     def _on_suggest_apodisation(self) -> None:
         """Suggest a matched apodisation filter from the run's dominant line."""
@@ -8416,8 +8411,7 @@ class MainWindow(QMainWindow):
         if self._fourier_apodisation_suggest_active:
             self._set_fourier_status("Apodisation suggestion is already running.")
             return
-        # Snapshot launch-time context on the GUI thread; the estimation (an
-        # unapodised FFT per group) runs on the shared TaskRunner.
+        # Workers consume launch-time data and plot-window snapshots.
         state = self._fourier_panel.get_state()
         dataset = self._current_dataset
         selected_group_ids = self._selected_fourier_group_ids(dataset)
@@ -8427,12 +8421,22 @@ class MainWindow(QMainWindow):
         self._tasks.start(
             lambda w, dataset=dataset, state=state, selected_group_ids=selected_group_ids, plot_window=plot_window: (
                 self._compute_apodisation_suggestion(
-                    dataset, state, selected_group_ids, plot_window
+                    dataset,
+                    state,
+                    selected_group_ids,
+                    plot_window,
+                    cancel_check=partial(check_task_cancelled, w),
                 )
             ),
             on_finished=self._on_apodisation_suggest_finished,
             on_error=self._on_apodisation_suggest_error,
+            on_cancelled=self._on_apodisation_suggest_cancelled,
         )
+
+    def _on_apodisation_suggest_cancelled(self) -> None:
+        self._fourier_apodisation_suggest_active = False
+        self._clear_status_state_if_idle()
+        self._set_fourier_status("Apodisation suggestion cancelled.")
 
     def _on_apodisation_suggest_finished(self, suggestion: ApodisationSuggestion | None) -> None:
         """Apply a suggested matched apodisation to the panel (GUI thread)."""
@@ -16590,10 +16594,17 @@ class MainWindow(QMainWindow):
         """Snapshot current application state with live reference timing requests."""
         from asymmetry import __version__
 
-        # Build dataset list (source files + field overrides).
-        # Important: combined datasets remove their source runs from
-        # ``_datasets``, so we must also capture source runs from
-        # ``_combined_source_datasets`` to guarantee they can be recreated.
+        refresh_reference_timing_requests(
+            self._data_browser.get_all_datasets(),
+            groupings=(
+                dict(
+                    profile.background_policy.details,
+                    background_mode=profile.background_policy.mode,
+                )
+                for profile in self._grouping_profiles
+            ),
+        )
+        # Include held combination sources so saved acquisitions can be reconstructed.
         datasets = []
         seen_run_numbers: set[int] = set()
 
@@ -16643,9 +16654,7 @@ class MainWindow(QMainWindow):
             for dataset in source_datasets:
                 _append_dataset_entry(dataset)
 
-        # Combined dataset definitions. The optional "operation" field is
-        # written only for subtractions, so co-add entries round-trip
-        # byte-for-byte as before (additive schema; no version bump).
+        # Additive combinations omit the subtraction-only operation field.
         combined_signs = getattr(self._data_browser, "_combined_signs", {})
         combined_methods = getattr(self._data_browser, "_combined_methods", {})
         combined_datasets = []
@@ -16699,14 +16708,7 @@ class MainWindow(QMainWindow):
             return pruned
 
         def _persisted_grouped_fit_state(state: dict | None) -> dict | None:
-            """Make the grouped window's ``{single, batch}`` surfaces persistable.
-
-            Their wizard caches sit one level down, so ``_prune_global_fit_state``
-            (which only looks at the top level) never saw them: they were written
-            to the file at full analysis resolution. Convert each surface to its
-            compact stored form instead — the cache still reopens without a
-            re-run, at a bounded size, and no live handle can reach the file.
-            """
+            """Persist grouped single/batch surfaces with compact wizard records."""
             if not isinstance(state, dict):
                 return state
             converted = dict(state)
@@ -16804,18 +16806,11 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
-        # Stamp the current ALC analysis onto its scan series before the model is
-        # serialised, so the baseline/peaks/options travel with the saved scan.
+        # Scan series own their ALC analysis settings.
         self._sync_alc_series_extra()
-        # Likewise stamp the Global Parameter Fit window's decorations into the
-        # owning fit's series so they persist attached to it (not orphaned under
-        # a standalone key).
+        # Fit-series decorations remain attached to their owning fit.
         self._sync_global_fit_decorations_to_series()
-        # Recipe-only representation/batch state (v6).  Frequency spectra are
-        # recomputed from these recipes on load; the array snapshot above is a
-        # transitional fallback removed in cleanup. Data groups need no mirror
-        # step: the browser mutates ``ProjectModel.data_groups`` directly (D6),
-        # so the registry is already current when it is serialised here.
+        # The project model owns representation recipes, batches, and data groups.
         self._project_model.write_to_project_state(project_state)
         return project_state
 

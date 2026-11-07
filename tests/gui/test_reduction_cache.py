@@ -743,3 +743,167 @@ def test_inactive_mapped_reference_does_not_block_unrelated_render_or_save(mainw
     mainwindow._counts_first_rebunched_arrays(plain, 2)
     state = mainwindow.collect_project_state()
     assert len(state["datasets"]) == 2
+
+
+@pytest.mark.parametrize("profile_owned", [False, True])
+def test_save_captures_live_reference_timing_without_an_intermediate_reduction(
+    mainwindow, tmp_path, profile_owned
+):
+    from copy import deepcopy
+
+    from asymmetry.core.io import resolve_background_reference
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from asymmetry.core.project.profiles import (
+        BackgroundPolicy,
+        GroupingProfile,
+        profile_fingerprint_for_run,
+    )
+    from asymmetry.core.project.schema import load_project, save_project
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    source = tmp_path / "reference.nxs"
+    reference.source_file = str(source)
+    reference.grouping["instrument"] = "reference"
+    write_nexus_v1(reference, source)
+    payload = {
+        "run_number": 2,
+        "source_file": str(source),
+        "period_number": 1,
+        "timing": {"t0_policy": {"mode": "manual", "offset_bins": 2}},
+    }
+    sample.grouping["background_run"] = deepcopy(payload)
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 4}
+    if profile_owned:
+        mainwindow._grouping_profiles = [
+            GroupingProfile(
+                name="sample",
+                fingerprint=profile_fingerprint_for_run(sample),
+                groups={1: [1], 2: [2]},
+                active=True,
+                background_policy=BackgroundPolicy(
+                    mode="reference_run", details={"background_run": deepcopy(payload)}
+                ),
+            )
+        ]
+    for run in (sample, reference):
+        mainwindow._data_browser.add_dataset(
+            MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        )
+    path = tmp_path / "project.asymp"
+    save_project(mainwindow.collect_project_state(), path)
+    state = load_project(path)
+    if profile_owned:
+        saved = state["grouping_profiles"][0]["background_policy"]["details"]["background_run"]
+    else:
+        saved = next(ds for ds in state["datasets"] if ds["run_number"] == 1)["grouping_overrides"][
+            "background_run"
+        ]
+    assert saved["timing"] == {"t0_policy": {"mode": "manual", "offset_bins": 4}}
+    assert resolve_background_reference(saved).timing.offset_bins == 4
+
+
+@pytest.mark.parametrize("operation", ["phase", "apodisation"])
+def test_fourier_auxiliary_preparation_honours_cancellation(mainwindow, monkeypatch, operation):
+    from asymmetry.gui.tasks import TaskCancelledError
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, _ = timing_runs()
+    dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=sample)
+
+    def cancel():
+        raise TaskCancelledError
+
+    def prepare(*args, cancel_check=None):
+        assert cancel_check is not None
+        cancel_check()
+        raise AssertionError("Cancelled timing preparation must not continue")
+
+    monkeypatch.setattr(mw_module, "precompute_group_fourier_inputs", prepare)
+    with pytest.raises(TaskCancelledError):
+        if operation == "phase":
+            mainwindow._estimate_group_fourier_phases(dataset, {}, cancel_check=cancel)
+        else:
+            mainwindow._compute_apodisation_suggestion(
+                dataset, {}, [1, 2], None, cancel_check=cancel
+            )
+
+
+@pytest.mark.parametrize("operation", ["phase", "apodisation"])
+def test_fourier_auxiliary_worker_cancellation_resets_ui(mainwindow, monkeypatch, operation):
+    from asymmetry.gui.tasks import TaskCancelledError, TaskWorker
+
+    dataset = _multi_group_dataset()
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._on_dataset_selected(dataset.run_number)
+    worker = TaskWorker(lambda worker: None)
+    worker.cancel()
+
+    def prepare(*args, cancel_check=None):
+        assert cancel_check is not None
+        cancel_check()
+
+    def start(task, **callbacks):
+        with pytest.raises(TaskCancelledError):
+            task(worker)
+        callbacks["on_cancelled"]()
+
+    monkeypatch.setattr(mw_module, "precompute_group_fourier_inputs", prepare)
+    monkeypatch.setattr(mainwindow._tasks, "start", start)
+    if operation == "phase":
+        mainwindow._on_fill_fourier_phases()
+        assert not mainwindow._fourier_phase_estimate_active
+    else:
+        mainwindow._on_suggest_apodisation()
+        assert not mainwindow._fourier_apodisation_suggest_active
+    assert "cancelled" in mainwindow.statusBar().currentMessage().lower()
+
+
+@pytest.mark.parametrize("key", ["run_number", "legacy_run_number"])
+def test_save_preserves_unusable_reference_numbers_for_editing(mainwindow, key):
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    sample.grouping["background_run"] = {key: "invalid"}
+    for run in (sample, reference):
+        mainwindow._data_browser.add_dataset(
+            MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        )
+    state = mainwindow.collect_project_state()
+    saved = next(ds for ds in state["datasets"] if ds["run_number"] == 1)
+    assert saved["grouping_overrides"]["background_run"] == {key: "invalid"}
+    with pytest.raises(ValueError, match="invalid"):
+        mainwindow._resolve_background_reference(sample.grouping)
+
+
+@pytest.mark.parametrize("operation", ["phase", "apodisation"])
+def test_fourier_auxiliary_cancellation_during_final_work_discards_result(
+    mainwindow, monkeypatch, operation
+):
+    from asymmetry.gui.tasks import TaskCancelledError
+
+    dataset = _multi_group_dataset()
+    cancelled = False
+
+    def check():
+        if cancelled:
+            raise TaskCancelledError
+
+    def finish(*args, **kwargs):
+        nonlocal cancelled
+        cancelled = True
+        return 0.0
+
+    monkeypatch.setattr(mw_module, "precompute_group_fourier_inputs", lambda *a, **k: (None, 0))
+    monkeypatch.setattr(mw_module, "build_group_signal_dataset", lambda *a, **k: dataset)
+    with pytest.raises(TaskCancelledError):
+        if operation == "phase":
+            monkeypatch.setattr(mainwindow, "_fourier_group_names_for_dataset", lambda _: {1: "F"})
+            monkeypatch.setattr(mainwindow, "_estimate_dataset_fourier_phase", finish)
+            mainwindow._estimate_group_fourier_phases(dataset, {}, cancel_check=check)
+        else:
+            monkeypatch.setattr(
+                mainwindow, "_resolve_fourier_phase_window_mhz", lambda *a, **k: (0.0, 1.0)
+            )
+            monkeypatch.setattr(mw_module, "suggest_matched_apodisation", finish)
+            mainwindow._compute_apodisation_suggestion(dataset, {}, [1], None, cancel_check=check)

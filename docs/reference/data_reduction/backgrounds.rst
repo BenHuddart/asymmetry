@@ -329,8 +329,10 @@ those residuals relative to the sample's selected exact anchor, along with the
 reference timing sources and search strategy. A Manual offset remains relative
 to the reference's own file timing.
 A matching live reference's timing takes precedence and updates the recorded
-source-bound request. When only its file is available, that saved request is
-replayed against the selected acquisition. **Manual** and **Auto-detect** requests
+source-bound request. Saving captures the live timing in both profile and
+run-override declarations, including unambiguous number-only references.
+Unavailable or ambiguous declarations remain editable and saveable. When only
+its file is available, the saved request is replayed against the selected acquisition. **Manual** and **Auto-detect** requests
 cannot silently become **From file**. Edit timing on the reference's own row
 before selecting it with **Choose run…**; no second timing editor is required.
 

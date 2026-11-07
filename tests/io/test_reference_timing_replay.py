@@ -162,3 +162,56 @@ def test_advisory_live_timing_refresh_keeps_inactive_and_ambiguous_requests_edit
     datasets.append(reference_dataset(copy.deepcopy(reference)))
     assert refresh_reference_timing_requests(datasets) == []
     assert "timing" not in sample.grouping["background_run"]
+
+
+def test_number_only_live_request_refreshes_timing_without_choosing_ambiguity():
+    from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
+
+    sample, reference = timing_runs()
+    sample.grouping["background_run"] = {"run_number": 2}
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 4}
+    datasets = [reference_dataset(run) for run in (sample, reference)]
+    assert refresh_reference_timing_requests(datasets) == [1]
+    assert sample.grouping["background_run"]["timing"] == {
+        "t0_policy": {"mode": "manual", "offset_bins": 4}
+    }
+    reference.grouping["t0_policy"]["offset_bins"] = 6
+    datasets.append(reference_dataset(copy.deepcopy(reference)))
+    assert refresh_reference_timing_requests(datasets) == []
+    assert sample.grouping["background_run"]["timing"]["t0_policy"]["offset_bins"] == 4
+
+
+def test_number_only_multi_period_reference_stays_advisory_when_period_is_ambiguous():
+    from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
+    from tests.io.test_period_selection import _combined_two_period
+
+    sample, _ = timing_runs()
+    sample.grouping["background_run"] = {"run_number": 12345}
+    assert (
+        refresh_reference_timing_requests([reference_dataset(sample), _combined_two_period()]) == []
+    )
+
+
+def test_advisory_refresh_preserves_an_invalid_live_timing_request_for_editing():
+    from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
+
+    sample, reference = timing_runs()
+    sample.grouping["background_run"] = {"run_number": 2}
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": None}
+    datasets = [reference_dataset(run) for run in (sample, reference)]
+    assert refresh_reference_timing_requests(datasets) == [1]
+    assert sample.grouping["background_run"]["timing"] == {
+        "t0_policy": reference.grouping["t0_policy"]
+    }
+    with pytest.raises(ValueError, match="Manual timing"):
+        resolve_background_reference(sample.grouping["background_run"], datasets=datasets)
+
+
+def test_empty_reference_declaration_cannot_capture_the_samples_own_timing():
+    from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
+
+    sample, _ = timing_runs()
+    sample.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 9}
+    sample.grouping["background_run"] = {"source_file": ""}
+    assert refresh_reference_timing_requests([reference_dataset(sample)]) == []
+    assert sample.grouping["background_run"] == {"source_file": ""}
