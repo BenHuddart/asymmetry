@@ -27,6 +27,7 @@ from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
+from asymmetry.core.transform.reference_timing import ReferenceTiming
 
 # Register built-in loaders
 LoaderRegistry.register(NexusLoader)
@@ -194,6 +195,7 @@ def resolve_background_reference(
     reference_run = resolve_loaded_reference(
         (ds.run for ds in datasets if ds.run is not None), payload
     )
+    live = reference_run is not None
     if reference_run is None:
         if not allow_file:
             return None
@@ -231,8 +233,27 @@ def resolve_background_reference(
         _grouping_good_frames(reference_run), sample_good_frames, payload
     )
 
+    timing_grouping = dict(reference_run.grouping)
+    if not live and payload.get("timing") is not None:
+        request = payload["timing"]
+        if not isinstance(request, dict) or set(request) not in (
+            {"t0_policy"},
+            {"effective_detector_t0_bins"},
+        ):
+            raise ValueError("Reference timing request requires one policy or absolute table")
+        if "t0_policy" in request and not isinstance(request["t0_policy"], dict):
+            raise ValueError("Reference timing requires an explicit policy mode")
+        for key in ("t0_policy", "effective_detector_t0_bins"):
+            timing_grouping.pop(key, None)
+        timing_grouping.update(request)
+    timing = ReferenceTiming.from_grouping(
+        reference_run.histograms, timing_grouping, reference_run.metadata
+    )
+    if live or payload.get("timing") is not None:
+        payload["timing"] = timing.request()
     return BackgroundReference(
         histograms=list(reference_run.histograms),
+        timing=timing,
         file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scale=float(scale),
         source_file=reference_run.source_file or source_file,

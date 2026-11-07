@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from functools import cached_property
+from functools import cached_property, partial
 from types import SimpleNamespace
 from typing import Any
 
@@ -1012,12 +1012,9 @@ def build_maxent_input(
     *,
     prepared: GroupPreparation | None = None,
     reference_t0_bin: int | None = None,
+    cancel_callback: MaxEntCancelCallback | None = None,
 ) -> MaxEntInput:
-    """Build grouped raw-count MaxEnt input from *run* and *config*.
-
-    Workload auto-steering is resolved first (when enabled), so a direct call
-    builds the same input :func:`maxent` would.
-    """
+    """Build grouped count input with the same workload steering used by MaxEnt."""
     run = _require_run(run)
     pre_steer = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     resolved_config = resolve_maxent_auto_steering(run, pre_steer)
@@ -1050,6 +1047,7 @@ def build_maxent_input(
             and bool(run.grouping.get("deadtime_correction", False)),
             reference_t0_bin=reference_t0_bin,
             time_range=(resolved_config.t_min_us, resolved_config.t_max_us),
+            cancel_check=partial(_check_cancel, cancel_callback),
         )
     elif set(prepared.layouts) != set(selected):
         raise ValueError("Prepared grouped counts do not match the requested cohort")
@@ -2080,7 +2078,7 @@ def maxent(
     # resolver is idempotent, so both see the same effective values).
     resolved_config = resolve_maxent_auto_steering(run, config)
     _check_cancel(cancel_callback)
-    maxent_input = build_maxent_input(run, config)
+    maxent_input = build_maxent_input(run, config, cancel_callback=cancel_callback)
     return run_cycles(
         maxent_input,
         resolved_config,

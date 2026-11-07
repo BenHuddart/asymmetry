@@ -17,6 +17,7 @@ class IncompletePreviewScenario(Scenario):
     description = "Missing background reference and disabled Apply."
     size = (1180, 780)
     complete = False
+    reference_width = None
     count_levels = (120.0, 80.0)
     correction_settings = {
         "background_correction": True,
@@ -52,7 +53,17 @@ class IncompletePreviewScenario(Scenario):
             metadata={"run_number": 8102, "title": self.description + " (synthetic)"},
             run=run,
         )
-        dialog = GroupingDialog([dataset])
+        datasets = [dataset]
+        if self.reference_width is not None:
+            reference = Run(
+                run_number=9999,
+                grouping={"instrument": "generic_layout"},
+                histograms=[
+                    Histogram(np.full(400, level), self.reference_width) for level in (10.0, 7.0)
+                ],
+            )
+            datasets.append(MuonDataset(time, np.zeros(200), np.ones(200), run=reference))
+        dialog = GroupingDialog(datasets)
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
@@ -83,6 +94,10 @@ class IncompletePreviewScenario(Scenario):
             raise RuntimeError("Correction preview acceptance does not match its outcome")
         if not pane._incomplete_banner.text():
             raise RuntimeError("Correction warning must remain visible")
+        if self.reference_width is not None and "compatible" not in pane._incomplete_banner.text():
+            raise RuntimeError(
+                f"Incompatible reference grid must explain the incomplete preview: {pane._incomplete_banner.text()}"
+            )
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
         if not dialog.grab().save(str(output), "PNG"):
@@ -93,6 +108,20 @@ class IncompletePreviewScenario(Scenario):
         dialog.deleteLater()
         _pump_events(40)
         return output
+
+
+class ReferenceGridScenario(IncompletePreviewScenario):
+    name = "grouping_reference_grid"
+    description = "Incompatible reference native grid and disabled Apply."
+    reference_width = 0.04
+    correction_settings = {
+        "background_correction": True,
+        "background_mode": "reference_run",
+        "background_run": {"run_number": 9999, "period_number": 1},
+    }
+
+
+register(ReferenceGridScenario())
 
 
 class FileDeadtimeWarningScenario(IncompletePreviewScenario):

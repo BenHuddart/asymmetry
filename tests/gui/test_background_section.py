@@ -177,6 +177,7 @@ def test_selected_green_period_is_persisted_and_displayed(qapp, monkeypatch):
         "source_file": "reference.nxs",
         "period_number": 2,
         "good_frames_reference": 75,
+        "timing": None,
     }
     assert "period 2" in section._status_label.text()
 
@@ -267,3 +268,21 @@ def test_reference_picker_omits_cached_only_period_fallbacks(qapp):
     dialog._clear_dirty()
     dialog.close()
     dialog.deleteLater()
+
+
+def test_reference_candidate_snapshots_own_policy_without_count_search(qapp, monkeypatch):
+    from tests.core.test_reference_timing import timing_runs
+
+    _, reference = timing_runs()
+    reference.grouping["t0_policy"] = {"mode": "auto_detect"}
+
+    def no_search(*args, **kwargs):
+        raise AssertionError("Reference picker must not search counts on the GUI thread")
+
+    monkeypatch.setattr("asymmetry.core.transform.t0.find_t0_for_run", no_search)
+    candidate = BackgroundReferenceRunCandidate.from_run(reference, 1, "Reference")
+    assert candidate.timing == {"t0_policy": {"mode": "auto_detect"}}
+    section = BackgroundSectionWidget(lambda: [candidate])
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("Reference", True))
+    section._pick_background_run()
+    assert section.background_run_payload()["timing"] == candidate.timing

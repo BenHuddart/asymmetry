@@ -119,6 +119,7 @@ from asymmetry.gui.utils.profile_colors import (
     soft_profile_background,
     used_profile_colors,
 )
+from asymmetry.gui.utils.reference_timing import prepare_reference_timing
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
@@ -3279,12 +3280,8 @@ class GroupingDialog(TimingControls, QDialog):
         """Offer acquired selections other than the current sample observations."""
         sample = reference_observations(self._run, self._current_period_mode())
         return [
-            BackgroundReferenceRunCandidate(
-                run_number=number,
-                period_number=period,
-                label=f"{ds.run_label} (period {period})",
-                source_file=ds.run.source_file,
-                good_frames=select_period_grouping(ds.run.grouping, period - 1).get("good_frames"),
+            BackgroundReferenceRunCandidate.from_run(
+                ds.run, period, f"{ds.run_label} (period {period})"
             )
             for ds in self._datasets
             if ds.run is not None
@@ -4857,10 +4854,7 @@ class GroupingDialog(TimingControls, QDialog):
     def _calibration_reference_resolver(
         self, grouping: dict[str, Any]
     ) -> BackgroundReference | None:
-        """Resolve calibration reference counts and their frame exposure.
-
-        Input and I/O failures propagate to the calibration error display.
-        """
+        """Prepare calibration reference timing on its worker boundary."""
         payload = grouping.get("background_run")
         if not isinstance(payload, dict):
             return None
@@ -4868,12 +4862,14 @@ class GroupingDialog(TimingControls, QDialog):
             sample_frames = float(grouping.get("good_frames", 0.0)) or None
         except (TypeError, ValueError):
             sample_frames = None
-        return resolve_background_reference(
+        reference = resolve_background_reference(
             payload,
             sample_good_frames=sample_frames,
             datasets=self._fingerprint_datasets(),
             cache=self._background_run_cache,
         )
+
+        return prepare_reference_timing(reference, grouping, self)
 
     def _calibration_facility(self) -> str:
         """Facility label for the alpha dialog's background tail-fit shortening."""

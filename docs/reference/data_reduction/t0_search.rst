@@ -128,6 +128,13 @@ mapped file bounds. Only common observed support is reduced. See
 :doc:`/reference/detector_grouping`, :doc:`/reference/project_files`, and
 :doc:`/explanation/reduction_pipeline`.
 
+For **Background run…**, sample and reference retain independent timing
+requests. Changing sample timing cannot overwrite a reference's File, Manual,
+or Auto-detect anchors. The same whole-bin mapping and exact-origin residual
+records apply to F/B and grouped spectral/MaxEnt inputs. Native bin widths and
+required observed support must be compatible at subtraction; raw loading stays
+available. See :doc:`backgrounds` for reference replay and compatibility details.
+
 Compared with other programs
 ----------------------------
 

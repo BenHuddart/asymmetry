@@ -47,6 +47,9 @@ class _StubDataBrowser(QWidget):
     def add_dataset(self, dataset):
         self._datasets[dataset.run_number] = dataset
 
+    def get_all_datasets(self):
+        return list(self._datasets.values())
+
     def get_dataset(self, run_number):
         return self._datasets.get(run_number)
 

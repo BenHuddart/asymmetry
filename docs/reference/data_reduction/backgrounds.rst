@@ -317,9 +317,42 @@ the data, scaled by the ratio of good frames:
 Good frames measure beam exposure, so the ratio puts both runs on the same
 exposure footing. The reference is chosen from the loaded datasets (or
 browsed from disk), recorded with the grouping, and re-resolved when the
-project is reopened. Both runs receive the same per-detector deadtime
-coefficients, with each run's own frame exposure used for the correction.
-Each run's own time zero is used for alignment.
+project is reopened. File deadtime uses each acquisition's own coefficient
+table and exposure; Manual uses the shared authored coefficients with each
+acquisition's own exposure.
+
+Sample and reference timing resolve independently using **From file**, **Manual**,
+or **Auto-detect**. A sample timing request never changes the reference anchors.
+Integer-bin alignment transports observed counts without interpolation. Exact
+file origins retain fractional residuals; applied reference alignment records
+those residuals relative to the sample's selected exact anchor, along with the
+reference timing sources and search strategy. A Manual offset remains relative
+to the reference's own file timing.
+A matching live reference's timing takes precedence and updates the recorded
+source-bound request. Saving captures the live timing in both profile and
+run-override declarations, including unambiguous number-only references.
+Unavailable or ambiguous declarations remain editable and saveable. When only
+its file is available, the saved request is replayed against the selected acquisition. **Manual** and **Auto-detect** requests
+cannot silently become **From file**. Edit timing on the reference's own row
+before selecting it with **Choose run…**; no second timing editor is required.
+
+Asymmetry also checks compatible native bin widths for the selected observations
+at subtraction. Widths may differ by at most one float64 ULP, admitting scalar
+representation rounding rather than a different acquisition interval. Required
+reference support must cover the returned sample count grid, including preview
+context; selecting a narrower output window does not supply absent reference
+observations. No missing bins are padded, output
+silently shortened, or counts resampled. These checks apply to the requested
+operation and selected channels; they do not restrict loading or raw inspection.
+F/B reduction, alpha calibration, and grouped Fourier/MaxEnt preparation use the
+same reference alignment. Reference Auto and missing-file timing searches run
+on cancellable workers. Final preparation displays "Resolving reference timing…"
+with **Cancel** when a fresh search is needed; cancellation publishes no corrected
+result. Verified unchanged source/request inputs reuse the existing cache.
+
+.. image:: /_generated/screenshots/grouping_reference_grid.png
+   :alt: Incompatible native reference grid keeps the preview incomplete and Apply disabled.
+   :width: 100%
 
 *When to use this.* Separating holder/mount signal when its *shape* (not
 just a flat rate) must be removed — the reference subtraction removes the
@@ -328,6 +361,20 @@ constant mode can do. The cost is doubled statistical noise where the
 reference dominates: the errors grow by the second term above. For
 period-mode data (light on/off within one run), prefer period mapping —
 each acquired period retains its own exposure; those exposures need not be equal.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA 1.326 **FileBG** uses one active channel shift for both sample and
+reference arrays. Asymmetry keeps independently resolved timing. Reference
+loading can change WiMDA's active timing; the matched tagged-spectrum comparison
+restores sample timing before export. See :ref:`comparison-reference-timing`
+for the numerical example, settings, and scope.
+
+Mantid 6.16.1 generic **Minus** requires compatible X arrays, but does not infer
+this independent t0 alignment. It is not an equivalent automatic Muon reference
+GUI workflow. musrfit run addition is a distinct operation and does not establish
+external-reference subtraction behaviour.
 
 WiMDA's File BG subtracts the raw reference counts from deadtime-corrected
 sample counts and leaves the error bars untouched; both are corrected here

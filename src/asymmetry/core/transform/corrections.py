@@ -14,6 +14,11 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.reference_timing import (
+    ReferenceTiming,
+    ResolvedReferenceTiming,
+    reference_alignment,
+)
 
 TAIL_BACKGROUND_POLICY_REVISION = 2
 
@@ -195,6 +200,8 @@ class BackgroundReference:
     scale_source: str = "explicit_scale"
     file_dead_time_us: tuple[float | None, ...] = ()
     period_number: int = 1
+    timing: ReferenceTiming = ReferenceTiming()
+    resolved_timing: ResolvedReferenceTiming | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
@@ -231,9 +238,25 @@ class BackgroundReference:
             "source_file": self.source_file,
             "scale": self.scale,
             "scale_source": self.scale_source,
+            "timing": self.timing.request(),
             "good_frames_sample": self.good_frames_sample,
             "good_frames_reference": self.good_frames_reference,
         }
+
+    def alignment(self, sample, grouping, crop, *groups, timing_grouping=None, cancel_check=None):
+        """Resolve this acquisition's timing on the requested sample grid."""
+        if timing_grouping is None and self.resolved_timing is not None:
+            timing_grouping = self.resolved_timing.grouping()
+        return reference_alignment(
+            self.histograms,
+            self.timing,
+            sample,
+            grouping,
+            crop,
+            *groups,
+            timing_grouping=timing_grouping,
+            cancel_check=cancel_check,
+        )
 
     def deadtime_grouping(self, sample_grouping: dict) -> dict:
         """Use this reference's acquisition facts with the shared authored request."""

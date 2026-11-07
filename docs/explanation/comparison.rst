@@ -688,6 +688,35 @@ These comparisons do not assert equality of low-count asymmetry formulas,
 background treatment, or fit objectives.
 The formulas and limitations are in :doc:`/reference/detector_grouping`.
 
+.. _comparison-reference-timing:
+
+Reference timing and native coordinates
+---------------------------------------
+
+Asymmetry resolves sample and selected reference clocks independently, retaining
+whole-bin shifts and fractional file-origin residuals in F/B and grouped
+Fourier/MaxEnt preparation. Asymmetry also checks compatible selected native bin
+widths and required reference support before subtraction. It neither resamples
+counts nor restricts raw file loading.
+
+WiMDA 1.326 **FileBG** uses a shared active channel shift. The synthetic NeXus
+check uses sample counts 200 per bin with t0 zero, reference counts
+``10 + rawbin`` with file t0 zero or two bins, 0.016 μs native width, equal
+200-frame exposures, and scale one. WiMDA exports raw group 1 with one detector,
+bunch one, deadtime off, and Auto/Manual BG off. After restoring sample timing,
+both 1999-row exports agree exactly at count-export precision, beginning
+190, 189, 188, 187 counts. Reference loading can change the active timing, so
+the matched comparison restores the sample first. Independent Asymmetry timing
+instead starts 188, 187, 186, 185 for the two-bin reference, checked against
+those tagged observations on bounded 32-bin sample support. The difference is
+explained by the alignment convention.
+
+Mantid 6.16.1 generic **Minus** rejects incompatible X arrays; this is explicit
+workspace arithmetic, not an equivalent automatic Muon reference GUI workflow.
+musrfit's run addition has separate t0 semantics and is distinct from FileBG
+subtraction. See :doc:`/reference/data_reduction/backgrounds` for the subtraction
+contract and its independent-variance assumptions.
+
 At a glance: feature coverage
 -----------------------------
 

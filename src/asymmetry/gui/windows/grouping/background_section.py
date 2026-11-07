@@ -78,6 +78,7 @@ class BackgroundReferenceRunCandidate:
         source_file: str,
         good_frames: float | None,
         period_number: int = 1,
+        timing: dict | None = None,
     ) -> None:
         """Store the candidate's run number, display label, source file, and good frames."""
         self.run_number = run_number
@@ -85,6 +86,28 @@ class BackgroundReferenceRunCandidate:
         self.source_file = source_file
         self.good_frames = good_frames
         self.period_number = period_number
+        self.timing = timing
+
+    @classmethod
+    def from_run(cls, run, period, label):
+        """Snapshot the selected reference's timing intent without count searches."""
+        from asymmetry.core.io.reference_selection import select_reference_run
+        from asymmetry.core.transform.reference_timing import ReferenceTiming
+
+        selected = select_reference_run(run, {"period_number": period})
+        if selected is None:
+            raise ValueError("Reference picker requires an available acquired period")
+        timing = ReferenceTiming.from_grouping(
+            selected.histograms, selected.grouping, selected.metadata
+        )
+        return cls(
+            run_number=selected.metadata.get("source_run_number", selected.run_number),
+            label=label,
+            source_file=selected.source_file,
+            good_frames=selected.grouping.get("good_frames"),
+            period_number=period,
+            timing=timing.request(),
+        )
 
 
 def background_status_text(policy: BackgroundPolicy) -> str:
@@ -317,6 +340,7 @@ class BackgroundSectionWidget(QWidget):
                 "source_file": candidate.source_file,
                 "period_number": candidate.period_number,
                 "good_frames_reference": candidate.good_frames,
+                "timing": candidate.timing,
             }
         self._refresh_visibility_and_status()
         if not _from_mode_change:

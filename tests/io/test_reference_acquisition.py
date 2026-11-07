@@ -96,7 +96,12 @@ def test_released_project_encoded_reference_is_recovered_from_source_facts(monke
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
     actual = resolve_background_reference(payload)
     assert actual.period_number == 2
-    assert payload == {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
+    assert payload == {
+        "source_file": "synthetic.nxs",
+        "run_number": 12345,
+        "period_number": 2,
+        "timing": None,
+    }
     assert actual.run_number == 12345
     assert actual.good_frames_reference is None  # scale semantics stay unchanged
     np.testing.assert_array_equal(

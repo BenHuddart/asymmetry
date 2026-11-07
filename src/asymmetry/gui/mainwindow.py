@@ -35,6 +35,7 @@ from concurrent.futures import CancelledError
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -147,7 +148,7 @@ from asymmetry.core.instrument import (
     projection_memberships,
     recommend_grouping_preset_for_run,
 )
-from asymmetry.core.io import resolve_background_reference
+from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
@@ -156,6 +157,7 @@ from asymmetry.core.io.periods import (
     histogram_grouping_facts,
     selected_period_index,
 )
+from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -304,7 +306,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_cell_qss,
     build_segmented_container_qss,
 )
-from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -316,6 +318,7 @@ from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache, histogram_content_key
+from asymmetry.gui.utils.reference_timing import prepare_reference_timing
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -5085,17 +5088,7 @@ class MainWindow(QMainWindow):
         )
 
     def _grouping_persistence_for_dataset(self, dataset) -> dict:
-        """Return the per-dataset grouping-persistence fragment (schema v17).
-
-        A run *following a profile* stores ``profile: <name>`` — its recorded
-        assignment, falling back to the fingerprint's default profile when no
-        assignment is recorded (or the assigned name no longer resolves) — and
-        no override. A *released* run stores its ``grouping_overrides`` payload
-        (authoritative for resolution) **plus** the same ``profile`` name as
-        its base — the reattach target. A run of a fingerprint with no profile
-        keeps only its ``grouping_overrides`` payload (as before v12), so it
-        round-trips unchanged and joins a profile only once one is created.
-        """
+        """Store the assigned profile, or authoritative run overrides with their base profile."""
         run = getattr(dataset, "run", None)
         profile = None
         if run is not None:
@@ -5769,6 +5762,7 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None or not run.histograms:
             raise ValueError("Counts-first display bunching requires raw histograms.")
+        refresh_reference_timing_requests(self._data_browser.get_all_datasets())
         grouping = run.grouping
         binning = replace(binning_spec(grouping), merge=extra_bunch_factor)
         forward_gid, backward_gid = (
@@ -5781,18 +5775,27 @@ class MainWindow(QMainWindow):
         backward_idx = effective_group_indices(
             grouping, backward_gid, n_histograms=len(run.histograms)
         )
-        if not forward_idx or not backward_idx:
-            raise ValueError(
-                "Counts-first display bunching requires a nonempty forward/backward pair."
-            )
         alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
         flags = correction_flags_from_grouping(grouping)
         period_mode = str(grouping.get("period_mode", PeriodMode.RED))
         facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
             metadata=dataset.metadata
         )
+        reference = (
+            self._resolve_background_reference(grouping)
+            if flags.use_background and resolve_background_mode(grouping) == "reference_run"
+            else None
+        )
+        reference_content = (
+            histogram_content_key(reference.histograms, self) if reference is not None else ()
+        )
+        if reference_content is None:
+            raise ValueError("Reference input check cancelled")
         key = (
             fourier_grouping_digest(run),
+            reference_content,
+            reference.timing if reference is not None else None,
+            reference.resolved_timing if reference is not None else None,
             binning,
             forward_gid,
             backward_gid,
@@ -5825,7 +5828,7 @@ class MainWindow(QMainWindow):
                 use_background=flags.use_background,
                 facility=facility,
                 metadata=reference_observation_metadata(run),
-                reference_resolver=self._resolve_background_reference,
+                reference_resolver=partial(background_reference_for_grouping, reference),
             )
             return reduced.time, reduced.asymmetry, reduced.error
 
@@ -5873,18 +5876,15 @@ class MainWindow(QMainWindow):
         )
 
     def _resolve_background_reference(self, grouping: dict) -> BackgroundReference | None:
-        """Resolve against loaded runs and the per-window file cache.
-
-        Input and I/O failures propagate to the user-boundary error handler;
-        a final reduction cannot substitute unsubtracted counts.
-        """
-        sample_frames = good_frames(grouping, default=0.0) or None
-        return resolve_background_reference(
+        """Resolve live source facts and prepare timing without GUI-thread searches."""
+        reference = resolve_background_reference(
             grouping.get("background_run"),
-            sample_good_frames=sample_frames,
+            sample_good_frames=good_frames(grouping, default=0.0) or None,
             datasets=self._data_browser.get_all_datasets(),
             cache=self._background_run_cache,
         )
+
+        return prepare_reference_timing(reference, grouping, self, cache=self._reduction_cache)
 
     def _maybe_apply_comment_field(
         self,
@@ -6836,18 +6836,19 @@ class MainWindow(QMainWindow):
         return 0.0, None
 
     def _estimate_group_fourier_phases(
-        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
+        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET, cancel_check=None
     ) -> dict[int, float]:
-        """Estimate one phase correction per detector group.
-
-        ``plot_window`` snapshots the frequency-plot view for off-thread use.
-        """
+        """Estimate group phases from snapshotted inputs on a cancellable worker."""
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
-        prepared, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
+        prepared, reference_t0_bin = precompute_group_fourier_inputs(
+            dataset.run, cancel_check=cancel_check
+        )
         background_reference_cache: dict = {}
         for group_id in self._fourier_group_names_for_dataset(dataset):
+            if cancel_check is not None:
+                cancel_check()
             group_dataset = build_group_signal_dataset(
                 dataset.run,
                 group_id,
@@ -6859,6 +6860,8 @@ class MainWindow(QMainWindow):
             phases[group_id] = self._estimate_dataset_fourier_phase(
                 group_dataset, state, plot_window=plot_window
             )
+        if cancel_check is not None:
+            cancel_check()
         return phases
 
     def _fourier_display_ylabel(self, display: str) -> str:
@@ -8290,27 +8293,27 @@ class MainWindow(QMainWindow):
         if self._fourier_phase_estimate_active:
             self._set_fourier_status("Phase estimation is already running.")
             return
-        # Preserve any live panel edits across the cascaded re-sync below. The
-        # sync restores both tables from their per-run stores, so live edits the
-        # stores haven't captured yet (e.g. Include-column toggles, which do not
-        # fire a store) would otherwise be clobbered — re-checking groups the
-        # user just disabled. Snapshot the live state into the stores first so
-        # the re-sync is a no-op for those edits.
+        # Store current inclusion and phase choices before synchronising the panel.
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
-        # Snapshot launch-time context on the GUI thread; the estimation (FFT per
-        # group + a reference-run load) runs on the shared TaskRunner.
+        # Workers consume launch-time data and plot-window snapshots.
         dataset = self._current_dataset
         plot_window = self._capture_fourier_plot_window(dataset)
         self._fourier_phase_estimate_active = True
         self._set_status_state("Estimating phases…")
         self._tasks.start(
             lambda w, dataset=dataset, state=state, plot_window=plot_window: (
-                self._estimate_group_fourier_phases(dataset, state, plot_window=plot_window)
+                self._estimate_group_fourier_phases(
+                    dataset,
+                    state,
+                    plot_window=plot_window,
+                    cancel_check=partial(check_task_cancelled, w),
+                )
             ),
             on_finished=self._on_fourier_phase_estimate_finished,
             on_error=self._on_fourier_phase_estimate_error,
+            on_cancelled=self._on_fourier_phase_estimate_cancelled,
         )
 
     def _on_fourier_phase_estimate_finished(self, phases: dict) -> None:
@@ -8333,31 +8336,33 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(f"Phase estimation failed: {message}")
         self._log_panel.log(f"Phase estimation failed: {message}")
 
+    def _on_fourier_phase_estimate_cancelled(self) -> None:
+        self._fourier_phase_estimate_active = False
+        self._clear_status_state_if_idle()
+        self._set_fourier_status("Phase estimation cancelled.")
+
     def _compute_apodisation_suggestion(
         self,
         dataset: MuonDataset,
         state: dict,
         selected_group_ids: list[int],
         plot_window,
+        *,
+        cancel_check=None,
     ) -> ApodisationSuggestion | None:
-        """Estimate the matched-filter apodisation for one run (off-thread; pure).
-
-        Transforms the UNAPODISED spectrum (``window="none"``) regardless of the
-        panel's own filter-mode setting — the estimator's contract requires the
-        unfiltered line shape, not an already-filtered one. Takes ``dataset``,
-        ``selected_group_ids``, and ``plot_window`` explicitly (rather than
-        reading live widgets) so it is safe to run on a worker thread.
-        """
+        """Estimate a matched filter from unapodised spectra on a cancellable worker."""
         if dataset.run is None or not selected_group_ids:
             return None
         prepared, reference_t0_bin = precompute_group_fourier_inputs(
-            dataset.run, selected_group_ids
+            dataset.run, selected_group_ids, cancel_check=cancel_check
         )
         background_reference_cache: dict = {}
         magnitudes: list[np.ndarray] = []
         freqs: np.ndarray | None = None
         padding_factor = max(4, int(state.get("padding", 1)))
         for group_id in selected_group_ids:
+            if cancel_check is not None:
+                cancel_check()
             group_dataset = build_group_signal_dataset(
                 dataset.run,
                 group_id,
@@ -8383,13 +8388,10 @@ class MainWindow(QMainWindow):
             dataset, freqs, plot_window=plot_window
         )
         window_kind = "gaussian" if str(state.get("window")) == "gaussian" else "lorentzian"
-        # freqs is the zero-padded axis: the unpadded (intrinsic) bin spacing
-        # is padding_factor x wider, since padding multiplies the transform
-        # length without changing the underlying record length (module
-        # docstring in core/fourier/apodisation.py).
+        # Zero padding refines the frequency grid without extending observed time support.
         bin_width = float(np.median(np.diff(freqs))) if freqs.size > 1 else 0.0
         intrinsic_resolution_mhz = bin_width * padding_factor if bin_width > 0.0 else None
-        return suggest_matched_apodisation(
+        suggestion = suggest_matched_apodisation(
             freqs,
             averaged_magnitude,
             window=window_kind,
@@ -8397,6 +8399,9 @@ class MainWindow(QMainWindow):
             max_frequency_mhz=max_frequency,
             intrinsic_resolution_mhz=intrinsic_resolution_mhz,
         )
+        if cancel_check is not None:
+            cancel_check()
+        return suggestion
 
     def _on_suggest_apodisation(self) -> None:
         """Suggest a matched apodisation filter from the run's dominant line."""
@@ -8406,8 +8411,7 @@ class MainWindow(QMainWindow):
         if self._fourier_apodisation_suggest_active:
             self._set_fourier_status("Apodisation suggestion is already running.")
             return
-        # Snapshot launch-time context on the GUI thread; the estimation (an
-        # unapodised FFT per group) runs on the shared TaskRunner.
+        # Workers consume launch-time data and plot-window snapshots.
         state = self._fourier_panel.get_state()
         dataset = self._current_dataset
         selected_group_ids = self._selected_fourier_group_ids(dataset)
@@ -8417,12 +8421,22 @@ class MainWindow(QMainWindow):
         self._tasks.start(
             lambda w, dataset=dataset, state=state, selected_group_ids=selected_group_ids, plot_window=plot_window: (
                 self._compute_apodisation_suggestion(
-                    dataset, state, selected_group_ids, plot_window
+                    dataset,
+                    state,
+                    selected_group_ids,
+                    plot_window,
+                    cancel_check=partial(check_task_cancelled, w),
                 )
             ),
             on_finished=self._on_apodisation_suggest_finished,
             on_error=self._on_apodisation_suggest_error,
+            on_cancelled=self._on_apodisation_suggest_cancelled,
         )
+
+    def _on_apodisation_suggest_cancelled(self) -> None:
+        self._fourier_apodisation_suggest_active = False
+        self._clear_status_state_if_idle()
+        self._set_fourier_status("Apodisation suggestion cancelled.")
 
     def _on_apodisation_suggest_finished(self, suggestion: ApodisationSuggestion | None) -> None:
         """Apply a suggested matched apodisation to the panel (GUI thread)."""
@@ -8878,17 +8892,11 @@ class MainWindow(QMainWindow):
         return False
 
     def _invalidate_fft_after_regroup(self, run_numbers: list[int]) -> None:
-        """Discard regrouped runs' FFT spectra and recipes; recompute a live view.
-
-        A spectrum computed under the old grouping is wrong, not merely
-        outdated — and its recipe is too: the recorded ``selected_group_ids``
-        and phases described groups that may no longer exist. Dropping both
-        lets compute-on-view synthesize a fresh recipe against the NEW grouping
-        (the panel widgets, not the recipe, carry the user's global settings),
-        exactly as the time-domain plot re-renders after a regroup. Parameter
-        edits, by contrast, only flag via the staleness banner — an explicit
-        Compute stays the only way a settings change replaces a spectrum.
-        """
+        """Discard changed reductions and reference dependants before spectral reuse."""
+        run_numbers = sorted(
+            set(run_numbers)
+            | set(refresh_reference_timing_requests(self._data_browser.get_all_datasets()))
+        )
         cache = self._frequency_cache(RepresentationType.FREQ_FFT)
         pending, failures = self._ensure_recompute_tracking()
         invalidated = 0
@@ -16583,20 +16591,20 @@ class MainWindow(QMainWindow):
         self._schedule_memory_settle()
 
     def collect_project_state(self) -> dict:
-        """Return a full serialisable snapshot of the current application state.
-
-        Returns
-        -------
-        dict
-            Project state suitable for passing to
-            :func:`~asymmetry.core.project.save_project`.
-        """
+        """Snapshot current application state with live reference timing requests."""
         from asymmetry import __version__
 
-        # Build dataset list (source files + field overrides).
-        # Important: combined datasets remove their source runs from
-        # ``_datasets``, so we must also capture source runs from
-        # ``_combined_source_datasets`` to guarantee they can be recreated.
+        refresh_reference_timing_requests(
+            self._data_browser.get_all_datasets(),
+            groupings=(
+                dict(
+                    profile.background_policy.details,
+                    background_mode=profile.background_policy.mode,
+                )
+                for profile in self._grouping_profiles
+            ),
+        )
+        # Include held combination sources so saved acquisitions can be reconstructed.
         datasets = []
         seen_run_numbers: set[int] = set()
 
@@ -16646,9 +16654,7 @@ class MainWindow(QMainWindow):
             for dataset in source_datasets:
                 _append_dataset_entry(dataset)
 
-        # Combined dataset definitions. The optional "operation" field is
-        # written only for subtractions, so co-add entries round-trip
-        # byte-for-byte as before (additive schema; no version bump).
+        # Additive combinations omit the subtraction-only operation field.
         combined_signs = getattr(self._data_browser, "_combined_signs", {})
         combined_methods = getattr(self._data_browser, "_combined_methods", {})
         combined_datasets = []
@@ -16702,14 +16708,7 @@ class MainWindow(QMainWindow):
             return pruned
 
         def _persisted_grouped_fit_state(state: dict | None) -> dict | None:
-            """Make the grouped window's ``{single, batch}`` surfaces persistable.
-
-            Their wizard caches sit one level down, so ``_prune_global_fit_state``
-            (which only looks at the top level) never saw them: they were written
-            to the file at full analysis resolution. Convert each surface to its
-            compact stored form instead — the cache still reopens without a
-            re-run, at a bounded size, and no live handle can reach the file.
-            """
+            """Persist grouped single/batch surfaces with compact wizard records."""
             if not isinstance(state, dict):
                 return state
             converted = dict(state)
@@ -16807,18 +16806,11 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
-        # Stamp the current ALC analysis onto its scan series before the model is
-        # serialised, so the baseline/peaks/options travel with the saved scan.
+        # Scan series own their ALC analysis settings.
         self._sync_alc_series_extra()
-        # Likewise stamp the Global Parameter Fit window's decorations into the
-        # owning fit's series so they persist attached to it (not orphaned under
-        # a standalone key).
+        # Fit-series decorations remain attached to their owning fit.
         self._sync_global_fit_decorations_to_series()
-        # Recipe-only representation/batch state (v6).  Frequency spectra are
-        # recomputed from these recipes on load; the array snapshot above is a
-        # transitional fallback removed in cleanup. Data groups need no mirror
-        # step: the browser mutates ``ProjectModel.data_groups`` directly (D6),
-        # so the registry is already current when it is serialised here.
+        # The project model owns representation recipes, batches, and data groups.
         self._project_model.write_to_project_state(project_state)
         return project_state
 

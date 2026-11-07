@@ -45,7 +45,7 @@ from asymmetry.core.transform.t0 import RunT0Search
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import make_warning_banner
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker, check_task_cancelled
+from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview as _decimate_for_preview
 from asymmetry.gui.utils.plot_decimation import preview_stride as _preview_stride
 
@@ -939,8 +939,7 @@ class GroupingPreviewPane(QWidget):
 
 def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResult:
     """Reduce immutable request snapshots off-thread, with cooperative cancellation."""
-    if worker.is_cancelled():
-        raise TaskCancelledError
+    check_task_cancelled(worker)
 
     def resolve_reference(grouping):
         if request.resolved_reference is not None and request.run is None:
@@ -991,8 +990,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     backward_gid = _as_int(grouping.get("backward_group"), 2)
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
-    if worker.is_cancelled():
-        raise TaskCancelledError
+    check_task_cancelled(worker)
     flags = correction_flags_from_grouping(grouping)
     use_deadtime = flags.use_deadtime
     use_background = flags.use_background
@@ -1017,10 +1015,10 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             metadata=metadata,
             timing_search=search_timing,
             reference_resolver=resolve_reference,
+            cancel_check=partial(check_task_cancelled, worker),
             allow_incomplete=True,
         )
-        if worker.is_cancelled():
-            raise TaskCancelledError
+        check_task_cancelled(worker)
         time, asymmetry, error = _decimate_for_preview(
             reduced.time, reduced.asymmetry, reduced.error, _MAX_PREVIEW_POINTS
         )
@@ -1048,6 +1046,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             facility=facility,
             metadata=metadata,
             reference_resolver=resolve_reference,
+            cancel_check=partial(check_task_cancelled, worker),
             allow_incomplete=True,
             output_binning=binning_spec(grouping),
         )
@@ -1074,8 +1073,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         _bt, base_asym, _be = _form_asymmetry(corrected, grouping, alpha, beta=1.0)
         _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
     elif (compare == "deadtime" and use_deadtime) or (compare == "background" and use_background):
-        if worker.is_cancelled():
-            raise TaskCancelledError
+        check_task_cancelled(worker)
         ghost_counts = _reduce(
             use_deadtime and compare != "deadtime",
             use_background and compare != "background",

@@ -1,8 +1,4 @@
-"""Versioned project-state migrations and atomic JSON persistence.
-
-Each migration owns one schema transition; runtime readers use current names.
-Non-finite scientific values have explicit JSON wrappers and round-trip intact.
-"""
+"""Versioned project migrations and atomic persistence with non-finite JSON wrappers."""
 
 from __future__ import annotations
 
@@ -20,12 +16,11 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 32
+CURRENT_SCHEMA_VERSION: int = 33
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
-#: Fourier-state keys that describe the FFT generation recipe (recipe-only
-#: persistence carries these into each dataset's ``freq_fft`` representation).
+#: FFT recipe keys persisted in each dataset's frequency representation.
 _FOURIER_RECIPE_KEYS: tuple[str, ...] = (
     "window",
     "padding",
@@ -36,7 +31,6 @@ _FOURIER_RECIPE_KEYS: tuple[str, ...] = (
     "filter_time_constant_us",
     "subtract_average_signal",
     "group_enabled_table",
-    # Frequency-domain finishers (post-FFT conditioning); additive, defaulted.
     "pulse_compensation",
     "pulse_half_width_us",
     "pulse_max_gain",
@@ -69,7 +63,6 @@ def migrate_to_current(data: dict) -> dict:
             "Upgrade the Asymmetry package to open this file, or check that "
             "the file is a valid Asymmetry project."
         )
-    # Channel representation must precede inference of profiles from old payloads.
     migrated = _migrate_channel_membership(data) if version < 30 else dict(data)
     if version == 1:
         migrated = _migrate_v1_to_v2(migrated)
@@ -165,6 +158,11 @@ def migrate_to_current(data: dict) -> dict:
         from asymmetry.core.project.reference_restore import migrate_reference_declarations
 
         migrated = migrate_reference_declarations(migrated) | {"schema_version": 32}
+        version = 32
+    if version == 32:
+        from asymmetry.core.project.reference_restore import migrate_reference_timing_declarations
+
+        migrated = migrate_reference_timing_declarations(migrated) | {"schema_version": 33}
     return migrated
 
 
