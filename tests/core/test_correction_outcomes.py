@@ -7,6 +7,7 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.reference_scale import ReferenceExposure, ReferenceScaleRequest
 
 
 @pytest.fixture
@@ -132,7 +133,15 @@ def test_outcomes_round_trip_and_own_nested_provenance():
 def test_reference_provenance_records_scale_and_public_identity(histograms):
     from asymmetry.core.transform.corrections import BackgroundReference
 
-    reference = BackgroundReference(deepcopy(histograms), 2.0, 42, "reference.nxs", 1000.0, 500.0)
+    reference = BackgroundReference(
+        deepcopy(histograms),
+        ReferenceScaleRequest("manual", 2.0).resolve(
+            ReferenceExposure(1000, "user"), ReferenceExposure(500, "user")
+        ),
+        42,
+        "reference.nxs",
+        500.0,
+    )
     result = corrected_grouped_counts(
         histograms=histograms,
         grouping={"background_mode": "reference_run"},
@@ -149,9 +158,10 @@ def test_reference_provenance_records_scale_and_public_identity(histograms):
         "source_file": "reference.nxs",
         "period_number": 1,
         "scale": 2.0,
-        "scale_source": "explicit_scale",
-        "good_frames_sample": 1000.0,
-        "good_frames_reference": 500.0,
+        "scale_source": "manual",
+        "scaling": reference.scaling.provenance(),
+        "scale_summary": "Manual: 2",
+        "deadtime_normaliser": 500.0,
         "timing": {"t0_policy": {"mode": "from_file"}},
     }
 
@@ -185,9 +195,8 @@ def test_reference_deadtime_uses_its_own_frame_exposure():
     sample = [Histogram(np.array([50.0]), 1.0) for _ in range(2)]
     reference = BackgroundReference(
         [Histogram(np.array([20 / 1.4]), 1.0) for _ in range(2)],
-        2.0,
-        good_frames_sample=10.0,
-        good_frames_reference=5.0,
+        ReferenceScaleRequest("manual", 2.0).resolve(),
+        deadtime_normaliser=5.0,
     )
     result = corrected_grouped_counts(
         histograms=sample,
@@ -395,8 +404,8 @@ def test_missing_reference_file_table_skips_sample_and_reference():
     sample = [Histogram(np.array([100.0, 80.0, 60.0]), 1.0) for _ in range(2)]
     reference = BackgroundReference(
         [Histogram(np.array([20.0, 10.0, 5.0]), 1.0) for _ in range(2)],
-        1.0,
-        good_frames_reference=100.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        deadtime_normaliser=100.0,
     )
     options = dict(
         histograms=sample,
@@ -499,8 +508,8 @@ def test_combined_missing_sample_table_also_skips_complete_reference(missing):
     ]
     reference = BackgroundReference(
         [Histogram(np.array([20.0, 10.0, 5.0]), 1.0) for _ in range(2)],
-        1.0,
-        good_frames_reference=100.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        deadtime_normaliser=100.0,
         file_dead_time_us=(0.1, 0.1),
     )
     tables = [[0.1, 0.1], [0.1, 0.1]]

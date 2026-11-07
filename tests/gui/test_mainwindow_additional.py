@@ -32,6 +32,7 @@ from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.corrections import CorrectionOutcomes
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
@@ -6302,23 +6303,19 @@ class TestMainWindowBasic:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """A reference-subtraction row persists its operation and rebuilds as
-        a subtraction (additive ``operation`` field; co-add unaffected)."""
+        """Reference subtraction preserves its operation and evidenced scale on reopen."""
         source_1 = tmp_path / "run_8421.nxs"
         source_2 = tmp_path / "run_8422.nxs"
         source_1.write_bytes(b"")
         source_2.write_bytes(b"")
-        ds1 = _make_dataset(8421, with_grouping=True)
-        ds2 = _make_dataset(8422, with_grouping=True)
-        assert ds1.run is not None and ds2.run is not None
-        ds1.run.source_file = str(source_1)
-        ds2.run.source_file = str(source_2)
-        ds1.metadata["source_file"] = str(source_1)
-        ds2.metadata["source_file"] = str(source_2)
-        ds1.run.grouping["good_frames"] = 1000.0
-        ds2.run.grouping["good_frames"] = 2000.0
-        mainwindow._data_browser.add_dataset(ds1)
-        mainwindow._data_browser.add_dataset(ds2)
+        ds1, ds2 = [_make_dataset(number, with_grouping=True) for number in (8421, 8422)]
+        for dataset, source, frames in ((ds1, source_1, 1000), (ds2, source_2, 2000)):
+            assert dataset.run is not None
+            dataset.run.source_file = dataset.metadata["source_file"] = str(source)
+            dataset.run.grouping.update(
+                good_frames=frames, reference_exposure=ReferenceExposure(frames, "user").to_dict()
+            )
+            mainwindow._data_browser.add_dataset(dataset)
         combined_rn = mainwindow._data_browser.add_combined_dataset(
             [8421, 8422], sign=-1, combined_run_number=-1
         )
@@ -6340,9 +6337,11 @@ class TestMainWindowBasic:
             rn = 8421 if "8421" in path else 8422
             loaded = _make_dataset(rn, with_grouping=True)
             assert loaded.run is not None
-            loaded.run.source_file = path
-            loaded.run.grouping["good_frames"] = 1000.0 if rn == 8421 else 2000.0
-            loaded.metadata["source_file"] = path
+            loaded.run.source_file = loaded.metadata["source_file"] = path
+            frames = 1000.0 if rn == 8421 else 2000.0
+            loaded.run.grouping.update(
+                good_frames=frames, reference_exposure=ReferenceExposure(frames, "user").to_dict()
+            )
             return loaded
 
         monkeypatch.setattr(

@@ -582,7 +582,7 @@ def _mirror_grouping(
     # ``t0_time_us`` is a per-run fact of the *base* run; the combined run's is
     # the mean over its own aligned detectors, which the combined histograms
     # carry, so drop it and let common_t0_time_us re-derive it.
-    dropped = (*_PERIOD_KEYS, "t0_time_us")
+    dropped = (*_PERIOD_KEYS, "t0_time_us", "reference_exposure", "period_reference_exposure")
     grouping = copy.deepcopy({k: v for k, v in base.grouping.items() if k not in dropped})
     if exposure > 0.0:
         grouping["good_frames"] = float(exposure)
