@@ -54,14 +54,15 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 #: detector's post-t0 bin grid (short arrays are zero-padded).
 GroupSignal = Callable[[NDArray[np.float64]], NDArray[np.float64]] | NDArray[np.float64]
 
-#: Grouping keys that describe two-period source files; a synthetic run is
-#: single-period, so these must not be inherited from the template.
-_PERIOD_KEYS = (
+#: Altered counts cannot inherit measured exposures or the source period arrays.
+_DERIVED_ACQUISITION_KEYS = (
     "period_histograms",
     "period_reduced",
     "period_mode",
     "period_good_frames",
     "period_dead_time_us",
+    "reference_exposure",
+    "period_reference_exposure",
 )
 
 
@@ -861,16 +862,12 @@ _INHERITED_METADATA_KEYS = (
 
 
 def _synthetic_run_grouping(template: Run, n_histograms: int) -> dict[str, Any]:
-    """Base grouping for a synthetic run: template grouping with deadtimes off.
+    """Copy analysis settings without acquired exposures or period arrays.
 
-    The period payload (which can hold full per-detector histogram arrays for a
-    combined two-period template) is stripped before the deep copy, and the
-    deadtimes are zeroed — the synthetic counts carry no deadtime distortion, so
-    zero is the true instrument description. Callers add an ``alpha`` override or
-    a fresh period payload on top.
+    Synthetic counts carry no deadtime distortion, so their true deadtimes are zero.
     """
     grouping: dict[str, Any] = copy.deepcopy(
-        {k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS}
+        {k: v for k, v in template.grouping.items() if k not in _DERIVED_ACQUISITION_KEYS}
     )
     grouping["deadtime_correction"] = False
     grouping["dead_time_us"] = [0.0] * n_histograms
@@ -1759,7 +1756,9 @@ def degrade_run(
 
     # The period payload holds full histogram arrays; exclude it from the
     # deepcopy and rebuild it from the thinned periods below.
-    grouping = copy.deepcopy({k: v for k, v in source_grouping.items() if k not in _PERIOD_KEYS})
+    grouping = copy.deepcopy(
+        {k: v for k, v in source_grouping.items() if k not in _DERIVED_ACQUISITION_KEYS}
+    )
 
     if has_periods:
         # run.histograms on a combined two-period run are clones of period 0

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -35,6 +36,7 @@ from asymmetry.core.transform.background import (
     background_range_is_explicit,
     resolve_background_ranges,
 )
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 
 __all__ = ["BackgroundReferenceRunCandidate", "BackgroundSectionWidget", "background_status_text"]
@@ -58,7 +60,7 @@ _MODE_ITEMS = (
         "Background run…",
         "reference_run",
         "Subtract a reference run (sample holder / silver / laser-off) "
-        "scaled by the good-frame ratio.",
+        "with Automatic or Manual scaling.",
     ),
     (
         "Fixed values",
@@ -76,15 +78,13 @@ class BackgroundReferenceRunCandidate:
         run_number: int,
         label: str,
         source_file: str,
-        good_frames: float | None,
         period_number: int = 1,
         timing: dict | None = None,
     ) -> None:
-        """Store the candidate's run number, display label, source file, and good frames."""
+        """Store the selected acquisition, period, and timing request."""
         self.run_number = run_number
         self.label = label
         self.source_file = source_file
-        self.good_frames = good_frames
         self.period_number = period_number
         self.timing = timing
 
@@ -104,7 +104,6 @@ class BackgroundReferenceRunCandidate:
             run_number=selected.metadata.get("source_run_number", selected.run_number),
             label=label,
             source_file=selected.source_file,
-            good_frames=selected.grouping.get("good_frames"),
             period_number=period,
             timing=timing.request(),
         )
@@ -204,6 +203,57 @@ class BackgroundSectionWidget(QWidget):
         reference_layout.addWidget(self._pick_reference_btn)
         root.addWidget(self._reference_row)
 
+        self._scale_row = QWidget()
+        scale_layout = QHBoxLayout(self._scale_row)
+        scale_layout.setContentsMargins(0, 0, 0, 0)
+        scale_layout.addWidget(QLabel("Reference scale"))
+        self._scale_mode = NoScrollComboBox()
+        self._scale_mode.addItem("Automatic", "automatic")
+        self._scale_mode.addItem("Manual", "manual")
+        scale_layout.addWidget(self._scale_mode)
+        scale_layout.addWidget(QLabel("Coefficient"))
+        self._scale_coefficient = QLineEdit("1")
+        self._scale_coefficient.setToolTip(
+            "Finite positive coefficient multiplying reference counts."
+        )
+        scale_layout.addWidget(self._scale_coefficient)
+        root.addWidget(self._scale_row)
+        self._scale_mode.currentIndexChanged.connect(self._on_scale_changed)
+        self._scale_coefficient.textEdited.connect(self._on_scale_changed)
+
+    def _on_scale_changed(self):
+        if self._background_run_payload is not None:
+            mode = self._scale_mode.currentData()
+            self._background_run_payload["scale_request"] = {"mode": mode} | (
+                {"coefficient": self._scale_coefficient.text()} if mode == "manual" else {}
+            )
+            try:
+                self._background_run_payload["scale_request"] = ReferenceScaleRequest.from_payload(
+                    self._background_run_payload
+                ).to_dict()
+            except ValueError:
+                pass  # Invalid user text remains editable in the draft.
+        self._refresh_visibility_and_status()
+        self.changed.emit()
+
+    def set_scale_summaries(self, outcomes):
+        """Display per-period scales from completed current worker outcomes."""
+        references = [
+            outcome.background.effective["reference"]
+            for outcome in outcomes
+            if outcome.background.effective and "reference" in outcome.background.effective
+        ]
+        summaries = [
+            f"Sample period {item['scaling']['sample']['period_number']}: {item['scale_summary']}"
+            for item in references
+        ]
+        if summaries:
+            self._status_label.setText(
+                background_status_text(self._policy()) + "; " + "; ".join(summaries)
+            )
+        else:
+            self._refresh_visibility_and_status()
+
     # -- configuration ---------------------------------------------------
 
     def configure(
@@ -235,6 +285,15 @@ class BackgroundSectionWidget(QWidget):
         self._background_run_payload = (
             dict(background_run_payload) if isinstance(background_run_payload, dict) else None
         )
+        request = (self._background_run_payload or {}).get("scale_request", {"mode": "automatic"})
+        if not isinstance(request, dict):
+            request = {}
+        self._scale_mode.blockSignals(True)
+        self._scale_coefficient.blockSignals(True)
+        self._scale_mode.setCurrentIndex(1 if request.get("mode") == "manual" else 0)
+        self._scale_coefficient.setText(str(request.get("coefficient", "1")))
+        self._scale_mode.blockSignals(False)
+        self._scale_coefficient.blockSignals(False)
         self._mode_combo.blockSignals(True)
         self._populate_modes()
         idx = self._mode_combo.findData(str(mode).strip().lower())
@@ -310,7 +369,7 @@ class BackgroundSectionWidget(QWidget):
         choice, accepted = QInputDialog.getItem(
             self,
             "Background Run",
-            "Reference run to subtract (scaled by the good-frame ratio):",
+            "Reference run to subtract:",
             labels,
             0,
             False,
@@ -318,6 +377,9 @@ class BackgroundSectionWidget(QWidget):
         if not accepted:
             self._set_mode("none")
             return
+        scale_request = (self._background_run_payload or {}).get(
+            "scale_request", {"mode": "automatic"}
+        )
         if choice == "Browse for file…":
             path, _ = QFileDialog.getOpenFileName(
                 self,
@@ -339,9 +401,9 @@ class BackgroundSectionWidget(QWidget):
                 "run_number": int(candidate.run_number),
                 "source_file": candidate.source_file,
                 "period_number": candidate.period_number,
-                "good_frames_reference": candidate.good_frames,
                 "timing": candidate.timing,
             }
+        self._background_run_payload["scale_request"] = scale_request
         self._refresh_visibility_and_status()
         if not _from_mode_change:
             # A re-pick while already in reference_run mode still edits the policy.
@@ -359,6 +421,8 @@ class BackgroundSectionWidget(QWidget):
     def _refresh_visibility_and_status(self) -> None:
         mode = self.mode()
         self._reference_row.setVisible(mode == "reference_run")
+        self._scale_row.setVisible(mode == "reference_run")
+        self._scale_coefficient.setEnabled(self._scale_mode.currentData() == "manual")
         self._edit_range_btn.setVisible(mode == "range")
         if mode == "reference_run":
             payload = self._background_run_payload or {}
@@ -367,7 +431,18 @@ class BackgroundSectionWidget(QWidget):
             period = payload.get("period_number")
             label += f", period {period}" if period else ""
             self._reference_summary_label.setText(f"Selected: {label}" if label else "")
-        self._status_label.setText(background_status_text(self._policy()))
+        text = background_status_text(self._policy())
+        if mode == "reference_run":
+            try:
+                request = ReferenceScaleRequest.from_payload(self._background_run_payload or {})
+                text += "; " + (
+                    f"Manual: {request.coefficient:.6g}"
+                    if request.mode == "manual"
+                    else "Automatic: exposure resolved in preview"
+                )
+            except ValueError as exc:
+                text += "; " + str(exc)
+        self._status_label.setText(text)
 
     def _policy(self) -> BackgroundPolicy:
         mode = self.mode()

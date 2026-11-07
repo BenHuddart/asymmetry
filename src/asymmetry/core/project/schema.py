@@ -16,7 +16,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 33
+CURRENT_SCHEMA_VERSION: int = 34
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -130,39 +130,37 @@ def migrate_to_current(data: dict) -> dict:
     if version == 22:
         migrated = _migrate_v22_to_v23(migrated)
         version = 23
-    if version == 23:
-        migrated = _migrate_v23_to_v24(migrated)
-        version = 24
-    if version == 24:
-        migrated = _migrate_v24_to_v25(migrated)
-        version = 25
-    if version == 25:
-        migrated = _migrate_v25_to_v26(migrated)
-        version = 26
-    if version == 26:
-        migrated = _migrate_v26_to_v27(migrated)
-        version = 27
-    if version == 27:
-        migrated = _migrate_v27_to_v28(migrated)
-        version = 28
-    if version == 28:
-        migrated = _migrate_v28_to_v29(migrated)
-        version = 29
+    for prior, convert in (
+        (23, _migrate_v23_to_v24),
+        (24, _migrate_v24_to_v25),
+        (25, _migrate_v25_to_v26),
+        (26, _migrate_v26_to_v27),
+        (27, _migrate_v27_to_v28),
+        (28, _migrate_v28_to_v29),
+    ):
+        if version == prior:
+            migrated = convert(migrated)
+            version = prior + 1
     if version == 29:
         migrated = dict(migrated, schema_version=30)
         version = 30
     if version == 30:
         migrated = _migrate_v30_to_v31(migrated)
         version = 31
-    if version == 31:
-        from asymmetry.core.project.reference_restore import migrate_reference_declarations
+    from asymmetry.core.project.reference_restore import (
+        migrate_reference_declarations,
+        migrate_reference_scale_declarations,
+        migrate_reference_timing_declarations,
+    )
 
-        migrated = migrate_reference_declarations(migrated) | {"schema_version": 32}
-        version = 32
-    if version == 32:
-        from asymmetry.core.project.reference_restore import migrate_reference_timing_declarations
-
-        migrated = migrate_reference_timing_declarations(migrated) | {"schema_version": 33}
+    for prior, convert in (
+        (31, migrate_reference_declarations),
+        (32, migrate_reference_timing_declarations),
+        (33, migrate_reference_scale_declarations),
+    ):
+        if version == prior:
+            version += 1
+            migrated = convert(migrated) | {"schema_version": version}
     return migrated
 
 

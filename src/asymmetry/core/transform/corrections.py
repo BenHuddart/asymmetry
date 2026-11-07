@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.reference_scale import ResolvedReferenceScale
 from asymmetry.core.transform.reference_timing import (
     ReferenceTiming,
     ResolvedReferenceTiming,
@@ -124,6 +125,10 @@ class CorrectionOutcome:
             return f"Automatic tail background subtraction skipped: {self.reason} Background remains unsubtracted for the entire result."
         if self.status == CorrectionStatus.SKIPPED:
             return f"File deadtime correction not applied: {self.reason} Continuing uncorrected."
+        if self.status == CorrectionStatus.APPLIED and self.requested == "reference_run":
+            reference = self.effective.get("reference", {})
+            if reference.get("scale_source") == "exposure_unknown":
+                return "Exposure unknown; scale 1 assumed"
         return None
 
     def to_dict(self) -> dict[str, Any]:
@@ -192,12 +197,10 @@ class BackgroundReference:
     """Resolved reference counts and the exposure actually used in subtraction."""
 
     histograms: list[Histogram]
-    scale: float
+    scaling: ResolvedReferenceScale
     run_number: int | None = None
     source_file: str = ""
-    good_frames_sample: float | None = None
-    good_frames_reference: float | None = None
-    scale_source: str = "explicit_scale"
+    deadtime_normaliser: float | None = None
     file_dead_time_us: tuple[float | None, ...] = ()
     period_number: int = 1
     timing: ReferenceTiming = ReferenceTiming()
@@ -205,8 +208,16 @@ class BackgroundReference:
 
     def __post_init__(self):
         object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
-        if not isfinite(self.scale) or self.scale <= 0:
-            raise ValueError("reference background scale must be finite and positive")
+
+    @property
+    def scale(self):
+        """Applied coefficient owned by the resolved scale outcome."""
+        return self.scaling.coefficient
+
+    @property
+    def scale_source(self):
+        """Origin of the applied coefficient."""
+        return self.scaling.source
 
     def require_independent(
         self, histograms: list[Histogram], metadata: dict | None, indices: list[int]
@@ -238,9 +249,10 @@ class BackgroundReference:
             "source_file": self.source_file,
             "scale": self.scale,
             "scale_source": self.scale_source,
+            "scaling": self.scaling.provenance(),
+            "scale_summary": self.scaling.summary(),
             "timing": self.timing.request(),
-            "good_frames_sample": self.good_frames_sample,
-            "good_frames_reference": self.good_frames_reference,
+            "deadtime_normaliser": self.deadtime_normaliser,
         }
 
     def alignment(self, sample, grouping, crop, *groups, timing_grouping=None, cancel_check=None):
@@ -262,7 +274,7 @@ class BackgroundReference:
         """Use this reference's acquisition facts with the shared authored request."""
         return dict(
             sample_grouping,
-            good_frames=self.good_frames_reference,
+            good_frames=self.deadtime_normaliser,
             deadtime_file_us=self.file_dead_time_us,
         )
 

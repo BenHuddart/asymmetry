@@ -28,6 +28,7 @@ from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direct
 from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.fb_counts import validated_count_arrays
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -538,14 +539,7 @@ class PsiLoader(BaseLoader):
         started: str = "",
         stopped: str = "",
     ) -> tuple[_PsiTemperatureLogs | None, list[dict[str, str]]]:
-        """Read optional PSI ``.mon`` sidecars with shared channel naming rules.
-
-        Returns the merged logs (or ``None``) plus a list of rejected sidecars.
-        A sidecar is rejected when its own start timestamp is inconsistent with
-        the run's *started*/*stopped* window — see
-        :meth:`_temperature_log_epoch_mismatch`. Rejections are reported rather
-        than dropped silently so a run with no temperature log still says why.
-        """
+        """Merge PSI temperature sidecars and report those outside the run epoch."""
         log_paths = self._find_temperature_log_files(path, run_number)
         if not log_paths:
             return None, []
@@ -1137,6 +1131,7 @@ class PsiLoader(BaseLoader):
             "deadtime_correction": False,
             # Whole-run acquisition: τ must be calibrated in this normalisation.
             "good_frames": 1.0,
+            "reference_exposure": ReferenceExposure(origin="whole_run_deadtime").to_dict(),
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],

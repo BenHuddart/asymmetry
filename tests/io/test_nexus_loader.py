@@ -749,7 +749,11 @@ def test_beam_good_frames_count_the_data_periods_not_the_dae_cycle(
         beam.create_dataset("frames_period_daq", data=np.array([15000, 15001]))
         beam.create_dataset("frames_good", data=np.array([30001]))
 
-        assert list(loader._good_frames_from_beam(f["run"])) == [15000.0, 15001.0]
+        from asymmetry.core.io.frame_exposure import read_nexus_frames
+
+        frames = read_nexus_frames(f["run"], loader._read_optional, legacy=True)
+        assert frames.values.tolist() == [15000.0, 15001.0]
+        assert [item["value"] for item in frames.exposures(2)] == [15000.0, 15001.0]
 
 
 def _series(mean: float) -> dict:

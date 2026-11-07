@@ -21,6 +21,7 @@ from asymmetry.core.project.schema import load_project, save_project
 from asymmetry.core.transform.grouping import independent_pair_indices
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping import preview_pane as preview_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
@@ -38,6 +39,10 @@ def test_payload_preview_uses_selected_period_exposure_and_file_deadtime(qapp, m
     sample.run.grouping.update(
         period_histograms=[sample.run.histograms, green.run.histograms],
         period_good_frames=[100, 200],
+        period_reference_exposure=[
+            ReferenceExposure(100, "user").to_dict(),
+            ReferenceExposure(200, "user", period_number=2).to_dict(),
+        ],
         good_frames=300,
         period_dead_time_us=[[0.001, 0.002], [0.003, 0.004]],
         dead_time_us=[0.005, 0.006],
@@ -201,6 +206,7 @@ def test_fresh_inheritance_resolves_its_loaded_reference(qapp, monkeypatch, tmp_
     )
     for dataset in (sample, reference):
         dataset.run.grouping["good_frames"] = 100
+        dataset.run.grouping["reference_exposure"] = ReferenceExposure(100, "user").to_dict()
     profile = automatic_profile()
     profile.groups = {1: [1], 2: [2]}
     profile.fingerprint = profile_fingerprint_for_run(sample.run)
@@ -230,10 +236,15 @@ def test_green_preview_and_applied_reduction_use_current_exposure_and_coefficien
         run_number=999, forward=np.full(6, 10.0), backward=np.full(6, 5.0)
     )
     reference.run.grouping["good_frames"] = 100
+    reference.run.grouping["reference_exposure"] = ReferenceExposure(100, "user").to_dict()
     sample.run.grouping.update(
         period_histograms=[sample.run.histograms, green.run.histograms],
         good_frames=100,
         period_good_frames=[100, 200],
+        period_reference_exposure=[
+            ReferenceExposure(100, "user").to_dict(),
+            ReferenceExposure(200, "user", period_number=2).to_dict(),
+        ],
         period_dead_time_us=[[0.1, 0.2], [0.1, 0.2]],
     )
     profile = automatic_profile()
@@ -267,7 +278,9 @@ def test_green_preview_and_applied_reduction_use_current_exposure_and_coefficien
         np.testing.assert_allclose(sample.asymmetry, pane._last_result.asymmetry, atol=1e-12)
         np.testing.assert_allclose(sample.asymmetry, 0, atol=1e-12)
         assert sample.run.grouping["good_frames"] == 100
-        assert outcomes["green"].background.effective["reference"]["good_frames_sample"] == 200
+        assert (
+            outcomes["green"].background.effective["reference"]["scaling"]["sample"]["value"] == 200
+        )
         if manual_deadtime:
             assert sample.run.grouping["dead_time_us"] == [0.01, 0.02]
     finally:
