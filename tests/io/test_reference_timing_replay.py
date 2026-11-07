@@ -14,6 +14,7 @@ from asymmetry.core.project.schema import (
     migrate_to_current,
     save_project,
 )
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from tests.core.test_reference_timing import reduce_reference, timing_runs
 
 
@@ -127,17 +128,17 @@ def test_selected_green_reference_keeps_own_manual_timing(identity_mapping, monk
     green.run.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 2}
     payload = {"source_file": combined.run.source_file, "run_number": 12345, "period_number": 2}
     live = resolve_background_reference(
-        payload, datasets=[green], allow_file=False, sample_good_frames=40
+        payload, datasets=[green], allow_file=False, sample_exposure=ReferenceExposure(40, "user")
     )
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
-    disk = resolve_background_reference(payload, sample_good_frames=40)
+    disk = resolve_background_reference(payload, sample_exposure=ReferenceExposure(40, "user"))
     assert (
         live.timing.request()
         == disk.timing.request()
         == {"t0_policy": {"mode": "manual", "offset_bins": 2}}
     )
     assert live.period_number == disk.period_number == 2
-    assert live.good_frames_reference == disk.good_frames_reference == 20
+    assert live.deadtime_normaliser == disk.deadtime_normaliser == 20
     np.testing.assert_array_equal(live.histograms[0].counts, disk.histograms[0].counts)
 
 

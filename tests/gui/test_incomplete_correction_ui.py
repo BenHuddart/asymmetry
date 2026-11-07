@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.data_browser import _BADGE_ROLE
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
@@ -48,7 +49,12 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
     import asymmetry.core.io as io
     from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
 
-    sample = _histogram_dataset(grouping_extra={"good_frames": 20})
+    sample = _histogram_dataset(
+        grouping_extra={
+            "good_frames": 20,
+            "reference_exposure": ReferenceExposure(20, "user").to_dict(),
+        }
+    )
     reference = _histogram_dataset(
         run_number=99,
         forward=np.full(6, 2.0),
@@ -69,8 +75,14 @@ def test_preview_uses_loaded_reference_and_live_exposure(qapp, monkeypatch):
         )
         for frames in (10, 5):
             reference.run.grouping["good_frames"] = frames
+            reference.run.grouping["reference_exposure"] = ReferenceExposure(
+                frames, "user"
+            ).to_dict()
             resolved = resolve_background_reference(
-                payload, datasets=[reference], sample_good_frames=20, allow_file=False
+                payload,
+                datasets=[reference],
+                sample_exposure=ReferenceExposure(20, "user"),
+                allow_file=False,
             )
             old = pane._last_result
             pane.request_preview(
@@ -356,7 +368,7 @@ def test_held_period_preview_enforces_reference_independence(qapp, sample_period
     reference = resolve_background_reference(
         sample.run.grouping["background_run"],
         datasets=[sample],
-        sample_good_frames=20,
+        sample_exposure=ReferenceExposure(20, "user"),
         allow_file=False,
     )
     if sample_period == 2:
@@ -387,7 +399,7 @@ def test_alpha_request_retains_sample_acquisition_identity(qapp, reference_perio
     reference = resolve_background_reference(
         {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": reference_period},
         datasets=[source],
-        sample_good_frames=20,
+        sample_exposure=ReferenceExposure(20, "user"),
     )
     request = build_alpha_request(
         token=1,

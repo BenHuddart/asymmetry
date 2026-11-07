@@ -386,7 +386,11 @@ def test_resolve_background_fixed_carries_values():
 
 def test_resolve_background_reference_run_carries_payload():
     run = _run(grouping=_per_run_facts())
-    ref_payload = {"run_number": 5, "source_file": "/x/ref.nxs", "good_frames_reference": 900.0}
+    ref_payload = {
+        "run_number": 5,
+        "source_file": "/x/ref.nxs",
+        "scale_request": {"mode": "automatic"},
+    }
     profile = _base_profile(
         background_policy=BackgroundPolicy(
             mode="reference_run", details={"background_run": ref_payload}

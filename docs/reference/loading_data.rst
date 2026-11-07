@@ -698,6 +698,23 @@ a measured pulsed frame count. Preprocessed ROOT banks are not automatically
 raw Poisson observations. See :doc:`detector_grouping` for source/window and
 conditional-error assumptions; no different exposure is inferred at loading.
 
+Reference subtraction exposure is separate from the deadtime denominator.
+NeXus good-frame fields (``good_frames``, ``goodfrm``, and
+``periods/good_frames``), applicable ``frames_period_daq`` arrays, and
+single-period ``frames_good`` retain their field origin. A scalar run total
+cannot establish separate period exposures; an unverified DAE-period mapping
+or generic ``frames`` alias also leaves subtraction exposure unknown. Invalid
+exposure does not prevent raw loading. The established deadtime field precedence
+and normalisation remain separate.
+
+PSI BIN/MDU and ROOT whole-run normalisation one has unknown subtraction
+exposure. **Automatic** reference scaling applies one with the visible assumption
+"Exposure unknown; scale 1 assumed"; **Manual** uses its authored coefficient.
+No duration, integrated-event, monitor, or beam-current exposure is inferred.
+Asymmetry-written NeXus files retain the explicit exposure declaration separately
+from the deadtime field, including unknown origin. See
+:doc:`data_reduction/backgrounds` for scale provenance and variance limits.
+
 Background correction is a separate Grouping dialog toggle for PSI-style data
 (``.bin``, ``.mdu``, and PSI/LEM ``.root``). It subtracts a count background
 from grouped raw forward/backward histograms before asymmetry calculation.

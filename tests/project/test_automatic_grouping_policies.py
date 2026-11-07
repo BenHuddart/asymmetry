@@ -24,6 +24,7 @@ from asymmetry.core.transform.corrections import BackgroundReference, Correction
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 
 
 def policy_run(levels=(10.0, 30.0, 50.0)):
@@ -52,7 +53,11 @@ def test_loaded_run_api_resolves_the_declared_background_reference():
             mode="reference_run", details={"background_run": {"run_number": 999}}
         ),
     )
-    reference = BackgroundReference(policy_run((1, 3, 5)).histograms, scale=2, run_number=999)
+    reference = BackgroundReference(
+        policy_run((1, 3, 5)).histograms,
+        scaling=ReferenceScaleRequest("manual", 2).resolve(),
+        run_number=999,
+    )
     seen = []
 
     def resolver(grouping):
@@ -164,8 +169,12 @@ def test_automatic_alpha_keeps_window_and_declared_background_source():
     run.metadata["facility"] = "PSI"
     # Outside-window counts deliberately have a different F/B balance.
     run.histograms[0].counts[:4] = 400
-    reference = BackgroundReference(policy_run((1, 3, 5)).histograms, scale=2, run_number=999)
-    declaration = {"run_number": 999, "scale": 2}
+    reference = BackgroundReference(
+        policy_run((1, 3, 5)).histograms,
+        scaling=ReferenceScaleRequest("manual", 2).resolve(),
+        run_number=999,
+    )
+    declaration = {"run_number": 999, "scale_request": {"mode": "manual", "coefficient": 2}}
     seen = []
 
     def resolve_reference(grouping):

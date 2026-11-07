@@ -16,6 +16,7 @@ from asymmetry.core.fourier.spectrum import (
     compute_average_group_spectrum,
     precompute_group_fourier_inputs,
 )
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 
 
 def _run() -> Run:
@@ -316,8 +317,8 @@ def test_fourier_reference_missing_file_table_skips_both_inputs(monkeypatch):
     run = _run()
     reference = BackgroundReference(
         [Histogram(h.counts / 4, h.bin_width) for h in run.histograms],
-        1.0,
-        good_frames_reference=100000.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        deadtime_normaliser=100000.0,
     )
     monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
     run.grouping.update(
@@ -370,8 +371,8 @@ def test_reference_cache_tracks_authored_manual_coefficients(monkeypatch):
     run = _run()
     reference = BackgroundReference(
         [Histogram(h.counts / 4, h.bin_width) for h in run.histograms],
-        1.0,
-        good_frames_reference=100000.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        deadtime_normaliser=100000.0,
     )
     monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
     run.grouping.update(

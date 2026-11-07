@@ -5114,7 +5114,8 @@ class DataBrowserPanel(QWidget):
         sample_label = self._datasets[sample_rn].run_label
         layout.addWidget(
             QLabel(
-                f"Subtract a frame-scaled reference run from run {sample_label}.\n"
+                f"Subtract a reference run from run {sample_label}.\n"
+                "Automatic exposure scaling; unknown exposure assumes scale 1.\n"
                 "Counts are subtracted bin-by-bin; errors add in quadrature."
             )
         )
@@ -5169,50 +5170,30 @@ class DataBrowserPanel(QWidget):
         combined_run_number: int,
         existing_dataset: MuonDataset | None = None,
     ) -> MuonDataset:
-        """Subtract a frame-scaled reference run from a sample (study RA3/RA4).
-
-        ``datasets`` is ``[sample, reference]``. The reference is resolved and
-        frame-scaled through the single reference-run home
-        (:func:`asymmetry.core.io.resolve_background_reference`, F9) and the
-        per-detector arithmetic runs through ``subtract_scaled_counts`` inside
-        ``combine_runs`` — no parallel subtraction path.
-        """
+        """Subtract with the core Automatic exposure scale and independent variance."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
-        from asymmetry.core.io import resolve_background_reference
-        from asymmetry.core.transform.grouping import good_frames
+        from asymmetry.core.transform.reference_scale import (
+            ReferenceExposure,
+            ReferenceScaleRequest,
+        )
 
         runs = self._runs_for_combine(datasets)
         sample_run, reference_run = runs
-        sample_frames = good_frames(sample_run.grouping, 0.0) or None
-        # Route reference resolution + frame scale through the shared home so a
-        # reference subtraction uses exactly the background path's exposure
-        # scale (sample/reference good frames).
-        payload = {
-            "run_number": int(reference_run.run_number),
-            "source_file": reference_run.source_file,
-            "good_frames_reference": good_frames(reference_run.grouping, 0.0) or None,
-        }
-        try:
-            resolved = resolve_background_reference(
-                payload,
-                sample_good_frames=sample_frames,
-                datasets=[datasets[1]],
-            )
-            scale = float(resolved.scale)
-        except (ValueError, OSError):
-            # Fall back to the direct frame ratio when resolution is unavailable
-            # (both runs are already in hand, so this is always computable).
-            ref_frames = good_frames(reference_run.grouping, 0.0)
-            scale = (sample_frames / ref_frames) if (sample_frames and ref_frames) else 1.0
+        scaling = ReferenceScaleRequest().resolve(
+            ReferenceExposure.from_grouping(sample_run.grouping),
+            ReferenceExposure.from_grouping(reference_run.grouping),
+        )
 
         combined_run = combine_runs(
             runs,
             sign=-1,
-            scales=[1.0, scale],
+            scales=[1.0, scaling.coefficient],
             run_number=combined_run_number,
             label=" − ".join(map(str, run_numbers)),
         )
         reduced = reduce_combined_run(combined_run)
+        reduced.metadata["reference_scaling"] = scaling.provenance()
+        reduced.metadata["reference_scale_summary"] = scaling.summary()
         return self._store_combined_reduction(reduced, existing_dataset)
 
     def _signed_subtract_datasets(

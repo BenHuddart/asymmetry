@@ -26,7 +26,7 @@ from asymmetry.gui.windows.grouping.background_section import (
 
 
 def _candidates() -> list[BackgroundReferenceRunCandidate]:
-    return [BackgroundReferenceRunCandidate(9001, "Run 9001 (run 9001)", "/tmp/x.nxs", 1000.0)]
+    return [BackgroundReferenceRunCandidate(9001, "Run 9001 (run 9001)", "/tmp/x.nxs")]
 
 
 def test_configure_seeds_mode_without_emitting(qapp: QApplication) -> None:
@@ -162,7 +162,7 @@ def test_separate_aliases_are_described_as_explicit():
 
 def test_selected_green_period_is_persisted_and_displayed(qapp, monkeypatch):
     section = BackgroundSectionWidget(
-        lambda: [BackgroundReferenceRunCandidate(42, "42/2", "reference.nxs", 75, period_number=2)]
+        lambda: [BackgroundReferenceRunCandidate(42, "42/2", "reference.nxs", period_number=2)]
     )
     section.configure(
         available_modes=("reference_run",),
@@ -176,7 +176,7 @@ def test_selected_green_period_is_persisted_and_displayed(qapp, monkeypatch):
         "run_number": 42,
         "source_file": "reference.nxs",
         "period_number": 2,
-        "good_frames_reference": 75,
+        "scale_request": {"mode": "automatic"},
         "timing": None,
     }
     assert "period 2" in section._status_label.text()
@@ -222,7 +222,7 @@ def test_reference_picker_uses_draft_sample_periods(qapp, mode, expected):
     dialog.deleteLater()
 
 
-def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
+def test_reference_request_keeps_scale_intent_without_copying_sample_exposure(qapp):
     from asymmetry.gui.windows.grouping.dialog import GroupingDialog
     from tests.io.test_period_selection import _combined_two_period
 
@@ -235,7 +235,6 @@ def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
         c for c in dialog._background_reference_candidates() if c.source_file == "another.nxs"
     )
     assert candidate.period_number == 2
-    assert candidate.good_frames == 20
     dialog._background_section.configure(
         available_modes=("reference_run",),
         has_fixed_values=False,
@@ -244,12 +243,13 @@ def test_candidate_and_sample_exposure_snapshots_follow_selected_period(qapp):
             "source_file": "another.nxs",
             "run_number": 12345,
             "period_number": 2,
-            "good_frames_reference": 20,
+            "scale_request": {"mode": "manual", "coefficient": 7},
         },
     )
     dialog._set_period_mode("green")
     dialog._on_background_changed()
-    assert dialog._background_run_payload["good_frames_sample"] == 20
+    assert dialog._background_run_payload["scale_request"] == {"mode": "manual", "coefficient": 7}
+    assert "good_frames_sample" not in dialog._background_run_payload
     dialog._clear_dirty()
     dialog.close()
     dialog.deleteLater()
@@ -286,3 +286,31 @@ def test_reference_candidate_snapshots_own_policy_without_count_search(qapp, mon
     monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("Reference", True))
     section._pick_background_run()
     assert section.background_run_payload()["timing"] == candidate.timing
+
+
+def test_manual_scale_controls_preserve_invalid_draft_and_reopen(qapp):
+    from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
+
+    section = BackgroundSectionWidget(_candidates)
+    section.configure(
+        available_modes=("reference_run",),
+        has_fixed_values=False,
+        mode="reference_run",
+        background_run_payload={
+            "run_number": 42,
+            "scale_request": {"mode": "manual", "coefficient": 7},
+        },
+    )
+    assert section._scale_mode.currentText() == "Manual"
+    assert section._scale_coefficient.text() == "7"
+    section._scale_coefficient.setText("nan")
+    section._scale_coefficient.textEdited.emit("nan")
+    assert section.background_run_payload()["scale_request"]["coefficient"] == "nan"
+    assert "finite and positive" in section._status_label.text()
+    assert section.background_run_payload()["run_number"] == 42
+    section._scale_coefficient.setText("9")
+    section._scale_coefficient.textEdited.emit("9")
+    assert ReferenceScaleRequest.from_payload(section.background_run_payload()).coefficient == 9
+    section._scale_mode.setCurrentIndex(0)
+    assert section.background_run_payload()["scale_request"] == {"mode": "automatic"}
+    assert not section._scale_coefficient.isEnabled()

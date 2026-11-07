@@ -12,6 +12,7 @@ from asymmetry.core.project.profiles import (
 )
 from asymmetry.core.project.schema import load_project, save_project
 from asymmetry.core.simulate import reduce_run_to_dataset
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.tasks import TaskWorker
 from asymmetry.gui.windows.grouping.alpha_section import build_alpha_request, run_alpha_estimate
@@ -361,7 +362,7 @@ def test_combined_preview_shares_final_period_calculation_and_grid_checks(qapp, 
     dialog.close()
 
 
-@pytest.mark.parametrize("source", ["live", "saved", "explicit", "unity"])
+@pytest.mark.parametrize("source", ["live", "historical", "explicit", "unity"])
 def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(qapp, source):
     from asymmetry.core.io import resolve_background_reference
     from asymmetry.core.project.profiles import BackgroundPolicy
@@ -384,13 +385,22 @@ def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(q
     payload = {"run_number": 99}
     if source == "live":
         reference.run.grouping["good_frames"] = 50
-    elif source == "saved":
-        payload.update(good_frames_sample=300, good_frames_reference=50)
+        reference.run.grouping["reference_exposure"] = ReferenceExposure(50, "user").to_dict()
+    elif source == "historical":
+        payload["historical_scale"] = {
+            "good_frames_sample": 300,
+            "good_frames_reference": 50,
+            "exposure_origin": "unverified",
+        }
     elif source == "explicit":
-        payload["scale"] = 3
+        payload["scale_request"] = {"mode": "manual", "coefficient": 3}
     dataset.run.grouping.update(
         good_frames=300,
         period_good_frames=[100, 200],
+        period_reference_exposure=[
+            ReferenceExposure(100, "user").to_dict(),
+            ReferenceExposure(200, "user", period_number=2).to_dict(),
+        ],
         period_histograms=[dataset.run.histograms, green.histograms],
     )
     profile = replace(
@@ -411,7 +421,7 @@ def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(q
     def resolver(selected):
         return resolve_background_reference(
             payload,
-            sample_good_frames=selected.get("good_frames"),
+            sample_exposure=ReferenceExposure.from_grouping(selected),
             datasets=[reference],
             allow_file=False,
         )
@@ -429,7 +439,14 @@ def test_combined_preview_reference_exposure_matches_final_and_analytic_counts(q
         use_background=True,
         reference_resolver=resolver,
     )
-    scales = (2, 4) if source == "live" else ({"saved": 6, "explicit": 3, "unity": 1}[source],) * 2
+    scales = {"live": (2, 4), "historical": (1, 1), "explicit": (3, 3), "unity": (1, 1)}[source]
+    status = dialog._background_section._status_label.text()
+    for period, scale in enumerate(scales, 1):
+        assert f"Sample period {period}:" in status
+        if source == "live":
+            assert f"Sample period {period}: Automatic exposure ratio: {scale}" in status
+        elif source == "historical":
+            assert f"Sample period {period}: Exposure unknown; scale 1 assumed" in status
     red_f, red_b = 100 - scales[0] * 10, 200 - scales[0] * 20
     green_f, green_b = 300 - scales[1] * 10, 400 - scales[1] * 20
     expected = 100 * ((green_f - green_b) / (green_f + green_b) - (red_f - red_b) / (red_f + red_b))

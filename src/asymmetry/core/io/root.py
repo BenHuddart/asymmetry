@@ -35,6 +35,7 @@ from asymmetry.core.io.root_header import (
     read_lem_header,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.perf import perf_timer
 
 _PHYSICAL_HEADER_FIELDS: dict[str, Dimension] = {
@@ -276,15 +277,9 @@ class RootLoader(BaseLoader):
         time_series: dict[str, dict[str, Any]],
         scalar: float,
     ) -> None:
-        """Pick one primary among competing canonical-K sample-temperature series.
+        """Choose the finite canonical-K series closest to the scalar temperature.
 
-        New-format FLAME files expose several channels matching the role (e.g.
-        "Cryostat Sample Temperature" plus an all-NaN "Dilution Sample
-        Temperature"), so the primary is the finite series whose typical
-        reading is closest to the header's scalar Sample Temperature. Zeros
-        are masked when computing the typical reading: SC traces are
-        zero-padded outside the recorded range, which would otherwise drag
-        the mean.
+        Zero padding outside the recorded range must not bias the comparison.
         """
         candidates = [
             info for info in time_series.values() if info.get("role") == "sample_temperature"
@@ -627,6 +622,7 @@ class RootLoader(BaseLoader):
             "deadtime_correction": False,
             # Whole-run acquisition: τ must be calibrated in this normalisation.
             "good_frames": 1.0,
+            "reference_exposure": ReferenceExposure(origin="whole_run_deadtime").to_dict(),
             "detector_t0_bins": detector_t0_bins,
             "detector_first_good_bins": first_good_bins,
             "detector_last_good_bins": last_good_bins,

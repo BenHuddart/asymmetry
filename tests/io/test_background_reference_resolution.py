@@ -17,6 +17,7 @@ from asymmetry.core.io import (
     BackgroundReference,
     resolve_background_reference,
 )
+from asymmetry.core.transform.reference_scale import ReferenceExposure, ReferenceScaleRequest
 
 
 def _run(run_number: int, *, good_frames: float, level: float) -> Run:
@@ -27,7 +28,12 @@ def _run(run_number: int, *, good_frames: float, level: float) -> Run:
         run_number=run_number,
         histograms=histograms,
         metadata={"run_number": run_number},
-        grouping={"good_frames": good_frames},
+        grouping={
+            "good_frames": good_frames,
+            "reference_exposure": ReferenceExposure(good_frames, "user").to_dict()
+            if good_frames > 0
+            else ReferenceExposure().to_dict(),
+        },
     )
 
 
@@ -46,7 +52,7 @@ def test_resolve_matches_loaded_dataset_by_run_number():
     registry = [_dataset(_run(1, good_frames=1.0, level=1.0)), _dataset(reference)]
     result = resolve_background_reference(
         {"run_number": 8103, "source_file": ""},
-        sample_good_frames=2000.0,
+        sample_exposure=ReferenceExposure(2000.0, "user"),
         datasets=registry,
     )
     assert isinstance(result, BackgroundReference)
@@ -56,20 +62,14 @@ def test_resolve_matches_loaded_dataset_by_run_number():
     assert result.histograms is reference.histograms or len(result.histograms) == 4
 
 
-def test_resolve_falls_back_to_payload_frames_then_scale():
-    reference = _run(42, good_frames=0.0, level=3.0)  # no good_frames on the run
+def test_unknown_exposure_uses_unity_and_manual_remains_explicit():
+    reference = _run(42, good_frames=0.0, level=3.0)
     registry = [_dataset(reference)]
-    # sample frames unknown -> payload good_frames_* used.
-    result = resolve_background_reference(
-        {"run_number": 42, "good_frames_sample": 500.0, "good_frames_reference": 250.0},
-        sample_good_frames=None,
-        datasets=registry,
-    )
-    assert result.scale == pytest.approx(2.0)
-    # When no frames at all are resolvable, the payload's scale snapshot wins.
+    result = resolve_background_reference({"run_number": 42}, datasets=registry)
+    assert result.scale == 1
+    assert result.scale_source == "exposure_unknown"
     result2 = resolve_background_reference(
-        {"run_number": 42, "scale": 1.7},
-        sample_good_frames=None,
+        {"run_number": 42, "scale_request": {"mode": "manual", "coefficient": 1.7}},
         datasets=registry,
     )
     assert result2.scale == pytest.approx(1.7)
@@ -88,8 +88,12 @@ def test_resolve_cache_reused_across_calls(monkeypatch):
     monkeypatch.setattr("asymmetry.core.io.load_background_run", _fake_load)
     cache: dict[str, object] = {}
     payload = {"run_number": 7, "source_file": "/some/ref.nxs"}
-    first = resolve_background_reference(payload, sample_good_frames=200.0, cache=cache)
-    second = resolve_background_reference(payload, sample_good_frames=200.0, cache=cache)
+    first = resolve_background_reference(
+        payload, sample_exposure=ReferenceExposure(200.0, "user"), cache=cache
+    )
+    second = resolve_background_reference(
+        payload, sample_exposure=ReferenceExposure(200.0, "user"), cache=cache
+    )
     assert calls["n"] == 1  # second call served from cache
     assert first.scale == pytest.approx(2.0)
     assert second.scale == pytest.approx(2.0)
@@ -107,26 +111,25 @@ def test_resolve_raises_human_readable(payload, match):
         resolve_background_reference(payload, datasets=[])
 
 
-def test_resolve_does_not_mix_live_reference_with_stale_sample_snapshot():
-    """When the sample's live good_frames is unknown, the scale must come from
-    the payload snapshot ratio (same epoch), not a live reference over a stale
-    sample snapshot."""
-    reference = _run(42, good_frames=1000.0, level=3.0)  # live reference frames
-    registry = [_dataset(reference)]
+def test_resolve_does_not_mix_live_reference_with_unverified_snapshot():
+    reference = _run(42, good_frames=1000.0, level=3.0)
     result = resolve_background_reference(
         {
             "run_number": 42,
-            "good_frames_sample": 800.0,
-            "good_frames_reference": 400.0,  # snapshot ratio 2.0
+            "historical_scale": {
+                "good_frames_sample": 800,
+                "good_frames_reference": 400,
+                "exposure_origin": "unverified",
+            },
         },
-        sample_good_frames=None,  # sample live frames unknown
-        datasets=registry,
+        sample_exposure=ReferenceExposure(),
+        datasets=[_dataset(reference)],
     )
-    # Snapshot ratio 800/400 = 2.0 — NOT 800/1000 (mixed) or any live/stale mix.
-    assert result.scale == pytest.approx(2.0)
-    assert result.good_frames_sample == 800.0
-    assert result.good_frames_reference == 400.0
-    assert result.scale_source == "saved_frames"
+    assert result.scale == 1
+    assert result.scaling.sample.value is None
+    assert result.scaling.reference.value == 1000
+    assert result.deadtime_normaliser == 1000
+    assert result.scale_source == "exposure_unknown"
 
 
 def test_advisory_resolution_does_not_consume_disk_cache(monkeypatch):
@@ -167,7 +170,9 @@ def test_fourier_reference_must_cover_the_sample(monkeypatch, reference_length):
     sample.grouping = grouping
     monkeypatch.setattr(
         "asymmetry.core.io.resolve_background_reference",
-        lambda *a, **k: BackgroundReference(histograms=short_reference, scale=1.0),
+        lambda *a, **k: BackgroundReference(
+            histograms=short_reference, scaling=ReferenceScaleRequest("manual", 1.0).resolve()
+        ),
     )
 
     no_bkg = dict(grouping)
@@ -218,7 +223,9 @@ def test_fourier_grouped_path_satisfies_reference_run(monkeypatch):
 
     monkeypatch.setattr(
         "asymmetry.core.io.resolve_background_reference",
-        lambda *a, **k: BackgroundReference(histograms=reference.histograms, scale=1.0),
+        lambda *a, **k: BackgroundReference(
+            histograms=reference.histograms, scaling=ReferenceScaleRequest("manual", 1.0).resolve()
+        ),
     )
 
     # With lifetime correction and centring off, the raw grouped signal is the
@@ -245,10 +252,10 @@ def test_fourier_grouped_path_satisfies_reference_run(monkeypatch):
 @pytest.mark.parametrize("scale", [0, -1, float("nan"), "invalid"])
 def test_invalid_reference_scale_does_not_become_unity(scale):
     reference = _run(42, good_frames=1000.0, level=3.0)
-    with pytest.raises(ValueError, match="scale must be finite and positive"):
+    with pytest.raises(ValueError, match="coefficient must be finite and positive"):
         resolve_background_reference(
-            {"run_number": 42, "scale": scale},
-            sample_good_frames=None,
+            {"run_number": 42, "scale_request": {"mode": "manual", "coefficient": scale}},
+            sample_exposure=ReferenceExposure(),
             datasets=[_dataset(reference)],
         )
 
@@ -258,9 +265,8 @@ def test_fourier_reference_deadtime_uses_reference_frames(monkeypatch):
 
     reference = BackgroundReference(
         [Histogram(np.array([20 / 1.4]), 1.0)],
-        2.0,
-        good_frames_sample=10.0,
-        good_frames_reference=5.0,
+        ReferenceScaleRequest("manual", 2.0).resolve(),
+        deadtime_normaliser=5.0,
     )
     monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
     run = Run(
@@ -302,7 +308,9 @@ def test_reference_file_coefficients_are_acquired_from_the_reference():
     )
     dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=reference_run)
     reference = resolve_background_reference(
-        {"run_number": 42, "scale": 1.0}, sample_good_frames=100.0, datasets=[dataset]
+        {"run_number": 42, "scale_request": {"mode": "manual", "coefficient": 1.0}},
+        sample_exposure=ReferenceExposure(100.0, "user"),
+        datasets=[dataset],
     )
     assert reference.file_dead_time_us == (0.2, 0.2)
     actual = corrected_grouped_counts(
@@ -377,12 +385,12 @@ def test_cached_file_reference_cannot_shadow_another_loaded_run_from_same_source
     selected = resolve_background_reference(
         {"source_file": source, "run_number": 8},
         datasets=[_dataset(second)],
-        sample_good_frames=400.0,
+        sample_exposure=ReferenceExposure(400.0, "user"),
         cache=cache,
     )
     np.testing.assert_array_equal(original.histograms[0].counts, 2.0)
     np.testing.assert_array_equal(selected.histograms[0].counts, 9.0)
-    assert selected.good_frames_reference == 200.0
+    assert selected.deadtime_normaliser == 200.0
     assert selected.scale == 2.0
     repeated = resolve_background_reference(
         {"source_file": source, "run_number": "007"}, cache=cache

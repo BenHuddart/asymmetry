@@ -5,6 +5,7 @@ import pytest
 
 from asymmetry.core.io import load_background_run, resolve_background_reference, select_period
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from tests.io.test_background_reference_resolution import _dataset, _run
 from tests.io.test_period_selection import _combined_two_period
 
@@ -44,11 +45,13 @@ def test_disk_and_loaded_selected_period_agree(monkeypatch, identity_mapping):
     green = select_period(combined, 2)
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
     payload = {"source_file": combined.run.source_file, "run_number": 12345, "period_number": 2}
-    disk = resolve_background_reference(payload, sample_good_frames=40)
-    live = resolve_background_reference(payload, sample_good_frames=40, datasets=[green])
+    disk = resolve_background_reference(payload, sample_exposure=ReferenceExposure(40, "user"))
+    live = resolve_background_reference(
+        payload, sample_exposure=ReferenceExposure(40, "user"), datasets=[green]
+    )
     np.testing.assert_array_equal(disk.histograms[0].counts, green.run.histograms[0].counts)
     np.testing.assert_array_equal(disk.histograms[0].counts, live.histograms[0].counts)
-    assert disk.good_frames_reference == live.good_frames_reference == 20
+    assert disk.deadtime_normaliser == live.deadtime_normaliser == 20
     assert disk.run_number == live.run_number == 12345
     assert disk.period_number == live.period_number == 2
 
@@ -101,9 +104,10 @@ def test_released_project_encoded_reference_is_recovered_from_source_facts(monke
         "run_number": 12345,
         "period_number": 2,
         "timing": None,
+        "scale_request": {"mode": "automatic"},
     }
     assert actual.run_number == 12345
-    assert actual.good_frames_reference is None  # scale semantics stay unchanged
+    assert actual.deadtime_normaliser == 20  # DT normalisation follows the selected reference.
     np.testing.assert_array_equal(
         actual.histograms[0].counts, select_period(combined, 2).run.histograms[0].counts
     )
@@ -186,9 +190,9 @@ def test_historical_reference_shapes_round_trip(number, period, shape, tmp_path,
         request = reopened["grouping_profiles"][0]["background_policy"]["details"]["background_run"]
     combined = _combined_two_period()
     monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
-    result = resolve_background_reference(request, sample_good_frames=40)
+    result = resolve_background_reference(request, sample_exposure=ReferenceExposure(40, "user"))
     assert (result.run_number, result.period_number) == (12345, period)
-    assert result.good_frames_reference == (10 if period == 1 else 20)
+    assert result.deadtime_normaliser == (10 if period == 1 else 20)
 
 
 def test_legacy_key_is_not_divided_without_acquisition_evidence(monkeypatch):

@@ -149,7 +149,9 @@ def resolve_loaded_reference(
     return candidates[0] if candidates else None
 
 
-def refresh_reference_timing_requests(datasets, *, groupings=()) -> list[int]:
+def refresh_reference_timing_requests(
+    datasets, *, groupings=(), changed_run_numbers=()
+) -> list[int]:
     """Capture uniquely resolved live timing in runtime and authored grouping requests."""
     from copy import deepcopy
 
@@ -170,9 +172,17 @@ def refresh_reference_timing_requests(datasets, *, groupings=()) -> list[int]:
             )
         )
     ]
+    dependants = set()
+    changed_sources = [run for run in runs if run.run_number in changed_run_numbers]
     for payload, _ in requests:
         selected = resolve_loaded_reference(runs, payload, advisory=True)
         if selected is not None:
             payload["timing"] = reference_timing_request(selected.grouping)
+            if resolve_loaded_reference(changed_sources, payload, advisory=True) is not None:
+                dependants.add(id(payload))
     changed = {id(payload) for payload, previous in requests if payload.get("timing") != previous}
-    return [run.run_number for run in runs if id(run.grouping.get("background_run")) in changed]
+    return [
+        run.run_number
+        for run in runs
+        if id(run.grouping.get("background_run")) in changed | dependants
+    ]

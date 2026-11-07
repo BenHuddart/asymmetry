@@ -239,6 +239,7 @@ class GroupingPreviewPane(QWidget):
     """Debounce F/B preview reductions on workers and show explicit failures."""
 
     preview_changed = Signal()
+    reference_scales_resolved = Signal(tuple)
     preview_completed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -476,11 +477,10 @@ class GroupingPreviewPane(QWidget):
 
     def _on_finished(self, result: object) -> None:
         self._dispatch_next_after_completion()
-        if not isinstance(result, _PreviewResult):
+        if not isinstance(result, _PreviewResult) or result.generation != self._generation:
             return
-        if result.generation != self._generation:
-            return  # superseded by a newer edit
         self._state = result
+        self.reference_scales_resolved.emit(result.corrections)
         items = [
             item
             for outcome in result.corrections
@@ -568,14 +568,10 @@ class GroupingPreviewPane(QWidget):
         result: _PreviewResult,
         preserved: tuple[tuple[float, float], tuple[float, float]] | None,
     ) -> None:
-        """Solid = the full reduction, ghost = the compare.
+        """Draw the full reduction and comparison with a fixed caption.
 
-        The y-axis always follows the *solid* curve (its finite ``asymmetry ±
-        error`` range, padded ~8%) — the ghost never influences the autoscale,
-        because a deadtime-removed ghost can reach ~1e7 % (e.g. a FLAME run) and
-        would crush the solid flat. There is no legend: the fixed caption in the
-        top-left corner names both curves, at a placement independent of the
-        data, so an off-scale ghost is named too.
+        Only finite solid-curve asymmetry ± error sets y limits; uncorrected
+        comparison curves can exceed that percentage scale by many orders.
         """
         # The counts view leaves the axis logarithmic; this one is always linear.
         self._axes.set_yscale("linear")

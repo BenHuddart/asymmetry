@@ -39,6 +39,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import resolve_group_indices
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
 try:
@@ -185,6 +186,12 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
                 _write_str(entry, name, str(value))
         if good_frames is not None:
             entry.create_dataset("good_frames", data=np.float64(good_frames))
+
+        _write_str(
+            entry,
+            "asymmetry_reference_exposure",
+            json.dumps(ReferenceExposure.from_grouping(grouping).to_dict()),
+        )
 
         instrument = entry.create_group("instrument")
         _write_str(instrument, "name", metadata.get("instrument", ""))

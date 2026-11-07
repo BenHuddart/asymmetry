@@ -907,3 +907,43 @@ def test_fourier_auxiliary_cancellation_during_final_work_discards_result(
             )
             monkeypatch.setattr(mw_module, "suggest_matched_apodisation", finish)
             mainwindow._compute_apodisation_suggestion(dataset, {}, [1], None, cancel_check=check)
+
+
+@pytest.mark.parametrize("mode", ["automatic", "manual"])
+def test_reference_exposure_changes_refresh_warm_reduction_without_overwriting_manual(
+    mainwindow, mode
+):
+    from asymmetry.core.transform.reference_scale import ReferenceExposure
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    sample.grouping["reference_exposure"] = ReferenceExposure(200, "user").to_dict()
+    reference.grouping["reference_exposure"] = ReferenceExposure(100, "user").to_dict()
+    scale_request = {"mode": mode} | ({"coefficient": 7} if mode == "manual" else {})
+    sample.grouping["background_run"] = {
+        "run_number": 2,
+        "source_file": reference.source_file,
+        "period_number": 1,
+        "scale_request": scale_request,
+    }
+    datasets = [
+        MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        for run in (sample, reference)
+    ]
+    for dataset in datasets:
+        mainwindow._data_browser.add_dataset(dataset)
+    first = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    repeat = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    np.testing.assert_array_equal(first[1], repeat[1])
+    reference.grouping["reference_exposure"] = ReferenceExposure(50, "user").to_dict()
+    second = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    if mode == "automatic":
+        assert not np.array_equal(first[1], second[1])
+    else:
+        np.testing.assert_array_equal(first[1], second[1])
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 3}
+    mainwindow._invalidate_fft_after_regroup([2])
+    assert sample.grouping["background_run"]["scale_request"] == scale_request
+    assert mainwindow._resolve_background_reference(sample.grouping).scale == (
+        4 if mode == "automatic" else 7
+    )

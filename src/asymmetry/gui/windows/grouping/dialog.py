@@ -100,6 +100,7 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
@@ -1351,6 +1352,9 @@ class GroupingDialog(TimingControls, QDialog):
         self._apply_btn.setDefault(False)
         self._apply_btn.clicked.connect(self._on_apply)
         self._preview_pane.preview_changed.connect(self._update_apply_enabled)
+        self._preview_pane.reference_scales_resolved.connect(
+            self._background_section.set_scale_summaries
+        )
         self._preview_pane.preview_completed.connect(self._show_per_run_alpha)
 
         bottom_bar = QHBoxLayout()
@@ -3307,17 +3311,7 @@ class GroupingDialog(TimingControls, QDialog):
         """Fold an inline background-section edit back into the draft + preview."""
         self._background_mode = self._background_section.mode()
         if self._background_mode == "reference_run":
-            reference_grouping = (
-                self._run.grouping
-                if self._run is not None and isinstance(self._run.grouping, dict)
-                else {}
-            )
-            index = selected_period_index(reference_grouping, self._current_period_mode())
-            if index is not None:
-                reference_grouping = select_period_grouping(reference_grouping, index)
-            payload = dict(self._background_section.background_run_payload() or {})
-            payload["good_frames_sample"] = reference_grouping.get("good_frames")
-            self._background_run_payload = payload
+            self._background_run_payload = self._background_section.background_run_payload()
         self._mark_dirty()
         self._refresh_preview()
         self._refresh_alpha_staleness()
@@ -3863,7 +3857,7 @@ class GroupingDialog(TimingControls, QDialog):
                     exposure = select_period_grouping(exposure, period_index)
                 reference = resolve_background_reference(
                     payload["background_run"],
-                    sample_good_frames=good_frames(exposure, default=0.0) or None,
+                    sample_exposure=ReferenceExposure.from_grouping(exposure),
                     datasets=self._fingerprint_datasets(),
                     allow_file=False,
                 )
@@ -4858,13 +4852,9 @@ class GroupingDialog(TimingControls, QDialog):
         payload = grouping.get("background_run")
         if not isinstance(payload, dict):
             return None
-        try:
-            sample_frames = float(grouping.get("good_frames", 0.0)) or None
-        except (TypeError, ValueError):
-            sample_frames = None
         reference = resolve_background_reference(
             payload,
-            sample_good_frames=sample_frames,
+            sample_exposure=ReferenceExposure.from_grouping(grouping),
             datasets=self._fingerprint_datasets(),
             cache=self._background_run_cache,
         )

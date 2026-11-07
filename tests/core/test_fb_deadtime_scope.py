@@ -9,6 +9,7 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 
 
 def reduce_counts(arrays, table, *, first=0, last=None, backward=1, background=False, mode="file"):
@@ -228,8 +229,8 @@ def test_reference_uses_own_exposure_coefficients_and_selected_samples(required_
     ]
     reference = BackgroundReference(
         [Histogram(np.array(a, dtype=float), 1) for a in ([100, 2, 2], [100, 1, 1], [100] * 3)],
-        scale=2,
-        good_frames_reference=50,
+        scaling=ReferenceScaleRequest("manual", 2).resolve(),
+        deadtime_normaliser=50,
         file_dead_time_us=(0.5, None if required_missing else -0.1, None),
     )
     grouping = {
@@ -470,8 +471,8 @@ def test_combined_period_reference_cohort_skips_only_required_missing_members(re
     references = {
         frames: BackgroundReference(
             reference_histograms,
-            1.0,
-            good_frames_reference=frames,
+            ReferenceScaleRequest("manual", 1.0).resolve(),
+            deadtime_normaliser=frames,
             file_dead_time_us=(0.1, None if required_missing and frames == 200 else -0.1, None),
         )
         for frames in (100, 200)

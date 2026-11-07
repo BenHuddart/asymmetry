@@ -3,7 +3,7 @@
 Periods use 1-based public numbering and 0-based held-array indices. Red is
 period 1; green is period 2. Cached curves do not supply raw histograms for
 an automatic timing search. Selection preserves acquired calibration and
-exposure; authored corrections remain separate from those acquisition facts.
+exposure independently of authored corrections.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.frame_exposure import summed_period_exposures
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.deadtime import DeadtimeCorrectionError, file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
@@ -27,6 +28,7 @@ from asymmetry.core.transform.integral import (
     integrate_curve,
 )
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -349,6 +351,14 @@ def select_period_grouping(grouping: dict, period_index: int) -> dict:
         ):
             period_grouping.pop(key, None)
 
+    period_grouping["reference_exposure"] = (
+        grouping["period_reference_exposure"][period_index]
+        if "period_reference_exposure" in grouping
+        else grouping.get("reference_exposure", ReferenceExposure().to_dict())
+        if period_index == 0
+        else ReferenceExposure(period_number=period_index + 1).to_dict()
+    )
+
     period_good_frames = grouping.get("period_good_frames")
     if isinstance(period_good_frames, list):
         period_grouping.pop("good_frames", None)
@@ -635,22 +645,10 @@ def combine_mapped_periods(
     source_run_number: int | None = None,
     source_file: str = "",
 ) -> MuonDataset:
-    """Build one red/green dataset from per-period datasets and a mapping.
+    """Sum acquired periods into red/green sets without exposure scaling.
 
-    ``period_datasets`` are the loader's per-period datasets for one run
-    (3+-period files load as such a list); ``mapping`` sends each period to
-    red, green or ignore (WiMDA's period-mapping form). Counts and good
-    frames are summed per set at the count level — periods of one run share
-    beam exposure bookkeeping exactly, so no scaling is involved (unlike
-    background-run subtraction). The result carries the standard two-period
-    structure (``period_histograms``, ``period_good_frames``,
-    ``period_dead_time_us``, ``period_mode``) that the RG reduction and the
-    grouping dialog already understand; with no green periods the result is
-    a single-set run (G±R modes do not apply). The mapping is recorded on
-    the grouping as ``period_mapping`` for provenance.
-
-    The trivial mapping ``{1: red, 2: green}`` of a two-period run
-    reproduces the loader's combined dataset structure.
+    Counts, DT normalisers, and evidenced exposures sum within each set.
+    Timing follows the first contributor; the mapping remains provenance.
     """
     runs = [ds.run for ds in period_datasets]
     if any(run is None or not run.histograms for run in runs):
@@ -661,9 +659,7 @@ def combine_mapped_periods(
     red_periods = _periods_for_target(normalised, "red")
     green_periods = _periods_for_target(normalised, "green")
 
-    # Counts are summed fresh by sum_period_histograms (it never mutates its
-    # inputs), so there is no need to clone each period before summing — only
-    # the final Run gets an independent copy below.
+    # Summation preserves the input arrays; only the returned Run owns new counts.
     red_histograms = _sum_period_set(runs, red_periods)
     sets: list[list[Histogram]] = [red_histograms]
     frames = [_sum_period_good_frames(runs, red_periods)]
@@ -698,6 +694,9 @@ def combine_mapped_periods(
         for ps in (red_periods, green_periods)
         if ps
     ]
+    exposures = summed_period_exposures(runs, (red_periods, green_periods))
+    grouping["period_reference_exposure"] = exposures
+    grouping["reference_exposure"] = exposures[0]
     grouping["period_good_frames"] = frames
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)

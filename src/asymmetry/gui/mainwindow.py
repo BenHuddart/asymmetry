@@ -224,7 +224,6 @@ from asymmetry.core.transform import (
     differentiate_scan,
     effective_detector_t0_bins,
     effective_group_indices,
-    good_frames,
     reduce_period_asymmetry,
     resolve_background_mode,
     resolve_facility,
@@ -247,6 +246,7 @@ from asymmetry.core.transform.grouping import InvalidGroupingError
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
     ROTATED_PROJECTIONS,
@@ -4083,10 +4083,7 @@ class MainWindow(QMainWindow):
                         )
                         if heal_note:
                             self._log_panel.log(heal_note, tag="grouping")
-                        # good_frames and its period companions are measured
-                        # per-run normalisers; they must come from each dataset's
-                        # own loader metadata, never be inherited from the
-                        # template run, or the dead-time correction diverges.
+                        # Acquisition normalisers and exposures never follow a template.
                         for per_run_key in self._PER_RUN_NORMALISER_KEYS:
                             grouping_payload.pop(per_run_key, None)
                         active_axis = None
@@ -5106,11 +5103,10 @@ class MainWindow(QMainWindow):
 
     def _extract_grouping_overrides(self, dataset) -> dict | None:
         """Return grouping settings that should persist in project files."""
-        run = getattr(dataset, "run", None)
-        grouping = getattr(run, "grouping", None)
-        if not isinstance(grouping, dict):
+        run = dataset.run
+        if run is None:
             return None
-
+        grouping = run.grouping
         groups_raw = grouping.get("groups")
         if not isinstance(groups_raw, dict):
             return None
@@ -5126,12 +5122,7 @@ class MainWindow(QMainWindow):
         if not groups:
             return None
 
-        t0_default = 0
-        if run is not None and getattr(run, "histograms", None):
-            try:
-                t0_default = int(run.histograms[0].t0_bin)
-            except (TypeError, ValueError, IndexError):
-                t0_default = 0
+        t0_default = int(run.histograms[0].t0_bin) if run.histograms else 0
 
         try:
             t0_bin = int(grouping.get("t0_bin", t0_default))
@@ -5233,8 +5224,9 @@ class MainWindow(QMainWindow):
                 payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
             elif isinstance(grouping.get("deadtime_loaded_us"), list):
                 payload["dead_time_us"] = list(grouping.get("deadtime_loaded_us", []))
-        if "good_frames" in grouping:
-            payload["good_frames"] = grouping.get("good_frames")
+        for key in ("good_frames", "reference_exposure", "period_reference_exposure"):
+            if key in grouping:
+                payload[key] = grouping[key]
         for key in (
             "background_ranges",
             "background_range",
@@ -5278,10 +5270,11 @@ class MainWindow(QMainWindow):
         setattr(dataset, "_grouping_source_arrays_cache", cached)
         return cached
 
-    # Frame counts normalise raw N·τ/(Δt·F); they and their period companions
-    # belong to the acquisition and cannot be inherited from a grouping template.
+    # Acquisition facts preserve the units in N·τ/(Δt·F) and reference scaling.
     _PER_RUN_NORMALISER_KEYS = (
         "good_frames",
+        "reference_exposure",
+        "period_reference_exposure",
         "period_good_frames",
         "period_dead_time_us",
         "period_histograms",
@@ -5796,6 +5789,9 @@ class MainWindow(QMainWindow):
             reference_content,
             reference.timing if reference is not None else None,
             reference.resolved_timing if reference is not None else None,
+            (reference.scaling, reference.deadtime_normaliser, reference.file_dead_time_us)
+            if reference is not None
+            else None,
             binning,
             forward_gid,
             backward_gid,
@@ -5879,7 +5875,7 @@ class MainWindow(QMainWindow):
         """Resolve live source facts and prepare timing without GUI-thread searches."""
         reference = resolve_background_reference(
             grouping.get("background_run"),
-            sample_good_frames=good_frames(grouping, default=0.0) or None,
+            sample_exposure=ReferenceExposure.from_grouping(grouping),
             datasets=self._data_browser.get_all_datasets(),
             cache=self._background_run_cache,
         )
@@ -8895,7 +8891,11 @@ class MainWindow(QMainWindow):
         """Discard changed reductions and reference dependants before spectral reuse."""
         run_numbers = sorted(
             set(run_numbers)
-            | set(refresh_reference_timing_requests(self._data_browser.get_all_datasets()))
+            | set(
+                refresh_reference_timing_requests(
+                    self._data_browser.get_all_datasets(), changed_run_numbers=run_numbers
+                )
+            )
         )
         cache = self._frequency_cache(RepresentationType.FREQ_FFT)
         pending, failures = self._ensure_recompute_tracking()
@@ -16145,14 +16145,9 @@ class MainWindow(QMainWindow):
         )
 
     def _grouped_time_domain_available(self, dataset: MuonDataset | None = None) -> bool:
-        """Cheap probe: can the active dataset produce grouped time-domain views?
+        """Probe grouped availability without building count arrays during mouse drags.
 
-        Used everywhere only the yes/no answer matters (toolbar button enable
-        state, fit-dock mode) — it runs on every selection update, including
-        per-mouse-motion fit-range drags, where building the full per-group
-        arrays via :meth:`_grouped_time_domain_display_datasets` is far too
-        expensive. The probe reads ``dataset.run`` directly: the rebinned
-        analysis copy shares the same run, which is all the build consumes.
+        The rebinned analysis copy shares the source Run used for the reduction.
         """
         source = self._current_dataset if dataset is None else dataset
         return grouped_time_domain_available(source)

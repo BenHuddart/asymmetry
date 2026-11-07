@@ -60,8 +60,8 @@ results. Each ``CorrectionOutcome`` records its name, requested mode, status
 Applied outcomes carry the effective settings and uncertainty convention:
 levels and errors, effective estimation ranges, tail-fit diagnostics, or the
 reference identity, frame counts, scale, and detector alignment. Reference
-scaling records whether it uses live frame counts, saved frame counts, an
-explicit scale, or a unity assumption when exposure metadata is absent. These records
+scaling records whether it uses evidenced acquisition exposures, an authored
+Manual coefficient, or a visible unity assumption when exposure is unknown. These records
 are immutable; ``CorrectionOutcomes.to_dict()`` exports an independent JSON
 snapshot. ``complete`` and ``require_complete()`` describe calculation acceptance,
 including warned ``skipped`` File deadtime and automatic-tail outcomes. They reject unavailable
@@ -302,24 +302,74 @@ source and number even when optional metadata omits those fields.
 WiMDA 1.326 disables same-run **FileBG**. That behaviour does not establish
 an equivalent external-reference operation or error policy in Mantid or musrfit.
 
-Subtracts a designated reference run — an empty sample holder, a silver
-plate, or the laser-off partner of a photo-excitation measurement — from
-the data, scaled by the ratio of good frames:
+A declared count reference is subtracted using a fixed coefficient :math:`s`:
 
 .. math::
 
-   N_{\text{corr}}(t) = N(t) - \frac{F_{\text{sample}}}{F_{\text{ref}}}\,
-   N_{\text{ref}}(t),
-   \qquad
-   \sigma^2 = N + \left(\frac{F_{\text{sample}}}{F_{\text{ref}}}\right)^2
-   N_{\text{ref}}.
+   N_{\text{corr}}(t) = N_{\text{sample}}(t) - s N_{\text{ref}}(t),
+   \qquad V_{\text{corr}} = V_{\text{sample}} + s^2 V_{\text{ref}}.
 
-Good frames measure beam exposure, so the ratio puts both runs on the same
-exposure footing. The reference is chosen from the loaded datasets (or
-browsed from disk), recorded with the grouping, and re-resolved when the
-project is reopened. File deadtime uses each acquisition's own coefficient
-table and exposure; Manual uses the shared authored coefficients with each
-acquisition's own exposure.
+The supplied variances are retained, including for negative corrected counts.
+This expression assumes independent measurements and treats the chosen scale as
+exact. It does not include uncertainty in an estimated coefficient or covariance
+between results sharing one reference. Exposure alone does not calibrate the
+physical holder fraction or prove that the reference describes counts to remove.
+
+In the **Background** section choose **Background run…**, then **Choose run…**.
+**Reference scale** offers **Automatic** and **Manual**:
+
+* **Automatic** uses the sample/reference ratio of evidenced, compatible exposure
+  counts from the selected acquired periods. For example, 200 and 100 measured
+  good frames give :math:`s=2`. When either exposure is unknown or the units are
+  incompatible, it applies :math:`s=1` and displays
+  "Exposure unknown; scale 1 assumed". This is an applied correction with an
+  explicit assumption, rather than a skipped correction.
+* **Manual** uses **Coefficient**, a finite positive multiplier of the reference
+  counts. A coefficient of seven remains seven regardless of measured frames,
+  saved snapshots, period selection, or a live reference timing edit. Invalid
+  text remains editable; the preview explains
+  "Manual reference coefficient must be finite and positive".
+
+PSI BIN/MDU and supported ROOT whole-run deadtime normalisation of one is not
+measured pulse exposure. A genuinely measured numeric good-frame count of one
+remains measured. JSON booleans are invalid as exposure evidence or Manual
+coefficients; they cannot stand for numeric one or zero. Untagged frame-like numbers, duration, event totals, monitor fields,
+beam-current metadata, and instrument labels cannot establish subtraction
+exposure. File exposure origin travels with selected periods. A scalar run total
+broadcast across several periods for deadtime cannot establish each period's
+subtraction exposure. See :doc:`/reference/loading_data`.
+
+The same scale owner serves preview, final reduction, alpha calibration, and
+spectral preparation. Applied/API/export provenance records the request, actual
+coefficient, scale source, exposure facts, and fixed-scale uncertainty convention.
+Profiles and per-run overrides retain the authored choice through project reopen;
+per-run acquisition facts are not inherited from another sample.
+
+For scripted reduction, set the reference declaration in the grouping:
+
+.. code-block:: python
+
+   grouping["background_run"] = {
+       "source_file": "reference.nxs",
+       "run_number": 42,
+       "period_number": 1,
+       "scale_request": {"mode": "manual", "coefficient": 7.0},
+   }
+
+Use ``{"mode": "automatic"}`` for exposure scaling. Bare ``scale`` or
+``good_frames_*`` request fields are rejected; use ``scale_request`` to declare
+intent. Project loading performs the historical conversion once. At the core resolver boundary,
+``sample_exposure=ReferenceExposure.from_grouping(sample.grouping)`` carries
+exposure evidence; a bare deadtime denominator does not. Acquired facts are
+reloaded from the selected source. Historical frame snapshots remain unverified
+provenance and are never combined with one live side. Derived combined or
+resampled count datasets do not inherit the first contributor's measured exposure;
+Automatic uses the visible unknown-exposure fallback for these datasets.
+
+File deadtime uses each acquisition's own coefficient table and deadtime
+normaliser. Manual deadtime uses the shared authored coefficients with each
+acquisition's own normaliser. These values remain separate from subtraction
+exposure and from **Reference scale**.
 
 Sample and reference timing resolve independently using **From file**, **Manual**,
 or **Auto-detect**. A sample timing request never changes the reference anchors.
@@ -354,13 +404,15 @@ result. Verified unchanged source/request inputs reuse the existing cache.
    :alt: Incompatible native reference grid keeps the preview incomplete and Apply disabled.
    :width: 100%
 
-*When to use this.* Separating holder/mount signal when its *shape* (not
-just a flat rate) must be removed — the reference subtraction removes the
-full time-dependent spectrum of the unwanted component, which neither
-constant mode can do. The cost is doubled statistical noise where the
-reference dominates: the errors grow by the second term above. For
-period-mode data (light on/off within one run), prefer period mapping —
-each acquired period retains its own exposure; those exposures need not be equal.
+Reference subtraction removes a time-dependent count spectrum when its shape
+and chosen scale represent the actual contribution in the sample measurement.
+A holder polarisation can instead be represented by an additive fit component.
+For period differences, each acquired period retains its own exposure; those
+exposures need not be equal.
+
+.. image:: /_generated/screenshots/grouping_reference_scale.png
+   :alt: Automatic reference scaling shows its unknown-exposure unity assumption while Apply remains enabled.
+   :width: 100%
 
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -376,9 +428,20 @@ this independent t0 alignment. It is not an equivalent automatic Muon reference
 GUI workflow. musrfit run addition is a distinct operation and does not establish
 external-reference subtraction behaviour.
 
-WiMDA's File BG subtracts the raw reference counts from deadtime-corrected
-sample counts and leaves the error bars untouched; both are corrected here
-(study record: divergences D6, D7).
+WiMDA 1.326 **FileBG** provides the measured-frame ratio and whole-run
+normalisation precedent. Its bounded 200/100-frame, 200/30-count example gives
+140 counts with deadtime off. Asymmetry's explicit Manual choice overrides that
+ratio. Unknown-exposure labelling is an Asymmetry assumption; no equivalent
+WiMDA label is claimed. Mantid 6.16.1 `Scale
+<https://docs.mantidproject.org/v6.16.1/algorithms/Scale-v1.html>`_ supplies an
+explicit authored factor before generic **Minus**, rather than an equivalent
+automatic Muon GUI reference workflow. No musrfit external-reference scale policy
+is established by these comparisons.
+
+WiMDA's matched **FileBG** check subtracts raw reference counts from a
+deadtime-corrected sample and retains the sample error bars. Asymmetry corrects
+both independent acquisitions first and propagates both supplied variances.
+See :doc:`/explanation/comparison` for versions, inputs, settings, and tolerances.
 
 .. _background-count-uncertainty:
 
@@ -427,9 +490,9 @@ zero variance.
      - Expected-information variance and the linearised likelihood influence
        below; covariance is zero outside the fit window.
    * - Background run
-     - :math:`r_j+s^2R_j`
-     - None; reference bins are independent and frame ratio :math:`s` is
-       treated as known.
+     - Supplied :math:`v_j+s^2V_j`
+     - None; reference bins are independent and the fixed coefficient :math:`s`
+       is treated as known.
 
 For the tail fit, let :math:`\mu_j` be its fitted expected count,
 :math:`J_j=\partial\mu_j/\partial(p_1,p_2)` and

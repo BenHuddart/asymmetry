@@ -94,10 +94,18 @@ class IncompletePreviewScenario(Scenario):
             raise RuntimeError("Correction preview acceptance does not match its outcome")
         if not pane._incomplete_banner.text():
             raise RuntimeError("Correction warning must remain visible")
-        if self.reference_width is not None and "compatible" not in pane._incomplete_banner.text():
+        if (
+            self.name == "grouping_reference_grid"
+            and "compatible" not in pane._incomplete_banner.text()
+        ):
             raise RuntimeError(
                 f"Incompatible reference grid must explain the incomplete preview: {pane._incomplete_banner.text()}"
             )
+        if (
+            self.name == "grouping_reference_scale"
+            and "Exposure unknown; scale 1 assumed" not in pane._incomplete_banner.text()
+        ):
+            raise RuntimeError("Unknown reference exposure must be visibly labelled")
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
         if not dialog.grab().save(str(output), "PNG"):
@@ -184,3 +192,22 @@ class ExplicitBackgroundRangeScenario(Scenario):
 
 
 register(ExplicitBackgroundRangeScenario())
+
+
+class ReferenceScaleScenario(IncompletePreviewScenario):
+    name = "grouping_reference_scale"
+    description = "Automatic reference scale with unknown exposure and enabled Apply."
+    complete = True
+    reference_width = 0.02
+    correction_settings = {
+        "background_correction": True,
+        "background_mode": "reference_run",
+        "background_run": {
+            "run_number": 9999,
+            "period_number": 1,
+            "scale_request": {"mode": "automatic"},
+        },
+    }
+
+
+register(ReferenceScaleScenario())
