@@ -8,6 +8,7 @@ from asymmetry.core.fourier.group_preparation import prepare_group_counts
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 
 
 def timing_runs():
@@ -54,7 +55,12 @@ def reduce_reference(sample, reference, consumer, monkeypatch):
 @pytest.mark.parametrize("consumer", ["fb", "spectral"])
 def test_noop_sample_timing_cannot_shift_reference(consumer, monkeypatch):
     sample, run = timing_runs()
-    reference = BackgroundReference(run.histograms, 1.0, run_number=2, source_file=run.source_file)
+    reference = BackgroundReference(
+        run.histograms,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        run_number=2,
+        source_file=run.source_file,
+    )
     expected = 188.0 - np.arange(32)
     np.testing.assert_array_equal(
         reduce_reference(sample, reference, consumer, monkeypatch), expected
@@ -84,7 +90,12 @@ def test_subtraction_rejects_incompatible_native_widths(consumer, monkeypatch):
     sample, run = timing_runs()
     for hist in run.histograms:
         hist.bin_width = 0.032
-    reference = BackgroundReference(run.histograms, 1.0, run_number=2, source_file=run.source_file)
+    reference = BackgroundReference(
+        run.histograms,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        run_number=2,
+        source_file=run.source_file,
+    )
     with pytest.raises(ValueError, match="compatible.*grid"):
         reduce_reference(sample, reference, consumer, monkeypatch)
 
@@ -98,7 +109,12 @@ def test_native_width_precision_is_one_ulp(consumer, steps, accepted, monkeypatc
         width = np.nextafter(width, np.inf)
     for hist in run.histograms:
         hist.bin_width = width
-    reference = BackgroundReference(run.histograms, 1.0, run_number=2, source_file=run.source_file)
+    reference = BackgroundReference(
+        run.histograms,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        run_number=2,
+        source_file=run.source_file,
+    )
     if accepted:
         np.testing.assert_array_equal(
             reduce_reference(sample, reference, consumer, monkeypatch), 188.0 - np.arange(32)
@@ -121,7 +137,7 @@ def test_reference_alignment_retains_cross_source_fractional_residuals():
     run.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 2}
     reference = BackgroundReference(
         run.histograms,
-        1.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
         timing=ReferenceTiming.from_grouping(run.histograms, run.grouping, run.metadata),
     )
     crop = resolve_alignment(sample.histograms, [0], [1], detector_t0_bins=[3, 3])
@@ -157,7 +173,12 @@ def test_reference_uses_own_timing_policy(mode, first, consumer, monkeypatch):
 def test_unused_incompatible_reference_spectator_does_not_block(consumer, monkeypatch):
     sample, run = timing_runs()
     run.histograms.append(Histogram(np.ones(3), 0.123, t0_bin=1))
-    reference = BackgroundReference(run.histograms, 1.0, run_number=2, source_file=run.source_file)
+    reference = BackgroundReference(
+        run.histograms,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        run_number=2,
+        source_file=run.source_file,
+    )
     np.testing.assert_array_equal(
         reduce_reference(sample, reference, consumer, monkeypatch), 188.0 - np.arange(32)
     )
@@ -205,7 +226,7 @@ def test_declared_auto_failure_never_falls_back_to_file(consumer, monkeypatch):
 )
 def test_prepared_reference_grid_edits_invalidate_alignment(field, value, monkeypatch):
     sample, run = timing_runs()
-    reference = BackgroundReference(run.histograms, 1.0)
+    reference = BackgroundReference(run.histograms, ReferenceScaleRequest("manual", 1.0).resolve())
     monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
     prepared = prepare_group_counts(sample, [1], use_deadtime=False)
     prepared.require_request(sample, 1, False, None, None)
@@ -217,7 +238,9 @@ def test_prepared_reference_grid_edits_invalidate_alignment(field, value, monkey
 @pytest.mark.parametrize("consumer", ["fb", "spectral"])
 def test_missing_reference_detector_is_contextual_error(consumer, monkeypatch):
     sample, run = timing_runs()
-    reference = BackgroundReference(run.histograms[:1], 1.0)
+    reference = BackgroundReference(
+        run.histograms[:1], ReferenceScaleRequest("manual", 1.0).resolve()
+    )
     with pytest.raises(ValueError, match="Detector.*2.*not exist"):
         if consumer == "spectral":
             monkeypatch.setattr(
@@ -286,7 +309,9 @@ def test_automatic_alpha_uses_the_same_reference_timing():
 
     sample, run = timing_runs()
     reference = BackgroundReference(
-        run.histograms, 1.0, timing=ReferenceTiming(mode="manual", offset_bins=2)
+        run.histograms,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
+        timing=ReferenceTiming(mode="manual", offset_bins=2),
     )
     profile = GroupingProfile(
         name="sample",
@@ -344,7 +369,7 @@ def test_resolved_reference_snapshot_cannot_supply_unresolved_new_cohort(monkeyp
     grouping = timing.resolve(run.histograms, [[0], [1]])
     reference = BackgroundReference(
         run.histograms,
-        1.0,
+        ReferenceScaleRequest("manual", 1.0).resolve(),
         timing=timing,
         resolved_timing=ResolvedReferenceTiming.from_grouping(run.histograms, grouping),
     )

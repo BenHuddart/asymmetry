@@ -699,6 +699,21 @@ Fourier/MaxEnt preparation. Asymmetry also checks compatible selected native bin
 widths and required reference support before subtraction. It neither resamples
 counts nor restricts raw file loading.
 
+Asymmetry offers **Automatic** and **Manual** reference scaling. Automatic uses
+compatible evidenced exposure ratios, or visibly assumes one when exposure is
+unknown. Whole-run PSI/ROOT deadtime normalisation one is not measured pulse
+exposure. Manual uses its authored positive coefficient regardless of metadata.
+WiMDA 1.326's bounded FileBG check uses sample/reference 200/100 good frames,
+200/30 counts per native 0.016 μs bin, one detector in group 1, bunch one,
+deadtime off, and Auto/Manual BG off. The exported 140 counts agree with the
+ratio-two arithmetic within 0.00051 counts (text precision). This does not
+establish a physical sample/holder calibration or an equivalent unknown-exposure
+label. Mantid 6.16.1 generic `Scale
+<https://docs.mantidproject.org/v6.16.1/algorithms/Scale-v1.html>`_ expresses an
+explicit coefficient; no corresponding automatic Muon GUI or musrfit FileBG
+scale workflow is claimed. Fixed-scale independent variance excludes
+estimated-scale and shared-reference cross-result covariance.
+
 WiMDA 1.326 **FileBG** uses a shared active channel shift. The synthetic NeXus
 check uses sample counts 200 per bin with t0 zero, reference counts
 ``10 + rawbin`` with file t0 zero or two bins, 0.016 μs native width, equal

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Add Automatic and Manual reference scaling, preserving authored coefficients and
+  visibly assuming unity when measured exposure is unknown, separately from deadtime.
+
 - Save current live reference timing in profiles and run overrides, including
   number-only selections, and honour cancellation during Fourier preparation.
 

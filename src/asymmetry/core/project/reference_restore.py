@@ -72,3 +72,30 @@ def complete_reference_restore(payload: dict, run: Run) -> None:
         selected = restore_reference_selection(payload, run)
         payload.clear()
         payload.update(selected)
+
+
+def migrate_reference_scale_declarations(value):
+    """Separate historical fallback snapshots from explicit authored scale intent."""
+    from math import isfinite
+
+    if isinstance(value, list):
+        return [migrate_reference_scale_declarations(child) for child in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: migrate_reference_scale_declarations(child) for key, child in value.items()}
+    payload = result.get("background_run")
+    if isinstance(payload, dict) and "scale_request" not in payload:
+        fields = ("scale", "good_frames_sample", "good_frames_reference")
+        historical = {key: payload.pop(key) for key in fields if key in payload}
+        request = {"mode": "automatic"}
+        if set(historical) == {"scale"}:
+            try:
+                coefficient = float(historical["scale"])
+            except (TypeError, ValueError, OverflowError):
+                coefficient = float("nan")
+            if isfinite(coefficient) and coefficient > 0:
+                request = {"mode": "manual", "coefficient": coefficient}
+        payload["scale_request"] = request
+        if historical:
+            payload["historical_scale"] = historical | {"exposure_origin": "unverified"}
+    return result

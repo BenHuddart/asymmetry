@@ -14,6 +14,7 @@ from asymmetry.core.transform.fb_counts import (
     good_window,
 )
 from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 
 
 def _counts(**overrides) -> ForwardBackwardCounts:
@@ -170,7 +171,9 @@ def test_reference_must_cover_the_sample_aligned_grid(reference_length: int) -> 
         use_deadtime=False,
         deadtime_mode="off",
         use_background=True,
-        reference_resolver=lambda _grouping: BackgroundReference(reference, 2.0),
+        reference_resolver=lambda _grouping: BackgroundReference(
+            reference, ReferenceScaleRequest("manual", 2.0).resolve()
+        ),
     )
     if reference_length < 10:
         with pytest.raises(

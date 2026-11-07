@@ -25,6 +25,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
+from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
@@ -364,24 +365,7 @@ class NexusLoader(BaseLoader):
             self._read_optional(h_data, "grouping", default=[]),
             dtype=np.int64,
         )
-        good_frames_values = np.asarray(
-            self._read_optional(entry, "good_frames", default=[]),
-            dtype=np.float64,
-        )
-        if good_frames_values.size == 0:
-            good_frames_values = np.asarray(
-                self._read_optional(entry, "goodfrm", default=[]),
-                dtype=np.float64,
-            )
-        if good_frames_values.size == 0:
-            good_frames_values = np.asarray(
-                self._read_optional(
-                    self._read_optional(entry, "periods"), "good_frames", default=[]
-                ),
-                dtype=np.float64,
-            )
-        if good_frames_values.size == 0:
-            good_frames_values = self._good_frames_from_beam(entry)
+        frame_metadata = read_nexus_frames(entry, self._read_optional, legacy=True)
         dead_time_values = np.asarray(
             self._read_optional(h_data, "dead_time", default=[]),
             dtype=np.float64,
@@ -479,7 +463,7 @@ class NexusLoader(BaseLoader):
             bin_width=bin_width,
             decodes=decodes,
             grouping_array=grouping_array,
-            good_frames_values=good_frames_values,
+            frame_metadata=frame_metadata,
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
             run_number=run_number,
@@ -498,24 +482,7 @@ class NexusLoader(BaseLoader):
         grouping_array = np.asarray(
             self._read_optional(detector, "grouping", default=[]), dtype=np.int64
         )
-        good_frames_values = np.asarray(
-            self._read_optional(entry, "good_frames", default=[]),
-            dtype=np.float64,
-        )
-        if good_frames_values.size == 0:
-            good_frames_values = np.asarray(
-                self._read_optional(
-                    self._read_optional(entry, "periods"), "good_frames", default=[]
-                ),
-                dtype=np.float64,
-            )
-        if good_frames_values.size == 0:
-            good_frames_values = np.asarray(
-                self._read_optional(entry, "goodfrm", default=[]),
-                dtype=np.float64,
-            )
-        if good_frames_values.size == 0:
-            good_frames_values = self._good_frames_from_beam(entry)
+        frame_metadata = read_nexus_frames(entry, self._read_optional, legacy=False)
         dead_time_values = np.asarray([], dtype=np.float64)
         for dead_time_key in ("dead_time", "deadtime", "deadtimes"):
             node = detector.get(dead_time_key)
@@ -621,37 +588,13 @@ class NexusLoader(BaseLoader):
             bin_width=bin_width,
             decodes=decodes,
             grouping_array=grouping_array,
-            good_frames_values=good_frames_values,
+            frame_metadata=frame_metadata,
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
             run_number=run_number,
             good_windows=good_windows,
             source_file=source_file,
         )
-
-    def _good_frames_from_beam(self, entry: Any) -> np.ndarray:
-        """Good-frame count(s) from ``instrument/beam``.
-
-        Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
-        do not carry a top-level ``good_frames``/``goodfrm``; the authoritative
-        good-frame count lives under ``instrument/beam`` instead. Prefer the
-        per-period arrays so multi-period normalisation stays correct —
-        ``frames_period_daq`` first, one entry per period the file holds
-        histograms for, because ``frames_period`` counts the DAE's periods and a
-        HiFi red/green run cycles four of them (ramp up, field on, ramp down,
-        field off: ``[0, 15000, 0, 15001]``) into two data periods — then fall
-        back to the run totals (``frames_good`` / ``frames``).
-
-        The count is the acquisition normalisation for detector deadtime.
-        """
-        beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
-        if beam is None:
-            return np.asarray([], dtype=np.float64)
-        for key in ("frames_period_daq", "frames_period", "frames_good", "frames"):
-            values = np.asarray(self._read_optional(beam, key, default=[]), dtype=np.float64)
-            if values.size:
-                return values
-        return np.asarray([], dtype=np.float64)
 
     def _data_periods(self, entry: Any, n_periods: int) -> list[int]:
         """The DAE period numbers of the file's *n_periods* data periods, in order.
@@ -674,7 +617,7 @@ class NexusLoader(BaseLoader):
         bin_width: float,
         decodes: list[T0Decode],
         grouping_array: np.ndarray,
-        good_frames_values: np.ndarray,
+        frame_metadata: NexusFrames,
         dead_time_values: np.ndarray,
         metadata_base: dict[str, Any],
         run_number: int,
@@ -691,10 +634,11 @@ class NexusLoader(BaseLoader):
             n_detectors=counts_periods[0].shape[0],
         )
         good_frames_periods = self._split_period_scalars(
-            good_frames_values,
+            frame_metadata.values,
             n_periods=n_periods,
         )
 
+        exposures = frame_metadata.exposures(n_periods)
         for period_idx, period_counts in enumerate(counts_periods, start=1):
             if period_counts.ndim != 2:
                 raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
@@ -767,6 +711,7 @@ class NexusLoader(BaseLoader):
                     ).tolist()
                 ],
             }
+            run_grouping["reference_exposure"] = exposures[period_idx - 1]
             run_grouping["deadtime_file_us"] = list(run_grouping["dead_time_us"])
             if good_frames_periods[period_idx - 1] is not None:
                 run_grouping["good_frames"] = good_frames_periods[period_idx - 1]

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
 pytestmark = [pytest.mark.gui, pytest.mark.usefixtures("qapp")]
@@ -28,6 +29,7 @@ def _dataset(
         "first_good_bin": 12,
         "last_good_bin": 90,
         "good_frames": frames,
+        "reference_exposure": ReferenceExposure(frames, "user").to_dict(),
         "t0_bin": 10,
     }
     hs = [
@@ -257,3 +259,16 @@ def test_signed_subtract_restores_via_add_combined_dataset():
     assert crn is not None
     assert panel._combined_methods[crn] == "subtract_signed"
     assert panel.get_dataset(crn).metadata["combination"]["method"] == "subtract_signed"
+
+
+def test_subtract_reference_unknown_exposure_uses_visible_unity():
+    panel = DataBrowserPanel()
+    for number, frames in ((401, 1000), (402, 2000)):
+        dataset = _dataset(number, frames=frames, seed=number)
+        dataset.run.grouping.pop("reference_exposure")
+        panel.add_dataset(dataset)
+    number = panel.add_combined_dataset([401, 402], sign=-1, combined_run_number=-1)
+    result = panel.get_dataset(number)
+    assert result.metadata["combination"]["reference_scale"] == 1
+    assert result.metadata["reference_scaling"]["source"] == "exposure_unknown"
+    assert result.metadata["reference_scale_summary"] == "Exposure unknown; scale 1 assumed"

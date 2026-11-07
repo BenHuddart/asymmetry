@@ -1,17 +1,9 @@
 """Project-level named detector-grouping profiles.
 
-Historically every :class:`~asymmetry.core.data.dataset.Run` carried a full
-``run.grouping`` payload dict — the union of *shareable* analysis choices (which
-detectors form the forward/backward groups, the balance ``alpha``, the deadtime
-and background modes) and *per-run, file-derived* facts (the run's own
-``t0_bin``, good-bin window, per-detector file deadtime values, good-frame
-count, period histograms). Two runs from the same instrument analysed the same
-way still each stored a complete copy, so an alpha or good-bin edit had to be
-broadcast run-by-run and could silently drift apart.
-
-This module introduces **grouping profiles**: a :class:`GroupingProfile` holds
-only the shareable settings, is named and owned by the project, and applies to
-every run whose *fingerprint* — ``(instrument name, histogram count)`` — matches.
+A run's grouping combines shareable analysis choices with its own acquisition
+facts: timing, good-bin windows, deadtime normalisers, and exposure origin.
+A :class:`GroupingProfile` owns shareable choices for an instrument/detector
+fingerprint; file-derived facts always remain attached to the run.
 Multiple profiles per fingerprint may be in concurrent use — e.g. one per
 sample in a multi-sample project — with each run recording which profile it is
 *assigned* to (schema v17; see :func:`assigned_profile_for_run`). One profile
@@ -74,8 +66,7 @@ background_fix / bkg_fix          shareable   legacy fixed-value aliases
 background_method                 shareable   provenance
 background_ranges / _range        shareable   range-mode bin windows
 background_forward/backward_range shareable   split range windows
-background_run                    shareable   reference-run payload {run_number, source_file,
-                                              good_frames_sample, good_frames_reference}
+background_run                    shareable   source/period, timing, and explicit scale request
 background_reference_run          shareable   count-fit background provenance
 instrument                        fingerprint part of the profile fingerprint
 --------------------------------  ----------  -----------------------------------------------
@@ -1340,6 +1331,8 @@ _PER_RUN_FACT_KEYS = (
     "histogram_labels",
     "root_histo_numbers",
     "good_frames",
+    "reference_exposure",
+    "period_reference_exposure",
     "period_histograms",
     "period_reduced",
     "period_good_frames",

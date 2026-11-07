@@ -16,6 +16,7 @@ from asymmetry.core.transform.grouping import align_forward_backward_counts
 from asymmetry.core.transform.integral import integrate_asymmetry
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -124,9 +125,8 @@ def test_reference_background_uses_both_measured_variances_and_own_exposure():
     run.grouping["background_mode"] = "reference_run"
     reference = BackgroundReference(
         [Histogram(np.full(32, n), 1.0) for n in (10.0, 5.0)],
-        scale=2.0,
-        good_frames_sample=100.0,
-        good_frames_reference=50.0,
+        scaling=ReferenceScaleRequest("manual", 2.0).resolve(),
+        deadtime_normaliser=50.0,
     )
     counts = _counts(run, background=True, reference_resolver=lambda _: reference)
     np.testing.assert_array_equal(counts.forward.variance, np.full(32, 140.0))

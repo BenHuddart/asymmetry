@@ -302,10 +302,10 @@ def _digest_int(value: object) -> int | None:
 
 
 def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
-    """Fingerprint enabled settings, including default-range facility and F/B mapping."""
+    """Fingerprint correction requests, acquired exposures, timing, and F/B mapping."""
     if run is None:
         return ""
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+    grouping = run.grouping
 
     payload: dict[str, object] = {
         "deadtime_scope": "required_grouped_observations",
@@ -317,8 +317,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     if groups is not None:
         payload["groups"] = groups
 
-    excluded = _digest_int_list(grouping.get("excluded_detectors"))
-    payload["excluded_detectors"] = excluded if excluded is not None else []
+    payload["excluded_detectors"] = _digest_int_list(grouping.get("excluded_detectors")) or []
 
     deadtime_correction = bool(grouping.get("deadtime_correction", False))
     payload["deadtime_correction"] = deadtime_correction
@@ -346,10 +345,10 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         if mode == "reference_run":
             from asymmetry.core.io import reference_file_identity
 
-            payload["reference_file_identity"] = reference_file_identity(
-                grouping.get("background_run")
-            )
-            payload["good_frames"] = grouping.get("good_frames")
+            request = grouping.get("background_run")
+            payload["reference_file_identity"] = reference_file_identity(request)
+            for key in ("reference_exposure", "period_reference_exposure"):
+                payload[key] = grouping.get(key)
         elif mode == "range" and not background_range_is_explicit(grouping):
             payload["background_facility"] = resolve_facility(
                 metadata=run.metadata, grouping=grouping

@@ -31,11 +31,11 @@ from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
-    good_frames,
     group_reference_t0,
     resolve_alignment,
 )
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
+from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.reference_timing import ReferenceTiming
 from asymmetry.core.transform.scoped_counts import (
     ScopedCounts,
@@ -186,7 +186,7 @@ def prepare_group_counts(
     if background and resolve_background_mode(grouping) == "reference_run":
         reference = resolve_background_reference(
             grouping.get("background_run"),
-            sample_good_frames=good_frames(grouping, default=0.0) or None,
+            sample_exposure=ReferenceExposure.from_grouping(grouping),
             cache=cache,
         )
     group_ids = list(group_ids)
