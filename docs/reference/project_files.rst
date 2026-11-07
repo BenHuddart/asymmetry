@@ -70,10 +70,10 @@ Reopening never substitutes another file merely because its run number matches.
 Manual coefficient, in both profiles and run overrides. Reopening resolves
 exposure from the selected acquisitions without turning whole-run deadtime
 normalisation into measured pulse exposure. Historical frame snapshots remain
-unverified provenance under Automatic. A valid bare historical coefficient with
-no frame-snapshot fields becomes Manual; a declaration containing both frames
-and a coefficient becomes Automatic and retains the coefficient as historical
-provenance. Cached applied coefficients do not become authored requests.
+unverified provenance under Automatic. A valid bare numeric coefficient without
+frame-snapshot fields becomes Manual. Boolean coefficients remain unverified
+history under Automatic. A declaration containing both frames and a coefficient
+becomes Automatic and retains the coefficient as historical provenance. Cached applied coefficients do not become authored requests.
 Unknown-exposure unity and the applied coefficient remain visible in result
 provenance. Invalid inactive declarations remain editable and saveable.
 

@@ -58,7 +58,7 @@ def test_automatic_requires_compatible_evidenced_exposure(sample, reference, exp
 
 
 @pytest.mark.parametrize(
-    "coefficient", [0, -1, float("inf"), float("nan"), 10**310, "invalid", None]
+    "coefficient", [True, False, 0, -1, float("inf"), float("nan"), 10**310, "invalid", None]
 )
 def test_manual_request_rejects_invalid_authored_coefficients(coefficient):
     with pytest.raises(ValueError, match="coefficient must be finite and positive"):
@@ -195,3 +195,24 @@ def test_resampled_counts_do_not_inherit_measured_template_exposure(operation):
 def test_obsolete_api_scale_settings_require_explicit_intent(obsolete):
     with pytest.raises(ValueError, match="Use scale_request"):
         ReferenceScaleRequest.from_payload(obsolete)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_boolean_exposure_is_unknown_and_cannot_supply_an_automatic_ratio(value):
+    exposure = ReferenceExposure.from_dict({"value": value, "origin": "user"})
+    assert exposure.value is None
+    for sample, reference in (
+        (exposure, ReferenceExposure(100, "user")),
+        (ReferenceExposure(200, "user"), exposure),
+    ):
+        outcome = ReferenceScaleRequest().resolve(sample, reference)
+        assert outcome.source == "exposure_unknown"
+        assert outcome.summary() == "Exposure unknown; scale 1 assumed"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_typed_scale_inputs_reject_boolean_numbers(value):
+    with pytest.raises(ValueError, match="finite positive value"):
+        ReferenceExposure(value, "user")
+    with pytest.raises(ValueError, match="coefficient must be finite and positive"):
+        ReferenceScaleRequest("manual", value)

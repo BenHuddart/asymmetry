@@ -55,6 +55,8 @@ def read_nexus_frames(entry, read_optional, *, legacy):
         except (TypeError, ValueError):
             return NexusFrames(np.asarray([], dtype=np.float64), f"unusable:{origin}", declared)
         if values.size:
+            if np.asarray(raw).dtype.kind == "b":
+                origin = f"unusable:{origin}:boolean"
             return NexusFrames(values, origin, declared)
     return NexusFrames(np.asarray([], dtype=np.float64), "missing", declared)
 

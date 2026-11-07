@@ -22,6 +22,8 @@ from asymmetry.core.project.schema import (
         ({"good_frames_sample": None, "scale": 7}, {"mode": "automatic"}),
         ({"scale": "unusable"}, {"mode": "automatic"}),
         ({"scale": 10**310}, {"mode": "automatic"}),
+        ({"scale": True}, {"mode": "automatic"}),
+        ({"scale": False}, {"mode": "automatic"}),
     ],
 )
 @pytest.mark.parametrize("location", ["profile", "run"])

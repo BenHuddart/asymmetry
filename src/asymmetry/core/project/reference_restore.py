@@ -88,7 +88,7 @@ def migrate_reference_scale_declarations(value):
         fields = ("scale", "good_frames_sample", "good_frames_reference")
         historical = {key: payload.pop(key) for key in fields if key in payload}
         request = {"mode": "automatic"}
-        if set(historical) == {"scale"}:
+        if set(historical) == {"scale"} and not isinstance(historical["scale"], bool):
             try:
                 coefficient = float(historical["scale"])
             except (TypeError, ValueError, OverflowError):

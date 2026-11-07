@@ -58,6 +58,7 @@ def test_untagged_dt_number_is_unknown_even_when_equal_to_one():
         ReferenceExposure(200, "user"),
     ],
 )
+@pytest.mark.io
 def test_nexus_export_preserves_exposure_separately_from_dt_normalisation(tmp_path, exposure):
     from asymmetry.core.io import load
     from asymmetry.core.io.nexus_writer import write_nexus_v1
@@ -76,3 +77,39 @@ def test_unrepresentable_exposure_declaration_is_unknown():
     exposure = ReferenceExposure.from_dict({"value": 10**310, "origin": "user"})
     assert exposure.value is None
     assert exposure.origin == "unknown:unusable declaration"
+
+
+@pytest.mark.parametrize("value", [True, False])
+@pytest.mark.io
+def test_boolean_file_exposure_remains_loadable_with_unknown_exposure(tmp_path, value):
+    import json
+
+    import h5py
+
+    from asymmetry.core.io import load
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from tests.io.test_nexus_writer import _template
+
+    run = _template()
+    path = tmp_path / "reference.nxs"
+    write_nexus_v1(run, path)
+    with h5py.File(path, "a") as handle:
+        entry = handle["run"]
+        del entry["asymmetry_reference_exposure"]
+        entry.create_dataset(
+            "asymmetry_reference_exposure", data=json.dumps({"value": value, "origin": "user"})
+        )
+    restored = load(str(path)).run
+    assert restored.grouping["good_frames"] == run.grouping["good_frames"]
+    assert ReferenceExposure.from_grouping(restored.grouping).value is None
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_boolean_nexus_frames_are_not_exposure_but_retain_dt_parsing(value):
+    facts = read_nexus_frames(
+        {"good_frames": [value]},
+        lambda node, key, default=None: node.get(key, default) if node is not None else default,
+        legacy=True,
+    )
+    assert facts.values.tolist() == [float(value)]
+    assert facts.exposures(1)[0]["value"] is None

@@ -33,7 +33,8 @@ class ReferenceExposure:
         ):
             raise ValueError("Reference exposure requires an acquired period")
         if self.value is not None and (
-            not isfinite(self.value)
+            isinstance(self.value, bool)
+            or not isfinite(self.value)
             or self.value <= 0
             or self.origin.startswith("unknown")
             or self.origin == "whole_run_deadtime"
@@ -73,7 +74,12 @@ class ReferenceScaleRequest:
         if self.mode not in ("automatic", "manual"):
             raise ValueError("Reference scale mode must be Automatic or Manual")
         if self.mode == "manual":
-            if self.coefficient is None or not isfinite(self.coefficient) or self.coefficient <= 0:
+            if (
+                self.coefficient is None
+                or isinstance(self.coefficient, bool)
+                or not isfinite(self.coefficient)
+                or self.coefficient <= 0
+            ):
                 raise ValueError("Manual reference coefficient must be finite and positive")
         elif self.coefficient is not None:
             raise ValueError("Automatic reference scale has no authored coefficient")
@@ -90,7 +96,8 @@ class ReferenceScaleRequest:
             raise ValueError("Reference scale requires an Automatic or Manual request")
         try:
             coefficient = value.get("coefficient")
-            coefficient = float(coefficient) if coefficient is not None else None
+            if coefficient is not None and not isinstance(coefficient, bool):
+                coefficient = float(coefficient)
         except (TypeError, ValueError, OverflowError):
             raise ValueError("Manual reference coefficient must be finite and positive") from None
         return cls(value.get("mode"), coefficient)

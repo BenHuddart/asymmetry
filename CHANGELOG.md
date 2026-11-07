@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject boolean reference exposures and coefficients instead of interpreting
+  `true` as measured exposure or an authored scale of one.
+
 - Add Automatic and Manual reference scaling, preserving authored coefficients and
   visibly assuming unity when measured exposure is unknown, separately from deadtime.
 

@@ -331,8 +331,9 @@ In the **Background** section choose **Background run…**, then **Choose run…
   "Manual reference coefficient must be finite and positive".
 
 PSI BIN/MDU and supported ROOT whole-run deadtime normalisation of one is not
-measured pulse exposure. A genuinely measured good-frame count of one remains
-measured. Untagged frame-like numbers, duration, event totals, monitor fields,
+measured pulse exposure. A genuinely measured numeric good-frame count of one
+remains measured. JSON booleans are invalid as exposure evidence or Manual
+coefficients; they cannot stand for numeric one or zero. Untagged frame-like numbers, duration, event totals, monitor fields,
 beam-current metadata, and instrument labels cannot establish subtraction
 exposure. File exposure origin travels with selected periods. A scalar run total
 broadcast across several periods for deadtime cannot establish each period's
