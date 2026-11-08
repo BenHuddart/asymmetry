@@ -7,7 +7,11 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
-from asymmetry.core.transform.corrections import CorrectionOutcomes, result_tail_skip
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    result_tail_skip,
+)
 from asymmetry.core.transform.fb_counts import BinWindow
 from asymmetry.core.transform.grouping import resolve_alignment
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
@@ -49,6 +53,17 @@ def count_background_domain(histograms, grouping, group_specs, metadata):
 
 def require_count_background(prepared, grouping, group_specs, metadata):
     """Check availability on corrected count groups without inventing a ratio."""
+    if resolve_background_mode(grouping) == "reference_run":
+        CorrectionOutcomes(
+            background=CorrectionOutcome(
+                "background",
+                "reference_run",
+                "unavailable",
+                reason="reference-run subtraction is unsupported for grouped/raw count fitting. "
+                "Disable background correction or choose a non-reference background mode "
+                "for count fitting; use an asymmetry fit for reference-subtracted data.",
+            )
+        ).require_complete()
     histograms = prepared.histograms
     groups = (
         [indices for _, indices in group_specs]

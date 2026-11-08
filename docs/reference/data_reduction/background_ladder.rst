@@ -3,25 +3,19 @@
 The background ladder: which stage removes what
 ===============================================
 
-Several different controls across Asymmetry carry the word "background", and
-they act at different points in the pipeline on different representations of
-the data. They are *not* alternatives to one another and they do *not* stack
-into a double subtraction — each removes a different manifestation of the same
-underlying quantity, at the stage where that manifestation appears. This page
-is the map: what each stage removes, where it sits in the chain, and when to
-turn it on. For the mechanics of any one stage, follow the cross-reference.
+Background controls act on different quantities and representations. Choose
+them according to the observation being analysed: an accidental count level,
+a declared reference count spectrum, a physical sample/holder signal, or a
+spectral display feature. These are not interchangeable estimates of one rate.
+See :ref:`background-correction` for the contribution and scale assumptions
+needed for count subtraction and for additive physical modelling advice.
 
-The physical quantity underneath most of these is a single thing: the
-**steady, uncorrelated count rate** — particles that reach a detector without
-being correlated with a muon decaying in the sample (decay positrons from
-muons stopped upstream, room background, detector noise that survives the
-coincidence logic). At a continuous source the rate is significant; at a
-pulsed source the beam duty factor suppresses it to nearly nothing (Blundell,
-De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*). One flat
-rate in the raw histograms shows up as a baseline in the counts, a
-zero-frequency feature in the FFT, a central peak in a zero-field MaxEnt
-distribution, and a pedestal under the spectrum — so it is handled, where it
-matters, at each of those stages.
+A steady, uncorrelated count rate is one source of background in raw histograms.
+It can matter at continuous sources and in long-time pulsed-source data
+(Blundell, De Renzi, Lancaster, and Pratt, *Muon Spectroscopy: An Introduction*).
+Its effects after a nonlinear asymmetry ratio or a spectral transform depend
+on that operation. A physical holder polarisation instead follows its own
+relaxation or precession; exposure alone cannot determine its amplitude.
 
 The ladder at a glance
 ----------------------
@@ -37,15 +31,15 @@ The ladder at a glance
    * - Grouping background mode
        (:ref:`backgrounds <background-correction>`)
      - raw counts, pre-asymmetry / pre-FFT
-     - the steady flat rate before the asymmetry ratio (one of four mutually
+     - a flat count level or a declared reference spectrum (mutually
        exclusive modes, applied once)
-     - enable per dataset at reduction time; feeds every downstream analysis
+     - enable for supported reduced-data workflows
    * - Count-fit background nuisance
        (:doc:`../count_domain_fitting`)
      - raw counts, in the fit
      - a flat rate fitted *jointly* with the count model — independent of the
        grouping correction
-     - when fitting raw counts and the grouping rate is not already trustworthy
+     - when fitting full counts, including their accidental background
    * - σ-clip baseline
        (:ref:`Robust baseline offset <robust-baseline-offset>`)
      - spectrum, post-FFT, display
@@ -62,26 +56,19 @@ The ladder at a glance
 Stage 1 — the grouping background mode (pre-asymmetry, pre-FFT)
 ---------------------------------------------------------------------
 
-The grouping dialog's **Background** selector subtracts the steady flat rate
-from the grouped forward/backward counts *before* the asymmetry ratio is
-formed. It offers four modes — **Fixed values**, **Range average** (pre-t0),
-**Tail fit** (late-time), and **Background run** — and they are **mutually
-exclusive**: exactly one applies to a given dataset, through a single
-correction chokepoint, and it is applied **once**. See
-:ref:`background-correction` for how to choose among the four and for the
-mathematics of each.
+The grouping dialog's **Background** selector offers **Fixed values**,
+**Range average**, and **Tail fit** for flat count levels, and **Background run**
+for a declared count spectrum. The modes are mutually exclusive; a reference
+spectrum can be time dependent. Subtraction acts on grouped counts before the
+asymmetry ratio. See :ref:`background-correction` for mode selection and
+uncertainty assumptions.
 
-This is the only background stage that reaches *every* downstream analysis.
-The asymmetry curve, the α estimators, the per-group time-domain fits and the
-Fourier input all consume the same corrected group sums. In particular, the
-FFT input is **rebuilt from the current grouping**, so the grouping
-background mode applies to the transform too — there is no separate FFT-only
-background control, and no second subtraction (see the FFT background
-discussion in :doc:`../fourier_analysis` and the Fourier panel's *Background*
-status line). A flat rate matters most here, because the
-grouped FFT signal is lifetime-corrected by :math:`e^{t/\tau_\mu}` before the
-transform: an unsubtracted constant becomes a growing ramp that dumps spurious
-power into the low-frequency bins.
+Supported asymmetry and grouped Fourier/MaxEnt preparation use the current
+count-background operation. Fourier input is rebuilt from the current grouping;
+its background status describes that preparation. Grouped/raw count-fit inputs
+and the **Individual Groups** display have a separate contract: they retain
+full count backgrounds and reject active reference subtraction. They do not
+consume the reference-subtracted group sums. See :doc:`../count_domain_fitting`.
 
 *When to enable.* Set a grouping background mode whenever the uncorrelated
 rate is non-negligible — routinely for continuous-source data (Range average),
@@ -100,8 +87,10 @@ P(t)] + \mathrm{bg}`. This term is fitted against the **raw counts**.
 .. warning::
 
    **The grouping background correction never reaches the count fit.** The
-   count fit always consumes raw histograms with deadtime applied — not the
-   background-corrected group sums that the asymmetry and Fourier paths use. A
+   count fit consumes full grouped counts, with deadtime correction only when
+   enabled and available. Poisson fitting requires eligible raw observations.
+   Active **Background run** subtraction is rejected even if the reference is
+   loaded; disable background correction or choose a non-reference mode. A
    user who believes the grouping correction has already removed the flat rate,
    and therefore fixes ``bg = 0``, will bias :math:`N_0` and α: the raw counts
    still contain the full background. Let ``bg`` float (or seed it from the
@@ -109,7 +98,7 @@ P(t)] + \mathrm{bg}`. This term is fitted against the **raw counts**.
 
 This is not a double subtraction; it is the *opposite* trap — a stage that
 looks downstream of the grouping correction but is not. The two are
-independent measurements of the same flat rate: Stage 1 stores it in the
+separate estimates of the same flat rate: Stage 1 stores it in the
 grouping and applies it to the reduced data; Stage 2 measures it from the raw
 counts the fit actually sees.
 
@@ -158,14 +147,13 @@ transverse-field precession lines that the other stages serve.
 Why they coexist
 ----------------
 
-Because each stage acts on a different representation — raw counts, the fitted
-count model, the spectral display channel, the reconstructed distribution —
-turning on more than one does not subtract the same rate twice. The worst case
-is mild redundancy: a pre-FFT-subtracted flat rate leaves a smaller
-zero-frequency feature for SpecBG to model, not a negative artefact. The one
-genuine trap is the count-fit asymmetry above — the grouping correction does
-*not* propagate into the count fit, so its background must be handled there in
-its own right.
+Each control has its own purpose and input contract. Count subtraction changes
+the observations used to form asymmetry; a count-fit nuisance models the full
+accidental rate in the fitted counts. Spectral display controls change the
+presentation of the transformed or reconstructed data. Applying several controls
+does not establish that their physical assumptions hold; inspect the owning
+workflow before combining them. A physical sample/holder contribution belongs
+in the fit model when it represents the measured polarisation.
 
 See also
 --------

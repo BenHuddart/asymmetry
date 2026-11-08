@@ -302,3 +302,33 @@ def test_toolbar_merge_also_sums_raw_group_counts(mainwindow):
     np.testing.assert_array_equal(by_group[1].asymmetry, [91.0, 32.0])
     np.testing.assert_array_equal(by_group[2].asymmetry, [19.0, 28.0])
     assert dataset.run.grouping["bunching_factor"] == 1
+
+
+@pytest.mark.parametrize("view", ["groups", "raw_counts"])
+def test_reference_count_views_show_diagnostic_and_recover(mainwindow, view):
+    dataset = _histogram_run_dataset(np.full(32, 200.0), np.full(32, 150.0))
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._on_dataset_selected(dataset.run_number)
+    mainwindow._plot_panel.set_time_view_modes(["fb_asymmetry", "groups", "raw_counts"], view)
+    mainwindow._render_current_selection_plot()
+    assert len(mainwindow._plot_panel._grouped_time_subplot_datasets) == 2
+
+    dataset.run.grouping.update(
+        background_correction=True,
+        background_mode="reference_run",
+        background_run={"run_number": 42},
+    )
+    mainwindow._on_plot_time_view_changed(view)
+    message = " ".join(text.get_text() for text in mainwindow._plot_panel._ax.texts)
+    assert "reference-run subtraction is unsupported" in message
+    assert "Disable background correction or choose a non-reference background mode" in message
+    assert not mainwindow._plot_panel._grouped_time_subplot_datasets
+    assert dataset.run.grouping["background_mode"] == "reference_run"
+    np.testing.assert_array_equal(dataset.run.histograms[0].counts, 200.0)
+    np.testing.assert_array_equal(dataset.run.histograms[1].counts, 150.0)
+
+    dataset.run.grouping["background_correction"] = False
+    mainwindow._render_current_selection_plot()
+    groups = mainwindow._plot_panel._grouped_time_subplot_datasets
+    assert len(groups) == 2
+    assert not any("unsupported" in text.get_text() for text in mainwindow._plot_panel._ax.texts)

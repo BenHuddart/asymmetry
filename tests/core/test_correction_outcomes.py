@@ -180,7 +180,7 @@ def test_count_fit_refuses_an_unresolved_requested_background(histograms):
         },
     )
     dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
-    with pytest.raises(ValueError, match="reference run is not loaded"):
+    with pytest.raises(ValueError, match="reference-run subtraction is unsupported"):
         fit_single_histogram(
             dataset,
             1,

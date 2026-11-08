@@ -25,6 +25,28 @@ Fit warnings and saved summaries retain the preflight request, status, and
 reason; an applied preflight records an available estimate, not subtraction
 from the joint model's observations.
 
+Active **Background run** subtraction is unsupported for **Single group**,
+**F + B (free α)**, and **All groups** count-fit inputs, for either cost.
+The shared input boundary raises ``CorrectionUnavailableError`` with:
+
+.. code-block:: text
+
+   background correction requested (reference_run) but not applied: reference-run subtraction is unsupported for grouped/raw count fitting. Disable background correction or choose a non-reference background mode for count fitting; use an asymmetry fit for reference-subtracted data.
+
+Loading the reference does not enable this workflow. Disable background
+correction in **Grouping**, or select a non-reference mode when its preflight
+is needed, and fit the full counts with the count model's background nuisance.
+Inactive reference settings do not block a count fit. For a justified reference
+subtraction, use the reduced asymmetry workflow described in
+:doc:`data_reduction/backgrounds`. A difference of independent counts is not a
+raw Poisson observation, even when its value is positive and integral.
+Physical sample/holder polarisation belongs in the model; the flat count
+nuisance describes accidental events.
+
+.. image:: /_generated/screenshots/count_reference_unsupported.png
+   :alt: Count-fit results card explains that reference-run subtraction is unsupported and gives the supported alternatives.
+   :width: 100%
+
 *When to use this.* Reach for the **free-α** fit whenever you need a defensible α from a
 calibration measurement and want its uncertainty and — importantly — its
 correlation with the signal amplitude. In a transverse field the count balance

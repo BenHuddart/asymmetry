@@ -41,7 +41,11 @@ interval, and apply enabled deadtime correction to individual detector
 histograms using the applicable calibration and exposure. The aligned interval
 is resolved with the selected channels' common support at the grouping step;
 file bounds and explicit windows are different inputs to that resolution.
-Reference-background data require their own detector preparation and exposure.
+A selected reference acquisition resolves its own period, timing, detector
+preparation, and exposure. **Automatic** scale uses compatible evidenced exposure
+ratios, visibly assuming one when exposure is unknown; **Manual** scale uses
+the authored positive coefficient. Reference alignment requires compatible
+native widths and enough observed support; it does not interpolate or pad counts.
 See :doc:`/reference/detector_grouping` for correction assumptions and failures.
 
 **Align, sum, and subtract group backgrounds.** Whole-bin shifts align the
@@ -50,7 +54,11 @@ sets the reference, with acquired-channel ordinal breaking ties; its exact
 origin supplies the time stamps. Fractional residuals record the approximation,
 not a timing uncertainty. Only common observed support enters the group sums.
 Enabled range, tail-fit, fixed, or reference-run backgrounds then act on those
-grouped counts, rather than independently on each raw detector.
+grouped counts, rather than independently on each raw detector. These are
+alternative background modes. Reference subtraction retains both independent
+counting variances with fixed scale; accidental levels and physical holder
+polarisation are different quantities. See
+:doc:`/reference/data_reduction/backgrounds`.
 
 **Bin counts, then form asymmetry.** The good window selects the observations
 for analysis bins. Counts and the full retained variance model, including shared
@@ -72,6 +80,14 @@ are signed offsets from effective t0, with omitted endpoints retaining mapped
 file limits. The resolved window also supplies finite-window calibration
 integrals. See :ref:`comparison-file-manual-windows` and
 :doc:`/reference/detector_grouping`.
+
+**Fit physical signals.** The asymmetry model can add sample and holder
+polarisation components with independent amplitudes and appropriate relaxation
+or precession. This stage describes physical muon populations; it does not
+subtract another accidental count level. Existing
+:doc:`/reference/composite_models` supply these components. Exposure scaling of
+an empty-holder run alone does not determine the holder contribution in the
+sample acquisition.
 
 Calibration dependencies
 -------------------------
@@ -109,7 +125,13 @@ Run arithmetic has its own compatibility and uncertainty requirements; selecting
 runs at the start of the diagram does not authorise adding raw acquisitions
 before nonlinear detector corrections. Raw-count likelihood fits and specialised
 observation models require their own preparation and statistical assumptions;
-they do not all pass through an F/B ratio. See
+they do not all pass through an F/B ratio. In particular, grouped/raw count-fit
+inputs reject active reference-run subtraction for either cost. With background
+correction disabled or a supported non-reference preflight, the count model
+fits full counts and its own accidental-background nuisance. Poisson fitting
+requires eligible raw observations, not signed reference differences. The
+separate count-fit branch in the figure represents this preparation contract,
+not a tap from the reference-subtracted counts. See
 :doc:`/reference/count_domain_fitting`, :doc:`/reference/negative_muon_analysis`,
 :doc:`/reference/run_arithmetic`, and :doc:`/reference/data_reduction/period_mapping`.
 

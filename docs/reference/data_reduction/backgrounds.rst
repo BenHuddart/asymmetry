@@ -3,15 +3,16 @@
 Background correction
 =====================
 
-Two different things are called "background" in μSR, and they must not be
-confused. The first is the **uncorrelated, time-independent count rate** in
-the raw histograms — particles unrelated to a muon decaying in the sample
-(for example decay positrons from muons stopped upstream) that survive the
-coincidence logic. This page is about removing that rate from the counts
-before the asymmetry is formed. The second is the **background asymmetry**
-from muons that genuinely stop in the sample holder or cryostat — a real
-muon signal, handled in the fit model (and calibrated with silver/hematite
-reference measurements), not by the corrections here.
+Background handling involves three different quantities. An **accidental count
+level** is an uncorrelated rate in the detector histograms; **Range average**,
+**Tail fit**, and **Fixed values** estimate or declare a level to remove before
+forming asymmetry. A **reference count spectrum** is a separate acquisition
+whose shape and scale must represent counts present in the sample measurement;
+**Background run** subtracts that declared contribution. A **physical holder
+signal** comes from muons stopping in the holder or cryostat and carries its own
+polarisation. Model that signal with additive fit components appropriate to the
+field, reference frame, and relaxation [MusrfitTutorial]_. An exposure ratio
+alone does not calibrate its contribution.
 
 Subtracting a count-rate background matters because the asymmetry is a ratio:
 a flat rate :math:`\eta` added to both groups pulls :math:`A(t)` toward zero
@@ -122,10 +123,49 @@ Continuous-source data      **Range average** — the pre-t0 bins measure the
                             uncorrelated rate directly
 Pulsed-source data          **Tail fit** — estimate a flat rate
                             from the late-time spectrum
-Dedicated reference run     **Background run** — sample-holder / silver /
-                            laser-off measurement
+Reference count spectrum    **Background run** — compatible reference
+                            spectrum with a justified shape and scale
 Known constants             **Fixed values** (from a stored grouping)
 ==========================  =====================================================
+
+For holder or cryostat polarisation, use the existing additive
+:doc:`/reference/composite_models` rather than choosing a subtraction mode
+solely because an empty-holder or silver run is available. Reference runs can
+constrain a physical model, but stopping populations and detector response must
+be applicable to the sample measurement. Laser-on minus laser-off data can
+instead define a difference observable; they need not recover an absolute
+sample polarisation. See :doc:`/reference/run_arithmetic` for that workflow.
+
+Physical sample and holder signals
+----------------------------------
+
+A simple asymmetry model is the sum
+
+.. math::
+
+   A(t) = A_s P_s(t) + A_h P_h(t).
+
+The amplitudes describe the measured sample and holder contributions; they are
+not an exposure ratio. A **Constant** component describes a non-relaxing signal
+only when it is stationary in the chosen frame. Use relaxing components or
+oscillations with the appropriate field and phase when the holder response
+requires them [MusrfitTutorial]_. Fit these alongside the sample components in
+the **Build Fit Function** dialog, retaining independent amplitudes as appropriate.
+
+For example, **Exponential** + **Constant** with ``A_1=20``, ``Lambda=0.35``
+μs⁻¹, and ``A_bg=4`` evaluates
+:math:`20\exp(-0.35t)+4` percent for time in μs. In fractional units the
+same curve is :math:`0.2\exp(-0.35t)+0.04`; divide the percent output by 100
+before comparing fraction-valued curves. See :doc:`/reference/asymmetry_units`.
+This illustrates units and model composition, not a holder calibration.
+
+Even in an equal-response mixture with a known holder fraction
+:math:`0\leq f<1`,
+:math:`P_\mathrm{total}=(1-f)P_s+fP_h`. Subtracting :math:`fP_h` leaves
+:math:`(1-f)P_s`; recovering :math:`P_s` also requires division by
+:math:`1-f`. Neither that fraction nor equal response follows from exposure.
+Count-reference subtraction remains useful when its declared contribution and
+scale actually describe the experiment.
 
 Range average
 -------------
@@ -440,8 +480,16 @@ is established by these comparisons.
 
 WiMDA's matched **FileBG** check subtracts raw reference counts from a
 deadtime-corrected sample and retains the sample error bars. Asymmetry corrects
-both independent acquisitions first and propagates both supplied variances.
-See :doc:`/explanation/comparison` for versions, inputs, settings, and tolerances.
+both independent acquisitions first and retains measured or supplied independent
+counting variances. The reused 200/30-count example gives 152.186836518 counts
+and variance 320 for Asymmetry and explicit Mantid arithmetic, compared with
+WiMDA’s 153.333 counts and sample-only error 14.1421. See
+:ref:`comparison-reference-errors` for settings, tolerances, and limits.
+
+musrfit models sample and holder signals additively [MusrfitTutorial]_; this is
+a physical fit model, not an external FileBG operation. The reused musrfit
+1.12.1 generic ASCII example and its percent/fraction convention are bounded
+in :ref:`comparison-physical-backgrounds`.
 
 .. _background-count-uncertainty:
 
@@ -567,3 +615,7 @@ treats its points as independent and does not carry these shared components.
 .. [BakerCousins1984] S. Baker and R. D. Cousins, Nucl. Instrum. Methods **221**,
    437–442 (1984). `doi:10.1016/0167-5087(84)90016-4
    <https://doi.org/10.1016/0167-5087(84)90016-4>`_.
+
+.. [MusrfitTutorial] `musrfit tutorial: sample and holder signals
+   <https://lmu.pages.psi.ch/musrfit-docu/tutorial.html>`_, accompanying
+   A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
