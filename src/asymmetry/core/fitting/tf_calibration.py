@@ -215,12 +215,6 @@ def fit_tf_calibration(
     overrides = {p.name: p for p in request.parameters}
     if len(overrides) != len(request.parameters) or overrides.keys() - {p.name for p in defaults}:
         raise ValueError("TF parameter overrides need unique supported count-model names")
-    if (
-        "alpha" in overrides
-        and overrides["alpha"].fixed
-        and (not np.isfinite(overrides["alpha"].value) or overrides["alpha"].value <= 0)
-    ):
-        raise ValueError("TF fixed alpha must be finite and positive")
     if "beta" in overrides and (
         overrides["beta"].fixed == request.fit_beta
         or (not request.fit_beta and overrides["beta"].value != 1.0)

@@ -433,7 +433,7 @@ def test_matches_native_global_histogram_rounded_control(beta, fit_beta, native_
 
 @pytest.mark.parametrize("alpha", [-1.25, 0.0, float("nan"), float("inf")])
 def test_nonpositive_or_nonfinite_fixed_alpha_is_rejected(alpha):
-    with pytest.raises(ValueError, match="fixed alpha.*positive"):
+    with pytest.raises(ValueError, match="TF fixed parameter.*alpha.*physical domain"):
         fit_tf_calibration(
             _raw_tf(beta=1), _request(parameters=(CountFitParameter("alpha", alpha, fixed=True),))
         )

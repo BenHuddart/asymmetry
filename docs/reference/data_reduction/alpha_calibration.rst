@@ -326,8 +326,8 @@ fit bounds; supplied finite endpoints may change the search interval while
 preserving positive alpha/beta, non-negative count scales/backgrounds, frequency,
 and damping, and 0–100 percent amplitude. Invalid domain bounds or fixed values
 raise an input error. Fixed parameters do not acquire the free-parameter search
-box as a physical limit. Backgrounds can be fixed to an
-independently established value or fitted separately for the two banks.
+box as a physical limit. Backgrounds can be fixed to an independently established
+value or fitted separately for the two banks.
 The estimator fits frequency by default. An explicitly fixed finite positive
 frequency is honoured as an independently supplied model assumption; no fitted
 frequency error is attached. Joint beta calibration rejects a nonpositive or
@@ -345,11 +345,11 @@ supplied counting variances, and explicit pulse-response requests are unsupporte
 loading and inspection remain available. Integer values alone do not establish
 raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
 labelled ``PostPileUp`` (using grouping labels when the metadata copy is absent)
-and a selected period marked as lacking acquired
-histograms; unselected processed channels remain loadable alongside raw banks.
+and a selected period marked as lacking acquired histograms; unselected processed
+channels remain loadable alongside raw banks.
 Unknown or untagged processing remains a caller precondition: supply acquired
-raw histograms, rather than processed ROOT channels or a mapped difference. Count-background settings
-retain the count fitter's availability preflight; constant backgrounds are
+raw histograms, rather than processed ROOT channels or a mapped difference.
+Count-background settings retain the count fitter's availability preflight; constant backgrounds are
 model terms, not a subtraction of prepared observations. Reference-run
 subtraction retains its unsupported-calculation diagnostic.
 
