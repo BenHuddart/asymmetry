@@ -132,6 +132,14 @@ behaviour. No unknown File value is replaced with zero to create a Manual table.
 Invalid Manual settings, missing required exposure, and saturation remain
 errors. See :doc:`detector_grouping` for the shared correction contract.
 
+Scripts can compare four TF calibration envelopes through the same count solver
+using :func:`~asymmetry.core.fitting.tf_calibration.select_tf_calibration`.
+Undamped, exponential, Gaussian, and stretched candidates share one prepared
+bank pair, correction/variance outcome, and fixed/free-beta intent. The usable
+candidate with minimum summed objective is recommended, retaining all fits and
+failures. This operation has no effect on this workspace's controls; see
+:doc:`data_reduction/alpha_calibration` for its constraints and conditional errors.
+
 Choosing the cost
 -----------------
 

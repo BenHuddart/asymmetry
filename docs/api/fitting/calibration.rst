@@ -12,7 +12,7 @@ native domains retain detector membership, alignment, raw-bin windows, timing,
 and correction preflight outcomes without copying a mutable grouping table.
 
 .. automodule:: asymmetry.core.fitting.tf_calibration
-   :members: TFCalibrationRequest, TFCalibrationResult, fit_tf_calibration
+   :members: TFCalibrationRequest, TFCalibrationResult, TFEnvelope, TFCalibrationSelection, fit_tf_calibration, select_tf_calibration
 
 .. automodule:: asymmetry.core.fitting.count_results
    :members: CountFitParameter, CountFitDomain, JointCountFit

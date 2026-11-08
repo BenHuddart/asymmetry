@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add scriptable TF calibration selection across four envelopes by summed fit cost,
+  retaining candidate fits/failures and enforcing explicit bounds on fixed parameters.
+
 - Support deadtime-corrected TF alpha/beta calibration using retained count
   variances, with automatic objective selection and correction provenance.
 
