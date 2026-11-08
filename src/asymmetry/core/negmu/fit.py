@@ -599,9 +599,7 @@ def fit_capture_fb_alpha(
     cov_accurate = getattr(m, "accurate", False)
     is_valid = bool(m.valid)
 
-    # Build independent per-group ParameterSets, covariance sub-matrices, and
-    # minos dicts: each side gets shared params + its own bg only, matching the
-    # count_domain._result_from_minuit keep_params pattern.
+    # Each bank retains shared parameters and its own background covariance.
     def _side_params(exclude_bg: str) -> ParameterSet:
         ps = ParameterSet()
         for p in result_params:

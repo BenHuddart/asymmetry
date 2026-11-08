@@ -39,9 +39,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.count_domain import (
-    fit_single_histogram,
-)
+from asymmetry.core.fitting.count_domain import fit_single_histogram
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import build_count_group
 from asymmetry.core.fitting.models import oscillatory

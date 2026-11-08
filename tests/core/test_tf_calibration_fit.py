@@ -172,7 +172,7 @@ def test_shared_fit_known_truth_and_full_nuisance_information(fit_beta, beta):
 
 
 def test_one_free_normalisation_has_exact_poisson_standard_error():
-    ds = _raw_tf(beta=1)
+    ds = _raw_tf(beta=1, backgrounds=(0, 0))
     truth = dict(
         alpha=1.25,
         beta=1,
@@ -429,3 +429,52 @@ def test_matches_native_global_histogram_rounded_control(beta, fit_beta, native_
     assert result.ok, result.message
     assert result.alpha == pytest.approx(native_alpha, abs=1e-4)
     assert result.beta == pytest.approx(native_beta, abs=1e-4)
+
+
+@pytest.mark.parametrize("alpha", [-1.25, 0.0, float("nan"), float("inf")])
+def test_nonpositive_or_nonfinite_fixed_alpha_is_rejected(alpha):
+    with pytest.raises(ValueError, match="fixed alpha.*positive"):
+        fit_tf_calibration(
+            _raw_tf(beta=1), _request(parameters=(CountFitParameter("alpha", alpha, fixed=True),))
+        )
+
+
+def test_explicitly_processed_detector_labels_are_not_raw_poisson_observations():
+    ds = _raw_tf(beta=1)
+    ds.run.metadata["histogram_labels"] = ["Forward PostPileUp rej.", "Backward"]
+    with pytest.raises(FitInputError, match="PostPileUp"):
+        fit_tf_calibration(ds, _request())
+    assert len(ds.run.histograms) == 2
+    assert np.all(ds.run.histograms[0].counts == np.floor(ds.run.histograms[0].counts))
+
+
+def test_unselected_processed_channels_do_not_ban_the_acquisition():
+    ds = _raw_tf(beta=1)
+    ds.run.histograms.append(Histogram(ds.run.histograms[0].counts.copy(), 0.016))
+    ds.run.metadata["histogram_labels"] = ["Forward", "Backward", "PostPileUp rej."]
+    result = fit_tf_calibration(ds, _request())
+    assert result.ok
+
+
+def test_joint_fit_honours_an_independently_fixed_positive_frequency():
+    result = fit_tf_calibration(
+        _raw_tf(beta=0.8),
+        _request(fit_beta=True, parameters=(CountFitParameter("frequency", 1.3, fixed=True),)),
+    )
+    assert result.fit.success
+    assert result.ok, result.message
+    assert result.beta == pytest.approx(0.8, abs=1e-4)
+    assert result.beta_error > 0
+    assert result.fit.standard_error("frequency") is None
+    assert next(p for p in result.fit.parameters if p.name == "frequency").fixed
+
+
+@pytest.mark.parametrize("frequency", [0.0, -1.3, float("nan"), float("inf")])
+def test_joint_fit_rejects_nonpositive_or_nonfinite_fixed_frequency(frequency):
+    with pytest.raises(ValueError, match="fixed frequency.*positive"):
+        fit_tf_calibration(
+            _raw_tf(beta=0.8),
+            _request(
+                fit_beta=True, parameters=(CountFitParameter("frequency", frequency, fixed=True),)
+            ),
+        )

@@ -82,8 +82,12 @@ to that operation while retaining its historical result fields and method key.
 Asymmetry also checks that free-beta calibration has a resolved amplitude and
 frequency: each must reach the existing three-standard-error significance gate
 (the amplitude helper retains its small nonzero fallback when an error is absent).
-A missing frequency error or missing reliable beta error makes calibration
-unavailable, with a diagnostic. These are safeguards for this weak-TF protocol,
+For fitted frequency, a missing frequency error makes calibration unavailable.
+An explicitly fixed finite positive frequency is instead an independently
+supplied model assumption: only its fitted-frequency significance test is
+omitted, while the amplitude and reliable-beta-error checks remain. The estimator
+never fixes frequency automatically. A missing reliable beta error makes
+calibration unavailable, with a diagnostic. These are safeguards for this weak-TF protocol,
 not universal identifiability tests or thresholds attributed to musrfit/WiMDA.
 They do not apply automatically to alpha-only calibration with beta fixed.
 

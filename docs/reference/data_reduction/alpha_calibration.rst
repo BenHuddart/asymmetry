@@ -323,6 +323,10 @@ For a dataset with an established grouping::
 ``fit_beta=True`` frees beta in the same model and solver. Parameter overrides
 use immutable ``CountFitParameter`` values; backgrounds can be fixed to an
 independently established value or fitted separately for the two banks.
+The estimator fits frequency by default. An explicitly fixed finite positive
+frequency is honoured as an independently supplied model assumption; no fitted
+frequency error is attached. Joint beta calibration rejects a nonpositive or
+nonfinite fixed frequency.
 The default free-background seeds are one count per bin, avoiding an optimiser
 start exactly at the non-negative boundary; this is a starting value, not a
 fixed background or prior. The :doc:`/api/fitting/calibration` reference describes
@@ -334,8 +338,11 @@ uses the existing acquired-period selector. It requires unprocessed integer
 Poisson counts on disjoint detector banks. Applied deadtime corrections,
 supplied counting variances, and explicit pulse-response requests are unsupported;
 loading and inspection remain available. Integer values alone do not establish
-raw-Poisson provenance. The caller must supply acquired raw histograms, rather
-than processed ROOT channels or a mapped difference. Count-background settings
+raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
+labelled ``PostPileUp`` and a selected period marked as lacking acquired
+histograms; unselected processed channels remain loadable alongside raw banks.
+Unknown or untagged processing remains a caller precondition: supply acquired
+raw histograms, rather than processed ROOT channels or a mapped difference. Count-background settings
 retain the count fitter's availability preflight; constant backgrounds are
 model terms, not a subtraction of prepared observations. Reference-run
 subtraction retains its unsupported-calculation diagnostic.
@@ -356,7 +363,8 @@ MINOS intervals are retained separately. ``fit.success`` describes the fit;
 ``unreliable`` covariance. Missing or unreliable errors are ``None``. Fixed
 beta has no fitted error or alpha–beta correlation.
 
-Asymmetry also checks the existing fitted scale against the observed count
+Asymmetry also requires a declared fixed alpha to be finite and positive, and
+checks the existing fitted scale against the observed count
 ratio (factor three) and forward count level (factor 100) to reject spurious
 minima. Free-beta calibration additionally retains the amplitude/frequency
 significance and finite-beta-error safeguards described in

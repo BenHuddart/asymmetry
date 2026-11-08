@@ -171,12 +171,27 @@ def fit_tf_calibration(
     run = dataset.run
     if run is None or not run.histograms:
         raise FitInputError("TF calibration needs a run with detector histograms")
+    if run.metadata.get("raw_period_histograms_available") is False:
+        raise FitInputError(
+            "TF calibration needs acquired period histograms, not a cached reduction"
+        )
     indices = [
         effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms))
         for gid in (request.forward_group, request.backward_group)
     ]
     if set(indices[0]) & set(indices[1]):
         raise FitInputError("Independent Poisson TF banks must have disjoint detectors")
+    labels = run.metadata.get("histogram_labels", ())
+    processed = [
+        i + 1
+        for bank in indices
+        for i in bank
+        if i < len(labels) and "postpileup" in labels[i].casefold().replace(" ", "")
+    ]
+    if processed:
+        raise FitInputError(
+            f"Raw Poisson TF calibration cannot use declared PostPileUp channels {processed}"
+        )
     if any(run.histograms[i].count_variance is not None for bank in indices for i in bank):
         raise FitInputError("Raw Poisson TF calibration cannot use supplied counting variance")
     frequency = (
@@ -200,11 +215,24 @@ def fit_tf_calibration(
     overrides = {p.name: p for p in request.parameters}
     if len(overrides) != len(request.parameters) or overrides.keys() - {p.name for p in defaults}:
         raise ValueError("TF parameter overrides need unique supported count-model names")
+    if (
+        "alpha" in overrides
+        and overrides["alpha"].fixed
+        and (not np.isfinite(overrides["alpha"].value) or overrides["alpha"].value <= 0)
+    ):
+        raise ValueError("TF fixed alpha must be finite and positive")
     if "beta" in overrides and (
         overrides["beta"].fixed == request.fit_beta
         or (not request.fit_beta and overrides["beta"].value != 1.0)
     ):
         raise ValueError("TF beta must be free for joint calibration or fixed at 1 for alpha-only")
+    if (
+        request.fit_beta
+        and "frequency" in overrides
+        and overrides["frequency"].fixed
+        and (not np.isfinite(overrides["frequency"].value) or overrides["frequency"].value <= 0)
+    ):
+        raise ValueError("Joint TF fixed frequency must be finite and positive")
     if "baseline" in overrides and (
         not overrides["baseline"].fixed or overrides["baseline"].value != 0
     ):
@@ -235,10 +263,13 @@ def fit_tf_calibration(
         raise RuntimeError("TF calibration requires the full joint count-fit solution")
     ok, message = fit.success, fit.message
     if ok and request.fit_beta:
-        values = {p.name: p.value for p in fit.parameters}
-        if not _amplitude_is_significant(
-            values["A0"], fit.standard_error("A0")
-        ) or not _frequency_is_resolved(values["frequency"], fit.standard_error("frequency")):
+        fitted = {p.name: p for p in fit.parameters}
+        if not _amplitude_is_significant(fitted["A0"].value, fit.standard_error("A0")) or (
+            not fitted["frequency"].fixed
+            and not _frequency_is_resolved(
+                fitted["frequency"].value, fit.standard_error("frequency")
+            )
+        ):
             ok, message = (
                 False,
                 "No resolved precession signal (amplitude or frequency consistent with zero); β is degenerate without precession.",
