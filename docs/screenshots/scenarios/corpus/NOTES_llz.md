@@ -10,7 +10,7 @@ simultaneously with the **Keren** relaxation + flat background.
 
 | Name | What the render shows | Intended docs use | requires_fit |
 |---|---|---|---|
-| `corpus_llz_calibration` | Alpha-calibration dialog on the TF 20 G run 51315; α = 0.876(1) fitted, before/after asymmetry preview | Data-prep: fix α before the science fits (GT §4 calibration) | no |
+| `corpus_llz_calibration` | Alpha-calibration dialog on the TF 20 G run 51315; α = 0.876 fitted, before/after asymmetry preview | Data-prep: fix α before the science fits (GT §4 calibration) | no |
 | `corpus_llz_lf_triplet` | 160 K 0/5/10 G triplet overlaid, 0–12 µs; the three fields visibly separate (0 G relaxes fastest, 10 G least) | The raw signature of weak LF decoupling | no |
 | `corpus_llz_global_setup` | Batch/global fit panel (1680×1000): full Keren+Constant formula, Δ/ν/amplitudes **Global**, B_L **From File**, 12 µs window, guide seeds, all 3 runs selected — Run batch fit armed, results card readable | THE parameter-tying showcase | no |
 | `corpus_llz_global_result` | Converged triplet fit: fitted shared Δ=0.358 µs⁻¹, ν=0.267 MHz, χ²ᵣ=1.67, red Keren curve over the ZF data | Headline global-fit result | **yes** |
@@ -19,7 +19,7 @@ simultaneously with the **Keren** relaxation + flat background.
 ## Run selection & workflow (GROUND_TRUTH.md refs)
 
 - **Calibration (GT §4):** run 51315, TF 20 G at 300 K. The alpha dialog fits
-  α = 0.876(1) from the F/B TF oscillation. Note: `classify_tf_calibration_run`
+  α = 0.876 from the F/B TF oscillation. Note: `classify_tf_calibration_run`
   returns *not a candidate* for this run (`field_gauss=None` — it reads a metadata
   key the EMU loader leaves unset), so it would not auto-highlight in the run
   dropdown; the scenario selects it explicitly. This is a minor classifier gap,
@@ -56,7 +56,7 @@ graded target (GT §10).
 
 | Quantity | This reproduction | Target | Source |
 |---|---|---|---|
-| α (TF 20 G, run 51315) | 0.876(1) | — (just "fix α first") | GT §4 |
+| α (TF 20 G, run 51315) | 0.876 | — (just "fix α first") | GT §4 |
 | Δ(160 K) | 0.358 µs⁻¹ | seed 0.3; expect smooth decrease | GT §4/§10 |
 | ν(160 K) | 0.267 MHz | seed 0.2; expect plateau then rise | GT §4/§10 |
 | Δ(T) trend | 0.358 → 0.27 µs⁻¹ (smooth decrease, min ~0.27 near 340 K) | "smooth decrease as Li⁺ mobilises" | GT §10 (paper) |

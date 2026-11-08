@@ -21,7 +21,10 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import AlphaPolicy
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.windows.grouping.alpha_section import AlphaSectionWidget
+from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+from tests.gui.test_grouping_dialog import _estimate_vector_axis, _tf_dataset_with_histograms
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
@@ -202,3 +205,32 @@ def test_quick_estimate_emits_policy_without_error(qapp):
     assert policies[-1].error is None
     assert "(" not in section._result_label.text().split("·")[0]
     section.shutdown()
+
+
+@pytest.mark.parametrize("method", ["diamagnetic", "general", "ratio"])
+def test_new_projection_estimate_replaces_historical_error(qapp, method):
+    dataset = _tf_dataset_with_histograms()
+    times = np.arange(4) * 0.01
+    decay = np.exp(-times / MUON_LIFETIME_US)
+    polarization = 0.2 * np.exp(-0.6 * times)
+    for histogram, counts in zip(
+        dataset.run.histograms,
+        (20000 * decay * (1 + polarization), 16000 * decay * (1 - polarization)),
+        strict=True,
+    ):
+        histogram.counts = counts
+    dataset.run.grouping["projections"][0].update(
+        alpha=1.1, alpha_error=0.9, alpha_reference_run=123
+    )
+    dialog = GroupingDialog([dataset])
+    dialog._vector_method_combo.setCurrentIndex(dialog._vector_method_combo.findData(method))
+    _estimate_vector_axis(dialog, "Top-Bottom")
+    projection = dialog._current_grouping_payload()["projections"][0]
+    assert projection["alpha_reference_run"] == dataset.run_number
+    if method == "ratio":
+        assert projection["alpha_error"] == pytest.approx(
+            dialog._alpha_estimate_state["Top-Bottom"][1]
+        )
+        assert projection["alpha_error"] != 0.9
+    else:
+        assert "alpha_error" not in projection

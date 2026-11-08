@@ -61,7 +61,7 @@ steering deliverable which exercises the fit-table + manual-column trend.
 | Quantity | GT target | Rendered value | Match |
 |---|---|---|---|
 | Grouping groups | 2 groups, 32 detectors each (1–32 / 33–64) | 2 groups × 32 detectors | ✓ (assignment order note below) |
-| α (any TF cal run) | no printed target ("note the value") | α = 0.88487(33), diamagnetic, run 18854 | ✓ (qualitatively balances about 0) |
+| α (any TF cal run) | no printed target ("note the value") | α = 0.8849, diamagnetic, run 18854 | ✓ (qualitatively balances about 0) |
 | Dead-time | no printed value; Off→Auto-Load "changes the plot" | visible ~5.2 % early-time shift (Off ≈ 17.8 %, Auto ≈ 23 %) | ✓ |
 | t0 / tgood (EMU 18850) | t0_bin 15 / first_good 22 (§A0, 1-based); offset ≈ 0.1 µs | t0 0.224 µs (bin 14, 0-based), tgood 0.336 µs (bin 21), offset ≈ 112 ns | ✓ |
 | B1 a₀(I) curve | parabola, min a₀ = 5.18 at I = −0.06 A; ≈7–8 at ±1 A | plotted points = steering_curve.dat exactly (min ≈5.17–5.19 near 0 A, 6.98/7.96 at ∓1/+1 A) | ✓ |

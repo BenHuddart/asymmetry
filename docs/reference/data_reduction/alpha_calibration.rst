@@ -109,12 +109,12 @@ bins so the result does not depend on the display bunching factor.
 General method
 --------------
 
-Uses the lifetime-corrected balanced count
+The General method uses the lifetime-corrected balanced count
 
 .. math::
 
    N(\alpha, t) = \left( \frac{N_F(t)}{\sqrt{\alpha}}
-                  + \sqrt{\alpha}\, N_B(t) \right) e^{t/\tau_\mu},
+                  + \sqrt{\alpha}\, N_B(t) \right) e^{t/\tau_\mu}.
 
 At the correct alpha, the polarisation cancels under a common muon-decay
 envelope, equal forward/backward polarisation magnitudes (beta = 1), and
