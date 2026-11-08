@@ -74,8 +74,15 @@ harmless. Loading a reference cannot enable subtraction in this workflow.
 See :doc:`count_domain_fitting` for the complete diagnostic and
 :doc:`data_reduction/backgrounds` for reference-subtracted asymmetry and additive
 physical sample/holder models. The **Individual Groups** display shares this
-count-input restriction. Grouped Fourier/MaxEnt reference preparation is a
+count-input restriction. With an active reference request, **Individual Groups**
+and **Raw Counts** replace the plot with the diagnostic and its supported
+alternatives. No reference setting is changed; disabling the correction restores
+the count traces. Grouped Fourier/MaxEnt reference preparation is a
 separate supported workflow.
+
+.. image:: /_generated/screenshots/count_reference_display.png
+   :alt: Raw Counts displays the unsupported-reference diagnostic and alternatives instead of stale or fallback traces.
+   :width: 100%
 
 Current GUI workflow
 --------------------

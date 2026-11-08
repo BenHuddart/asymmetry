@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Explain unsupported reference subtraction in grouped/raw count fitting and
-  give actionable alternatives, even when the reference is already available.
+  count displays, showing actionable alternatives without an uncaught render error.
 
 - Reject boolean reference exposures and coefficients instead of interpreting
   `true` as measured exposure or an authored scale of one.

@@ -124,3 +124,42 @@ class CountReferenceUnsupportedScenario(AlphaCountCalibrationScenario):
 
 
 register(CountReferenceUnsupportedScenario())
+
+
+class CountReferenceDisplayScenario(Scenario):
+    name = "count_reference_display"
+    description = "Raw-count display presents the unsupported-reference diagnostic without plotting a fallback."
+    size = (900, 440)
+
+    def build(self) -> QWidget:
+        from asymmetry.gui.mainwindow import MainWindow
+
+        from ..data import make_ybco_knight_grouped
+
+        window = MainWindow()
+        dataset = make_ybco_knight_grouped()
+        window._data_browser.add_dataset(dataset)
+        window._on_dataset_selected(dataset.run_number)
+        window._plot_panel.set_time_view_modes(
+            ["fb_asymmetry", "groups", "raw_counts"], "raw_counts"
+        )
+        dataset.run.grouping.update(
+            background_correction=True,
+            background_mode="reference_run",
+            background_run={"run_number": 3521},
+        )
+        window._render_current_selection_plot()
+        panel = window._plot_panel
+        if not any(
+            "reference-run subtraction is unsupported" in text.get_text()
+            for text in panel._ax.texts
+        ):
+            raise RuntimeError("Raw-count display must show the unsupported-reference diagnostic")
+        panel.setParent(None)
+        window._dirty = False
+        window.close()
+        window.deleteLater()
+        return panel
+
+
+register(CountReferenceDisplayScenario())
