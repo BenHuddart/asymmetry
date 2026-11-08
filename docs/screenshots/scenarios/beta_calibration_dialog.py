@@ -16,11 +16,10 @@ Raw and deadtime-corrected shared count fits use the same result controls;
 the objective and variance contracts are documented on the companion page.
 This canonical display adds no background or objective selector or result line.
 
-The count-fit protocol's real estimate (:func:`fit_fb_alpha` with
-``estimate_beta=True``) is an iminuit count-domain fit — the same fitting
-stack ``alpha_count_calibration`` marks ``requires_fit = True`` for, because
-it trips on numpy >= 2.3 in dev environments (see docs/README.md). Rather than
-tie this docs screenshot to that stack (and to a real fit's convergence),
+The count-fit protocol delegates its real estimate to the shared
+:func:`~asymmetry.core.fitting.tf_calibration.fit_tf_calibration` operation,
+which selects raw Poisson or corrected weighted observations from the applied
+deadtime outcome. To keep the canonical display independent of fit convergence,
 this scenario patches ``estimate_beta_detailed`` at the same seam
 ``tests/gui/test_beta_section.py`` patches it — the module-level name the
 β-section worker looks up — with a fixed, canonical

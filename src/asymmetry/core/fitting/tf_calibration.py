@@ -209,9 +209,7 @@ def fit_tf_calibration(
         if i < len(labels) and "postpileup" in labels[i].casefold().replace(" ", "")
     ]
     if processed:
-        raise FitInputError(
-            f"Raw Poisson TF calibration cannot use declared PostPileUp channels {processed}"
-        )
+        raise FitInputError(f"TF calibration cannot use declared PostPileUp channels {processed}")
     frequency = (
         request.frequency_mhz
         if request.frequency_mhz is not None

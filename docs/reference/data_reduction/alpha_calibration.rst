@@ -359,6 +359,8 @@ raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
 labelled ``PostPileUp`` (using grouping labels when the metadata copy is absent)
 and a selected period marked as lacking acquired histograms; unselected processed
 channels remain loadable alongside raw banks.
+For example, "TF calibration cannot use declared PostPileUp channels [1]"
+identifies an unsupported selected channel independently of the fit objective.
 Unknown or untagged processing remains a caller precondition: supply acquired
 raw histograms, rather than processed ROOT channels or a mapped difference.
 Count-background settings retain the count fitter's availability preflight.

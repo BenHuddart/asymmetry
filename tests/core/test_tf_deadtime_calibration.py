@@ -111,12 +111,13 @@ def test_missing_optional_file_table_retains_raw_poisson_and_skip_provenance():
     assert all(d.deadtime.status == "skipped" for d in result.fit.domains)
 
 
-@pytest.mark.parametrize("mode", ["manual", "from_file"])
-def test_applied_deadtime_does_not_admit_declared_processed_banks(mode):
-    ds = _deadtime_tf(mode=mode)
+@pytest.mark.parametrize("mode", ["off", "manual", "from_file"])
+def test_processed_bank_diagnostic_does_not_claim_a_fitting_objective(mode):
+    ds = _raw_tf(beta=1) if mode == "off" else _deadtime_tf(mode=mode)
     ds.run.metadata["histogram_labels"] = ["Forward PostPileUp rej.", "Backward"]
-    with pytest.raises(FitInputError, match="PostPileUp"):
+    with pytest.raises(FitInputError, match=r"PostPileUp channels \[1\]") as error:
         fit_tf_calibration(ds, TFCalibrationRequest(1, 2))
+    assert "Poisson" not in str(error.value)
 
 
 def test_skipped_file_correction_does_not_admit_arbitrary_supplied_variance():

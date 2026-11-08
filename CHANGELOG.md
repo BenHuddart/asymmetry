@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Identify unsupported processed channels in TF calibration without implying
+  that the selected fit objective is Poisson.
+
 - Retain physical domains in TF parameter overrides and recognise processed
   channel labels held only in grouping before raw-Poisson calibration.
 
