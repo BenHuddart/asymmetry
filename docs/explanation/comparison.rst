@@ -177,6 +177,18 @@ These policy distinctions do not establish numerical equivalence between
 calibration estimators. The cited Mantid documentation version is distinct
 from the 6.16.1 executable used in the numerical comparisons below.
 
+WiMDA 1.326 quick **Diamagnetic** and **General** estimates return alpha
+without an uncertainty; Asymmetry follows that error policy. Its Diamagnetic
+uses continuous minimisation and internal packing, and its General uses a
+two-window decay balance rather than relative-scatter minimisation. Matched
+16 ns synthetic beta = 1 controls over raw bins 4–498, background/deadtime off
+and bunch one agree within 0.001 absolute alpha: TF Diamagnetic 1.237 versus
+1.236610, TF General 1.250 versus 1.249827, and relaxing General 1.250 versus
+1.250073 (WiMDA then Asymmetry). These checks do not establish uncertainty
+coverage or equivalence on corrected or acquired observations. Asymmetry also
+checks rounding-level General contrast and a residual lifetime diagnostic;
+their purpose and limits are in :ref:`alpha-calibration`.
+
 Asymmetry also checks that automatic α has finite positive F/B integrals and
 a finite positive ratio. An undefined estimate makes that reduction unavailable
 and editable; it does not replace the stored request with unity. Explicit

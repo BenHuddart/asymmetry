@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Diamagnetic and General quick alpha estimates return values without added
+  bootstrap errors; General rejects rounding-only window contrast. Count-ratio
+  uncertainty and saved calibration records are preserved.
+
+
 - Explain unsupported reference subtraction in grouped/raw count fitting and
   count displays, showing actionable alternatives without an uncaught render error.
 

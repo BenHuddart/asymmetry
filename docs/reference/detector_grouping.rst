@@ -801,8 +801,12 @@ the asymmetry at :math:`\alpha = 1` against the asymmetry at the fitted
 so the balance is self-evident.
 
 A successful estimate sets the profile's alpha policy to ``calibrated`` and
-records its **provenance** — method, source run, and uncertainty — displayed as,
-for example, "α = 1.2345(67) · Diamagnetic (TF) · run 2923". Typing a value into
+records its **provenance** — method, source run, and uncertainty where available.
+For example, a quick result displays "α = 1.2345 · Diamagnetic (TF) · run 2923".
+**Diamagnetic (TF)** and **General (LF/ZF)** return alpha without an added
+uncertainty; **Count ratio ΣF/ΣB** retains first-order error propagation.
+Saved calibration errors remain recorded until an explicit new estimate replaces
+them. Typing a value into
 the alpha field directly instead switches the policy to ``fixed`` and the
 provenance to plain "manual", since a hand-typed number no longer carries a
 measurement behind it. If you change the deadtime or background settings after

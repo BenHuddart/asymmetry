@@ -196,10 +196,10 @@ def test_alpha_estimate_sees_exclusion_through_grouped_counts():
     full = group_forward_backward(histograms, _grouping())
     excl = group_forward_backward(histograms, _grouping(excluded_detectors=[2]))
     alpha_full = estimate_alpha_detailed(
-        GroupCounts(full.forward), GroupCounts(full.backward), method="ratio", n_bootstrap=0
+        GroupCounts(full.forward), GroupCounts(full.backward), method="ratio"
     )
     alpha_excl = estimate_alpha_detailed(
-        GroupCounts(excl.forward), GroupCounts(excl.backward), method="ratio", n_bootstrap=0
+        GroupCounts(excl.forward), GroupCounts(excl.backward), method="ratio"
     )
     assert alpha_full.alpha == pytest.approx(30.0 / 70.0)
     assert alpha_excl.alpha == pytest.approx(10.0 / 70.0)

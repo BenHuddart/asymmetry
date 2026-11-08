@@ -189,3 +189,16 @@ def test_request_resolution_error_is_shown_without_starting_a_worker(qapp, monke
     assert messages == ["reference run is not loaded"]
     assert section._estimate_btn.isEnabled()
     assert section._tasks.active_count == 0
+
+
+def test_quick_estimate_emits_policy_without_error(qapp):
+    section = AlphaSectionWidget()
+    _configured(section, [_run(5, ratio=2.0)], method="diamagnetic", selected=5)
+    policies = []
+    section.alpha_estimated.connect(policies.append)
+    section._on_estimate()
+    _wait_until(lambda: section._tasks.active_count == 0)
+    assert policies[-1].value == pytest.approx(2.0)
+    assert policies[-1].error is None
+    assert "(" not in section._result_label.text().split("·")[0]
+    section.shutdown()

@@ -260,8 +260,9 @@ Where each function lives
   (``asymmetry.core.transform``) — estimate :math:`\alpha` from grouped counts.
   The simple form is a count-ratio (:math:`\sum F / \sum B`, Mantid
   ``AlphaCalc``); the **detailed** form (``method="diamagnetic"`` by default)
-  returns an :class:`~asymmetry.core.transform.AlphaEstimate` with an
-  uncertainty and is the one to use for the diamagnetic (TF balance) method.
+  returns an :class:`~asymmetry.core.transform.AlphaEstimate` and is the one
+  to use for the diamagnetic (TF balance) method. Diamagnetic and General
+  return no added uncertainty; the ratio reports first-order propagation.
   The simple form raises ``CorrectionUnavailableError`` for empty inputs,
   nonpositive integrals or an unrepresentable ratio; it has no default result.
 * ``apply_grouping(histograms, group_indices)``
