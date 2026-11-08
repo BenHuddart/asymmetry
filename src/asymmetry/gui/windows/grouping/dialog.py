@@ -1793,7 +1793,6 @@ class GroupingDialog(TimingControls, QDialog):
         untouched: the form payload is captured into that run's override draft so
         Apply can write it back to the overridden run alone.
         """
-        # Drift-clear first so the draft does not carry a stale ``grouping_preset``.
         self._refresh_preset_selection()
         payload = self._current_grouping_payload()
         target = self._editing_target()

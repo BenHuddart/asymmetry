@@ -18,7 +18,7 @@ and correction preflight outcomes without copying a mutable grouping table.
    :members: CountFitParameter, CountFitDomain, JointCountFit
 
 Applying and saving a captured result
-------------------------------------
+-------------------------------------
 
 Use the existing grouping-profile owner to apply a completed fit or selection::
 

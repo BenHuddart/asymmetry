@@ -203,19 +203,31 @@ def restore_calibration(data: dict) -> CalibrationRecord:
         f = c["fit"]
         parameters = tuple(CountFitParameter(**p) for p in f["parameters"])
         names = [p.name for p in parameters]
-        for p in (*request.parameters, *parameters):
-            if isnan(p.min) or isnan(p.max) or p.min > p.max or (not p.fixed and p.min == p.max):
-                raise ValueError("Calibration parameter bounds must be ordered")
-            if p.fixed and (not isfinite(p.value) or not p.min <= p.value <= p.max):
-                raise ValueError("Fixed calibration parameters must lie in their explicit bounds")
-            if p.name in {"alpha", "beta", "stretch"} and (
-                (isfinite(p.min) and p.min <= 0)
-                or (isfinite(p.max) and p.max <= 0)
-                or ((p.fixed or c["ok"]) and (not isfinite(p.value) or p.value <= 0))
-            ):
-                raise ValueError(
-                    "Calibration balances and stretch require positive physical domains"
-                )
+        # Free request seeds may be clipped; the full fit owns effective values.
+        for effective, specs in ((False, request.parameters), (True, parameters)):
+            for p in specs:
+                if (
+                    isnan(p.min)
+                    or isnan(p.max)
+                    or p.min > p.max
+                    or (not p.fixed and p.min == p.max)
+                ):
+                    raise ValueError("Calibration parameter bounds must be ordered")
+                if p.fixed and (not isfinite(p.value) or not p.min <= p.value <= p.max):
+                    raise ValueError(
+                        "Fixed calibration parameters must lie in their explicit bounds"
+                    )
+                if p.name in {"alpha", "beta", "stretch"} and (
+                    (isfinite(p.min) and p.min <= 0)
+                    or (isfinite(p.max) and p.max <= 0)
+                    or (
+                        (p.fixed or (effective and c["ok"]))
+                        and (not isfinite(p.value) or p.value <= 0)
+                    )
+                ):
+                    raise ValueError(
+                        "Calibration balances and stretch require positive physical domains"
+                    )
         beta = next((p for p in parameters if p.name == "beta"), None)
         if (
             beta is None

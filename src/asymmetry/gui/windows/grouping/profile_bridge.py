@@ -130,8 +130,14 @@ def profile_from_form_payload(
         profile.alpha_policy = alpha_policy
     if calibration_source is not None:
         profile.calibration_records = calibration_source.calibration_records
+        if alpha_policy is None and isinstance(
+            calibration_source.alpha_policy, CalibratedCoefficient
+        ):
+            profile.alpha_policy = calibration_source.alpha_policy
         previous = calibration_source.beta_policy
-        if isinstance(previous, CalibratedCoefficient) and (
+        if payload.get("projections"):
+            profile.beta_policy = previous
+        elif isinstance(previous, CalibratedCoefficient) and (
             profile.beta_policy.method == previous.method
             and profile.beta_policy.source_run == previous.source_run
             and profile.beta_policy.error == previous.error

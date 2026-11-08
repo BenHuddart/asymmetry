@@ -282,3 +282,42 @@ def test_projection_history_retains_canonical_identity(tmp_path):
     restored = round_trip(tmp_path, profile)
     assert restored.projections == profile.projections
     assert restored.alpha_policy.record is restored.beta_policy.record
+
+
+@pytest.mark.parametrize("seed", [0.0, -1.0])
+def test_successful_fit_preserves_clipped_free_request_seed(tmp_path, seed):
+    from asymmetry.core.fitting.tf_calibration import fit_tf_calibration
+    from tests.core.test_tf_calibration_fit import _raw_tf
+
+    request = TFCalibrationRequest(
+        1,
+        2,
+        fit_beta=True,
+        parameters=(
+            CountFitParameter("beta", seed),
+            CountFitParameter("frequency", 1.3, fixed=True),
+        ),
+    )
+    result = fit_tf_calibration(_raw_tf(beta=1), request)
+    assert result.ok, result.message
+    profile = GroupingProfile("seed", ProfileFingerprint("test", 2))
+    apply_calibration(profile, CalibrationRecord("seed", result))
+    restored = round_trip(tmp_path, profile)
+    assert restored.alpha_policy.result.request == request
+    assert restored.beta_policy.value > 0
+    assert restored.beta_policy.value == result.beta
+
+
+@pytest.mark.parametrize("period", [None, 1, "sum"])
+def test_recorded_period_and_requested_window_survive(tmp_path, period):
+    result = candidate()
+    request = replace(
+        result.request, period=period, t_min=-0.02, t_max=6.0, exclude=(0.0, 0.04), minos=True
+    )
+    result = replace(result, request=request)
+    profile = GroupingProfile("support", ProfileFingerprint("test", 2))
+    apply_calibration(profile, CalibrationRecord("support", result))
+    restored = round_trip(tmp_path, profile)
+    assert restored.alpha_policy.result.request == request
+    assert restored.alpha_policy.result.period_number == 2
+    assert restored.alpha_policy.result.source_run_number == 123
