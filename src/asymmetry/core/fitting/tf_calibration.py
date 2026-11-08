@@ -278,7 +278,13 @@ def _tf_parameters(dataset, request, envelope):
         Parameter("phase", 0.0),
         *(Parameter(p.name, p.value, min=p.min, max=p.max) for p in _TF_MODELS[envelope][1]),
         Parameter("baseline", 0.0, fixed=True),
-        Parameter("beta", 1.0, min=0.01, max=10.0, fixed=not request.fit_beta),
+        Parameter(
+            "beta",
+            1.0,
+            min=0.01 if request.fit_beta else -np.inf,
+            max=10.0 if request.fit_beta else np.inf,
+            fixed=not request.fit_beta,
+        ),
     ]
     overrides = {p.name: p for p in request.parameters}
     if len(overrides) != len(request.parameters) or overrides.keys() - {p.name for p in defaults}:
@@ -305,9 +311,10 @@ def _tf_parameters(dataset, request, envelope):
         if p is None:
             params.add(default)
             continue
-        lower = default.min if p.min == -np.inf else p.min
-        upper = default.max if p.max == np.inf else p.max
-        positive_balance = p.name in {"alpha", "beta", "stretch"}
+        # Fixed declarations do not inherit numerical search bounds.
+        lower = default.min if not p.fixed and p.min == -np.inf else p.min
+        upper = default.max if not p.fixed and p.max == np.inf else p.max
+        strictly_positive = p.name in {"alpha", "beta", "stretch"}
         nonnegative = default.min >= 0
         amplitude_ceiling = default.max if p.name == "A0" else np.inf
         if (
@@ -315,19 +322,18 @@ def _tf_parameters(dataset, request, envelope):
             or np.isnan(upper)
             or lower > upper
             or (not p.fixed and lower == upper)
-            or (nonnegative and lower < 0)
-            or (positive_balance and lower <= 0)
-            or upper > amplitude_ceiling
+            or (nonnegative and np.isfinite(lower) and lower < 0)
+            or (strictly_positive and np.isfinite(lower) and lower <= 0)
+            or (np.isfinite(upper) and upper > amplitude_ceiling)
         ):
             raise ValueError(f"TF parameter bounds for {p.name!r} must retain its physical domain")
-        # Default search boxes constrain free parameters; fixed values obey user endpoints.
         if p.fixed and (
             not np.isfinite(p.value)
             or (nonnegative and p.value < 0)
-            or (positive_balance and p.value <= 0)
+            or (strictly_positive and p.value <= 0)
             or p.value > amplitude_ceiling
-            or p.value < p.min
-            or p.value > p.max
+            or p.value < lower
+            or p.value > upper
         ):
             raise ValueError(
                 f"TF fixed parameter {p.name!r} must lie in its physical domain and explicit bounds"

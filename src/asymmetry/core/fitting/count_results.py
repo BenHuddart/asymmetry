@@ -56,9 +56,10 @@ def count_fit_domain(group, dataset) -> CountFitDomain:
 class CountFitParameter:
     """Immutable parameter specification/value; count scales are counts per bin.
 
-    In TF request overrides, infinite endpoints retain the default search bounds.
-    Finite endpoints must respect the TF model's physical parameter domains;
-    fixed values must also respect explicitly supplied endpoints.
+    Free TF overrides inherit default search bounds at infinite endpoints.
+    Fixed overrides retain explicit endpoints without numerical search defaults.
+    Finite endpoints and fixed values must respect physical parameter domains;
+    fixed values must also lie within explicitly supplied endpoints.
     """
 
     name: str
@@ -221,7 +222,9 @@ def _result_from_minuit(
                 if merror is not None and getattr(merror, "is_valid", False):
                     minos_errors[p.name] = (float(merror.lower), float(merror.upper))
         else:
-            result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
+            result_params.add(
+                Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
+            )
 
     covariance = None
     covariance_order = list(free_names)

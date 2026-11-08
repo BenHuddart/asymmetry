@@ -13,7 +13,7 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from tests.core.test_tf_calibration_fit import _raw_tf
 
 
-def _control(envelope, beta=1, *, power=1.5, corrected=False):
+def _control(envelope, beta=1, *, power=1.5, corrected=False, alpha=1.25):
     ds = _raw_tf(beta=beta)
     t = ds.run.histograms[0].time_axis
     exponent = {
@@ -27,7 +27,7 @@ def _control(envelope, beta=1, *, power=1.5, corrected=False):
         ds.run.histograms,
         [
             20000 * np.exp(-t / MUON_LIFETIME_US) * (1 + q) + 7,
-            16000 * np.exp(-t / MUON_LIFETIME_US) * (1 - beta * q) + 11,
+            (20000 / alpha) * np.exp(-t / MUON_LIFETIME_US) * (1 - beta * q) + 11,
         ],
         strict=True,
     ):
@@ -391,4 +391,46 @@ def test_fixed_selection_overrides_must_respect_effective_bounds(monkeypatch, co
             _control("exponential"),
             tf.TFCalibrationRequest(1, 2, parameters=common),
             envelope_parameters=specific,
+        )
+
+
+@pytest.mark.parametrize(
+    "parameter", [P("alpha", 150, min=120, fixed=True), P("stretch", 0.02, max=0.04, fixed=True)]
+)
+def test_fixed_partial_bounds_do_not_inherit_search_defaults(parameter):
+    shape = parameter.name == "stretch"
+    request = tf.TFCalibrationRequest(
+        1,
+        2,
+        frequency_mhz=1.3,
+        parameters=(P("frequency", 1.3, fixed=True),) + (() if shape else (parameter,)),
+    )
+    result = tf.select_tf_calibration(
+        _control(
+            "stretched" if shape else "exponential",
+            power=0.02 if shape else 1.5,
+            alpha=1.25 if shape else 150,
+        ),
+        request,
+        envelope_parameters={tf.TFEnvelope.STRETCHED: (parameter,)} if shape else None,
+    )
+    assert len(result.candidates) == 4
+    candidate = result.candidates[-1] if shape else result.candidates[1]
+    fixed = next(p for p in candidate.fit.parameters if p.name == parameter.name)
+    assert fixed.fixed and fixed.value == parameter.value
+    assert fixed.min == parameter.min and fixed.max == parameter.max
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [P("phase", 0, min=1, max=-1, fixed=True), P("alpha", 150, min=160, max=140, fixed=True)],
+)
+def test_fixed_overrides_reject_inverted_explicit_bounds(monkeypatch, parameter):
+    def forbidden(*args, **kwargs):
+        pytest.fail("inverted fixed bounds reached minimisation")
+
+    monkeypatch.setattr(tf, "_fit_fb_count_groups", forbidden)
+    with pytest.raises(ValueError, match="TF parameter bounds"):
+        tf.select_tf_calibration(
+            _control("exponential"), tf.TFCalibrationRequest(1, 2, parameters=(parameter,))
         )

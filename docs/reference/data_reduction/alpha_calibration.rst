@@ -321,8 +321,8 @@ For a dataset with an established grouping::
         assert result.beta_fixed and result.beta_error is None
 
 ``fit_beta=True`` frees beta in the same model and solver. Parameter overrides
-use immutable ``CountFitParameter`` values. Scalar overrides retain the default
-fit bounds; supplied finite endpoints may change the search interval while
+use immutable ``CountFitParameter`` values. Free-parameter scalar overrides
+retain the default fit bounds; supplied finite endpoints may change the search interval while
 preserving positive alpha/beta, non-negative count scales/backgrounds, frequency,
 and damping, and 0–100 percent amplitude. Invalid domain bounds or fixed values
 raise an input error. Fixed parameters do not acquire the free-parameter search
@@ -473,8 +473,8 @@ Use ``Lambda`` for exponential, ``sigma`` for Gaussian, and ``Lambda``/``stretch
 for stretched; undamped accepts no damping overrides. Asymmetry also checks
 that overrides name parameters actually used by their candidate, with positive
 stretching exponents, before minimisation. Fixed values must lie within any
-explicitly supplied finite bounds; numerical search defaults do not impose new
-physical limits on fixed values. Invalid requests raise ``ValueError``.
+explicitly supplied finite bounds; omitted endpoints stay unbounded for fixed
+values, independently of the numerical defaults used for free searches. Invalid requests raise ``ValueError``.
 The selected result's ``model`` identifies its effective envelope, such as
 ``gaussian_common_phase`` or ``stretched_common_phase``. Calling
 ``fit_tf_calibration`` still fits only the exponential model. Selection is a
