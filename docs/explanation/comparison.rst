@@ -220,7 +220,7 @@ disjoint detectors, 100000 good frames, deadtime 0.02 μs, zero fixed background
 and packing one/four. After matching its corrected-count variance convention,
 fixed/free-beta points agree within 0.0001 absolute and alpha errors within
 0.1%. Asymmetry's retained measured-count weights differ: one beta-one control
-gives alpha 1.249557 versus native 1.249574, and errors 0.001102 versus 0.001162.
+gives alpha 1.249554 versus native 1.249574, and errors 0.001102 versus 0.001162.
 This is a weighting difference, not an uncertainty correction to copy.
 Mantid's muon ``ApplyDeadTimeCorr`` preserves supplied errors; WiMDA's ordinary
 grouping uses measured counts as its counting-error basis. Those correction
