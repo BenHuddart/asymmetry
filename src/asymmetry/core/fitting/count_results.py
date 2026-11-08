@@ -54,7 +54,11 @@ def count_fit_domain(group, dataset) -> CountFitDomain:
 
 @dataclass(frozen=True)
 class CountFitParameter:
-    """Immutable parameter specification/value; count scales are counts per bin."""
+    """Immutable parameter specification/value; count scales are counts per bin.
+
+    In TF request overrides, infinite endpoints retain the default search bounds.
+    Finite endpoints must respect the TF model's physical parameter domains.
+    """
 
     name: str
     value: float

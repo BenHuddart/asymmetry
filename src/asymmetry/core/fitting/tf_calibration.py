@@ -181,7 +181,7 @@ def fit_tf_calibration(
     ]
     if set(indices[0]) & set(indices[1]):
         raise FitInputError("Independent Poisson TF banks must have disjoint detectors")
-    labels = run.metadata.get("histogram_labels", ())
+    labels = run.metadata.get("histogram_labels") or run.grouping.get("histogram_labels", ())
     processed = [
         i + 1
         for bank in indices
@@ -237,14 +237,35 @@ def fit_tf_calibration(
         not overrides["baseline"].fixed or overrides["baseline"].value != 0
     ):
         raise ValueError("TF baseline must be fixed at zero; count backgrounds own constant levels")
-    params = ParameterSet(
-        [
-            Parameter(p.name, p.value, min=p.min, max=p.max, fixed=p.fixed)
-            if (p := overrides.get(default.name)) is not None
-            else default
-            for default in defaults
-        ]
-    )
+    params = ParameterSet()
+    for default in defaults:
+        p = overrides.get(default.name)
+        if p is None:
+            params.add(default)
+            continue
+        lower = default.min if p.min == -np.inf else p.min
+        upper = default.max if p.max == np.inf else p.max
+        positive_balance = p.name in {"alpha", "beta"}
+        nonnegative = default.min >= 0
+        amplitude_ceiling = default.max if p.name == "A0" else np.inf
+        if (
+            np.isnan(lower)
+            or np.isnan(upper)
+            or lower > upper
+            or (not p.fixed and lower == upper)
+            or (nonnegative and lower < 0)
+            or (positive_balance and lower <= 0)
+            or upper > amplitude_ceiling
+        ):
+            raise ValueError(f"TF parameter bounds for {p.name!r} must retain its physical domain")
+        if p.fixed and (
+            not np.isfinite(p.value)
+            or (nonnegative and p.value < 0)
+            or (positive_balance and p.value <= 0)
+            or p.value > amplitude_ceiling
+        ):
+            raise ValueError(f"TF fixed parameter {p.name!r} must lie in its physical domain")
+        params.add(Parameter(p.name, p.value, min=lower, max=upper, fixed=p.fixed))
     grouped = fit_fb_alpha(
         dataset,
         request.forward_group,

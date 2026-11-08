@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain physical domains in TF parameter overrides and recognise processed
+  channel labels held only in grouping before raw-Poisson calibration.
+
 - Report joint count-fit degrees of freedom once per free parameter, evaluate
   full HESSE covariance, and seed free TF backgrounds away from the zero boundary.
 

@@ -478,3 +478,137 @@ def test_joint_fit_rejects_nonpositive_or_nonfinite_fixed_frequency(frequency):
                 fit_beta=True, parameters=(CountFitParameter("frequency", frequency, fixed=True),)
             ),
         )
+
+
+@pytest.mark.parametrize("metadata_labels", [None, []])
+def test_processed_labels_in_grouping_are_checked_when_metadata_labels_absent(metadata_labels):
+    ds = _raw_tf(beta=1)
+    if metadata_labels is not None:
+        ds.run.metadata["histogram_labels"] = metadata_labels
+    ds.run.grouping["histogram_labels"] = ["Forward PostPileUp rej.", "Backward"]
+    with pytest.raises(FitInputError, match="PostPileUp"):
+        fit_tf_calibration(ds, _request())
+    assert len(ds.run.histograms) == 2
+
+
+@pytest.mark.parametrize(
+    "name,value,lower,upper",
+    [
+        ("alpha", 1.2, 1e-6, 100.0),
+        ("beta", 0.8, 0.01, 10.0),
+        ("N0", 17888.0, 0.0, np.inf),
+        ("background", 5.0, 0.0, np.inf),
+        ("background_b", 5.0, 0.0, np.inf),
+        ("A0", 20.0, 0.0, 100.0),
+        ("frequency", 1.3, 0.0, np.inf),
+        ("Lambda", 0.15, 0.0, np.inf),
+    ],
+)
+def test_scalar_parameter_overrides_retain_default_bounds(monkeypatch, name, value, lower, upper):
+    fit = tf_calibration.fit_fb_alpha
+
+    def check_parameters(dataset, forward, backward, model, params, **kwargs):
+        assert params[name].min == lower
+        assert params[name].max == upper
+        return fit(dataset, forward, backward, model, params, **kwargs)
+
+    monkeypatch.setattr(tf_calibration, "fit_fb_alpha", check_parameters)
+    result = fit_tf_calibration(
+        _raw_tf(beta=0.8), _request(fit_beta=True, parameters=(CountFitParameter(name, value),))
+    )
+    assert result.ok, result.message
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        CountFitParameter("alpha", 1.2, min=0),
+        CountFitParameter("beta", 0.8, min=-1),
+        CountFitParameter("frequency", 1.3, min=-1),
+        CountFitParameter("Lambda", 0.15, min=-1),
+        CountFitParameter("N0", 17888.0, min=-1),
+        CountFitParameter("background", 5.0, min=-1),
+        CountFitParameter("background_b", 5.0, min=-1),
+        CountFitParameter("A0", 20.0, min=-1),
+        CountFitParameter("A0", 20.0, max=101),
+        CountFitParameter("background", 5.0, min=6, max=4),
+        CountFitParameter("Lambda", 0.15, min=float("nan")),
+    ],
+)
+def test_override_bounds_cannot_remove_physical_parameter_domains(parameter):
+    with pytest.raises(ValueError, match="TF parameter bounds"):
+        fit_tf_calibration(_raw_tf(beta=0.8), _request(fit_beta=True, parameters=(parameter,)))
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        CountFitParameter("background", -1.0, fixed=True),
+        CountFitParameter("background_b", -1.0, fixed=True),
+        CountFitParameter("N0", -1.0, fixed=True),
+        CountFitParameter("A0", 101.0, fixed=True),
+        CountFitParameter("A0", -1.0, fixed=True),
+        CountFitParameter("Lambda", -0.15, fixed=True),
+        CountFitParameter("frequency", -1.3, fixed=True),
+    ],
+)
+def test_fixed_overrides_respect_physical_parameter_domains(parameter):
+    with pytest.raises(ValueError, match="TF fixed parameter"):
+        fit_tf_calibration(_raw_tf(beta=1), _request(parameters=(parameter,)))
+
+
+def test_explicit_bounds_may_widen_a_balance_search_box_within_the_physical_domain():
+    result = fit_tf_calibration(
+        _raw_tf(beta=0.8),
+        _request(
+            fit_beta=True,
+            parameters=(
+                CountFitParameter("alpha", 1.2, min=0.001, max=200),
+                CountFitParameter("beta", 0.8, min=0.001, max=20),
+                CountFitParameter("frequency", 1.3, min=0.5, max=2),
+            ),
+        ),
+    )
+    assert result.ok, result.message
+    fitted = {p.name: p for p in result.fit.parameters}
+    assert fitted["alpha"].max == 200
+    assert fitted["beta"].min == 0.001 and fitted["beta"].max == 20
+    assert result.alpha == pytest.approx(1.25, abs=1e-4)
+    assert result.beta == pytest.approx(0.8, abs=1e-4)
+
+
+def test_fixed_positive_alpha_is_not_limited_by_the_default_search_box():
+    ds = _raw_tf(beta=1)
+    t = np.arange(600) * 0.016
+    q = 0.2 * np.exp(-0.15 * t) * np.cos(2 * np.pi * 1.3 * t + 0.17)
+    ds.run.histograms[1].counts = np.rint(
+        (20000 / 150) * np.exp(-t / MUON_LIFETIME_US) * (1 - q) + 11
+    )
+    fixed = dict(
+        alpha=150.0,
+        A0=20.0,
+        frequency=1.3,
+        phase=0.17,
+        Lambda=0.15,
+        background=7.0,
+        background_b=11.0,
+    )
+    result = fit_tf_calibration(
+        ds,
+        _request(parameters=tuple(CountFitParameter(n, v, fixed=True) for n, v in fixed.items())),
+    )
+    assert result.ok, result.message
+    assert result.alpha == 150
+    assert result.alpha_error is None
+
+
+def test_fixed_frequency_may_use_equal_endpoints():
+    result = fit_tf_calibration(
+        _raw_tf(beta=0.8),
+        _request(
+            fit_beta=True,
+            parameters=(CountFitParameter("frequency", 1.3, min=1.3, max=1.3, fixed=True),),
+        ),
+    )
+    assert result.ok, result.message
+    assert result.beta == pytest.approx(0.8, abs=1e-4)

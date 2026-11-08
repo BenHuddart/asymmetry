@@ -321,7 +321,12 @@ For a dataset with an established grouping::
         assert result.beta_fixed and result.beta_error is None
 
 ``fit_beta=True`` frees beta in the same model and solver. Parameter overrides
-use immutable ``CountFitParameter`` values; backgrounds can be fixed to an
+use immutable ``CountFitParameter`` values. Scalar overrides retain the default
+fit bounds; supplied finite endpoints may change the search interval while
+preserving positive alpha/beta, non-negative count scales/backgrounds, frequency,
+and damping, and 0–100 percent amplitude. Invalid domain bounds or fixed values
+raise an input error. Fixed parameters do not acquire the free-parameter search
+box as a physical limit. Backgrounds can be fixed to an
 independently established value or fitted separately for the two banks.
 The estimator fits frequency by default. An explicitly fixed finite positive
 frequency is honoured as an independently supplied model assumption; no fitted
@@ -339,7 +344,8 @@ Poisson counts on disjoint detector banks. Applied deadtime corrections,
 supplied counting variances, and explicit pulse-response requests are unsupported;
 loading and inspection remain available. Integer values alone do not establish
 raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
-labelled ``PostPileUp`` and a selected period marked as lacking acquired
+labelled ``PostPileUp`` (using grouping labels when the metadata copy is absent)
+and a selected period marked as lacking acquired
 histograms; unselected processed channels remain loadable alongside raw banks.
 Unknown or untagged processing remains a caller precondition: supply acquired
 raw histograms, rather than processed ROOT channels or a mapped difference. Count-background settings
