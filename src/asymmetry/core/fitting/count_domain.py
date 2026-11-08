@@ -16,10 +16,16 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_calibration import record_count_deadtime_calibration
+from asymmetry.core.fitting.count_results import (
+    _result_from_minuit,
+    count_bank_view,
+    count_fit_domain,
+    joint_count_fit,
+)
 from asymmetry.core.fitting.engine import (
+    FitCancelledError,
     FitResult,
     _make_cancel_guard,
-    _minuit_status_message,
     _reject_affine_ties,
     drive_minuit,
 )
@@ -341,6 +347,7 @@ def _solve(
     total_cost: Callable[..., float],
     *,
     minos: bool = False,
+    explicit_hesse: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ):
     """Minimise with cooperative cancellation and optional MINOS intervals."""
@@ -360,101 +367,13 @@ def _solve(
         lo = p.min if p.min != -_INF else m.limits[i][0]
         hi = p.max if p.max != _INF else m.limits[i][1]
         m.limits[i] = (lo, hi)
-    drive_minuit(m, migrad_kwargs={"iterate": 5, "use_simplex": True}, minos=minos)
+    drive_minuit(
+        m,
+        migrad_kwargs={"iterate": 5, "use_simplex": True},
+        minos=minos,
+        explicit_hesse=explicit_hesse,
+    )
     return m
-
-
-def _result_from_minuit(
-    m,
-    params: ParameterSet,
-    free_names: list[str],
-    *,
-    observations: GaussianObservations | PoissonCounts,
-    model_values: NDArray[np.float64],
-    keep_params: list[str] | None = None,
-    chi_squared: float | None = None,
-    followers: dict[str, str] | None = None,
-    success_message: str = "Count fit successful",
-    failure_prefix: str = "Count fit failed",
-) -> FitResult:
-    """Record one bank, with its own cost and equality-linked parameter values.
-
-    Expected-count minima and residuals refer to this bank's observations.
-    """
-    keep = set(keep_params) if keep_params is not None else None
-    link_followers = followers or {}
-    # MINOS stores signed interval offsets; the symmetric HESSE errors stay unchanged.
-    merrors = getattr(m, "merrors", None)
-    result_params = ParameterSet()
-    uncertainties: dict[str, float] = {}
-    minos_errors: dict[str, tuple[float, float]] = {}
-    for p in params:
-        if keep is not None and p.name not in keep:
-            continue
-        source = link_followers.get(p.name, p.name)
-        if source in free_names:
-            idx = free_names.index(source)
-            result_params.add(Parameter(name=p.name, value=m.values[idx], min=p.min, max=p.max))
-            if m.errors[idx] is not None:
-                uncertainties[p.name] = float(m.errors[idx])
-            if merrors is not None:
-                try:
-                    merror = merrors[source]
-                except (KeyError, TypeError):
-                    merror = None
-                if merror is not None and getattr(merror, "is_valid", False):
-                    minos_errors[p.name] = (float(merror.lower), float(merror.upper))
-        else:
-            result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
-
-    covariance = None
-    covariance_order: list[str] = []
-    if m.valid and getattr(m, "covariance", None) is not None:
-        cov = np.asarray(m.covariance, dtype=float)
-        cov_names = [n for n in free_names if keep is None or n in keep]
-        cov_idx = [free_names.index(n) for n in cov_names]
-        if cov_idx:
-            covariance = cov[np.ix_(cov_idx, cov_idx)]
-            covariance_order = cov_names
-
-    counts = (
-        observations.values
-        if isinstance(observations, GaussianObservations)
-        else observations.counts
-    )
-    objective = (
-        Objective.GAUSSIAN if isinstance(observations, GaussianObservations) else Objective.POISSON
-    )
-    invalid_model = (
-        observations.invalid_model_reason(model_values)
-        if isinstance(observations, PoissonCounts)
-        else None
-    )
-    ndata = int(np.size(counts))
-    nfree = len(free_names if keep is None else covariance_order)
-    residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
-    chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
-    return FitResult(
-        objective=objective,
-        success=bool(m.valid) and invalid_model is None,
-        minimum_expected_count=float(np.min(model_values))
-        if isinstance(observations, PoissonCounts) and invalid_model is None
-        else None,
-        chi_squared=chi2,
-        reduced_chi_squared=chi2 / max(ndata - nfree, 1),
-        parameters=result_params,
-        uncertainties=uncertainties,
-        covariance=covariance,
-        covariance_parameters=covariance_order,
-        residuals=residuals,
-        message=invalid_model
-        or _minuit_status_message(
-            m, success_message=success_message, failure_prefix=failure_prefix
-        ),
-        function_calls=int(getattr(m, "nfcn", 0) or 0),
-        dof=ndata - nfree,
-        minos_errors=minos_errors or None,
-    )
 
 
 # --- dpsep refinement -------------------------------------------------------
@@ -732,7 +651,8 @@ def fit_fb_alpha(
     polarization amplitude only — the musrfit fit-type-2 asymmetry balance
     measured on a weak-TF calibration run. ``shared_parameters`` then also
     reports ``beta``, and its correlation with ``alpha`` is available on either
-    group result's covariance block. This path rejects a physics model owning a
+    group result's covariance block. An explicitly fixed beta remains fixed.
+    This path rejects a physics model owning a
     ``beta`` parameter (e.g. the stretched exponential) so the structural name is
     unambiguous, and is not supported with the double-pulse model. Existing
     ``estimate_beta=False`` callers are unaffected.
@@ -877,40 +797,42 @@ def fit_fb_alpha(
     # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
     # free it is located by the non-smooth grid scan above, where a likelihood-walk
     # interval is not well defined, so that path stays HESSE-only.
-    m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
+    m = _solve(free, total_cost, minos=minos, explicit_hesse=True, cancel_callback=cancel_callback)
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)
     chi2_f = _cost_value(observations_f, model_f)
     chi2_b = _cost_value(observations_b, model_b)
 
-    # Both sides retain shared parameters and their own background.
-    fwd_keep = [p.name for p in params if p.name != "background_b"]
-    bwd_keep = [p.name for p in params if p.name != "background"]
-    result_f = _result_from_minuit(
+    if isinstance(observations_f, PoissonCounts):
+        observations = PoissonCounts(
+            np.concatenate((time_f, time_b)),
+            np.concatenate((counts_f, counts_b)),
+            observations_f.source,
+            observations_f.run_number,
+        )
+    else:
+        observations = GaussianObservations(
+            np.concatenate((time_f, time_b)),
+            np.concatenate((counts_f, counts_b)),
+            np.concatenate((observations_f.sigma, observations_b.sigma)),
+            observations_f.run_number,
+        )
+    joint = _result_from_minuit(
         m,
         params,
         free_names,
-        observations=observations_f,
-        model_values=model_f,
-        keep_params=fwd_keep,
-        chi_squared=chi2_f,
+        observations=observations,
+        model_values=np.concatenate((model_f, model_b)),
+        chi_squared=chi2_f + chi2_b,
         followers=followers,
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
-    result_b = _result_from_minuit(
-        m,
-        params,
-        free_names,
-        observations=observations_b,
-        model_values=model_b,
-        keep_params=bwd_keep,
-        chi_squared=chi2_b,
-        followers=followers,
-        success_message="Forward/backward count fit successful",
-        failure_prefix="Forward/backward count fit failed",
+    result_f = count_bank_view(
+        joint, observations_f, model_f, omit="background_b", statistic=chi2_f
     )
+    result_b = count_bank_view(joint, observations_b, model_b, omit="background", statistic=chi2_b)
 
     minima = (result_f.minimum_expected_count, result_b.minimum_expected_count)
     minimum = min(minima) if all(value is not None for value in minima) else None
@@ -937,10 +859,8 @@ def fit_fb_alpha(
         int(forward_group): result_f,
         int(backward_group): result_b,
     }
-    success = bool(m.valid)
-    message = (
-        "Forward/backward count fit successful" if success else "Forward/backward count fit failed"
-    )
+    success = joint.success
+    message = joint.message
     if success:
         free_values = dict(zip(free_names, fitted, strict=True))
         complaint = _fb_scale_complaint(
@@ -955,7 +875,13 @@ def fit_fb_alpha(
             message = f"Forward/backward count fit {complaint}"
             for result in (result_f, result_b):
                 result.warnings.append(message)
+    joint.success, joint.message = success, message
+    if cancel_callback is not None and cancel_callback():
+        raise FitCancelledError("Fit cancelled.")
     return GroupedTimeDomainFitResult(
+        joint_fit=joint_count_fit(
+            joint, tuple(count_fit_domain(g, dataset) for g in (g_fwd, g_bwd))
+        ),
         success=success,
         group_results=group_results,
         shared_parameters=shared_parameters,

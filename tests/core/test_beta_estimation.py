@@ -31,7 +31,6 @@ from asymmetry.core.fitting.beta_calibration import (
 )
 from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
 from asymmetry.core.fitting.grouped_time_domain import (
-    GroupedTimeDomainFitResult,
     build_fb_count_model,
 )
 from asymmetry.core.fitting.models import oscillatory, stretched_exponential
@@ -263,8 +262,8 @@ def test_count_fit_matches_a_hand_seeded_n0():
             [
                 Parameter("alpha", 1.0, min=1.0e-6, max=100.0),
                 Parameter("N0", _n0_seed(ds, 1), min=0.0),
-                Parameter("background", 0.0, min=0.0),
-                Parameter("background_b", 0.0, min=0.0),
+                Parameter("background", 1.0, min=0.0),
+                Parameter("background_b", 1.0, min=0.0),
                 Parameter("A0", 20.0, min=0.0, max=100.0),
                 Parameter("frequency", f, min=0.0),
                 Parameter("phase", 0.0),
@@ -283,13 +282,15 @@ def test_count_fit_passes_the_underlying_failure_message_through(monkeypatch):
     """A fit rejected for an implausible converged scale must not be flattened
     into "did not converge" — the caller needs to know the scale is the problem."""
     ds = _fb_beta_run(f=0.5, field_gauss=_field_gauss_for_frequency(0.5))
-    rejected = GroupedTimeDomainFitResult(
-        success=False,
-        group_results={},
-        shared_parameters=ParameterSet(),
-        message="Forward/backward count fit converged at a spurious minimum",
+    from dataclasses import replace
+
+    from asymmetry.core.fitting.tf_calibration import TFCalibrationRequest, fit_tf_calibration
+
+    result = fit_tf_calibration(ds, TFCalibrationRequest(1, 2, fit_beta=True, frequency_mhz=0.5))
+    rejected = replace(
+        result, ok=False, message="Forward/backward count fit converged at a spurious minimum"
     )
-    monkeypatch.setattr(beta_calibration, "fit_fb_alpha", lambda *a, **k: rejected)
+    monkeypatch.setattr(beta_calibration, "fit_tf_calibration", lambda *a, **k: rejected)
     est = estimate_beta_detailed(ds, 1, 2, method="count_fit")
     assert not est.ok
     assert est.message == rejected.message

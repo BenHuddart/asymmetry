@@ -393,6 +393,7 @@ def drive_minuit(
     method: str = "migrad",
     migrad_kwargs: dict | None = None,
     run_hesse: bool = True,
+    explicit_hesse: bool = False,
     minos: bool = False,
     minos_parameters: Sequence[str] | None = None,
 ) -> dict[str, tuple[float, float]] | None:
@@ -406,10 +407,8 @@ def drive_minuit(
     ``m`` must already have its cost function, parameter names, and limits set; this
     function owns only the post-construction drive. ``migrad_kwargs`` is forwarded to
     ``m.migrad``/``m.simplex`` so each caller keeps its own ncall/iterate/use_simplex
-    tuning. migrad already runs HESSE as its final step, so the symmetric errors and
-    covariance need no extra work; an explicit ``m.hesse()`` is run only when MINOS
-    follows a *simplex* fit (simplex computes no Hessian, which MINOS requires). The
-    migrad symmetric errors are therefore bit-identical whether or not MINOS follows.
+    tuning. ``explicit_hesse`` evaluates the full Hessian after minimisation,
+    before optional MINOS; otherwise MIGRAD's covariance estimate is retained.
 
     When ``minos`` is true and the fit is valid, ``m.minos()`` scans every free
     parameter (or just ``minos_parameters``) and the signed asymmetric offsets
@@ -425,14 +424,14 @@ def drive_minuit(
     else:
         m.migrad(**migrad_kwargs)
 
+    if explicit_hesse and m.valid:
+        m.hesse()
+
     if not minos or not getattr(m, "valid", False):
         return None
 
-    # MINOS needs a valid Hessian. migrad already runs HESSE as its final step, so on
-    # the migrad path the covariance is HESSE-quality and we add nothing — keeping the
-    # symmetric errors bit-identical whether or not MINOS follows. simplex computes no
-    # Hessian, so MINOS there gets an explicit HESSE first.
-    if run_hesse and method == "simplex":
+    # Simplex supplies no covariance for MINOS unless HESSE is requested.
+    if run_hesse and method == "simplex" and not explicit_hesse:
         try:
             m.hesse()
         except Exception:

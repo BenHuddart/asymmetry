@@ -21,6 +21,7 @@ from asymmetry.core.fitting.count_inputs import (
     _count_group_setup,
     _resolve_group_indices,
 )
+from asymmetry.core.fitting.count_results import JointCountFit
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
     CostFactory,
@@ -56,7 +57,6 @@ GROUP_NUISANCE_PARAMS: tuple[str, ...] = (
     "relative_phase",
 )
 
-#: Group nuisances a chained seed does not carry from the previous run's fit.
 _CHAIN_NUISANCE_RESTART: dict[str, float] = {"amplitude": 1.0, "background": 0.0}
 
 
@@ -117,7 +117,7 @@ def normalize_to_grouped_contract(
 
 @dataclass
 class GroupedTimeDomainGroup:
-    """One lifetime-corrected grouped-count domain for simultaneous fitting."""
+    """One grouped-count domain."""
 
     group_id: Hashable
     group_name: str
@@ -141,12 +141,13 @@ class GroupedTimeDomainGroup:
 
 @dataclass
 class GroupedTimeDomainFitResult:
-    """Result bundle for grouped time-domain fitting."""
+    """Grouped results, with a complete F/B solution when available."""
 
     success: bool
     group_results: dict[Hashable, FitResult]
     shared_parameters: ParameterSet
     message: str = ""
+    joint_fit: JointCountFit | None = None
 
 
 def build_grouped_time_domain_datasets(
@@ -254,11 +255,7 @@ def build_count_groups(
     lifetime_corrected: bool = True,
     exclude: tuple[float, float] | None = None,
 ) -> list[GroupedTimeDomainGroup]:
-    """Build requested groups in order, on one detector-aligned time axis.
-
-    Common t0 is computed over the detector union so F/B models compare the
-    same time coordinates, even when detectors carry different t0 bins.
-    """
+    """Build banks in order on a common t0 aligned over their detector union."""
     run, grouping, _groups_raw, _included = _count_group_setup(dataset)
     specs: list[tuple[int, list[int]]] = []
     for raw_gid in group_ids:

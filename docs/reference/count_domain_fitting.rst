@@ -402,6 +402,14 @@ not statistical equivalence of the estimators. See
 :doc:`detector_grouping` for the primary ISIS report and
 :doc:`/explanation/comparison` for the bounds of the program comparisons.
 
+The core F/B result also exposes ``joint_fit``: one complete parameter and
+covariance solution, including both backgrounds. Bank results remain projections
+for plotting and existing consumers. Use the joint statistic/dof for a joint
+fit-quality diagnostic; summing bank degrees of freedom counts shared parameters
+twice. F/B fits explicitly evaluate HESSE before optional MINOS. The fixed/free
+beta TF calibration API is described in :doc:`data_reduction/alpha_calibration`
+and :doc:`/api/fitting/calibration`.
+
 .. [baker_cousins] S. Baker and R. D. Cousins, Nuclear Instruments and Methods
    **221**, 437–442 (1984), `doi:10.1016/0167-5087(84)90016-4
    <https://doi.org/10.1016/0167-5087(84)90016-4>`_.

@@ -39,34 +39,21 @@ from dataclasses import dataclass
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.count_domain import (
-    SEED_FROM_DATA,
-    fit_fb_alpha,
-    fit_single_histogram,
-)
+from asymmetry.core.fitting.count_domain import fit_single_histogram
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import build_count_group
 from asymmetry.core.fitting.models import oscillatory
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+from asymmetry.core.fitting.tf_calibration import (
+    TFCalibrationRequest,
+    _amplitude_is_significant,
+    _frequency_is_resolved,
+    _seed_frequency_mhz,
+    fit_tf_calibration,
 )
 
 #: Method identifiers accepted by :func:`estimate_beta_detailed`.
 BETA_ESTIMATION_METHODS: tuple[str, ...] = ("count_fit", "single_histogram")
-
-#: Amplitude / frequency significance below which the precession signal is
-#: treated as absent (β is degenerate without a resolved oscillation — the design
-#: note's §4). Both gates are needed: a flat (non-precessing) asymmetry fits a
-#: *significant* constant amplitude at a frequency that collapses to zero, so the
-#: frequency gate is what actually rejects the degenerate case.
-_MIN_AMPLITUDE_SIGNIFICANCE = 3.0
-_MIN_FREQUENCY_SIGNIFICANCE = 3.0
-
-#: Fallback precession-frequency seed (MHz) when no field is known — a weak-TF
-#: calibration run should always carry field metadata, so this is a last resort.
-_FALLBACK_FREQUENCY_MHZ = 1.0
 
 #: Typical seed amplitude for a transverse-field calibration run (percent), the
 #: convention shared with the count-fit seeder in the GUI.
@@ -82,7 +69,8 @@ class BetaEstimate:
     correlation of the fitted α and β from the joint fit's covariance block for
     the ``"count_fit"`` method, and ``None`` for ``"single_histogram"`` (two
     independent fits carry no cross-parameter correlation). ``reduced_chi2`` is
-    the combined per-side χ²/dof summary of the underlying fit(s).
+    Poisson deviance per joint dof for ``count_fit`` (unique free parameters),
+    or pooled per-side deviance/dof for ``single_histogram``.
     """
 
     beta: float
@@ -111,22 +99,6 @@ def _fail(method: str, message: str, *, n_bins_used: int = 0) -> BetaEstimate:
         ok=False,
         message=message,
     )
-
-
-def _seed_frequency_mhz(dataset: MuonDataset, field_tesla: float | None) -> float:
-    """Precession-frequency seed (MHz) for the oscillatory model.
-
-    Prefers an explicit ``field_tesla``; otherwise falls back to the dataset's
-    recorded field (Gauss). A missing or zero field yields
-    :data:`_FALLBACK_FREQUENCY_MHZ` — a calibration run normally carries the
-    field, so this is only a floor to keep the fit runnable.
-    """
-    if field_tesla is not None and np.isfinite(field_tesla) and field_tesla != 0.0:
-        return float(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * abs(float(field_tesla)))
-    field_gauss = float(dataset.run.field) if dataset.run is not None else 0.0
-    if np.isfinite(field_gauss) and field_gauss != 0.0:
-        return float(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * abs(field_gauss))
-    return _FALLBACK_FREQUENCY_MHZ
 
 
 def _n0_seed(dataset: MuonDataset, group_id: int) -> float:
@@ -163,32 +135,6 @@ def _oscillatory_seed_params(
     )
 
 
-def _amplitude_is_significant(value: float | None, error: float | None) -> bool:
-    """Whether a fitted amplitude is resolved above zero (precession present)."""
-    if value is None or not np.isfinite(value):
-        return False
-    if abs(value) <= 1.0e-9:
-        return False
-    if error is None or not np.isfinite(error) or error <= 0.0:
-        # No usable error: accept only a clearly non-zero amplitude.
-        return abs(value) > 1.0e-6
-    return abs(value) >= _MIN_AMPLITUDE_SIGNIFICANCE * error
-
-
-def _frequency_is_resolved(value: float | None, error: float | None) -> bool:
-    """Whether a fitted precession frequency is resolved above zero.
-
-    A flat / non-precessing asymmetry drives the fitted frequency to zero; when
-    it is consistent with zero (or has no usable error) there is no resolved
-    precession and β is degenerate.
-    """
-    if value is None or not np.isfinite(value):
-        return False
-    if error is None or not np.isfinite(error) or error <= 0.0:
-        return False
-    return abs(value) >= _MIN_FREQUENCY_SIGNIFICANCE * error
-
-
 def _combined_reduced_chi2(*results: FitResult) -> float | None:
     """Pooled χ²/dof over the supplied side fits (``None`` when dof ≤ 0)."""
     chi2 = 0.0
@@ -199,23 +145,6 @@ def _combined_reduced_chi2(*results: FitResult) -> float | None:
     if dof <= 0:
         return None
     return chi2 / dof
-
-
-def _alpha_beta_correlation(result: FitResult) -> float | None:
-    """Pearson α–β correlation from a joint fit's covariance block, or ``None``."""
-    cov = result.covariance
-    names = result.covariance_parameters
-    if cov is None or not names or "alpha" not in names or "beta" not in names:
-        return None
-    i = names.index("alpha")
-    j = names.index("beta")
-    denom = np.sqrt(cov[i, i] * cov[j, j])
-    if not np.isfinite(denom) or denom <= 0.0:
-        return None
-    rho = float(cov[i, j] / denom)
-    if not np.isfinite(rho):
-        return None
-    return float(np.clip(rho, -1.0, 1.0))
 
 
 def _estimate_beta_count_fit(
@@ -230,84 +159,32 @@ def _estimate_beta_count_fit(
     minos: bool,
     cancel_callback: Callable[[], bool] | None,
 ) -> BetaEstimate:
-    """Protocol A: simultaneous forward/backward count fit with β free."""
-    method = "count_fit"
-    params = ParameterSet(
-        [
-            Parameter("alpha", 1.0, min=1.0e-6, max=100.0),
-            # fit_fb_alpha seeds N0 from the fitted window itself; no caller
-            # should have to know the run's count scale to drive it.
-            Parameter("N0", SEED_FROM_DATA, min=0.0),
-            Parameter("background", 0.0, min=0.0),
-            Parameter("background_b", 0.0, min=0.0),
-            Parameter("A0", _SEED_AMPLITUDE_PERCENT, min=0.0, max=100.0),
-            Parameter("frequency", float(freq_mhz), min=0.0),
-            Parameter("phase", 0.0),
-            Parameter("Lambda", 0.1, min=0.0),
-            Parameter("baseline", 0.0, fixed=True),
-        ]
-    )
-    result = fit_fb_alpha(
+    """Keep the historical count_fit result vocabulary over the shared TF fit."""
+    result = fit_tf_calibration(
         dataset,
-        forward_group,
-        backward_group,
-        oscillatory,
-        params,
-        t_min=t_min,
-        t_max=t_max,
-        exclude=exclude,
-        estimate_beta=True,
-        minos=minos,
+        TFCalibrationRequest(
+            forward_group,
+            backward_group,
+            fit_beta=True,
+            t_min=t_min,
+            t_max=t_max,
+            exclude=exclude,
+            frequency_mhz=freq_mhz,
+            minos=minos,
+        ),
         cancel_callback=cancel_callback,
     )
-    fwd = result.group_results.get(int(forward_group))
-    bwd = result.group_results.get(int(backward_group))
-    n_bins = int(np.size(fwd.residuals)) if fwd is not None else 0
-    if not result.success or fwd is None or bwd is None:
-        # The underlying fit distinguishes "no minimum" from "converged on an
-        # implausible scale"; pass its own words through rather than flattening
-        # both into "did not converge".
-        return _fail(
-            method,
-            result.message or "Forward/backward count fit did not converge.",
-            n_bins_used=n_bins,
-        )
-
-    amplitude = fwd.parameters["A0"].value if "A0" in fwd.parameters.names else None
-    amplitude_err = fwd.uncertainties.get("A0")
-    frequency = fwd.parameters["frequency"].value if "frequency" in fwd.parameters.names else None
-    frequency_err = fwd.uncertainties.get("frequency")
-    if not _amplitude_is_significant(amplitude, amplitude_err) or not _frequency_is_resolved(
-        frequency, frequency_err
-    ):
-        return _fail(
-            method,
-            "No resolved precession signal (amplitude or frequency consistent with "
-            "zero); β is degenerate without precession.",
-            n_bins_used=n_bins,
-        )
-
-    beta = float(result.shared_parameters["beta"].value)
-    alpha = float(result.shared_parameters["alpha"].value)
-    beta_err = fwd.uncertainties.get("beta")
-    alpha_err = fwd.uncertainties.get("alpha")
-    if beta_err is None or not np.isfinite(beta_err):
-        return _fail(
-            method,
-            "β could not be constrained (no finite error); the run may lack a "
-            "resolved precession signal.",
-            n_bins_used=n_bins,
-        )
-
+    if not result.ok:
+        return _fail("count_fit", result.message, n_bins_used=result.n_bins_used)
     return BetaEstimate(
-        beta=beta,
-        beta_error=float(beta_err),
-        alpha=alpha,
-        alpha_error=float(alpha_err) if alpha_err is not None else None,
-        alpha_beta_correlation=_alpha_beta_correlation(fwd),
-        method=method,
-        n_bins_used=n_bins,
-        reduced_chi2=_combined_reduced_chi2(fwd, bwd),
+        beta=result.beta,
+        beta_error=result.beta_error,
+        alpha=result.alpha,
+        alpha_error=result.alpha_error,
+        alpha_beta_correlation=result.alpha_beta_correlation,
+        method="count_fit",
+        n_bins_used=result.n_bins_used,
+        reduced_chi2=result.fit.statistic_per_dof,
         ok=True,
         message="β estimated by simultaneous forward/backward count fit.",
     )
@@ -470,7 +347,8 @@ def estimate_beta_detailed(
     -------
     BetaEstimate
         On success, ``beta``/``alpha`` with symmetric errors, the α–β correlation
-        (Protocol A only), the bins used and the pooled reduced χ². On any
+        (Protocol A only), the bins used, and deviance per joint dof for Protocol A
+        or pooled per-side dof for Protocol B. On any
         data-quality failure (no precession, degenerate amplitude, fit did not
         converge) ``ok`` is ``False`` and ``message`` explains why; this function
         does not raise for such cases.

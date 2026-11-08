@@ -195,6 +195,59 @@ and editable; it does not replace the stored request with unity. Explicit
 fixed unity remains valid. This protects the ratio's mathematical inputs,
 without claiming that all reference workflows use the same guard.
 
+Shared TF count calibration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Asymmetry's ``tf_calibration_fit`` core operation uses one exponential/common-phase
+F/B raw-count model, fixing beta at one for alpha-only calibration or freeing it
+for joint calibration. Both backgrounds and other nuisances belong to one full
+covariance. Poisson deviance/dof counts unique free parameters once, and errors
+are conventional conditional HESSE standard errors, without residual scaling.
+The existing beta ``count_fit`` adapter uses this operation; the independent
+``single_histogram`` ratio remains a separate protocol.
+
+The closest executed counterpart is musrfit 1.12.1 (``708f777b``, ROOT 6.40.04)
+global type-0 histogram fitting with ``MAX_LIKELIHOOD``, described in the
+`Single Histograms tutorial <https://musruser.psi.ch/Tutorial/Tutorial2.html>`_.
+Four owned controls (rounded means and one seeded Poisson realisation each,
+fixed/free beta) use identical 16 ns integer arrays, raw bins 4–498,
+fixed lifetime, zero backgrounds, phases 0/180 degrees, and matched free
+frequency/damping/amplitude parameters. Alpha/beta points agree within 0.0001
+absolute after mapping native :math:`N_B/N_F` to reciprocal Asymmetry alpha;
+native fractional amplitude maps to Asymmetry percent, MHz to MHz, and degrees
+to radians. This is not equivalence to musrfit type-2 asymmetry chi-square,
+a coverage study, or validation of acquired detector response.
+
+The installed likelihood route reports a different error scale. With only the
+forward normalisation free, the exact Poisson MLE is 19999.9849 and its standard
+error is 9.24119 counts/bin. Asymmetry gives about 9.24122; native musrfit gives
+about 6.535, approximately :math:`1/\sqrt{2}` as large. The independent control
+and full-TF information calculation support Asymmetry's unit-deviance error
+criterion (see the `Minuit2 manual
+<https://root.cern.ch/root/htmldoc/guides/minuit2/Minuit2.html>`_). No compensating
+rescaling is applied. This observation is specific to that installed likelihood
+route; it makes no claim about other versions, type-2 chi-square, or all musrfit
+uncertainties.
+
+WiMDA 1.326 quick Diamagnetic and Asymmetry's quick method give about 1.237 on
+an owned beta-one TF control with generating alpha 1.25; the model fit gives
+1.249995, changing mean reduced asymmetry by about −0.53 percentage points.
+On a matched original Ag TF example (raw bins 18–883, 16 ns, full F/B banks,
+bunch one, background/deadtime off), native quick alpha is 0.974 and Asymmetry
+quick alpha 0.974190, versus TF beta-one 0.966447. The associated mean asymmetry
+shift is about +0.39 percentage points. Its deviance/dof is about 1.30, with
+pulse/phase adequacy unresolved and no physical alpha truth asserted. These
+results describe different estimators, not a universal accuracy ranking.
+WiMDA's separate paired/all-group model-fit errors remain unverified here;
+Mantid AlphaCalc is a ratio comparator, not a shared-TF likelihood comparison.
+
+Asymmetry also checks raw-Poisson numerical inputs, disjoint detector banks,
+existing count-scale sanity, and free-beta precession/error diagnostics. Their
+scope and consequences, and the limits of processed/corrected/pulsed support,
+are in :doc:`/reference/data_reduction/alpha_calibration` and
+:doc:`/reference/data_reduction/beta_calibration`. Passing these checks does not
+certify that an exponential common-phase signal describes a calibration.
+
 .. _comparison-timing:
 
 Integer timing alignment
