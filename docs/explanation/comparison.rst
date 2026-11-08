@@ -270,6 +270,35 @@ are in :doc:`/reference/data_reduction/alpha_calibration` and
 :doc:`/reference/data_reduction/beta_calibration`. Passing these checks does not
 certify that an exponential common-phase signal describes a calibration.
 
+The separate ``select_tf_calibration`` script operation compares undamped,
+exponential, Gaussian, and stretched envelopes on identical count observations,
+using minimum summed objective without a complexity penalty or extra ambiguity
+threshold. All candidate states and conditional covariances remain available.
+This recommendation is an Asymmetry convenience. The existing single-model
+operation and beta adapter retain the exponential model.
+
+musrfit's `MuSRFit interface <https://musruser.psi.ch/?page_id=148>`_ lists
+Exponential Cosine, Gaussian Cosine, and Stretch Cosine. The
+`musrfit THEORY documentation
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_
+defines ``simpleGss`` with a Gaussian rate :math:`\sqrt{2}` times Asymmetry's
+:math:`\sigma`; ``generExpo`` uses :math:`\exp[-(\Lambda t)^p]` at positive time.
+Fresh musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) component controls for all four
+shapes agree within 0.0001 absolute alpha/beta with fixed/free beta, zero fixed
+backgrounds, phases 0/180 degrees, and the same 16 ns raw bins 4–498. Reciprocal
+alpha, fractional amplitude, Gaussian-rate, and degree/radian conventions are
+matched. This tests component points, not native automatic selection or an
+extension of the likelihood error-scale comparison above.
+
+Mantid's `StretchExpMuon documentation
+<https://docs.mantidproject.org/nightly/fitting/fitfunctions/StretchExpMuon.html>`_
+defines the corresponding non-oscillatory stretched envelope and describes a
+usual exponent range up to two. Asymmetry's positive stretching exponent has no
+upper physical cap; its numerical lower search default can be overridden with
+positive bounds. No fresh native Mantid stretched fit or WiMDA model-fit
+comparison is asserted. The outgoing Diamagnetic/reduced-signal comparison
+above concerns a different estimator and does not enter fit-cost ranking.
+
 .. _comparison-timing:
 
 Integer timing alignment
