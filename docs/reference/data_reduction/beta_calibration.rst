@@ -219,3 +219,13 @@ its exponential model.
   asymmetry fit (fit type 2) defines :math:`\beta`.
 - musrfit user manual, "Asymmetry Fit (fit type 2)"
   (<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>).
+
+Stored joint calibration
+------------------------
+
+When a shared TF result is applied through the core grouping-profile API, beta
+and alpha refer to the same frozen fit and nuisance covariance. Fixed beta has
+no fitted error or correlation. Replacing beta with a manual policy removes its
+active joint link while keeping the captured fit in profile history. Stored
+independent scalar alpha and beta records do not imply a joint measurement,
+even when their source runs match. See :doc:`../project_files`.

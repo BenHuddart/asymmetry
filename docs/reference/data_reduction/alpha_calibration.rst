@@ -559,3 +559,15 @@ universal default or uncertainty coverage.
 
 .. [roundoff] N. J. Higham, *Accuracy and Stability of Numerical Algorithms*,
    2nd ed. (SIAM, Philadelphia, 2002), Sec. 3.1.
+
+Stored calibration meaning
+--------------------------
+
+A TF result applied through the core grouping-profile API retains its request,
+effective model and fitted constraints, native support, correction assumptions,
+and full covariance in the project. Alpha and beta share a canonical fit record.
+A usable alpha-only fit with unavailable or unreliable covariance retains alpha
+without an error. Loading uses stored coefficients even when the calibrant file
+is absent; it does not fit again. Manual policies and recorded historical quick
+errors remain authored values, without inferred TF or HESSE provenance. See
+:doc:`../project_files` for the record and conditional uncertainty contract.

@@ -109,6 +109,12 @@ from typing import Any
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.instrument import detect_instrument, instrument_display_name
+from asymmetry.core.project.calibration import (
+    CalibratedCoefficient,
+    CalibrationRecord,
+    profile_calibration_payload,
+    restore_profile_calibrations,
+)
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.deadtime import file_deadtime_table
@@ -823,7 +829,7 @@ class GroupingProfile:
     excluded_detectors: list[int] = field(default_factory=list)
 
     # Policies ---------------------------------------------------------------
-    alpha_policy: AlphaPolicy = field(default_factory=AlphaPolicy)
+    alpha_policy: AlphaPolicy | CalibratedCoefficient = field(default_factory=AlphaPolicy)
     deadtime_policy: DeadtimePolicy = field(default_factory=DeadtimePolicy)
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
@@ -831,7 +837,8 @@ class GroupingProfile:
     # Intrinsic-asymmetry balance beta = A_{0,B}/A_{0,F} (musrfit asymmetry fit
     # type 2), applied with alpha as A = (F - aB)/(bF + aB). Mirrors
     # alpha_policy minus per_run_estimate (docs/porting/beta-correction/).
-    beta_policy: BetaPolicy = field(default_factory=BetaPolicy)
+    beta_policy: BetaPolicy | CalibratedCoefficient = field(default_factory=BetaPolicy)
+    calibration_records: tuple[CalibrationRecord, ...] = ()
 
     # Binning ----------------------------------------------------------------
     binning: BinningSpec = field(default_factory=BinningSpec)
@@ -871,15 +878,8 @@ class GroupingProfile:
             "background_policy": self.background_policy.to_dict(),
             **_base_binning_payload(self.binning),
         }
-        # ``t0_policy`` rides inside the profile dict. It is emitted only when it
-        # departs from the ``from_file`` default so existing projects (which
-        # never stored one) round-trip unchanged and ``from_dict`` stays lenient
-        # — no schema bump is needed.
         if self.t0_policy.mode != "from_file":
             data["t0_policy"] = self.t0_policy.to_dict()
-        # ``good_window_policy`` follows the same rule for the same reason: the
-        # default resolves to the file window a project already stored, so an
-        # untouched profile round-trips byte-identically (D4).
         if self.good_window_policy.mode != "from_file":
             data["good_window_policy"] = self.good_window_policy.to_dict()
         _apply_beta_policy(data, self.beta_policy)
@@ -889,7 +889,7 @@ class GroupingProfile:
             data["period_mode"] = str(self.period_mode)
         if self.extra:
             data["extra"] = dict(self.extra)
-        return data
+        return profile_calibration_payload(self, data)
 
     @classmethod
     def from_dict(cls, data: Any) -> GroupingProfile:
@@ -899,6 +899,11 @@ class GroupingProfile:
         """
         if not isinstance(data, dict):
             raise TypeError("GroupingProfile.from_dict requires a dict")
+        policies = {
+            "alpha_policy": AlphaPolicy.from_dict(data.get("alpha_policy")),
+            "beta_policy": _beta_policy_from_payload(data),
+            **restore_profile_calibrations(data),
+        }
         return cls(
             name=str(data.get("name", "")),
             fingerprint=ProfileFingerprint.from_dict(data.get("fingerprint")),
@@ -907,17 +912,11 @@ class GroupingProfile:
             **_profile_structure(data),
             forward_group=_as_int(data.get("forward_group"), 1) or 1,
             backward_group=_as_int(data.get("backward_group"), 2) or 2,
-            alpha_policy=AlphaPolicy.from_dict(data.get("alpha_policy")),
+            **policies,
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
             t0_policy=T0Policy.from_dict(data.get("t0_policy")),
             good_window_policy=GoodWindowPolicy.from_dict(data.get("good_window_policy")),
-            # ``beta``'s profile-dict shape is identical to its grouping-payload
-            # shape (flat ``beta``/``beta_method``/``beta_error``/
-            # ``beta_reference_run`` keys, no nested policy dict — see
-            # ``to_dict``), so the same inference helper reconstructs the
-            # policy from either surface.
-            beta_policy=_beta_policy_from_payload(data),
             binning=binning_spec(data),
             period_mode=None if data.get("period_mode") is None else str(data.get("period_mode")),
             extra=dict(data.get("extra")) if isinstance(data.get("extra"), dict) else {},
