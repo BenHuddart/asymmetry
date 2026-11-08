@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject invalid calibration identities before they can be applied or saved.
+
 - Identify unsupported processed channels in TF calibration without implying
   that the selected fit objective is Poisson.
 

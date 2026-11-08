@@ -29,6 +29,10 @@ class CalibrationRecord:
     calibration_id: str
     result: TFCalibrationResult | TFCalibrationSelection
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.calibration_id, str) or not self.calibration_id:
+            raise ValueError("Calibration requires a nonempty identity")
+
     @property
     def selected(self) -> TFCalibrationResult | None:
         return (
@@ -279,8 +283,6 @@ def restore_calibration(data: dict) -> CalibrationRecord:
         not data["selection"] and len(candidates) != 1
     ):
         raise ValueError("Calibration candidate scope must match the captured operation")
-    if not isinstance(data["calibration_id"], str) or not data["calibration_id"]:
-        raise ValueError("Calibration requires a nonempty identity")
     result = TFCalibrationSelection(tuple(candidates)) if data["selection"] else candidates[0]
     return CalibrationRecord(data["calibration_id"], result)
 

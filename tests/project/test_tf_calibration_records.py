@@ -189,6 +189,12 @@ def test_actual_selection_support_and_fit_round_trip(tmp_path, fit_beta, correct
     restored = round_trip(tmp_path, profile)
     frozen = restored.calibration_records[0].result
     assert frozen == selection
+    for expected, actual in zip(selection.candidates, frozen.candidates, strict=True):
+        for source_domain, restored_domain in zip(
+            expected.fit.domains, actual.fit.domains, strict=True
+        ):
+            assert restored_domain.alignment.group_lengths == source_domain.alignment.group_lengths
+            assert isinstance(restored_domain.alignment.group_lengths, tuple)
     assert all(c.fit.domains is frozen.candidates[0].fit.domains for c in frozen.candidates)
     assert restored.alpha_policy.result.envelope == selection.selected.envelope
     assert restored.alpha_policy.error == selection.selected.alpha_error
@@ -327,3 +333,19 @@ def test_recorded_period_and_requested_window_survive(tmp_path, period):
     assert restored.alpha_policy.result.request == request
     assert restored.alpha_policy.result.period_number == 2
     assert restored.alpha_policy.result.source_run_number == 123
+
+
+@pytest.mark.parametrize("identity", ["", None, 7, ["invalid"]])
+def test_invalid_identity_cannot_become_an_applied_record(identity):
+    with pytest.raises(ValueError, match="nonempty identity"):
+        CalibrationRecord(identity, candidate())
+
+
+@pytest.mark.parametrize("identity", ["", None, 7, ["invalid"]])
+def test_invalid_persisted_identity_is_rejected(identity):
+    from asymmetry.core.project.calibration import calibration_payload, restore_calibration
+
+    payload = calibration_payload(CalibrationRecord("valid", candidate()))
+    payload["calibration_id"] = identity
+    with pytest.raises(ValueError, match="nonempty identity"):
+        restore_calibration(payload)

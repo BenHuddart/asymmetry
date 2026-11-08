@@ -32,6 +32,8 @@ Use the existing grouping-profile owner to apply a completed fit or selection::
    save_project(state, "calibration.asymp")
 
 Restore the profile with ``GroupingProfile.from_dict`` after ``load_project``.
+Calibration identities must be nonempty strings and are checked when a record
+is constructed, including during project restore.
 Both coefficient policies reference one frozen record; their scalar values and
 errors derive from its full fit. An unsuccessful selection may be retained in
 ``profile.calibration_records`` for diagnostics but cannot be applied. See
