@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Share one core TF calibration fit for alpha-only (beta fixed at one) and joint
+  alpha/beta, with full nuisance covariance, conditional errors, and cancellation.
+
 ### Documentation
 
 - Distinguish reference-count subtraction from additive physical holder signals,
@@ -24,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed
+
+- Report joint count-fit degrees of freedom once per free parameter, evaluate
+  full HESSE covariance, and seed free TF backgrounds away from the zero boundary.
 
 - Diamagnetic and General quick alpha estimates return values without added
   bootstrap errors; General rejects rounding-only window contrast. Count-ratio

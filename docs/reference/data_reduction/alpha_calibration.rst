@@ -287,6 +287,85 @@ parameter of a count-level fit (the WiMDA manual's "most accurate way"). That
 route is the **Count-fit α** section above; its uncertainty comes from the fit
 covariance, including the α–amplitude correlation.
 
+Shared core TF calibration fit
+------------------------------
+
+For scripts, :func:`~asymmetry.core.fitting.tf_calibration.fit_tf_calibration`
+fits alpha with beta fixed at one, or alpha and beta jointly, through one
+raw-count solver. Its method identity is ``tf_calibration_fit``, distinct from
+quick ``diamagnetic`` and the beta adapter's historical ``count_fit`` identity.
+The grouping dialog's quick-method choices and automatic per-run ratio policy
+retain their separate meanings.
+
+The supported polarisation is
+:math:`q(t)=(A_0/100)\exp(-\Lambda |t|)\cos(2\pi f t+\phi)`.
+Both banks share this exponential envelope, frequency, and phase, with opposite
+signs and the count equations in :doc:`beta_calibration`. Time is in μs,
+frequency in MHz, phase in radians, and :math:`A_0` in percent. The muon lifetime
+is fixed at the cited physical constant. A single common phase is a model
+assumption; a successful minimum does not establish its adequacy.
+
+For a dataset with an established grouping::
+
+    from asymmetry.core.fitting.tf_calibration import (
+        TFCalibrationRequest, fit_tf_calibration,
+    )
+
+    request = TFCalibrationRequest(
+        forward_group=1, backward_group=2,
+        fit_beta=False, t_min=0.1, t_max=8.0,
+    )
+    result = fit_tf_calibration(dataset, request)
+    if result.ok:
+        alpha, conditional_error = result.alpha, result.alpha_error
+        assert result.beta_fixed and result.beta_error is None
+
+``fit_beta=True`` frees beta in the same model and solver. Parameter overrides
+use immutable ``CountFitParameter`` values; backgrounds can be fixed to an
+independently established value or fitted separately for the two banks.
+The default free-background seeds are one count per bin, avoiding an optimiser
+start exactly at the non-negative boundary; this is a starting value, not a
+fixed background or prior. The :doc:`/api/fitting/calibration` reference describes
+selection and result fields.
+
+The operation consumes the supplied acquisition and its existing grouping,
+exclusions, native timing, good-bin support, and bunching. An explicit ``period``
+uses the existing acquired-period selector. It requires unprocessed integer
+Poisson counts on disjoint detector banks. Applied deadtime corrections,
+supplied counting variances, and explicit pulse-response requests are unsupported;
+loading and inspection remain available. Integer values alone do not establish
+raw-Poisson provenance. The caller must supply acquired raw histograms, rather
+than processed ROOT channels or a mapped difference. Count-background settings
+retain the count fitter's availability preflight; constant backgrounds are
+model terms, not a subtraction of prepared observations. Reference-run
+subtraction retains its unsupported-calculation diagnostic.
+
+``result.fit`` owns every fitted and fixed parameter, both backgrounds, the
+unique free-parameter covariance order, units, and the effective native domains.
+The statistic is the summed Poisson deviance, with
+:math:`\nu=N_F+N_B-k`, counting each unique free parameter once.
+Deviance per degree of freedom is a diagnostic, not an exact chi-square
+calibration or an instruction to rescale errors.
+
+Errors are conditional symmetric HESSE curvature standard errors, using a unit
+change in deviance. They include the fitted nuisance correlations, but not
+model selection, uncertain timing/corrections held fixed, or propagated
+cross-bin reduction covariance. Explicit HESSE follows minimisation; optional
+MINOS intervals are retained separately. ``fit.success`` describes the fit;
+``fit.uncertainty_status`` separately reports ``available``, ``unavailable``, or
+``unreliable`` covariance. Missing or unreliable errors are ``None``. Fixed
+beta has no fitted error or alpha–beta correlation.
+
+Asymmetry also checks the existing fitted scale against the observed count
+ratio (factor three) and forward count level (factor 100) to reject spurious
+minima. Free-beta calibration additionally retains the amplitude/frequency
+significance and finite-beta-error safeguards described in
+:doc:`beta_calibration`. Those beta-identifiability checks are not imposed on
+alpha-only calibration with beta fixed. Neither set certifies model adequacy.
+Cancellation is polled during the actual objective, HESSE/MINOS work, and at
+the final result boundary; cancellation raises ``FitCancelledError`` and
+publishes no result.
+
 Compared with other programs
 ----------------------------
 
@@ -302,8 +381,33 @@ See :doc:`/explanation/comparison` and the `WiMDA overview/manual
 counterpart; musrfit model fits use a different objective from these quick
 estimates.
 
+The closest raw-count counterpart is musrfit's global histogram likelihood fit,
+not its type-2 asymmetry fit. Matched musrfit 1.12.1/ROOT 6.40.04 fixed/free-beta
+controls agree within 0.0001 absolute alpha/beta, after reciprocal alpha and
+fraction/percent conversion. The installed likelihood route's differing error
+scale is documented in :doc:`/explanation/comparison`; Asymmetry retains the
+independently checked conventional standard-error scale.
+
+On an owned rounded beta-one TF control, TF alpha is 1.249995 against generating
+1.25, while the quick values above are about 1.237. The mean reduced asymmetry
+changes by about −0.53 percentage points on those same counts. On the original
+Ag calibration example, matched raw support gives quick alpha 0.974 in WiMDA
+1.326 and 0.974190 in Asymmetry, versus TF beta-one 0.966447 (zero backgrounds,
+no deadtime or pulse response). The mean reduced asymmetry changes by about
++0.39 percentage points; deviance/dof is about 1.30. No independent physical
+alpha truth is asserted for that acquisition, and pulse/phase/model suitability
+remains a limitation. These are bounded method comparisons, not evidence for a
+universal default or uncertainty coverage.
+
 **References**
 
+- `musrfit Single Histograms tutorial
+  <https://musruser.psi.ch/Tutorial/Tutorial2.html>`_, global histogram
+  calibration and shared geometric parameters.
+- S. Baker and R. D. Cousins, Nucl. Instrum. Methods Phys. Res. **221**, 437 (1984),
+  `doi:10.1016/0167-5087(84)90016-4 <https://doi.org/10.1016/0167-5087(84)90016-4>`_.
+- `CERN Minuit2 manual <https://root.cern.ch/root/htmldoc/guides/minuit2/Minuit2.html>`_,
+  function normalisation, HESSE, and MINOS.
 - S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
 - F. L. Pratt, Physica B **289–290**, 710 (2000).
