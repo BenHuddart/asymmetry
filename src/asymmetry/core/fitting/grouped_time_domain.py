@@ -255,10 +255,7 @@ def build_count_groups(
     lifetime_corrected: bool = True,
     exclude: tuple[float, float] | None = None,
 ) -> list[GroupedTimeDomainGroup]:
-    """Build requested groups in order, on one detector-aligned time axis.
-
-    Common t0 over the detector union keeps F/B time coordinates identical.
-    """
+    """Build banks in order on a common t0 aligned over their detector union."""
     run, grouping, _groups_raw, _included = _count_group_setup(dataset)
     specs: list[tuple[int, list[int]]] = []
     for raw_gid in group_ids:
