@@ -54,8 +54,8 @@ Count fit
 ---------
 
 *Count fit (recommended)* (method id ``count_fit``) fits the forward and
-backward raw count histograms **simultaneously** under a shared Poisson
-likelihood, with a single :math:`\beta` scaling only the backward
+backward count histograms **simultaneously**, with a single :math:`\beta`
+scaling only the backward
 polarisation term:
 
 .. math::
@@ -72,6 +72,14 @@ fitted alongside it and their correlation, so the two balances are measured
 *with* their mutual dependence rather than in isolation. It is the
 **endorsed measurement protocol** and the only one of the two that yields an
 :math:`\alpha`–:math:`\beta` correlation.
+
+Raw counts use a shared Poisson likelihood. Applied File/manual deadtime
+correction selects weighted count fitting with retained measured or supplied
+independent variances, through the same model and solver. A skipped optional
+File correction retains raw Poisson observations and its warning/provenance.
+Backgrounds remain automatic model terms; grouping background subtraction is
+not applied to these observations. See :doc:`alpha_calibration` for selection,
+supported observations, and conditional-error limits.
 
 The scriptable :func:`~asymmetry.core.fitting.tf_calibration.fit_tf_calibration`
 operation owns this joint fit. Its ``TFCalibrationRequest(fit_beta=False)`` fixes
@@ -166,10 +174,12 @@ produced.
 The full joint parameter/covariance owner includes both backgrounds and every
 other nuisance. Errors and alpha–beta correlation derive from that matrix;
 unavailable/unreliable covariance supplies no coefficient error. The legacy
-``reduced_chi2`` field for ``count_fit`` contains Poisson deviance divided by
-joint degrees of freedom, counting shared free parameters once. It is not
-an exact chi-square test or a residual-based error scale. See
-:doc:`alpha_calibration` for the supported raw observations, fixed-beta error
+``reduced_chi2`` field for ``count_fit`` contains the selected objective divided
+by joint degrees of freedom, counting shared free parameters once: Poisson
+deviance for raw data or weighted chi-square after applied deadtime correction.
+Neither is used to rescale parameter errors; Poisson deviance is not an exact
+chi-square test. See
+:doc:`alpha_calibration` for supported observations, fixed-beta error
 state, cancellation, and conditional-error limits.
 
 Compared with other programs

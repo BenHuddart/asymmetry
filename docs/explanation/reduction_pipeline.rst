@@ -130,6 +130,11 @@ inputs reject active reference-run subtraction for either cost. With background
 correction disabled or a supported non-reference preflight, the count model
 fits full counts and its own accidental-background nuisance. Poisson fitting
 requires eligible raw observations, not signed reference differences. The
+shared TF calibration follows this count-model branch. It uses Poisson deviance
+when deadtime is off or skipped, and weighted corrected counts with retained
+measured/supplied variance after an applied deadtime correction. Grouping
+background settings retain their availability preflight; the two fitted model
+backgrounds are neither subtracted nor replaced by grouping estimates. The
 separate count-fit branch in the figure represents this preparation contract,
 not a tap from the reference-subtracted counts. See
 :doc:`/reference/count_domain_fitting`, :doc:`/reference/negative_muon_analysis`,

@@ -12,6 +12,10 @@ overlays the β = 1 "before" ghost against the calibrated-β "after" curve.
 Companion to :doc:`/reference/detector_grouping` and
 :doc:`/reference/data_reduction/beta_calibration`.
 
+Raw and deadtime-corrected shared count fits use the same result controls;
+the objective and variance contracts are documented on the companion page.
+This canonical display adds no background or objective selector or result line.
+
 The count-fit protocol's real estimate (:func:`fit_fb_alpha` with
 ``estimate_beta=True``) is an iminuit count-domain fit — the same fitting
 stack ``alpha_count_calibration`` marks ``requires_fit = True`` for, because

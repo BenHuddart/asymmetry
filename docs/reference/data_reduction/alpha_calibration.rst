@@ -292,7 +292,7 @@ Shared core TF calibration fit
 
 For scripts, :func:`~asymmetry.core.fitting.tf_calibration.fit_tf_calibration`
 fits alpha with beta fixed at one, or alpha and beta jointly, through one
-raw-count solver. Its method identity is ``tf_calibration_fit``, distinct from
+count-model solver. Its method identity is ``tf_calibration_fit``, distinct from
 quick ``diamagnetic`` and the beta adapter's historical ``count_fit`` identity.
 The grouping dialog's quick-method choices and automatic per-run ratio policy
 retain their separate meanings.
@@ -339,29 +339,46 @@ selection and result fields.
 
 The operation consumes the supplied acquisition and its existing grouping,
 exclusions, native timing, good-bin support, and bunching. An explicit ``period``
-uses the existing acquired-period selector. It requires unprocessed integer
-Poisson counts on disjoint detector banks. Applied deadtime corrections,
-supplied counting variances, and explicit pulse-response requests are unsupported;
-loading and inspection remain available. Integer values alone do not establish
+uses the existing acquired-period selector. It requires disjoint detector banks
+from acquired integer counts. With deadtime correction off or skipped, it uses
+the raw-count Poisson objective. An applied File/manual deadtime correction
+selects the existing weighted count fit automatically, retaining measured-count
+variance or explicitly supplied independent variance. No cost selector is needed.
+Corrections act on each required native detector bin before grouping and packing;
+variances sum over the same observations. The weighting uses a variance floor of
+one count squared per packed bin, matching the existing count-fit preparation.
+This does not propagate uncertainty through the deadtime correction formula or
+include coefficient/exposure uncertainty.
+
+Asymmetry also checks the selected acquired counts before admitting a corrected
+fit, so correction does not admit fractional or negative source observations.
+Arbitrary supplied-variance observations without an applied deadtime correction
+and explicit pulse-response requests are unsupported; loading and inspection
+remain available. Integer values alone do not establish
 raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
 labelled ``PostPileUp`` (using grouping labels when the metadata copy is absent)
 and a selected period marked as lacking acquired histograms; unselected processed
 channels remain loadable alongside raw banks.
 Unknown or untagged processing remains a caller precondition: supply acquired
 raw histograms, rather than processed ROOT channels or a mapped difference.
-Count-background settings retain the count fitter's availability preflight; constant backgrounds are
-model terms, not a subtraction of prepared observations. Reference-run
+Count-background settings retain the count fitter's availability preflight.
+The two constant backgrounds are fitted model terms even when reduction
+background subtraction is off. Grouping fixed values, range estimates, and
+automatic-tail estimates neither subtract the calibration observations nor fix
+or seed those model terms. Independently established background values can be
+fixed through explicit count-model parameter overrides. Reference-run
 subtraction retains its unsupported-calculation diagnostic.
 
 ``result.fit`` owns every fitted and fixed parameter, both backgrounds, the
 unique free-parameter covariance order, units, and the effective native domains.
-The statistic is the summed Poisson deviance, with
+``result.fit.objective`` identifies Poisson deviance or weighted chi-square, with
 :math:`\nu=N_F+N_B-k`, counting each unique free parameter once.
-Deviance per degree of freedom is a diagnostic, not an exact chi-square
+Poisson deviance per degree of freedom is a diagnostic, not an exact chi-square
 calibration or an instruction to rescale errors.
 
 Errors are conditional symmetric HESSE curvature standard errors, using a unit
-change in deviance. They include the fitted nuisance correlations, but not
+change in the fitted objective, without residual scaling. Weighted errors are
+conditional on the retained/supplied variances. They include the fitted nuisance correlations, but not
 model selection, uncertain timing/corrections held fixed, or propagated
 cross-bin reduction covariance. Explicit HESSE follows minimisation; optional
 MINOS intervals are retained separately. ``fit.success`` describes the fit;
@@ -401,6 +418,14 @@ controls agree within 0.0001 absolute alpha/beta, after reciprocal alpha and
 fraction/percent conversion. The installed likelihood route's differing error
 scale is documented in :doc:`/explanation/comparison`; Asymmetry retains the
 independently checked conventional standard-error scale.
+
+For applied deadtime correction, matched musrfit 1.12.1 type-0 weighted
+histogram controls agree within 0.0001 absolute alpha/beta only after matching
+the error convention. Its compared export rebuilds errors from corrected counts;
+Asymmetry retains measured/supplied variance, consistent with Mantid's muon
+correction and WiMDA's ordinary counting-error basis. These are distinct weights,
+not full propagation through deadtime correction. Conditions and limits are in
+:ref:`comparison-count-calibration`.
 
 On an owned rounded beta-one TF control, TF alpha is 1.249995 against generating
 1.25, while the quick values above are about 1.237. The mean reduced asymmetry
