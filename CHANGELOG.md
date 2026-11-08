@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preserve applied core TF calibration and model-selection records in projects,
+  including shared covariance, effective constraints, source assumptions, and history.
+
 - Add scriptable TF calibration selection across four envelopes by summed fit cost,
   retaining candidate fits/failures and enforcing explicit bounds on fixed parameters.
 

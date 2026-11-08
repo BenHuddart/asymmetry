@@ -28,6 +28,7 @@ from asymmetry.core.instrument import (
     PresetGrouping,
     instrument_display_name,
 )
+from asymmetry.core.project.calibration import CalibratedCoefficient
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     GoodWindowPolicy,
@@ -112,6 +113,7 @@ def profile_from_form_payload(
     fingerprint: ProfileFingerprint,
     active: bool = True,
     alpha_policy: AlphaPolicy | None = None,
+    calibration_source: GroupingProfile | None = None,
     good_window_policy: GoodWindowPolicy | None = None,
 ) -> GroupingProfile:
     """Lift the shareable settings out of a form-built *payload* into a profile.
@@ -126,6 +128,16 @@ def profile_from_form_payload(
     profile = profile_from_payload(payload, name, fingerprint, active=active)
     if alpha_policy is not None:
         profile.alpha_policy = alpha_policy
+    if calibration_source is not None:
+        profile.calibration_records = calibration_source.calibration_records
+        previous = calibration_source.beta_policy
+        if isinstance(previous, CalibratedCoefficient) and (
+            profile.beta_policy.method == previous.method
+            and profile.beta_policy.source_run == previous.source_run
+            and profile.beta_policy.error == previous.error
+            and abs(profile.beta_policy.value - previous.value) < 0.5e-6
+        ):
+            profile.beta_policy = previous
     if good_window_policy is not None:
         profile.good_window_policy = good_window_policy
     return profile

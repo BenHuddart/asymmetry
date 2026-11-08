@@ -16,3 +16,26 @@ and correction preflight outcomes without copying a mutable grouping table.
 
 .. automodule:: asymmetry.core.fitting.count_results
    :members: CountFitParameter, CountFitDomain, JointCountFit
+
+Applying and saving a captured result
+------------------------------------
+
+Use the existing grouping-profile owner to apply a completed fit or selection::
+
+   from asymmetry.core.project.calibration import CalibrationRecord, apply_calibration
+   from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, save_project
+
+   record = CalibrationRecord("calibration-1", result)
+   apply_calibration(profile, record)
+   state = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": [],
+            "grouping_profiles": [profile.to_dict()]}
+   save_project(state, "calibration.asymp")
+
+Restore the profile with ``GroupingProfile.from_dict`` after ``load_project``.
+Both coefficient policies reference one frozen record; their scalar values and
+errors derive from its full fit. An unsuccessful selection may be retained in
+``profile.calibration_records`` for diagnostics but cannot be applied. See
+:doc:`/reference/project_files` for source availability and history semantics.
+
+.. automodule:: asymmetry.core.project.calibration
+   :members: CalibrationRecord, CalibratedCoefficient, apply_calibration

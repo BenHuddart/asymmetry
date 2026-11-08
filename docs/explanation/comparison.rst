@@ -1317,3 +1317,14 @@ and information checks in Asymmetry protect downstream covariance even when a
 solver might claim success; none establishes physical model adequacy.
 See :doc:`/reference/data_reduction/backgrounds` for the model, current window,
 and covariance equations.
+
+Calibration persistence
+-----------------------
+
+Asymmetry's project records preserve the effective TF model, count objective,
+units, correction assumptions, constraints, and full nuisance covariance of an
+applied core calibration. Saving and loading do not rerun a reference program,
+change the fit, or establish additional numerical agreement. The component,
+objective, and conditional-error comparisons above retain their stated versions
+and conditions. Model selection is an Asymmetry convenience; stored candidate
+covariances do not measure selection uncertainty or full reduced-data covariance.

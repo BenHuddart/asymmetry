@@ -16,7 +16,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 34
+CURRENT_SCHEMA_VERSION: int = 35
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -161,6 +161,8 @@ def migrate_to_current(data: dict) -> dict:
         if version == prior:
             version += 1
             migrated = convert(migrated) | {"schema_version": version}
+    if version == 34:
+        migrated = dict(migrated, schema_version=35)
     return migrated
 
 
@@ -1772,27 +1774,7 @@ def validate(data: dict) -> None:
 
 
 def load_project(path: str | Path) -> dict:
-    """Load, migrate, and validate a project file.
-
-    Parameters
-    ----------
-    path : str or Path
-        Path to the ``.asymp`` project file.
-
-    Returns
-    -------
-    dict
-        Validated project state dict at the current schema version.
-
-    Raises
-    ------
-    UnsupportedSchemaVersion
-        If the schema version is not supported.
-    ValueError
-        If required keys are missing or the file is not valid JSON.
-    OSError
-        If the file cannot be read.
-    """
+    """Load, migrate, and validate a project file without resolving external inputs."""
     raw = decode_non_finite(json.loads(Path(path).read_text(encoding="utf-8")))
     migrated = migrate_to_current(raw)
     validate(migrated)
