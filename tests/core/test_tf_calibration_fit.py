@@ -341,7 +341,7 @@ def test_cooperative_cancellation_reaches_actual_work_and_final_boundary(monkeyp
         return cancelled or (boundary == "objective" and calls >= 5)
 
     if boundary == "final":
-        original = tf_calibration.fit_fb_alpha
+        original = tf_calibration._fit_fb_count_groups
 
         def cancel_after_fit(*args, **kwargs):
             nonlocal cancelled
@@ -349,7 +349,7 @@ def test_cooperative_cancellation_reaches_actual_work_and_final_boundary(monkeyp
             cancelled = True
             return result
 
-        monkeypatch.setattr(tf_calibration, "fit_fb_alpha", cancel_after_fit)
+        monkeypatch.setattr(tf_calibration, "_fit_fb_count_groups", cancel_after_fit)
     with pytest.raises(FitCancelledError):
         fit_tf_calibration(_raw_tf(beta=1), _request(), cancel_callback=cancel)
     assert calls <= 5 or boundary == "final"
@@ -505,14 +505,14 @@ def test_processed_labels_in_grouping_are_checked_when_metadata_labels_absent(me
     ],
 )
 def test_scalar_parameter_overrides_retain_default_bounds(monkeypatch, name, value, lower, upper):
-    fit = tf_calibration.fit_fb_alpha
+    fit = tf_calibration._fit_fb_count_groups
 
-    def check_parameters(dataset, forward, backward, model, params, **kwargs):
+    def check_parameters(dataset, groups, model, params, **kwargs):
         assert params[name].min == lower
         assert params[name].max == upper
-        return fit(dataset, forward, backward, model, params, **kwargs)
+        return fit(dataset, groups, model, params, **kwargs)
 
-    monkeypatch.setattr(tf_calibration, "fit_fb_alpha", check_parameters)
+    monkeypatch.setattr(tf_calibration, "_fit_fb_count_groups", check_parameters)
     result = fit_tf_calibration(
         _raw_tf(beta=0.8), _request(fit_beta=True, parameters=(CountFitParameter(name, value),))
     )

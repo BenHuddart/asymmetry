@@ -617,46 +617,48 @@ def fit_fb_alpha(
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedTimeDomainFitResult:
-    """Simultaneously fit forward and backward counts with the balance alpha free.
+    """Prepare and jointly fit F/B counts with shared physics and balance.
 
-    Recovers the detector balance ``alpha`` from a transverse-field calibration
-    run the statistically proper way (WiMDA ``fgFB``), reporting its correlation
-    with the physics amplitude — strong in TF runs. ``params`` must contain the
-    shared ``alpha``, a forward background ``background`` and a backward
-    background ``background_b``, plus the physics model parameters — whose
-    asymmetry amplitudes (``A``/``A0``, ``baseline``) are **in percent (0–100)**,
-    as in :func:`fit_single_histogram`.
-
-    Returns a :class:`GroupedTimeDomainFitResult` whose ``group_results`` are
-    keyed by ``forward_group`` / ``backward_group`` and whose
-    ``shared_parameters`` hold the fitted ``alpha``/``N0``/physics. The (alpha,
-    amplitude) covariance is available on either group result.
-
-    An omitted or invalid ``N0`` seed comes from the first positive forward
-    bin, lifted to t=0 by exp(t/τμ); fixed or positive explicit seeds are retained.
-    Fitted α and N₀√α must agree with the observed bank ratio and count scale
-    within the documented factors. Violations fail the result and retain warnings.
-
-    The same optional nuisances as :func:`fit_single_histogram` apply, all
-    no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
-    shifts the model time axis; free ``lambda_base`` / ``beta_base`` add a
-    baseline drift; ``DT0`` adds rational non-paralysable count loss;
-    a ``dpsep`` parameter switches on the ISIS double-pulse
-    model (the √α-tied model evaluated at ``t ± dpsep/2``); a ``tau`` parameter
-    frees the shared muon lifetime (reported in ``shared_parameters``; not
-    supported with the double-pulse model).
-
-    When ``estimate_beta`` is true a shared free ``beta`` is added (positive
-    lower-bound clamp, fit box [0.01, 10], seed 1.0) that scales the backward
-    polarization amplitude only — the musrfit fit-type-2 asymmetry balance
-    measured on a weak-TF calibration run. ``shared_parameters`` then also
-    reports ``beta``, and its correlation with ``alpha`` is available on either
-    group result's covariance block. An explicitly fixed beta remains fixed.
-    This path rejects a physics model owning a
-    ``beta`` parameter (e.g. the stretched exponential) so the structural name is
-    unambiguous, and is not supported with the double-pulse model. Existing
-    ``estimate_beta=False`` callers are unaffected.
+    Physics amplitudes are percent; scales/backgrounds are counts per packed bin.
+    ``estimate_beta`` permits a shared backward amplitude ratio, including fixed
+    beta constraints. Otherwise beta is absent. Gaussian cost uses retained count
+    errors; Poisson cost requires uncorrected integer acquisition observations.
+    Optional t0, lifetime, deadtime and pulse nuisances use the same joint solver.
     """
+    groups = build_count_groups(
+        dataset,
+        [forward_group, backward_group],
+        t_min=t_min,
+        t_max=t_max,
+        lifetime_corrected=False,
+        exclude=exclude,
+    )
+    return _fit_fb_count_groups(
+        dataset,
+        groups,
+        model_fn,
+        params,
+        cost=cost,
+        estimate_beta=estimate_beta,
+        minos=minos,
+        cancel_callback=cancel_callback,
+    )
+
+
+def _fit_fb_count_groups(
+    dataset,
+    groups,
+    model_fn,
+    params,
+    *,
+    cost="poisson",
+    estimate_beta=False,
+    minos=False,
+    cancel_callback=None,
+) -> GroupedTimeDomainFitResult:
+    """Solve prepared F/B banks once, retaining the full nuisance covariance."""
+    g_fwd, g_bwd = groups
+    forward_group, backward_group = g_fwd.group_id, g_bwd.group_id
     _validate_cost(cost)
     _guard_model_param_collisions(model_fn)
     if estimate_beta:
@@ -682,30 +684,18 @@ def fit_fb_alpha(
     if _has_free_dpsep(params):
         return _refine_free_dpsep(
             params["dpsep"],
-            fit_fixed=lambda value: fit_fb_alpha(
+            fit_fixed=lambda value: _fit_fb_count_groups(
                 dataset,
-                forward_group,
-                backward_group,
+                groups,
                 model_fn,
                 _with_fixed_dpsep(params, value),
                 cost=cost,
-                t_min=t_min,
-                t_max=t_max,
-                exclude=exclude,
+                estimate_beta=estimate_beta,
                 cancel_callback=cancel_callback,
             ),
             cost_of=lambda result: sum(gr.chi_squared for gr in result.group_results.values()),
         )
 
-    # Build both banks in ONE context so they share a common t0 alignment.
-    g_fwd, g_bwd = build_count_groups(
-        dataset,
-        [forward_group, backward_group],
-        t_min=t_min,
-        t_max=t_max,
-        lifetime_corrected=False,
-        exclude=exclude,
-    )
     time_f = np.asarray(g_fwd.time, dtype=float)
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)

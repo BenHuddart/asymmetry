@@ -1,8 +1,10 @@
 TF calibration
 ==============
 
-Fit acquired raw F/B histograms through one count model with beta fixed at one
-or free. See :doc:`/reference/data_reduction/alpha_calibration` for assumptions,
+Fit acquired F/B histograms through one count model with beta fixed at one
+or free. Applied deadtime correction selects weighted corrected counts with
+retained measured/supplied variance; off/skipped correction uses raw Poisson.
+See :doc:`/reference/data_reduction/alpha_calibration` for assumptions,
 units, safeguards, conditional error meaning, and reference comparisons. The
 supplied dataset owns acquisition/grouping/correction facts; the request owns
 intent. Explicit periods use the existing acquired-period selector. Returned

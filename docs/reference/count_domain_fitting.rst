@@ -25,6 +25,14 @@ Fit warnings and saved summaries retain the preflight request, status, and
 reason; an applied preflight records an available estimate, not subtraction
 from the joint model's observations.
 
+The shared scriptable TF calibration operation in
+:doc:`data_reduction/alpha_calibration` chooses its objective from the resolved
+deadtime outcome: raw Poisson for off/skipped correction, or weighted counts
+with retained measured/supplied variance after an applied correction. It reuses
+the same prepared banks and joint solver as the explicit count-fit targets.
+Its automatic background terms retain the distinction above; grouping fixed
+values and range/tail estimates do not constrain or seed the model terms.
+
 Active **Background run** subtraction is unsupported for **Single group**,
 **F + B (free α)**, and **All groups** count-fit inputs, for either cost.
 The shared input boundary raises ``CorrectionUnavailableError`` with:

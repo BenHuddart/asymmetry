@@ -195,16 +195,38 @@ and editable; it does not replace the stored request with unity. Explicit
 fixed unity remains valid. This protects the ratio's mathematical inputs,
 without claiming that all reference workflows use the same guard.
 
+.. _comparison-count-calibration:
+
 Shared TF count calibration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Asymmetry's ``tf_calibration_fit`` core operation uses one exponential/common-phase
-F/B raw-count model, fixing beta at one for alpha-only calibration or freeing it
+F/B count model, fixing beta at one for alpha-only calibration or freeing it
 for joint calibration. Both backgrounds and other nuisances belong to one full
 covariance. Poisson deviance/dof counts unique free parameters once, and errors
 are conventional conditional HESSE standard errors, without residual scaling.
 The existing beta ``count_fit`` adapter uses this operation; the independent
 ``single_histogram`` ratio remains a separate protocol.
+
+Applied File/manual deadtime corrections select the existing weighted count
+objective, retaining measured or supplied independent variances. Off/skipped
+deadtime uses raw Poisson counts. Backgrounds are fitted model terms; grouping
+fixed values, range estimates, and automatic-tail estimates do not subtract or
+constrain them. This shares the count model, not musrfit's type-2 asymmetry
+objective.
+
+Matched musrfit 1.12.1 type-0 chi-square controls use 16 ns native bins, two
+disjoint detectors, 100000 good frames, deadtime 0.02 μs, zero fixed backgrounds,
+and packing one/four. After matching its corrected-count variance convention,
+fixed/free-beta points agree within 0.0001 absolute and alpha errors within
+0.1%. Asymmetry's retained measured-count weights differ: one beta-one control
+gives alpha 1.249554 versus native 1.249574, and errors 0.001102 versus 0.001162.
+This is a weighting difference, not an uncertainty correction to copy.
+Mantid's muon ``ApplyDeadTimeCorr`` preserves supplied errors; WiMDA's ordinary
+grouping uses measured counts as its counting-error basis. Those correction
+conventions do not establish equivalent native TF calibration objectives or
+complete deadtime uncertainty propagation. The comparisons are conditional
+weighted fits, not uncertainty coverage or a new detector-response likelihood.
 
 The closest executed counterpart is musrfit 1.12.1 (``708f777b``, ROOT 6.40.04)
 global type-0 histogram fitting with ``MAX_LIKELIHOOD``, described in the
@@ -232,11 +254,11 @@ uncertainties.
 WiMDA 1.326 quick Diamagnetic and Asymmetry's quick method give about 1.237 on
 an owned beta-one TF control with generating alpha 1.25; the model fit gives
 1.249995, changing mean reduced asymmetry by about −0.53 percentage points.
-On a matched original Ag TF example (raw bins 18–883, 16 ns, full F/B banks,
+On a matched original Ag TF example (zero-based raw bins 19–884, 16 ns, full F/B banks,
 bunch one, background/deadtime off), native quick alpha is 0.974 and Asymmetry
 quick alpha 0.974190, versus TF beta-one 0.966447. The associated mean asymmetry
 shift is about +0.39 percentage points. Its deviance/dof is about 1.30, with
-pulse/phase adequacy unresolved and no physical alpha truth asserted. These
+phase/model adequacy unresolved and no physical alpha truth asserted. These
 results describe different estimators, not a universal accuracy ranking.
 WiMDA's separate paired/all-group model-fit errors remain unverified here;
 Mantid AlphaCalc is a ratio comparator, not a shared-TF likelihood comparison.
