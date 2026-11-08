@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Distinguish reference-count subtraction from additive physical holder signals,
+  with explicit percent/fraction units and bounded correction/error comparisons.
+
 - Clarify deadtime Cal/Estimate sources, windows, conditional errors, and
   differences from pooled and transformed-regression calibration methods.
 
@@ -21,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed
+
+- Explain unsupported reference subtraction in grouped/raw count fitting and
+  give actionable alternatives, even when the reference is already available.
 
 - Reject boolean reference exposures and coefficients instead of interpreting
   `true` as measured exposure or an authored scale of one.

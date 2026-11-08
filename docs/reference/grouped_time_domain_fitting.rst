@@ -65,6 +65,17 @@ where:
 * :math:`B` is the group background term
 * the optional group ``relative_phase`` is added onto the model ``phase`` parameter when the model supports phase
 
+The shared count-input boundary rejects active **Background run** subtraction,
+including for Gaussian fits of lifetime-corrected traces. It reports
+"reference-run subtraction is unsupported for grouped/raw count fitting."
+Disable background correction or choose a non-reference mode to fit full
+counts with the model's background term; inactive reference declarations remain
+harmless. Loading a reference cannot enable subtraction in this workflow.
+See :doc:`count_domain_fitting` for the complete diagnostic and
+:doc:`data_reduction/backgrounds` for reference-subtracted asymmetry and additive
+physical sample/holder models. The displayed group traces can use reference
+subtraction; that does not make them count-fit observations.
+
 Current GUI workflow
 --------------------
 

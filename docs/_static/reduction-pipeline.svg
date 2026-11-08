@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="700" height="900" viewBox="0 0 700 900" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="1020" viewBox="0 0 700 1020" role="img" aria-labelledby="title description">
 <title id="title">Standard count-based forward/backward reduction</title>
-<desc id="description">For one selected run and period, acquired histograms undergo optional detector deadtime correction, whole-bin alignment and group summation, optional group background correction, count binning, and asymmetry formation. Dashed arrows supply settings, calibration, references, and current corrected counts. A run-level integral-observable branch supports no background or a constant subtraction, with its own window, estimator, and balances.</desc>
+<desc id="description">For one selected run and period, acquired histograms undergo optional detector deadtime correction, whole-bin alignment and group summation, optional group background correction, count binning, and asymmetry formation. Dashed arrows supply settings, calibration, references, and current corrected counts. The asymmetry fit adds physical sample and holder signals. A separate count-fit workflow uses full counts with its own nuisance background and rejects active reference subtraction. A run-level integral-observable branch supports no background or a constant subtraction, with its own window, estimator, and balances.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#35566c"/></marker></defs>
-<rect width="700" height="900" fill="white"/>
+<rect width="700" height="1020" fill="white"/>
 <g fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)">
 <path d="M 195 90 V 112"/>
 <path d="M 195 185 V 217"/>
@@ -11,9 +11,11 @@
 <path d="M 195 510 V 552"/>
 <path d="M 195 635 V 672"/>
 <path d="M 195 745 V 782"/>
+<path d="M 195 855 V 887"/>
 <path d="M 370 480 H 415 V 595 H 432"/>
 </g><g fill="none" stroke="#35566c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)">
 <path d="M 435 150 H 373"/>
+<path d="M 370 175 H 390 V 195 H 687 V 775 H 558 V 787"/>
 <path d="M 435 255 H 373"/>
 <path d="M 435 475 H 373"/>
 <path d="M 435 710 H 373"/>
@@ -62,4 +64,13 @@
 <text x="557.5" y="698.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Resolve α / β policies</text>
 <text x="557.5" y="722.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Fixed / calibrated / auto α</text>
 <text x="405" y="666" font-family="DejaVu Sans, sans-serif" font-size="14" fill="#163449">Current counts</text>
-<text x="350" y="885" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Solid: count flow     Dashed: settings and dependencies</text></svg>
+<rect x="20" y="890" width="350" height="70" rx="8" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="195" y="913" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="18" fill="#163449">Fit additive physical signals</text>
+<text x="195" y="937" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="18" fill="#163449">Sample + holder polarisation</text>
+<rect x="435" y="790" width="245" height="170" rx="8" fill="#fbf1df" stroke="#35566c" stroke-width="1.5"/>
+<text x="557.5" y="815" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Separate count-fit workflow</text>
+<text x="557.5" y="845" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Own input preparation</text>
+<text x="557.5" y="870" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Full counts + nuisance BG</text>
+<text x="557.5" y="900" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Active reference subtraction</text>
+<text x="557.5" y="925" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">is unsupported</text>
+<text x="350" y="995" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="16" fill="#163449">Solid: count flow     Dashed: settings and dependencies</text></svg>

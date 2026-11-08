@@ -28,6 +28,7 @@ class AlphaCountCalibrationScenario(Scenario):
     )
     size = (640, 1080)
     requires_fit = True
+    reference_requested = False
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.composite import CompositeModel
@@ -87,6 +88,13 @@ class AlphaCountCalibrationScenario(Scenario):
         tab._group_model_table.reseed({"frequency": Seed(1.5), "phase": Seed(0.3)})
         _process_events_for(milliseconds=40)
 
+        if self.reference_requested:
+            run.grouping.update(
+                background_correction=True,
+                background_mode="reference_run",
+                background_run={"run_number": 3521},
+            )
+
         # Run the real forward/backward free-α count fit synchronously (worker
         # thread, blocked on with a live event loop for a deterministic capture).
         tab._run_count_domain_fit()
@@ -96,3 +104,23 @@ class AlphaCountCalibrationScenario(Scenario):
 
 
 register(AlphaCountCalibrationScenario())
+
+
+class CountReferenceUnsupportedScenario(AlphaCountCalibrationScenario):
+    name = "count_reference_unsupported"
+    description = "Active reference subtraction reports the count-input restriction and remedies."
+    reference_requested = True
+    size = (640, 220)
+
+    def build(self) -> QWidget:
+        window = super().build()
+        card = window._single_fit_tab._results_card
+        if "reference-run subtraction is unsupported" not in card.content_html():
+            raise RuntimeError("Count-fit reference request must show its unsupported diagnostic")
+        card.setParent(None)
+        window.close()
+        window.deleteLater()
+        return card
+
+
+register(CountReferenceUnsupportedScenario())
