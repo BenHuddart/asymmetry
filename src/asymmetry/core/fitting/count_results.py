@@ -74,6 +74,7 @@ class CountFitParameter:
             "background_b": "counts/bin",
             "alpha": "1",
             "beta": "1",
+            "stretch": "1",
             "tau": "µs",
             "t0": "µs",
             "dpsep": "µs",

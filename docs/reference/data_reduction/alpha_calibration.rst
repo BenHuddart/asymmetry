@@ -399,6 +399,86 @@ Cancellation is polled during the actual objective, HESSE/MINOS work, and at
 the final result boundary; cancellation raises ``FitCancelledError`` and
 publishes no result.
 
+Bounded envelope selection in scripts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a single exponential does not describe the calibrant, use
+:func:`~asymmetry.core.fitting.tf_calibration.select_tf_calibration` with the same
+``TFCalibrationRequest``. It prepares the selected F/B observations once and
+compares undamped, exponential, Gaussian, and stretched-exponential envelopes in
+that declared order. Each has common F/B frequency, phase, and envelope, opposing
+signs, automatic fitted constant backgrounds, and beta fixed at one or free.
+
+The envelopes are :math:`1`, :math:`\exp(-\Lambda |t|)`,
+:math:`\exp[-(\sigma t)^2]`, and :math:`\exp[-(\Lambda |t|)^p]`.
+The stretching exponent ``stretch`` (:math:`p>0`, dimensionless) is distinct
+from backward-amplitude ``beta``. Rates ``Lambda`` and ``sigma`` are in μs⁻¹;
+:math:`p=1` is exponential and :math:`p=2` is Gaussian with :math:`\sigma=\Lambda`.
+The undamped candidate has no damping parameter. Rate seeds are 0.1 μs⁻¹;
+``stretch`` starts at one with a numerical lower search bound of 0.05 and no
+upper bound. The floor avoids the singular zero-exponent limit, where damping
+loses its time dependence. It is a search default, not a physical lower limit:
+explicit positive bounds below it and exponents above two are accepted.
+
+The recommendation is the usable candidate with the lowest **summed fit cost**:
+Poisson deviance on raw observations, or weighted chi-square after applied
+deadtime correction with the same retained variances for every candidate.
+There is no complexity penalty, reduced-statistic ranking, or additional
+near-tie rejection threshold. Exact cost ties follow declared candidate order.
+The stretched model contains the other shapes as limits and will often win
+when its extra freedom is resolved; selection does not identify a physical
+relaxation mechanism or certify model adequacy.
+
+For example::
+
+    from asymmetry.core.fitting.tf_calibration import select_tf_calibration
+
+    selection = select_tf_calibration(dataset, request)
+    for candidate in selection.candidates:
+        print(candidate.model, candidate.ok, candidate.message,
+              candidate.fit.statistic, candidate.fit.uncertainty_status)
+    if selection.selected is not None:
+        alpha = selection.selected.alpha
+        conditional_error = selection.selected.alpha_error
+
+``selection.candidates`` retains all four full fits, coefficients, nuisance
+covariance, effective requests, and failure messages. A failed candidate does
+not discard usable alternatives; no usable fit gives ``selected=None``. Fit
+success, calibration verdict, and covariance quality remain separate states.
+As for the single-model operation, an alpha-only fit may be usable with
+unavailable covariance; its error is then ``None``. Free beta retains its
+precession and finite-error safeguards. Errors and MINOS intervals are
+conditional on the individual model, without model-selection uncertainty.
+Local minima and numerical failures remain possible, including in the flexible
+stretched candidate; no extra retry procedure is applied. Cancellation during
+fitting or between candidates raises ``FitCancelledError`` without a partial
+recommendation.
+
+Common request overrides constrain every candidate. Candidate-specific damping
+constraints use ``envelope_parameters`` so settings cannot be silently dropped::
+
+    from asymmetry.core.fitting.count_results import CountFitParameter
+    from asymmetry.core.fitting.tf_calibration import TFEnvelope
+
+    selection = select_tf_calibration(
+        dataset, request,
+        envelope_parameters={
+            TFEnvelope.STRETCHED: (
+                CountFitParameter("stretch", 1.5, min=0.01, max=4.0),
+            ),
+        },
+    )
+
+Use ``Lambda`` for exponential, ``sigma`` for Gaussian, and ``Lambda``/``stretch``
+for stretched; undamped accepts no damping overrides. Asymmetry also checks
+that overrides name parameters actually used by their candidate, with positive
+stretching exponents, before minimisation. Invalid requests raise ``ValueError``.
+The selected result's ``model`` identifies its effective envelope, such as
+``gaussian_common_phase`` or ``stretched_common_phase``. Calling
+``fit_tf_calibration`` still fits only the exponential model. Selection is a
+separate core operation; it does not change grouping-dialog choices, apply
+coefficients, or alter saved/manual calibrations.
+
 Compared with other programs
 ----------------------------
 
@@ -429,6 +509,18 @@ correction and WiMDA's ordinary counting-error basis. These are distinct weights
 not full propagation through deadtime correction. Conditions and limits are in
 :ref:`comparison-count-calibration`.
 
+Envelope selection is an Asymmetry convenience, not a shared default of these
+programs. musrfit's documented ``simpleGss`` uses
+:math:`\exp[-(\sigma_{\mathrm{native}}t)^2/2]`, requiring
+:math:`\sigma_{\mathrm{native}}=\sqrt{2}\sigma`; ``generExpo`` uses the
+stretched envelope above. Matched musrfit 1.12.1/ROOT 6.40.04 component fits
+on rounded undamped/exponential/Gaussian/stretched controls, with zero fixed
+backgrounds, phases 0/180 degrees, 16 ns bins, raw bins 4–498, and fixed/free
+beta, agree within 0.0001 absolute alpha/beta after these unit/orientation
+conversions. These checks establish component point agreement, not automatic
+selection equivalence or uncertainty coverage. No native WiMDA model fit or
+Mantid numerical stretched-fit comparison is claimed.
+
 On an owned rounded beta-one TF control, TF alpha is 1.249995 against generating
 1.25, while the quick values above are about 1.237. The mean reduced asymmetry
 changes by about −0.53 percentage points on those same counts. On the original
@@ -442,6 +534,11 @@ universal default or uncertainty coverage.
 
 **References**
 
+- `PSI MuSRFit interface <https://musruser.psi.ch/?page_id=148>`_, exponential,
+  Gaussian, and Stretch Cosine components.
+- `Mantid StretchExpMuon documentation
+  <https://docs.mantidproject.org/nightly/fitting/fitfunctions/StretchExpMuon.html>`_,
+  stretched relaxation convention.
 - `musrfit Single Histograms tutorial
   <https://musruser.psi.ch/Tutorial/Tutorial2.html>`_, global histogram
   calibration and shared geometric parameters.

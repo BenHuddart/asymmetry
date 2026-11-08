@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
+from enum import Enum
 
 import numpy as np
 
@@ -13,7 +14,7 @@ from asymmetry.core.fitting.count_results import CountFitParameter, JointCountFi
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.grouped_time_domain import build_count_groups
 from asymmetry.core.fitting.likelihood import CountSource, FitInputError, Objective, PoissonCounts
-from asymmetry.core.fitting.models import oscillatory
+from asymmetry.core.fitting.models import gaussian_relaxation, oscillatory, stretched_exponential
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.io.periods import select_period, source_run_of
 from asymmetry.core.transform.corrections import CorrectionStatus
@@ -23,6 +24,45 @@ from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RAT
 _MIN_AMPLITUDE_SIGNIFICANCE = 3.0
 _MIN_FREQUENCY_SIGNIFICANCE = 3.0
 _FALLBACK_FREQUENCY_MHZ = 1.0
+
+
+class TFEnvelope(str, Enum):
+    """Declared candidate order, also used to resolve exact cost ties."""
+
+    UNDAMPED = "undamped"
+    EXPONENTIAL = "exponential"
+    GAUSSIAN = "gaussian"
+    STRETCHED = "stretched"
+
+
+def _undamped_tf(t, A0, frequency, phase=0.0, baseline=0.0):  # noqa: N803
+    """Undamped cosine with no unused damping parameter."""
+    return oscillatory(t, A0, frequency, phase, baseline=baseline)
+
+
+def _gaussian_tf(t, A0, frequency, phase=0.0, sigma=0.1, baseline=0.0):  # noqa: N803
+    """Gaussian exp[-(sigma*t)^2], with sigma in inverse microseconds."""
+    return oscillatory(t, A0, frequency, phase) * gaussian_relaxation(t, 1.0, sigma) + baseline
+
+
+def _stretched_tf(t, A0, frequency, phase=0.0, Lambda=0.1, stretch=1.0, baseline=0.0):  # noqa: N803
+    """Positive shape exponent is independent of detector-amplitude beta."""
+    return (
+        oscillatory(t, A0, frequency, phase) * stretched_exponential(t, 1.0, Lambda, beta=stretch)
+        + baseline
+    )
+
+
+_TF_MODELS = {
+    TFEnvelope.UNDAMPED: (_undamped_tf, ()),
+    TFEnvelope.EXPONENTIAL: (oscillatory, (CountFitParameter("Lambda", 0.1, min=0.0),)),
+    TFEnvelope.GAUSSIAN: (_gaussian_tf, (CountFitParameter("sigma", 0.1, min=0.0),)),
+    # A positive search floor avoids the singular p=0 limit; there is no upper cap.
+    TFEnvelope.STRETCHED: (
+        _stretched_tf,
+        (CountFitParameter("Lambda", 0.1, min=0.0), CountFitParameter("stretch", 1.0, min=0.05)),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +112,7 @@ class TFCalibrationResult:
     source_file: str
     ok: bool
     message: str
+    envelope: TFEnvelope = TFEnvelope.EXPONENTIAL
 
     @property
     def n_bins_used(self) -> int:
@@ -83,7 +124,7 @@ class TFCalibrationResult:
 
     @property
     def model(self) -> str:
-        return "exponential_common_phase"
+        return f"{self.envelope.value}_common_phase"
 
     @property
     def alpha(self) -> float:
@@ -169,21 +210,8 @@ def _require_acquired_tf_counts(run, groups):
             )
 
 
-def fit_tf_calibration(
-    dataset: MuonDataset,
-    request: TFCalibrationRequest,
-    *,
-    cancel_callback: Callable[[], bool] | None = None,
-) -> TFCalibrationResult:
-    """Fit one exponential/common-phase TF count model under fixed/free beta.
-
-    Uses existing native alignment, exclusions, bunching and background preflight.
-    Applied deadtime corrections use weighted corrected counts with retained
-    measured/supplied variance; otherwise raw counts use Poisson deviance.
-    Arbitrary supplied variance and explicit pulse-response requests are unsupported.
-    Input limitations raise ``FitInputError``/``ValueError``; numerical failures
-    retain their full fit with ``ok=False``. Cancellation raises ``FitCancelledError``.
-    """
+def _prepare_tf_counts(dataset, request, cancel_callback):
+    """Resolve the acquisition and one bank pair for every candidate."""
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Fit cancelled.")
     if request.period is not None:
@@ -210,6 +238,30 @@ def fit_tf_calibration(
     ]
     if processed:
         raise FitInputError(f"TF calibration cannot use declared PostPileUp channels {processed}")
+    groups = build_count_groups(
+        dataset,
+        [request.forward_group, request.backward_group],
+        t_min=request.t_min,
+        t_max=request.t_max,
+        exclude=request.exclude,
+        lifetime_corrected=False,
+    )
+    objective = (
+        Objective.GAUSSIAN
+        if groups[0].deadtime.status is CorrectionStatus.APPLIED
+        else Objective.POISSON
+    )
+    if objective is Objective.GAUSSIAN:
+        _require_acquired_tf_counts(run, groups)
+    if objective is Objective.POISSON and any(
+        run.histograms[i].count_variance is not None for bank in indices for i in bank
+    ):
+        raise FitInputError("Raw Poisson TF calibration cannot use supplied counting variance")
+    return dataset, groups, objective
+
+
+def _tf_parameters(dataset, request, envelope):
+    """Validate user constraints against the effective candidate's domain."""
     frequency = (
         request.frequency_mhz
         if request.frequency_mhz is not None
@@ -224,7 +276,7 @@ def fit_tf_calibration(
         Parameter("A0", 20.0, min=0.0, max=100.0),
         Parameter("frequency", frequency, min=0.0),
         Parameter("phase", 0.0),
-        Parameter("Lambda", 0.1, min=0.0),
+        *(Parameter(p.name, p.value, min=p.min, max=p.max) for p in _TF_MODELS[envelope][1]),
         Parameter("baseline", 0.0, fixed=True),
         Parameter("beta", 1.0, min=0.01, max=10.0, fixed=not request.fit_beta),
     ]
@@ -255,7 +307,7 @@ def fit_tf_calibration(
             continue
         lower = default.min if p.min == -np.inf else p.min
         upper = default.max if p.max == np.inf else p.max
-        positive_balance = p.name in {"alpha", "beta"}
+        positive_balance = p.name in {"alpha", "beta", "stretch"}
         nonnegative = default.min >= 0
         amplitude_ceiling = default.max if p.name == "A0" else np.inf
         if (
@@ -276,29 +328,16 @@ def fit_tf_calibration(
         ):
             raise ValueError(f"TF fixed parameter {p.name!r} must lie in its physical domain")
         params.add(Parameter(p.name, p.value, min=lower, max=upper, fixed=p.fixed))
-    groups = build_count_groups(
-        dataset,
-        [request.forward_group, request.backward_group],
-        t_min=request.t_min,
-        t_max=request.t_max,
-        exclude=request.exclude,
-        lifetime_corrected=False,
-    )
-    objective = (
-        Objective.GAUSSIAN
-        if groups[0].deadtime.status is CorrectionStatus.APPLIED
-        else Objective.POISSON
-    )
-    if objective is Objective.GAUSSIAN:
-        _require_acquired_tf_counts(run, groups)
-    if objective is Objective.POISSON and any(
-        run.histograms[i].count_variance is not None for bank in indices for i in bank
-    ):
-        raise FitInputError("Raw Poisson TF calibration cannot use supplied counting variance")
+    return params
+
+
+def _fit_prepared_tf(dataset, request, groups, objective, params, envelope, cancel_callback):
+    """Fit and assess one candidate with the shared full nuisance covariance."""
+    run = dataset.run
     grouped = _fit_fb_count_groups(
         dataset,
         groups,
-        oscillatory,
+        _TF_MODELS[envelope][0],
         params,
         estimate_beta=True,
         cost=objective.value,
@@ -334,7 +373,94 @@ def fit_tf_calibration(
         run.source_file,
         ok,
         message,
+        envelope,
     )
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Fit cancelled.")
     return result
+
+
+def fit_tf_calibration(
+    dataset: MuonDataset,
+    request: TFCalibrationRequest,
+    *,
+    cancel_callback: Callable[[], bool] | None = None,
+) -> TFCalibrationResult:
+    """Fit the established exponential/common-phase TF model.
+
+    Applied deadtime uses retained-variance weighted counts; off/skipped correction
+    uses raw Poisson deviance. Input limitations raise FitInputError/ValueError;
+    numerical failures retain the fit with ok=False. Cancellation raises
+    FitCancelledError. This single-model operation does not select an envelope.
+    """
+    dataset, groups, objective = _prepare_tf_counts(dataset, request, cancel_callback)
+    params = _tf_parameters(dataset, request, TFEnvelope.EXPONENTIAL)
+    return _fit_prepared_tf(
+        dataset, request, groups, objective, params, TFEnvelope.EXPONENTIAL, cancel_callback
+    )
+
+
+@dataclass(frozen=True)
+class TFCalibrationSelection:
+    """All four candidate fits and their separate calibration/covariance states.
+
+    The recommendation uses minimum summed cost among usable candidates. Errors
+    are conditional on each envelope and exclude model-selection uncertainty.
+    """
+
+    candidates: tuple[TFCalibrationResult, ...]
+
+    @property
+    def selected(self) -> TFCalibrationResult | None:
+        return min(
+            (
+                candidate
+                for candidate in self.candidates
+                if candidate.ok and np.isfinite(candidate.fit.statistic)
+            ),
+            key=lambda candidate: candidate.fit.statistic,
+            default=None,
+        )
+
+
+def select_tf_calibration(
+    dataset: MuonDataset,
+    request: TFCalibrationRequest,
+    *,
+    envelope_parameters: Mapping[TFEnvelope, tuple[CountFitParameter, ...]] | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
+) -> TFCalibrationSelection:
+    """Compare four envelopes on one prepared F/B count pair.
+
+    Request overrides constrain common parameters in every candidate. Damping
+    overrides belong in ``envelope_parameters``: Lambda for exponential,
+    sigma for Gaussian, Lambda and stretch for stretched; none for undamped.
+    All constraints are validated before fitting. Exact ties follow TFEnvelope
+    order. A failed fit retains its result/message and does not remove other
+    candidates; no usable candidate gives ``selected=None``. Cancellation raises
+    FitCancelledError, including between candidates, and returns no partial set.
+    """
+    specific = envelope_parameters or {}
+    if set(specific) - set(TFEnvelope):
+        raise ValueError("Unknown TF envelope in parameter overrides")
+    damping_names = {p.name for _, defaults in _TF_MODELS.values() for p in defaults}
+    if any(p.name in damping_names for p in request.parameters):
+        raise ValueError("Selection damping overrides belong in envelope_parameters")
+    requests = []
+    for envelope in TFEnvelope:
+        overrides = tuple(specific.get(envelope, ()))
+        if {p.name for p in overrides} - {p.name for p in _TF_MODELS[envelope][1]}:
+            raise ValueError(f"Unsupported damping override for {envelope.value}")
+        requests.append(replace(request, parameters=(*request.parameters, *overrides)))
+    dataset, groups, objective = _prepare_tf_counts(dataset, request, cancel_callback)
+    parameters = [_tf_parameters(dataset, r, e) for r, e in zip(requests, TFEnvelope, strict=True)]
+    candidates = []
+    for envelope, effective_request, params in zip(TFEnvelope, requests, parameters, strict=True):
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit cancelled.")
+        candidates.append(
+            _fit_prepared_tf(
+                dataset, effective_request, groups, objective, params, envelope, cancel_callback
+            )
+        )
+    return TFCalibrationSelection(tuple(candidates))

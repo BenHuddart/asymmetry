@@ -203,6 +203,16 @@ for the one-normalisation control and its limits. WiMDA quick Diamagnetic is
 a different point objective. Native WiMDA paired-count model-fit errors are
 not verified by these checks. Mantid AlphaCalc is the separate ratio comparator.
 
+
+The separate script operation
+:func:`~asymmetry.core.fitting.tf_calibration.select_tf_calibration` compares four
+common-phase envelopes with beta fixed or free. Its dimensionless ``stretch``
+exponent is distinct from detector beta; candidate errors retain all fitted
+nuisance correlations and are conditional on that envelope. See
+:doc:`alpha_calibration` for summed-cost ranking, constraints, candidate failures,
+and reference component comparisons. The historical ``count_fit`` adapter keeps
+its exponential model.
+
 **References**
 
 - A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, whose
