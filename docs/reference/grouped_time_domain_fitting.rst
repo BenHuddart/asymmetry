@@ -73,8 +73,9 @@ counts with the model's background term; inactive reference declarations remain
 harmless. Loading a reference cannot enable subtraction in this workflow.
 See :doc:`count_domain_fitting` for the complete diagnostic and
 :doc:`data_reduction/backgrounds` for reference-subtracted asymmetry and additive
-physical sample/holder models. The displayed group traces can use reference
-subtraction; that does not make them count-fit observations.
+physical sample/holder models. The **Individual Groups** display shares this
+count-input restriction. Grouped Fourier/MaxEnt reference preparation is a
+separate supported workflow.
 
 Current GUI workflow
 --------------------
