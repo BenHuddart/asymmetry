@@ -5476,18 +5476,11 @@ class GroupingDialog(TimingControls, QDialog):
         return payload
 
     def _projection_payload(self, canonical: bool) -> list[dict[str, Any]]:
-        """Return the projections list, injecting per-projection alpha edits.
+        """Attach current non-canonical projection values and estimate provenance.
 
-        For non-canonical projections (GPS WEP's FB/UD, the MuSR/HiFi transverse
-        pairs) each row's α spin is written back into that projection's ``alpha``,
-        which :meth:`MainWindow._resolve_vector_alpha_values` consumes. When the
-        spin still holds an estimate (a manual edit invalidates it), the estimate
-        provenance — ``alpha_error`` and ``alpha_reference_run`` — is attached to
-        the projection too, mirroring the canonical per-axis provenance in
-        :meth:`_vector_alpha_payload`; a manual edit drops any stale provenance
-        carried on the spec. The canonical EMU axes keep their alpha (and
-        provenance) in the dedicated ``alpha_x/y/z`` keys, so their projection
-        dicts are passed through untouched.
+        A matching new estimate replaces the recorded error, including an absent
+        error. Manual edits clear estimate provenance. Canonical EMU axes use
+        dedicated alpha_x/y/z keys, so their projection specs pass through.
         """
         specs = self._projection_specs or []
         result: list[dict[str, Any]] = []
@@ -5503,6 +5496,8 @@ class GroupingDialog(TimingControls, QDialog):
                 if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
                     if recorded[1] is not None:
                         new_spec["alpha_error"] = float(recorded[1])
+                    else:
+                        new_spec.pop("alpha_error", None)
                     new_spec["alpha_reference_run"] = int(recorded[2])
                 else:
                     # A manual edit (or no estimate) invalidates stale provenance.

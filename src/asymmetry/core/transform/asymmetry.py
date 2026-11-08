@@ -91,7 +91,7 @@ def compute_asymmetry(
 
     asym[safe] = numerator[safe] / denominator[safe]
 
-    # Exact Poisson propagation of A = (F - alpha B)/(beta F + alpha B) with
+    # First-order Poisson propagation of A = (F - alpha B)/(beta F + alpha B) with
     # var(F) = F, var(B) = B, keeping the num/den covariance:
     #   dA/dF = alpha B (1 + beta)/D^2,  dA/dB = -alpha F (1 + beta)/D^2
     #   var(A) = alpha^2 (1 + beta)^2 F B (F + B) / (beta F + alpha B)^4
@@ -258,20 +258,13 @@ ALPHA_ESTIMATION_METHODS = ("diamagnetic", "general", "ratio")
 # to [0.1, 10]; a wider window costs nothing with a bounded scalar minimiser.
 _LN_ALPHA_BOUNDS = (float(np.log(0.01)), float(np.log(100.0)))
 
-# Bootstrap replicas sit close to the base estimate, so the diamagnetic
-# minimiser searches only a narrow ln window around it with a relaxed tolerance
-# — far cheaper than a full bounded minimisation per replica (~200×).
-_BOOTSTRAP_LN_WINDOW = 1.0
-_BOOTSTRAP_XATOL = 1e-4
-
 
 @dataclass(frozen=True)
 class AlphaEstimate:
     """Result of an alpha estimation.
 
-    ``alpha_error`` is a seeded Poisson-bootstrap standard deviation for the
-    optimising methods, and the closed-form propagation for ``ratio`` (``None``
-    when uncertainty estimation was disabled or too few replicas survived).
+    ``alpha_error`` is absent for the quick diamagnetic and General estimates.
+    ``ratio`` reports first-order propagation of the detector-group sums.
     ``objective_value`` is the minimised objective for the optimising methods
     and ``None`` for the ``ratio`` method.
     """
@@ -286,14 +279,10 @@ class AlphaEstimate:
 
 
 def _diamagnetic_objective(alpha: float, f: NDArray[np.float64], b: NDArray[np.float64]) -> float:
-    """WiMDA's diamagnetic objective: Σ (A_i / σ_i)².
+    """Weighted asymmetry power Σ(A_i / σ_i)² with first-order Poisson errors.
 
-    Follows WiMDA's ``EstimateButtonClick`` (method = diamag).
-    The per-bin error is the exact Poisson propagation of the asymmetry,
-    σ = 2α√(fb(f+b)) / (f+αb)², written by WiMDA as
-    ``2 a (f/b) sqrt(1/f + 1/b) / (f/b + a)²``. On a transverse-field run
-    the oscillation is symmetric about zero exactly when alpha balances the
-    detector efficiencies, which minimises this weighted asymmetry power.
+    This quick TF objective can retain finite-window and amplitude-dependent bias;
+    its minimum need not equal the detector efficiency ratio.
     """
     asym = (f - alpha * b) / (f + alpha * b)
     err = 2.0 * alpha * np.sqrt(f * b * (f + b)) / np.square(f + alpha * b)
@@ -305,27 +294,12 @@ def _general_two_window_alpha(
     b: NDArray[np.float64],
     time_us: NDArray[np.float64],
 ) -> float | None:
-    """General-method alpha: flatness of the lifetime-corrected balance.
+    """Balance early/late lifetime-corrected densities at beta = 1.
 
-    The combination N(α) = (F/√α + B√α)·exp(t/τ_μ) is flat in time exactly
-    when alpha equals the true efficiency ratio — the polarization term
-    cancels for any P(t) — which is the principle of WiMDA's "general"
-    estimate (``EstimateButtonClick``). WiMDA minimises a weighted
-    relative-scatter functional of N; that functional has no interior
-    minimum at realistic statistics (study divergence D14), so Asymmetry
-    solves the equivalent flatness condition in closed form instead.
-
-    Equating the mean lifetime-corrected count density between two
-    equal-statistics time windows W₁, W₂ gives
-
-        A₁/√α + B₁√α = A₂/√α + B₂√α  ⇒  α = (A₁ − A₂)/(B₂ − B₁)
-
-    where A_k, B_k are smoothly weighted window means of F·exp(t/τ_μ) and
-    B·exp(t/τ_μ) (weights exp(−2t/τ_μ), the inverse variance scale of a
-    corrected count). Everything is linear in the counts, so the estimate
-    is unbiased; it requires the polarization to *relax* between the
-    windows — on non-relaxing data the denominator is consistent with zero
-    and the method reports failure rather than a number.
+    For F = α₀ C exp(-t/τ)(1 + P), B = C exp(-t/τ)(1 - P),
+    equating A₁ + α B₁ = A₂ + α B₂ yields α = (A₁-A₂)/(B₂-B₁).
+    Recovery requires different weighted mean P in the two windows. A ratio
+    of linear sums is nonlinear and need not be statistically unbiased.
     """
     if f.size < 4:
         return None
@@ -340,17 +314,30 @@ def _general_two_window_alpha(
     weight = np.exp(-2.0 * time_us / MUON_LIFETIME_US)
     corrected = np.exp(time_us / MUON_LIFETIME_US)
 
-    def window_density(values: NDArray[np.float64], sl: slice) -> float:
-        return float(np.sum(weight[sl] * values[sl] * corrected[sl]) / np.sum(weight[sl]))
+    def window_density(values: NDArray[np.float64], sl: slice) -> tuple[float, float]:
+        summands = weight[sl] * values[sl] * corrected[sl]
+        normalization = float(np.sum(weight[sl]))
+        return (
+            float(np.sum(summands) / normalization),
+            float(np.sum(np.abs(summands)) / normalization),
+        )
 
     early = slice(0, split)
     late = slice(split, None)
-    a1 = window_density(f, early)
-    a2 = window_density(f, late)
-    b1 = window_density(b, early)
-    b2 = window_density(b, late)
+    a1, scale_a1 = window_density(f, early)
+    a2, scale_a2 = window_density(f, late)
+    b1, scale_b1 = window_density(b, early)
+    b2, scale_b2 = window_density(b, late)
     denominator = b2 - b1
-    if denominator == 0.0:
+    # Subtracting nearly equal densities loses relative precision. The γ_n
+    # bound nε/(1−nε) scales with absolute summands, including signed-count
+    # cancellation; eight further operations cover weighting, normalisation,
+    # and density subtraction. This is not a statistical significance test.
+    n_epsilon = (f.size + 8) * np.finfo(np.float64).eps
+    rounding = n_epsilon / (1.0 - n_epsilon)
+    if abs(a1 - a2) <= rounding * (scale_a1 + scale_a2) or abs(denominator) <= rounding * (
+        scale_b1 + scale_b2
+    ):
         return None
     alpha = (a1 - a2) / denominator
     if not np.isfinite(alpha) or alpha <= 0.0:
@@ -358,25 +345,9 @@ def _general_two_window_alpha(
     return float(alpha)
 
 
-# --- General-method goodness gate -------------------------------------------
-#
-# The closed-form solver imposes flatness of the lifetime-corrected balanced
-# count between exactly two windows: one equation for one unknown. The
-# combination is polarization-free at the true alpha for *any* P(t), but only if
-# the counts really decay at τ_μ — so counts decaying with an effective lifetime
-# slightly different from τ_μ (pile-up rejection, a slightly over-subtracted
-# background) are indistinguishable from a detector imbalance, and the whole
-# mismatch lands in alpha with `ok=True` and a small bootstrap error.
-#
-# Testing that by fitting a straight line to the residual log-trend at the
-# *solved* alpha does not work: the two-window condition has already set the two
-# window means equal, which cancels the linear component of exactly that trend
-# (verified on synthetic data — a 0.5% lifetime error that shifts alpha by 12%
-# leaves a residual slope of only ~0.05%). The gate therefore re-frees alpha:
-# the sub-window log-levels are fitted with a three-term basis
-# {constant, time, ∂ln N/∂alpha}, so the lifetime term is measured *after*
-# alpha has been allowed to re-absorb what it can. What survives is the part of
-# the mismatch alpha cannot absorb, and it is reported as an effective lifetime.
+# The two-window equation can absorb a lifetime mismatch into alpha. Fitting
+# ln N against {1, t, ∂ln N/∂ln α} re-frees alpha so the residual rate measures
+# the effective-lifetime deviation through s = 1/τ_mu − 1/τ_eff.
 
 #: Sub-windows the gate splits the estimation window into (equal combined
 #: counts, so every sub-window carries comparable Poisson error), and the
@@ -568,7 +539,7 @@ def _alpha_window(
 # Poisson noise floor does not swamp the alpha-mismatch signal on fine raw
 # binning (WiMDA runs on the live display bins, which are already bunched;
 # packing deterministically from the data keeps the result independent of
-# display settings — study divergence D3). Target combined counts per packed
+# display settings). Target combined counts per packed
 # bin, and the minimum number of packed bins to keep:
 _PACK_TARGET_COUNTS = 200.0
 _PACK_MIN_BINS = 10
@@ -631,57 +602,26 @@ def _positive_mask(
     return f[mask], b[mask], t
 
 
-def _minimise_alpha(
-    objective,
-    *,
-    center: float | None = None,
-    xatol: float = 1e-10,
-) -> float:
-    """Minimise an objective of alpha on ln(alpha) within the search bounds.
-
-    With *center* given (a finite, positive alpha), the bracket is narrowed to
-    a small ln window around ``ln(center)`` (clamped to the global bounds) — the
-    bootstrap path passes the base estimate so each replica solves a tight,
-    relaxed-tolerance problem instead of a full bounded minimisation.
-    """
-    lo, hi = _LN_ALPHA_BOUNDS
-    if center is not None and np.isfinite(center) and center > 0.0:
-        c = float(np.log(center))
-        lo = max(lo, c - _BOOTSTRAP_LN_WINDOW)
-        hi = min(hi, c + _BOOTSTRAP_LN_WINDOW)
-    result = minimize_scalar(
-        lambda ln_alpha: objective(float(np.exp(ln_alpha))),
-        bounds=(lo, hi),
-        method="bounded",
-        options={"xatol": xatol},
-    )
-    return float(np.exp(result.x))
-
-
 def _single_alpha_estimate(
     method: str,
     f: NDArray[np.float64],
     b: NDArray[np.float64],
     t: NDArray[np.float64] | None,
-    *,
-    center: float | None = None,
-    xatol: float = 1e-10,
 ) -> float | None:
-    """One alpha estimate on prepared counts; ``None`` when degenerate.
-
-    ``ratio`` and ``general`` expect raw windowed counts (both are linear in
-    the data); ``diamagnetic`` expects packed, positive-masked counts.
-    ``center``/``xatol`` narrow the diamagnetic minimiser for bootstrap replicas.
-    """
+    """One point estimate on method-specific prepared counts."""
     if f.size == 0:
         return None
     if method == "ratio":
         bs = float(np.sum(b))
         return float(np.sum(f)) / bs if bs > 0.0 else None
     if method == "diamagnetic":
-        return _minimise_alpha(
-            lambda a: _diamagnetic_objective(a, f, b), center=center, xatol=xatol
+        result = minimize_scalar(
+            lambda ln_alpha: _diamagnetic_objective(float(np.exp(ln_alpha)), f, b),
+            bounds=_LN_ALPHA_BOUNDS,
+            method="bounded",
+            options={"xatol": 1e-10},
         )
+        return float(np.exp(result.x))
     return _general_two_window_alpha(f, b, t)
 
 
@@ -691,7 +631,7 @@ def _ratio_alpha_error(
     backward: GroupCounts,
     edges: NDArray[np.intp],
 ) -> float | None:
-    """Propagate the ratio of independent detector-group sums, including shared noise."""
+    """First-order ratio propagation, including within-group shared noise."""
     window = slice(int(edges[0]), int(edges[-1]))
     sum_f = float(np.sum(forward.counts[window]))
     sum_b = float(np.sum(backward.counts[window]))
@@ -710,64 +650,23 @@ def estimate_alpha_detailed(
     time_us: NDArray[np.float64] | None = None,
     first_good_bin: int | None = None,
     last_good_bin: int | None = None,
-    n_bootstrap: int = 200,
-    seed: int = 0,
 ) -> AlphaEstimate:
-    """Estimate alpha with an uncertainty, by one of three methods.
+    """Estimate alpha using a quick balance or the integral ratio.
 
-    Methods (see ``docs/reference/data_reduction/alpha_calibration``):
+    ``diamagnetic`` minimises weighted asymmetry power on internally packed,
+    positive bins. ``general`` equates early/late lifetime-corrected densities
+    at beta = 1 and requires ``time_us`` in microseconds relative to t0.
+    Both return ``alpha_error=None``. ``ratio`` uses the raw window sums and
+    reports first-order uncertainty, including supplied shared background terms.
 
-    - ``"diamagnetic"`` — minimise the weighted asymmetry power Σ(A/σ)² over
-      a transverse-field calibration run (WiMDA's diamagnetic estimate, run
-      on internally packed equal-statistics bins).
-    - ``"general"`` — flatness of the lifetime-corrected balanced count
-      (F/√α + B√α)·exp(t/τ_μ), solved in closed form between two
-      equal-statistics time windows; works on *relaxing* LF/ZF data, where
-      no zero-mean oscillation exists, and fails informatively when the
-      polarization does not relax. Requires ``time_us`` (bin centres
-      relative to t0, microseconds). The solution is then **gated on the
-      flatness it assumes** (see below), because the two-window equation
-      cannot itself tell a detector imbalance from a residual time trend.
-    - ``"ratio"`` — ΣF/ΣB (Mantid ``AlphaCalc``; the legacy
-      :func:`estimate_alpha`). Only unbiased when the polarization
-      integrates to zero over the window (many-cycle TF data).
-
-    For the optimising methods the uncertainty is a Poisson bootstrap: per-bin
-    counts are resampled as Poisson(observed) ``n_bootstrap`` times with a
-    seeded generator and the estimator re-run; ``alpha_error`` is the robust
-    (percentile) standard error of the replicas (``None`` when ``n_bootstrap``
-    is 0 or fewer than 10 replicas survive). WiMDA reports a bare number; the
-    uncertainty is an Asymmetry improvement (study divergence D2).
-
-    Goodness gate (``general`` only)
-    --------------------------------
-    The closed-form solution equates the balanced count between two windows,
-    which is one equation for one unknown: a *residual trend* in that count —
-    counts decaying with an effective lifetime slightly different from τ_μ
-    (pile-up rejection, a slightly over-subtracted background) — is absorbed
-    into alpha rather than reported, and used to come back with ``ok=True`` and
-    a small bootstrap error while being 10–100% wrong. After solving, the
-    flatness is therefore re-tested across ``_GENERAL_GATE_WINDOWS``
-    equal-statistics sub-windows *with alpha re-freed*, so the surviving time
-    trend measures the effective lifetime instead of being absorbed again (see
-    :func:`_general_flatness`). ``objective_value`` carries the flatness χ² of
-    those sub-window levels about their weighted mean — the ``general`` analogue
-    of the diamagnetic objective, and likewise a plain rather than reduced χ².
-    The estimate is rejected with ``ok=False`` when the effective lifetime
-    differs from τ_μ by more than :data:`_GENERAL_GATE_TAU_TOLERANCE` (0.15%)
-    *and* that deviation is resolved at :data:`_GENERAL_GATE_SIGMA` (2.5) standard
-    errors; see those constants for the synthetic study behind the numbers. The
-    reported ``alpha`` is unchanged either way — only ``ok``, ``message`` and
-    ``objective_value`` react.
-
-    ``ratio`` propagates the two window sums through
-    :func:`~asymmetry.core.transform.fb_counts.linear_combination_variance`,
-    including shared background uncertainty and estimation-window overlap.
-    The optimising methods use their seeded Poisson bootstrap and do not carry
-    shared components into the resampling. ``n_bootstrap=0`` suppresses errors.
-
-    Counts are :class:`~asymmetry.core.transform.fb_counts.GroupCounts` values;
-    the other parameters mirror :func:`estimate_alpha`.
+    General rejects rounding-level window contrast. Its existing diagnostic
+    re-frees alpha across eight sub-windows to check the lifetime assumption:
+    a deviation exceeding both 0.15% and 2.5 standard errors sets ``ok=False``.
+    This diagnostic uses a Poisson count approximation and does not certify
+    identifiability, corrected-data uncertainty, or noisy weak-contrast recovery.
+    ``objective_value`` is the flatness chi-square, or weighted asymmetry power
+    for Diamagnetic; it is absent for the ratio. See the alpha calibration
+    reference for assumptions and diagnostic limits.
     """
     if method not in ALPHA_ESTIMATION_METHODS:
         raise ValueError(
@@ -779,7 +678,7 @@ def estimate_alpha_detailed(
     f, b, t = _alpha_window(forward.counts, backward.counts, time_us, first_good_bin, last_good_bin)
     if method == "diamagnetic":
         # The diamagnetic objective runs on packed, positive-masked bins;
-        # ratio and general are linear in counts and use the raw window.
+        # ratio and general use the raw window.
         f, b, t = _pack_for_estimation(f, b, t)
         f, b, t = _positive_mask(f, b, t)
     n_bins = int(f.size)
@@ -800,7 +699,7 @@ def estimate_alpha_detailed(
         if method == "general":
             message = (
                 "No polarization contrast between the early and late windows "
-                "— the General method needs visibly relaxing data"
+                "— the General method needs different window polarizations"
             )
         return AlphaEstimate(
             alpha=1.0,
@@ -827,9 +726,9 @@ def estimate_alpha_detailed(
     if method == "general":
         if flatness is None:
             message = (
-                "Flatness gate not applied: the window does not split into "
-                f"{_GENERAL_GATE_MIN_WINDOWS} usable sub-windows, so the General "
-                "estimate is unverified"
+                "Flatness gate not applied: need at least "
+                f"{_GENERAL_GATE_MIN_WINDOWS} usable sub-windows and a resolved lifetime fit; "
+                "the General estimate is unverified"
             )
         elif (
             abs(flatness.tau_deviation) > _GENERAL_GATE_TAU_TOLERANCE
@@ -843,7 +742,7 @@ def estimate_alpha_detailed(
                 "method is unreliable on this data; consider 'ratio' on a "
                 "fully-depolarized window"
             )
-    if n_bootstrap > 0 and method == "ratio":
+    if method == "ratio":
         edges = np.array(
             [
                 0 if first_good_bin is None else first_good_bin,
@@ -852,38 +751,6 @@ def estimate_alpha_detailed(
             dtype=np.intp,
         )
         alpha_error = _ratio_alpha_error(alpha, forward, backward, edges)
-    elif n_bootstrap > 0:
-        rng = np.random.default_rng(seed)
-        f_lam = np.clip(f, 0.0, None)
-        b_lam = np.clip(b, 0.0, None)
-        replicas: list[float] = []
-        for _ in range(int(n_bootstrap)):
-            fr = rng.poisson(f_lam).astype(np.float64)
-            br = rng.poisson(b_lam).astype(np.float64)
-            if method == "diamagnetic":
-                fr, br, t_rep = _positive_mask(fr, br, t)
-                replica = _single_alpha_estimate(
-                    method, fr, br, t_rep, center=alpha, xatol=_BOOTSTRAP_XATOL
-                )
-            else:
-                replica = _single_alpha_estimate(method, fr, br, t)
-            if replica is not None and np.isfinite(replica):
-                replicas.append(replica)
-        if len(replicas) >= 10:
-            # Robust standard error: half-width of the central 68.27%
-            # interval — equals the standard deviation for well-behaved
-            # replicas, but is not blown up by the heavy tails the General
-            # estimator develops near its identifiability limit.
-            lo_q, hi_q = np.percentile(replicas, [15.865, 84.135])
-            alpha_error = float((hi_q - lo_q) / 2.0)
-        if method == "general" and ok and len(replicas) < 0.9 * int(n_bootstrap):
-            ok = False
-            message = (
-                "Polarization contrast is marginal — the General estimate is "
-                "unreliable on this data "
-                f"({int(n_bootstrap) - len(replicas)}/{int(n_bootstrap)} "
-                "bootstrap replicas failed)"
-            )
 
     return AlphaEstimate(
         alpha=float(alpha),

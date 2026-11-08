@@ -10,7 +10,7 @@ runs, one figure per concept/worked-example.
 Every scenario resolves its data through :mod:`._corpus` (``ASYMMETRY_CORPUS_ROOT``)
 so it runs locally and in CI. Only the steering scenario runs an iminuit fit at
 capture time (the a₀(I) polynomial trend fit — ``requires_fit = True``); the α
-estimate is the algebraic diamagnetic estimator and the dead-time before/after
+estimate is the deterministic diamagnetic estimator and the dead-time before/after
 is a pure-core reduction, so the other four are fit-free.
 """
 
@@ -135,8 +135,15 @@ class BasicsAlphaScenario(CorpusScenario):
         section = dialog._alpha_section
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
-        # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
-        _pump_events(500)
+        if (
+            "α =" not in section._result_label.text()
+            or "(" in section._result_label.text().split("·")[0]
+        ):
+            raise RuntimeError("Quick alpha capture requires a value without an error")
+        preview = dialog._preview_pane
+        preview.flush()
+        _pump_until(lambda: preview._state is not None and preview._tasks.active_count == 0)
+        _pump_events(80)
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _pump_events(80)
         out = _grab_widget(dialog, self.name, ctx.output_dir)

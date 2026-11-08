@@ -165,8 +165,8 @@ highlighted and pre-selected there. Choose a **Method** and press
 
    The inline alpha calibration on the silver TF run ``EMU00018854``.
    With the **Diamagnetic (TF)** method and the good-bin window 21–1999,
-   pressing **Estimate α** returns :math:`\alpha = 0.88487(33)`, reported in
-   the α card as ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``. The
+   pressing **Estimate α** returns :math:`\alpha = 0.88487`, reported in
+   the α card as ``α = 0.8849 · Diamagnetic (TF) · run 18854``. The
    shared preview overlays the uncorrected asymmetry (grey, :math:`\alpha =
    1`) on the calibrated one (blue): the fitted :math:`\alpha` pulls the
    precession down onto a symmetric oscillation about zero, removing the
@@ -191,11 +191,12 @@ B_i` (Mantid's ``AlphaCalc``), with no oscillation model; on a clean silver
 run the two agree closely. The **General (LF/ZF)** method balances
 lifetime-corrected counts and accommodates a genuinely relaxing signal, but
 needs visible relaxation. On this silver TF run the diamagnetic estimate
-gives :math:`\alpha = 0.88487(33)`, and the shared before/after preview
+gives :math:`\alpha = 0.88487`, and the shared before/after preview
 shows the balancing effect directly. The estimate applies immediately: the
-α card reads ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``.
+α card reads ``α = 0.8849 · Diamagnetic (TF) · run 18854``.
 
-The same calculation is available from the Python API. The diamagnetic fit
+The quick estimate reports no added uncertainty. The same calculation is
+available from the Python API. The diamagnetic fit
 lives in :func:`~asymmetry.core.transform.estimate_alpha_detailed`; the
 simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
 :func:`~asymmetry.core.transform.estimate_alpha`:
@@ -204,6 +205,7 @@ simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
 
    from asymmetry.core.io import load
    from asymmetry.core.transform import apply_grouping, estimate_alpha_detailed
+   from asymmetry.core.transform.fb_counts import GroupCounts
 
    tf = load("Basics/data/EMU00018854.nxs")
    g = tf.run.grouping
@@ -213,7 +215,7 @@ simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
    forward = apply_grouping(tf.run.histograms, fwd)
    backward = apply_grouping(tf.run.histograms, bwd)
    est = estimate_alpha_detailed(
-       forward, backward,
+       GroupCounts(forward), GroupCounts(backward),
        method="diamagnetic",
        first_good_bin=g.get("first_good_bin"),
        last_good_bin=g.get("last_good_bin"),

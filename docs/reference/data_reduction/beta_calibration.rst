@@ -25,16 +25,15 @@ never measures :math:`\beta` behaves exactly as before.
 Why beta needs a fit, not a count ratio
 ----------------------------------------
 
-:math:`\beta` is invisible to integrated counts: it enters only through the
-size of the oscillating term, not the total number of events in either
-detector, so no count-ratio estimator — the ones :math:`\alpha` uses on a
-diamagnetic or count-ratio basis — can see it. Measuring :math:`\beta`
-therefore needs a *resolved precession signal*: the same weak-TF calibration
-run already used to calibrate :math:`\alpha` (a T20-style run, around 20 G, on
-the same sample and mounting), fitted so that the forward and backward
-amplitudes are recovered separately. On non-precessing (relaxing LF/ZF or
-fully decoupled) data every :math:`\beta` gives the same corrected asymmetry,
-so the estimator reports failure rather than a number.
+Beta describes the relative polarisation magnitudes in the two detector
+groups. Integrated counts alone cannot generally separate it from alpha and
+the physical polarisation. The implemented calibration fits a resolved weak-TF
+signal on the same sample and mounting, recovering the two amplitudes.
+It requires precession and reports failure when that signal cannot be resolved.
+This is a limitation of this fit, not a statement that beta cannot affect LF/ZF
+observations: for fixed F, B, and alpha, the corrected asymmetry above generally
+changes with beta even without precession. Other models require their own
+identifiability assessment.
 
 The grouping dialog's β card grows a **Measure from run** section for this:
 a **Calibration run** picker (weak-TF candidates highlighted, the same
