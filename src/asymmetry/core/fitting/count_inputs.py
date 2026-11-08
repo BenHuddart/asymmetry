@@ -242,6 +242,10 @@ def _build_one_count_group(
             "grouped_alignment": ctx.alignment.to_dict(),
             "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
+            "count_fit_raw_windows": tuple(
+                (ctx.first_good + i * bunch_factor, ctx.first_good + (i + 1) * bunch_factor - 1)
+                for i in np.flatnonzero(mask)
+            ),
         }
     )
     return GroupedTimeDomainGroup(

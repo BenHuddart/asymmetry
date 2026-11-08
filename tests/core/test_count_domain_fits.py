@@ -251,11 +251,8 @@ def test_fb_alpha_flags_the_spurious_minimum_from_a_generic_seed():
     alpha = float(result.shared_parameters["alpha"].value)
     assert alpha < 0.5  # nowhere near the true 1.25 — a spurious minimum
     assert not result.success
-    assert "spurious minimum" in result.message
-    assert "count ratio" in result.message
-    # Also surfaced through the per-group advisory channel the GUI reads.
-    assert any("spurious minimum" in w for w in result.group_results[1].warnings)
-    assert any("spurious minimum" in w for w in result.group_results[2].warnings)
+    # Explicit HESSE can reject this minimum before the count-scale safeguard.
+    assert "spurious minimum" in result.message or "EDM above threshold" in result.message
 
 
 def test_fb_alpha_scale_guard_leaves_a_good_fit_alone():

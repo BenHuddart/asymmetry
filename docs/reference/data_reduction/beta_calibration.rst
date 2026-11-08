@@ -73,6 +73,24 @@ fitted alongside it and their correlation, so the two balances are measured
 **endorsed measurement protocol** and the only one of the two that yields an
 :math:`\alpha`–:math:`\beta` correlation.
 
+The scriptable :func:`~asymmetry.core.fitting.tf_calibration.fit_tf_calibration`
+operation owns this joint fit. Its ``TFCalibrationRequest(fit_beta=False)`` fixes
+beta at one in the same physical model for alpha-only calibration; ``fit_beta=True``
+frees it. The convenience ``estimate_beta_detailed(method="count_fit")`` delegates
+to that operation while retaining its historical result fields and method key.
+
+Asymmetry also checks that free-beta calibration has a resolved amplitude and
+frequency: each must reach the existing three-standard-error significance gate
+(the amplitude helper retains its small nonzero fallback when an error is absent).
+For fitted frequency, a missing frequency error makes calibration unavailable.
+An explicitly fixed finite positive frequency is instead an independently
+supplied model assumption: only its fitted-frequency significance test is
+omitted, while the amplitude and reliable-beta-error checks remain. The estimator
+never fixes frequency automatically. A missing reliable beta error makes
+calibration unavailable, with a diagnostic. These are safeguards for this weak-TF protocol,
+not universal identifiability tests or thresholds attributed to musrfit/WiMDA.
+They do not apply automatically to alpha-only calibration with beta fixed.
+
 Single-histogram ratio
 -----------------------
 
@@ -131,8 +149,9 @@ comfortably inside that range.
 Uncertainties
 -------------
 
-Both protocols report symmetric (HESSE) standard errors from the underlying
-count fit(s) by default. For the count fit, :math:`\sigma_\beta` and
+Both protocols report symmetric curvature standard errors from the underlying
+count fit(s). The joint operation explicitly evaluates HESSE after minimisation;
+the independent single-histogram cross-check retains its optimiser covariance. For the count fit, :math:`\sigma_\beta` and
 :math:`\sigma_\alpha` come directly from the joint fit's covariance, together
 with their correlation; for the single-histogram ratio, they are propagated
 from the two independent fits' amplitude (and :math:`N_0`) errors by the
@@ -143,6 +162,36 @@ obtained, and the estimate goes **stale** (the same staleness convention as
 :math:`\alpha`) when the deadtime or background corrections change after it
 was measured, since :math:`\beta` was fitted on the counts those corrections
 produced.
+
+The full joint parameter/covariance owner includes both backgrounds and every
+other nuisance. Errors and alpha–beta correlation derive from that matrix;
+unavailable/unreliable covariance supplies no coefficient error. The legacy
+``reduced_chi2`` field for ``count_fit`` contains Poisson deviance divided by
+joint degrees of freedom, counting shared free parameters once. It is not
+an exact chi-square test or a residual-based error scale. See
+:doc:`alpha_calibration` for the supported raw observations, fixed-beta error
+state, cancellation, and conditional-error limits.
+
+Compared with other programs
+----------------------------
+
+musrfit's `Single Histograms tutorial
+<https://musruser.psi.ch/Tutorial/Tutorial2.html>`_ describes simultaneous
+histogram calibration, including shared alpha/beta parameters. Its examples
+also illustrate Gaussian damping and separate detector phases; those choices
+are distinct from this exponential/common-phase model. Matched global
+histogram likelihood controls in musrfit 1.12.1 (``708f777b``, ROOT 6.40.04)
+agree in fixed/free-beta point estimates within 0.0001 absolute alpha/beta.
+Here alpha is :math:`N_F/N_B`, reciprocal to the compared native parameter,
+while beta is the same backward/forward amplitude ratio. The native type-2
+asymmetry chi-square route has a different objective.
+
+The installed native likelihood route reports errors approximately
+:math:`1/\sqrt{2}` of the independently checked conventional Poisson standard
+errors. Asymmetry does not copy that scale; see :doc:`/explanation/comparison`
+for the one-normalisation control and its limits. WiMDA quick Diamagnetic is
+a different point objective. Native WiMDA paired-count model-fit errors are
+not verified by these checks. Mantid AlphaCalc is the separate ratio comparator.
 
 **References**
 
