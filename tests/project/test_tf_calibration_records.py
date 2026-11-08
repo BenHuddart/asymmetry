@@ -276,12 +276,18 @@ def test_nonfinite_failure_and_strict_json(tmp_path):
 
 
 def test_projection_history_retains_canonical_identity(tmp_path):
-    profile = GroupingProfile("vector", ProfileFingerprint("test", 2))
+    from asymmetry.core.project.profiles import resolve_effective_grouping
+    from asymmetry.core.transform.projections import projection_alphas
+    from tests.core.test_tf_calibration_fit import _raw_tf
+
+    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
     apply_calibration(profile, CalibrationRecord("joint", candidate()))
-    profile.projections = [{"name": "pair", "forward_group": 1, "backward_group": 2}]
+    profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
     restored = round_trip(tmp_path, profile)
     assert restored.projections == profile.projections
     assert restored.alpha_policy.record is restored.beta_policy.record
+    grouping = resolve_effective_grouping(restored, _raw_tf().run)
+    assert projection_alphas(grouping)["pair"] == restored.alpha_policy.value
 
 
 @pytest.mark.parametrize("seed", [0.0, -1.0])

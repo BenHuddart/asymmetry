@@ -36,6 +36,10 @@ def test_form_capture_preserves_history_and_authored_beta(manual_beta):
 def test_vector_form_capture_keeps_unedited_base_calibration():
     from dataclasses import replace
 
+    from asymmetry.core.project.profiles import resolve_effective_grouping
+    from asymmetry.core.transform.projections import projection_alphas
+    from tests.core.test_tf_calibration_fit import _raw_tf
+
     result = candidate()
     result = replace(
         result,
@@ -55,7 +59,7 @@ def test_vector_form_capture_keeps_unedited_base_calibration():
         "alpha_method": "tf_calibration_fit",
         "alpha_reference_run": 123,
         "alpha_error": 0.2,
-        "projections": [{"name": "pair", "forward_group": 1, "backward_group": 2}],
+        "projections": [{"label": "pair", "forward_group": 1, "backward_group": 2}],
     }
     captured = profile_from_form_payload(
         payload, name=profile.name, fingerprint=profile.fingerprint, calibration_source=profile
@@ -65,3 +69,5 @@ def test_vector_form_capture_keeps_unedited_base_calibration():
     restored = GroupingProfile.from_dict(captured.to_dict())
     assert restored.alpha_policy.value == 1.23456789
     assert restored.alpha_policy.record is restored.beta_policy.record
+    grouping = resolve_effective_grouping(restored, _raw_tf().run)
+    assert projection_alphas(grouping)["pair"] == 1.23456789
