@@ -232,6 +232,7 @@ from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
     CorrectionStatus,
+    CorrectionUnavailableError,
     background_grouping_metadata,
     correction_warnings,
     reference_observation_metadata,
@@ -2996,11 +2997,7 @@ class MainWindow(QMainWindow):
             if not targets:
                 return
 
-            time_view_mode = (
-                self._plot_panel.current_time_view_mode()
-                if hasattr(self._plot_panel, "current_time_view_mode")
-                else "fb_asymmetry"
-            )
+            time_view_mode = self._plot_panel.current_time_view_mode()
             # A single data-group header selects all its members; the groups/raw-counts
             # views show one run's detector groups, so render a representative member.
             group_target = self._single_group_view_target(targets)
@@ -3014,9 +3011,7 @@ class MainWindow(QMainWindow):
                     primary,
                     lifetime_corrected=time_view_mode != "raw_counts",
                 )
-                if grouped_targets and hasattr(
-                    self._plot_panel, "plot_grouped_time_domain_subplots"
-                ):
+                if grouped_targets:
                     # Bind the current run to the representative member so fits and
                     # labels follow the run whose groups are shown.
                     self._current_dataset = primary
@@ -3077,6 +3072,10 @@ class MainWindow(QMainWindow):
 
             render_mode = "single"
             self._plot_panel.plot_dataset(targets[0])
+        except CorrectionUnavailableError as exc:
+            render_mode = "unavailable"
+            rendered_targets = []
+            self._plot_panel.show_message(str(exc))
         finally:
             self._update_grouping_hint()
             self._log_perf_event(

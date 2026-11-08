@@ -732,6 +732,98 @@ musrfit's run addition has separate t0 semantics and is distinct from FileBG
 subtraction. See :doc:`/reference/data_reduction/backgrounds` for the subtraction
 contract and its independent-variance assumptions.
 
+.. _comparison-reference-errors:
+
+Reference subtraction: deadtime and counting errors
+----------------------------------------------------
+
+The following comparison reuses recorded native WiMDA 1.326 (64 bit, Wine
+10.0) and Mantid 6.16.1 results on synthetic constant spectra. It is not a new
+native execution or a comparison on an acquired sample/holder pair. The sample
+has 200/150 counts per native bin in two detectors; the reference has 30/20.
+Each group contains one detector. Sample/reference exposures are 200/100 good
+frames, native width is 0.016 μs, raw t0 is zero, and the subtraction scale is
+two. Enabled Manual deadtime is 1 ns (0.001 μs) per detector. The table shows
+the first group with bunch one; WiMDA exports raw group 1 at nonnegative time,
+with Auto/Manual BG off and FileBG enabled. Its sample exposure is restored to
+200 frames after reference loading, which can change the active frame count.
+
+.. list-table:: First-group count and standard error
+   :header-rows: 1
+   :widths: 45 28 27
+
+   * - Operation
+     - Count
+     - Standard error
+   * - Asymmetry / explicit Mantid, DT off
+     - 140
+     - 17.88854382
+   * - WiMDA FileBG, DT off
+     - 140
+     - 14.1421
+   * - Asymmetry / explicit Mantid, both sides DT-corrected
+     - 152.186836518
+     - 17.88854382
+   * - WiMDA FileBG, sample DT-corrected, raw reference
+     - 153.333
+     - 14.1421
+
+For each acquisition, the independently evaluated inverse is
+:math:`c(n)=n/[1-n\tau/(F\Delta t)]`, with :math:`\tau` and
+:math:`\Delta t` in μs. Asymmetry gives
+:math:`c_S(200)-2c_R(30)=152.18683651804673`.
+The Mantid sequence explicitly applies `ApplyDeadTimeCorr
+<https://docs.mantidproject.org/v6.16.1/algorithms/ApplyDeadTimeCorr-v1.html>`_
+to each workspace, then **Scale** and **Minus**. A separately configured
+sample-only sequence gives :math:`c_S(200)-2(30)=153.33333333333334`,
+explaining the WiMDA FileBG result. These are authored workspace operations,
+not an equivalent automatic Muon GUI workflow.
+
+Asymmetry and the configured Mantid arithmetic retain independent input
+variance :math:`200+2^2(30)=320` with DT off or on. They do not infer Poisson
+variance from corrected means. WiMDA's tested raw-group export retains the
+sample-only counting error :math:`\sqrt{200}` after FileBG. These measurement-
+variance conventions exclude coefficient/exposure uncertainty and physical
+deadtime-induced correlations. The independent-variance rule also excludes
+estimated-scale and shared-reference cross-result covariance. Matching this
+example does not establish full uncertainty coverage or identical fit objectives.
+
+The Asymmetry/Mantid independent-arithmetic checks use relative tolerance
+:math:`10^{-13}`. WiMDA's text-export absolute tolerances are 0.00051 counts
+and 0.000051 in the standard error, set by print precision; all 1999 exported
+rows satisfy the constant-spectrum comparison. This bounds the claim to the
+recorded synthetic raw-group export, not noisy inputs, ROOT-bank statistics,
+or every GUI path. See :doc:`/reference/data_reduction/backgrounds` for the
+count-reference contract and :ref:`comparison-reference-timing` for the
+separate channel-alignment convention.
+
+.. _comparison-physical-backgrounds:
+
+Additive physical signals and amplitude units
+---------------------------------------------
+
+The `musrfit tutorial <https://lmu.pages.psi.ch/musrfit-docu/tutorial.html>`_
+models sample and holder contributions with separate amplitudes, relaxation,
+and fields. These physical signals are distinct from the uncorrelated count
+background fitted in a single-histogram model. Asymmetry's existing composite
+models likewise express additive physical signals; no external FileBG operation
+is implied. A constant holder component is appropriate only for a stationary,
+non-relaxing response in the chosen frame.
+
+A reused musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) check fits a generic
+``fittype 8`` ASCII curve
+:math:`a(t)=0.2\exp(-0.35t)+0.04`, with 81 equally spaced points from
+0 to 8 μs, supplied error 0.001, packing one, and rate fixed at 0.35 μs⁻¹.
+MIGRAD/HESSE recovers both fraction-valued amplitudes within absolute tolerance
+:math:`5\times10^{-6}` (printed parameter precision), starting at 0.15/0.02.
+Asymmetry's **Exponential** + **Constant** forward evaluation uses amplitudes
+20%/4%; dividing its percent output by 100 gives the same fractional curve
+(relative tolerance :math:`10^{-14}`, absolute :math:`10^{-16}`). This is a
+model-composition and units illustration. It is not matched raw muon reduction,
+a new native fit, a holder-fraction calibration, or a comparison of fit covariance.
+See :doc:`/reference/data_reduction/backgrounds` and
+:doc:`/reference/asymmetry_units` for modelling advice and units.
+
 At a glance: feature coverage
 -----------------------------
 
