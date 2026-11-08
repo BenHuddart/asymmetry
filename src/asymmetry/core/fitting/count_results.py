@@ -57,7 +57,8 @@ class CountFitParameter:
     """Immutable parameter specification/value; count scales are counts per bin.
 
     In TF request overrides, infinite endpoints retain the default search bounds.
-    Finite endpoints must respect the TF model's physical parameter domains.
+    Finite endpoints must respect the TF model's physical parameter domains;
+    fixed values must also respect explicitly supplied endpoints.
     """
 
     name: str

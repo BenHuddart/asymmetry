@@ -64,7 +64,11 @@ def test_public_selection_recovers_calibration_and_minimum_total_cost(envelope, 
     assert best is min((c for c in selection.candidates if c.ok), key=lambda c: c.fit.statistic)
     assert best.alpha == pytest.approx(1.25, abs=2e-4)
     assert best.beta == pytest.approx(beta, abs=2e-4)
-    assert best.alpha_error > 0
+    if best.fit.uncertainty_status == "available":
+        assert best.alpha_error > 0
+    else:
+        assert not fit_beta
+        assert best.alpha_error is None
     assert (best.beta_error is not None) == fit_beta
     assert best.fit.objective is Objective.POISSON
     assert best.model == f"{best.envelope.value}_common_phase"
@@ -199,7 +203,7 @@ def test_failed_stretched_candidate_keeps_usable_alternative():
 
 
 @pytest.mark.parametrize(
-    "mode", ["failure", "no-usable", "tie", "near-tie", "nonfinite", "covariance"]
+    "mode", ["failure", "no-usable", "tie", "near-tie", "nonfinite", "covariance", "unreliable"]
 )
 def test_selection_policy_retains_candidate_states(monkeypatch, mode):
     original = tf._fit_fb_count_groups
@@ -221,6 +225,7 @@ def test_selection_policy_retains_candidate_states(monkeypatch, mode):
             statistic=statistic,
             message="deliberate fit failure" if not success else fit.message,
             covariance=None if mode == "covariance" else fit.covariance,
+            covariance_accurate=False if mode == "unreliable" else fit.covariance_accurate,
         )
         calls.append(grouped.joint_fit)
         return grouped
@@ -236,10 +241,14 @@ def test_selection_policy_retains_candidate_states(monkeypatch, mode):
     else:
         index = 1 if mode in {"failure", "nonfinite"} else 3 if mode == "near-tie" else 0
         assert result.selected is result.candidates[index]
-    if mode == "covariance":
+    if mode in {"covariance", "unreliable"}:
         assert result.selected.ok
         assert result.selected.alpha_error is None
-        assert result.selected.fit.uncertainty_status == "unavailable"
+        assert result.selected.beta_error is None
+        assert result.selected.alpha_beta_correlation is None
+        assert result.selected.fit.uncertainty_status == (
+            "unavailable" if mode == "covariance" else "unreliable"
+        )
 
 
 def test_common_and_candidate_constraints_and_no_shape_cap():
@@ -250,8 +259,8 @@ def test_common_and_candidate_constraints_and_no_shape_cap():
         parameters=(P("frequency", 1.3, fixed=True), P("phase", 0.17, fixed=True)),
     )
     specifics = {
-        tf.TFEnvelope.EXPONENTIAL: (P("Lambda", 0.3, fixed=True),),
-        tf.TFEnvelope.GAUSSIAN: (P("sigma", 0.3, fixed=True),),
+        tf.TFEnvelope.EXPONENTIAL: (P("Lambda", 0.3, min=0.3, max=0.3, fixed=True),),
+        tf.TFEnvelope.GAUSSIAN: (P("sigma", 0.3, min=0.3, max=0.3, fixed=True),),
         tf.TFEnvelope.STRETCHED: (P("Lambda", 0.3, fixed=True), P("stretch", 3, fixed=True)),
     }
     result = tf.select_tf_calibration(
@@ -358,3 +367,28 @@ def test_selection_minos_preserves_conditional_errors():
     assert intervals["alpha"][0] < 0 < intervals["alpha"][1]
     assert intervals["alpha"][1] == pytest.approx(best.alpha_error, rel=0.02)
     assert set(intervals) == {"alpha", "N0"}
+
+
+@pytest.mark.parametrize(
+    "common,specific",
+    [
+        ((P("phase", 0.5, min=-0.1, max=0.1, fixed=True),), {}),
+        ((P("alpha", 1.25, min=1.3, max=2, fixed=True),), {}),
+        ((), {tf.TFEnvelope.EXPONENTIAL: (P("Lambda", 0.3, min=0, max=0.2, fixed=True),)}),
+        ((), {tf.TFEnvelope.GAUSSIAN: (P("sigma", 0.3, min=0.4, max=1, fixed=True),)}),
+        ((), {tf.TFEnvelope.STRETCHED: (P("Lambda", 0.3, min=0, max=0.2, fixed=True),)}),
+        ((), {tf.TFEnvelope.STRETCHED: (P("stretch", 3, min=0.1, max=2, fixed=True),)}),
+        ((), {tf.TFEnvelope.STRETCHED: (P("stretch", 0.02, min=0.05, fixed=True),)}),
+    ],
+)
+def test_fixed_selection_overrides_must_respect_effective_bounds(monkeypatch, common, specific):
+    def forbidden(*args, **kwargs):
+        pytest.fail("fixed value outside effective bounds reached minimisation")
+
+    monkeypatch.setattr(tf, "_fit_fb_count_groups", forbidden)
+    with pytest.raises(ValueError, match="TF fixed parameter"):
+        tf.select_tf_calibration(
+            _control("exponential"),
+            tf.TFCalibrationRequest(1, 2, parameters=common),
+            envelope_parameters=specific,
+        )

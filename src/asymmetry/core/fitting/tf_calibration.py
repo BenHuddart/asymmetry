@@ -320,13 +320,18 @@ def _tf_parameters(dataset, request, envelope):
             or upper > amplitude_ceiling
         ):
             raise ValueError(f"TF parameter bounds for {p.name!r} must retain its physical domain")
+        # Default search boxes constrain free parameters; fixed values obey user endpoints.
         if p.fixed and (
             not np.isfinite(p.value)
             or (nonnegative and p.value < 0)
             or (positive_balance and p.value <= 0)
             or p.value > amplitude_ceiling
+            or p.value < p.min
+            or p.value > p.max
         ):
-            raise ValueError(f"TF fixed parameter {p.name!r} must lie in its physical domain")
+            raise ValueError(
+                f"TF fixed parameter {p.name!r} must lie in its physical domain and explicit bounds"
+            )
         params.add(Parameter(p.name, p.value, min=lower, max=upper, fixed=p.fixed))
     return params
 
