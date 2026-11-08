@@ -349,7 +349,7 @@ draft is what gets applied to every run following the profile.
   measured), the :math:`\alpha` chip in the pipeline strip gains a
   **" · stale"** suffix and a tooltip prompting a re-estimate, and the
   :math:`\alpha` card's header is warn-tinted. The :math:`\alpha` card carries a
-  one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run
+  one-line provenance summary (e.g. "α = 1.2345 · Diamagnetic (TF) · run
   2923"); deadtime and background carry their own mode controls and one-line
   status (see `Alpha calibration`_, `Deadtime Correction`_, and `Background
   Correction`_ below). On a window too short to show every card at once, a
@@ -801,8 +801,13 @@ the asymmetry at :math:`\alpha = 1` against the asymmetry at the fitted
 so the balance is self-evident.
 
 A successful estimate sets the profile's alpha policy to ``calibrated`` and
-records its **provenance** — method, source run, and uncertainty — displayed as,
-for example, "α = 1.2345(67) · Diamagnetic (TF) · run 2923". Typing a value into
+records its **provenance** — method, source run, and uncertainty where available.
+For example, a quick result displays "α = 1.2345 · Diamagnetic (TF) · run 2923".
+**Diamagnetic (TF)** and **General (LF/ZF)** return alpha without an added
+uncertainty; **Count ratio ΣF/ΣB** retains first-order error propagation.
+An explicit new estimate replaces the selected calibration record, clearing any
+recorded error when the new result has none. This also applies to per-projection
+estimates. Typing a value into
 the alpha field directly instead switches the policy to ``fixed`` and the
 provenance to plain "manual", since a hand-typed number no longer carries a
 measurement behind it. If you change the deadtime or background settings after

@@ -49,25 +49,27 @@ class AlphaCalibrationDialogScenario(Scenario):
         # inline α-calibration controls (run picker, method, Estimate α, result)
         # live in the Corrections column alongside deadtime and background — no tab
         # to select, both columns are visible at once.
-        section = getattr(dialog, "_alpha_section", None)
-        if section is not None:
-            section._on_estimate()
-            _pump_until(lambda: section._tasks.active_count == 0)
-            # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
-            _pump_events(500)
-            # Bring the α section into frame. With the adaptive deadtime layout
-            # it already sits above the fold in the default (deadtime-off) state,
-            # so this is a no-op there and still correct on smaller captures.
-            corr_scroll = getattr(dialog, "_corrections_scroll", None)
-            if corr_scroll is not None:
-                corr_scroll.ensureWidgetVisible(section)
-                # Under the app stylesheet the calibration-run combo's minimum
-                # (the longest run label) can exceed the column width, and
-                # ensureWidgetVisible then also scrolls *right*, cutting off the
-                # correction cards' left edge. Pin the column flush-left — the
-                # cards and the α controls are the subject of this capture.
-                corr_scroll.horizontalScrollBar().setValue(0)
-                _pump_events(80)
+        section = dialog._alpha_section
+        section._on_estimate()
+        _pump_until(lambda: section._tasks.active_count == 0)
+        if (
+            "α =" not in section._result_label.text()
+            or "(" in section._result_label.text().split("·")[0]
+        ):
+            raise RuntimeError("Quick alpha capture requires an estimate without an error")
+        preview = dialog._preview_pane
+        preview.flush()
+        _pump_until(
+            lambda: (
+                preview._state is not None
+                and preview._tasks.active_count == 0
+                and not preview._debounce.isActive()
+            )
+        )
+        corr_scroll = dialog._corrections_scroll
+        corr_scroll.ensureWidgetVisible(section)
+        corr_scroll.horizontalScrollBar().setValue(0)
+        _pump_events(80)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

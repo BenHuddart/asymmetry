@@ -12,19 +12,19 @@ The measured forward/backward asymmetry
 depends on the calibration constant :math:`\alpha = N_F^0/N_B^0`, the ratio of
 the two detector groups' efficiency × solid-angle products. With the correct
 :math:`\alpha` the asymmetry equals :math:`a_0 P_z(t)`; with the wrong one,
-a spurious baseline and a distortion proportional to the muon decay envelope
-leak into every fit. Alpha is a property of the instrument configuration
+a spurious baseline and a nonlinear distortion of the polarisation enter
+every fit. Alpha is a property of the instrument configuration
 *and* the sample position, so it must be recalibrated per mounting — and,
 because detector solid angles change with sample environment, ideally per
 cooldown.
 
 The grouping dialog's **Estimate α** control determines :math:`\alpha` from
 the reference run and applies it to all selected datasets (the same
-reference-run convention as deadtime estimation). Three methods are offered;
-all report the estimate with a statistical uncertainty, e.g. 1.3702(45)
-— from a seeded Poisson bootstrap of the histogram counts for the two
-optimising methods, and from closed-form first-order propagation for the count
-ratio. WiMDA reports a bare number for the same operations.
+reference-run convention as deadtime estimation). The selector offers
+**Diamagnetic (TF)**, **General (LF/ZF)**, and **Count ratio ΣF/ΣB**.
+Diamagnetic and General return alpha without an added uncertainty,
+following WiMDA's quick estimates. **Count ratio** reports a statistical
+uncertainty from first-order propagation of the detector-group sums.
 
 Choosing a method
 -----------------
@@ -64,7 +64,8 @@ from. This matters most for the background: a flat background pedestal does not
 track the detectors' efficiency ratio, so estimating :math:`\alpha` from the raw
 (unsubtracted) counts balances the *totals* and leaves the reduced weak-TF
 asymmetry off-centre once the background is subtracted. Estimating on the
-background-subtracted counts centres it. Asymmetry estimates on counts after
+background-subtracted counts avoids this pedestal-induced imbalance; the quick
+objective can still retain finite-window and weighting biases. Asymmetry estimates on counts after
 deadtime correction, grouping,
 and background subtraction. This preparation does not imply that every
 reference program uses the same estimator or automatic policy. See
@@ -85,16 +86,19 @@ Minimises the weighted asymmetry power
 
    S(\alpha) = \sum_i \left( \frac{A_i(\alpha)}{\sigma_i(\alpha)} \right)^2,
 
-where :math:`\sigma_i` is the Poisson error propagated to the asymmetry. In
+where :math:`\sigma_i` is a nominal first-order Poisson weight computed from
+the prepared counts. For corrected input this objective does not model the
+full correction covariance. In
 a transverse field the muons in a diamagnetic environment precess, so the
 true asymmetry oscillates symmetrically about zero — any imbalance shows up
 as a net offset that inflates :math:`S`. The minimum of :math:`S(\alpha)`
-is the balanced point.
+is a quick balance estimate; finite windows and the alpha-dependent weights
+can displace it from the efficiency ratio.
 
 *When to use this.* The default for any weak-TF run on a sample in a
 diamagnetic (non-magnetic, non-relaxing) state — the standard calibration
-measurement. It is the most precise of the three methods: the oscillation
-provides a zero-mean reference that makes the imbalance directly visible.
+measurement. A resolved oscillation provides a useful balance reference;
+precision depends on its amplitude, window, corrections, and count statistics.
 Avoid it on magnetically ordered samples (spontaneous fields shift the
 oscillation) and on data where the diamagnetic fraction is small.
 
@@ -105,36 +109,41 @@ bins so the result does not depend on the display bunching factor.
 General method
 --------------
 
-Uses the lifetime-corrected balanced count
+The General method uses the lifetime-corrected balanced count
 
 .. math::
 
    N(\alpha, t) = \left( \frac{N_F(t)}{\sqrt{\alpha}}
-                  + \sqrt{\alpha}\, N_B(t) \right) e^{t/\tau_\mu},
+                  + \sqrt{\alpha}\, N_B(t) \right) e^{t/\tau_\mu}.
 
-which is constant in time *exactly* when :math:`\alpha` is correct: the
-polarisation term cancels between the two groups regardless of the shape of
-:math:`P_z(t)`. Asymmetry solves this flatness condition in closed form by
-equating the mean corrected count density between an early and a late
-equal-statistics window — everything is linear in the counts, so the
-estimate is unbiased and fails loudly (rather than returning a number) when
-the two windows show no polarisation contrast.
+At the correct alpha, the polarisation cancels under a common muon-decay
+envelope, equal forward/backward polarisation magnitudes (beta = 1), and
+correct background subtraction. Flatness alone does not uniquely identify
+alpha: constant polarisation makes every alpha give a flat envelope.
+Asymmetry equates weighted lifetime-corrected densities in an early and a late
+equal-statistics window. With densities :math:`F_1,F_2,B_1,B_2`, this gives
+:math:`\alpha=(F_1-F_2)/(B_2-B_1)`. The sums are linear, but their ratio is
+nonlinear and need not be statistically unbiased.
 
-*When to use this.* Relaxing LF or ZF data when no TF calibration run
-exists — the situation the plain count ratio cannot handle. The polarisation
-must visibly relax within the time window: on non-relaxing (or fully
-decoupled) data, *no* method can extract :math:`\alpha` from flatness,
-because every :math:`\alpha` gives a flat corrected count. Expect a larger
-uncertainty than the diamagnetic method at the same statistics; if the
-reported uncertainty is comparable to the value itself, treat the result as
-a consistency check rather than a calibration. Background and deadtime
-corrections should be applied first — a residual flat background grows as
-:math:`e^{t/\tau_\mu}` after lifetime correction and biases the late window.
+Use **General** on relaxing LF/ZF data when no TF calibration is available,
+provided the two windows have different mean polarisation. Time variation can
+also come from TF precession. A finite window can give equal window means even
+for a varying signal. Weak or noisy contrast can give an unstable estimate;
+no uncertainty or confidence test is supplied by this quick method.
+Background and deadtime corrections should be applied first. A residual flat
+background grows after lifetime correction and can bias the late window.
 
-WiMDA's General estimate minimises a weighted relative-scatter functional of
-the same :math:`N(\alpha, t)`; that functional loses its interior minimum at
-realistic counting statistics, so Asymmetry replaces it with the closed-form
-flatness condition above (study record: divergence D14).
+WiMDA's **General** minimises relative scatter of the lifetime-corrected
+balanced counts. Asymmetry uses the two-window condition above. These are
+different numerical objectives; neither a universal absence of an interior
+minimum nor universal agreement is implied.
+
+Asymmetry also checks for numerical degeneracy before dividing the window
+differences. Differences no larger than a floating-point accumulation bound
+scaled by the absolute summands of the densities are treated as zero contrast. The bound scales with
+the number of terms and double-precision machine epsilon [roundoff]_; it is not a
+statistical significance threshold. Passing it does not establish physical
+identifiability on noisy or weakly relaxing data.
 
 .. _alpha-general-goodness-gate:
 
@@ -147,7 +156,7 @@ whole mismatch is absorbed into :math:`\alpha`. A 0.5 % lifetime error is enough
 to shift :math:`\alpha` by 10 % at a 20 % asymmetry, and by tens of per cent
 when the asymmetry is small.
 
-Asymmetry therefore re-tests the flatness after solving, across eight
+Asymmetry also checks the flatness after solving, across eight
 equal-statistics sub-windows and with :math:`\alpha` re-freed, and reads the
 surviving time trend back as an effective lifetime. When that lifetime differs
 from :math:`\tau_\mu` by more than 0.15 % *and* the deviation is resolved at
@@ -156,9 +165,13 @@ naming the deviation, so a wrong number is not presented as a good one. The
 value itself is never altered by the gate, and ``objective_value`` carries the
 flatness :math:`\chi^2` of the sub-window levels for inspection either way. If
 your data trips the gate, calibrate :math:`\alpha` from a fully depolarised
-late-time window with the count ratio instead: where
-:math:`P_z(t) \rightarrow 0` the ratio is exact and assumes nothing about the
-lifetime.
+late-time window with the count ratio instead, if enough counts remain.
+Where :math:`P_z(t) \rightarrow 0`, the ratio of expected counts equals alpha
+without a lifetime assumption; a ratio of measured sums still has sampling bias.
+The lifetime diagnostic uses approximate Poisson weights on the prepared counts;
+it does not propagate all correction uncertainty or certify a valid calibration.
+If it cannot form enough usable sub-windows or resolve its fitted parameters,
+the result message says the check was not applied.
 
 Count ratio
 -----------
@@ -171,12 +184,11 @@ over the good-bin window — the Mantid ``AlphaCalc`` convention, kept for
 cross-checks against Mantid workflows and older analyses.
 
 *When to use this.* Only on transverse-field data spanning many precession
-cycles, where the oscillating polarisation integrates to zero and the ratio
-of summed counts is the efficiency ratio. On relaxing LF/ZF data the
-positive polarisation does **not** integrate to zero and the ratio is biased
-upward by approximately :math:`a_0 \langle P_z \rangle` — typically several
-percent, which is an order of magnitude larger than the statistical
-uncertainty of a good calibration. The reported uncertainty does not include
+cycles, provided the decay-weighted mean polarisation is close to zero.
+The ratio of expected summed counts then approaches the efficiency ratio.
+On relaxing LF/ZF data a positive weighted mean polarisation produces an
+upward relative bias of approximately :math:`2a_0 \langle P_z \rangle`
+at small amplitude, potentially much larger than the statistical uncertainty. The reported uncertainty does not include
 this bias.
 
 .. _alpha-ratio-subtracted-background:
@@ -245,23 +257,17 @@ controls and the sibling t₀/background promotes.
 Uncertainties
 -------------
 
-The diamagnetic and General methods report a statistical uncertainty from a
-Poisson bootstrap: the histogram counts are resampled 200 times from their
-observed values, the estimator is re-run on each replica, and the spread of the
-replicas (a percentile-based standard error, robust against the heavy tails the
-General method develops near its identifiability limit) is quoted. The bootstrap
-is seeded, so repeating an estimate gives identical digits. These two methods
-resample positive count means as Poisson and do not propagate shared correction
-components into their bootstrap uncertainty. The count ratio
-instead propagates in closed form (see
-:ref:`background uncertainty <alpha-ratio-subtracted-background>`), using
-first-order propagation of the window sums and including the recorded shared
-background components. Setting ``n_bootstrap=0``
-suppresses the uncertainty for every method.
+The diamagnetic and General quick estimates return ``alpha_error=None``.
+Their result display shows the alpha value alone. Repeating **Estimate α**
+applies a new result explicitly; existing saved and manual values, including
+historically recorded errors, remain intact until replaced.
 
-The uncertainty is statistical only — it does not include the count-ratio
-method's polarisation bias, nor systematic effects such as a mis-set t0 or an
-uncorrected background.
+The count ratio reports first-order propagation of the window sums, including
+recorded shared background components (see
+:ref:`background uncertainty <alpha-ratio-subtracted-background>`).
+This statistical uncertainty excludes polarisation bias, a mis-set t0, and
+unmodelled correction errors. It is not an exact sampling distribution for a
+ratio, particularly when the denominator is poorly determined.
 
 The diamagnetic estimate additionally carries a small **method** systematic that
 no amount of statistics removes. Its stationary point is
@@ -271,15 +277,30 @@ oscillation amplitude :math:`u = a_0 P_z(t)`, the estimating equation is
 second-order term survives even for a perfectly zero-mean oscillation, so the
 estimate is displaced by roughly :math:`a_0^2 (\alpha-1)/(\alpha+1)` — a few
 tenths of a percent at a typical 20 % asymmetry, growing quadratically with the
-asymmetry and reversing sign for :math:`\alpha < 1`. It does **not** depend on
-the precession frequency, so a calibration that drifts with applied field points
-at the instrument rather than at the estimator.
+asymmetry and reversing sign for :math:`\alpha < 1`. In resolved, many-cycle
+controls this bias need not track frequency. Finite
+windows, packing, and unresolved oscillations can introduce further dependence;
+a field-dependent estimate does not by itself locate an instrumental defect.
 
 For the most demanding work, :math:`\alpha` can instead be treated as a free
 parameter of a count-level fit (the WiMDA manual's "most accurate way"). That
 route is the **Count-fit α** section above; its uncertainty comes from the fit
-covariance, including the α–amplitude correlation, rather than the bootstrap
-used by the reduction-time estimators here.
+covariance, including the α–amplitude correlation.
+
+Compared with other programs
+----------------------------
+
+WiMDA 1.326 quick **Diamagnetic** and **General** return alpha without an error.
+On matched rounded synthetic beta = 1 histograms (16 ns bins, raw bins 4–498,
+F/B channels 1/2, background and deadtime off, bunch one), its displayed TF
+Diamagnetic alpha is 1.237, compared with 1.236610 in Asymmetry. General gives
+1.250 on both TF and relaxing controls; Asymmetry gives 1.249827 and 1.250073.
+Agreement is within 0.001 absolute alpha, the native search/display step.
+These are point checks, not uncertainty coverage or acquired-data validation.
+See :doc:`/explanation/comparison` and the `WiMDA overview/manual
+<https://shadow.nd.rl.ac.uk/wimda/>`_. Mantid ``AlphaCalc`` is the integral-ratio
+counterpart; musrfit model fits use a different objective from these quick
+estimates.
 
 **References**
 
@@ -289,3 +310,6 @@ used by the reduction-time estimators here.
 - A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011).
+
+.. [roundoff] N. J. Higham, *Accuracy and Stability of Numerical Algorithms*,
+   2nd ed. (SIAM, Philadelphia, 2002), Sec. 3.1.
