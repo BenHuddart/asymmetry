@@ -278,8 +278,10 @@ This recommendation is an Asymmetry convenience. The existing single-model
 operation and beta adapter retain the exponential model.
 
 musrfit's `MuSRFit interface <https://musruser.psi.ch/?page_id=148>`_ lists
-Exponential Cosine, Gaussian Cosine, and Stretch Cosine. Its documented
-``simpleGss`` envelope uses a Gaussian rate :math:`\sqrt{2}` times Asymmetry's
+Exponential Cosine, Gaussian Cosine, and Stretch Cosine. The
+`musrfit THEORY documentation
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_
+defines ``simpleGss`` with a Gaussian rate :math:`\sqrt{2}` times Asymmetry's
 :math:`\sigma`; ``generExpo`` uses :math:`\exp[-(\Lambda t)^p]` at positive time.
 Fresh musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) component controls for all four
 shapes agree within 0.0001 absolute alpha/beta with fixed/free beta, zero fixed

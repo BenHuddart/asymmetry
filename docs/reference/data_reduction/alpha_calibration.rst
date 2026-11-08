@@ -400,7 +400,7 @@ the final result boundary; cancellation raises ``FitCancelledError`` and
 publishes no result.
 
 Bounded envelope selection in scripts
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When a single exponential does not describe the calibrant, use
 :func:`~asymmetry.core.fitting.tf_calibration.select_tf_calibration` with the same
@@ -510,7 +510,9 @@ not full propagation through deadtime correction. Conditions and limits are in
 :ref:`comparison-count-calibration`.
 
 Envelope selection is an Asymmetry convenience, not a shared default of these
-programs. musrfit's documented ``simpleGss`` uses
+programs. The `musrfit THEORY documentation
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_
+defines ``simpleGss`` as
 :math:`\exp[-(\sigma_{\mathrm{native}}t)^2/2]`, requiring
 :math:`\sigma_{\mathrm{native}}=\sqrt{2}\sigma`; ``generExpo`` uses the
 stretched envelope above. Matched musrfit 1.12.1/ROOT 6.40.04 component fits
