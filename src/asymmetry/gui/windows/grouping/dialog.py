@@ -1793,7 +1793,6 @@ class GroupingDialog(TimingControls, QDialog):
         untouched: the form payload is captured into that run's override draft so
         Apply can write it back to the overridden run alone.
         """
-        # Drift-clear first so the draft does not carry a stale ``grouping_preset``.
         self._refresh_preset_selection()
         payload = self._current_grouping_payload()
         target = self._editing_target()
@@ -1808,11 +1807,11 @@ class GroupingDialog(TimingControls, QDialog):
             fingerprint=self._fingerprint,
             active=True,
             alpha_policy=self._draft.alpha_policy if not self._vector_axis_pairs else None,
+            calibration_source=self._draft,
         )
         # Explicit timing/window selectors own their policies, independent of values.
         self._draft.t0_policy = self._current_t0_policy()
         self._draft.good_window_policy = self._current_good_window_policy()
-        # Identity colour is profile metadata, independent of form state.
         self._draft.color = color
 
     # -- profile selector -------------------------------------------------

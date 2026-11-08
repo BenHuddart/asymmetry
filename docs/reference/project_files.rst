@@ -863,3 +863,38 @@ valid detector deadtime correction remains recorded separately. Reapplying a
 changed input or selection recomputes the outcome and clears stale fitted levels
 and correction errors. Count-fit summaries retain their background preflight
 separately from the joint model's fitted background.
+
+Applied TF calibration records
+------------------------------
+
+A grouping profile can retain frozen ``CalibrationRecord`` entries in
+``calibration_records``. Applying a record with ``apply_calibration`` makes
+its alpha and beta policies read-only views of the same candidate. The record
+contains the actual single-model result or all four model-selection candidates;
+selection uses the minimum finite total cost among usable candidates, with the
+declared envelope order for ties. The applied views name a captured candidate,
+so subsequent work does not silently replace an applied coefficient.
+
+The saved request contains user overrides. The full fitted parameter table
+separately retains effective fixed/free values and search endpoints, including
+defaults and data-derived seeds. The record retains full nuisance covariance
+and its unique parameter order, signed MINOS offsets, fit and calibration
+verdicts, acquired period, source, native timing and raw-bin support, and
+correction/variance assumptions. Shared acquisition and domain facts are stored
+once per record. Unbounded endpoints use the project's non-finite JSON codec.
+
+A missing calibration source file does not prevent loading or using stored
+coefficients. ``CalibrationRecord.require_source`` diagnoses an unavailable
+input before an explicit rerun; opening a project performs no calibration fit
+or model selection. Replacing a coefficient policy with a manual policy removes
+its active fit link while retaining the frozen record in profile history.
+Scalar records retain their recorded method, source, and error; absent model,
+window, or covariance provenance remains unknown. Matching scalar values or
+source run numbers do not establish a joint calibration.
+
+Covariance errors are conditional on the fitted model, selected support,
+corrections, and fixed assumptions. Unavailable or unreliable covariance yields
+no fitted error, even for a usable alpha-only calibration. Fixed beta has no
+fitted error or alpha/beta correlation. These uncertainties do not include model
+selection or full propagation into reduced-data covariance. Historical quick
+errors remain recorded values with unverified uncertainty meaning.
