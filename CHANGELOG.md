@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support deadtime-corrected TF alpha/beta calibration using retained count
+  variances, with automatic objective selection and correction provenance.
+
 - Share one core TF calibration fit for alpha-only (beta fixed at one) and joint
   alpha/beta, with full nuisance covariance, conditional errors, and cancellation.
 
@@ -29,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed
+
+- Identify unsupported processed channels in TF calibration without implying
+  that the selected fit objective is Poisson.
 
 - Retain physical domains in TF parameter overrides and recognise processed
   channel labels held only in grouping before raw-Poisson calibration.

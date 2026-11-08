@@ -1,4 +1,4 @@
-"""Shared raw-Poisson TF calibration with beta fixed at one or fitted."""
+"""Shared TF count calibration with beta fixed at one or fitted."""
 
 from __future__ import annotations
 
@@ -8,13 +8,15 @@ from dataclasses import dataclass
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.count_domain import fit_fb_alpha
+from asymmetry.core.fitting.count_domain import _fit_fb_count_groups
 from asymmetry.core.fitting.count_results import CountFitParameter, JointCountFit
 from asymmetry.core.fitting.engine import FitCancelledError
-from asymmetry.core.fitting.likelihood import FitInputError
+from asymmetry.core.fitting.grouped_time_domain import build_count_groups
+from asymmetry.core.fitting.likelihood import CountSource, FitInputError, Objective, PoissonCounts
 from asymmetry.core.fitting.models import oscillatory
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.io.periods import select_period, source_run_of
+from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -150,6 +152,23 @@ def _frequency_is_resolved(value: float | None, error: float | None) -> bool:
     return abs(value) >= _MIN_FREQUENCY_SIGNIFICANCE * error
 
 
+def _require_acquired_tf_counts(run, groups):
+    """Correction changes means, not the independent integer acquisition precondition."""
+    for group in groups:
+        offsets = dict(group.metadata["grouped_alignment"]["detector_offsets"])
+        for index in group.detector_indices:
+            bins = np.concatenate(
+                [
+                    np.arange(first - offsets[index], last - offsets[index] + 1)
+                    for first, last in group.metadata["count_fit_raw_windows"]
+                ]
+            )
+            histogram = run.histograms[index]
+            PoissonCounts(
+                histogram.time_axis[bins], histogram.counts[bins], CountSource.RAW, run.run_number
+            )
+
+
 def fit_tf_calibration(
     dataset: MuonDataset,
     request: TFCalibrationRequest,
@@ -158,9 +177,10 @@ def fit_tf_calibration(
 ) -> TFCalibrationResult:
     """Fit one exponential/common-phase TF count model under fixed/free beta.
 
-    Uses acquired integer observations and the existing native alignment,
-    exclusions, bunching and count-background preparation. Corrected counts,
-    supplied counting variance and explicit pulse-response requests are unsupported.
+    Uses existing native alignment, exclusions, bunching and background preflight.
+    Applied deadtime corrections use weighted corrected counts with retained
+    measured/supplied variance; otherwise raw counts use Poisson deviance.
+    Arbitrary supplied variance and explicit pulse-response requests are unsupported.
     Input limitations raise ``FitInputError``/``ValueError``; numerical failures
     retain their full fit with ``ok=False``. Cancellation raises ``FitCancelledError``.
     """
@@ -189,11 +209,7 @@ def fit_tf_calibration(
         if i < len(labels) and "postpileup" in labels[i].casefold().replace(" ", "")
     ]
     if processed:
-        raise FitInputError(
-            f"Raw Poisson TF calibration cannot use declared PostPileUp channels {processed}"
-        )
-    if any(run.histograms[i].count_variance is not None for bank in indices for i in bank):
-        raise FitInputError("Raw Poisson TF calibration cannot use supplied counting variance")
+        raise FitInputError(f"TF calibration cannot use declared PostPileUp channels {processed}")
     frequency = (
         request.frequency_mhz
         if request.frequency_mhz is not None
@@ -260,16 +276,32 @@ def fit_tf_calibration(
         ):
             raise ValueError(f"TF fixed parameter {p.name!r} must lie in its physical domain")
         params.add(Parameter(p.name, p.value, min=lower, max=upper, fixed=p.fixed))
-    grouped = fit_fb_alpha(
+    groups = build_count_groups(
         dataset,
-        request.forward_group,
-        request.backward_group,
-        oscillatory,
-        params,
-        estimate_beta=True,
+        [request.forward_group, request.backward_group],
         t_min=request.t_min,
         t_max=request.t_max,
         exclude=request.exclude,
+        lifetime_corrected=False,
+    )
+    objective = (
+        Objective.GAUSSIAN
+        if groups[0].deadtime.status is CorrectionStatus.APPLIED
+        else Objective.POISSON
+    )
+    if objective is Objective.GAUSSIAN:
+        _require_acquired_tf_counts(run, groups)
+    if objective is Objective.POISSON and any(
+        run.histograms[i].count_variance is not None for bank in indices for i in bank
+    ):
+        raise FitInputError("Raw Poisson TF calibration cannot use supplied counting variance")
+    grouped = _fit_fb_count_groups(
+        dataset,
+        groups,
+        oscillatory,
+        params,
+        estimate_beta=True,
+        cost=objective.value,
         minos=request.minos,
         cancel_callback=cancel_callback,
     )

@@ -13,7 +13,7 @@ asymmetry amplitude. This module is a thin orchestrator over the count-domain
 primitives in :mod:`asymmetry.core.fitting.count_domain`, offering two protocols:
 
 - ``"count_fit"`` (Protocol A, default) — one simultaneous forward+backward
-  Poisson count fit (:func:`fit_fb_alpha` with ``estimate_beta=True``) that
+  TF count fit (Poisson for raw counts, weighted after applied deadtime) that
   shares the physics between the two histograms and floats a single ``beta`` on
   the backward amplitude. This is the endorsed measurement protocol and the only
   one that yields an α–β correlation.
@@ -69,7 +69,8 @@ class BetaEstimate:
     correlation of the fitted α and β from the joint fit's covariance block for
     the ``"count_fit"`` method, and ``None`` for ``"single_histogram"`` (two
     independent fits carry no cross-parameter correlation). ``reduced_chi2`` is
-    Poisson deviance per joint dof for ``count_fit`` (unique free parameters),
+    Poisson deviance or weighted chi-square per joint dof for ``count_fit``
+    (unique free parameters),
     or pooled per-side deviance/dof for ``single_histogram``.
     """
 
