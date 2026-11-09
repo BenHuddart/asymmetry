@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve canonical integer run IDs in saved wizard cache signatures.
+
+- Indent nonuniform bin-width fields below the grouping binning selector to avoid horizontal scrolling.
+
+- Select nearest whole-bin Variable/Constant error widths at actual left edges,
+  retaining actual midpoint times, inclusive nonuniform tails, and count variance.
+
 - Use shared TF calibration with optional beta, selected models, and safe Apply/Stop.
   Preserve full quick/projection context and historical values across project upgrades.
 - Report zero or nonfinite coefficients as unusable calibration results.

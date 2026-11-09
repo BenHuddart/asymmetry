@@ -87,6 +87,7 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.fft import fft_arrays
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
@@ -3675,17 +3676,14 @@ def single_fit_build_signature(
     scope: WizardScope | None,
     user_frequencies_mhz: Sequence[float] | None = None,
 ) -> str:
-    """Encode the question :func:`build_fit_wizard_recommendation` was asked.
+    """Encode scope, declared frequencies, and the numerical binning contract.
 
-    Two calls with the same scope and the same user-declared frequencies screen
-    the same candidate families from the same seeds, so their recommendations
-    are interchangeable; anything else is a different analysis. The encoding is
-    a canonical JSON string so it survives persistence and dict ordering, and it
-    is never empty — an empty signature marks a payload that did not come from
-    the full single-run path at all.
+    A missing or different identity cannot qualify a historical recommendation
+    for current screening. The canonical JSON identity survives persistence.
     """
     return json.dumps(
         {
+            "binning_policy": BINNING_POLICY,
             "scope": scope.to_payload() if scope is not None else None,
             "user_frequencies_mhz": [float(value) for value in (user_frequencies_mhz or ())],
         },

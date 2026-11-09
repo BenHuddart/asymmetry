@@ -63,7 +63,11 @@ polarisation are different quantities. See
 **Bin counts, then form asymmetry.** The good window selects the observations
 for analysis bins. Counts and the full retained variance model, including shared
 background-estimate components, are combined before the F/B ratio is formed.
-Averaging already formed ratios is a different operation. For example, with
+Nonuniform targets use the actual left edge and nearest whole-bin membership,
+with half-up ties and at least one acquisition bin. Timestamps are actual
+contributing-bin midpoints with exact-t0 residuals. Base nonuniform support
+retains a partial tail; fixed packing and additional merges trim only incomplete
+groups. Averaging already formed ratios is a different operation. For example, with
 unity balances, no corrections, and independent Poisson counts, adjacent pairs
 (F, B) = (9, 1) and (1, 1) merge to (10, 2), giving asymmetry 2/3 rather than
 the mean ratio 0.4. The

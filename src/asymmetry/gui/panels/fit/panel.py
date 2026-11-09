@@ -39,6 +39,7 @@ from asymmetry.core.fitting.parameters import (
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
 )
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
@@ -842,10 +843,7 @@ class FitPanel(QWidget):
         active_signature = (
             copy.deepcopy(signature)
             if isinstance(signature, dict)
-            else {
-                "run_number": run_key,
-                "model": None,
-            }
+            else {"run_number": run_key, "model": None, "binning_policy": BINNING_POLICY}
         )
         # Held by reference: this cache lives in session state and is only
         # serialised (compactly) when a fit slot or project file is written.

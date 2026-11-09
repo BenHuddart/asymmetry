@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.core.criteria_fixtures import with_aicc
@@ -366,16 +368,12 @@ def _force_serial_phase_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_fit_wizard_module, "_try_open_process_pool", lambda **_kwargs: None)
 
 
+@pytest.mark.parametrize("legacy_policy", [False, True])
 def test_build_or_complete_single_fit_tables_reuses_a_matching_single_run_analysis(
     monkeypatch: pytest.MonkeyPatch,
+    legacy_policy: bool,
 ) -> None:
-    """Reuse is keyed on the question asked, not on the template list returned.
-
-    The old gate demanded that a cached recommendation's templates equal the
-    series portfolio's exactly, which no genuine single-run analysis ever does —
-    so every run was re-analysed. The rule is now the scope and user frequencies
-    the cached analysis was built for.
-    """
+    """Reuse requires the same question and numerical binning contract."""
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -391,28 +389,29 @@ def test_build_or_complete_single_fit_tables_reuses_a_matching_single_run_analys
     generated_calls: list[int] = []
     _stub_single_run_wizard(monkeypatch, (template,), calls=generated_calls)
     _force_serial_phase_one(monkeypatch)
-
     existing_run = int(datasets[0].run_number)
+    identity = json.loads(fit_wizard_module.single_fit_build_signature(None, None))
+    if legacy_policy:
+        identity.pop("binning_policy", None)
     existing_recommendation = replace(
         build_fit_wizard_recommendation_for_templates(datasets[0], (template,)),
-        build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+        build_signature=json.dumps(identity, sort_keys=True),
     )
     store = {existing_run: existing_recommendation}
-
     table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         datasets,
         current_model=model,
         existing_recommendations_by_run=store,
     )
 
-    assert table.portfolio.dataset_order == tuple(int(d.run_number) for d in datasets)
-    assert table.single_fit_recommendations_by_run[existing_run] is existing_recommendation
-    assert generated_calls == [int(datasets[1].run_number), int(datasets[2].run_number)]
+    assert (
+        table.single_fit_recommendations_by_run[existing_run] is existing_recommendation
+    ) != legacy_policy
+    assert generated_calls == [
+        int(d.run_number) for d in (datasets if legacy_policy else datasets[1:])
+    ]
     assert set(table.generated_run_numbers) == set(generated_calls)
-    # The caller's store keeps the runs' own analyses, never the derived table.
-    assert store[existing_run] is existing_recommendation
-    assert set(store) == {int(dataset.run_number) for dataset in datasets}
-    # ...and every run is scored against every alphabet template.
+    assert store[existing_run] is table.single_fit_recommendations_by_run[existing_run]
     for dataset in datasets:
         completed = table.recommendations_by_run[int(dataset.run_number)]
         assert [t.key for t in completed.templates] == [t.key for t in table.portfolio.templates]

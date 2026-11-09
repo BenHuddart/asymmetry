@@ -91,10 +91,46 @@ within the stated storage or export precision. Explained convention differences
 are identified separately. Unverified paths and unresolved uncertainty
 comparisons remain limits; acceptance of a selection alone does not establish
 correct covariance or physical calibration. Versioned WiMDA numerical checks
-are limited to the background cases explicitly identified below. Other WiMDA
+cover the background and binning controls explicitly identified below. Other WiMDA
 descriptions compare workflows without claiming executable numerical agreement;
 the `author's homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_
 provide general context.
+
+.. _comparison-binning:
+
+Binning and timestamps
+----------------------
+
+Asymmetry sums counts and their retained variance before forming F/B asymmetry.
+Nonuniform target widths are evaluated at the actual left edge, rounded to the
+nearest positive whole number of acquisition bins (half-up), and stamped at
+the actual contributing-bin midpoint. The exact 10 μs Variable law, lifetime
+Constant error law, and pre-t0 clamp define the target, rather than its realised
+integer width. Base nonuniform bins retain inclusive selected support and a
+partial tail. Fixed packing and additional recorded-bin merges trim incomplete
+groups and retain all complete ones.
+
+The closest width-selection comparison is WiMDA 1.326. With 0.1 μs native
+bins, initial width 0.12 μs, and Variable width at 10 μs of 0.25 μs, all eight
+Constant error values and eleven shared Variable values agree within 0.0005
+percentage points. Actual midpoint times, terminal support, and the literal
+10 μs law remain deliberate differences. Half-up is Asymmetry's deterministic
+choice, not a verified WiMDA tie result. Positive-count uncertainty conventions
+also differ; this comparison does not certify matching corrected/sparse errors.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) provides ordinary integer packing,
+with matching interior sums and mean native timestamps under matched support
+and integer timing. It does not establish the same nonuniform controls.
+Mantid histogram-centre conventions offer a coordinate comparison; histogram
+Rebunch retains a partial group, while Rebin can redistribute fractional bins.
+The Mantid comparison is documented behaviour, with no native binning execution.
+See :doc:`/reference/data_reduction/binning` for algorithm references, terminal
+qualifications, and uncertainty assumptions.
+
+Point-model fits use output timestamps and conditional point errors. Wide bins
+average the signal; their point-model approximation can attenuate oscillations
+or shift phase. Mantid's separate histogram-evaluation option is not a general
+integration prescription for every count ratio or curve mean.
 
 .. _comparison-membership:
 

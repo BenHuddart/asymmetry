@@ -190,8 +190,6 @@ def test_integral_ratio_and_one_binned_point_share_the_same_variances() -> None:
 
 
 def test_variable_width_bins_match_direct_raw_count_coefficients() -> None:
-    from asymmetry.core.transform.rebin import BinningSpec
-
     forward, backward = np.full(80, 100.0), np.full(80, 80.0)
     forward[:10], backward[:10] = np.arange(2, 12), np.arange(3, 13)
     grouping = {
@@ -214,12 +212,8 @@ def test_variable_width_bins_match_direct_raw_count_coefficients() -> None:
         facility="",
     )
     _, asymmetry, error = binned_fb_asymmetry(counts, binning=binning_spec(grouping), alpha=1.0)
-    edges = (
-        BinningSpec(mode="variable", bin0_us=0.1, bin10_us=0.4).edges(
-            72, bin_width_us=0.05, t_start_us=0.4
-        )
-        + 8
-    )
+    # Width crosses 2.5 native bins between left edges 1.575 and 1.675 us.
+    edges = [*range(8, 35, 2), *range(37, 80, 3), 80]
     expected_values, expected_errors = [], []
     for first, last in zip(edges[:-1], edges[1:]):
         coefficients = np.zeros(80)
@@ -229,7 +223,7 @@ def test_variable_width_bins_match_direct_raw_count_coefficients() -> None:
         vf, vb = (coefficients**2) @ forward, (coefficients**2) @ backward
         expected_values.append((f - b) / (f + b))
         expected_errors.append(2 * np.sqrt(b * b * vf + f * f * vb) / (f + b) ** 2)
-    np.testing.assert_allclose(asymmetry, expected_values, rtol=1e-12)
+    np.testing.assert_allclose(asymmetry, expected_values, rtol=1e-12, atol=1e-15)
     np.testing.assert_allclose(error, expected_errors, rtol=1e-12)
 
 

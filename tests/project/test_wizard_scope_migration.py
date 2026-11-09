@@ -131,11 +131,11 @@ def test_v22_scopes_migrate_to_version_2_physics_payloads():
         "skip_slow": False,
     }
     assert WizardScope.from_payload(single["signature"]["scope"]) == expected
-    # The migrated build signature is the one the runtime builds today, so the
-    # cached recommendation still counts as the answer to the same question.
-    assert single["recommendation"]["build_signature"] == single_fit_build_signature(
-        expected, [2.5]
-    )
+    # A scope codec migration preserves the historical numerical contract.
+    historical = single["recommendation"]["build_signature"]
+    assert json.loads(historical) == {"scope": expected.to_payload(), "user_frequencies_mhz": [2.5]}
+    assert historical != single_fit_build_signature(expected, [2.5])
+    assert "binning_policy" not in single["signature"]
 
     projection = open_fit(rep, "real")["ui_state"]["wizard_state"]
     assert WizardScope.from_payload(projection["signature"]["scope"]) == _scope(
