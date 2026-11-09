@@ -12,6 +12,7 @@ and :doc:`/reference/grouping_calibration`.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
@@ -31,7 +32,7 @@ def _renumbered(dataset, run_number: int):
 
 class GroupingWindowProfileEditorScenario(Scenario):
     name = "grouping_window_profile_editor"
-    description = "Grouping window profile editor, with the live asymmetry preview pane."
+    description = "Grouping profile editor with Variable widths below the mode and a live preview."
     size = (1180, 780)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
@@ -55,6 +56,7 @@ class GroupingWindowProfileEditorScenario(Scenario):
         profile_b = profile_from_payload(
             dict(dataset_b.run.grouping), "Sample B", fingerprint, active=False
         )
+        profile_a.binning = replace(profile_a.binning, mode="variable", bin0_us=0.12, bin10_us=0.25)
         profile_a.alpha_policy = AlphaPolicy(mode="per_run_estimate")
 
         dialog = GroupingDialog(

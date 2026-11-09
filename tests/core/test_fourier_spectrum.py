@@ -402,3 +402,13 @@ def test_fb_fft_normalises_numeric_designated_group_ids():
     assert actual is not None
     np.testing.assert_array_equal(actual.time, expected.time)
     np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
+
+
+def test_fb_spectrum_identity_changes_with_binning_contract(monkeypatch):
+    import asymmetry.core.fourier.spectrum as module
+    from asymmetry.core.data.dataset import Histogram, Run
+
+    run = Run(histograms=[Histogram(np.ones(20), 0.1)], grouping={})
+    current = module.fourier_grouping_digest(run, "fb_asymmetry")
+    monkeypatch.setattr(module, "BINNING_POLICY", "ceiling_first_centre")
+    assert module.fourier_grouping_digest(run, "fb_asymmetry") != current

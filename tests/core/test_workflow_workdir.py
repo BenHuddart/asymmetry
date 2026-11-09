@@ -607,3 +607,27 @@ def test_reduction_cache_invalidates_the_base_balance_policy(reduced):
     workdir.write_reduced(dataset, dataclasses.replace(entry, digest=digest))
     current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     assert not workdir.is_current(entry.run_number, current)
+
+
+def test_ceiling_binning_cache_is_stale_but_history_remains_readable(reduced):
+    import hashlib
+
+    from asymmetry.core.workflow import workdir as module
+
+    workdir, dataset, entry, path, grouping, settings = reduced
+    old = {
+        "schema": SCHEMA,
+        "deadtime_scope": "required_fb_observations",
+        "pair_balance_policy": "selected_pair_explicit_override",
+        "tail_background_policy": module.TAIL_BACKGROUND_POLICY_REVISION,
+        "files": [file_fingerprint(path)],
+        "grouping": module._canonical(grouping),
+        "settings": settings.to_dict(),
+    }
+    digest = hashlib.sha256(
+        json.dumps(old, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    workdir.write_reduced(dataset, dataclasses.replace(entry, digest=digest))
+    current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+    assert not workdir.is_current(entry.run_number, current)
+    np.testing.assert_array_equal(workdir.reduced(entry.run_number).asymmetry, dataset.asymmetry)

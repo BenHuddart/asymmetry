@@ -62,6 +62,7 @@ from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionSettings
@@ -259,6 +260,7 @@ def reduction_digest(
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
+        "binning_policy": BINNING_POLICY,
         "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),

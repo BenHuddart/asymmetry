@@ -832,11 +832,11 @@ class GroupingDialog(TimingControls, QDialog):
         self._bin10_spin.setDecimals(4)
         self._bin10_spin.setRange(0.0001, 100.0)
         self._bin10_spin.setSuffix(" µs")
-        # Create the labels beside their spins so _on_binning_mode_changed can
-        # show/hide both without a getattr/ordering dance (it runs during this
-        # setup, before the layout row that positions them is built).
+        # Width labels and spins share visibility before the form is laid out.
         self._bin0_label = QLabel("Initial bin")
         self._bin10_label = QLabel("Bin at 10 µs")
+        for label in (self._bin0_label, self._bin10_label):
+            label.setIndent(metrics.char_width(2))
         initial_binning = binning_spec(grouping)
         self._bin0_spin.setValue(initial_binning.bin0_us)
         self._bin10_spin.setValue(initial_binning.bin10_us)
@@ -1093,11 +1093,9 @@ class GroupingDialog(TimingControls, QDialog):
         binning_row.setContentsMargins(0, 0, 0, 0)
         binning_row.addWidget(self._binning_mode_combo)
         binning_row.addWidget(self._bunch_spin)
-        binning_row.addWidget(self._bin0_label)
-        binning_row.addWidget(self._bin0_spin)
-        binning_row.addWidget(self._bin10_label)
-        binning_row.addWidget(self._bin10_spin)
         form.addRow("Binning", binning_row_widget)
+        form.addRow(self._bin0_label, self._bin0_spin)
+        form.addRow(self._bin10_label, self._bin10_spin)
         self._on_binning_mode_changed()
         form.addRow("Exclude Detectors", self._exclude_edit)
         self._map_periods_btn = QPushButton("Map periods…")

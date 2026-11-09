@@ -1,9 +1,4 @@
-"""Variable and constant-error binning modes (WiMDA's binning modes).
-
-The WiMDA formula oracle: width(t) = bin0·exp(λ_µ·t·0.22·ln(bin10/bin0)),
-whose rounded 0.22 makes it ≈ bin0·(bin10/bin0)^(t/10 µs); Asymmetry
-implements the exact law (study divergence D8, < 0.2 % difference).
-"""
+"""Count binning with exact width laws and actual native-bin midpoint times."""
 
 from __future__ import annotations
 
@@ -23,26 +18,16 @@ from tests.counts import aligned_counts
 BIN_WIDTH_US = 0.016
 
 
-def test_variable_widths_follow_exact_law_and_wimda_formula():
+def test_variable_widths_follow_exact_left_edge_law():
     bin0, bin10 = 0.08, 0.25
     edges = BinningSpec(mode="variable", bin0_us=bin0, bin10_us=bin10).edges(
         100_000, bin_width_us=BIN_WIDTH_US, t_start_us=0.0
     )
-    starts_us = edges[:-1] * BIN_WIDTH_US
+    starts_us = (edges[:-1] - 0.5) * BIN_WIDTH_US
     widths_us = np.diff(edges) * BIN_WIDTH_US
-    exact = bin0 * (bin10 / bin0) ** (starts_us / 10.0)
-    # Snapped to whole raw bins: within one raw bin of the exact law.
-    assert np.all(np.abs(widths_us[:-1] - exact[:-1]) <= BIN_WIDTH_US + 1e-12)
-    # WiMDA's rounded-constant formula (0.22 ≈ τ_µ/10) drifts from the exact
-    # law as exp(0.0014·(t/10)·ln(bin10/bin0)) − 1: < 0.2 % at 10 µs and
-    # < 0.6 % over a realistic 32 µs window (study divergence D8).
-    in_window = starts_us <= 32.0
-    wimda = bin0 * np.exp(
-        (1.0 / MUON_LIFETIME_US) * starts_us[in_window] * 0.22 * np.log(bin10 / bin0)
-    )
-    relative = np.abs(wimda - exact[in_window]) / exact[in_window]
-    assert np.all(relative < 0.006)
-    assert np.all(relative[starts_us[in_window] <= 10.0] < 0.002)
+    exact = bin0 * (bin10 / bin0) ** (np.maximum(starts_us, 0) / 10.0)
+    # Nearest native width is at most half a native bin from the target.
+    assert np.all(np.abs(widths_us[:-1] - exact[:-1]) <= BIN_WIDTH_US / 2 + 1e-12)
     # Width at 10 µs equals bin10 (within a raw bin).
     at_10 = int(np.searchsorted(starts_us, 10.0))
     assert widths_us[at_10] == pytest.approx(bin10, abs=BIN_WIDTH_US)
@@ -53,10 +38,10 @@ def test_constant_error_widths_grow_with_muon_lifetime():
     edges = BinningSpec(mode="constant_error", bin0_us=bin0).edges(
         200_000, bin_width_us=BIN_WIDTH_US, t_start_us=0.0
     )
-    starts_us = edges[:-1] * BIN_WIDTH_US
+    starts_us = (edges[:-1] - 0.5) * BIN_WIDTH_US
     widths_us = np.diff(edges) * BIN_WIDTH_US
-    exact = bin0 * np.exp(starts_us / MUON_LIFETIME_US)
-    assert np.all(np.abs(widths_us[:-1] - exact[:-1]) <= BIN_WIDTH_US + 1e-12)
+    exact = bin0 * np.exp(np.maximum(starts_us, 0) / MUON_LIFETIME_US)
+    assert np.all(np.abs(widths_us[:-1] - exact[:-1]) <= BIN_WIDTH_US / 2 + 1e-12)
 
 
 def test_constant_error_mode_gives_flat_errors():

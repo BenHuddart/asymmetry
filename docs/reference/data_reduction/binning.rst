@@ -17,9 +17,14 @@ Mode                Output bin width
 Fixed               bunching factor × raw width, everywhere
 Variable            grows exponentially from *Initial bin* at t = 0 to
                     *Bin at 10 μs*
-Constant error      grows as :math:`e^{t/\tau_\mu}` from *Initial bin* — equal
-                    counts, flat error per bin
+Constant error      grows as :math:`e^{t/\tau_\mu}` from *Initial bin* —
+                    approximately equal counts for slowly varying signals
 ==================  =============================================================
+
+The **Binning** selector and fixed factor share one row. **Variable** and
+**Constant error** show **Initial bin** on an indented row below; **Variable**
+also shows **Bin at 10 µs** on the following indented row. The extra fields do not widen
+the settings column.
 
 All three are display/fit-input transformations: the raw histograms are
 never modified, and changing mode (or any width) is always reversible. In
@@ -30,6 +35,34 @@ raw independent counts have additive Poisson variance. Deadtime-corrected
 counts retain measured counting variance through the same bin sums; they are
 not treated as fresh Poisson observations. Shared-background covariance is
 propagated separately, including overlap with the estimation window.
+
+Target widths and actual coordinates
+------------------------------------
+
+**Variable** and **Constant error** evaluate their target width at the actual
+left edge of each output bin: the first contributing acquisition-bin centre
+minus half the native width. The time is relative to the selected exact t0,
+including its fractional-bin residual. Negative left-edge times use the width
+at zero. The target is rounded to the nearest positive whole number of native
+bins, with at least one bin. Half-integer targets round upward (half-up).
+The comparison uses the fractional part of the floating-point width ratio,
+without a tolerance that moves neighbouring representable values into a tie.
+This tie convention is an Asymmetry choice.
+
+The realised width can therefore be smaller or larger than the target. For
+example, a 0.12 μs target on a 0.1 μs acquisition grid selects one observation;
+a 0.25 μs target selects three. No acquisition bin is split or interpolated.
+The timestamp is the midpoint of the actual first and last contributing native
+centres, never the midpoint of a nominal requested interval.
+
+The selected good-bin window is inclusive. Base nonuniform binning retains all
+its observations, including a partial final bin. **Fixed** drops an incomplete
+raw group and retains every complete group. An additional **Bunch:** merge
+also drops its incomplete final group, even when its base mode is nonuniform.
+
+.. image:: /_generated/screenshots/nonuniform_binning.png
+   :alt: Fixed, Variable, and Constant error count reductions on a coarse synthetic grid.
+   :width: 100%
 
 Display bunching
 ----------------
@@ -99,7 +132,7 @@ Width grows smoothly as
 
 .. math::
 
-   w(t) = w_0 \left( \frac{w_{10}}{w_0} \right)^{t/10\,\mu\text{s}},
+   w(t) = w_0 \left( \frac{w_{10}}{w_0} \right)^{\max(t,0)/(10\,\mu\text{s})},
 
 set by the width at t = 0 and the width at 10 μs (WiMDA's two-knob
 convention; defaults 0.08 μs and 0.25 μs).
@@ -117,15 +150,15 @@ Width grows at exactly the muon decay rate,
 
 .. math::
 
-   w(t) = w_0\, e^{t/\tau_\mu},
+   w(t) = w_0\, e^{\max(t,0)/\tau_\mu},
 
-so the expected counts per output bin — and hence the Poisson error per
-point — stay constant while the polarisation varies slowly. One knob: the
+so short bins contain approximately equal expected counts under pure muon
+decay. Asymmetry errors are approximately flat when polarisation varies slowly;
+finite widths, rounding, background, and corrections can change that. One knob: the
 initial width sets the statistics level of every bin.
 
 *When to use this.* Weak, slow relaxation followed to long times (20–32 μs
-pulsed-source work): every plotted point carries equal statistical weight,
-which is also the friendliest input for eyeballing weak trends. Two
+pulsed-source work): the late-time statistics are easier to inspect. Two
 caveats: late output bins become microseconds wide, so any structure faster
 than the local width is averaged away — check with fixed binning first that
 nothing oscillates; and the final bin, truncated by the good-data window,
@@ -139,6 +172,11 @@ fixed factor and non-fixed widths. Its ``merge`` combines that many output
 bins at the count level; a fixed factor of 4 with merge 2 equals factor 8.
 An incomplete final group of output bins is dropped. Reduction records the
 spec it used.
+
+Cached reductions and wizard analyses carry the numerical binning identity.
+An analysis from a different policy is not reused as current. Saved fit and
+calibration results keep their recorded values; opening a project does not
+run a new fit.
 
 .. code-block:: python
 
@@ -193,11 +231,56 @@ fraction or percent scale. The raw acquisition record remains unchanged.
 Notes
 -----
 
-Fourier and MaxEnt analyses require uniform sampling and always use fixed
-binning regardless of this setting. Fits of the displayed curve use the
-displayed binning — each point enters the χ² with its own error, so the
-non-uniform widths are handled correctly — but note that heavily binned
-input has less information about fast components than the raw data.
+Fourier and MaxEnt analyses require uniform sampling. Count fitting retains
+its explicit fixed packing. Curve fits evaluate the model at the prepared
+point timestamps, with each point's own error. This centre-point approximation
+does not account for signal averaging within wide bins: rapid oscillations can
+lose amplitude and acquire a phase shift. Nyquist is a sampling limit, not a
+guarantee of negligible bin averaging. Nonuniform weights alone do not make the
+point-model expectation exact.
+
+Compared with other programs
+----------------------------
+
+WiMDA 1.326 offers **Variable** and **Constant error** width controls. On a
+controlled 0.1 μs acquisition grid with initial width 0.12 μs and Variable
+width at 10 μs of 0.25 μs, nearest-width selection at the actual left edge
+matches all eight Constant error point values and eleven shared Variable
+point values within 0.0005 percentage points (ASCII export precision).
+This is a bounded membership comparison, not universal output equality or a
+measurement of WiMDA's tie policy.
+
+WiMDA's nominal requested/clipped interval timestamps can differ from actual
+contributing-bin midpoints. Its tested terminal support also differs by mode;
+Asymmetry retains the inclusive nonuniform tail. Asymmetry uses the literal
+10 μs Variable law above, while WiMDA's growth uses a slightly different
+scaling approximation. Its positive-count F/B error adjustment is also distinct
+from Asymmetry's supplied-variance and shared-background propagation.
+
+musrfit 1.12.1 (revision ``708f777b``, ROOT 6.40.04) uses integer packing for
+ordinary count/asymmetry fits; this is not the same two-knob nonuniform law.
+Matched interior count sums and means of native centre timestamps agree in
+controlled packing cases. Terminal selection and integer-t0 versus exact-t0
+coordinates must be matched separately; an observed terminal omission in that
+build is not reproduced by Asymmetry. See the `musrfit packing guide
+<https://musruser.psi.ch/Tutorial/Tutorial1.html>`_.
+
+In Mantid, histogram `Rebunch
+<https://docs.mantidproject.org/nightly/algorithms/Rebunch-v1.html>`_ combines
+whole bins and retains a partial final group; `Rebin
+<https://docs.mantidproject.org/nightly/algorithms/Rebin-v1.html>`_ can redistribute
+fractional overlaps and offers ``FullBinsOnly``. Histogram-centre coordinates
+identify the actual retained edges. These are distinct operations, not the
+same Variable/Constant error controls. This comparison uses the documented
+algorithms (reviewed Mantid 6.16 development); no native Mantid binning run is
+claimed. `Fit
+<https://docs.mantidproject.org/nightly/algorithms/Fit-v1.html>`_ defaults to
+``CentrePoint`` and separately offers histogram evaluation for supported models.
+
+Asymmetry also checks positive finite native widths, compatible count/variance
+arrays, and valid selected windows at their input boundaries. A malformed
+request raises a contextual error; these checks do not impose new facility-file
+admission rules. See :ref:`comparison-binning` for the comparison scope.
 
 **References**
 
@@ -205,3 +288,4 @@ input has less information about fast components than the raw data.
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
   rebinning schemes and counting statistics.
 - F. L. Pratt, Physica B **289–290**, 710 (2000).
+- `WiMDA homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_.

@@ -103,6 +103,7 @@ from asymmetry.core.fitting.spectral import (
 )
 from asymmetry.core.representation.naming import format_run_range
 from asymmetry.core.representation.series import FitSeries, normalise_recipe
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
@@ -2138,6 +2139,7 @@ class GlobalFitTab(FitTabBase):
 
     def _wizard_context_signature(self, parsed: dict[str, object]) -> dict[str, object]:
         return {
+            "binning_policy": BINNING_POLICY,
             "run_numbers": list(self._normalized_wizard_run_set()),
             "model": self._composite_model.to_dict(),
             "types": {str(key): str(value) for key, value in dict(parsed["types"]).items()},
@@ -2264,7 +2266,7 @@ class GlobalFitTab(FitTabBase):
             persist(
                 run_key,
                 recommendation,
-                signature={"run_number": run_key, "model": None},
+                signature={"run_number": run_key, "model": None, "binning_policy": BINNING_POLICY},
                 log_text="Updated by Global Fit Wizard screening.",
             )
 
@@ -2821,7 +2823,10 @@ class GlobalFitTab(FitTabBase):
                 signature=cached_signature,
                 log_text=cached_log_text,
             )
-        elif cached_recommendation is not None:
+        elif (
+            cached_recommendation is not None
+            and cached_signature.get("binning_policy") == BINNING_POLICY
+        ):
             self._fit_wizard_window.set_cached_recommendation(
                 cached_recommendation,
                 signature=cached_signature,
@@ -2968,21 +2973,15 @@ class GlobalFitTab(FitTabBase):
     ) -> bool:
         if not isinstance(cached_signature, dict):
             return False
-        for key in ("run_numbers", "model", "values"):
+        for key in ("binning_policy", "run_numbers", "model", "values", "types"):
             if cached_signature.get(key) != base_signature.get(key):
                 return False
-        cached_types = cached_signature.get("types")
-        base_types = base_signature.get("types")
-        if not isinstance(cached_types, dict) or cached_types != base_types:
-            return False
         cached_bounds = cached_signature.get("bounds")
-        base_bounds = base_signature.get("bounds")
         if not isinstance(cached_bounds, dict):
             return False
-        for name, bounds in base_bounds.items():
-            if cached_bounds.get(name) != bounds:
-                return False
-        return True
+        return all(
+            cached_bounds.get(name) == bounds for name, bounds in base_signature["bounds"].items()
+        )
 
     def _effective_initial_values_by_run(self, parsed: dict) -> dict[int, dict[str, float]]:
         """Per-run initial values used by the batch fit.

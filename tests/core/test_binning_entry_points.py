@@ -263,3 +263,65 @@ def test_held_periods_cannot_substitute_the_default_histograms(periods):
             deadtime_mode="off",
             use_background=False,
         )
+
+
+@pytest.mark.parametrize("mode,points", [("variable", 12), ("constant_error", 8)])
+def test_nonuniform_consumers_share_actual_membership(mode, points):
+    from asymmetry.core.fourier.fb_input import build_fb_signal_dataset
+    from asymmetry.core.representation.time import TimeFBAsymmetry
+
+    run = _run(
+        1000 + 10 * np.arange(20),
+        700 + 3 * np.arange(20),
+        binning_mode=mode,
+        bin0_us=0.12,
+        bin10_us=0.25,
+        first_good_bin=2,
+        last_good_bin=13,
+    )
+    run.histograms = [replace(h, good_bin_start=2, good_bin_end=13) for h in run.histograms]
+    direct = _direct(run, binning_spec(run.grouping))
+    workflow = reduce_run(run, ReductionSettings(), allow_aliasing=True)
+    fourier = build_fb_signal_dataset(run)
+    representation = TimeFBAsymmetry().compute(run)[0]
+    assert len(direct.time) == points
+    for result in (workflow, fourier):
+        for key in ("time", "asymmetry", "error"):
+            np.testing.assert_allclose(getattr(result, key), getattr(direct, key), atol=1e-14)
+    np.testing.assert_allclose(representation.time, direct.time, atol=1e-14)
+    np.testing.assert_allclose(representation.asymmetry * 100, direct.asymmetry, atol=1e-14)
+    np.testing.assert_allclose(representation.error * 100, direct.error, atol=1e-14)
+
+
+@pytest.mark.parametrize("mode", ["variable", "constant_error"])
+@pytest.mark.parametrize("exact_offset", [None, 0.03])
+def test_nonuniform_real_alignment_crop_retains_fractional_timing(mode, exact_offset):
+    f, b = np.arange(1.0, 201), np.arange(201.0, 401)
+    run = _run(f, b, first_good_bin=115, last_good_bin=125)
+    run.histograms = [
+        replace(h, t0_bin=t0, t0_time_us=None if exact_offset is None else t0 * 0.1 + exact_offset)
+        for h, t0 in zip(run.histograms, [100, 110])
+    ]
+    spec = BinningSpec(mode=mode, bin0_us=0.1215, bin10_us=0.25)
+    result = _direct(run, spec)
+    if mode == "variable":
+        edges = list(range(115, 127))
+    elif exact_offset is None:
+        edges = [115, 116, 118, 120, 122, 124, 126]
+    else:
+        edges = [115, 117, 119, 121, 123, 125, 126]
+    forward = np.array([sum(f[i - 10 : j - 10]) for i, j in zip(edges[:-1], edges[1:])])
+    backward = np.array([sum(b[i:j]) for i, j in zip(edges[:-1], edges[1:])])
+    shift = 0 if exact_offset is None else 0.05 - exact_offset
+    np.testing.assert_allclose(
+        result.time,
+        [((i + j - 1) / 2 - 110) * 0.1 + shift for i, j in zip(edges[:-1], edges[1:])],
+        atol=2e-15,
+    )
+    np.testing.assert_allclose(result.asymmetry, 100 * (forward - backward) / (forward + backward))
+    np.testing.assert_allclose(
+        result.error,
+        200 * np.sqrt(backward**2 * forward + forward**2 * backward) / (forward + backward) ** 2,
+    )
+    np.testing.assert_array_equal(run.histograms[0].counts, f)
+    np.testing.assert_array_equal(run.histograms[1].counts, b)

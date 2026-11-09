@@ -88,11 +88,13 @@ class BunchingComparisonScenario(Scenario):
         return out_path
 
 
-def _grab_plot(dataset: MuonDataset, *, caption: str) -> QPixmap:
+def _grab_plot(
+    dataset: MuonDataset, *, caption: str, size: tuple[int, int] = (480, 440)
+) -> QPixmap:
     from asymmetry.gui.panels.plot_panel import PlotPanel
 
     panel = PlotPanel(domain="time")
-    panel.resize(480, 440)
+    panel.resize(*size)
     panel.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     panel.show()
     _pump_events(120)

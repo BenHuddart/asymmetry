@@ -48,11 +48,8 @@ from asymmetry.core.transform.background import (
 )
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
-from asymmetry.core.transform.grouping import (
-    group_names,
-    grouping_balances,
-)
-from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.grouping import group_names, grouping_balances
+from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides
 from asymmetry.core.utils.coerce import optional_float
 
@@ -311,6 +308,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     payload: dict[str, object] = {
         "deadtime_scope": "required_grouped_observations",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
+        "binning_policy": BINNING_POLICY,
         "histogram_grid": histogram_grid_identity(run.histograms),
     }
 

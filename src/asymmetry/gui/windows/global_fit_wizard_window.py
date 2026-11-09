@@ -80,6 +80,7 @@ from asymmetry.core.fitting.wizard_scope import (
     effort_tier_from_payload,
     set_user_field_direction,
 )
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
@@ -1608,6 +1609,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
     def _analysis_signature(self) -> dict[str, object]:
         return {
+            "binning_policy": BINNING_POLICY,
             "run_numbers": [int(dataset.run_number) for dataset in self._datasets],
             "model": self._current_model.to_dict() if self._current_model is not None else None,
             "types": {str(key): str(value) for key, value in self._current_parameter_types.items()},
@@ -1619,10 +1621,6 @@ class GlobalFitWizardWindow(WizardWindowBase):
             "scope": self._picker.scope().to_payload(),
             "effort_tier": self.current_effort_tier().value,
         }
-
-    # ------------------------------------------------------------------
-    # Parameter expectations (embedded ex-dialog)
-    # ------------------------------------------------------------------
 
     def _set_expectations_warning(self, text: str) -> None:
         """Show ``text`` instead of the expectations table (empty text restores it)."""

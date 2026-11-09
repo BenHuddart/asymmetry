@@ -509,3 +509,27 @@ def _global_wizard_recommendation_for_dataset(
         summary="Recommended: Exponential + Constant by AICc.",
         objective=SelectionObjective.STATISTICAL,
     )
+
+
+@pytest.mark.parametrize("tab_type", ["single", "global"])
+def test_reopened_wizard_does_not_serve_a_pre_policy_cache(qapp, dataset, monkeypatch, tab_type):
+    if tab_type == "single":
+        monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
+        tab = SingleFitTab()
+        tab.set_dataset(dataset)
+        tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+        _assessment, recommendation = _single_wizard_payload(dataset)
+        tab._open_fit_wizard()
+        signature = tab._wizard_context_signature()
+    else:
+        monkeypatch.setattr(global_tab_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+        tab = GlobalFitTab()
+        tab.set_datasets(_two_dataset_batch(dataset))
+        tab._open_fit_wizard()
+        signature = tab._wizard_context_signature(tab._parse_parameter_configuration())
+        recommendation = _global_wizard_recommendation_for_dataset(dataset)
+    signature.pop("binning_policy", None)
+    tab._on_fit_wizard_analysis_cached(recommendation, "historical analysis", signature)
+    tab._open_fit_wizard()
+    assert tab._fit_wizard_window.set_cached_recommendation_calls == []
+    assert tab._cached_wizard_recommendation is recommendation

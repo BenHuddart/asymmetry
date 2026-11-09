@@ -323,6 +323,7 @@ def _import_scenarios() -> None:
         data_browser_groups,
         data_browser_phases,
         data_processing_rebin,
+        nonuniform_binning,
         emu_longitudinal_layout,
         fit_asymmetric_errors,
         fit_wizard_gkt,
