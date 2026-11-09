@@ -38,10 +38,10 @@ class NonuniformBinningScenario(Scenario):
         )
         grouping = run.grouping | {"first_good_bin": 2, "last_good_bin": 13}
         panels = []
-        for mode, title in (
-            ("fixed", "Fixed ×5: 2 complete bins"),
-            ("variable", "Variable: 12 bins, 0.20–1.30 μs"),
-            ("constant_error", "Constant error: 8 bins, 0.20–1.25 μs"),
+        for mode, label in (
+            ("fixed", "Fixed ×5"),
+            ("variable", "Variable"),
+            ("constant_error", "Constant error"),
         ):
             result = reduce_grouped_asymmetry(
                 histograms=run.histograms,
@@ -54,6 +54,12 @@ class NonuniformBinningScenario(Scenario):
                 use_background=False,
                 binning=BinningSpec(mode=mode, factor=5, bin0_us=0.12, bin10_us=0.25),
             )
+            support = (
+                "complete bins"
+                if mode == "fixed"
+                else f"bins, {result.time[0]:.2f}–{result.time[-1]:.2f} μs"
+            )
+            title = f"{label}: {result.time.size} {support}"
             dataset = MuonDataset(
                 result.time, result.asymmetry, result.error, metadata={"title": title}
             )

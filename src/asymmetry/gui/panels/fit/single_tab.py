@@ -819,9 +819,10 @@ class SingleFitTab(FitTabBase):
 
     def _wizard_context_signature(self) -> dict[str, object]:
         dataset = self._current_dataset
+        number = dataset.run_number if dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
-            "run_number": dataset.run_number if dataset is not None else None,
+            "run_number": int(number) if number is not None else None,
             "model": self._composite_model.to_dict(),
         }
 
@@ -830,10 +831,9 @@ class SingleFitTab(FitTabBase):
         cached_signature: dict[str, object] | None,
         current_signature: dict[str, object],
     ) -> bool:
-        if not isinstance(cached_signature, dict):
-            return False
         return (
-            cached_signature.get("binning_policy") == BINNING_POLICY
+            isinstance(cached_signature, dict)
+            and cached_signature.get("binning_policy") == BINNING_POLICY
             and cached_signature.get("run_number") == current_signature["run_number"]
             and cached_signature.get("model") in (None, current_signature["model"])
         )

@@ -777,8 +777,6 @@ class FitWizardWindow(WizardWindowBase):
         self._invalidate_pending_curves()
         self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
         self._cached_log_text = str(log_text or "")
-        # Restore scope + peak seeds from the signature. A signature without a
-        # scope keeps the default; without peaks, none. Cached state is never stale.
         signature_dict = signature if isinstance(signature, dict) else {}
         if "scope" in signature_dict:
             self._picker.set_scope(WizardScope.from_payload(signature_dict["scope"]))
@@ -796,9 +794,10 @@ class FitWizardWindow(WizardWindowBase):
         self._show_result()
 
     def _analysis_signature(self) -> dict[str, object]:
+        number = self._dataset.run_number if self._dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
-            "run_number": self._dataset.run_number if self._dataset is not None else None,
+            "run_number": int(number) if number is not None else None,
             "model": self._current_model.to_dict() if self._current_model is not None else None,
             "scope": self._picker.scope().to_payload(),
             "user_peaks": [dict(peak) for peak in self._user_peaks],
