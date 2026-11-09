@@ -292,6 +292,16 @@ def describe(settings: ReductionSettings) -> str:
             " on these corrected counts — survey measures raw counts, so their "
             "value differs; this is the one applied"
         )
+    if settings.quick_calibration is not None:
+        estimate = settings.quick_calibration.estimate
+        error = (
+            "error unavailable"
+            if estimate.alpha_error is None
+            else f"+/- {estimate.alpha_error:.3g}"
+        )
+        alpha = (
+            f"alpha {estimate.alpha:.6g} {error} ({settings.effective_alpha_source}, beta 1 fixed"
+        )
     if settings.calibration is not None:
         result = settings.calibration.selected
         error = (

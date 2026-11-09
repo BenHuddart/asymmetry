@@ -67,7 +67,8 @@ and encodes the canonical block with the project nonfinite codec;
 Old scalar/source-only settings do not acquire inferred joint records.
 
 ``ReductionSettings.alpha`` also accepts a ``QuickCalibrationResult``, preserving
-its shared typed estimate and source/pair/acquired-period/correction/timing context.
+its shared typed estimate and source/pair/period/correction/timing context,
+including the contributor mapping for a mapped quick calculation.
 The ``quick_calibration`` view and JSON block retain that explicit operation;
 automatic legacy ratio settings remain scalar/source-only. Fixed beta one is
 applied authoritatively even when a target carries a historical nonunity beta.

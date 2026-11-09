@@ -114,27 +114,37 @@ def test_workflow_never_labels_mapped_counts_as_an_acquired_period(mapping):
     selected = replace(mapped, run=red, metadata=red.metadata)
     ratio = calibrate_run(selected, ReductionSettings(), CalibrationOptions("ratio"))
     assert ratio.alpha is not None
+    assert dict(ratio.result.period_mapping) == mapping
+    from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
+    from asymmetry.core.workflow.jsonio import json_safe
+
+    assert QuickCalibrationResult.from_dict(json_safe(ratio.result.to_dict())) == ratio.result
 
 
+@pytest.mark.parametrize("method", ["tf_calibration_fit", "ratio", "diamagnetic", "general"])
 @pytest.mark.parametrize("period", [None, 3])
-def test_workflow_preserves_an_already_selected_acquired_period(period):
+def test_workflow_preserves_an_already_selected_acquired_period(period, method):
     from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
     from asymmetry.core.workflow.reduction import ReductionSettings
 
     data = _raw_tf(beta=1)
     data.run.metadata.update(source_run_number=7101, period_number=3, period_count=4)
     options = CalibrationOptions(
-        "tf_calibration_fit", envelope="exponential", frequency_mhz=1.3, period=period
+        method,
+        envelope="exponential" if method == "tf_calibration_fit" else None,
+        frequency_mhz=1.3 if method == "tf_calibration_fit" else None,
+        period=period,
     )
     outcome = calibrate_run(data, ReductionSettings(), options)
-    assert outcome.record.result.period_number == 3
+    assert outcome.period_number == 3
 
 
-def test_workflow_rejects_mismatched_selected_source_period():
+@pytest.mark.parametrize("method", ["tf_calibration_fit", "ratio", "diamagnetic", "general"])
+def test_workflow_rejects_mismatched_selected_source_period(method):
     from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
     from asymmetry.core.workflow.reduction import ReductionSettings
 
     data = _raw_tf(beta=1)
     data.run.metadata.update(source_run_number=7101, period_number=3, period_count=4)
     with pytest.raises(ValueError, match="requested acquired period"):
-        calibrate_run(data, ReductionSettings(), CalibrationOptions("tf_calibration_fit", period=2))
+        calibrate_run(data, ReductionSettings(), CalibrationOptions(method, period=2))

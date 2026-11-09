@@ -27,6 +27,7 @@ class QuickCalibrationResult:
     window: BinWindow
     bin_width_us: float
     t0_time_us: float
+    period_mapping: tuple[tuple[int, str], ...] = ()
 
     def to_dict(self) -> dict:
         """Export shared result fields and source context without histogram arrays."""
@@ -51,8 +52,10 @@ class QuickCalibrationResult:
             **{
                 f.name: data[f.name]
                 for f in fields(cls)
-                if f.name not in {"estimate", "corrections", "alignment", "window"}
+                if f.name
+                not in {"estimate", "corrections", "alignment", "window", "period_mapping"}
             },
+            period_mapping=tuple((int(n), target) for n, target in data["period_mapping"]),
             corrections=CorrectionOutcomes.from_dict(data["corrections"]),
             alignment=AlignmentCrop(
                 **{

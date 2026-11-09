@@ -194,6 +194,12 @@ def calibrate_run(
             counts.window,
             counts.bin_width_us,
             counts.t0_time_us,
+            tuple(
+                (int(number), target)
+                for number, target in run.grouping.get(
+                    "period_mapping", run.metadata.get("period_mapping", {})
+                ).items()
+            ),
         )
     check_cancel()
     return CalibrationOutcome(result)
@@ -205,15 +211,16 @@ def calibration_source(
     """Resolve a source period separately from target reduction and cached views."""
     tf = options.method == TF_CALIBRATION_METHOD
     period = options.period if options.period is not None else settings.period
-    if tf and period == GREEN_MINUS_RED:
-        raise ValueError("TF calibration requires an explicit acquired source period")
-    source = (
-        select_period(loaded, period)
-        if isinstance(loaded, list) and period is not None
-        else loaded[0]
-        if isinstance(loaded, list)
-        else loaded
-    )
+    if period == GREEN_MINUS_RED:
+        if tf:
+            raise ValueError("TF calibration requires an explicit acquired source period")
+        period = "red"
+    if not tf and options.period is None and period_count(loaded) == 1:
+        period = None
+    if isinstance(loaded, list):
+        source = loaded[0] if period is None else select_period(loaded, period)
+    else:
+        source = loaded
     run = source.run
     if (
         tf
@@ -223,14 +230,15 @@ def calibration_source(
         )
     ):
         raise ValueError("TF calibration source is mapped; select an original acquired period")
-    period = options.period if options.period is not None else settings.period
-    if tf and period == GREEN_MINUS_RED:
-        raise ValueError("TF calibration requires an explicit acquired source period")
+    if isinstance(loaded, list):
+        if tf and period is None and len(loaded) > 1:
+            raise ValueError("TF calibration requires an explicit acquired source period")
+        return source
     if (
-        tf
-        and not isinstance(loaded, list)
-        and run is not None
-        and ("period_number" in run.metadata and "period_histograms" not in run.grouping)
+        run is not None
+        and "period_number" in run.metadata
+        and "period_histograms" not in run.grouping
+        and (tf or run.metadata.get("raw_period_histograms_available") is not False)
     ):
         number = run.metadata["period_number"]
         count = max(2, number, period_count(source))
@@ -238,17 +246,9 @@ def calibration_source(
         selected = select_reference_run(run, {"period_number": requested})
         if selected is None:
             raise ValueError(
-                "TF calibration needs the requested acquired period histograms; reload the source"
+                "Calibration needs the requested acquired period histograms; reload the source"
             )
         return source
     if tf and period is None and period_count(loaded) > 1:
         raise ValueError("TF calibration requires an explicit acquired source period")
-    if period == GREEN_MINUS_RED:
-        period = "red"
-    if not tf and options.period is None and period_count(loaded) == 1:
-        period = None
-    return (
-        select_period(loaded, period)
-        if period is not None
-        else (loaded[0] if isinstance(loaded, list) else loaded)
-    )
+    return select_period(loaded, period) if period is not None else loaded
