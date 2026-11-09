@@ -295,8 +295,8 @@ def reduce_integral_run(
     method
         See :func:`integrate_asymmetry`.
     alpha
-        Balance parameter; when ``None`` it is taken from the effective grouping
-        (``grouping['alpha']``, default 1.0) leniently — exactly as the
+        Balance parameter; when ``None`` it is resolved for the selected pair
+        in the effective grouping (default 1.0), exactly as the
         time-domain reduction does. An explicit value is validated (> 0, finite).
     grouping_ref
         Optional grouping override (forward/backward group ids, alpha, good-bin

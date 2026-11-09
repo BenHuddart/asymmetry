@@ -50,6 +50,7 @@ from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import (
     group_names,
+    grouping_balances,
 )
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides
@@ -398,21 +399,8 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         backward_group = _digest_int(grouping.get("backward_group", 2))
         payload["fb_forward_group"] = forward_group if forward_group is not None else 1
         payload["fb_backward_group"] = backward_group if backward_group is not None else 2
-        # Normalise alpha/beta exactly as group_forward_backward does:
-        # unparseable, non-finite or non-positive values all fall back to 1.0.
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
-        if not math.isfinite(alpha) or alpha <= 0.0:
-            alpha = 1.0
+        alpha, beta = grouping_balances(grouping)
         payload["fb_alpha"] = alpha
-        try:
-            beta = float(grouping.get("beta", 1.0))
-        except (TypeError, ValueError):
-            beta = 1.0
-        if not math.isfinite(beta) or beta <= 0.0:
-            beta = 1.0
         if beta != 1.0:
             # Emitted only when active so pre-beta recorded digests stay valid.
             payload["fb_beta"] = beta

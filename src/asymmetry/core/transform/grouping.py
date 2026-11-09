@@ -610,8 +610,13 @@ class ForwardBackwardLayout:
         return self.alignment.common_t0_bin
 
 
-def grouping_balances(grouping: dict) -> tuple[float, float]:
-    """Resolve finite positive F/B balances under the existing unity fallback."""
+def grouping_balances(
+    grouping: dict, *, pair: tuple[int, int] | None = None
+) -> tuple[float, float]:
+    """Resolve the actual pair's balances, retaining the authored base fallback."""
+    from asymmetry.core.instrument import derive_projection_pairs
+    from asymmetry.core.transform.projections import projection_alphas
+
     balances = []
     for key in ("alpha", "beta"):
         try:
@@ -619,6 +624,24 @@ def grouping_balances(grouping: dict) -> tuple[float, float]:
         except (TypeError, ValueError):
             value = 1.0
         balances.append(value if np.isfinite(value) and value > 0.0 else 1.0)
+    pairs = derive_projection_pairs(
+        grouping.get("groups"), grouping.get("group_names"), grouping.get("projections")
+    )
+    if pairs:
+        selected = pair or (
+            int(grouping.get("forward_group", 1)),
+            int(grouping.get("backward_group", 2)),
+        )
+        matching = [label for label, candidate in pairs.items() if candidate == selected]
+        values = projection_alphas(dict(grouping, alpha=balances[0]))
+        axis = grouping.get("vector_axis")
+        alphas = {values[axis]} if axis in matching else {values[label] for label in matching}
+        if len(alphas) > 1:
+            raise ValueError("Selected F/B pair requires an unambiguous projection alpha")
+        if alphas:
+            alpha = alphas.pop()
+            balances[0] = alpha if np.isfinite(alpha) and alpha > 0 else 1.0
+        balances[1] = 1.0
     return tuple(balances)
 
 

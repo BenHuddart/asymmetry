@@ -806,6 +806,12 @@ projection has none declared. See :doc:`vector_polarization` for the EMU
 per-axis alpha table and estimation buttons, which follow the same
 per-projection model.
 
+The selected forward/backward pair determines the effective balance for
+counts-first display binning, F/B Fourier input, re-reduction and exported
+curve labels. Selecting a projection preserves the profile's authored base
+fallback for other pairs. Vector projections use beta one; a stored base beta
+does not become a fitted beta for those projections.
+
 Beta calibration
 ------------------
 

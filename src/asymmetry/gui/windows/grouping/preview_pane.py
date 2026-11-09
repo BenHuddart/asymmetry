@@ -39,6 +39,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     reference_observation_metadata,
 )
+from asymmetry.core.transform.grouping import grouping_balances
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_period_asymmetry
 from asymmetry.core.transform.t0 import RunT0Search
@@ -994,7 +995,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     mode = grouping.get("period_mode", PeriodMode.RED)
     if mode in (PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED):
-        alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
+        alpha, beta = grouping_balances(grouping)
         reduced = reduce_period_asymmetry(
             histograms,
             grouping,
@@ -1049,10 +1050,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     corrected = _reduce(use_deadtime, use_background)
     first_good, last_good = corrected.window.first, corrected.window.last
-    alpha = _as_float(grouping.get("alpha"), 1.0)
-    beta = _as_float(grouping.get("beta"), 1.0)
-    if not np.isfinite(beta) or beta <= 0.0:
-        beta = 1.0
+    alpha, beta = grouping_balances(grouping)
 
     time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, beta=beta)
 

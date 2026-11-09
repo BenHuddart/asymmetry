@@ -1,7 +1,4 @@
-"""Display runs and logbook fields over ProjectModel's group membership.
-
-Collapsed rows are local view state.
-"""
+"""Display runs and logbook fields; collapsed rows remain local view state."""
 
 from __future__ import annotations
 
@@ -76,6 +73,7 @@ from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.corrections import correction_warnings
 from asymmetry.core.transform.grouping import good_event_count, good_frames
+from asymmetry.core.transform.projections import projection_alphas
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K
 from asymmetry.gui.styles import tokens
@@ -3563,6 +3561,7 @@ class DataBrowserPanel(QWidget):
             "forward_group": int(grouping.get("forward_group", 1)),
             "backward_group": int(grouping.get("backward_group", 2)),
             "alpha": float(grouping.get("alpha", 1.0)),
+            "projection_alphas": projection_alphas(grouping),
             "alpha_x": grouping.get("alpha_x"),
             "alpha_y": grouping.get("alpha_y"),
             "alpha_z": grouping.get("alpha_z"),

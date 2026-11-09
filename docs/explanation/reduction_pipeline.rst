@@ -74,6 +74,10 @@ returns fractional asymmetry and uncertainty. See
 :doc:`/reference/asymmetry_units` for API scales and
 :doc:`/reference/data_reduction/binning` for bin edges, partial bins, and errors.
 
+Each F/B consumer resolves alpha for its actual selected pair. Display binning,
+F/B Fourier input and re-reduction retain that projection's coefficient while
+the authored base alpha remains available as the fallback for other pairs.
+
 File-good limits stay on acquired raw bins through timing edits; selected-channel
 alignment maps them into the common observed interval. Manual window endpoints
 are signed offsets from effective t0, with omitted endpoints retaining mapped
