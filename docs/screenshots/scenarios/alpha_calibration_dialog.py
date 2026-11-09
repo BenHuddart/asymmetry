@@ -14,8 +14,7 @@ from ._base import CaptureContext, Scenario, register
 class AlphaCalibrationDialogScenario(Scenario):
     name = "alpha_calibration_dialog"
     description = (
-        "Inline alpha calibration in the grouping window's Corrections column, with the "
-        "shared before/after (α = 1 ↔ α̂) asymmetry preview."
+        "Shared calibration result staged beside the current applied asymmetry preview."
     )
     size = (1220, 780)
     fit_beta = False

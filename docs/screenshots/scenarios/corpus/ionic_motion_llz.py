@@ -102,9 +102,7 @@ class LlzCalibrationScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        # α calibration is inline in the Grouping window's Corrections column
-        # (the standalone modal is retired); the shared preview overlays the
-        # α = 1 ↔ α̂ before/after with the residual baseline ⟨A⟩.
+        # The quick result is staged beside the currently applied preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([f"{_DATA}/emu00051315.nxs"])[0]
@@ -118,7 +116,7 @@ class LlzCalibrationScenario(CorpusScenario):
         section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
-        # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
+        # Let the current applied preview settle before grabbing.
         _pump(500)
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _pump(60)
@@ -128,8 +126,7 @@ class LlzCalibrationScenario(CorpusScenario):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
-        # The applied estimate dirtied the draft: close() would raise the
-        # discard-guard modal, which hangs headless — tear down directly.
+        # Release workers without entering a headless discard prompt.
         dialog._teardown_workers()
         dialog.deleteLater()
         _pump(40)

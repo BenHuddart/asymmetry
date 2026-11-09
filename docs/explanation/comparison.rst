@@ -1338,12 +1338,12 @@ exposes Diamagnetic, General, and ratio as distinct operations. The no-option
 explicit CLI calibration uses TF calibration fit. Survey and
 automatic per-run calibration retain the separate integral-ratio policy, which
 is not WiMDA's Diamagnetic or General estimate. These adapters add no
-reference-program
-numerical agreement or physical-accuracy claim to the versioned comparisons
-above. General count-domain fitting remains a separate capability.
+reference-program numerical agreement or physical-accuracy claim to the
+versioned comparisons above. General count-domain fitting remains a separate
+capability.
 
 Fresh explicit calibration routing
----------------------------------
+----------------------------------
 
 Asymmetry's GUI, CLI ``alpha``/``--alpha-from``, and omitted-option explicit API
 calibration use the shared TF count fit with four-envelope selection. Quick
