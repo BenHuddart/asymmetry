@@ -201,6 +201,7 @@ def test_strict_json_round_trip_preserves_endpoints_and_error_states(
         assert restored.result == selection
         assert summary["alpha_error"] is None
         assert summary["beta_error"] is None
+        assert summary["beta_fixed"] == (not fit_beta)
         if state in {"failed", "no_selection"}:
             assert summary["alpha"] is None
             with pytest.raises(ValueError, match="usable"):
@@ -233,3 +234,36 @@ def test_strict_json_round_trip_preserves_endpoints_and_error_states(
             if not fit_beta:
                 assert np.isneginf(effective["beta"].min)
                 assert np.isposinf(effective["beta"].max)
+
+
+@pytest.mark.parametrize("method", ["diamagnetic", "general", "ratio"])
+def test_explicit_quick_alpha_from_retains_result_context(
+    workflow_folder, tmp_path, capsys, method
+):
+    root = tmp_path / method
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--alpha-from",
+            str(CALIBRATION_RUN),
+            "--calibration-method",
+            method,
+            "--workdir",
+            str(root),
+            "--json",
+        ]
+    )
+    output = strict_output(capsys)
+    settings = ReductionSettings.from_dict(output["settings"])
+    quick = settings.quick_calibration
+    assert quick is not None
+    assert quick.estimate.method == method
+    assert (quick.estimate.alpha_error is not None) == (method == "ratio")
+    assert settings.effective_alpha == quick.estimate.alpha
+    assert settings.calibration is None
+    stored = WorkDir(root)
+    assert stored.entry(SCAN_RUNS[0]).settings == settings
+    assert stored.alpha_calibration_runs() == {CALIBRATION_RUN}

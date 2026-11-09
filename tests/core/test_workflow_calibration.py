@@ -80,7 +80,26 @@ def test_quick_uses_shared_result_and_source_timing(method):
     outcome = calibrate_run(
         data, ReductionSettings(t0_offset_bins=2, t_good_offset_bins=5), CalibrationOptions(method)
     )
-    counts = outcome.counts
+    from asymmetry.core.transform.rebin import BinningSpec
+    from asymmetry.core.transform.reduce import corrected_period_counts
+
+    settings = ReductionSettings(t0_offset_bins=2, t_good_offset_bins=5)
+    grouping = resolve_reduction_grouping(data.run, settings)
+    counts = next(
+        iter(
+            corrected_period_counts(
+                data.run.histograms,
+                grouping,
+                "red",
+                binning=BinningSpec(),
+                forward_idx=[0],
+                backward_idx=[1],
+                use_deadtime=False,
+                deadtime_mode="off",
+                use_background=False,
+            ).values()
+        )
+    )
     expected = estimate_alpha_detailed(
         counts.forward,
         counts.backward,
@@ -91,7 +110,7 @@ def test_quick_uses_shared_result_and_source_timing(method):
         first_good_bin=counts.window.first,
         last_good_bin=counts.window.last,
     )
-    assert outcome.result == expected
+    assert outcome.result.estimate == expected
     assert outcome.record is None
     assert (expected.alpha_error is not None) == (method == "ratio")
     assert outcome.to_dict()["beta_error"] is None
@@ -241,3 +260,26 @@ def test_captured_record_target_reduction_matches_direct_profile():
     np.testing.assert_array_equal(routed.error, direct.error)
     wrong = reduce_run(target, ReductionSettings(alpha=outcome.alpha))
     assert not np.allclose(routed.asymmetry, wrong.asymmetry)
+
+
+@pytest.mark.parametrize("captured", [False, True])
+def test_historical_target_beta_cannot_override_fixed_one(captured):
+    source = _raw_tf(beta=1)
+    settings = ReductionSettings(alpha=1.25, alpha_source="user")
+    if captured:
+        record = calibrate_run(
+            source,
+            ReductionSettings(),
+            CalibrationOptions(
+                "tf_calibration_fit", envelope=TFEnvelope.EXPONENTIAL, frequency_mhz=1.3
+            ),
+        ).record
+        settings = replace(settings, alpha=record)
+    target = _raw_tf(beta=1).run
+    baseline = reduce_run(target, settings)
+    target.grouping.update(
+        beta=0.7, beta_method="count_fit", beta_error=0.02, beta_reference_run=42
+    )
+    actual = reduce_run(target, settings)
+    np.testing.assert_array_equal(actual.asymmetry, baseline.asymmetry)
+    np.testing.assert_array_equal(actual.error, baseline.error)

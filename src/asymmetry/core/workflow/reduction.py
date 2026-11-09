@@ -62,6 +62,7 @@ from asymmetry.core.transform.reduce import (
     reduce_period_asymmetry,
 )
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
 
 #: Deadtime treatments a scripted reduction offers. ``off`` is the GUI's
 #: fresh-run default; ``from_file`` uses each run's own per-detector values.
@@ -108,7 +109,7 @@ class ReductionSettings:
     difference of a two-period run.
     """
 
-    alpha: float | CalibrationRecord = 1.0
+    alpha: float | CalibrationRecord | QuickCalibrationResult = 1.0
     alpha_source: str = "assumed"
     deadtime: str = "off"
     background: str = "none"
@@ -146,9 +147,14 @@ class ReductionSettings:
                 )
         if isinstance(self.rebin, bool) or not isinstance(self.rebin, Integral) or self.rebin < 1:
             raise ValueError(f"Rebin factor must be an integer >= 1, got {self.rebin!r}.")
+        if isinstance(self.alpha, (CalibrationRecord, QuickCalibrationResult)):
+            object.__setattr__(self, "alpha_source", "assumed")
         if isinstance(self.alpha, CalibrationRecord):
             if self.alpha.selected is None or not self.alpha.selected.ok:
                 raise ValueError("Cannot apply a calibration without a usable candidate")
+        elif isinstance(self.alpha, QuickCalibrationResult):
+            if not self.alpha.estimate.ok or self.alpha.estimate.alpha <= 0:
+                raise ValueError("Cannot apply an unusable quick calibration")
         elif self.alpha <= 0.0:
             raise ValueError(f"Alpha must be positive, got {self.alpha}.")
         if self.t_min is not None and self.t_max is not None and self.t_min >= self.t_max:
@@ -160,16 +166,29 @@ class ReductionSettings:
         return self.alpha if isinstance(self.alpha, CalibrationRecord) else None
 
     @property
+    def quick_calibration(self) -> QuickCalibrationResult | None:
+        """Explicit shared quick result/context; historical scalar settings stay scalar."""
+        return self.alpha if isinstance(self.alpha, QuickCalibrationResult) else None
+
+    @property
     def effective_alpha(self) -> float:
         """Applied alpha derived from the captured result or authored scalar."""
-        return self.alpha.selected.alpha if self.calibration is not None else self.alpha
+        if self.calibration is not None:
+            return self.calibration.selected.alpha
+        return (
+            self.quick_calibration.estimate.alpha
+            if self.quick_calibration is not None
+            else self.alpha
+        )
 
     @property
     def effective_alpha_source(self) -> str:
         """Canonical identity for TF calibration; historical source text otherwise."""
-        return (
-            self.calibration.calibration_id if self.calibration is not None else self.alpha_source
-        )
+        if self.calibration is not None:
+            return self.calibration.calibration_id
+        if self.quick_calibration is not None:
+            return f"{self.quick_calibration.estimate.method}:{self.quick_calibration.run_number}"
+        return self.alpha_source
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
@@ -179,6 +198,11 @@ class ReductionSettings:
             **(
                 {"calibration": encode_non_finite(calibration_payload(self.calibration))}
                 if self.calibration is not None
+                else {}
+            ),
+            **(
+                {"quick_calibration": self.quick_calibration.to_dict()}
+                if self.quick_calibration is not None
                 else {}
             ),
             "deadtime": str(self.deadtime),
@@ -201,8 +225,12 @@ class ReductionSettings:
         return cls(
             alpha=restore_calibration(decode_non_finite(data["calibration"]))
             if "calibration" in data
+            else QuickCalibrationResult.from_dict(data["quick_calibration"])
+            if "quick_calibration" in data
             else float(data["alpha"]),
-            alpha_source="assumed" if "calibration" in data else str(data["alpha_source"]),
+            alpha_source="assumed"
+            if "calibration" in data or "quick_calibration" in data
+            else str(data["alpha_source"]),
             deadtime=str(data["deadtime"]),
             background=str(data["background"]),
             background_range=None
@@ -341,7 +369,9 @@ def _fixed_alpha_grouping(run: Run, settings: ReductionSettings) -> dict[str, An
 def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> MuonDataset:
     """Resolve the run recipe, then bin each selected period counts-first."""
     spec = replace(binning_spec(run.grouping), merge=merge)
-    grouping = dict(run.grouping) | _fixed_alpha_grouping(_grouping_run(run, settings), settings)
+    grouping = {
+        key: value for key, value in run.grouping.items() if key.startswith("period_")
+    } | _fixed_alpha_grouping(_grouping_run(run, settings), settings)
     n_histograms = len(run.histograms)
     forward_idx = effective_group_indices(
         grouping, int(grouping["forward_group"]), n_histograms=n_histograms

@@ -430,7 +430,7 @@ each named in the candidates block:
 Where a measurement *was* possible it decides: a file's ``TF`` stamp on a run
 with no precession in it is not a calibration candidate. ``asymmetry alpha``
 applies the same rule and prints its own ``precession`` line, so the two
-commands never disagree about whether a run will calibrate alpha.
+commands use the same advisory recommendation for calibration.
 
 Each run's ``survey.json`` row carries ``n_periods``, ``total_events``,
 ``geometry``, ``geometry_source``
@@ -616,7 +616,10 @@ require ``--alpha-from`` and never fit arbitrary target samples implicitly.
 ``--calibration-period RED|GREEN|N`` selects the acquired source period independently
 of the target ``--period``. Without it the source follows ``--period``. TF requires
 an explicit acquired period for a multi-period source and rejects a difference
-or cached-only period. For a target difference, supply the source period explicitly.
+or cached-only period. Nontrivially mapped sets require the original acquired
+source, since a mapped ordinal cannot name a source acquisition. An already-selected
+acquired period keeps its original ordinal, including when the matching selector
+is repeated. For a target difference, supply the source period explicitly.
 The automatic and explicit ratio paths retain their red-period difference
 semantics and single-period source adaptation. Pair, timing, good-window, and
 correction options resolve on the calibration source, rather than the target.
@@ -637,7 +640,10 @@ and correction outcomes. Both coefficients derive from this block when
 ``--alpha-from`` applies it. Stored workdir settings retain the same capture
 identity and tagged nonfinite endpoints through restoration; reading does not
 refit or generate a new identity. Scalar/source-only documents remain scalar
-records without inferred joint provenance. General count-domain science fitting
+records without inferred joint provenance. Explicit quick results retain their
+shared typed estimate, method/error meaning, source, acquired period, pair,
+correction outcomes, and timing/window context in ``quick_calibration`` settings;
+no TF covariance or joint record is inferred. General count-domain science fitting
 is a separate API capability.
 
 ``reduce``

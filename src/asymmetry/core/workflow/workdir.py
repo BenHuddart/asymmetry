@@ -790,6 +790,8 @@ class WorkDir:
             settings = self.entry(run).settings
             if settings.calibration is not None:
                 sources.add(settings.calibration.selected.source_run_number)
+            elif settings.quick_calibration is not None:
+                sources.add(settings.quick_calibration.run_number)
             elif settings.alpha_source.startswith(ALPHA_ESTIMATED_PREFIX):
                 sources.add(int(settings.alpha_source.removeprefix(ALPHA_ESTIMATED_PREFIX)))
         return sources

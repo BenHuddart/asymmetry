@@ -66,6 +66,12 @@ and encodes the canonical block with the project nonfinite codec;
 ``from_dict`` restores it without fitting, source-file access, or a new identity.
 Old scalar/source-only settings do not acquire inferred joint records.
 
+``ReductionSettings.alpha`` also accepts a ``QuickCalibrationResult``, preserving
+its shared typed estimate and source/pair/acquired-period/correction/timing context.
+The ``quick_calibration`` view and JSON block retain that explicit operation;
+automatic legacy ratio settings remain scalar/source-only. Fixed beta one is
+applied authoritatively even when a target carries a historical nonunity beta.
+
 ``CalibrationOptions()`` retains the automatic integral ratio; explicit
 ``diamagnetic``, ``general``, and ``ratio`` return the shared typed quick result
 with source/count context. TF with ``envelope=None`` selects all four; an explicit
@@ -78,7 +84,10 @@ applied settings. :doc:`/reference/agent_workflow` documents CLI flags and
 independent source-period semantics.
 
 .. automodule:: asymmetry.core.workflow.calibration
-   :members: CalibrationOptions, CalibrationOutcome, calibrate_run, calibration_source
+   :members: CalibrationOptions, calibrate_run, calibration_source
+
+.. automodule:: asymmetry.core.workflow.calibration_results
+   :members: CalibrationOutcome, QuickCalibrationResult
 
 .. automodule:: asymmetry.core.workflow.reduction
    :members: ReductionSettings, estimate_alpha_for_run, reduce_run

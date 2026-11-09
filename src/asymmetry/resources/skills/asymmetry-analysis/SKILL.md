@@ -277,7 +277,8 @@ summed cost among usable candidates); `--calibration-frequency MHZ` is a TF seed
 Use the same options with `reduce --alpha-from RUN` or `integral-scan --alpha-from RUN`.
 `--calibration-period RED|GREEN|N` selects the source independently of target
 `--period`; TF needs an acquired period, never a difference or cached-only curve.
-TF JSON/workdir settings retain one canonical result with both coefficients,
+Explicit quick settings retain their typed result/method/source context; TF settings
+retain one canonical result with both coefficients,
 source/support/corrections and full conditional covariance. Missing/unreliable
 errors are absent; fixed beta has no error/correlation. Quick Diamagnetic/General
 have no added uncertainty, explicit ratio uses first-order propagation. Failed
@@ -1648,8 +1649,7 @@ as a calibration candidate.
 Reduce the sample block with `reduce runs --runs 102-107 --alpha-from 101
 --deadtime from_file --plot`; use the stored reduction's alpha and A(0).
 
-Run 107's A(0) is already odd. Screen the coldest run, which has the most
-signal:
+Screen the coldest sample run, which has the most signal:
 
 ```console
 $ asymmetry wizard runs --run 102 --plot

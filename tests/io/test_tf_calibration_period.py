@@ -83,3 +83,58 @@ def test_workflow_does_not_calibrate_cached_period():
     data.run.grouping.update(period_reduced=[empty, empty])
     with pytest.raises(FitInputError, match="acquired period histograms"):
         calibrate_run(data, ReductionSettings(), CalibrationOptions("tf_calibration_fit", period=2))
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {1: "ignore", 2: "red", 3: "red", 4: "ignore"},
+        {1: "ignore", 2: "green", 3: "red", 4: "ignore"},
+    ],
+)
+def test_workflow_never_labels_mapped_counts_as_an_acquired_period(mapping):
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    periods = [_raw_tf(beta=1, seed=i) for i in range(4)]
+    for i, data in enumerate(periods, 1):
+        data.run.metadata.update(source_run_number=7101, period_number=i, period_count=4)
+    mapped = combine_mapped_periods(periods, mapping)
+    options = CalibrationOptions(
+        "tf_calibration_fit", envelope="exponential", period=1, frequency_mhz=1.3
+    )
+    with pytest.raises(ValueError, match="mapped.*acquired"):
+        calibrate_run(mapped, ReductionSettings(), options)
+    from dataclasses import replace
+
+    from asymmetry.core.io.periods import period_run
+
+    red = period_run(mapped.run, 0)
+    selected = replace(mapped, run=red, metadata=red.metadata)
+    ratio = calibrate_run(selected, ReductionSettings(), CalibrationOptions("ratio"))
+    assert ratio.alpha is not None
+
+
+@pytest.mark.parametrize("period", [None, 3])
+def test_workflow_preserves_an_already_selected_acquired_period(period):
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    data = _raw_tf(beta=1)
+    data.run.metadata.update(source_run_number=7101, period_number=3, period_count=4)
+    options = CalibrationOptions(
+        "tf_calibration_fit", envelope="exponential", frequency_mhz=1.3, period=period
+    )
+    outcome = calibrate_run(data, ReductionSettings(), options)
+    assert outcome.record.result.period_number == 3
+
+
+def test_workflow_rejects_mismatched_selected_source_period():
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    data = _raw_tf(beta=1)
+    data.run.metadata.update(source_run_number=7101, period_number=3, period_count=4)
+    with pytest.raises(ValueError, match="requested acquired period"):
+        calibrate_run(data, ReductionSettings(), CalibrationOptions("tf_calibration_fit", period=2))

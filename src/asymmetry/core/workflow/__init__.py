@@ -14,6 +14,7 @@ from asymmetry.core.workflow.calibration import (
     CalibrationOutcome,
     calibrate_run,
 )
+from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
 from asymmetry.core.workflow.fourier import (
     CorrelationSettings,
     FourierOutcome,
@@ -102,6 +103,7 @@ from asymmetry.core.workflow.workdir import (
 __all__ = [
     "CalibrationOptions",
     "CalibrationOutcome",
+    "QuickCalibrationResult",
     "calibrate_run",
     "BACKGROUND_MODES",
     "GREEN_MINUS_RED",

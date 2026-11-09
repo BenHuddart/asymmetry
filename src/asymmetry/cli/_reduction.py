@@ -225,8 +225,8 @@ def reduction_settings(
         # ReductionSettings owns the vocabulary the CLI accepts; a value it
         # rejects is the user's, so it exits 1 with a message, not 2.
         raise UserError(str(exc)) from None
-    if estimate.record is not None:
-        return replace(settings, alpha=estimate.record)
+    if options.method is not None:
+        return replace(settings, alpha=estimate.result)
     return replace(
         settings, alpha=estimate.alpha, alpha_source=f"{ALPHA_ESTIMATED_PREFIX}{alpha_from}"
     )
@@ -294,9 +294,22 @@ def describe(settings: ReductionSettings) -> str:
         )
     if settings.calibration is not None:
         result = settings.calibration.selected
-        alpha += f", {result.model}, beta {result.beta:.4f}" + (
-            " fixed" if result.beta_fixed else " fitted"
+        error = (
+            "error unavailable" if result.alpha_error is None else f"+/- {result.alpha_error:.3g}"
         )
+        beta = (
+            "1 fixed"
+            if result.beta_fixed
+            else (
+                f"{result.beta:.6g} "
+                + (
+                    "error unavailable"
+                    if result.beta_error is None
+                    else f"+/- {result.beta_error:.3g}"
+                )
+            )
+        )
+        alpha = f"alpha {result.alpha:.6g} {error} (run {result.source_run_number}, {result.model}, beta {beta}; conditional errors"
     parts = [
         alpha + ")",
         f"deadtime {settings.deadtime}",

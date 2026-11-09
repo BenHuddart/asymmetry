@@ -58,7 +58,7 @@ def run(args: argparse.Namespace) -> None:
         raise UserError(f"Run {args.run}: {exc}") from None
 
     # The same two-source rule the survey's candidate list uses, so the two
-    # commands can never disagree about whether a run will calibrate alpha.
+    # commands use the same advisory calibration recommendation.
     source, reason = calibration_verdict(dataset.run.metadata, dataset.field, evidence)
     warning = (
         None
@@ -113,7 +113,7 @@ def run(args: argparse.Namespace) -> None:
             print(f"  background {label}: {outcome.requested} -> {outcome.status.value}")
         print("  TF backgrounds  : fitted in the count model")
     else:
-        corrections = estimate.counts.corrections
+        corrections = estimate.result.corrections
         for outcome in (corrections.deadtime, corrections.background):
             print(f"  {outcome.name:16}: {outcome.requested} -> {outcome.status.value}")
     print(f"  method          : {estimate.method}")

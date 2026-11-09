@@ -591,5 +591,9 @@ no model-selection or reduced-signal covariance is added. Quick methods retain
 no added uncertainty; ratio retains first-order propagation. Missing/unreliable
 errors and fixed-beta errors are absent. Requested/applied corrections, native
 support, timing, and acquired source period remain in the record.
+Explicit quick workflow settings also retain the shared typed result and its
+method, source period, correction outcomes, and timing/window context.
+Asymmetry also checks that a TF source names an acquired period rather than a
+nontrivial mapped sum, so a saved ordinal does not misidentify its observations.
 Routing equivalence establishes the same calculation across entry points;
 it does not extend the reference comparisons or physical-accuracy claims above.
