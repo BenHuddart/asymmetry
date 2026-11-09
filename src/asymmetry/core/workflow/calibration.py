@@ -19,6 +19,7 @@ from asymmetry.core.fitting.tf_calibration import (
     fit_tf_calibration,
     select_tf_calibration,
 )
+from asymmetry.core.instrument import derive_projection_pairs
 from asymmetry.core.io.periods import (
     period_count,
     period_run,
@@ -161,6 +162,13 @@ def calibrate_source(
     if run is None or not run.histograms:
         raise ValueError("Calibration requires source detector histograms")
     grouping = run.grouping
+    projections = derive_projection_pairs(
+        grouping.get("groups"), grouping.get("group_names"), grouping.get("projections")
+    )
+    if options.fit_beta and not supports_joint_calibration(
+        options.method, projection_layout=bool(projections)
+    ):
+        raise ValueError("Joint beta calibration requires a single F/B pair layout")
     forward, backward = int(grouping["forward_group"]), int(grouping["backward_group"])
     prepared = dataset
     tf = options.method == TF_CALIBRATION_METHOD

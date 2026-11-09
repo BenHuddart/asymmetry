@@ -641,7 +641,7 @@ def grouping_balances(
         if alphas:
             alpha = alphas.pop()
             balances[0] = alpha if np.isfinite(alpha) and alpha > 0 else 1.0
-        balances[1] = 1.0
+            balances[1] = 1.0
     return tuple(balances)
 
 

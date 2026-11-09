@@ -18,7 +18,7 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
-from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
@@ -99,7 +99,6 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
     )
     if not pairs:
         raise ValueError(f"Run {run.run_number}'s grouping declares no asymmetry projections.")
-    alphas = projection_alphas(grouping)
     flags = correction_flags_from_grouping(grouping)
     n_histograms = len(source.histograms)
     datasets: dict[str, MuonDataset] = {}
@@ -112,7 +111,10 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
         return search
 
     for label, (forward, backward) in pairs.items():
-        selected_grouping = dict(grouping, forward_group=forward, backward_group=backward)
+        selected_grouping = dict(
+            grouping, forward_group=forward, backward_group=backward, vector_axis=label
+        )
+        alpha, beta = grouping_balances(selected_grouping)
         if "t0_policy" in grouping:
             policy = grouping["t0_policy"]
             resolve_selected_timing(
@@ -129,12 +131,12 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             grouping=selected_grouping,
             forward_idx=effective_group_indices(grouping, forward, n_histograms=n_histograms),
             backward_idx=effective_group_indices(grouping, backward, n_histograms=n_histograms),
-            alpha=alphas[label],
+            alpha=alpha,
             use_deadtime=flags.use_deadtime,
             deadtime_mode=flags.deadtime_mode,
             use_background=flags.use_background,
             metadata=source.metadata,
-            beta=float(grouping.get("beta", 1.0)),
+            beta=beta,
         )
         datasets[label] = MuonDataset(
             time=result.time,

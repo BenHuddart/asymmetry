@@ -128,3 +128,28 @@ def test_selected_pair_does_not_change_scalar_legacy_balances():
     run = pair_run()
     run = replace(run, grouping={"alpha": 0.8, "beta": 1.2})
     assert grouping_balances(run.grouping) == (0.8, 1.2)
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+def test_workflow_reduction_resolves_projection_instead_of_authored_fallback(canonical):
+    from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+
+    run = pair_run(canonical)
+    data = reduce_run(run, ReductionSettings(alpha=1.3, rebin=2))
+    np.testing.assert_allclose(data.asymmetry, 25.0)
+    assert run.grouping["alpha"] == 1.3
+
+
+def test_projection_reduction_uses_each_alpha_and_fixed_beta():
+    from asymmetry.core.transform.projections import reduce_run_projections
+
+    run = pair_run()
+    results = reduce_run_projections(run, 0)
+    for label, forward, backward, alpha in (("FB", 100, 80, 0.75), ("UD", 120, 60, 1.1)):
+        expected = 100 * (forward - alpha * backward) / (forward + alpha * backward)
+        np.testing.assert_allclose(results[label].asymmetry, expected)
+    assert run.grouping["beta"] == 1.4
+
+
+def test_pair_outside_declared_projections_keeps_both_scalar_fallbacks():
+    assert grouping_balances(pair_run().grouping, pair=(1, 4)) == (1.3, 1.4)

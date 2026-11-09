@@ -330,8 +330,8 @@ draft is what gets applied to every run following the profile.
   **α (detector balance)** (its value and provenance or, in vector mode, the
   per-projection table, plus the calibration controls), and
   **β (asymmetry balance)** (a **β value** entry for musrfit's
-  intrinsic-asymmetry balance, plus a "Measure from run" calibration
-  section mirroring α's — see :doc:`data_reduction/beta_calibration`;
+  intrinsic-asymmetry balance; **Calibrate β** in the shared calibration
+  section fits both coefficients — see :doc:`data_reduction/beta_calibration`;
   hidden in vector mode, where per-projection reductions stay at β = 1)
   — each previewed against the same corrected
   reduction. A card's header row shows a disclosure arrow,
@@ -810,7 +810,12 @@ The selected forward/backward pair determines the effective balance for
 counts-first display binning, F/B Fourier input, re-reduction and exported
 curve labels. Selecting a projection preserves the profile's authored base
 fallback for other pairs. Vector projections use beta one; a stored base beta
-does not become a fitted beta for those projections.
+does not become a fitted beta for those projections. Pairs outside the declared
+projections retain both authored scalar fallbacks.
+
+**Estimate All α** updates the draft only when every requested projection
+succeeds. Failure or **Stop** discards the incomplete batch and preserves the
+existing draft values; those values remain available to **Apply**.
 
 Beta calibration
 ------------------

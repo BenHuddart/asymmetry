@@ -4,6 +4,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from asymmetry.core.project.calibration import CalibratedCoefficient
+from asymmetry.core.transform.grouping import grouping_balances
 from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.windows.grouping.format import ALPHA_METHOD_ITEMS
@@ -55,7 +56,7 @@ class BetaSectionWidget(QWidget):
         return float(self._beta_spin.value())
 
     def set_value(self, value):
-        self._beta_spin.setValue(float(value))
+        self._beta_spin.setValue(grouping_balances({"beta": value})[1])
 
     def is_active(self):
         return abs(self.value() - 1.0) > 1e-9

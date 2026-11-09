@@ -306,7 +306,7 @@ def test_unavailable_pair_discards_a_deferred_drag_result(qapp):
 
 
 @pytest.mark.parametrize("overlap", ["same_group", "partial"])
-def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeypatch, overlap):
+def test_invalid_vector_axis_aborts_the_calibration_batch(qapp, monkeypatch, overlap):
     from tests.gui.test_grouping_dialog import _vector_dataset_with_histograms
 
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
@@ -322,12 +322,16 @@ def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeyp
         else:
             dialog._groups[5] = [0, 1]
             shared = 2
-        original_alpha = dialog._vector_alpha_spins["P_x"].value()
+        original_alphas = {
+            label: spin.value() for label, spin in dialog._vector_alpha_spins.items()
+        }
         dialog._begin_vector_estimates(["P_x", "P_y"])
         _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
         assert f"shared acquired channels {shared}" in dialog._alpha_section._result_label.text()
-        assert dialog._vector_alpha_spins["P_x"].value() == original_alpha
-        assert dialog._vector_alpha_spins["P_y"].value() == pytest.approx(1.2)
+        assert {
+            label: spin.value() for label, spin in dialog._vector_alpha_spins.items()
+        } == original_alphas
+        assert dialog._alpha_section.pending() == {}
         assert dialog._vector_estimate_buttons["P_y"].isEnabled()
         payload = dialog._current_grouping_payload()
         assert "alpha_x_reference_run" not in payload

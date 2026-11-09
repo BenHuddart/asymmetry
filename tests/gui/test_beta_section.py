@@ -64,3 +64,10 @@ def test_beta_label_uses_recorded_constraint_at_unity(fit_beta):
         "TF calibration fit" if fit_beta else "fixed"
     )
     assert beta_provenance_text(BetaPolicy(value=1.0)) == "manual"
+
+
+@pytest.mark.parametrize("value", [None, 0, -1, float("nan"), float("inf"), "bad"])
+def test_invalid_raw_beta_uses_unity_at_the_form_boundary(qapp, value):
+    section = BetaSectionWidget()
+    section.set_value(value)
+    assert section.value() == 1.0

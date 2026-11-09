@@ -83,6 +83,8 @@ applied authoritatively even when a target carries a historical nonunity beta.
 
 Omitting the options argument in ``calibrate_run(source, settings)`` selects
 TF calibration fit with automatic four-envelope selection and beta fixed at one.
+Joint-beta requests require a single-pair source layout; projection layouts
+retain beta one and reject ``fit_beta=True`` at the shared workflow boundary.
 ``explicit_calibration_options`` owns this fresh explicit default. Passing
 ``CalibrationOptions()`` deliberately retains the automatic integral ratio; explicit
 ``diamagnetic``, ``general``, and ``ratio`` return the shared typed quick result

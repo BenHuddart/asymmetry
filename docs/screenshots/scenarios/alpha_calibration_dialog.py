@@ -42,7 +42,8 @@ class AlphaCalibrationDialogScenario(Scenario):
         dialog._alpha_card.set_expanded(True)
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
-        if not section.pending():
+        expected = set(dialog._vector_alpha_spins) if self.vector else {"single"}
+        if set(section.pending()) != expected:
             raise RuntimeError(section._result_label.text())
         preview = dialog._preview_pane
         preview.flush()

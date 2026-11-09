@@ -316,3 +316,17 @@ def test_zero_forward_ratio_is_not_a_usable_calibration():
     assert outcome.alpha is None
     assert not outcome.to_dict()["ok"]
     assert outcome.to_dict()["message"]
+
+
+@pytest.mark.parametrize("entry", ["source", "workflow"])
+def test_joint_beta_rejects_projection_layout_at_shared_boundary(entry):
+    from asymmetry.core.workflow.calibration import calibrate_source
+    from docs.screenshots.data.calibration import calibration_control
+
+    data = calibration_control(vector=True)
+    options = CalibrationOptions("tf_calibration_fit", True, TFEnvelope.EXPONENTIAL)
+    with pytest.raises(ValueError, match="single.*pair"):
+        if entry == "source":
+            calibrate_source(data, options)
+        else:
+            calibrate_run(data, ReductionSettings(), options)

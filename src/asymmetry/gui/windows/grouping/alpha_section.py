@@ -273,7 +273,7 @@ class AlphaSectionWidget(QWidget):
         self._tasks = TaskRunner(self)
         self._worker = None
         self._generation = 0
-        self._pending: dict[str, CalibrationOutcome] = {}
+        self._pending: dict[str, CalibrationReply] = {}
         self._queue: list[tuple[str, MuonDataset, Any, Any]] = []
         self._source = None
         self._source_key = None
@@ -434,9 +434,10 @@ class AlphaSectionWidget(QWidget):
         if outcome.alpha is None:
             self._error(outcome.message)
             return
-        self._pending[reply.slot] = outcome
+        self._pending[reply.slot] = reply
         lines = []
-        for slot, result in self._pending.items():
+        for slot, captured in self._pending.items():
+            result = captured.outcome
             fitted = result.selected
             alpha = format_value_with_uncertainty(fitted.alpha, fitted.alpha_error)
             if result.record is not None and fitted.alpha_error is None:
@@ -483,7 +484,11 @@ class AlphaSectionWidget(QWidget):
             errors = "first-order errors" if outcome.method == "ratio" else "no error estimate"
         summary.append(errors)
         self._note_label.setText(" · ".join(summary))
-        self.result_ready.emit(reply)
+        if not self._queue:
+            for captured in tuple(self._pending.values()):
+                if captured.generation != self._generation:
+                    break
+                self.result_ready.emit(captured)
         self._start_next()
 
     @Slot(str)
@@ -493,6 +498,7 @@ class AlphaSectionWidget(QWidget):
         self._queue.clear()
         self._pending.clear()
         self._result_label.setText(f"Calibration failed: {message}")
+        self._note_label.clear()
         self._start_next()
 
     @Slot()
@@ -510,7 +516,11 @@ class AlphaSectionWidget(QWidget):
     def pending(self):
         if self._source is not None and not self._sources_current():
             self.invalidate()
-        return dict(self._pending)
+        return (
+            {}
+            if self._worker is not None
+            else {slot: reply.outcome for slot, reply in self._pending.items()}
+        )
 
     def shutdown(self):
         self.invalidate()

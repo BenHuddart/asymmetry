@@ -24,7 +24,9 @@ and stretched common-phase F/B envelopes and shows the selected model. The
 minimum finite summed cost among usable candidates wins; model selection does
 not establish physical truth. **Calibrate β** fits alpha and beta jointly in a
 single-pair layout; unchecked fixes beta at one. Vector layouts calibrate alpha
-for each projection with beta fixed at one.
+for each projection with beta fixed at one. **Estimate All α** publishes the
+requested projections together after every fit succeeds. Failure or **Stop**
+discards the incomplete batch and leaves the draft coefficients unchanged.
 
 **Diamagnetic**, **Decay balance** (stored method ``general``), and
 **Count ratio ΣF/ΣB** remain explicit quick choices. Quick methods disable and

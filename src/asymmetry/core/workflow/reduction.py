@@ -55,7 +55,11 @@ from asymmetry.core.project.profiles import (
 )
 from asymmetry.core.transform.background import background_window
 from asymmetry.core.transform.corrections import reference_observation_metadata
-from asymmetry.core.transform.grouping import effective_group_indices, group_names
+from asymmetry.core.transform.grouping import (
+    effective_group_indices,
+    group_names,
+    grouping_balances,
+)
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
@@ -380,6 +384,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         grouping, int(grouping["backward_group"]), n_histograms=n_histograms
     )
     flags = correction_flags_from_grouping(grouping)
+    alpha, beta = grouping_balances(grouping)
     result = reduce_period_asymmetry(
         run.histograms,
         grouping,
@@ -387,8 +392,8 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         binning=spec,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
-        alpha=float(grouping["alpha"]),
-        beta=float(grouping.get("beta", 1.0)),
+        alpha=alpha,
+        beta=beta,
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,

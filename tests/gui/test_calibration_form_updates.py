@@ -106,3 +106,61 @@ def test_filled_joint_values_keep_canonical_methods_after_apply_and_reopen(qapp,
     assert reopened._alpha_section._tasks.active_count == 0
     reopened._clear_dirty()
     reopened.close()
+
+
+@pytest.mark.parametrize("finish", ["failure", "stop"])
+@pytest.mark.parametrize("failed_slot", ["P_y", "P_x"])
+def test_vector_batch_does_not_publish_partial_results(qapp, monkeypatch, finish, failed_slot):
+    from threading import Event
+
+    from asymmetry.gui.windows.grouping import alpha_section as module
+
+    data = calibration_control(vector=True)
+    dialog = GroupingDialog([data])
+    _wait_for_t0_detection(dialog)
+    section = dialog._alpha_section
+    before = dialog._draft.to_dict()
+    spins = {label: spin.value() for label, spin in dialog._vector_alpha_spins.items()}
+    entered, release = Event(), Event()
+    original = module.run_calibration
+    published = []
+    section.result_ready.connect(published.append)
+
+    def held(worker, request):
+        if request.slot == failed_slot:
+            entered.set()
+            assert release.wait(5)
+            raise ValueError("owned second-pair failure")
+        return original(worker, request)
+
+    monkeypatch.setattr(module, "run_calibration", held)
+    try:
+        dialog._estimate_all_alpha()
+        _wait_until(entered.is_set)
+        during = list(published)
+        pending_during = section.pending()
+        if finish == "stop":
+            section._stop_btn.click()
+        release.set()
+        _wait_until(lambda: section._tasks.active_count == 0)
+        assert pending_during == {}
+        assert during == []
+        assert published == []
+        assert section.pending() == {}
+        assert dialog._draft.to_dict() == before
+        assert {label: spin.value() for label, spin in dialog._vector_alpha_spins.items()} == spins
+        dialog._preview_pane.flush()
+        _wait_until(lambda: dialog._preview_pane.corrections_complete)
+        assert dialog._apply_btn.isEnabled()
+        dialog._on_apply()
+        assert dialog.get_profile_result()["profile"].calibration_records == ()
+        monkeypatch.setattr(module, "run_calibration", original)
+        dialog._estimate_all_alpha()
+        _wait_until(lambda: section._tasks.active_count == 0)
+        assert len(published) == 3
+        assert set(section.pending()) == set(dialog._vector_alpha_spins)
+        assert len(dialog._draft.calibration_records) == 3
+    finally:
+        release.set()
+        dialog._clear_dirty()
+        dialog.close()
