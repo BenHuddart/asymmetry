@@ -40,6 +40,7 @@ from asymmetry.core.maxent.state_identity import state_signature
 from asymmetry.core.transform.grouping import (
     group_names,
     group_reference_t0,
+    grouping_balances,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.t0 import t0_stamp_residual_us
@@ -1069,9 +1070,7 @@ def build_maxent_input(
         elif forward_group in selected:
             selected = [int(forward_group)] + [gid for gid in selected if gid != forward_group]
         zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
-        zf_lf_alpha = _float_or_default(grouping.get("alpha"), 1.0)
-        if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
-            zf_lf_alpha = 1.0
+        zf_lf_alpha, _ = grouping_balances(grouping, pair=tuple(selected))
 
     group_signals: list[GroupCountSignal] = []
     for group_id in selected:

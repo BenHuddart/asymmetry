@@ -87,7 +87,7 @@ options:
 
 ```
 usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}]
-                       [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                       [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}]
                        [--fit-beta]
                        [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                        [--calibration-period RED|GREEN|N]
@@ -106,9 +106,8 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
-  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
-                        Explicit calibration operation (omitted: per-run integral
-                        ratio)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}
+                        Explicit calibration operation (omitted: TF calibration fit)
   --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
                         beta is fixed at 1)
   --calibration-envelope {undamped,exponential,gaussian,stretched}
@@ -145,7 +144,7 @@ options:
 ```
 usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                         [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                        [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                        [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}]
                         [--fit-beta]
                         [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                         [--calibration-period RED|GREEN|N]
@@ -175,9 +174,8 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
-  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
-                        Explicit calibration operation (omitted: per-run integral
-                        ratio)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}
+                        Explicit calibration operation (omitted: TF calibration fit)
   --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
                         beta is fixed at 1)
   --calibration-envelope {undamped,exponential,gaussian,stretched}
@@ -228,7 +226,7 @@ options:
 ```
 usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                               [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                               [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}]
                                [--fit-beta]
                                [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                                [--calibration-period RED|GREEN|N]
@@ -258,9 +256,8 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
-  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
-                        Explicit calibration operation (omitted: per-run integral
-                        ratio)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit,automatic}
+                        Explicit calibration operation (omitted: TF calibration fit)
   --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
                         beta is fixed at 1)
   --calibration-envelope {undamped,exponential,gaussian,stretched}

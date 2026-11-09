@@ -349,3 +349,41 @@ def test_invalid_persisted_identity_is_rejected(identity):
     payload["calibration_id"] = identity
     with pytest.raises(ValueError, match="nonempty identity"):
         restore_calibration(payload)
+
+
+def test_schema35_records_upgrade_without_reinterpreting_coefficients():
+    from copy import deepcopy
+
+    from asymmetry.core.project.schema import migrate_to_current
+
+    profile = GroupingProfile("saved", ProfileFingerprint("test", 2))
+    apply_calibration(profile, CalibrationRecord("history", candidate()))
+    profile.alpha_policy = AlphaPolicy(
+        mode="calibrated", value=1.37, method="general", source_run=42
+    )
+    old = {"schema_version": 35, "datasets": [], "grouping_profiles": [profile.to_dict()]}
+    original = deepcopy(old)
+    migrated = migrate_to_current(old)
+    assert CURRENT_SCHEMA_VERSION > 35
+    assert migrated == {**original, "schema_version": CURRENT_SCHEMA_VERSION}
+    assert old == original
+    restored = GroupingProfile.from_dict(migrated["grouping_profiles"][0])
+    assert restored.alpha_policy.to_dict() == profile.alpha_policy.to_dict()
+    assert restored.calibration_records == profile.calibration_records
+
+
+@pytest.mark.parametrize("invalid", ["zero", "beta"])
+def test_applied_quick_policy_requires_a_usable_alpha(invalid):
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+    from tests.core.test_tf_calibration_fit import _raw_tf
+
+    result = calibrate_run(
+        _raw_tf(beta=1), ReductionSettings(), CalibrationOptions("ratio")
+    ).result.to_dict()
+    if invalid == "zero":
+        result["alpha"] = 0.0
+    payload = GroupingProfile("quick", ProfileFingerprint("test", 2)).to_dict()
+    payload["beta_policy" if invalid == "beta" else "alpha_policy"] = {"quick_calibration": result}
+    with pytest.raises(ValueError, match="quick|Quick"):
+        GroupingProfile.from_dict(payload)

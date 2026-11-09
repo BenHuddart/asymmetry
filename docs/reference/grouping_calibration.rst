@@ -17,7 +17,7 @@ calibration constant :math:`\alpha` fixed, and — for raw histogram formats —
 correction applied. In Asymmetry this is a **grouping profile** — one named,
 shareable calibration per instrument — edited in the **Grouping** window, with
 the detector arrangement built visually in the **Detector Layout** editor and
-:math:`\alpha`/deadtime/background each calibrated in its own dedicated dialog.
+calibration and correction controls together in the Corrections column.
 
 .. note::
 
@@ -49,7 +49,8 @@ The illustrated Sample A profile uses the existing ``per_run_estimate`` alpha
 policy. Its label reads **per-run integral ratio · see preview**; the completed
 preview supplies the coefficient for the selected run. Group edits keep that
 policy. Editing the alpha number explicitly replaces it with a fixed value;
-**Estimate** supplies a one-shot calibrated value.
+**Estimate calibration** fills the draft spinboxes and updates the preview;
+**Apply** commits the captured coefficients and their source context.
 
 During refresh the plot reads **Computing preview…** and **Apply** waits for
 the current result. A failed estimate reads **Preview unavailable:** followed
@@ -84,10 +85,14 @@ settings out to whichever runs happen to be checked:
 * **Preset dropdown** — an instrument-aware starting arrangement. The dropdown
   shows the preset the groups match, and reads "Custom" once you edit a group
   or swap the forward/backward pair by hand.
-* **Alpha status row** — the current :math:`\alpha` and its provenance (a
-  fixed value, or "diamagnetic · run 2923" for a calibrated one), with a
-  **Calibrate…** button that opens the alpha calibration dialog (see the
-  worked example below).
+* **Calibration section** — **TF calibration fit** is the fresh explicit default.
+  **Estimate calibration** compares four count envelopes and displays the selected
+  model. **Calibrate β** is available only for TF in a single-pair layout;
+  vector projections retain beta one. **Diamagnetic**, **Decay balance**, and
+  **Count ratio ΣF/ΣB** remain quick choices. **Stop** invalidates pending work;
+  completed values update the draft spinboxes and preview immediately. Their
+  method labels return to ``manual`` on a coefficient edit. **Apply** commits
+  the draft results and their full source context.
 * **t0 Bin**, **t_good Offset**, **Last Good Bin**, **Bunching Factor** — the
   time-zero bin (with a **From file** / **Manual** / **Auto-detect** mode
   selector), the first-good-bin offset after t\ :sub:`0`, the last good bin,
@@ -352,5 +357,34 @@ The core grouping-profile application API preserves an applied TF fit or model
 selection as a frozen record shared by its alpha and beta policies. Captured
 fit assumptions and conditional uncertainty survive save/load without source
 files or recalibration. Manual policies replace the active coefficient link;
-the captured record remains history. See :doc:`project_files` and
+the captured record remains history. A manually edited projection carries its
+new value without the old method, error or reference-run fields. See
+:doc:`project_files` and
 :doc:`/api/fitting/calibration` for the persistence API.
+
+Shared calibration controls
+---------------------------
+
+.. figure:: /_generated/screenshots/alpha_calibration_dialog.png
+   :width: 100%
+   :alt: TF calibration fit with selected model, conditional errors, and beta fixed at one.
+
+   Fresh TF calibration with beta fixed at one; Apply commits the displayed result.
+
+.. figure:: /_generated/screenshots/calibration_free_beta.png
+   :width: 100%
+   :alt: TF calibration with Calibrate beta checked and joint coefficient errors.
+
+   Joint alpha and beta calibration uses the same count fit.
+
+.. figure:: /_generated/screenshots/calibration_decay_balance.png
+   :width: 100%
+   :alt: Decay balance with the Calibrate beta checkbox disabled.
+
+   Decay balance retains its quick error policy and beta fixed at one.
+
+.. figure:: /_generated/screenshots/calibration_vector.png
+   :width: 100%
+   :alt: Per-projection calibration with beta fixed at one.
+
+   Vector results retain each projection's source pair.

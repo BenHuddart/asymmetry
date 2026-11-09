@@ -26,6 +26,7 @@ from asymmetry.core.data.combine import (
     runs_with_dataset_metadata,
 )
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.instrument import derive_projection_pairs
 from asymmetry.core.io import load
 from asymmetry.core.io.periods import (
     RED_INDEX,
@@ -36,8 +37,9 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.project.calibration import (
     CalibrationRecord,
-    apply_calibration,
+    apply_calibration_outcome,
     calibration_payload,
+    resolve_projection_calibrations,
     restore_calibration,
 )
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite
@@ -55,14 +57,18 @@ from asymmetry.core.project.profiles import (
 )
 from asymmetry.core.transform.background import background_window
 from asymmetry.core.transform.corrections import reference_observation_metadata
-from asymmetry.core.transform.grouping import effective_group_indices, group_names
+from asymmetry.core.transform.grouping import (
+    effective_group_indices,
+    group_names,
+    grouping_balances,
+)
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
     reduce_period_asymmetry,
 )
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
+from asymmetry.core.workflow.calibration_results import CalibrationOutcome, QuickCalibrationResult
 
 #: Deadtime treatments a scripted reduction offers. ``off`` is the GUI's
 #: fresh-run default; ``from_file`` uses each run's own per-detector values.
@@ -361,9 +367,25 @@ def _fixed_alpha_grouping(run: Run, settings: ReductionSettings) -> dict[str, An
     profile = _profile_for_run(
         run, settings, alpha_policy=AlphaPolicy(mode="fixed", value=settings.effective_alpha)
     )
-    if settings.calibration is not None:
-        apply_calibration(profile, settings.calibration)
-    return resolve_effective_grouping(profile, run)
+    pairs = derive_projection_pairs(profile.groups, profile.group_names, profile.projections)
+    selected = [
+        label
+        for label, pair in pairs.items()
+        if pair == (profile.forward_group, profile.backward_group)
+    ]
+    result = settings.calibration or settings.quick_calibration
+    explicit = result is not None or settings.alpha_source != "assumed" or settings.alpha != 1.0
+    if result is not None:
+        outcome = CalibrationOutcome(result)
+        apply_calibration_outcome(profile, outcome)
+        for label in selected:
+            apply_calibration_outcome(profile, outcome, projection=label)
+    grouping = resolve_effective_grouping(profile, run)
+    if explicit and result is None:
+        resolve_projection_calibrations(
+            {label: profile.alpha_policy for label in selected}, grouping
+        )
+    return grouping
 
 
 def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> MuonDataset:
@@ -380,6 +402,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         grouping, int(grouping["backward_group"]), n_histograms=n_histograms
     )
     flags = correction_flags_from_grouping(grouping)
+    alpha, beta = grouping_balances(grouping)
     result = reduce_period_asymmetry(
         run.histograms,
         grouping,
@@ -387,8 +410,8 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         binning=spec,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
-        alpha=float(grouping["alpha"]),
-        beta=float(grouping.get("beta", 1.0)),
+        alpha=alpha,
+        beta=beta,
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,

@@ -35,20 +35,21 @@ observations: for fixed F, B, and alpha, the corrected asymmetry above generally
 changes with beta even without precession. Other models require their own
 identifiability assessment.
 
-The grouping dialog's β card grows a **Measure from run** section for this:
-a **Calibration run** picker (weak-TF candidates highlighted, the same
-convention :doc:`alpha_calibration` uses), a **Protocol** selector, and an
-**Estimate β** button. Two protocols are offered.
+In the grouping dialog select **TF calibration fit** and check **Calibrate β**
+in the shared calibration section. **Estimate calibration** updates both draft
+spinboxes and the preview, showing the selected envelope and conditional errors.
+The method beside beta stays until its value is edited, then reads ``manual``.
+**Apply** commits the pair through one captured calibration record. Leave the
+checkbox unchecked for beta fixed at one. Quick methods disable and uncheck it;
+vector layouts retain one alpha per projection and beta fixed at one. A manual
+beta can still be entered in the beta card. Loading saved values never fits them.
 
-Choosing a protocol
---------------------
+For TF calibration with beta fixed at one, the spinbox label reads ``fixed``,
+including after reopening it. A fitted beta of one retains its calibration
+method; changing the coefficient by hand changes the label to ``manual``.
 
-============================  ====================================================
-Situation                     Protocol
-============================  ====================================================
-Routine calibration           **Count fit (recommended)** — the default
-Independent cross-check       **Single-histogram ratio**
-============================  ====================================================
+The API also retains the explicit single-histogram ratio cross-check described
+below; the GUI uses the shared TF operation with automatic envelope selection.
 
 Count fit
 ---------
@@ -122,25 +123,14 @@ in the underlying :class:`~asymmetry.core.fitting.beta_calibration.BetaEstimate`
 other's data landing on compatible :math:`\beta` values is good evidence the
 count-fit result is not an artefact of the shared model.
 
-Fitted alpha and "Also update alpha"
---------------------------------------
+Applying the joint result
+-------------------------
 
-Because both protocols are count fits, they recover :math:`\alpha` alongside
-:math:`\beta`. The result row shows both — e.g.
-"β = 0.8732 ± 0.0041 · fitted α = 1.1520 ± 0.0081 · Count fit (recommended) ·
-run 7101" — as a **consistency readout**: the fitted :math:`\alpha` is
-warn-tinted when it disagrees with the card's currently applied
-:math:`\alpha` by more than roughly :math:`3\sigma`, which is a sign the two
-calibrations should agree and currently do not (a stale :math:`\alpha`, a
-mismatched calibration run, or a poor fit).
-
-**Apply β** writes only :math:`\beta`; the fitted :math:`\alpha` is not
-applied automatically. An explicit **Also update α** checkbox next to it
-additionally applies the fitted :math:`\alpha` through the same path the
-:math:`\alpha` card's own estimator uses, stamped with method ``count_fit``
-provenance — for *both* protocols, since Protocol B's :math:`\alpha` is still
-recovered from a pair of count fits and ``single_histogram`` is not part of
-:math:`\alpha`'s method vocabulary.
+Alpha and beta refer to the same count fit and shared covariance. **Apply** uses
+both coefficients from that record. A fixed-beta calibration applies beta one,
+even when a manual or historical nonunity beta is present. The result displays
+fixed, fitted, and unavailable-error states distinctly; missing covariance does
+not by itself make an otherwise usable alpha-only fit fail.
 
 Instrument guidance
 --------------------

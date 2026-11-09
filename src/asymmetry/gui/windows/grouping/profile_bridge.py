@@ -28,7 +28,11 @@ from asymmetry.core.instrument import (
     PresetGrouping,
     instrument_display_name,
 )
-from asymmetry.core.project.calibration import CalibratedCoefficient
+from asymmetry.core.project.calibration import (
+    CALIBRATION_PAYLOAD_KEYS,
+    CalibratedCoefficient,
+    QuickCalibratedCoefficient,
+)
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     GoodWindowPolicy,
@@ -38,6 +42,7 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.grouping import resolve_group_indices
+from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
 
 
 def instrument_display_for_fingerprint(
@@ -125,15 +130,37 @@ def profile_from_form_payload(
     An explicit ``alpha_policy`` preserves the editor's selected policy; a
     numeric preview value alone cannot distinguish fixed and automatic alpha.
     """
-    profile = profile_from_payload(payload, name, fingerprint, active=active)
+    fields = (
+        payload
+        if calibration_source is None
+        else {key: value for key, value in payload.items() if key not in CALIBRATION_PAYLOAD_KEYS}
+    )
+    profile = profile_from_payload(fields, name, fingerprint, active=active)
     if alpha_policy is not None:
         profile.alpha_policy = alpha_policy
     if calibration_source is not None:
         profile.calibration_records = calibration_source.calibration_records
-        if alpha_policy is None and isinstance(
-            calibration_source.alpha_policy, CalibratedCoefficient
+        if alpha_policy is None and (
+            payload.get("projections")
+            or isinstance(
+                calibration_source.alpha_policy, (CalibratedCoefficient, QuickCalibratedCoefficient)
+            )
         ):
             profile.alpha_policy = calibration_source.alpha_policy
+        bindings = {}
+        keys = _AXIS_ALPHA_KEYS
+        for label, policy in calibration_source.projection_alpha_policies.items():
+            value = (
+                payload.get(keys.get(label))
+                if label in keys
+                else next(
+                    (p.get("alpha") for p in profile.projections if p["label"] == label), None
+                )
+            )
+            if value is not None and abs(float(value) - policy.value) < 0.5e-6:
+                bindings[label] = policy
+        if bindings:
+            profile.projection_alpha_policies = bindings
         previous = calibration_source.beta_policy
         if payload.get("projections"):
             profile.beta_policy = previous

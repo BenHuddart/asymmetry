@@ -21,7 +21,7 @@ from numbers import Integral
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QColor, QIcon, QPixmap, QValidator
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -69,16 +69,20 @@ from asymmetry.core.io.periods import (
     selected_period_index,
 )
 from asymmetry.core.io.reference_selection import reference_observations
+from asymmetry.core.project.calibration import (
+    CALIBRATION_PAYLOAD_KEYS,
+    CalibratedCoefficient,
+    QuickCalibratedCoefficient,
+    resolve_projection_calibrations,
+)
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
-    BetaPolicy,
     GoodWindowPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
     profile_fingerprint_for_run,
-    resolve_effective_grouping,
     resolve_run_good_window,
     run_file_good_window,
 )
@@ -97,7 +101,6 @@ from asymmetry.core.transform import (
     resolve_facility,
     resolve_selected_timing,
 )
-from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.transform.reference_scale import ReferenceExposure
@@ -120,7 +123,6 @@ from asymmetry.gui.utils.profile_colors import (
     soft_profile_background,
     used_profile_colors,
 )
-from asymmetry.gui.utils.reference_timing import prepare_reference_timing
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
@@ -130,11 +132,8 @@ from asymmetry.gui.widgets.no_scroll_spin import (
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.section_overflow_indicator import SectionOverflowIndicator
 from asymmetry.gui.windows.grouping.alpha_section import (
-    AlphaEstimateResult,
     AlphaSectionWidget,
-    build_alpha_request,
-    populate_calibration_run_combo,
-    run_alpha_estimate,
+    CalibrationReference,
 )
 from asymmetry.gui.windows.grouping.background_section import (
     BackgroundReferenceRunCandidate,
@@ -143,6 +142,7 @@ from asymmetry.gui.windows.grouping.background_section import (
 )
 from asymmetry.gui.windows.grouping.beta_section import (
     BetaSectionWidget,
+    beta_provenance_text,
     beta_status_text,
 )
 from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
@@ -365,6 +365,7 @@ class GroupingDialog(TimingControls, QDialog):
         # one alongside the profile. ``_current_run`` mirrors the selected run so
         # the target can be resolved without touching the scope panel mid-reseed.
         self._override_drafts: dict[int, dict[str, Any]] = {}
+        self._override_profiles: dict[int, GroupingProfile] = {}
         #: overridden runs whose override draft has uncommitted edits this session.
         self._override_dirty_runs: set[int] = set()
         #: overridden runs whose edits were committed by the last Apply (read by
@@ -377,6 +378,7 @@ class GroupingDialog(TimingControls, QDialog):
         # one is the dialog's). Created before the "no runs" early return below
         # so ``done``/``closeEvent`` can unconditionally shut it down.
         self._tasks = TaskRunner(self)
+        self._calibration_key = None
 
         self.setWindowTitle("Grouping")
         # Wide enough that the grouping and corrections columns sit side by side
@@ -445,13 +447,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._estimate_all_btn: QPushButton | None = None
-        # Inline per-projection α estimate (replaces the retired modal). Estimates
-        # run off-thread on this runner; "Estimate All" serialises them one axis at
-        # a time (the queue below), so each result routes to its own spin.
-        self._vector_alpha_tasks = TaskRunner(self)
-        self._vector_estimate_token = 0
-        self._vector_estimate_queue: list[str] = []
-        self._vector_estimate_source_run: int | None = None
         #: Focused compare-in-preview stage ("deadtime"/"background"/"alpha"/
         #: "beta"/None) — preview-only, drives the ghost (never the payload).
         self._compare_stage: str | None = None
@@ -459,6 +454,7 @@ class GroupingDialog(TimingControls, QDialog):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
         self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
+        self._suppress_alpha_provenance_reset = False
         # Digest of the deadtime + background settings a calibrated alpha was
         # measured under. When the corrections later change, the calibrated alpha
         # no longer balances the reduced (corrected) asymmetry — the staleness
@@ -937,7 +933,7 @@ class GroupingDialog(TimingControls, QDialog):
         # modal is kept only for the per-projection vector case). Estimate results
         # flow back into the α spin + provenance via _apply_calibrated_policy.
         self._alpha_section = AlphaSectionWidget()
-        self._alpha_section.alpha_estimated.connect(self._on_alpha_section_estimated)
+        self._alpha_section.result_ready.connect(self._on_calibration_ready)
 
         # The estimation *method* is now chosen inside the calibration dialog, so
         # the inline method combo is retired from the visible row. It is kept as a
@@ -960,9 +956,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._alpha_provenance_label = QLabel("")
         self._alpha_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._alpha_provenance_label.setWordWrap(True)
-
-        self._alpha_result_label = QLabel("")
-        self._alpha_result_label.setWordWrap(True)
 
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
@@ -1018,22 +1011,6 @@ class GroupingDialog(TimingControls, QDialog):
         # the per-axis Estimate buttons and "Estimate All" all use this pair with
         # the axis's own forward/backward groups (the estimate is inline — the
         # standalone modal that used to own these controls is retired).
-        vector_controls = QHBoxLayout()
-        vector_controls.setContentsMargins(0, 0, 0, 0)
-        vector_controls.addWidget(QLabel("Calibration run"))
-        self._vector_run_combo = NoScrollComboBox()
-        vector_controls.addWidget(self._vector_run_combo, stretch=1)
-        vector_controls.addWidget(QLabel("Method"))
-        self._vector_method_combo = NoScrollComboBox()
-        for label, key, explanation in _ALPHA_METHOD_ITEMS:
-            self._vector_method_combo.addItem(label, key)
-            self._vector_method_combo.setItemData(
-                self._vector_method_combo.count() - 1, explanation, Qt.ItemDataRole.ToolTipRole
-            )
-        self._vector_method_combo.currentIndexChanged.connect(self._on_vector_method_changed)
-        vector_controls.addWidget(self._vector_method_combo)
-        vector_alpha_vbox.addLayout(vector_controls)
-
         vector_grid_widget = QWidget()
         self._vector_alpha_layout = QGridLayout(vector_grid_widget)
         self._vector_alpha_layout.setContentsMargins(0, 0, 0, 0)
@@ -1056,7 +1033,6 @@ class GroupingDialog(TimingControls, QDialog):
         alpha_area_form.setVerticalSpacing(4)
         alpha_area_form.setHorizontalSpacing(12)
         alpha_area_form.addRow(self._alpha_row_label, self._single_alpha_widget)
-        alpha_area_form.addRow("", self._alpha_result_label)
         alpha_area_form.addRow("", self._alpha_stale_banner)
         alpha_area_form.addRow(self._vector_alpha_widget)
         alpha_area_layout.addLayout(alpha_area_form)
@@ -1069,9 +1045,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._beta_section = BetaSectionWidget()
         self._beta_section.set_value(grouping.get("beta", 1.0))
         self._beta_section.changed.connect(self._on_beta_changed)
-        self._beta_section.beta_estimated.connect(self._on_beta_section_estimated)
         # "Also update α" routes the count fit's α through the α apply path.
-        self._beta_section.alpha_estimated.connect(self._on_alpha_section_estimated)
         self._reseed_beta_provenance_from_grouping(grouping)
         # Note: the initial β staleness check runs at the end of __init__, once the
         # whole form exists (_correction_digest reads the full payload).
@@ -1249,7 +1223,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._update_deadtime_status()
         self._update_background_status(grouping)
         self._update_alpha_section()
-        self._update_beta_section()
 
         columns_row = QHBoxLayout()
         columns_row.setContentsMargins(0, 0, 0, 0)
@@ -1693,6 +1666,18 @@ class GroupingDialog(TimingControls, QDialog):
         if target != "profile":
             # Override drafts retain edits across target switches.
             payload = dict(self._override_draft_for(int(target)))
+            owner = self._override_profiles[int(target)]
+            for name in ("alpha", "beta"):
+                policy = getattr(owner, f"{name}_policy")
+                payload[name] = policy.value
+                if policy.mode == "calibrated":
+                    payload[f"{name}_method"] = policy.method
+                    if policy.source_run is not None:
+                        payload[f"{name}_reference_run"] = policy.source_run
+                    if policy.error is not None:
+                        payload[f"{name}_error"] = policy.error
+            payload["projections"] = [dict(spec) for spec in payload.get("projections", ())]
+            resolve_projection_calibrations(owner.projection_alpha_policies, payload)
         else:
             seed_profile = self._draft
             if seed_profile.alpha_policy.mode == "per_run_estimate":
@@ -1757,8 +1742,16 @@ class GroupingDialog(TimingControls, QDialog):
                 None,
             )
             run = dataset.run if dataset is not None else None
-            grouping = run.grouping if run is not None and isinstance(run.grouping, dict) else {}
-            draft = dict(grouping)
+            if run is None:
+                raise ValueError("Override draft requires a loaded run")
+            draft = dict(run.grouping)
+            self._override_profiles[run_number] = profile_from_form_payload(
+                draft,
+                name="override",
+                fingerprint=profile_fingerprint_for_run(run),
+            )
+            for key in CALIBRATION_PAYLOAD_KEYS:
+                draft.pop(key, None)
             self._override_drafts[run_number] = draft
         return draft
 
@@ -1780,7 +1773,16 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _sync_override_draft_from_form(self, run_number: int) -> None:
         """Capture the live form payload into *run_number*'s override draft."""
-        self._override_drafts[int(run_number)] = self._current_grouping_payload()
+        payload = self._current_grouping_payload()
+        source = self._override_profiles[int(run_number)]
+        self._override_profiles[int(run_number)] = profile_from_form_payload(
+            payload,
+            name=source.name,
+            fingerprint=source.fingerprint,
+            alpha_policy=source.alpha_policy if not self._vector_axis_pairs else None,
+            calibration_source=source,
+        )
+        self._override_drafts[int(run_number)] = payload
 
     def _sync_draft_from_form(self) -> None:
         """Lift the current form payload back into the current target's payload.
@@ -1797,7 +1799,7 @@ class GroupingDialog(TimingControls, QDialog):
         payload = self._current_grouping_payload()
         target = self._editing_target()
         if target != "profile":
-            self._override_drafts[int(target)] = payload
+            self._sync_override_draft_from_form(int(target))
             return
         assert self._fingerprint is not None
         color = self._draft.color
@@ -2354,6 +2356,7 @@ class GroupingDialog(TimingControls, QDialog):
         for rn in list(self._override_drafts):
             if not self._run_is_overridden(int(rn)):
                 self._override_drafts.pop(int(rn), None)
+                self._override_profiles.pop(int(rn), None)
                 self._override_dirty_runs.discard(int(rn))
                 self._scope_panel.mark_override_dirty(int(rn), False)
         # Re-seed the form from the target the current run now resolves to.
@@ -2972,7 +2975,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._alpha_estimate_state.clear()
         self._alpha_correction_digest = None
         self._reseed_alpha_provenance_from_grouping(grouping)
-        self._alpha_result_label.setText("")
         self._refresh_alpha_provenance_label()
         self._refresh_alpha_staleness()
         # β provenance reseed must follow the ``set_value`` above: at this point
@@ -3026,7 +3028,6 @@ class GroupingDialog(TimingControls, QDialog):
         )
         self._update_background_status(grouping)
         self._update_alpha_section()
-        self._update_beta_section()
         binning = binning_spec(grouping)
         self._bin0_spin.setValue(binning.bin0_us)
         self._bin10_spin.setValue(binning.bin10_us)
@@ -3271,7 +3272,8 @@ class GroupingDialog(TimingControls, QDialog):
         banner + chip flag clear. The preview (``_refresh_preview``) syncs the
         compare surfaces on its way in.
         """
-        if not getattr(self, "_suppress_beta_provenance_reset", False):
+        if not self._suppress_beta_provenance_reset:
+            self._beta_section.set_provenance("manual")
             self._beta_estimate_state = None
             self._beta_method = ""
             self._beta_correction_digest = None
@@ -3823,6 +3825,37 @@ class GroupingDialog(TimingControls, QDialog):
             return beta_off_unity
         return False
 
+    def _calibration_input_key(self):
+        """Bounded widget facts; advice-only preview refreshes do not change a request."""
+        return (
+            id(self._run),
+            repr(self._groups),
+            repr(self._included_groups),
+            repr(self._projection_specs),
+            tuple(self._vector_axis_pairs.items()),
+            self._exclude_edit.text(),
+            self._forward_combo.currentData(),
+            self._backward_combo.currentData(),
+            self._current_t0_mode(),
+            self._t0_spin.value(),
+            self._current_good_window_mode(),
+            self._t_good_offset_spin.value(),
+            self._last_good_spin.value(),
+            self._current_period_mode(),
+            self._bunch_spin.value(),
+            self._binning_mode_combo.currentData(),
+            self._bin0_spin.value(),
+            self._bin10_spin.value(),
+            repr(self._deadtime_section.get_policy().to_dict()),
+            self._background_mode,
+            repr(self._background_section.details()),
+            repr(self._background_run_payload),
+            repr(self.period_mapping_request),
+            self._alpha_spin.value(),
+            self._beta_section.value(),
+            tuple((key, spin.value()) for key, spin in self._vector_alpha_spins.items()),
+        )
+
     def _refresh_preview(self, *args: object) -> None:
         """Snapshot form inputs; profile resolution and reduction run on the worker."""
         self._refresh_t0_line()
@@ -3830,6 +3863,10 @@ class GroupingDialog(TimingControls, QDialog):
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
+        key = self._calibration_input_key()
+        if key != self._calibration_key:
+            self._calibration_key = key
+            self._alpha_section.invalidate()
         run = self._run
         if run is None or not run.histograms or self._fingerprint is None:
             pane.show_unavailable()
@@ -4052,12 +4089,8 @@ class GroupingDialog(TimingControls, QDialog):
     def _teardown_workers(self) -> None:
         """Cancel and join every worker runner (idempotent).
 
-        The preview pane owns its runner for the live-preview reduction; the
-        inline α section owns its single-α estimate runner; the inline β section
-        owns its β estimate runner;
-        ``self._vector_alpha_tasks`` runs the inline per-projection α estimates;
-        and ``self._tasks`` is this dialog's runner for the background-configure
-        preview grouping. Every ``shutdown()`` is safe to call more than once.
+        Preview, calibration, deadtime, and timing work keep their existing
+        runner ownership and cooperative shutdown paths.
         """
         # Stop the detected-t0 debounce first: a timer left armed would start a
         # fresh worker on the runner we are about to shut down.
@@ -4071,12 +4104,6 @@ class GroupingDialog(TimingControls, QDialog):
         if alpha_section is not None:
             alpha_section.shutdown()
         self._deadtime_section.shutdown()
-        beta_section = getattr(self, "_beta_section", None)
-        if beta_section is not None:
-            beta_section.shutdown()
-        vector_tasks = getattr(self, "_vector_alpha_tasks", None)
-        if vector_tasks is not None:
-            vector_tasks.shutdown()
         tasks = getattr(self, "_tasks", None)
         if tasks is not None:
             tasks.shutdown()
@@ -4301,16 +4328,14 @@ class GroupingDialog(TimingControls, QDialog):
         # _sync_compare_surfaces clears an α compare focus there (α is never
         # available in vector mode), so no ghost — and no card accent — is left.
         if hasattr(self, "_alpha_section"):
-            self._alpha_section.setVisible(not vector_mode)
+            self._alpha_section.setVisible(True)
+            self._alpha_section.set_vector(vector_mode, self._vector_axis_pairs)
             self._sync_compare_surfaces()
         # β is scalar-only: the whole card hides in vector mode and the payload
         # omits the key there (per-projection reductions stay at β = 1). The
         # widget keeps its value so leaving vector mode restores it.
         if hasattr(self, "_beta_card"):
             self._beta_card.setVisible(not vector_mode)
-
-        if vector_mode:
-            self._update_vector_alpha_controls()
 
         if not vector_mode:
             self._rebuild_vector_alpha_table([], grouping_values, canonical)
@@ -4419,6 +4444,7 @@ class GroupingDialog(TimingControls, QDialog):
                 spin.setValue(self._projection_alpha_for_label(label, fallback))
             layout.addWidget(spin, row_idx, 3)
             self._vector_alpha_spins[label] = spin
+            spin.valueChanged.connect(partial(self._on_projection_alpha_edited, label))
 
             btn = QPushButton("Estimate α")
             btn.setAutoDefault(False)
@@ -4434,6 +4460,17 @@ class GroupingDialog(TimingControls, QDialog):
         self._estimate_all_btn.setDefault(False)
         self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
         layout.addWidget(self._estimate_all_btn, len(ordered_labels) + 1, 0, 1, 5)
+
+    def _on_projection_alpha_edited(self, label: str, _value: float) -> None:
+        """Manual projection edits revoke that applied link while retaining history."""
+        if self._suppress_dirty or self._suppress_alpha_provenance_reset:
+            return
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        owner.projection_alpha_policies.pop(label, None)
+        self._alpha_estimate_state.pop(label, None)
+        self._mark_dirty()
+        self._refresh_preview()
 
     def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
         """Resolve the InstrumentLayout to show in the detector layout editor.
@@ -4595,11 +4632,14 @@ class GroupingDialog(TimingControls, QDialog):
     def _set_alpha_method(self, method_key: str) -> None:
         """Select the alpha estimation method combo entry, defaulting to diamagnetic."""
         idx = self._alpha_method_combo.findData(str(method_key))
-        self._alpha_method_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if idx < 0:
+            self._alpha_method_combo.addItem(str(method_key), str(method_key))
+            idx = self._alpha_method_combo.count() - 1
+        self._alpha_method_combo.setCurrentIndex(idx)
 
     def _current_alpha_method(self) -> str:
         """Return the grouping-dict key of the selected estimation method."""
-        return str(self._alpha_method_combo.currentData() or "diamagnetic")
+        return str(self._alpha_method_combo.currentData() or "")
 
     def _set_binning_mode(self, mode_key: str) -> None:
         """Select the binning-mode combo entry, defaulting to fixed."""
@@ -4725,12 +4765,13 @@ class GroupingDialog(TimingControls, QDialog):
         if dialog.exec() != QDialog.DialogCode.Accepted or dialog.mapping is None:
             return
         metadata = getattr(self._reference_dataset, "metadata", {}) or {}
+        self._alpha_section.invalidate()
         self.period_mapping_request = {
             "mapping": dialog.mapping,
             "source_run_number": metadata.get("source_run_number", metadata.get("run_number")),
             "period_run_numbers": [int(ds.run_number) for ds in siblings],
         }
-        self._alpha_result_label.setText(
+        self._alpha_section._note_label.setText(
             "Period mapping recorded — a combined red/green dataset is created "
             "when you press Apply."
         )
@@ -4742,65 +4783,86 @@ class GroupingDialog(TimingControls, QDialog):
             return
         section.configure(
             datasets=self._fingerprint_datasets(),
-            method=self._current_alpha_method(),
             selected_run_number=int(self._reference_dataset.run_number),
             context_provider=self._alpha_estimate_context,
         )
 
-    def _alpha_estimate_context(self) -> dict[str, Any]:
-        """The current group pair + correction context for an inline α estimate.
-
-        Read fresh at Estimate time so a group / forward-backward edit is honoured
-        without re-seeding (which would reset the calibration-run selection).
-        """
-        try:
-            forward_gid = int(self._forward_combo.currentData())
-            backward_gid = int(self._backward_combo.currentData())
-        except (TypeError, ValueError):
-            forward_gid, backward_gid = 1, 2
-        return {
-            "groups": self._groups,
-            "forward_group": forward_gid,
-            "backward_group": backward_gid,
-            "excluded_detectors": self._current_excluded_detectors() or [],
-            "correction_provider": self._calibration_correction_provider(),
-            "reference_resolver": self._calibration_reference_resolver,
-            "facility": self._calibration_facility(),
-        }
-
-    def _on_alpha_section_estimated(self, policy: object) -> None:
-        """Apply an inline single-α estimate to the α spin + provenance."""
-        if isinstance(policy, AlphaPolicy):
-            self._apply_calibrated_policy("single", self._alpha_spin, policy)
-
-    def _update_beta_section(self) -> None:
-        """(Re)seed the inline β section's calibration-run list + context."""
-        section = getattr(self, "_beta_section", None)
-        if section is None:
-            return
-        section.configure(
-            datasets=self._fingerprint_datasets(),
-            selected_run_number=int(self._reference_dataset.run_number),
-            context_provider=self._alpha_estimate_context,
-            current_alpha_provider=lambda: float(self._alpha_spin.value()),
+    def _alpha_estimate_context(self):
+        """Capture policies once at Estimate; resolution belongs to the worker."""
+        payload = self._current_grouping_payload()
+        profile = profile_from_form_payload(
+            payload,
+            name=self._draft_name,
+            fingerprint=self._fingerprint,
+            good_window_policy=self._current_good_window_policy(),
         )
+        profile.t0_policy = self._current_t0_policy()
+        datasets = self._fingerprint_datasets()
+
+        def context(slot, dataset):
+
+            pairs = self._vector_axis_pairs
+            pair = pairs.get(slot, (profile.forward_group, profile.backward_group))
+            selected = replace(
+                profile, forward_group=pair[0], backward_group=pair[1], projections=[]
+            )
+            reference = None
+            if payload.get("background_mode") == "reference_run":
+                reference = CalibrationReference(dict(payload["background_run"]), tuple(datasets))
+            return selected, reference
+
+        return context
+
+    @Slot(object)
+    def _on_calibration_ready(self, reply):
+        """Accept a current measurement into the draft; Apply commits its owner."""
+        from asymmetry.core.project.calibration import apply_calibration_outcome
+
+        slot, outcome = reply.slot, reply.outcome
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        apply_calibration_outcome(owner, outcome, projection=None if slot == "single" else slot)
+        policy = owner.alpha_policy if slot == "single" else owner.projection_alpha_policies[slot]
+        spin = self._alpha_spin if slot == "single" else self._vector_alpha_spins[slot]
+        with (
+            QSignalBlocker(spin),
+            QSignalBlocker(self._alpha_spin),
+            QSignalBlocker(self._alpha_method_combo),
+            QSignalBlocker(self._beta_section),
+        ):
+            spin.setValue(policy.value)
+            if slot == "P_z":
+                self._alpha_spin.setValue(policy.value)
+            self._set_alpha_method(policy.method)
+            if slot == "single":
+                self._beta_section.set_value(owner.beta_policy.value)
+        self._calibration_key = self._calibration_input_key()
+        if slot == "single":
+            if outcome.record is not None:
+                self._on_beta_section_estimated(owner.beta_policy)
+            else:
+                self._beta_estimate_state = None
+                self._beta_method = ""
+                self._beta_correction_digest = None
+                self._beta_section.set_provenance("fixed")
+                self._refresh_beta_staleness()
+        self._apply_calibrated_policy(slot, spin, policy)
+        self._refresh_preview()
+        self._update_apply_enabled()
 
     def _on_beta_section_estimated(self, policy: object) -> None:
-        """Apply an inline β estimate to the β spin + provenance + staleness.
+        """Show the captured beta policy and its correction assumptions.
 
-        Mirrors :meth:`_apply_calibrated_policy` for the (single, scalar) β: writes
-        the spin under the suppress flag so the ``changed`` handler does not drop
-        the provenance we are recording, stamps the corrections digest β was
-        measured under, refreshes staleness, and focuses the β compare.
+        Beta scales forward counts in the denominator; the draft policy retains
+        the common fit record while the spin uses its displayed precision.
         """
-        if not isinstance(policy, BetaPolicy):
-            return
         self._beta_estimate_state = (
             float(policy.value),
             policy.error,
             int(policy.source_run) if policy.source_run is not None else -1,
         )
         self._beta_method = str(policy.method)
+        self._beta_section.set_provenance(beta_provenance_text(policy))
         self._suppress_beta_provenance_reset = True
         try:
             self._beta_section.set_value(float(policy.value))
@@ -4816,108 +4878,16 @@ class GroupingDialog(TimingControls, QDialog):
             self._beta_card.set_expanded(True)
         self._mark_dirty()
 
-    def _calibration_correction_provider(self):
-        """Build the per-dataset correction-payload provider for the alpha dialog.
-
-        Resolves the current draft (deadtime + background config) against each
-        candidate calibration run, so the alpha estimate runs on the same
-        deadtime-corrected, background-subtracted counts the reduction will. The
-        draft's alpha policy is forced to a fixed value so resolving does not
-        trigger a nested per-run alpha estimate (the dialog measures alpha
-        itself). Returns ``None`` when no fingerprint context is available.
-        """
-        if self._fingerprint is None:
-            return None
-        payload = self._current_grouping_payload()
-        profile = profile_from_form_payload(
-            payload,
-            name=self._draft_name or "draft",
-            fingerprint=self._fingerprint,
-            good_window_policy=self._current_good_window_policy(),
-        )
-        profile = replace(profile, alpha_policy=AlphaPolicy(mode="fixed", value=1.0))
-
-        def provide(dataset: MuonDataset) -> dict[str, Any]:
-            if dataset.run is None:
-                return {}
-            return resolve_effective_grouping(profile, dataset.run)
-
-        return provide
-
-    def _calibration_reference_resolver(
-        self, grouping: dict[str, Any]
-    ) -> BackgroundReference | None:
-        """Prepare calibration reference timing on its worker boundary."""
-        payload = grouping.get("background_run")
-        if not isinstance(payload, dict):
-            return None
-        reference = resolve_background_reference(
-            payload,
-            sample_exposure=ReferenceExposure.from_grouping(grouping),
-            datasets=self._fingerprint_datasets(),
-            cache=self._background_run_cache,
-        )
-
-        return prepare_reference_timing(reference, grouping, self)
-
-    def _calibration_facility(self) -> str:
-        """Facility label for the alpha dialog's background tail-fit shortening."""
-        run = self._run
-        return resolve_facility(
-            metadata=(run.metadata if run is not None else None),
-            grouping=(run.grouping if run is not None else None),
-        )
-
-    # ------------------------------------------------------------------
-    # Inline per-projection (vector) α estimate
-    # ------------------------------------------------------------------
-
-    def _update_vector_alpha_controls(self) -> None:
-        """(Re)seed the shared vector calibration-run list + method combo.
-
-        The run combo is repopulated preserving the current selection (falling
-        back to the preview reference run); the method mirrors the single-α
-        provenance method. Called whenever the vector table becomes visible.
-        """
-        combo = getattr(self, "_vector_run_combo", None)
-        if combo is None:
-            return
-        current = combo.currentData()
-        selected = int(current) if current is not None else int(self._reference_dataset.run_number)
-        combo.blockSignals(True)
-        populate_calibration_run_combo(combo, self._fingerprint_datasets(), selected)
-        combo.blockSignals(False)
-        method_combo = self._vector_method_combo
-        idx = method_combo.findData(self._current_alpha_method())
-        method_combo.blockSignals(True)
-        method_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        method_combo.blockSignals(False)
-
-    def _on_vector_method_changed(self) -> None:
-        """Keep the payload's α-method provenance in step with the vector combo."""
-        self._set_alpha_method(self._current_vector_method())
-
-    def _current_vector_method(self) -> str:
-        return str(self._vector_method_combo.currentData() or "diamagnetic")
-
-    def _vector_calibration_dataset(self) -> MuonDataset | None:
-        """The dataset for the shared vector calibration-run selection."""
-        run_number = self._vector_run_combo.currentData()
-        if run_number is None:
-            return None
-        return next(
-            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == int(run_number)),
-            None,
-        )
-
     def _apply_calibrated_policy(
-        self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
+        self,
+        slot: str,
+        target_spin: QDoubleSpinBox,
+        policy: AlphaPolicy | CalibratedCoefficient | QuickCalibratedCoefficient,
     ) -> None:
-        """Write a calibrated :class:`AlphaPolicy` back into the form + provenance."""
+        """Show the captured coefficient policy in the form and provenance."""
         if slot == "single" and self._editing_target() == "profile":
             self._draft.alpha_policy = policy
-        # Record provenance the same shape the old inline estimate produced, so
-        # _current_grouping_payload emits alpha_method/alpha_error/alpha_reference_run.
+        # Form provenance is a view of the captured coefficient policy.
         self._alpha_estimate_state[slot] = (
             float(policy.value),
             policy.error,
@@ -4943,7 +4913,6 @@ class GroupingDialog(TimingControls, QDialog):
         # a later deadtime/background change re-raises the staleness banner.
         self._alpha_correction_digest = self._correction_digest()
         self._refresh_alpha_staleness()
-        self._record_calibration_result_label(slot, policy)
         # The scalar compare and expanded card expose the newly measured result.
         if not bool(self._vector_axis_pairs):
             self._set_compare_stage("alpha")
@@ -4951,23 +4920,15 @@ class GroupingDialog(TimingControls, QDialog):
             self._alpha_card.set_expanded(True)
         self._mark_dirty()
 
-    def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:
-        """Show the calibrated α in the shared result label."""
-        method_label = next(
-            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == policy.method),
-            policy.method,
-        )
-        formatted = _format_value_with_uncertainty(policy.value, policy.error)
-        slot_prefix = "" if slot == "single" else f"{slot}: "
-        run_text = f", run {policy.source_run}" if policy.source_run is not None else ""
-        self._alpha_result_label.setText(f"{slot_prefix}α = {formatted} — {method_label}{run_text}")
-
     def _on_alpha_spin_edited(self) -> None:
         """A hand-edit of the single alpha spin drops calibration provenance."""
-        if getattr(self, "_suppress_alpha_provenance_reset", False):
+        if self._suppress_alpha_provenance_reset:
             return
-        if not self._suppress_dirty and self._editing_target() == "profile":
-            self._draft.alpha_policy = AlphaPolicy(value=float(self._alpha_spin.value()))
+        if not self._suppress_dirty:
+            target = self._editing_target()
+            owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+            owner.alpha_policy = AlphaPolicy(value=float(self._alpha_spin.value()))
+            self._set_alpha_method("")
         self._alpha_estimate_state.pop("single", None)
         self._alpha_estimate_state.pop("P_z", None)
         self._alpha_correction_digest = None
@@ -5010,6 +4971,7 @@ class GroupingDialog(TimingControls, QDialog):
         ``beta_error`` / ``beta_correction_digest``); lifting it back lets the β
         staleness banner fire on reopen, not just within the session.
         """
+        self._beta_section.set_provenance("manual")
         reference = grouping.get("beta_reference_run")
         if reference is None:
             return
@@ -5024,6 +4986,9 @@ class GroupingDialog(TimingControls, QDialog):
             error_val = None
         self._beta_estimate_state = (float(self._beta_section.value()), error_val, run)
         self._beta_method = str(grouping.get("beta_method", ""))
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        self._beta_section.set_provenance(beta_provenance_text(owner.beta_policy))
         digest = grouping.get("beta_correction_digest")
         self._beta_correction_digest = str(digest) if digest is not None else None
 
@@ -5226,91 +5191,8 @@ class GroupingDialog(TimingControls, QDialog):
         self._begin_vector_estimates(axes)
 
     def _begin_vector_estimates(self, axes: list[str]) -> None:
-        """Queue *axes* for serialised inline estimation and start the first."""
-        if self._run is None or not self._run.histograms:
-            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
-            return
-        if not axes:
-            return
-        self._vector_estimate_queue = list(axes)
-        self._set_vector_estimate_enabled(False)
-        self._start_next_vector_estimate()
-
-    def _start_next_vector_estimate(self) -> None:
-        """Kick off the next queued axis estimate, or re-enable when drained."""
-        while self._vector_estimate_queue:
-            axis = self._vector_estimate_queue[0]
-            pair = self._vector_axis_pairs.get(axis)
-            spin = self._vector_alpha_spins.get(axis)
-            dataset = self._vector_calibration_dataset()
-            if pair is None or spin is None or dataset is None or dataset.run is None:
-                self._vector_estimate_queue.pop(0)
-                continue
-            forward_gid, backward_gid = int(pair[0]), int(pair[1])
-            self._vector_estimate_source_run = int(dataset.run_number)
-            self._vector_estimate_token += 1
-            token = self._vector_estimate_token
-            request = build_alpha_request(
-                token=token,
-                dataset=dataset,
-                groups=self._groups,
-                forward_gid=forward_gid,
-                backward_gid=backward_gid,
-                excluded_detectors=self._current_excluded_detectors() or [],
-                method=self._current_vector_method(),
-                correction_provider=self._calibration_correction_provider(),
-                reference_resolver=self._calibration_reference_resolver,
-                facility=self._calibration_facility(),
-            )
-            self._vector_alpha_tasks.start(
-                lambda worker, request=request: run_alpha_estimate(worker, request),
-                on_finished=lambda result, axis=axis, token=token: (
-                    self._on_vector_estimate_finished(axis, token, result)
-                ),
-                on_error=lambda message, axis=axis: self._on_vector_estimate_error(axis, message),
-            )
-            return
-        self._set_vector_estimate_enabled(True)
-
-    def _on_vector_estimate_finished(self, axis: str, token: int, result: object) -> None:
-        """Apply one axis estimate (unless superseded) and start the next."""
-        if token != self._vector_estimate_token:
-            return  # a newer estimate supersedes this stale result
-        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
-            self._vector_estimate_queue.pop(0)
-        spin = self._vector_alpha_spins.get(axis)
-        if isinstance(result, AlphaEstimateResult) and result.estimate.ok and spin is not None:
-            estimate = result.estimate
-            self._apply_calibrated_policy(
-                axis,
-                spin,
-                AlphaPolicy(
-                    mode="calibrated",
-                    value=float(estimate.alpha),
-                    error=estimate.alpha_error,
-                    method=estimate.method,
-                    source_run=self._vector_estimate_source_run,
-                ),
-            )
-        elif isinstance(result, AlphaEstimateResult) and not result.estimate.ok:
-            QMessageBox.warning(
-                self, "Alpha Calibration", f"Estimate failed: {result.estimate.message}"
-            )
-        self._start_next_vector_estimate()
-
-    def _on_vector_estimate_error(self, axis: str, message: str) -> None:
-        """Surface a worker error for one axis and continue the queue."""
-        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
-            self._vector_estimate_queue.pop(0)
-        QMessageBox.warning(self, "Alpha Calibration", message)
-        self._start_next_vector_estimate()
-
-    def _set_vector_estimate_enabled(self, enabled: bool) -> None:
-        """Enable/disable the per-axis + Estimate-All buttons while in flight."""
-        for button in self._vector_estimate_buttons.values():
-            button.setEnabled(enabled)
-        if self._estimate_all_btn is not None:
-            self._estimate_all_btn.setEnabled(enabled)
+        """Stage each projection with beta fixed to one on the shared runner."""
+        self._alpha_section.estimate_slots(axes)
 
     def _reference_has_two_period_data(self) -> bool:
         """Return True when the reference run contains two-period histograms."""
@@ -5475,12 +5357,7 @@ class GroupingDialog(TimingControls, QDialog):
         return payload
 
     def _projection_payload(self, canonical: bool) -> list[dict[str, Any]]:
-        """Attach current non-canonical projection values and estimate provenance.
-
-        A matching new estimate replaces the recorded error, including an absent
-        error. Manual edits clear estimate provenance. Canonical EMU axes use
-        dedicated alpha_x/y/z keys, so their projection specs pass through.
-        """
+        """Capture each projection value without stale or duplicate attribution."""
         specs = self._projection_specs or []
         result: list[dict[str, Any]] = []
         for spec in specs:
@@ -5488,7 +5365,10 @@ class GroupingDialog(TimingControls, QDialog):
                 continue
             new_spec = dict(spec)
             label = str(new_spec.get("label"))
-            if not canonical and label in self._vector_alpha_spins:
+            if canonical and label in CANONICAL_VECTOR_AXES:
+                for field in ("alpha", "alpha_error", "alpha_reference_run", "alpha_method"):
+                    new_spec.pop(field, None)
+            elif label in self._vector_alpha_spins:
                 value = float(self._vector_alpha_spins[label].value())
                 new_spec["alpha"] = value
                 recorded = self._alpha_estimate_state.get(label)
@@ -5499,9 +5379,8 @@ class GroupingDialog(TimingControls, QDialog):
                         new_spec.pop("alpha_error", None)
                     new_spec["alpha_reference_run"] = int(recorded[2])
                 else:
-                    # A manual edit (or no estimate) invalidates stale provenance.
-                    new_spec.pop("alpha_error", None)
-                    new_spec.pop("alpha_reference_run", None)
+                    for field in ("alpha_error", "alpha_reference_run", "alpha_method"):
+                        new_spec.pop(field, None)
             result.append(new_spec)
         return result
 
@@ -5632,7 +5511,13 @@ class GroupingDialog(TimingControls, QDialog):
                 continue
             draft = self._override_drafts.get(int(run_number))
             if draft is not None:
-                override_edits[int(run_number)] = dict(draft)
+                from asymmetry.core.project.calibration import profile_calibration_payload
+
+                payload = {**draft, "projections": [dict(p) for p in draft.get("projections", ())]}
+                override_edits[int(run_number)] = profile_calibration_payload(
+                    self._override_profiles[int(run_number)],
+                    payload,
+                )
         return {
             "profile": GroupingProfile.from_dict(self._draft.to_dict()),
             "inheriting": self._scope_panel.inheriting_run_numbers(),

@@ -59,9 +59,11 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
     good_event_count,
     group_forward_backward,
+    grouping_balances,
 )
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
+from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
@@ -4969,24 +4971,17 @@ class PlotPanel(QWidget):
         """Return the asymmetry alpha value used for *dataset*, if available."""
         run = dataset.run
         if run is not None and isinstance(run.grouping, dict):
-            axis = self._axis_canonical_key(run.grouping.get("vector_axis"))
-            axis_key = {
-                "P_x": "alpha_x",
-                "P_y": "alpha_y",
-                "P_z": "alpha_z",
-            }.get(axis)
-            if axis_key is not None:
-                alpha = run.grouping.get(axis_key)
-                try:
-                    return float(alpha)
-                except (TypeError, ValueError):
-                    pass
-
-            alpha = run.grouping.get("alpha")
-            try:
-                return float(alpha)
-            except (TypeError, ValueError):
-                pass
+            if any(
+                key in run.grouping
+                for key in ("alpha", "alpha_x", "alpha_y", "alpha_z", "projections")
+            ):
+                grouping = run.grouping
+                if not grouping.get("groups"):
+                    # A cached curve retains its recorded axis without acquired pair facts.
+                    axis = self._axis_canonical_key(grouping.get("vector_axis"))
+                    key = _AXIS_ALPHA_KEYS.get(axis, "alpha")
+                    grouping = {"alpha": grouping.get(key, grouping.get("alpha", 1.0))}
+                return grouping_balances(grouping)[0]
 
         alpha = dataset.metadata.get("alpha")
         try:
@@ -8368,7 +8363,7 @@ class PlotPanel(QWidget):
         )
         forward_group = _safe_int(grouping.get("forward_group"))
         backward_group = _safe_int(grouping.get("backward_group"))
-        alpha = _fmt_float(grouping.get("alpha"), 4)
+        alpha = _fmt_float(grouping_balances(grouping)[0], 4)
         t0_bin = _safe_int(grouping.get("t0_bin"))
         if t0_bin is None:
             t0_bin = 0

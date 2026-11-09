@@ -177,9 +177,7 @@ class MolAfmAlphaScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx) -> Path:  # noqa: D401
-        # α calibration is inline in the Grouping window's Corrections column
-        # (the standalone modal is retired); the shared preview overlays the
-        # α = 1 ↔ α̂ before/after with the residual baseline ⟨A⟩.
+        # The quick result updates the draft coefficient and its preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([_DATA % _ALPHA_RUN])[0]
@@ -189,13 +187,12 @@ class MolAfmAlphaScenario(CorpusScenario):
         dialog.show()
         _process(150)
 
-        # Estimate runs on a worker thread; block until it lands so the capture
-        # shows the α value and the balanced "after" curve, never the transient
-        # "Computing estimate…" state.
+        # Pump the event loop until the worker fills the calibrated draft.
         section = dialog._alpha_section
+        section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _wait_until(lambda: section._tasks.active_count == 0, timeout_ms=15000)
-        # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
+        # Let the calibrated draft preview settle before grabbing.
         _process(500)
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _process(80)
@@ -205,8 +202,7 @@ class MolAfmAlphaScenario(CorpusScenario):
         pix = dialog.grab()
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
-        # The applied estimate dirtied the draft: close() would raise the
-        # discard-guard modal, which hangs headless — tear down directly.
+        # Release workers without entering a headless discard prompt.
         dialog._teardown_workers()
         dialog.deleteLater()
         _process(40)

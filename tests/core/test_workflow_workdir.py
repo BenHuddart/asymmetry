@@ -585,3 +585,25 @@ def test_tail_policy_invalidates_old_cache_but_preserves_readable_results(reduce
     current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     assert not workdir.is_current(entry.run_number, current)
     np.testing.assert_array_equal(workdir.reduced(entry.run_number).asymmetry, dataset.asymmetry)
+
+
+def test_reduction_cache_invalidates_the_base_balance_policy(reduced):
+    import hashlib
+
+    from asymmetry.core.workflow import workdir as module
+
+    workdir, dataset, entry, path, grouping, settings = reduced
+    legacy = {
+        "schema": SCHEMA,
+        "deadtime_scope": "required_fb_observations",
+        "tail_background_policy": module.TAIL_BACKGROUND_POLICY_REVISION,
+        "files": [file_fingerprint(path)],
+        "grouping": module._canonical(grouping),
+        "settings": settings.to_dict(),
+    }
+    digest = hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    workdir.write_reduced(dataset, dataclasses.replace(entry, digest=digest))
+    current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+    assert not workdir.is_current(entry.run_number, current)

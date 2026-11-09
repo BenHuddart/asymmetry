@@ -176,6 +176,7 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.project.calibration import CALIBRATION_PAYLOAD_KEYS, calibration_values
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
@@ -243,7 +244,7 @@ from asymmetry.core.transform.deadtime import (
     fit_deadtime_calibration,
     promote_deadtime_to_grouping,
 )
-from asymmetry.core.transform.grouping import InvalidGroupingError
+from asymmetry.core.transform.grouping import InvalidGroupingError, grouping_balances
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
@@ -604,6 +605,7 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 #: apply paths AND the project-persistence extractor, so a new reduction
 #: setting cannot be persisted on one path and silently erased on another.
 ALPHA_PROVENANCE_KEYS = (
+    *CALIBRATION_PAYLOAD_KEYS,
     "alpha_method",
     "alpha_error",
     "alpha_reference_run",
@@ -2334,20 +2336,11 @@ class MainWindow(QMainWindow):
         grouping_result: dict,
         existing_grouping: dict | None,
     ) -> dict[str, float]:
-        """Resolve per-projection alpha values keyed by projection label.
+        """Resolve projection views for a partial grouping edit.
 
-        Each declared projection contributes its own alpha — the value carried in
-        the ``projections`` payload (e.g. the GPS ``WEP`` ``FB`` pair's ``0.75``,
-        written by :meth:`AsymmetryProjection.to_payload`) — so a non-canonical
-        projection (``FB``/``UD``, transverse-field ``Top-Bottom``/``Fwd-Back``,
-        …) reduces with *its* alpha instead of the shared base alpha. A projection
-        dict without an explicit ``alpha`` falls back to the base alpha, matching
-        legacy groupings whose projections predate per-projection alpha.
-
-        The canonical EMU axes ``P_x``/``P_y``/``P_z`` are simply one case of this:
-        they keep their dedicated ``alpha_x``/``alpha_y``/``alpha_z`` keys, which
-        the per-axis alpha table writes, and they fall back to the base alpha — never to a seeded projection value — so the EMU
-        vector-polarization behaviour is unchanged.
+        Canonical axes use their dedicated keys; other projections use their
+        declared alpha. Missing values use the authored base fallback, and
+        untouched settings come from the existing run.
         """
         existing = existing_grouping if isinstance(existing_grouping, dict) else {}
         try:
@@ -4963,15 +4956,7 @@ class MainWindow(QMainWindow):
                     self._assign_dataset_profile(dataset, base)
 
     def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> list[int]:
-        """Apply every edited per-run override to its own run.
-
-        ``profile_result`` carries ``override_edits`` — a ``{run_number:
-        grouping_payload}`` map of every overridden run whose own grouping was
-        edited in the grouping window this session. Each payload is applied to
-        its run alone; the run stays marked overridden (the edit *is* its new
-        per-run override). Returns the sorted list of run numbers actually
-        updated (empty when there were no override edits).
-        """
+        """Apply each released run's captured override and return the updated runs."""
         override_edits = profile_result.get("override_edits") or {}
         if not override_edits:
             return []
@@ -5302,6 +5287,7 @@ class MainWindow(QMainWindow):
         self, dataset, grouping_result: dict
     ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
         """Apply atomically, returning success and each period's correction outcomes."""
+        grouping_result = calibration_values(grouping_result)
         run = dataset.run
         if run is None:
             return False, {}
@@ -5647,6 +5633,7 @@ class MainWindow(QMainWindow):
         reduction_grouping.update(
             {
                 "groups": groups,
+                "group_names": group_names_for_axis or {},
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
                 "alpha": float(alpha if alpha > 0 else 1.0),
@@ -5670,7 +5657,9 @@ class MainWindow(QMainWindow):
         if not use_deadtime:
             grouping.pop("deadtime_method", None)
 
-        run_alpha = alpha if alpha > 0 else 1.0
+        self._store_projections(reduction_grouping, projections_to_store)
+        self._store_vector_axis(reduction_grouping, vector_axis if axis_pairs else None)
+        run_alpha, run_beta = grouping_balances(reduction_grouping)
         outcomes: dict[str, CorrectionOutcomes] = {}
         facility = resolve_facility(
             metadata=run.metadata, grouping=reduction_grouping
@@ -5683,7 +5672,7 @@ class MainWindow(QMainWindow):
             forward_idx=forward_idx,
             backward_idx=backward_idx,
             alpha=run_alpha,
-            beta=float(reduction_grouping.get("beta", 1.0)),
+            beta=run_beta,
             use_deadtime=use_deadtime,
             deadtime_mode=deadtime_mode,
             use_background=use_background,
@@ -5707,7 +5696,9 @@ class MainWindow(QMainWindow):
                 "groups": groups,
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
-                "alpha": float(run_alpha),
+                "alpha": float(
+                    grouping_result.get("alpha", run_alpha) if axis_pairs else run_alpha
+                ),
                 "t0_bin": t0_bin,
                 "t_good_offset": t_good_offset,
                 "first_good_bin": first_good,
@@ -5767,7 +5758,7 @@ class MainWindow(QMainWindow):
         backward_idx = effective_group_indices(
             grouping, backward_gid, n_histograms=len(run.histograms)
         )
-        alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
+        alpha, beta = grouping_balances(grouping)
         flags = correction_flags_from_grouping(grouping)
         period_mode = str(grouping.get("period_mode", PeriodMode.RED))
         facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(

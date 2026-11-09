@@ -18,31 +18,50 @@ every fit. Alpha is a property of the instrument configuration
 because detector solid angles change with sample environment, ideally per
 cooldown.
 
-The grouping dialog's **Estimate α** control determines :math:`\alpha` from
-the reference run and applies it to all selected datasets (the same
-reference-run convention as deadtime estimation). The selector offers
-**Diamagnetic (TF)**, **General (LF/ZF)**, and **Count ratio ΣF/ΣB**.
-Diamagnetic and General return alpha without an added uncertainty,
-following WiMDA's quick estimates. **Count ratio** reports a statistical
-uncertainty from first-order propagation of the detector-group sums.
+The grouping dialog's **Estimate calibration** control uses **TF calibration fit**
+for a fresh explicit calibration. It compares undamped, exponential, Gaussian,
+and stretched common-phase F/B envelopes and shows the selected model. The
+minimum finite summed cost among usable candidates wins; model selection does
+not establish physical truth. **Calibrate β** fits alpha and beta jointly in a
+single-pair layout; unchecked fixes beta at one. Vector layouts calibrate alpha
+for each projection with beta fixed at one. **Estimate All α** publishes the
+requested projections together after every fit succeeds. Failure or **Stop**
+discards the incomplete batch and leaves the draft coefficients unchanged.
+
+**Diamagnetic**, **Decay balance** (stored method ``general``), and
+**Count ratio ΣF/ΣB** remain explicit quick choices. Quick methods disable and
+uncheck **Calibrate β**. Diamagnetic and Decay balance return no added uncertainty;
+ratio reports first-order errors. TF errors are conditional on the selected
+count model, observations, and corrections. An unavailable error is not zero.
+
+The compact result summary identifies the period or mapped set and F/B pair.
+TF fits show ``Poisson deviance/ν`` or ``χ²/ν`` and the number of degrees of
+freedom, with ``conditional errors`` marked when unavailable or unreliable.
+These are diagnostics of the selected fit, without a model-truth verdict.
+Quick methods show the bins used and ``first-order errors`` or
+``no error estimate``. The calibration-run selector identifies the source;
+the complete source context remains in the captured record.
+
+A completed calibration updates the draft alpha and beta spinboxes and the
+preview immediately. Fixed-beta operations show beta one. The coefficient's
+method replaces ``manual`` until its value is changed by hand. **Apply** commits
+both coefficients and their captured record to the run/project; estimating does
+not write saved values. **Stop** and input changes cancel pending work, and an
+obsolete worker cannot overwrite the displayed values. Completed measurements
+retain their captured source and assumptions when editing the draft. Loading a
+project never starts a calibration. A zero or nonfinite coefficient
+cannot be applied as a detector calibration; the source and diagnostic remain
+available for inspection.
 
 Choosing a method
 -----------------
 
-============================  ====================================================
-Data in hand                  Method
-============================  ====================================================
-Weak-TF calibration run       **Diamagnetic** (preferred whenever TF data exist)
-Only relaxing LF/ZF runs      **General** — needs *visible* relaxation
-Quick TF cross-check          **Count ratio** (Mantid ``AlphaCalc`` convention)
-Most demanding work           **Count-fit α** (free count-fit parameter)
-============================  ====================================================
-
-The standard workflow is the WiMDA/ISIS one: take a weak transverse-field
-calibration run (a "T20", around 20 G) on the *same sample and mounting*,
-estimate :math:`\alpha` there with the diamagnetic method, and hold it fixed
-for the longitudinal- and zero-field runs that follow. The General method
-exists for the case where no TF calibration was recorded.
+Use a weak-TF calibration on the same sample and mounting for TF calibration fit
+or the quick Diamagnetic cross-check. Use Decay balance for visibly relaxing
+LF/ZF data when no TF calibrant is available. The ratio provides a separate
+integral-balance check (Mantid ``AlphaCalc`` convention). Different objectives
+and finite windows can produce different alpha values; their uncertainties do
+not describe the same estimator.
 
 Corrections and the estimate
 ----------------------------
@@ -95,7 +114,7 @@ as a net offset that inflates :math:`S`. The minimum of :math:`S(\alpha)`
 is a quick balance estimate; finite windows and the alpha-dependent weights
 can displace it from the efficiency ratio.
 
-*When to use this.* The default for any weak-TF run on a sample in a
+*When to use this.* A quick cross-check for a weak-TF run on a sample in a
 diamagnetic (non-magnetic, non-relaxing) state — the standard calibration
 measurement. A resolved oscillation provides a useful balance reference;
 precision depends on its amplitude, window, corrections, and count statistics.
@@ -258,7 +277,7 @@ Uncertainties
 -------------
 
 The diamagnetic and General quick estimates return ``alpha_error=None``.
-Their result display shows the alpha value alone. Repeating **Estimate α**
+Their result display shows the alpha value alone. Repeating **Estimate calibration**
 applies a new result explicitly; existing saved and manual values, including
 historically recorded errors, remain intact until replaced.
 
@@ -577,6 +596,8 @@ Explicit workflow and CLI calibration
 
 The :doc:`../agent_workflow` ``alpha`` command and ``--alpha-from`` accept
 ``--calibration-method tf_calibration_fit`` for the shared TF operation.
+Omitting options in ``calibrate_run`` selects this fresh explicit default;
+passing ``CalibrationOptions()`` deliberately retains automatic ratio.
 ``--fit-beta`` enables joint alpha/beta; omission fixes beta at one.
 ``--calibration-envelope`` constrains the requested model, while omission
 selects the minimum finite summed cost from all four usable candidates.

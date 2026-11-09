@@ -1,31 +1,12 @@
-"""Project-level named detector-grouping profiles.
+"""Named grouping profiles combine shareable choices with each run's acquired facts.
 
-A run's grouping combines shareable analysis choices with its own acquisition
-facts: timing, good-bin windows, deadtime normalisers, and exposure origin.
-A :class:`GroupingProfile` owns shareable choices for an instrument/detector
-fingerprint; file-derived facts always remain attached to the run.
-Multiple profiles per fingerprint may be in concurrent use — e.g. one per
-sample in a multi-sample project — with each run recording which profile it is
-*assigned* to (schema v17; see :func:`assigned_profile_for_run`). One profile
-per fingerprint is flagged the **default** (the ``active`` field): freshly
-loaded runs are assigned to it. A run follows its assigned profile unless the
-user "releases" it with an explicit per-run override; a released run keeps its
-assignment as the *base* profile Reattach returns it to.
+Runs follow their assigned profile until released into a per-run override.
+One active profile per instrument/detector fingerprint supplies fresh-run defaults.
+Resolution keeps file timing, good-bin windows, deadtime normalisers, and exposure
+attached to the acquisition. Policies own authored choices; calibrated policies
+reference captured results. Runtime coefficient views are derived from those owners.
 
-:func:`resolve_effective_grouping` merges a profile with a run's file-derived
-facts and reproduces **exactly** today's ``run.grouping`` payload shape, so
-nothing downstream of ``run.grouping`` (reduction, fitting, export) has to
-change. Where a policy needs a computed value — a per-run ``alpha`` estimate, or
-the file's own deadtime values — resolution computes it from the run.
-
-Shareable vs per-run key classification
-========================================
-
-Every key that appears in a loader/dialog ``run.grouping`` payload is classified
-below. **Shareable** keys live on the profile; **per-run** keys are always taken
-from the freshly-resolved run (never stored in the profile). A profile is built
-by lifting the shareable keys out of a payload (:func:`profile_from_payload`) and
-resolution re-merges them with the run's per-run facts.
+Shareable keys live on the profile; per-run keys come from the selected run:
 
 ================================  ==========  ===============================================
 Key                               Class       Notes
@@ -112,7 +93,9 @@ from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.project.calibration import (
     CalibratedCoefficient,
     CalibrationRecord,
+    QuickCalibratedCoefficient,
     profile_calibration_payload,
+    resolve_projection_calibrations,
     restore_profile_calibrations,
 )
 from asymmetry.core.transform.asymmetry import estimate_alpha
@@ -829,7 +812,9 @@ class GroupingProfile:
     excluded_detectors: list[int] = field(default_factory=list)
 
     # Policies ---------------------------------------------------------------
-    alpha_policy: AlphaPolicy | CalibratedCoefficient = field(default_factory=AlphaPolicy)
+    alpha_policy: AlphaPolicy | CalibratedCoefficient | QuickCalibratedCoefficient = field(
+        default_factory=AlphaPolicy
+    )
     deadtime_policy: DeadtimePolicy = field(default_factory=DeadtimePolicy)
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
@@ -839,6 +824,9 @@ class GroupingProfile:
     # alpha_policy minus per_run_estimate (docs/porting/beta-correction/).
     beta_policy: BetaPolicy | CalibratedCoefficient = field(default_factory=BetaPolicy)
     calibration_records: tuple[CalibrationRecord, ...] = ()
+    projection_alpha_policies: dict[str, CalibratedCoefficient | QuickCalibratedCoefficient] = (
+        field(default_factory=dict)
+    )
 
     # Binning ----------------------------------------------------------------
     binning: BinningSpec = field(default_factory=BinningSpec)
@@ -1046,6 +1034,11 @@ def profile_from_payload(
         if key in payload:
             extra[key] = payload[key]
 
+    policies = {
+        "alpha_policy": _alpha_policy_from_payload(payload),
+        "beta_policy": _beta_policy_from_payload(payload),
+        **restore_profile_calibrations(payload),
+    }
     return GroupingProfile(
         name=name,
         fingerprint=fingerprint,
@@ -1053,7 +1046,7 @@ def profile_from_payload(
         **_profile_structure(payload),
         forward_group=_as_int(payload.get("forward_group"), 1) or 1,
         backward_group=_as_int(payload.get("backward_group"), 2) or 2,
-        alpha_policy=_alpha_policy_from_payload(payload),
+        **policies,
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
         t0_policy=_t0_policy_from_payload(payload),
@@ -1062,7 +1055,6 @@ def profile_from_payload(
         # *values*, and inferring a policy from them would flip every freshly
         # loaded run into Manual (the t0 D1 lesson).
         good_window_policy=GoodWindowPolicy.from_dict(payload.get("good_window_policy")),
-        beta_policy=_beta_policy_from_payload(payload),
         binning=binning_spec(payload),
         period_mode=None if payload.get("period_mode") is None else str(payload.get("period_mode")),
         extra=extra,
@@ -1257,6 +1249,8 @@ def resolve_effective_grouping(
         for key, value in profile.extra.items():
             grouping[key] = value
 
+        resolve_projection_calibrations(profile.projection_alpha_policies, grouping)
+
         # Instrument is part of the fingerprint but also a payload key downstream
         # code reads (background gating, fingerprinting on reload).
         if profile.fingerprint.instrument:
@@ -1295,13 +1289,11 @@ def resolve_effective_grouping(
             _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
             if profile.alpha_policy.mode != "per_run_estimate":
                 _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
-            if not profile.projections:
-                _apply_beta_policy(grouping, profile.beta_policy)
+            _apply_beta_policy(grouping, profile.beta_policy)
             if isinstance(exc, InvalidGroupingError):
                 raise
             raise InvalidGroupingError(str(exc), grouping) from exc
-        if not profile.projections:
-            _apply_beta_policy(grouping, profile.beta_policy)
+        _apply_beta_policy(grouping, profile.beta_policy)
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping

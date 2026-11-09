@@ -283,3 +283,50 @@ def test_historical_target_beta_cannot_override_fixed_one(captured):
     actual = reduce_run(target, settings)
     np.testing.assert_array_equal(actual.asymmetry, baseline.asymmetry)
     np.testing.assert_array_equal(actual.error, baseline.error)
+
+
+def test_omitted_explicit_options_select_tf_but_none_keeps_automatic_ratio():
+    data = _raw_tf(beta=1)
+    fresh = calibrate_run(data, ReductionSettings())
+    assert fresh.method == "tf_calibration_fit"
+    assert fresh.record is not None
+    automatic = calibrate_run(data, ReductionSettings(), CalibrationOptions())
+    assert automatic.method == "per_run_estimate"
+
+
+def test_resolved_source_grouping_is_not_replaced_by_cli_defaults():
+    from asymmetry.core.workflow.calibration import calibrate_source
+
+    data = _raw_tf(beta=1)
+    grouping = {
+        **data.run.grouping,
+        "background_mode": "fixed",
+        "background_correction": True,
+        "background_fixed_values": [2.0, 3.0],
+    }
+    source = replace(data, run=replace(data.run, grouping=grouping))
+    outcome = calibrate_source(source, CalibrationOptions("ratio"))
+    assert outcome.source.corrections.background.requested == "fixed"
+
+
+def test_zero_forward_ratio_is_not_a_usable_calibration():
+    data = _raw_tf(beta=1)
+    data.run.histograms[0].counts[:] = 0
+    outcome = calibrate_run(data, ReductionSettings(), CalibrationOptions("ratio"))
+    assert outcome.alpha is None
+    assert not outcome.to_dict()["ok"]
+    assert outcome.to_dict()["message"]
+
+
+@pytest.mark.parametrize("entry", ["source", "workflow"])
+def test_joint_beta_rejects_projection_layout_at_shared_boundary(entry):
+    from asymmetry.core.workflow.calibration import calibrate_source
+    from docs.screenshots.data.calibration import calibration_control
+
+    data = calibration_control(vector=True)
+    options = CalibrationOptions("tf_calibration_fit", True, TFEnvelope.EXPONENTIAL)
+    with pytest.raises(ValueError, match="single.*pair"):
+        if entry == "source":
+            calibrate_source(data, options)
+        else:
+            calibrate_run(data, ReductionSettings(), options)
