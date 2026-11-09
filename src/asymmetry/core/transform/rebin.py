@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 
 BINNING_MODES = ("fixed", "variable", "constant_error")
+BINNING_POLICY = "nearest_half_up_left_edge_v1"
 
 
 def merge_curve_bins(
@@ -130,7 +131,12 @@ class BinningSpec:
                 raise ValueError(f"{name} must be finite and > 0; got {value!r}.")
 
     def edges(self, n_bins: int, bin_width_us: float, t_start_us: float) -> NDArray[np.intp]:
-        """Raw edges; retain a variable-mode tail, drop an incomplete merged group."""
+        """Raw edges from the first native centre ``t_start_us``.
+
+        Nonuniform targets use the actual left edge and nearest whole native
+        width (half-up, at least one). Retain their final partial bin; fixed
+        packing and an additional merge drop only incomplete groups.
+        """
         if self.mode == "fixed":
             edges = np.arange(
                 0, n_bins // self.factor * self.factor + 1, self.factor, dtype=np.intp
@@ -139,9 +145,12 @@ class BinningSpec:
             boundaries = [0]
             index = 0
             while index < n_bins:
-                time = t_start_us + index * bin_width_us
+                time = t_start_us + (index - 0.5) * bin_width_us
                 width = _target_width_us(self.mode, time, self.bin0_us, self.bin10_us)
-                step = max(1, int(np.ceil(width / bin_width_us - 1e-9)))
+                whole, fraction = divmod(width / bin_width_us, 1.0)
+                # Compare the fractional quotient directly: adding 0.5 can
+                # round the representable value below a half-integer to a tie.
+                step = max(1, int(whole) + int(fraction >= 0.5))
                 index = min(index + step, n_bins)
                 boundaries.append(index)
             edges = np.asarray(boundaries, dtype=np.intp)

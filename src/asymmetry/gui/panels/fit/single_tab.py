@@ -60,6 +60,7 @@ from asymmetry.core.fitting.rrf_offset import (
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
 from asymmetry.core.representation.base import FitSlot
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -817,13 +818,10 @@ class SingleFitTab(FitTabBase):
         self._fit_wizard_btn.setToolTip(tooltip)
 
     def _wizard_context_signature(self) -> dict[str, object]:
+        dataset = self._current_dataset
         return {
-            "run_number": (
-                int(self._current_dataset.run_number)
-                if self._current_dataset is not None
-                and getattr(self._current_dataset, "run_number", None) is not None
-                else None
-            ),
+            "binning_policy": BINNING_POLICY,
+            "run_number": dataset.run_number if dataset is not None else None,
             "model": self._composite_model.to_dict(),
         }
 
@@ -834,9 +832,10 @@ class SingleFitTab(FitTabBase):
     ) -> bool:
         if not isinstance(cached_signature, dict):
             return False
-        cached_model = cached_signature.get("model")
-        return cached_signature.get("run_number") == current_signature.get("run_number") and (
-            cached_model is None or cached_model == current_signature.get("model")
+        return (
+            cached_signature.get("binning_policy") == BINNING_POLICY
+            and cached_signature.get("run_number") == current_signature["run_number"]
+            and cached_signature.get("model") in (None, current_signature["model"])
         )
 
     def _cache_wizard_analysis(

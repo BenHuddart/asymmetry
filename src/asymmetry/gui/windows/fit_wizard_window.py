@@ -59,6 +59,7 @@ from asymmetry.core.fitting.wizard_scope import (
     set_user_field_direction,
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
 from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
@@ -796,12 +797,8 @@ class FitWizardWindow(WizardWindowBase):
 
     def _analysis_signature(self) -> dict[str, object]:
         return {
-            "run_number": (
-                int(self._dataset.run_number)
-                if self._dataset is not None
-                and getattr(self._dataset, "run_number", None) is not None
-                else None
-            ),
+            "binning_policy": BINNING_POLICY,
+            "run_number": self._dataset.run_number if self._dataset is not None else None,
             "model": self._current_model.to_dict() if self._current_model is not None else None,
             "scope": self._picker.scope().to_payload(),
             "user_peaks": [dict(peak) for peak in self._user_peaks],

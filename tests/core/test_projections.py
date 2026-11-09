@@ -80,3 +80,12 @@ def test_the_reduction_identity_follows_what_shapes_the_projections_only():
     # … but alpha, binning or the groups do.
     for key, value in (("alpha_x", 1.2), ("bunching_factor", 4), ("groups", {1: [1], 2: [2]})):
         assert reduction_identity({**run.grouping, key: value}) != identity
+
+
+def test_projection_identity_does_not_replay_a_previous_binning_contract(monkeypatch):
+    import asymmetry.core.transform.projections as module
+
+    run = synthetic_vector_run([_static], seed=None)
+    current = reduction_identity(run.grouping)
+    monkeypatch.setattr(module, "BINNING_POLICY", "ceiling_first_centre")
+    assert reduction_identity(run.grouping) != current

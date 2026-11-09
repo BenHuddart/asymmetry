@@ -423,9 +423,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
-        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
-            _fake_recommendation(dataset)
-        ),
+        lambda dataset, **kwargs: _fake_recommendation(dataset),
     )
     window = FitWizardWindow()
     payload: dict[str, object] = {}
@@ -446,6 +444,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     assert isinstance(payload.get("recommendation"), FitWizardRecommendation)
     assert payload.get("log_text") == ""
     assert payload.get("signature") == {
+        "binning_policy": wizard_window_module.BINNING_POLICY,
         "run_number": int(dataset.run_number),
         "model": None,
         "scope": WizardScope().to_payload(),
