@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Indent nonuniform bin-width fields below the grouping binning selector to avoid horizontal scrolling.
+
 - Select nearest whole-bin Variable/Constant error widths at actual left edges,
   retaining actual midpoint times, inclusive nonuniform tails, and count variance.
 

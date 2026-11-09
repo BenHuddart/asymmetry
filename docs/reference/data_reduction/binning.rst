@@ -21,6 +21,11 @@ Constant error      grows as :math:`e^{t/\tau_\mu}` from *Initial bin* —
                     approximately equal counts for slowly varying signals
 ==================  =============================================================
 
+The **Binning** selector and fixed factor share one row. **Variable** and
+**Constant error** show **Initial bin** on an indented row below; **Variable**
+also shows **Bin at 10 µs** on the following indented row. The extra fields do not widen
+the settings column.
+
 All three are display/fit-input transformations: the raw histograms are
 never modified, and changing mode (or any width) is always reversible. In
 all modes the *counts* are summed onto the output bins and the
