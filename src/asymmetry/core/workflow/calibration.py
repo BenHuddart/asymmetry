@@ -187,14 +187,13 @@ def calibrate_run(
                 last_good_bin=counts.window.last,
             )
         mapping = run.grouping.get("period_mapping", run.metadata.get("period_mapping", {}))
+        mapped = reference_mapping_requires_replay(mapping)
         result = QuickCalibrationResult(
             result,
             source_run_of(run),
             forward,
             backward,
-            None
-            if reference_mapping_requires_replay(mapping)
-            else run.metadata.get("period_number"),
+            None if mapped else run.metadata.get("period_number"),
             run.source_file,
             counts.corrections,
             counts.alignment,
@@ -202,6 +201,7 @@ def calibrate_run(
             counts.bin_width_us,
             counts.t0_time_us,
             tuple((int(number), target) for number, target in mapping.items()),
+            mapped_period_number=run.metadata.get("period_number") if mapped else None,
         )
     check_cancel()
     return CalibrationOutcome(result)

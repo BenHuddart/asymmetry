@@ -42,8 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Reject cached-only calibration periods for quick methods and preserve source-run
-  and effective red-period identities in combined-run calibration results.
+- Preserve run and selected period identities in calibration results, and reject
+  cached curves without the corresponding source-period counts.
 
 - Reject invalid calibration identities before they can be applied or saved.
 

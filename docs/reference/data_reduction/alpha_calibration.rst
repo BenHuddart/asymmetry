@@ -592,7 +592,9 @@ no added uncertainty; ratio retains first-order propagation. Missing/unreliable
 errors and fixed-beta errors are absent. Requested/applied corrections, native
 support, timing, and acquired source period remain in the record.
 Explicit quick workflow settings also retain the shared typed result and its
-method, source period, correction outcomes, and timing/window context.
+method, source period, correction outcomes, and timing/window context. A mapped
+quick source retains its contributor recipe and selected mapped-set ordinal
+separately from an acquired-period identity.
 Asymmetry also checks that calibration has identified source-period histograms;
 a cached curve or an unidentified multi-period parent cannot supply another
 period's counts. TF sources must name an acquired period rather than a

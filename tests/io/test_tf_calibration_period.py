@@ -115,6 +115,7 @@ def test_workflow_never_labels_mapped_counts_as_an_acquired_period(mapping):
     ratio = calibrate_run(selected, ReductionSettings(), CalibrationOptions("ratio"))
     assert ratio.alpha is not None
     assert ratio.period_number is None
+    assert ratio.result.mapped_period_number == 1
     assert dict(ratio.result.period_mapping) == mapping
     from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
     from asymmetry.core.workflow.jsonio import json_safe
@@ -290,3 +291,74 @@ def test_calibration_rejects_unidentified_parent_of_declared_multiple_periods(me
     source.run.metadata["period_count"] = 2
     with pytest.raises(ValueError, match="acquired.*period"):
         calibrate_run(source, ReductionSettings(), CalibrationOptions(method))
+
+
+def test_mapped_quick_sources_retain_selected_set_through_json_and_workdir(tmp_path):
+    import json
+
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.jsonio import dumps
+    from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+    from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir
+
+    periods = [_raw_tf(beta=1) for _ in range(4)]
+    periods[3].run.histograms[1].counts *= 2
+    mapping = {1: "ignore", 2: "red", 3: "red", 4: "green"}
+    mapped = combine_mapped_periods(periods, mapping, source_run_number=7101)
+    root = WorkDir(tmp_path / "mapped")
+    captured = []
+    for period in (1, 2):
+        outcome = calibrate_run(
+            mapped, ReductionSettings(), CalibrationOptions("ratio", period=period)
+        )
+        assert outcome.period_number is None
+        assert outcome.result.mapped_period_number == period
+        assert dict(outcome.result.period_mapping) == mapping
+        settings = ReductionSettings(alpha=outcome.result)
+        restored = ReductionSettings.from_dict(json.loads(dumps(settings.to_dict())))
+        assert restored == settings
+        target = _raw_tf(beta=1).run
+        target.run_number = period
+        signal = reduce_run(target, restored)
+        entry = ReducedEntry(
+            period,
+            "digest",
+            "synthetic.nxs",
+            signal.n_points,
+            restored,
+            {},
+            outcome.alpha,
+            "off",
+            1,
+            2,
+            [],
+        )
+        root.write_reduced(signal, entry)
+        assert root.entry(period).settings == settings
+        captured.append(outcome)
+    assert captured[0].alpha != captured[1].alpha
+    assert captured[0].result.mapped_period_number != captured[1].result.mapped_period_number
+    stored_path = root.reduced_dir / "1.json"
+    historical = json.loads(stored_path.read_text())
+    historical["settings"]["quick_calibration"].pop("mapped_period_number")
+    stored_path.write_text(json.dumps(historical))
+    unknown = root.entry(1).settings.quick_calibration
+    assert unknown.mapped_period_number is None
+    assert unknown.period_number is None
+    assert unknown.estimate == captured[0].result.estimate
+    assert dict(unknown.period_mapping) == mapping
+
+
+@pytest.mark.parametrize("period", [1, 2])
+def test_identity_mapping_retains_acquired_ordinal_without_mapped_ordinal(period):
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    mapped = combine_mapped_periods(
+        [_raw_tf(beta=1), _raw_tf(beta=1, seed=43)], {1: "red", 2: "green"}, source_run_number=7101
+    )
+    outcome = calibrate_run(mapped, ReductionSettings(), CalibrationOptions("ratio", period=period))
+    assert outcome.period_number == period
+    assert outcome.result.mapped_period_number is None

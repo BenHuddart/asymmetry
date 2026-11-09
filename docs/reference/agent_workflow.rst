@@ -647,7 +647,7 @@ records without inferred joint provenance. Explicit quick results retain their
 shared typed estimate, method/error meaning, source, acquired period, pair,
 correction outcomes, contributor mapping, and timing/window context in
 ``quick_calibration`` settings; a nontrivial mapped quick source retains its
-contributor recipe with no acquired-period ordinal;
+contributor recipe and selected mapped-set ordinal with no acquired-period ordinal;
 no TF covariance or joint record is inferred. General count-domain science fitting
 is a separate API capability.
 
