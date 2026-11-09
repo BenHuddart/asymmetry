@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.calibration import best_calibration_run_index, classify_tf_calibration_run
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitCancelledError
+from asymmetry.core.fitting.result_summary import reduced_statistic_label
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.project.profiles import AlphaPolicy, resolve_effective_grouping
 from asymmetry.core.transform.t0 import find_t0_for_run
@@ -308,9 +309,7 @@ class AlphaSectionWidget(QWidget):
             button.setAutoDefault(False)
             row.addWidget(button)
         root.addLayout(row)
-        self._result_label = QLabel(
-            "Choose a source and estimate; Apply commits the displayed result."
-        )
+        self._result_label = QLabel("No calibration result")
         self._result_label.setWordWrap(True)
         root.addWidget(self._result_label)
         self._note_label = QLabel("")
@@ -361,7 +360,7 @@ class AlphaSectionWidget(QWidget):
         self._references = ()
         self._stop_btn.setEnabled(False)
         self._estimate_btn.setEnabled(bool(self._datasets))
-        self._result_label.setText("Estimate calibration for the current inputs.")
+        self._result_label.setText("No calibration result")
         self._note_label.clear()
         self.invalidated.emit()
 
@@ -455,24 +454,35 @@ class AlphaSectionWidget(QWidget):
             prefix = "" if slot == "single" else f"{slot}: "
             lines.append(f"{prefix}α = {alpha} · β = {beta} · {model}")
         self._result_label.setText("\n".join(lines))
-        self._note_label.setText(
-            f"TF errors are conditional on the selected count model and corrections (covariance: {selected.fit.uncertainty_status}). Apply commits these values."
-            if outcome.record
-            else "Quick calibration; Apply commits these values."
-        )
         source = outcome.source
         period = (
-            f"acquired period {outcome.period_number}"
+            f"Period {outcome.period_number}"
             if outcome.period_number is not None
             else (
-                f"mapped set {source.mapped_period_number}"
+                f"Mapped set {source.mapped_period_number}"
                 if outcome.record is None and source.mapped_period_number is not None
-                else "period unidentified"
+                else "Period unknown"
             )
         )
-        self._note_label.setText(
-            f"Source run {outcome.run_number}, {period}. " + self._note_label.text()
-        )
+        summary = [period, f"F{outcome.forward_group}/B{outcome.backward_group}"]
+        if reply.slot != "single":
+            summary.insert(0, reply.slot)
+        if outcome.record:
+            fit = selected.fit
+            statistic = (
+                f"{fit.statistic_per_dof:.3g}"
+                if fit.statistic_per_dof is not None
+                else "unavailable"
+            )
+            summary.append(f"{reduced_statistic_label(fit.objective)} {statistic} ({fit.dof} dof)")
+            errors = "conditional errors"
+            if fit.uncertainty_status != "available":
+                errors += f" {fit.uncertainty_status}"
+        else:
+            summary.append(f"{selected.n_bins_used} bins")
+            errors = "first-order errors" if outcome.method == "ratio" else "no error estimate"
+        summary.append(errors)
+        self._note_label.setText(" · ".join(summary))
         self.result_ready.emit(reply)
         self._start_next()
 

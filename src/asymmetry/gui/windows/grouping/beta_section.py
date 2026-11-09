@@ -35,11 +35,6 @@ class BetaSectionWidget(QWidget):
         fields.addWidget(self._provenance_label, 1)
         form.addRow("β value", row)
         layout.addLayout(form)
-        hint = QLabel(
-            "Enter β manually or use Calibrate β with TF calibration fit in the calibration section."
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
         self._stale_banner = make_warning_banner("", severity="warn")
         self._stale_banner.hide()
         layout.addWidget(self._stale_banner)

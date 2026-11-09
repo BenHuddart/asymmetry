@@ -32,13 +32,22 @@ uncheck **Calibrate β**. Diamagnetic and Decay balance return no added uncertai
 ratio reports first-order errors. TF errors are conditional on the selected
 count model, observations, and corrections. An unavailable error is not zero.
 
+The compact result summary identifies the period or mapped set and F/B pair.
+TF fits show ``Poisson deviance/ν`` or ``χ²/ν`` and the number of degrees of
+freedom, with ``conditional errors`` marked when unavailable or unreliable.
+These are diagnostics of the selected fit, without a model-truth verdict.
+Quick methods show the bins used and ``first-order errors`` or
+``no error estimate``. The calibration-run selector identifies the source;
+the complete source context remains in the captured record.
+
 A completed calibration updates the draft alpha and beta spinboxes and the
 preview immediately. Fixed-beta operations show beta one. The coefficient's
 method replaces ``manual`` until its value is changed by hand. **Apply** commits
 both coefficients and their captured record to the run/project; estimating does
 not write saved values. **Stop** and input changes cancel pending work, and an
 obsolete worker cannot overwrite the displayed values. Completed measurements
-retain their captured source and assumptions when editing the draft. Loading a project never starts a calibration. A zero or nonfinite coefficient
+retain their captured source and assumptions when editing the draft. Loading a
+project never starts a calibration. A zero or nonfinite coefficient
 cannot be applied as a detector calibration; the source and diagnostic remain
 available for inspection.
 

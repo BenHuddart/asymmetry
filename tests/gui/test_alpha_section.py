@@ -218,7 +218,13 @@ def test_resolved_gui_corrections_match_direct_core(qapp, mode, method):
 
 
 @pytest.mark.parametrize("status", ["unavailable", "unreliable"])
-def test_usable_alpha_only_fit_without_reliable_error_stays_applicable(qapp, monkeypatch, status):
+@pytest.mark.parametrize(
+    "objective,label", [("poisson", "Poisson deviance/ν"), ("gaussian", "χ²/ν")]
+)
+def test_usable_alpha_only_fit_without_reliable_error_stays_applicable(
+    qapp, monkeypatch, status, objective, label
+):
+    from asymmetry.core.fitting.likelihood import Objective
     from asymmetry.core.project.calibration import CalibrationRecord
     from asymmetry.core.workflow.calibration_results import CalibrationOutcome
     from tests.project.test_tf_calibration_records import candidate
@@ -228,6 +234,7 @@ def test_usable_alpha_only_fit_without_reliable_error_stays_applicable(qapp, mon
         result,
         fit=replace(
             result.fit,
+            objective=Objective(objective),
             covariance=None if status == "unavailable" else result.fit.covariance,
             covariance_accurate=False,
         ),
@@ -248,6 +255,9 @@ def test_usable_alpha_only_fit_without_reliable_error_stays_applicable(qapp, mon
     assert "error unavailable" in section._result_label.text()
     assert "1 (fixed)" in section._result_label.text()
     assert status in section._note_label.text()
+    assert f"{label} 1.92 (12 dof)" in section._note_label.text()
+    assert "Period 2" in section._note_label.text()
+    assert "F1/B2" in section._note_label.text()
     section.shutdown()
 
 
@@ -278,6 +288,19 @@ def test_gui_source_keeps_acquired_or_mapped_set_identity(qapp, period, mapped):
     assert gui.result == direct.result
     assert gui.period_number == (None if mapped else period)
     assert gui.source.mapped_period_number == (period if mapped else None)
+    section = AlphaSectionWidget()
+    section.configure(
+        datasets=[data],
+        selected_run_number=data.run_number,
+        context_provider=lambda: lambda slot, dataset: (profile, None),
+    )
+    section._method_combo.setCurrentIndex(section._method_combo.findData("ratio"))
+    section._on_estimate()
+    _wait_until(lambda: section._tasks.active_count == 0)
+    identity = f"Mapped set {period}" if mapped else f"Period {period}"
+    assert section._note_label.text().startswith(identity)
+    assert "first-order errors" in section._note_label.text()
+    section.shutdown()
 
 
 @pytest.mark.parametrize("method", ["general", "count_fit"])
