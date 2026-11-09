@@ -101,6 +101,7 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.cli import plots
     from asymmetry.core.io.periods import period_count
     from asymmetry.core.transform.corrections import correction_warnings
+    from asymmetry.core.transform.grouping import grouping_balances
     from asymmetry.core.workflow.reduction import (
         load_reduction_source,
         reduce_run,
@@ -184,7 +185,7 @@ def run(args: argparse.Namespace) -> None:
                 settings=settings,
                 run=row.to_dict()
                 | {"correction_outcomes": dataset.metadata["correction_outcomes"]},
-                alpha=float(grouping["alpha"]),
+                alpha=grouping_balances(grouping)[0],
                 deadtime_mode=str(grouping["deadtime_mode"]),
                 forward_group=int(grouping["forward_group"]),
                 backward_group=int(grouping["backward_group"]),

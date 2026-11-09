@@ -164,12 +164,27 @@ def test_invalid_grouping_keeps_the_all_detector_t0_base(qapp):
 
 
 def test_calibration_preparation_rejects_partial_overlap():
+    from asymmetry.core.data.dataset import MuonDataset, Run
     from asymmetry.core.transform.grouping import InvalidGroupingError
-    from asymmetry.gui.windows.grouping.alpha_section import build_corrected
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_source
     from tests.core.test_group_membership import histograms
 
     with pytest.raises(InvalidGroupingError, match="shared acquired channels 2"):
-        build_corrected(histograms(), {"groups": {1: [1, 2], 2: [2, 3]}}, None, "")
+        source = MuonDataset(
+            np.empty(0),
+            np.empty(0),
+            np.empty(0),
+            run=Run(
+                run_number=1,
+                histograms=histograms(),
+                grouping={
+                    "groups": {1: [1, 2], 2: [2, 3]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                },
+            ),
+        )
+        calibrate_source(source, CalibrationOptions("ratio"))
 
 
 def test_saved_overlap_keeps_fixed_options_and_can_be_repaired(window, monkeypatch, tmp_path):
@@ -291,7 +306,7 @@ def test_unavailable_pair_discards_a_deferred_drag_result(qapp):
 
 
 @pytest.mark.parametrize("overlap", ["same_group", "partial"])
-def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeypatch, overlap):
+def test_invalid_vector_axis_aborts_the_calibration_batch(qapp, monkeypatch, overlap):
     from tests.gui.test_grouping_dialog import _vector_dataset_with_histograms
 
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
@@ -307,22 +322,20 @@ def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeyp
         else:
             dialog._groups[5] = [0, 1]
             shared = 2
-        original_alpha = dialog._vector_alpha_spins["P_x"].value()
+        original_alphas = {
+            label: spin.value() for label, spin in dialog._vector_alpha_spins.items()
+        }
         dialog._begin_vector_estimates(["P_x", "P_y"])
-        _wait_until(
-            lambda: (
-                not dialog._vector_estimate_queue and dialog._vector_alpha_tasks.active_count == 0
-            )
-        )
-        assert len(warnings) == 1
-        assert warnings[0][0] == "Alpha Calibration"
-        assert f"shared acquired channels {shared}" in warnings[0][1]
-        assert dialog._vector_alpha_spins["P_x"].value() == original_alpha
-        assert dialog._vector_alpha_spins["P_y"].value() == pytest.approx(2.0)
+        _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
+        assert f"shared acquired channels {shared}" in dialog._alpha_section._result_label.text()
+        assert {
+            label: spin.value() for label, spin in dialog._vector_alpha_spins.items()
+        } == original_alphas
+        assert dialog._alpha_section.pending() == {}
         assert dialog._vector_estimate_buttons["P_y"].isEnabled()
         payload = dialog._current_grouping_payload()
         assert "alpha_x_reference_run" not in payload
-        assert payload["alpha_y_reference_run"] == 4010
+        assert "alpha_y_reference_run" not in payload
     finally:
         dialog._clear_dirty()
         dialog.close()

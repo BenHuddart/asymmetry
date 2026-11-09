@@ -74,6 +74,10 @@ returns fractional asymmetry and uncertainty. See
 :doc:`/reference/asymmetry_units` for API scales and
 :doc:`/reference/data_reduction/binning` for bin edges, partial bins, and errors.
 
+Each F/B consumer resolves alpha for its actual selected pair. Display binning,
+F/B Fourier input and re-reduction retain that projection's coefficient while
+the authored base alpha remains available as the fallback for other pairs.
+
 File-good limits stay on acquired raw bins through timing edits; selected-channel
 alignment maps them into the common observed interval. Manual window endpoints
 are signed offsets from effective t0, with omitted endpoints retaining mapped
@@ -167,3 +171,9 @@ Each required estimated anchor belongs to that acquired channel and period;
 run-wide consensus cannot supply a missing detector delay. Acquired file facts
 remain separate from effective policy outcomes, including numerically equal
 estimates. See :ref:`t0-search`.
+
+Fresh explicit calibration uses TF calibration fit, with beta fixed at one unless
+joint calibration is requested for a single pair. The GUI stages the selected
+model and conditional errors until Apply; input changes invalidate pending work.
+Automatic per-run ratio, manual coefficients, and loaded historical records keep
+their own policies. A reduction without a calibration source never starts a TF fit.

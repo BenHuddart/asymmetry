@@ -231,6 +231,14 @@ pushes to `main` that touch `docs/**`, `src/**` or the docs workflow, because
 screenshots are captured from the live GUI and `src/**` changes can alter them.
 PRs that touch `docs/**` get a cheap build-only smoke with no screenshots.
 
+If screenshot capture, completeness, or Sphinx fails, repair the build before rerunning.
+A Pages deployment failure after a successful build is separate: rerun the failed
+jobs while the `github-pages` artifact remains available (three days). Successful
+deployments delete the artifact. Once it expires, or a workflow has deleted it,
+rerun the full documentation workflow to rebuild it. The deploy action supports
+at most ten minutes per attempt; the outer job timeout does not extend that limit.
+
+
 ## Contributing
 
 When adding new features:

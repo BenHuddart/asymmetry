@@ -99,7 +99,12 @@ def test_alpha_estimate_surfaces_invalid_deadtime_without_blocking(qapp, dataset
     section._fill_all_spin.setValue(-100)
     section._fill_all_btn.click()
     messages = []
-    provider = dialog._calibration_correction_provider()
+    profile, _ = dialog._alpha_estimate_context()("single", dataset)
+    from asymmetry.core.project.profiles import resolve_effective_grouping
+
+    def provider(data):
+        return resolve_effective_grouping(profile, data.run)
+
     assert provider is not None
     assert provider(dataset)["dead_time_us"] == [-0.1, -0.1]
     assert "good_frames" not in provider(dataset)
@@ -107,8 +112,11 @@ def test_alpha_estimate_surfaces_invalid_deadtime_without_blocking(qapp, dataset
         QMessageBox, "warning", lambda parent, title, message: messages.append(message)
     )
     dialog._alpha_section._on_estimate()
-    wait_for(lambda: bool(messages), qapp)
-    assert "deadtime correction requested (manual) but not applied: good frames" in messages[0]
+    wait_for(lambda: dialog._alpha_section._tasks.active_count == 0, qapp)
+    assert (
+        "deadtime correction requested (manual) but not applied: good frames"
+        in dialog._alpha_section._result_label.text()
+    )
     dialog._clear_dirty()
 
 

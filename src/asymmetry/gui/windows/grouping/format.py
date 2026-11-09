@@ -17,13 +17,18 @@ import numpy as np
 #: grouping-dict key, and a one-line explanation shown as the tooltip.
 ALPHA_METHOD_ITEMS = (
     (
-        "Diamagnetic (TF)",
+        "TF calibration fit",
+        "tf_calibration_fit",
+        "Compare four common-phase count envelopes; errors are conditional on the selected model.",
+    ),
+    (
+        "Diamagnetic",
         "diamagnetic",
         "Minimise the weighted asymmetry over a transverse-field calibration "
         "run, so A(t) oscillates symmetrically about zero.",
     ),
     (
-        "General (LF/ZF)",
+        "Decay balance",
         "general",
         "Balance lifetime-corrected counts between early and late times; "
         "works on relaxing LF/ZF data, but needs visible relaxation.",

@@ -44,6 +44,7 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
+    grouping_balances,
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
@@ -1091,10 +1092,7 @@ def simulate_run(
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     if alpha is None:
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
+        alpha, _ = grouping_balances(grouping)
     if not np.isfinite(alpha) or alpha <= 0:
         raise ValueError("alpha must be positive and finite.")
 
@@ -1234,10 +1232,7 @@ def simulate_double_pulse_run(
     grouping = template.grouping if isinstance(template.grouping, dict) else {}
     backward_gid = int(grouping.get("backward_group", 2))
     if alpha is None:
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
+        alpha, _ = grouping_balances(grouping)
     if not np.isfinite(alpha) or alpha <= 0:
         raise ValueError("alpha must be positive and finite.")
 
@@ -1365,11 +1360,7 @@ def simulate_two_period_run(
     grouping = template.grouping if isinstance(template.grouping, dict) else {}
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
-    default_alpha = grouping.get("alpha", 1.0)
-    try:
-        default_alpha = float(default_alpha)
-    except (TypeError, ValueError):
-        default_alpha = 1.0
+    default_alpha, _ = grouping_balances(grouping)
     good_frames = grouping.get("good_frames", 1.0)
     try:
         good_frames = float(good_frames)
@@ -1441,7 +1432,7 @@ def simulate_two_period_run(
             for hist, clean in zip(template.histograms, expected, strict=True)
         ]
         period_histograms.append(hists)
-        period_reduced.append(_reduce_histograms(hists, reduce_grouping))
+        period_reduced.append(_reduce_histograms(hists, reduce_grouping, alpha=1.0))
         period_provenance.append(
             {
                 "model": expression,
@@ -1835,6 +1826,8 @@ def degrade_run(
 def _reduce_histograms(
     histograms: list[Histogram],
     grouping: dict,
+    *,
+    alpha: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Loader-convention F-B reduction of one histogram set (percent).
 
@@ -1847,7 +1840,7 @@ def _reduce_histograms(
     time, asymmetry, error = binned_fb_asymmetry(
         fb.counts,
         binning=binning_spec(grouping),
-        alpha=fb.alpha,
+        alpha=fb.alpha if alpha is None else alpha,
         beta=fb.beta,
     )
 

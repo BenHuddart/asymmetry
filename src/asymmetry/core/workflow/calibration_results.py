@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
+from math import isfinite
 
 from asymmetry.core.fitting.tf_calibration import TF_CALIBRATION_METHOD, TFCalibrationSelection
 from asymmetry.core.project.calibration import CalibrationRecord, calibration_payload
@@ -95,7 +96,19 @@ class CalibrationOutcome:
 
     @property
     def alpha(self) -> float | None:
-        return self.selected.alpha if self.selected is not None and self.selected.ok else None
+        selected = self.selected
+        if selected is None or not selected.ok:
+            return None
+        return selected.alpha if isfinite(selected.alpha) and selected.alpha > 0 else None
+
+    @property
+    def message(self) -> str:
+        selected = self.selected
+        if selected is None:
+            return "No usable TF candidate"
+        if self.alpha is None and selected.ok:
+            return "Calibration requires a finite positive alpha"
+        return selected.message
 
     @property
     def method(self) -> str:
@@ -143,8 +156,6 @@ class CalibrationOutcome:
             "backward_group": self.backward_group,
             "method": self.method,
             "alpha": self.alpha,
-            "ok": selected is not None and selected.ok,
-            "message": "No usable TF candidate" if selected is None else selected.message,
         }
         if self.record is not None:
             data["calibration"] = encode_non_finite(calibration_payload(self.record))
@@ -167,4 +178,5 @@ class CalibrationOutcome:
             data.update(
                 self.result.to_dict(), alpha=self.alpha, beta=1.0, beta_fixed=True, beta_error=None
             )
+        data.update(ok=self.alpha is not None, message=self.message)
         return data

@@ -116,10 +116,7 @@ class BasicsAlphaScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx) -> Path:  # noqa: D401
-        # α calibration is inline in the Grouping window's Corrections column
-        # (the standalone modal is retired): the α card carries the calibration
-        # run picker, method combo and Estimate α, and the shared preview shows
-        # the α = 1 ↔ α̂ before/after overlay with the residual baseline ⟨A⟩.
+        # The quick result updates the draft coefficient and its preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([_EMU_ALPHA])[0]
@@ -129,10 +126,9 @@ class BasicsAlphaScenario(CorpusScenario):
         dialog.show()
         _pump_events(150)
 
-        # Estimate runs on a worker thread; block (live loop) until it lands so
-        # the capture shows the α value and the balanced "after" curve, never the
-        # transient "Computing estimate…" state.
+        # Pump the event loop until the worker fills the calibrated draft.
         section = dialog._alpha_section
+        section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
         if (
@@ -147,8 +143,7 @@ class BasicsAlphaScenario(CorpusScenario):
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _pump_events(80)
         out = _grab_widget(dialog, self.name, ctx.output_dir)
-        # The applied estimate dirtied the draft: close() would raise the
-        # discard-guard modal, which hangs headless — tear down directly.
+        # Release workers without entering a headless discard prompt.
         dialog._teardown_workers()
         dialog.deleteLater()
         _pump_events(40)

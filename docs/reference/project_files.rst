@@ -54,8 +54,7 @@ older release triggers automatic schema migration, and the loader
 refuses to silently accept a file written by a future schema it does
 not understand. The format is therefore directly diffable in version
 control, which is the main practical difference from musrfit's
-hand-editable ``.msr`` text format (the import of ``.msr`` into
-``.asymp`` is a roadmap candidate; see :doc:`/explanation/comparison`)
+hand-editable ``.msr`` text format
 and from Mantid's binary HDF5 ``.mantid`` files.
 
 Reference-background requests persist their declared source acquisition and
@@ -898,3 +897,14 @@ no fitted error, even for a usable alpha-only calibration. Fixed beta has no
 fitted error or alpha/beta correlation. These uncertainties do not include model
 selection or full propagation into reduced-data covariance. Historical quick
 errors remain recorded values with unverified uncertainty meaning.
+
+Calibration records
+-------------------
+
+The project format stores full TF candidate/history records and conditional
+covariance once, with coefficient policies referencing them. Quick calibration
+policies retain their source period or mapped-set recipe, timing/window,
+corrections, and error meaning. Vector policies identify the actual calibrated
+projection pair and keep beta fixed at one. Manual changes replace the applied
+policy while retained fit history stays available. Opening an existing project
+preserves its authored values and method identities and never starts a fit.

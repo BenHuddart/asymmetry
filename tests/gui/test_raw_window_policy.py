@@ -13,9 +13,10 @@ from asymmetry.core.project.profiles import (
 from asymmetry.core.project.schema import load_project, save_project
 from asymmetry.core.simulate import reduce_run_to_dataset
 from asymmetry.core.transform.reference_scale import ReferenceExposure
+from asymmetry.core.workflow.calibration import CalibrationOptions
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.tasks import TaskWorker
-from asymmetry.gui.windows.grouping.alpha_section import build_alpha_request, run_alpha_estimate
+from asymmetry.gui.windows.grouping.alpha_section import CalibrationRequest, run_calibration
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests.gui.test_grouping_preview_pane import _wait_until
 from tests.project.test_raw_window_policy import acquired_run, request
@@ -123,25 +124,13 @@ def test_invalid_saved_manual_request_stays_editable_and_repairs(qapp):
 
 def test_alpha_worker_uses_the_resolved_local_window_after_leading_crop(qapp):
     dataset, profile = dataset_and_profile(request(5, -10, 70, manual=True))
-    grouping = resolve_effective_grouping(profile, dataset.run)
-    snapshot = build_alpha_request(
-        token=1,
-        dataset=dataset,
-        groups={1: [0], 2: [1]},
-        forward_gid=1,
-        backward_gid=2,
-        excluded_detectors=[],
-        method="ratio",
-        correction_provider=lambda _: grouping,
-        reference_resolver=None,
-        facility="",
-    )
-    result = run_alpha_estimate(TaskWorker(lambda _: None), snapshot)
+    snapshot = CalibrationRequest(1, dataset, profile, CalibrationOptions("ratio"))
+    result = run_calibration(TaskWorker(lambda _: None), snapshot)
     # Common t0 20, start 10 and end 90, detector 1 leads by five bins.
     oracle = (
         dataset.run.histograms[0].counts[5:86].sum() / dataset.run.histograms[1].counts[10:91].sum()
     )
-    assert result.estimate.alpha == pytest.approx(oracle, rel=1e-15)
+    assert result.outcome.alpha == pytest.approx(oracle, rel=1e-15)
 
 
 def test_released_run_preview_and_calibration_keep_its_explicit_window(qapp):
@@ -160,7 +149,8 @@ def test_released_run_preview_and_calibration_keep_its_explicit_window(qapp):
     expected = reduce_run_to_dataset(dataset.run)
     np.testing.assert_allclose(pane._last_result.time, expected.time)
     np.testing.assert_allclose(pane._last_result.asymmetry, expected.asymmetry)
-    grouping = dialog._calibration_correction_provider()(dataset)
+    source_profile, _ = dialog._alpha_estimate_context()("single", dataset)
+    grouping = resolve_effective_grouping(source_profile, dataset.run)
     assert (grouping["first_good_bin"], grouping["last_good_bin"]) == (5, 90)
     dialog._clear_dirty()
     dialog.close()

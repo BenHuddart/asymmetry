@@ -305,13 +305,16 @@ class TestBetaPersistence:
         )
         assert not np.allclose(a_plain, a_beta)
 
-    def test_vector_profile_never_emits_beta(self):
-        """Scalar-only: a projection-carrying profile resolves without β."""
+    def test_vector_profile_preserves_base_beta_but_reduces_projection_at_unity(self):
+        """A declared projection uses unity without deleting the scalar fallback."""
         profile = _profile(
             beta=0.9,
             projections=[{"label": "P_z", "forward_group": 1, "backward_group": 2}],
         )
-        assert "beta" not in resolve_effective_grouping(profile, _run())
+        run = _run()
+        resolved = resolve_effective_grouping(profile, run)
+        assert resolved["beta"] == 0.9
+        assert group_forward_backward(run.histograms, resolved).beta == 1.0
 
     def test_instrument_heal_keeps_beta(self):
         """β is instrument-independent, so a stale-identity heal keeps it."""
@@ -434,8 +437,8 @@ class TestBetaPolicyProfileIntegration:
         assert "beta_error" not in resolved
         assert "beta_reference_run" not in resolved
 
-    def test_vector_profile_never_emits_beta_provenance(self):
-        """Scalar-only: a projection-carrying profile drops calibrated provenance too."""
+    def test_vector_profile_retains_scalar_provenance_without_applying_its_beta(self):
+        """Scalar provenance survives while declared projections reduce at unity."""
         profile = _profile(
             beta_policy=BetaPolicy(
                 mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
@@ -443,10 +446,11 @@ class TestBetaPolicyProfileIntegration:
             projections=[{"label": "P_z", "forward_group": 1, "backward_group": 2}],
         )
         resolved = resolve_effective_grouping(profile, _run())
-        assert "beta" not in resolved
-        assert "beta_method" not in resolved
-        assert "beta_error" not in resolved
-        assert "beta_reference_run" not in resolved
+        assert resolved["beta"] == 0.85
+        assert resolved["beta_method"] == "count_fit"
+        assert resolved["beta_error"] == 0.004
+        assert resolved["beta_reference_run"] == 3039
+        assert group_forward_backward(_run().histograms, resolved).beta == 1.0
 
     def test_profile_from_payload_lifts_calibrated_beta(self):
         payload = {

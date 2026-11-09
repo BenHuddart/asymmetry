@@ -238,6 +238,7 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: docs/_build/html
+          retention-days: 3
 
   deploy-pages:
     name: Deploy to GitHub Pages
@@ -272,13 +273,12 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5
         with:
-          timeout: 1200000
+          timeout: 600000
 
       # The Pages deploy has consumed the artifact; delete it so it does not sit
-      # in the run's storage for the default retention period. Runs even if the
-      # deploy step failed, since the artifact exists either way.
+      # in the run's storage. Failed/cancelled attempts retain it for recovery.
       - name: Delete github-pages artifact
-        if: always()
+        if: success() && steps.deployment.outcome == 'success'
         uses: actions/github-script@v7
         with:
           script: |

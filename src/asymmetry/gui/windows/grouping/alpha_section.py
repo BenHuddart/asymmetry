@@ -1,236 +1,126 @@
-"""Inline α (detector-balance) calibration for the grouping Corrections panel.
-
-Hosts the single-α estimate controls — a calibration-run picker (weak-TF
-candidates highlighted), a method combo, and an **Estimate** button — that used
-to live in the standalone ``AlphaCalibrationDialog``. The estimate runs on a
-:class:`~asymmetry.gui.tasks.TaskRunner` worker thread over the *corrected*
-forward/backward counts (deadtime + background applied, see PR 1); on success
-the section emits :attr:`alpha_estimated` with a calibrated
-:class:`~asymmetry.core.project.profiles.AlphaPolicy`, and the owning grouping
-dialog applies it to the α spin and the shared preview (which already draws the
-α=1↔α̂ overlay and the residual baseline). There is no preview of its own — the
-unified grouping preview is the single source of truth.
-
-The off-thread estimate worker (:func:`run_alpha_estimate`), its corrected-F/B
-builder (:func:`build_corrected`), the request builder (:func:`build_alpha_request`)
-and the run-combo helpers (:func:`populate_calibration_run_combo`) are shared with
-the grouping dialog's inline *vector* per-projection α estimate (the standalone
-``AlphaCalibrationDialog`` it used to launch has been retired).
-"""
+"""Shared explicit calibration controls and cancellable workflow lifecycle."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from asymmetry.core.data.calibration import (
-    best_calibration_run_index,
-    classify_tf_calibration_run,
+from asymmetry.core.data.calibration import best_calibration_run_index, classify_tf_calibration_run
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.engine import FitCancelledError
+from asymmetry.core.fitting.result_summary import reduced_statistic_label
+from asymmetry.core.io import background_reference_for_grouping
+from asymmetry.core.project.profiles import AlphaPolicy, resolve_effective_grouping
+from asymmetry.core.transform.t0 import find_t0_for_run
+from asymmetry.core.workflow.calibration import (
+    CalibrationOptions,
+    calibrate_source,
+    calibration_source,
+    explicit_calibration_options,
+    supports_joint_calibration,
 )
-from asymmetry.core.data.dataset import Histogram, MuonDataset
-from asymmetry.core.project.profiles import AlphaPolicy
-from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
-from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.corrections import (
-    BackgroundReference,
-    CorrectionStatus,
-    reference_observation_metadata,
-)
-from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
-from asymmetry.core.transform.grouping import effective_group_indices
-from asymmetry.core.transform.reduce import (
-    ReferenceResolver,
-    corrected_grouped_counts,
-    correction_flags_from_grouping,
-)
+from asymmetry.core.workflow.calibration_results import CalibrationOutcome
+from asymmetry.core.workflow.reduction import ReductionSettings
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
-from asymmetry.gui.widgets.elided_label import ElidedLabel
+from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
-from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
-from asymmetry.gui.windows.grouping.format import (
-    ALPHA_METHOD_ITEMS,
-    format_value_with_uncertainty,
-)
-
-__all__ = [
-    "AlphaEstimateRequest",
-    "AlphaEstimateResult",
-    "AlphaSectionWidget",
-    "build_alpha_request",
-    "build_corrected",
-    "correction_note",
-    "grouping_for_reduction",
-    "populate_calibration_run_combo",
-    "resolve_reference",
-    "run_alpha_estimate",
-    "run_metadata",
-    "run_summary",
-]
-
-CorrectionProvider = Callable[[MuonDataset], "dict[str, Any]"]
+from asymmetry.gui.windows.grouping.format import ALPHA_METHOD_ITEMS, format_value_with_uncertainty
 
 
 @dataclass(frozen=True)
-class AlphaEstimateRequest:
-    """An immutable snapshot of what to estimate, built on the GUI thread.
+class CalibrationReference:
+    """Reference selection and loaded-source handles, resolved on the worker."""
 
-    Everything here is a plain object, so the worker runs entirely off the GUI
-    thread. ``resolved_reference`` is the ``reference_run`` background's
-    ``(histograms, scale)`` pre-resolved on the GUI thread (or ``None``).
-    """
-
-    token: int
-    histograms: list[Histogram]
-    grouping: dict[str, Any]
-    method: str
-    run_label: str
-    resolved_reference: BackgroundReference | None
-    facility: str
-    metadata: dict[str, Any]
+    payload: dict
+    datasets: tuple
 
 
 @dataclass(frozen=True)
-class AlphaEstimateResult:
-    """The estimate marshalled back to the GUI thread, tagged with its token.
+class CalibrationRequest:
+    """Bounded request facts; acquired arrays are held by the captured source."""
 
-    ``note_text``/``note_warn`` describe which corrections the estimate reflected
-    (the modal recomputes its own note for its preview and ignores these).
-    """
-
-    token: int
-    estimate: AlphaEstimate
-    run_label: str
-    note_text: str = ""
-    note_warn: bool = False
+    generation: int
+    dataset: MuonDataset
+    profile: Any
+    options: CalibrationOptions
+    reference: Any = None
+    slot: str = "single"
 
 
-def build_corrected(
-    histograms: list[Histogram],
-    grouping: dict[str, Any],
-    resolved_reference: BackgroundReference | None,
-    facility: str,
-    metadata: dict[str, Any] | None = None,
-) -> ForwardBackwardCounts:
-    """Deadtime-correct, group and background-subtract F/B for the estimate.
+@dataclass(frozen=True)
+class CalibrationReply:
+    generation: int
+    slot: str
+    outcome: CalibrationOutcome
 
-    Pure (no widgets). Raises :class:`ValueError` when the groups reference no
-    present detectors, matching the grouping dialog's guard.
-    """
-    from asymmetry.core.io import background_reference_for_grouping
-    from asymmetry.core.io.periods import select_period_histograms, selected_period_index
 
-    metadata = dict(metadata or {})
-    index = selected_period_index(grouping)
-    if index is not None:
-        histograms, grouping = select_period_histograms(histograms, grouping, index)
-        metadata["period_number"] = index + 1
-    resolved_reference = background_reference_for_grouping(resolved_reference, grouping)
-    n = len(histograms)
-    forward_gid = int(grouping.get("forward_group", 1))
-    backward_gid = int(grouping.get("backward_group", 2))
-    forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n)
-    backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n)
-    flags = correction_flags_from_grouping(grouping)
-    resolver = None if resolved_reference is None else (lambda _g: resolved_reference)
-    return corrected_grouped_counts(
-        histograms=histograms,
-        grouping=grouping,
-        forward_idx=forward_idx,
-        backward_idx=backward_idx,
-        use_deadtime=flags.use_deadtime,
-        deadtime_mode=flags.deadtime_mode,
-        use_background=flags.use_background,
-        facility=facility,
-        metadata=metadata,
-        reference_resolver=resolver,
+def run_calibration(worker: TaskWorker, request: CalibrationRequest) -> CalibrationReply:
+    """Resolve the source profile and run the shared numerical operation off-thread."""
+    check_task_cancelled(worker)
+    from asymmetry.core.io.periods import period_count
+
+    run = request.dataset.run
+    parent = run is not None and (
+        "period_histograms" in run.grouping or "period_reduced" in run.grouping
     )
+    options = replace(
+        request.options,
+        period=request.profile.period_mode
+        if parent and period_count(request.dataset) > 1
+        else None,
+    )
+    source = calibration_source(request.dataset, ReductionSettings(), options)
+    profile = replace(request.profile, alpha_policy=AlphaPolicy(value=1.0), period_mode=None)
+    reference = request.reference
+    if isinstance(reference, CalibrationReference):
+        from asymmetry.core.io import resolve_background_reference
+        from asymmetry.core.transform.reference_scale import ReferenceExposure
 
-
-def correction_note(grouping: dict[str, Any], corrected: ForwardBackwardCounts) -> tuple[str, bool]:
-    """Describe the complete correction outcome used for this estimate."""
-    corrected.corrections.require_complete()
-    applied = [
-        outcome.name
-        for outcome in (corrected.corrections.deadtime, corrected.corrections.background)
-        if outcome.status == CorrectionStatus.APPLIED
-    ]
-    if not applied:
-        return (
-            "No deadtime or background correction is configured — α is estimated on raw counts.",
-            False,
+        reference = resolve_background_reference(
+            reference.payload,
+            sample_exposure=ReferenceExposure.from_grouping(source.run.grouping),
+            datasets=list(reference.datasets),
         )
-    return ("α is estimated on corrected counts (" + ", ".join(applied) + ").", False)
 
+    def resolve_reference(grouping):
+        resolved = background_reference_for_grouping(reference, grouping)
+        if resolved is None:
+            return None
+        from asymmetry.core.transform.grouping import independent_pair_indices
+        from asymmetry.gui.utils.reference_timing import _resolve_reference_timing
 
-def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> AlphaEstimateResult:
-    """Build corrected F/B and estimate α off the GUI thread (+ correction note).
+        pair = independent_pair_indices(grouping, n_histograms=len(resolved.histograms))
+        return _resolve_reference_timing(resolved, pair, worker)
 
-    ``build_corrected`` raises :class:`ValueError` when the groups reference no
-    present detectors; the TaskWorker turns that into the worker's ``error``
-    signal.
-    """
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    corrected = build_corrected(
-        request.histograms,
-        request.grouping,
-        request.resolved_reference,
-        request.facility,
-        request.metadata,
+    def search(histograms, metadata, **_options):
+        return find_t0_for_run(
+            histograms, metadata, cancel_check=lambda: check_task_cancelled(worker)
+        )
+
+    grouping = resolve_effective_grouping(
+        profile, source.run, reference_resolver=resolve_reference, timing_search=search
     )
-    forward = corrected.forward.counts
-    common_t0 = corrected.common_t0_bin
-    bin_width = float(corrected.bin_width_us)
-
-    time_us = None
-    if request.method == "general":
-        # Same bin-centre stamps the reduction uses (D4): the residual is the
-        # sub-bin offset of the run's exact t0, exactly 0.0 without one.
-        residual_us = (float(common_t0) + 0.5) * bin_width - corrected.t0_time_us
-        time_us = (
-            np.arange(forward.size, dtype=np.float64) - float(common_t0)
-        ) * bin_width + residual_us
-
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    estimate = estimate_alpha_detailed(
-        corrected.forward,
-        corrected.backward,
-        method=request.method,
-        time_us=time_us,
-        first_good_bin=corrected.window.first,
-        last_good_bin=corrected.window.last,
+    source = replace(source, run=replace(source.run, grouping=grouping))
+    outcome = calibrate_source(
+        source,
+        request.options,
+        reference_resolver=resolve_reference,
+        cancel_callback=worker.is_cancelled,
     )
-    note_text, note_warn = correction_note(request.grouping, corrected)
-    return AlphaEstimateResult(
-        token=request.token,
-        estimate=estimate,
-        run_label=request.run_label,
-        note_text=note_text,
-        note_warn=note_warn,
-    )
-
-
-# ----------------------------------------------------------------------------
-# Shared run-combo + request builders (used by the inline single-α section here
-# and by the grouping dialog's inline per-projection vector estimate). One
-# implementation, so the two estimate call sites agree by construction.
-# ----------------------------------------------------------------------------
+    check_task_cancelled(worker)
+    return CalibrationReply(request.generation, request.slot, outcome)
 
 
 def run_metadata(dataset: MuonDataset) -> dict[str, Any]:
@@ -290,278 +180,348 @@ def populate_calibration_run_combo(
     combo.setCurrentIndex(auto if auto is not None else 0)
 
 
-def grouping_for_reduction(
-    dataset: MuonDataset,
-    *,
-    groups: dict[int, list[int]],
-    forward_gid: int,
-    backward_gid: int,
-    excluded_detectors: list[int],
-    correction_provider: CorrectionProvider | None,
-) -> dict[str, Any]:
-    """Resolved correction grouping for *dataset* with a draft group pair.
-
-    Starts from the dataset's resolved correction payload (deadtime + background
-    config plus per-run t0 / good-window facts) so α is estimated on the same
-    corrected counts the reduction applies it to, then overrides the group
-    selection, forward/backward pair and exclusions. Without a
-    ``correction_provider`` this degrades to the minimal raw-count dict. ``groups``
-    are the dialog's 0-based detector indices; they are stored 1-based here.
-    """
-    grouping: dict[str, Any] = {}
-    if correction_provider is not None:
-        grouping = dict(correction_provider(dataset))
-    grouping["groups"] = {int(gid): shift_channel_entries(idxs, 1) for gid, idxs in groups.items()}
-    grouping["forward_group"] = int(forward_gid)
-    grouping["backward_group"] = int(backward_gid)
-    grouping["excluded_detectors"] = list(excluded_detectors)
-    return grouping
-
-
-def resolve_reference(
-    grouping: dict[str, Any], reference_resolver: ReferenceResolver | None
-) -> BackgroundReference | None:
-    """Resolve the ``reference_run`` background on the GUI thread, or ``None``.
-
-    Done on the GUI thread (not in the worker) because the resolver reaches into
-    the loaded-dataset registry; the result is plain data snapshotted into the
-    worker request. Non-reference modes return ``None``; resolution failures
-    reach the user-input error display.
-    """
-    if reference_resolver is None:
-        return None
-    if resolve_background_mode(grouping) != "reference_run":
-        return None
-    return reference_resolver(grouping)
-
-
-def build_alpha_request(
-    *,
-    token: int,
-    dataset: MuonDataset,
-    groups: dict[int, list[int]],
-    forward_gid: int,
-    backward_gid: int,
-    excluded_detectors: list[int],
-    method: str,
-    correction_provider: CorrectionProvider | None,
-    reference_resolver: ReferenceResolver | None,
-    facility: str,
-) -> AlphaEstimateRequest:
-    """Snapshot the current inputs into an :class:`AlphaEstimateRequest`.
-
-    Built on the GUI thread — resolves the correction grouping, the good-bin
-    window and the ``reference_run`` background to plain data so the worker never
-    touches widgets or the loader. *dataset* must carry a run with histograms.
-    """
+def source_identity(dataset):
+    """Bounded acquired facts; count arrays are replaced rather than edited by the GUI."""
     run = dataset.run
-    assert run is not None
-    grouping = grouping_for_reduction(
+    if run is None:
+        return (id(dataset), None)
+    grouping = run.grouping
+    facts = (
+        "period_mode",
+        "t0_bin",
+        "t0_time_us",
+        "first_good_bin",
+        "last_good_bin",
+        "good_frames",
+        "dead_time_us",
+        "detector_t0_bins",
+        "detector_first_good_bins",
+        "detector_last_good_bins",
+    )
+    return (
+        id(dataset),
+        id(run),
+        id(grouping),
+        id(run.histograms),
+        run.run_number,
+        run.source_file,
+        tuple(id(h.counts) for h in run.histograms),
+        run.metadata.get("source_run_number"),
+        run.metadata.get("period_number"),
+        run.metadata.get("raw_period_histograms_available"),
+        tuple((grouping.get("period_mapping", run.metadata.get("period_mapping")) or {}).items()),
+        tuple((key, repr(grouping.get(key))) for key in facts),
+        id(grouping.get("period_histograms")),
+        id(grouping.get("period_reduced")),
+    )
+
+
+def source_snapshot(dataset):
+    """Capture source containers while retaining owned, immutable acquisition arrays."""
+    run = dataset.run
+    if run is None:
+        return replace(dataset, metadata=dict(dataset.metadata))
+    grouping = {
+        key: value.copy() if isinstance(value, (dict, list)) else value
+        for key, value in run.grouping.items()
+    }
+    return replace(
         dataset,
-        groups=groups,
-        forward_gid=forward_gid,
-        backward_gid=backward_gid,
-        excluded_detectors=excluded_detectors,
-        correction_provider=correction_provider,
+        metadata=dict(dataset.metadata),
+        run=replace(
+            run, histograms=list(run.histograms), grouping=grouping, metadata=dict(run.metadata)
+        ),
     )
-    return AlphaEstimateRequest(
-        token=token,
-        histograms=list(run.histograms),
-        grouping=grouping,
-        method=method,
-        run_label=str(dataset.run_label),
-        resolved_reference=resolve_reference(grouping, reference_resolver),
-        facility=str(facility or ""),
-        metadata=reference_observation_metadata(run),
-    )
+
+
+class CalibrationDelivery(QObject):
+    """Bind every terminal signal to the request generation on the GUI thread."""
+
+    def __init__(self, section, generation):
+        super().__init__(section)
+        self.section = section
+        self.generation = generation
+
+    @Slot(str)
+    def error(self, message):
+        if self.generation == self.section._generation:
+            self.section._error(message)
+        self.deleteLater()
+
+    @Slot()
+    def cancelled(self):
+        if self.generation == self.section._generation:
+            self.section._cancelled()
+        self.deleteLater()
+
+    @Slot(object)
+    def finished(self, reply):
+        self.section._finished(reply)
+        self.deleteLater()
 
 
 class AlphaSectionWidget(QWidget):
-    """Inline single-α calibration controls (run picker + method + Estimate).
+    """One lifecycle for scalar and per-projection calibration, staged until Apply."""
 
-    :meth:`configure` (re)seeds it from the grouping draft; a successful Estimate
-    emits :attr:`alpha_estimated` with a calibrated :class:`AlphaPolicy`. The
-    runner is shut down via :meth:`shutdown` from the dialog's teardown.
-    """
+    result_ready = Signal(object)
+    invalidated = Signal()
 
-    #: Emitted with a calibrated ``AlphaPolicy`` when an estimate succeeds.
-    alpha_estimated = Signal(object)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        """Build the run combo, method combo, Estimate button and note."""
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._datasets: list[MuonDataset] = []
-        #: Supplies the current {groups, forward_group, backward_group,
-        #: excluded_detectors, correction_provider, reference_resolver, facility}
-        #: fresh at Estimate time, so a group/pair edit is never stale and the
-        #: run-combo selection is preserved across edits.
-        self._context_provider: Callable[[], dict[str, Any]] | None = None
-        self._estimate_source_run: int | None = None
-
+        self._datasets = []
+        self._context_provider = None
         self._tasks = TaskRunner(self)
-        self._estimate_token = 0
-
+        self._worker = None
+        self._generation = 0
+        self._pending: dict[str, CalibrationReply] = {}
+        self._queue: list[tuple[str, MuonDataset, Any, Any]] = []
+        self._source = None
+        self._source_key = None
+        self._references = ()
+        self._vector = False
+        self._slots = []
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(4)
-
-        run_row = QHBoxLayout()
-        run_row.setContentsMargins(0, 0, 0, 0)
-        run_row.addWidget(QLabel("Calibration run"))
         self._run_combo = NoScrollComboBox()
-        # Long run labels ("Run 7101 · YBCO TF 200G 100K (Knight shift) · …")
-        # must not set the combo's *minimum* width — that forces the whole
-        # corrections column into a horizontal scrollbar on narrow panes. Size
-        # to a modest minimum instead; the stretch grants whatever width the
-        # column actually has, and the popup still shows full labels.
         self._run_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
         self._run_combo.setMinimumContentsLength(18)
-        run_row.addWidget(self._run_combo, stretch=1)
-        root.addLayout(run_row)
-
-        method_row = QHBoxLayout()
-        method_row.setContentsMargins(0, 0, 0, 0)
-        method_row.addWidget(QLabel("Method"))
+        root.addWidget(QLabel("Calibration run"))
+        root.addWidget(self._run_combo)
         self._method_combo = NoScrollComboBox()
-        for label, key, explanation in ALPHA_METHOD_ITEMS:
+        for label, key, tip in ALPHA_METHOD_ITEMS:
             self._method_combo.addItem(label, key)
             self._method_combo.setItemData(
-                self._method_combo.count() - 1, explanation, Qt.ItemDataRole.ToolTipRole
+                self._method_combo.count() - 1, tip, Qt.ItemDataRole.ToolTipRole
             )
-        method_row.addWidget(self._method_combo, stretch=1)
-        self._estimate_btn = QPushButton("Estimate α")
-        self._estimate_btn.setAutoDefault(False)
-        self._estimate_btn.setDefault(False)
-        self._estimate_btn.clicked.connect(self._on_estimate)
-        method_row.addWidget(self._estimate_btn)
-        root.addLayout(method_row)
-
-        # A single-line status ("α = 1.0123  ·  Diamagnetic (TF)  ·  run 12"):
-        # ElidedLabel (not word-wrap) so a long method label or run title can
-        # never set a minimum width that forces the corrections column into a
-        # horizontal scrollbar — it elides with the full text as a tooltip
-        # instead, the same pattern the t0 line uses in dialog.py.
-        self._result_label = ElidedLabel("Pick a calibration run and press Estimate α.")
-        self._result_label.set_pen_color(tokens.TEXT_MUTED)
+        self._method_combo.setCurrentIndex(
+            self._method_combo.findData(explicit_calibration_options().method)
+        )
+        root.addWidget(self._method_combo)
+        self._fit_beta = QCheckBox("Calibrate β")
+        root.addWidget(self._fit_beta)
+        row = QHBoxLayout()
+        self._estimate_btn = QPushButton("Estimate calibration")
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setEnabled(False)
+        for button in (self._estimate_btn, self._stop_btn):
+            button.setAutoDefault(False)
+            row.addWidget(button)
+        root.addLayout(row)
+        self._result_label = QLabel("No calibration result")
+        self._result_label.setWordWrap(True)
         root.addWidget(self._result_label)
-
         self._note_label = QLabel("")
         self._note_label.setWordWrap(True)
-        self._note_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         root.addWidget(self._note_label)
+        self._estimate_btn.clicked.connect(self._on_estimate)
+        self._stop_btn.clicked.connect(self.invalidate)
+        self._run_combo.currentIndexChanged.connect(self.invalidate)
+        self._method_combo.currentIndexChanged.connect(self._method_changed)
+        self._fit_beta.toggled.connect(self.invalidate)
 
-    # -- configuration ---------------------------------------------------
-
-    def configure(
-        self,
-        *,
-        datasets: list[MuonDataset],
-        method: str,
-        selected_run_number: int | None,
-        context_provider: Callable[[], dict[str, Any]],
-    ) -> None:
-        """(Re)seed the run list and method; the context is pulled at Estimate time.
-
-        ``context_provider`` returns the current ``{groups, forward_group,
-        backward_group, excluded_detectors, correction_provider,
-        reference_resolver, facility}`` — read fresh on each Estimate, so a later
-        group/pair edit is honoured without resetting the run selection.
-        """
-        self._datasets = [ds for ds in datasets if ds.run is not None]
+    def configure(self, *, datasets, selected_run_number, context_provider):
+        self.invalidate()
+        self._datasets = list(datasets)
         self._context_provider = context_provider
-        self._run_combo.blockSignals(True)
-        self._populate_run_combo(selected_run_number)
-        self._run_combo.blockSignals(False)
-        idx = self._method_combo.findData(str(method or "diamagnetic"))
-        self._method_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._estimate_btn.setEnabled(bool(self._datasets))
-
-    def shutdown(self) -> None:
-        """Tear down the estimate runner (call from the dialog's teardown)."""
-        self._tasks.shutdown()
-
-    # -- run combo -------------------------------------------------------
-
-    def _populate_run_combo(self, selected_run_number: int | None) -> None:
+        with_block = self._run_combo.blockSignals(True)
         populate_calibration_run_combo(self._run_combo, self._datasets, selected_run_number)
+        self._run_combo.blockSignals(with_block)
+        self._estimate_btn.setEnabled(bool(datasets))
 
-    def _current_dataset(self) -> MuonDataset | None:
-        run_number = self._run_combo.currentData()
-        if run_number is None:
-            return None
-        return next((ds for ds in self._datasets if int(ds.run_number) == int(run_number)), None)
+    def set_vector(self, vector, slots=()):
+        self._slots = list(slots)
+        if vector != self._vector:
+            self.invalidate()
+        self._vector = vector
+        self._method_changed()
 
-    def _current_method(self) -> str:
-        return str(self._method_combo.currentData() or "diamagnetic")
+    @Slot()
+    def _method_changed(self):
+        enabled = supports_joint_calibration(
+            self._method_combo.currentData(), projection_layout=self._vector
+        )
+        self._fit_beta.setEnabled(enabled)
+        if not enabled:
+            self._fit_beta.setChecked(False)
+        self.invalidate()
 
-    # -- estimate --------------------------------------------------------
+    @Slot()
+    def invalidate(self):
+        self._generation += 1
+        if self._worker is not None:
+            self._worker.cancel()
+        self._worker = None
+        self._pending.clear()
+        self._queue.clear()
+        self._source = None
+        self._source_key = None
+        self._references = ()
+        self._stop_btn.setEnabled(False)
+        self._estimate_btn.setEnabled(bool(self._datasets))
+        self._result_label.setText("No calibration result")
+        self._note_label.clear()
+        self.invalidated.emit()
 
-    def _on_estimate(self) -> None:
+    def _current_dataset(self):
+        index = self._run_combo.currentIndex()
+        return self._datasets[index] if 0 <= index < len(self._datasets) else None
+
+    @Slot()
+    def _on_estimate(self):
+        self.estimate_slots(self._slots if self._vector else ["single"])
+
+    def estimate_slots(self, slots):
+        self.invalidate()
         dataset = self._current_dataset()
-        if dataset is None or dataset.run is None or not dataset.run.histograms:
-            QMessageBox.warning(self, "Alpha Calibration", "Selected run has no histograms.")
+        if dataset is None or self._context_provider is None:
             return
-        context = self._context_provider() if self._context_provider is not None else {}
-        self._estimate_source_run = int(dataset.run_number)
-        self._estimate_token += 1
+        self._source = dataset
+        self._source_key = source_identity(dataset)
+        dataset = source_snapshot(dataset)
         try:
-            request = build_alpha_request(
-                token=self._estimate_token,
-                dataset=dataset,
-                groups=context.get("groups") or {},
-                forward_gid=int(context.get("forward_group", 1)),
-                backward_gid=int(context.get("backward_group", 2)),
-                excluded_detectors=context.get("excluded_detectors") or [],
-                method=self._current_method(),
-                correction_provider=context.get("correction_provider"),
-                reference_resolver=context.get("reference_resolver"),
-                facility=str(context.get("facility", "")),
-            )
+            context = self._context_provider()
+            self._queue = []
+            references = {}
+            for slot in slots:
+                profile, reference = context(slot, dataset)
+                if isinstance(reference, CalibrationReference):
+                    for source in reference.datasets:
+                        references[id(source)] = (source, source_identity(source))
+                    reference = replace(
+                        reference, datasets=tuple(source_snapshot(ds) for ds in reference.datasets)
+                    )
+                self._queue.append((slot, dataset, profile, reference))
+            self._references = tuple(references.values())
         except (ValueError, OSError) as exc:
-            self._on_estimate_error(str(exc))
+            self._result_label.setText(f"Calibration unavailable: {exc}")
             return
+        self._start_next()
+
+    def _start_next(self):
+        if not self._queue:
+            self._worker = None
+            self._estimate_btn.setEnabled(bool(self._datasets))
+            self._stop_btn.setEnabled(False)
+            return
+        slot, dataset, profile, reference = self._queue.pop(0)
+        options = CalibrationOptions(
+            str(self._method_combo.currentData()), self._fit_beta.isChecked(), period=None
+        )
+        request = CalibrationRequest(self._generation, dataset, profile, options, reference, slot)
         self._estimate_btn.setEnabled(False)
-        self._result_label.set_pen_color(tokens.TEXT_MUTED)
-        self._result_label.setText("Computing estimate…")
-        self._tasks.start(
-            lambda worker: run_alpha_estimate(worker, request),
-            on_finished=self._on_estimate_finished,
-            on_error=self._on_estimate_error,
+        self._stop_btn.setEnabled(True)
+        self._result_label.setText("Computing calibration…")
+        delivery = CalibrationDelivery(self, request.generation)
+        self._worker = self._tasks.start(
+            lambda worker: run_calibration(worker, request),
+            on_finished=delivery.finished,
+            on_error=delivery.error,
+            on_cancelled=delivery.cancelled,
+            cancel_exceptions=(FitCancelledError,),
         )
 
-    def _on_estimate_finished(self, result: object) -> None:
-        self._estimate_btn.setEnabled(True)
-        self._result_label.set_pen_color(tokens.TEXT)
-        if not isinstance(result, AlphaEstimateResult) or result.token != self._estimate_token:
-            return  # superseded by a later Estimate click
-        estimate = result.estimate
-        self._note_label.setStyleSheet(
-            f"color: {tokens.WARN if result.note_warn else tokens.TEXT_MUTED};"
-        )
-        self._note_label.setText(result.note_text)
-        if not estimate.ok:
-            self._result_label.setText(f"Estimate failed: {estimate.message}")
+    @Slot(object)
+    def _finished(self, reply):
+        if reply.generation != self._generation:
             return
-        method_label = next(
-            (label for label, key, _ in ALPHA_METHOD_ITEMS if key == estimate.method),
-            estimate.method,
-        )
-        formatted = format_value_with_uncertainty(estimate.alpha, estimate.alpha_error)
-        self._result_label.setText(f"α = {formatted}  ·  {method_label}  ·  run {result.run_label}")
-        self.alpha_estimated.emit(
-            AlphaPolicy(
-                mode="calibrated",
-                value=float(estimate.alpha),
-                error=estimate.alpha_error,
-                method=estimate.method,
-                source_run=self._estimate_source_run,
+        if not self._sources_current():
+            self.invalidate()
+            return
+        outcome = reply.outcome
+        selected = outcome.selected
+        if outcome.alpha is None:
+            self._error(outcome.message)
+            return
+        self._pending[reply.slot] = reply
+        lines = []
+        for slot, captured in self._pending.items():
+            result = captured.outcome
+            fitted = result.selected
+            alpha = format_value_with_uncertainty(fitted.alpha, fitted.alpha_error)
+            if result.record is not None and fitted.alpha_error is None:
+                alpha += " (error unavailable)"
+            beta = "1 (fixed)"
+            if result.record is not None and not fitted.beta_fixed:
+                beta = format_value_with_uncertainty(fitted.beta, fitted.beta_error)
+                if fitted.beta_error is None:
+                    beta += " (error unavailable)"
+            model = (
+                result.selected.envelope.value.title()
+                if result.record
+                else next(label for label, key, _ in ALPHA_METHOD_ITEMS if key == result.method)
+            )
+            prefix = "" if slot == "single" else f"{slot}: "
+            lines.append(f"{prefix}α = {alpha} · β = {beta} · {model}")
+        self._result_label.setText("\n".join(lines))
+        source = outcome.source
+        period = (
+            f"Period {outcome.period_number}"
+            if outcome.period_number is not None
+            else (
+                f"Mapped set {source.mapped_period_number}"
+                if outcome.record is None and source.mapped_period_number is not None
+                else "Period unknown"
             )
         )
+        summary = [period, f"F{outcome.forward_group}/B{outcome.backward_group}"]
+        if reply.slot != "single":
+            summary.insert(0, reply.slot)
+        if outcome.record:
+            fit = selected.fit
+            statistic = (
+                f"{fit.statistic_per_dof:.3g}"
+                if fit.statistic_per_dof is not None
+                else "unavailable"
+            )
+            summary.append(f"{reduced_statistic_label(fit.objective)} {statistic} ({fit.dof} dof)")
+            errors = "conditional errors"
+            if fit.uncertainty_status != "available":
+                errors += f" {fit.uncertainty_status}"
+        else:
+            summary.append(f"{selected.n_bins_used} bins")
+            errors = "first-order errors" if outcome.method == "ratio" else "no error estimate"
+        summary.append(errors)
+        self._note_label.setText(" · ".join(summary))
+        if not self._queue:
+            for captured in tuple(self._pending.values()):
+                if captured.generation != self._generation:
+                    break
+                self.result_ready.emit(captured)
+        self._start_next()
 
-    def _on_estimate_error(self, message: str) -> None:
-        self._estimate_btn.setEnabled(True)
-        self._result_label.set_pen_color(tokens.TEXT)
-        self._result_label.setText("Press Estimate α to measure α from this run.")
-        QMessageBox.warning(self, "Alpha Calibration", message)
+    @Slot(str)
+    def _error(self, message):
+        if self._worker is None:
+            return
+        self._queue.clear()
+        self._pending.clear()
+        self._result_label.setText(f"Calibration failed: {message}")
+        self._note_label.clear()
+        self._start_next()
+
+    @Slot()
+    def _cancelled(self):
+        if self._worker is not None:
+            self.invalidate()
+
+    def _sources_current(self):
+        return (
+            self._source is not None
+            and source_identity(self._source) == self._source_key
+            and all(source_identity(source) == key for source, key in self._references)
+        )
+
+    def pending(self):
+        if self._source is not None and not self._sources_current():
+            self.invalidate()
+        return (
+            {}
+            if self._worker is not None
+            else {slot: reply.outcome for slot, reply in self._pending.items()}
+        )
+
+    def shutdown(self):
+        self.invalidate()
+        self._tasks.shutdown()

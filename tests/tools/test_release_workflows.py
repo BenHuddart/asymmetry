@@ -204,13 +204,19 @@ def test_standard_ci_uses_the_native_per_test_watchdog() -> None:
     assert ("-o", "faulthandler_timeout=600") in tuple(zip(options, options[1:]))
 
 
-def test_pages_allows_slow_sync_with_a_bounded_job_and_cleanup() -> None:
+def test_pages_uses_supported_timeout_and_preserves_failed_artifacts() -> None:
     job = _workflow("docs-pages.yml")["jobs"]["deploy-pages"]
     deploy = next(
         step for step in job["steps"] if step.get("uses", "").startswith("actions/deploy-pages@")
     )
     timeout_ms = int(deploy.get("with", {}).get("timeout", 600000))
-    assert timeout_ms > 600000
+    assert 0 < timeout_ms <= 600000
     assert timeout_ms < job["timeout-minutes"] * 60000 <= 30 * 60000
     cleanup = next(step for step in job["steps"] if step["name"] == "Delete github-pages artifact")
-    assert cleanup["if"] == "always()"
+    assert cleanup["if"] == "success() && steps.deployment.outcome == 'success'"
+    upload = next(
+        step
+        for step in _workflow("docs-pages.yml")["jobs"]["build-docs"]["steps"]
+        if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert 1 <= upload["with"]["retention-days"] <= 7

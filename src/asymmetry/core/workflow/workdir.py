@@ -257,6 +257,7 @@ def reduction_digest(
     payload = {
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
+        "pair_balance_policy": "selected_pair_explicit_override",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
         "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),

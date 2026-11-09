@@ -100,9 +100,9 @@ def add_calibration_arguments(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument(
         "--calibration-method",
-        choices=CALIBRATION_METHODS,
+        choices=(*CALIBRATION_METHODS, "automatic"),
         default=None,
-        help="Explicit calibration operation (omitted: per-run integral ratio)",
+        help="Explicit calibration operation (omitted: TF calibration fit)",
     )
     parser.add_argument(
         "--fit-beta",
@@ -132,10 +132,17 @@ def add_calibration_arguments(parser: argparse.ArgumentParser) -> None:
 
 def calibration_options(args: argparse.Namespace):
     """Parse once at the shared calibration request boundary."""
-    from asymmetry.core.workflow.calibration import CalibrationOptions
+    from asymmetry.core.workflow.calibration import (
+        CalibrationOptions,
+        explicit_calibration_options,
+    )
 
     return CalibrationOptions(
-        method=args.calibration_method,
+        method=explicit_calibration_options().method
+        if args.calibration_method is None
+        else None
+        if args.calibration_method == "automatic"
+        else args.calibration_method,
         fit_beta=args.fit_beta,
         envelope=args.calibration_envelope,
         period=args.calibration_period,
@@ -213,7 +220,11 @@ def reduction_settings(
         options = calibration_options(args)
         if alpha_from is None:
             if args.command != "alpha" and (
-                options.method is not None or options.period is not None
+                args.calibration_method is not None
+                or options.period is not None
+                or args.fit_beta
+                or args.calibration_envelope is not None
+                or args.calibration_frequency is not None
             ):
                 raise ValueError("Explicit calibration options require --alpha-from")
             return settings

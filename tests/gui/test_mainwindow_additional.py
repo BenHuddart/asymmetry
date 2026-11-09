@@ -4213,19 +4213,18 @@ class TestMainWindowBasic:
             "bunching_factor": 1,
             "deadtime_correction": False,
         }
-
         applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
-
         assert applied is True
         assert dataset.run is not None
         assert dataset.run.grouping["forward_group"] == 5
         assert dataset.run.grouping["backward_group"] == 6
         assert dataset.run.grouping["vector_axis"] == "P_x"
         assert dataset.run.grouping["instrument"] == "EMU"
-        assert dataset.run.grouping["alpha"] == pytest.approx(1.7)
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
         assert dataset.run.grouping["alpha_x"] == pytest.approx(1.7)
         assert dataset.run.grouping["alpha_y"] == pytest.approx(1.3)
         assert dataset.run.grouping["alpha_z"] == pytest.approx(1.1)
+        np.testing.assert_allclose(dataset.asymmetry, 100 * (1 - 1.7 * 0.8) / (1 + 1.7 * 0.8))
 
     def test_fit_target_change_reduces_dataset_to_that_projection(
         self,
@@ -4893,7 +4892,7 @@ class TestMainWindowBasic:
         assert dataset.run is not None
         assert dataset.run.grouping["forward_group"] == 1
         assert dataset.run.grouping["backward_group"] == 2
-        assert dataset.run.grouping["alpha"] == pytest.approx(0.75)
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
         # A = (100 - 0.75*80) / (100 + 0.75*80) = 40/160 = 0.25 -> 25%.
         np.testing.assert_allclose(dataset.asymmetry, 25.0)
 
@@ -4930,7 +4929,7 @@ class TestMainWindowBasic:
         reloaded = _gps_wep_dataset(6003)
         applied, _ = mainwindow._apply_grouping_settings_to_dataset(reloaded, overrides)
         assert applied is True
-        assert reloaded.run.grouping["alpha"] == pytest.approx(0.75)
+        assert reloaded.run.grouping["alpha"] == pytest.approx(1.0)
         np.testing.assert_allclose(reloaded.asymmetry, 25.0)
 
     def test_apply_grouping_tf_projection_uses_declared_alpha_over_base(
@@ -4956,7 +4955,7 @@ class TestMainWindowBasic:
             "backward_group": 2,
             "vector_axis": "Top-Bottom",
             "instrument": "MuSR",
-            "alpha": 1.5,  # differs from the declared 1.0 to prove it is ignored
+            "alpha": 1.5,  # authored fallback remains separate from the active pair
             "t0_bin": 0,
             "first_good_bin": 0,
             "last_good_bin": 3,
@@ -4965,7 +4964,7 @@ class TestMainWindowBasic:
         }
         applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
         assert applied is True
-        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.5)
         # A = (100 - 1.0*80) / (100 + 1.0*80) = 20/180 = 0.111 -> 11.1%
         # (base alpha 1.5 would give (100-120)/(100+120) = -9.1%).
         np.testing.assert_allclose(dataset.asymmetry, 100.0 / 9.0)

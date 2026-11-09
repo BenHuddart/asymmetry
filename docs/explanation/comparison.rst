@@ -1335,7 +1335,27 @@ Workflow calibration entry points
 Explicit workflow/API/CLI TF requests share the documented core operation,
 model selection, and canonical alpha/beta record. ``--calibration-method`` also
 exposes Diamagnetic, General, and ratio as distinct operations. The no-option
-CLI and survey retain the integral-ratio policy, which is not WiMDA's
-Diamagnetic or General estimate. These adapters add no reference-program
-numerical agreement or physical-accuracy claim to the versioned comparisons
-above. General count-domain fitting remains a separate capability.
+explicit CLI calibration uses TF calibration fit. Survey and
+automatic per-run calibration retain the separate integral-ratio policy, which
+is not WiMDA's Diamagnetic or General estimate. These adapters add no
+reference-program numerical agreement or physical-accuracy claim to the
+versioned comparisons above. General count-domain fitting remains a separate
+capability.
+
+Fresh explicit calibration routing
+----------------------------------
+
+Asymmetry's GUI, CLI ``alpha``/``--alpha-from``, and omitted-option explicit API
+calibration use the shared TF count fit with four-envelope selection. Quick
+Diamagnetic and Decay balance remain distinct objectives, with stored ``general``
+identity retained for Decay balance. Finite windows, weights, frequency, and model
+backgrounds can change the fitted detector balance; different estimators need
+not agree. The selected envelope and its conditional errors do not establish
+acquired physical alpha truth or pulse-model adequacy. Asymmetry also checks
+request freshness before displaying or applying GUI results, so changes to the
+source, pair, timing, or corrections cannot apply an obsolete result.
+
+Asymmetry also checks that a displayed calibration coefficient is finite and
+positive before offering application. A numerical ratio of zero from an empty
+forward group cannot be used as a detector calibration; the workflow reports
+that diagnostic without changing the ratio formula or its error calculation.

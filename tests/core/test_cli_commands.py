@@ -620,7 +620,9 @@ def test_alpha_json_payload_recovers_the_simulated_balance(workflow_folder: Path
     payload = _json_output(capsys)
     _assert_stamped(payload)
     assert payload["alpha"]["alpha"] == pytest.approx(CALIBRATION_ALPHA, rel=0.01)
-    assert payload["alpha"]["method"] == "per_run_estimate"
+    assert payload["alpha"]["method"] == "tf_calibration_fit"
+    assert payload["alpha"]["beta_fixed"]
+    assert payload["alpha"]["calibration"]["source_run_number"] == CALIBRATION_RUN
     assert payload["is_calibration_candidate"] is True
     assert payload["warning"] is None
     assert payload["precession"]["state"] == "larmor"
@@ -727,7 +729,10 @@ def test_reduce_with_alpha_from_records_the_estimate_and_its_source(
     )
     payload = _json_output(capsys)
     assert payload["settings"]["alpha"] == pytest.approx(CALIBRATION_ALPHA, rel=0.01)
-    assert payload["settings"]["alpha_source"] == f"estimated:{CALIBRATION_RUN}"
+    assert (
+        payload["settings"]["alpha_source"] == payload["settings"]["calibration"]["calibration_id"]
+    )
+    assert payload["settings"]["calibration"]["source_run_number"] == CALIBRATION_RUN
 
 
 def test_reduce_with_deadtime_from_file(workflow_folder: Path, tmp_path: Path, capsys) -> None:
