@@ -319,6 +319,11 @@ def test_projection_override_apply_and_reopen_preserves_authored_policy(
     profile = profile_from_payload(payload, "restored", profile_fingerprint_for_run(data.run))
     if manual:
         assert label not in profile.projection_alpha_policies
+        spec = next(p for p in payload["projections"] if p["label"] == label)
+        for key in ("alpha_error", "alpha_reference_run", "alpha_method"):
+            assert key not in spec
+        if canonical:
+            assert "alpha" not in spec
         values = calibration_values(payload)
         assert (
             values["alpha_x"] == 1.7
@@ -339,6 +344,11 @@ def test_projection_override_apply_and_reopen_preserves_authored_policy(
     path = tmp_path / "projection.asymp"
     save_project(window.collect_project_state(), path)
     stored = load_project(path)["datasets"][0]["grouping_overrides"]
+    if manual:
+        spec = next(p for p in stored["projections"] if p["label"] == label)
+        assert not {"alpha_error", "alpha_reference_run", "alpha_method"} & spec.keys()
+        if canonical:
+            assert "alpha" not in spec
     reopened = profile_from_payload(stored, "reopened", profile.fingerprint)
     assert reopened.alpha_policy.to_dict() == profile.alpha_policy.to_dict()
     assert reopened.beta_policy.to_dict() == profile.beta_policy.to_dict()

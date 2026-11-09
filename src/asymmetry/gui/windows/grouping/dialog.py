@@ -5357,12 +5357,7 @@ class GroupingDialog(TimingControls, QDialog):
         return payload
 
     def _projection_payload(self, canonical: bool) -> list[dict[str, Any]]:
-        """Attach current non-canonical projection values and estimate provenance.
-
-        A matching new estimate replaces the recorded error, including an absent
-        error. Manual edits clear estimate provenance. Canonical EMU axes use
-        dedicated alpha_x/y/z keys, so their projection specs pass through.
-        """
+        """Capture each projection value without stale or duplicate attribution."""
         specs = self._projection_specs or []
         result: list[dict[str, Any]] = []
         for spec in specs:
@@ -5370,7 +5365,10 @@ class GroupingDialog(TimingControls, QDialog):
                 continue
             new_spec = dict(spec)
             label = str(new_spec.get("label"))
-            if not canonical and label in self._vector_alpha_spins:
+            if canonical:
+                for field in ("alpha", "alpha_error", "alpha_reference_run", "alpha_method"):
+                    new_spec.pop(field, None)
+            elif label in self._vector_alpha_spins:
                 value = float(self._vector_alpha_spins[label].value())
                 new_spec["alpha"] = value
                 recorded = self._alpha_estimate_state.get(label)
@@ -5381,9 +5379,8 @@ class GroupingDialog(TimingControls, QDialog):
                         new_spec.pop("alpha_error", None)
                     new_spec["alpha_reference_run"] = int(recorded[2])
                 else:
-                    # A manual edit (or no estimate) invalidates stale provenance.
-                    new_spec.pop("alpha_error", None)
-                    new_spec.pop("alpha_reference_run", None)
+                    for field in ("alpha_error", "alpha_reference_run", "alpha_method"):
+                        new_spec.pop(field, None)
             result.append(new_spec)
         return result
 

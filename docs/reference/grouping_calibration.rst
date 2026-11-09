@@ -357,7 +357,9 @@ The core grouping-profile application API preserves an applied TF fit or model
 selection as a frozen record shared by its alpha and beta policies. Captured
 fit assumptions and conditional uncertainty survive save/load without source
 files or recalibration. Manual policies replace the active coefficient link;
-the captured record remains history. See :doc:`project_files` and
+the captured record remains history. A manually edited projection carries its
+new value without the old method, error or reference-run fields. See
+:doc:`project_files` and
 :doc:`/api/fitting/calibration` for the persistence API.
 
 Shared calibration controls
