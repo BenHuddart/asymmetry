@@ -21,7 +21,7 @@ from numbers import Integral
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Slot
 from PySide6.QtGui import QColor, QIcon, QPixmap, QValidator
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -71,6 +71,8 @@ from asymmetry.core.io.periods import (
 from asymmetry.core.io.reference_selection import reference_observations
 from asymmetry.core.project.calibration import (
     CALIBRATION_PAYLOAD_KEYS,
+    CalibratedCoefficient,
+    QuickCalibratedCoefficient,
     resolve_projection_calibrations,
 )
 from asymmetry.core.project.profiles import (
@@ -954,9 +956,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._alpha_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._alpha_provenance_label.setWordWrap(True)
 
-        self._alpha_result_label = QLabel("")
-        self._alpha_result_label.setWordWrap(True)
-
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
         self._alpha_row_label = QLabel("α")
@@ -1033,7 +1032,6 @@ class GroupingDialog(TimingControls, QDialog):
         alpha_area_form.setVerticalSpacing(4)
         alpha_area_form.setHorizontalSpacing(12)
         alpha_area_form.addRow(self._alpha_row_label, self._single_alpha_widget)
-        alpha_area_form.addRow("", self._alpha_result_label)
         alpha_area_form.addRow("", self._alpha_stale_banner)
         alpha_area_form.addRow(self._vector_alpha_widget)
         alpha_area_layout.addLayout(alpha_area_form)
@@ -2976,7 +2974,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._alpha_estimate_state.clear()
         self._alpha_correction_digest = None
         self._reseed_alpha_provenance_from_grouping(grouping)
-        self._alpha_result_label.setText("")
         self._refresh_alpha_provenance_label()
         self._refresh_alpha_staleness()
         # β provenance reseed must follow the ``set_value`` above: at this point
@@ -3274,7 +3271,8 @@ class GroupingDialog(TimingControls, QDialog):
         banner + chip flag clear. The preview (``_refresh_preview``) syncs the
         compare surfaces on its way in.
         """
-        if not getattr(self, "_suppress_beta_provenance_reset", False):
+        if not self._suppress_beta_provenance_reset:
+            self._beta_section.set_provenance("manual")
             self._beta_estimate_state = None
             self._beta_method = ""
             self._beta_correction_digest = None
@@ -3366,7 +3364,6 @@ class GroupingDialog(TimingControls, QDialog):
             return
         # Diagnostic timing disagreements are advisory; failed requested searches
         # are gated by the preview. Commit only the validated current form state.
-        self._commit_calibrations()
         self.t0_apply_warnings = list(self._current_t0_verdict().messages)
         self._sync_draft_from_form()
         self._committed_override_runs = set(self._pending_override_runs())
@@ -4773,7 +4770,7 @@ class GroupingDialog(TimingControls, QDialog):
             "source_run_number": metadata.get("source_run_number", metadata.get("run_number")),
             "period_run_numbers": [int(ds.run_number) for ds in siblings],
         }
-        self._alpha_result_label.setText(
+        self._alpha_section._note_label.setText(
             "Period mapping recorded — a combined red/green dataset is created "
             "when you press Apply."
         )
@@ -4815,50 +4812,48 @@ class GroupingDialog(TimingControls, QDialog):
 
         return context
 
+    @Slot(object)
     def _on_calibration_ready(self, reply):
-        """Results remain in the section until the dialog's explicit Apply."""
-        self._update_apply_enabled()
-
-    def _commit_calibrations(self):
-        """Apply current captured outcomes through the canonical profile owner."""
+        """Accept a current measurement into the draft; Apply commits its owner."""
         from asymmetry.core.project.calibration import apply_calibration_outcome
 
-        outcomes = self._alpha_section.pending()
-        if not outcomes:
-            return
+        slot, outcome = reply.slot, reply.outcome
         target = self._editing_target()
         owner = self._draft if target == "profile" else self._override_profiles[int(target)]
-        for slot, outcome in outcomes.items():
-            policy = AlphaPolicy(
-                mode="calibrated",
-                value=outcome.alpha,
-                error=outcome.selected.alpha_error,
-                method=outcome.method,
-                source_run=outcome.run_number,
-            )
+        apply_calibration_outcome(owner, outcome, projection=None if slot == "single" else slot)
+        policy = owner.alpha_policy if slot == "single" else owner.projection_alpha_policies[slot]
+        spin = self._alpha_spin if slot == "single" else self._vector_alpha_spins[slot]
+        with (
+            QSignalBlocker(spin),
+            QSignalBlocker(self._alpha_spin),
+            QSignalBlocker(self._alpha_method_combo),
+            QSignalBlocker(self._beta_section),
+        ):
+            spin.setValue(policy.value)
+            if slot == "P_z":
+                self._alpha_spin.setValue(policy.value)
+            self._set_alpha_method(policy.method)
             if slot == "single":
-                self._apply_calibrated_policy(slot, self._alpha_spin, policy)
-                if outcome.record is not None:
-                    apply_calibration_outcome(owner, outcome)
-                    self._on_beta_section_estimated(owner.beta_policy)
-                else:
-                    apply_calibration_outcome(owner, outcome)
-                    self._beta_section.set_value(1.0)
+                self._beta_section.set_value(owner.beta_policy.value)
+        self._calibration_key = self._calibration_input_key()
+        if slot == "single":
+            if outcome.record is not None:
+                self._on_beta_section_estimated(owner.beta_policy)
             else:
-                self._apply_calibrated_policy(slot, self._vector_alpha_spins[slot], policy)
-                apply_calibration_outcome(owner, outcome, projection=slot)
-
-        if target != "profile":
-            self._override_profiles[int(target)] = owner
-            self._sync_override_draft_from_form(int(target))
+                self._beta_estimate_state = None
+                self._beta_method = ""
+                self._beta_correction_digest = None
+                self._beta_section.set_provenance("fixed at 1")
+                self._refresh_beta_staleness()
+        self._apply_calibrated_policy(slot, spin, policy)
+        self._refresh_preview()
+        self._update_apply_enabled()
 
     def _on_beta_section_estimated(self, policy: object) -> None:
-        """Apply an inline β estimate to the β spin + provenance + staleness.
+        """Show the captured beta policy and its correction assumptions.
 
-        Mirrors :meth:`_apply_calibrated_policy` for the (single, scalar) β: writes
-        the spin under the suppress flag so the ``changed`` handler does not drop
-        the provenance we are recording, stamps the corrections digest β was
-        measured under, refreshes staleness, and focuses the β compare.
+        Beta scales forward counts in the denominator; the draft policy retains
+        the common fit record while the spin uses its displayed precision.
         """
         self._beta_estimate_state = (
             float(policy.value),
@@ -4866,6 +4861,12 @@ class GroupingDialog(TimingControls, QDialog):
             int(policy.source_run) if policy.source_run is not None else -1,
         )
         self._beta_method = str(policy.method)
+        self._beta_section.set_provenance(
+            next(
+                (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == policy.method),
+                policy.method or "manual",
+            )
+        )
         self._suppress_beta_provenance_reset = True
         try:
             self._beta_section.set_value(float(policy.value))
@@ -4882,13 +4883,15 @@ class GroupingDialog(TimingControls, QDialog):
         self._mark_dirty()
 
     def _apply_calibrated_policy(
-        self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
+        self,
+        slot: str,
+        target_spin: QDoubleSpinBox,
+        policy: AlphaPolicy | CalibratedCoefficient | QuickCalibratedCoefficient,
     ) -> None:
-        """Write a calibrated :class:`AlphaPolicy` back into the form + provenance."""
+        """Show the captured coefficient policy in the form and provenance."""
         if slot == "single" and self._editing_target() == "profile":
             self._draft.alpha_policy = policy
-        # Record provenance the same shape the old inline estimate produced, so
-        # _current_grouping_payload emits alpha_method/alpha_error/alpha_reference_run.
+        # Form provenance is a view of the captured coefficient policy.
         self._alpha_estimate_state[slot] = (
             float(policy.value),
             policy.error,
@@ -4914,24 +4917,12 @@ class GroupingDialog(TimingControls, QDialog):
         # a later deadtime/background change re-raises the staleness banner.
         self._alpha_correction_digest = self._correction_digest()
         self._refresh_alpha_staleness()
-        self._record_calibration_result_label(slot, policy)
         # The scalar compare and expanded card expose the newly measured result.
         if not bool(self._vector_axis_pairs):
             self._set_compare_stage("alpha")
         if hasattr(self, "_alpha_card"):
             self._alpha_card.set_expanded(True)
         self._mark_dirty()
-
-    def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:
-        """Show the calibrated α in the shared result label."""
-        method_label = next(
-            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == policy.method),
-            policy.method,
-        )
-        formatted = _format_value_with_uncertainty(policy.value, policy.error)
-        slot_prefix = "" if slot == "single" else f"{slot}: "
-        run_text = f", run {policy.source_run}" if policy.source_run is not None else ""
-        self._alpha_result_label.setText(f"{slot_prefix}α = {formatted} — {method_label}{run_text}")
 
     def _on_alpha_spin_edited(self) -> None:
         """A hand-edit of the single alpha spin drops calibration provenance."""
@@ -4984,6 +4975,7 @@ class GroupingDialog(TimingControls, QDialog):
         ``beta_error`` / ``beta_correction_digest``); lifting it back lets the β
         staleness banner fire on reopen, not just within the session.
         """
+        self._beta_section.set_provenance("manual")
         reference = grouping.get("beta_reference_run")
         if reference is None:
             return
@@ -4998,6 +4990,12 @@ class GroupingDialog(TimingControls, QDialog):
             error_val = None
         self._beta_estimate_state = (float(self._beta_section.value()), error_val, run)
         self._beta_method = str(grouping.get("beta_method", ""))
+        self._beta_section.set_provenance(
+            next(
+                (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == self._beta_method),
+                self._beta_method or "manual",
+            )
+        )
         digest = grouping.get("beta_correction_digest")
         self._beta_correction_digest = str(digest) if digest is not None else None
 

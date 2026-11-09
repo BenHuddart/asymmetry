@@ -32,11 +32,13 @@ uncheck **Calibrate β**. Diamagnetic and Decay balance return no added uncertai
 ratio reports first-order errors. TF errors are conditional on the selected
 count model, observations, and corrections. An unavailable error is not zero.
 
-Results are staged for the existing **Apply** action, which commits both
-coefficients and the captured record. Changing controls alone does not change
-saved or manual coefficients. **Stop**, source/period, grouping, timing/window,
-and correction changes invalidate pending work. An obsolete result cannot display
-or apply. Loading a project never starts a calibration. A zero or nonfinite coefficient
+A completed calibration updates the draft alpha and beta spinboxes and the
+preview immediately. Fixed-beta operations show beta one. The coefficient's
+method replaces ``manual`` until its value is changed by hand. **Apply** commits
+both coefficients and their captured record to the run/project; estimating does
+not write saved values. **Stop** and input changes cancel pending work, and an
+obsolete worker cannot overwrite the displayed values. Completed measurements
+retain their captured source and assumptions when editing the draft. Loading a project never starts a calibration. A zero or nonfinite coefficient
 cannot be applied as a detector calibration; the source and diagnostic remain
 available for inspection.
 

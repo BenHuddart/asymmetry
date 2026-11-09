@@ -36,8 +36,9 @@ changes with beta even without precession. Other models require their own
 identifiability assessment.
 
 In the grouping dialog select **TF calibration fit** and check **Calibrate β**
-in the shared calibration section. **Estimate calibration** stages both
-coefficients, the selected envelope, and conditional covariance errors.
+in the shared calibration section. **Estimate calibration** updates both draft
+spinboxes and the preview, showing the selected envelope and conditional errors.
+The method beside beta stays until its value is edited, then reads ``manual``.
 **Apply** commits the pair through one captured calibration record. Leave the
 checkbox unchecked for beta fixed at one. Quick methods disable and uncheck it;
 vector layouts retain one alpha per projection and beta fixed at one. A manual

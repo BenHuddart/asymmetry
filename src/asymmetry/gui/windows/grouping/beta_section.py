@@ -1,7 +1,7 @@
 """Manual beta value; explicit calibration lives in the shared calibration section."""
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFormLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
@@ -27,7 +27,13 @@ class BetaSectionWidget(QWidget):
         self._beta_spin.setValue(1.0)
         self._beta_spin.valueChanged.connect(self.changed)
         form = QFormLayout()
-        form.addRow("β value", self._beta_spin)
+        row = QWidget()
+        fields = QHBoxLayout(row)
+        fields.setContentsMargins(0, 0, 0, 0)
+        self._provenance_label = QLabel("manual")
+        fields.addWidget(self._beta_spin)
+        fields.addWidget(self._provenance_label, 1)
+        form.addRow("β value", row)
         layout.addLayout(form)
         hint = QLabel(
             "Enter β manually or use Calibrate β with TF calibration fit in the calibration section."
@@ -46,6 +52,9 @@ class BetaSectionWidget(QWidget):
 
     def is_active(self):
         return abs(self.value() - 1.0) > 1e-9
+
+    def set_provenance(self, text):
+        self._provenance_label.setText(text)
 
     def set_stale_message(self, text):
         self._stale_banner.setText(text or "")

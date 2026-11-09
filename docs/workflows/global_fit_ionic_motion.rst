@@ -87,7 +87,7 @@ it is a single preparatory step.
    :width: 90%
    :align: center
    :alt: The inline alpha calibration on the Al-LLZ TF 20 G run 51315, showing
-      the current reduction beside a staged calibration with value
+      the calibrated draft preview beside its measured coefficient
       α = 0.876 in the α card.
 
    The inline alpha calibration (the Grouping window's **α (detector
@@ -95,8 +95,8 @@ it is a single preparatory step.
    **Diamagnetic** method selected, **Estimate calibration** finds the :math:`\alpha`
    that makes the transverse-field precession oscillate symmetrically about
    zero; the α card reports
-   :math:`\alpha = 0.876` for this silver-free garnet run. The result is staged for **Apply**. The preview shows the current reduction
-   while that calibration is pending. The precession is clean out to about 20 µs; past ~25 µs
+   :math:`\alpha = 0.876` for this silver-free garnet run. The spinbox and preview update immediately; **Apply** commits the draft
+   coefficient and captured source context. The precession is clean out to about 20 µs; past ~25 µs
    the forward/backward counts have run down and the raw asymmetry ratio grows
    noisy, which is normal for pulsed EMU data and does not affect the estimate.
 

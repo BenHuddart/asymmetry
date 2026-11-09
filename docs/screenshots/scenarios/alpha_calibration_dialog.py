@@ -14,7 +14,7 @@ from ._base import CaptureContext, Scenario, register
 class AlphaCalibrationDialogScenario(Scenario):
     name = "alpha_calibration_dialog"
     description = (
-        "Shared calibration result staged beside the current applied asymmetry preview."
+        "Completed calibration in the draft spinboxes with its model, errors and updated preview."
     )
     size = (1220, 780)
     fit_beta = False
@@ -108,6 +108,7 @@ def _pump_until(predicate, timeout_ms: int = 10_000) -> None:
 class FreeBetaScenario(AlphaCalibrationDialogScenario):
     name = "calibration_free_beta"
     fit_beta = True
+    size = (1220, 920)
 
 
 class DecayBalanceScenario(AlphaCalibrationDialogScenario):

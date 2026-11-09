@@ -87,14 +87,14 @@ def test_staged_dialog_result_applies_and_reopens_without_refitting(qapp, tmp_pa
     from tests.gui.test_grouping_dialog import _wait_for_t0_detection
 
     _wait_for_t0_detection(dialog)
-    before = dialog._draft.to_dict()
+    before = dict(data.run.grouping)
     section = dialog._alpha_section
     section._method_combo.setCurrentIndex(section._method_combo.findData(method))
     section._on_estimate()
     _wait_until(lambda: section._tasks.active_count == 0)
     outcome = section.pending()["single"]
-    assert dialog._draft.to_dict() == before
-    assert dialog._beta_section.value() == 1.3
+    assert data.run.grouping == before
+    assert dialog._beta_section.value() == 1.0
     dialog._preview_pane.flush()
     _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
@@ -146,7 +146,6 @@ def test_vector_records_keep_each_pair_with_beta_fixed(qapp, tmp_path):
     _wait_until(lambda: section._tasks.active_count == 0)
     outcomes = section.pending()
     assert set(outcomes) == {"P_x", "P_y", "P_z"}
-    dialog._commit_calibrations()
     dialog._sync_draft_from_form()
     restored = GroupingProfile.from_dict(dialog._draft.to_dict())
     grouping = resolve_effective_grouping(restored, data.run)
@@ -245,7 +244,6 @@ def test_manual_override_edit_drops_quick_policy_but_keeps_authored_value(qapp):
     section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
     section._on_estimate()
     _wait_until(lambda: section._tasks.active_count == 0)
-    dialog._commit_calibrations()
     dialog._alpha_spin.setValue(1.7)
     dialog._sync_draft_from_form()
     payload = dialog._override_drafts[data.run_number]

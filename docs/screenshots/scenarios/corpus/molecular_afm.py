@@ -177,7 +177,7 @@ class MolAfmAlphaScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx) -> Path:  # noqa: D401
-        # The quick result is staged beside the currently applied preview.
+        # The quick result updates the draft coefficient and its preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([_DATA % _ALPHA_RUN])[0]
@@ -187,12 +187,12 @@ class MolAfmAlphaScenario(CorpusScenario):
         dialog.show()
         _process(150)
 
-        # Pump the event loop until the worker publishes the pending result.
+        # Pump the event loop until the worker fills the calibrated draft.
         section = dialog._alpha_section
         section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _wait_until(lambda: section._tasks.active_count == 0, timeout_ms=15000)
-        # Let the current applied preview settle before grabbing.
+        # Let the calibrated draft preview settle before grabbing.
         _process(500)
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _process(80)

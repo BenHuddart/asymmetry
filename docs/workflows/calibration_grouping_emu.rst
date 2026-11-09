@@ -159,13 +159,13 @@ these are different estimators. **Apply** commits the displayed result.
 .. figure:: /_generated/corpus_screenshots/corpus_basics_alpha.png
    :width: 80%
    :align: center
-   :alt: A pending quick Diamagnetic calibration beside the current reduction preview.
+   :alt: A completed Diamagnetic calibration in the draft alpha spinbox and balanced preview.
 
 
    The inline alpha calibration on the silver TF run ``EMU00018854``.
    With **Diamagnetic** and the good-bin window 21–1999, the quick result is
-   :math:`\alpha = 0.88487`. The result is staged for **Apply**; the shared
-   preview shows the current reduction until the coefficients are applied.
+   :math:`\alpha = 0.88487`. The alpha spinbox and
+   preview update immediately; **Apply** commits the draft to the run/project.
 
 
 Choose the **Diamagnetic** method. On a silver TF run the precession
@@ -187,8 +187,9 @@ B_i` (Mantid's ``AlphaCalc``), with no oscillation model; on a clean silver
 run the two agree closely. The **Decay balance** method balances
 lifetime-corrected counts and accommodates a genuinely relaxing signal, but
 needs visible relaxation. On this silver TF run the diamagnetic estimate
-gives :math:`\alpha = 0.88487`. The preview keeps the current applied
-coefficients until **Apply** commits the staged result. The result reads
+gives :math:`\alpha = 0.88487`. The alpha spinbox and preview update immediately,
+with **Diamagnetic** beside the coefficient until it is edited by hand. **Apply**
+commits the draft values and their captured context. The result reads
 ``α = 0.8849 · β = 1 (fixed) · Diamagnetic``.
 
 The quick estimate reports no added uncertainty. The same calculation is

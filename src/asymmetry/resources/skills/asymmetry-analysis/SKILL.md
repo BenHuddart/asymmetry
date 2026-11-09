@@ -274,7 +274,7 @@ Use `--calibration-method automatic` for the separate per-run ratio. Source-free
 `--fit-beta` only with TF (otherwise beta1); `--calibration-envelope
 undamped|exponential|gaussian|stretched` only with TF (omitted: minimum finite
 summed cost among usable candidates); `--calibration-frequency MHZ` is a TF seed.
-Use the same options with `reduce --alpha-from RUN` or `integral-scan --alpha-from RUN`.
+Use the same options with `reduce --alpha-from RUN` or `integral-scan --alpha-from RUN`. GUI calibration fills draft spinboxes/preview; coefficient edits return method labels to manual, and Apply commits to the run/project.
 `--calibration-period RED|GREEN|N` selects the source independently of target
 `--period`; all methods need source-period counts; TF rejects a difference or mapped sum.
 Explicit quick settings retain their typed result/method/source context; TF settings

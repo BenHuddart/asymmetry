@@ -102,7 +102,7 @@ class LlzCalibrationScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        # The quick result is staged beside the currently applied preview.
+        # The quick result updates the draft coefficient and its preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([f"{_DATA}/emu00051315.nxs"])[0]
@@ -116,7 +116,7 @@ class LlzCalibrationScenario(CorpusScenario):
         section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
-        # Let the current applied preview settle before grabbing.
+        # Let the calibrated draft preview settle before grabbing.
         _pump(500)
         dialog._corrections_scroll.ensureWidgetVisible(section)
         _pump(60)

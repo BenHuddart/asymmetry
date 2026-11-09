@@ -57,7 +57,6 @@ def _estimate_vector_axis(dialog, axis: str) -> None:
     )
     dialog._estimate_alpha_for_axis(axis)
     _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
-    dialog._commit_calibrations()
 
 
 def _estimate_all_vector_alpha(dialog) -> None:
@@ -67,7 +66,6 @@ def _estimate_all_vector_alpha(dialog) -> None:
     )
     dialog._estimate_all_alpha()
     _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
-    dialog._commit_calibrations()
 
 
 def _estimate_single_alpha(dialog, method: str | None = None) -> None:
@@ -86,7 +84,6 @@ def _estimate_single_alpha(dialog, method: str | None = None) -> None:
         section._method_combo.setCurrentIndex(idx)
     section._on_estimate()
     _wait_until(lambda: section._tasks.active_count == 0)
-    dialog._commit_calibrations()
 
 
 def _dataset_with_histograms() -> MuonDataset:
@@ -2344,7 +2341,7 @@ def test_estimate_records_provenance_in_payload(
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
-    assert dialog._alpha_result_label.text() != ""
+    assert dialog._alpha_section._result_label.text() != ""
     # The single-alpha provenance status reflects the calibration, not "manual".
     assert dialog._alpha_provenance_label.text() != "manual"
     result = dialog.get_grouping_result()

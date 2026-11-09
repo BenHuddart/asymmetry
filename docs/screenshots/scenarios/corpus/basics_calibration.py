@@ -116,7 +116,7 @@ class BasicsAlphaScenario(CorpusScenario):
     size = (1220, 760)
 
     def capture(self, ctx) -> Path:  # noqa: D401
-        # The quick result is staged beside the currently applied preview.
+        # The quick result updates the draft coefficient and its preview.
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([_EMU_ALPHA])[0]
@@ -126,7 +126,7 @@ class BasicsAlphaScenario(CorpusScenario):
         dialog.show()
         _pump_events(150)
 
-        # Pump the event loop until the worker publishes the pending result.
+        # Pump the event loop until the worker fills the calibrated draft.
         section = dialog._alpha_section
         section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()

@@ -49,7 +49,8 @@ The illustrated Sample A profile uses the existing ``per_run_estimate`` alpha
 policy. Its label reads **per-run integral ratio · see preview**; the completed
 preview supplies the coefficient for the selected run. Group edits keep that
 policy. Editing the alpha number explicitly replaces it with a fixed value;
-**Estimate calibration** stages a one-shot result for **Apply**.
+**Estimate calibration** fills the draft spinboxes and updates the preview;
+**Apply** commits the captured coefficients and their source context.
 
 During refresh the plot reads **Computing preview…** and **Apply** waits for
 the current result. A failed estimate reads **Preview unavailable:** followed
@@ -89,7 +90,9 @@ settings out to whichever runs happen to be checked:
   model. **Calibrate β** is available only for TF in a single-pair layout;
   vector projections retain beta one. **Diamagnetic**, **Decay balance**, and
   **Count ratio ΣF/ΣB** remain quick choices. **Stop** invalidates pending work;
-  the existing **Apply** commits current results and their full source context.
+  completed values update the draft spinboxes and preview immediately. Their
+  method labels return to ``manual`` on a coefficient edit. **Apply** commits
+  the draft results and their full source context.
 * **t0 Bin**, **t_good Offset**, **Last Good Bin**, **Bunching Factor** — the
   time-zero bin (with a **From file** / **Manual** / **Auto-detect** mode
   selector), the first-good-bin offset after t\ :sub:`0`, the last good bin,

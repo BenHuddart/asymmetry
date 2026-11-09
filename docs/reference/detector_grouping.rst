@@ -760,8 +760,8 @@ Alpha calibration
 
    Alpha is calibrated inline, in the **α (detector balance)** section of the
    Corrections column: pick the calibration run, choose a method, and press
-   **Estimate calibration**. The live preview shows the current reduction; estimated values remain staged
-   until Apply.
+   **Estimate calibration**. Completed values fill the draft spinboxes and
+   update the preview; **Apply** commits them to the run/project.
 
 Alpha is calibrated inline, in the **α (detector balance)** section of the
 Corrections column. Pick a run from the **Calibration run** dropdown — every run
@@ -1875,6 +1875,8 @@ The calibration section uses **TF calibration fit** for a fresh request and show
 its selected count envelope. **Calibrate β** is available only in a single-pair
 TF layout. Vector requests retain per-projection alpha and beta one. Quick
 **Diamagnetic**, **Decay balance**, and **Count ratio ΣF/ΣB** requests keep their
-own error meanings. **Estimate calibration** stages results; **Stop** and input
-changes invalidate them, and the existing **Apply** commits the current result.
+own error meanings. **Estimate calibration** fills the draft spinboxes and
+updates the preview. The method beside each coefficient returns to ``manual``
+when that value is edited. **Stop** and input changes cancel pending work;
+**Apply** commits the draft coefficients and captured records.
 See :doc:`data_reduction/alpha_calibration` for model assumptions and limitations.
