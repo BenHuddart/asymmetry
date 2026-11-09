@@ -262,8 +262,10 @@ def calibration_source(
             raise FitInputError(
                 "Calibration needs the requested acquired period histograms; reload the source"
             )
-    elif tf and period is None and period_count(source) > 1:
-        raise ValueError("TF calibration requires an explicit acquired source period")
+    elif run is not None and period_count(run) > 1:
+        raise FitInputError(
+            "Calibration needs acquired period histograms for an identified source period"
+        )
     elif period is not None:
         source = select_period(source, period)
     if (

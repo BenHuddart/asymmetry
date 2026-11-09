@@ -279,3 +279,14 @@ def test_source_period_retains_run_identity_without_duplicate_metadata(period):
     assert (
         calibrate_run(combined, ReductionSettings(), options).run_number == combined.run.run_number
     )
+
+
+@pytest.mark.parametrize("method", [None, "ratio", "diamagnetic", "general", "tf_calibration_fit"])
+def test_calibration_rejects_unidentified_parent_of_declared_multiple_periods(method):
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    source = _raw_tf(beta=1)
+    source.run.metadata["period_count"] = 2
+    with pytest.raises(ValueError, match="acquired.*period"):
+        calibrate_run(source, ReductionSettings(), CalibrationOptions(method))

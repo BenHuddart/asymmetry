@@ -593,7 +593,9 @@ errors and fixed-beta errors are absent. Requested/applied corrections, native
 support, timing, and acquired source period remain in the record.
 Explicit quick workflow settings also retain the shared typed result and its
 method, source period, correction outcomes, and timing/window context.
-Asymmetry also checks that a TF source names an acquired period rather than a
+Asymmetry also checks that calibration has identified source-period histograms;
+a cached curve or an unidentified multi-period parent cannot supply another
+period's counts. TF sources must name an acquired period rather than a
 nontrivial mapped sum, so a saved ordinal does not misidentify its observations.
 Routing equivalence establishes the same calculation across entry points;
 it does not extend the reference comparisons or physical-accuracy claims above.
