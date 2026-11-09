@@ -44,3 +44,23 @@ def test_manual_value_round_trip(qapp):
     assert section.is_active() and section.value() == 1.13
     section.set_value(1.0)
     assert not section.is_active()
+
+
+@pytest.mark.parametrize("fit_beta", [False, True])
+def test_beta_label_uses_recorded_constraint_at_unity(fit_beta):
+    from dataclasses import replace
+
+    from asymmetry.core.project.calibration import CalibrationRecord, apply_calibration
+    from asymmetry.core.project.profiles import BetaPolicy, GroupingProfile, ProfileFingerprint
+    from asymmetry.gui.windows.grouping.beta_section import beta_provenance_text
+    from tests.project.test_tf_calibration_records import candidate
+
+    result = candidate(fit_beta=fit_beta)
+    parameters = (result.fit.parameters[0], replace(result.fit.parameters[1], value=1.0))
+    result = replace(result, fit=replace(result.fit, parameters=parameters))
+    profile = GroupingProfile("beta", ProfileFingerprint("test", 2))
+    apply_calibration(profile, CalibrationRecord("unity", result))
+    assert beta_provenance_text(profile.beta_policy) == (
+        "TF calibration fit" if fit_beta else "fixed"
+    )
+    assert beta_provenance_text(BetaPolicy(value=1.0)) == "manual"

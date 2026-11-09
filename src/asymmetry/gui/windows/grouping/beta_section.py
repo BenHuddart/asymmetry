@@ -3,8 +3,20 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from asymmetry.core.project.calibration import CalibratedCoefficient
 from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.windows.grouping.format import ALPHA_METHOD_ITEMS
+
+
+def beta_provenance_text(policy) -> str:
+    """Read the captured beta constraint and method for its coefficient view."""
+    if isinstance(policy, CalibratedCoefficient) and policy.result.beta_fixed:
+        return "fixed"
+    return next(
+        (label for label, key, _ in ALPHA_METHOD_ITEMS if key == policy.method),
+        policy.method or "manual",
+    )
 
 
 def beta_status_text(value: float) -> str:

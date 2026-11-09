@@ -44,6 +44,10 @@ checkbox unchecked for beta fixed at one. Quick methods disable and uncheck it;
 vector layouts retain one alpha per projection and beta fixed at one. A manual
 beta can still be entered in the beta card. Loading saved values never fits them.
 
+For TF calibration with beta fixed at one, the spinbox label reads ``fixed``,
+including after reopening it. A fitted beta of one retains its calibration
+method; changing the coefficient by hand changes the label to ``manual``.
+
 The API also retains the explicit single-histogram ratio cross-check described
 below; the GUI uses the shared TF operation with automatic envelope selection.
 

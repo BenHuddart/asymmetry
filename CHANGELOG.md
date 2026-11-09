@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retain each projection's balance through display binning, Fourier input and re-reduction.
 - Fill calibration spinboxes and preview immediately, retaining method labels until manual edits.
 - Replace calibration instructions with compact fit diagnostics and remove the beta-entry helper text.
+- Label fixed-beta TF calibration values as fixed, including after reopening a project.
 - Preserve failed documentation deployment artifacts briefly for deploy-only recovery.
 
 ### Added

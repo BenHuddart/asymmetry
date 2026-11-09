@@ -40,15 +40,18 @@ def test_completed_calibration_updates_spins_and_method_before_apply(qapp, metho
     assert section._method_combo.currentText() in dialog._alpha_provenance_label.text()
     if fit_beta:
         assert "TF calibration fit" in dialog._beta_section._provenance_label.text()
+    else:
+        assert dialog._beta_section._provenance_label.text() == "fixed"
     assert data.run.grouping == before
     # A value-preserving edit retains the method; a changed coefficient stays manual.
     dialog._alpha_spin.setValue(dialog._alpha_spin.value())
     assert "manual" not in dialog._alpha_provenance_label.text()
     dialog._alpha_spin.setValue(1.7)
     assert dialog._alpha_provenance_label.text() == "manual"
-    if fit_beta:
-        dialog._beta_section.set_value(1.1)
-        assert dialog._beta_section._provenance_label.text() == "manual"
+    dialog._beta_section.set_value(1.1)
+    assert dialog._beta_section._provenance_label.text() == "manual"
+    dialog._beta_section.set_value(1.0)
+    assert dialog._beta_section._provenance_label.text() == "manual"
     dialog._clear_dirty()
     dialog.close()
 

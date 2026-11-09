@@ -55,6 +55,8 @@ class AlphaCalibrationDialogScenario(Scenario):
         )
         corr_scroll = dialog._corrections_scroll
         corr_scroll.ensureWidgetVisible(section)
+        if not self.vector and self.method == "tf_calibration_fit":
+            corr_scroll.ensureWidgetVisible(dialog._beta_section)
         corr_scroll.horizontalScrollBar().setValue(0)
         _pump_events(80)
 

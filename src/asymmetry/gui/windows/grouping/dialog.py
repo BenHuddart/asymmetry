@@ -142,6 +142,7 @@ from asymmetry.gui.windows.grouping.background_section import (
 )
 from asymmetry.gui.windows.grouping.beta_section import (
     BetaSectionWidget,
+    beta_provenance_text,
     beta_status_text,
 )
 from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
@@ -4843,7 +4844,7 @@ class GroupingDialog(TimingControls, QDialog):
                 self._beta_estimate_state = None
                 self._beta_method = ""
                 self._beta_correction_digest = None
-                self._beta_section.set_provenance("fixed at 1")
+                self._beta_section.set_provenance("fixed")
                 self._refresh_beta_staleness()
         self._apply_calibrated_policy(slot, spin, policy)
         self._refresh_preview()
@@ -4861,12 +4862,7 @@ class GroupingDialog(TimingControls, QDialog):
             int(policy.source_run) if policy.source_run is not None else -1,
         )
         self._beta_method = str(policy.method)
-        self._beta_section.set_provenance(
-            next(
-                (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == policy.method),
-                policy.method or "manual",
-            )
-        )
+        self._beta_section.set_provenance(beta_provenance_text(policy))
         self._suppress_beta_provenance_reset = True
         try:
             self._beta_section.set_value(float(policy.value))
@@ -4990,12 +4986,9 @@ class GroupingDialog(TimingControls, QDialog):
             error_val = None
         self._beta_estimate_state = (float(self._beta_section.value()), error_val, run)
         self._beta_method = str(grouping.get("beta_method", ""))
-        self._beta_section.set_provenance(
-            next(
-                (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == self._beta_method),
-                self._beta_method or "manual",
-            )
-        )
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        self._beta_section.set_provenance(beta_provenance_text(owner.beta_policy))
         digest = grouping.get("beta_correction_digest")
         self._beta_correction_digest = str(digest) if digest is not None else None
 

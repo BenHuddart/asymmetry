@@ -124,6 +124,8 @@ def test_staged_dialog_result_applies_and_reopens_without_refitting(qapp, tmp_pa
     assert reopened._alpha_section._tasks.active_count == 0
     assert reopened._alpha_section.pending() == {}
     assert reopened._draft.alpha_policy.value == outcome.alpha
+    if method == "tf_calibration_fit":
+        assert reopened._beta_section._provenance_label.text() == "fixed"
     reopened._clear_dirty()
     reopened.close()
 
