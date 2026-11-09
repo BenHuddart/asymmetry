@@ -50,6 +50,11 @@ from asymmetry.core.workflow.reduction import (
 CALIBRATION_METHODS = (*ALPHA_ESTIMATION_METHODS, TF_CALIBRATION_METHOD)
 
 
+def supports_joint_calibration(method: str | None, *, projection_layout: bool = False) -> bool:
+    """Joint detector beta is supported by TF calibration on a single F/B pair."""
+    return method == TF_CALIBRATION_METHOD and not projection_layout
+
+
 @dataclass(frozen=True)
 class CalibrationOptions:
     """Explicit operation; an omitted method preserves the automatic ratio policy.
@@ -71,7 +76,7 @@ class CalibrationOptions:
     def __post_init__(self):
         if self.method is not None and self.method not in CALIBRATION_METHODS:
             raise ValueError(f"Unknown calibration method {self.method!r}")
-        if self.method != TF_CALIBRATION_METHOD and (
+        if not supports_joint_calibration(self.method) and (
             self.fit_beta
             or self.envelope is not None
             or self.frequency_mhz is not None
@@ -92,7 +97,7 @@ class CalibrationOptions:
 def calibrate_run(
     loaded: MuonDataset | list[MuonDataset],
     settings: ReductionSettings,
-    options: CalibrationOptions = CalibrationOptions(),
+    options: CalibrationOptions | None = None,
     *,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> CalibrationOutcome:
@@ -109,22 +114,63 @@ def calibrate_run(
             raise FitCancelledError("Fit cancelled.")
 
     check_cancel()
+    options = explicit_calibration_options(options)
     dataset = calibration_source(loaded, settings, options)
-    tf = options.method == TF_CALIBRATION_METHOD
     run = dataset.run
     if run is None or not run.histograms:
         raise ValueError("Calibration requires source detector histograms")
     source_settings = replace(settings, alpha=1.0, alpha_source="assumed", period=None)
     grouping = resolve_reduction_grouping(run, source_settings)
-    forward, backward = int(grouping["forward_group"]), int(grouping["backward_group"])
     prepared = replace(dataset, run=replace(run, grouping=grouping))
+    return calibrate_source(
+        prepared,
+        options,
+        t_min=settings.t_min,
+        t_max=settings.t_max,
+        cancel_callback=cancel_callback,
+    )
+
+
+def explicit_calibration_options(options: CalibrationOptions | None = None) -> CalibrationOptions:
+    """Resolve omitted explicit-operation intent without altering automatic policies."""
+    return CalibrationOptions(TF_CALIBRATION_METHOD) if options is None else options
+
+
+def calibrate_source(
+    dataset: MuonDataset,
+    options: CalibrationOptions | None = None,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    reference_resolver=None,
+    cancel_callback: Callable[[], bool] | None = None,
+) -> CalibrationOutcome:
+    """Calibrate an identified source with its fully resolved grouping and corrections.
+
+    Front ends resolve source selection/profile through their existing owners.
+    This boundary never replaces those policies with CLI reduction defaults.
+    """
+
+    def check_cancel():
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit cancelled.")
+
+    check_cancel()
+    options = explicit_calibration_options(options)
+    run = dataset.run
+    if run is None or not run.histograms:
+        raise ValueError("Calibration requires source detector histograms")
+    grouping = run.grouping
+    forward, backward = int(grouping["forward_group"]), int(grouping["backward_group"])
+    prepared = dataset
+    tf = options.method == TF_CALIBRATION_METHOD
     if tf:
         request = TFCalibrationRequest(
             forward,
             backward,
             options.fit_beta,
-            t_min=settings.t_min,
-            t_max=settings.t_max,
+            t_min=t_min,
+            t_max=t_max,
             frequency_mhz=options.frequency_mhz,
             parameters=options.parameters,
             exclude=options.exclude,
@@ -146,7 +192,7 @@ def calibrate_run(
                 corrected_period_counts(
                     run.histograms,
                     grouping,
-                    "red",
+                    grouping.get("period_mode", "red"),
                     binning=BinningSpec(),
                     forward_idx=effective_group_indices(grouping, forward, n_histograms=n),
                     backward_idx=effective_group_indices(grouping, backward, n_histograms=n),
@@ -155,6 +201,7 @@ def calibrate_run(
                     use_background=flags.use_background,
                     metadata=reference_observation_metadata(run),
                     cancel_check=check_cancel,
+                    reference_resolver=reference_resolver,
                 ).values()
             )
         )

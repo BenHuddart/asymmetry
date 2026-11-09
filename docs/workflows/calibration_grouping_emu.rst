@@ -152,27 +152,23 @@ In the **α (detector balance)** card of the Corrections column, pick the
 silver TF calibration run (``EMU00018854``, silver in a 100 G transverse
 field) from the **Calibration run** dropdown. Because this run's field
 geometry is transverse and its magnitude sits in the weak-TF window, it is
-highlighted and pre-selected there. Choose a **Method** and press
-**Estimate α**.
+highlighted and pre-selected there. For this quick cross-check choose **Diamagnetic** and press
+**Estimate calibration**. The fresh explicit default is **TF calibration fit**;
+these are different estimators. **Apply** commits the displayed result.
 
 .. figure:: /_generated/corpus_screenshots/corpus_basics_alpha.png
    :width: 80%
    :align: center
-   :alt: The inline alpha calibration on EMU00018854, showing the α card's
-      run picker, method combo and Estimate α button, with a before (α = 1,
-      grey) / after (fitted α, blue) asymmetry preview in which the
-      precession becomes symmetric about zero.
+   :alt: A pending quick Diamagnetic calibration beside the current reduction preview.
+
 
    The inline alpha calibration on the silver TF run ``EMU00018854``.
-   With the **Diamagnetic (TF)** method and the good-bin window 21–1999,
-   pressing **Estimate α** returns :math:`\alpha = 0.88487`, reported in
-   the α card as ``α = 0.8849 · Diamagnetic (TF) · run 18854``. The
-   shared preview overlays the uncorrected asymmetry (grey, :math:`\alpha =
-   1`) on the calibrated one (blue): the fitted :math:`\alpha` pulls the
-   precession down onto a symmetric oscillation about zero, removing the
-   forward/backward imbalance.
+   With **Diamagnetic** and the good-bin window 21–1999, the quick result is
+   :math:`\alpha = 0.88487`. The result is staged for **Apply**; the shared
+   preview shows the current reduction until the coefficients are applied.
 
-Choose the **Diamagnetic (TF)** method. On a silver TF run the precession
+
+Choose the **Diamagnetic** method. On a silver TF run the precession
 is a clean, non-relaxing oscillation, and the correct :math:`\alpha` is the
 one that makes the forward/backward asymmetry oscillate *symmetrically
 about zero* — an imbalanced :math:`\alpha` leaves the precession riding on
@@ -188,12 +184,12 @@ with :math:`\sigma_i` the Poisson-propagated per-bin asymmetry error —
 WiMDA's diamagnetic estimate. The **Count ratio ΣF/ΣB** method instead
 computes the simple integral balance :math:`\alpha = \sum_i F_i / \sum_i
 B_i` (Mantid's ``AlphaCalc``), with no oscillation model; on a clean silver
-run the two agree closely. The **General (LF/ZF)** method balances
+run the two agree closely. The **Decay balance** method balances
 lifetime-corrected counts and accommodates a genuinely relaxing signal, but
 needs visible relaxation. On this silver TF run the diamagnetic estimate
 gives :math:`\alpha = 0.88487`, and the shared before/after preview
 shows the balancing effect directly. The estimate applies immediately: the
-α card reads ``α = 0.8849 · Diamagnetic (TF) · run 18854``.
+α card reads ``α = 0.8849 · β = 1 (fixed) · Diamagnetic``.
 
 The quick estimate reports no added uncertainty. The same calculation is
 available from the Python API. The diamagnetic fit

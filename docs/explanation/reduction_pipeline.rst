@@ -167,3 +167,9 @@ Each required estimated anchor belongs to that acquired channel and period;
 run-wide consensus cannot supply a missing detector delay. Acquired file facts
 remain separate from effective policy outcomes, including numerically equal
 estimates. See :ref:`t0-search`.
+
+Fresh explicit calibration uses TF calibration fit, with beta fixed at one unless
+joint calibration is requested for a single pair. The GUI stages the selected
+model and conditional errors until Apply; input changes invalidate pending work.
+Automatic per-run ratio, manual coefficients, and loaded historical records keep
+their own policies. A reduction without a calibration source never starts a TF fit.

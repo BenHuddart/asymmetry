@@ -1,15 +1,4 @@
-"""Inline alpha calibration in the grouping window's Corrections column.
-
-Opens the Grouping window directly on a synthesised YBCO transverse-field run.
-Alpha (the detector-balance parameter) is calibrated **inline** in the
-**Corrections** column — a calibration-run picker (weak-TF candidates
-highlighted), an estimation method, and an **Estimate α** button — instead of a
-separate modal dialog. Pressing Estimate α measures alpha on the *corrected*
-forward/backward counts and drives the shared grouping preview (pinned below both
-columns), which overlays the α = 1 "before" ghost against the estimated-α "after"
-curve and reports the residual baseline ⟨A⟩. Companion to
-:doc:`/reference/detector_grouping` and :doc:`/reference/grouping_calibration`.
-"""
+"""Shared calibration controls on owned count-domain synthetic acquisitions."""
 
 from __future__ import annotations
 
@@ -18,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
-from ..data import make_ybco_knight_grouped
+from ..data.calibration import calibration_control
 from ._base import CaptureContext, Scenario, register
 
 
@@ -29,34 +18,33 @@ class AlphaCalibrationDialogScenario(Scenario):
         "shared before/after (α = 1 ↔ α̂) asymmetry preview."
     )
     size = (1220, 780)
+    fit_beta = False
+    vector = False
+    method = "tf_calibration_fit"
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
-        dataset = make_ybco_knight_grouped()
+        dataset = calibration_control(
+            beta=0.8 if self.fit_beta else 1.0,
+            vector=self.vector,
+            relaxing=self.method == "general",
+        )
 
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
-        _pump_events(150)
+        _pump_until(lambda: dialog._t0_search_cache.get(dialog._t0_cache_key()) is not None)
 
-        # The inline α estimate runs on a background worker thread, so a single
-        # click does not populate the result before the grab. Pump the event loop
-        # until the worker's queued finished callback has landed (deterministic,
-        # not a fixed sleep) so the captured α result and preview overlay always
-        # show the estimate, never the transient "Computing estimate…" state. The
-        # inline α-calibration controls (run picker, method, Estimate α, result)
-        # live in the Corrections column alongside deadtime and background — no tab
-        # to select, both columns are visible at once.
         section = dialog._alpha_section
+        section._method_combo.setCurrentIndex(section._method_combo.findData(self.method))
+        section._fit_beta.setChecked(self.fit_beta)
+        dialog._alpha_card.set_expanded(True)
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
-        if (
-            "α =" not in section._result_label.text()
-            or "(" in section._result_label.text().split("·")[0]
-        ):
-            raise RuntimeError("Quick alpha capture requires an estimate without an error")
+        if not section.pending():
+            raise RuntimeError(section._result_label.text())
         preview = dialog._preview_pane
         preview.flush()
         _pump_until(
@@ -118,4 +106,25 @@ def _pump_until(predicate, timeout_ms: int = 10_000) -> None:
     guard.stop()
 
 
-register(AlphaCalibrationDialogScenario())
+class FreeBetaScenario(AlphaCalibrationDialogScenario):
+    name = "calibration_free_beta"
+    fit_beta = True
+
+
+class DecayBalanceScenario(AlphaCalibrationDialogScenario):
+    name = "calibration_decay_balance"
+    method = "general"
+
+
+class VectorCalibrationScenario(AlphaCalibrationDialogScenario):
+    name = "calibration_vector"
+    vector = True
+
+
+for scenario in (
+    AlphaCalibrationDialogScenario(),
+    FreeBetaScenario(),
+    DecayBalanceScenario(),
+    VectorCalibrationScenario(),
+):
+    register(scenario)

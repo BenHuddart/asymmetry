@@ -87,10 +87,8 @@ def test_quick_json_uncertainty_is_honest(workflow_folder, capsys, method):
 @pytest.mark.parametrize(
     "options",
     [
-        ["--fit-beta"],
         ["--calibration-method", "ratio", "--fit-beta"],
         ["--calibration-method", "general", "--calibration-envelope", "gaussian"],
-        ["--calibration-envelope", "stretched"],
     ],
 )
 def test_invalid_combinations_are_user_errors(workflow_folder, capsys, options):
@@ -282,7 +280,7 @@ def test_combined_quick_cli_json_and_workdir_record_red_source(
     target.run.run_number = SCAN_RUNS[0]
     monkeypatch.setattr(io, "load", lambda path: source)
     monkeypatch.setattr(reduction, "load", lambda path: target)
-    flags = [] if method is None else ["--calibration-method", method]
+    flags = ["--calibration-method", "automatic" if method is None else method]
     cli.main(["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN), *flags, "--json"])
     summary = strict_output(capsys)["alpha"]
     assert summary["period_number"] == 1
@@ -346,7 +344,6 @@ def test_quick_cli_rejects_cached_source_before_emitting_a_result(
     [
         ["--calibration-method", "ratio"],
         ["--calibration-period", "1"],
-        ["--fit-beta"],
         ["--calibration-envelope", "gaussian"],
         ["--calibration-frequency", "1.3"],
         ["--calibration-method", "tf_calibration_fit", "--fit-beta"],
@@ -369,3 +366,11 @@ def test_calibration_flags_without_source_are_rejected(
         )
     assert error.value.code == 1
     assert "require" in capsys.readouterr().err
+
+
+def test_fresh_cli_default_is_tf_with_fixed_beta(workflow_folder, capsys):
+    cli.main(["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN), "--json"])
+    summary = strict_output(capsys)["alpha"]
+    assert summary["method"] == "tf_calibration_fit"
+    assert summary["beta_fixed"] and summary["beta"] == 1
+    assert summary["model"]

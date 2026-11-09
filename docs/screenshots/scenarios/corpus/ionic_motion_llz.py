@@ -115,6 +115,7 @@ class LlzCalibrationScenario(CorpusScenario):
         _pump(150)
 
         section = dialog._alpha_section
+        section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)
         # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.

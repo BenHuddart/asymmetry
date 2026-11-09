@@ -81,7 +81,10 @@ The ``quick_calibration`` view and JSON block retain that explicit operation;
 automatic legacy ratio settings remain scalar/source-only. Fixed beta one is
 applied authoritatively even when a target carries a historical nonunity beta.
 
-``CalibrationOptions()`` retains the automatic integral ratio; explicit
+Omitting the options argument in ``calibrate_run(source, settings)`` selects
+TF calibration fit with automatic four-envelope selection and beta fixed at one.
+``explicit_calibration_options`` owns this fresh explicit default. Passing
+``CalibrationOptions()`` deliberately retains the automatic integral ratio; explicit
 ``diamagnetic``, ``general``, and ``ratio`` return the shared typed quick result
 with source/count context. TF with ``envelope=None`` selects all four; an explicit
 ``TFEnvelope`` constrains the actual fit. ``fit_tf_calibration`` also accepts
@@ -93,10 +96,22 @@ applied settings. :doc:`/reference/agent_workflow` documents CLI flags and
 independent source-period semantics.
 
 .. automodule:: asymmetry.core.workflow.calibration
-   :members: CalibrationOptions, calibrate_run, calibration_source
+   :members: CalibrationOptions, calibrate_run, calibrate_source, calibration_source, explicit_calibration_options
 
 .. automodule:: asymmetry.core.workflow.calibration_results
    :members: CalibrationOutcome, QuickCalibrationResult
 
 .. automodule:: asymmetry.core.workflow.reduction
    :members: ReductionSettings, estimate_alpha_for_run, reduce_run
+
+``calibrate_source`` accepts an identified source with its fully resolved grouping.
+The GUI uses this seam for manual/estimated deadtime and fixed/reference background
+policies that the CLI settings vocabulary cannot express. It shares preparation,
+results, cancellation, and scientific support with ``calibrate_run``.
+
+GUI application uses the same captured outcomes. Quick policies retain the full
+``QuickCalibrationResult`` context through ``QuickCalibratedCoefficient``.
+``GroupingProfile.projection_alpha_policies`` associates each projection label
+with its own captured coefficient; TF views reference the profile's canonical
+history. Each projection keeps beta fixed at one. Runtime scalar views are derived
+from these owners, including released-run override application and persistence.

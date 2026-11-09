@@ -176,6 +176,7 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.project.calibration import CALIBRATION_PAYLOAD_KEYS, calibration_values
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
@@ -604,6 +605,7 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 #: apply paths AND the project-persistence extractor, so a new reduction
 #: setting cannot be persisted on one path and silently erased on another.
 ALPHA_PROVENANCE_KEYS = (
+    *CALIBRATION_PAYLOAD_KEYS,
     "alpha_method",
     "alpha_error",
     "alpha_reference_run",
@@ -4963,15 +4965,7 @@ class MainWindow(QMainWindow):
                     self._assign_dataset_profile(dataset, base)
 
     def _apply_grouping_override_edits(self, datasets, profile_result: dict) -> list[int]:
-        """Apply every edited per-run override to its own run.
-
-        ``profile_result`` carries ``override_edits`` — a ``{run_number:
-        grouping_payload}`` map of every overridden run whose own grouping was
-        edited in the grouping window this session. Each payload is applied to
-        its run alone; the run stays marked overridden (the edit *is* its new
-        per-run override). Returns the sorted list of run numbers actually
-        updated (empty when there were no override edits).
-        """
+        """Apply each released run's captured override and return the updated runs."""
         override_edits = profile_result.get("override_edits") or {}
         if not override_edits:
             return []
@@ -5302,6 +5296,7 @@ class MainWindow(QMainWindow):
         self, dataset, grouping_result: dict
     ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
         """Apply atomically, returning success and each period's correction outcomes."""
+        grouping_result = calibration_values(grouping_result)
         run = dataset.run
         if run is None:
             return False, {}

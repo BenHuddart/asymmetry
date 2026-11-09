@@ -384,8 +384,7 @@ def test_held_period_preview_enforces_reference_independence(qapp, sample_period
 def test_alpha_request_retains_sample_acquisition_identity(qapp, reference_period):
     from copy import deepcopy
 
-    from asymmetry.gui.windows.grouping.alpha_section import build_alpha_request, run_alpha_estimate
-    from tests.gui.test_grouping_preview_pane import _StubWorker
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_source
     from tests.io.test_period_selection import _combined_two_period
 
     sample = _combined_two_period()
@@ -401,30 +400,19 @@ def test_alpha_request_retains_sample_acquisition_identity(qapp, reference_perio
         datasets=[source],
         sample_exposure=ReferenceExposure(20, "user"),
     )
-    request = build_alpha_request(
-        token=1,
-        dataset=sample,
-        groups={1: [0], 2: [1]},
-        forward_gid=1,
-        backward_gid=2,
-        excluded_detectors=[],
-        method="integral",
-        correction_provider=lambda _: grouping,
-        reference_resolver=lambda _: reference,
-        facility="",
-    )
+    from dataclasses import replace
+
+    sample = replace(sample, run=replace(sample.run, grouping=grouping))
     if reference_period == 2:
         with pytest.raises(ValueError, match="identical observations"):
-            run_alpha_estimate(_StubWorker(), request)
+            calibrate_source(
+                sample, CalibrationOptions("ratio"), reference_resolver=lambda _: reference
+            )
     else:
-        # Independent red reference yields a complete count preparation; the
-        # calibration estimator itself retains its existing method contract.
-        from asymmetry.gui.windows.grouping.alpha_section import build_corrected
-
-        corrected = build_corrected(
-            request.histograms, request.grouping, reference, "", request.metadata
+        result = calibrate_source(
+            sample, CalibrationOptions("ratio"), reference_resolver=lambda _: reference
         )
-        assert corrected.corrections.complete
+        assert result.source.corrections.complete
 
 
 def test_reference_preview_requires_sample_identity_before_copying_periods(qapp):

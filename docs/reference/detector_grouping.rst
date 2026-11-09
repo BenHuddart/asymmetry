@@ -336,7 +336,7 @@ draft is what gets applied to every run following the profile.
   — each previewed against the same corrected
   reduction. A card's header row shows a disclosure arrow,
   the title, and a live status summary (e.g. "off", "range average",
-  "1.2692 · Diamagnetic (TF)"), so a collapsed card still reports what its stage
+  "1.2692 · Diamagnetic"), so a collapsed card still reports what its stage
   is doing; clicking anywhere on the header expands or collapses the body. At
   open, a card is expanded exactly when its stage is active (deadtime on,
   background configured, :math:`\alpha` calibrated or away from 1,
@@ -349,7 +349,7 @@ draft is what gets applied to every run following the profile.
   measured), the :math:`\alpha` chip in the pipeline strip gains a
   **" · stale"** suffix and a tooltip prompting a re-estimate, and the
   :math:`\alpha` card's header is warn-tinted. The :math:`\alpha` card carries a
-  one-line provenance summary (e.g. "α = 1.2345 · Diamagnetic (TF) · run
+  one-line provenance summary (e.g. "α = 1.2345 · Diamagnetic · run
   2923"); deadtime and background carry their own mode controls and one-line
   status (see `Alpha calibration`_, `Deadtime Correction`_, and `Background
   Correction`_ below). On a window too short to show every card at once, a
@@ -756,12 +756,12 @@ Alpha calibration
    :align: center
    :alt: The inline alpha calibration controls in the grouping window's
       Corrections column — a highlighted transverse-field calibration run, a
-      method combo, an Estimate α button, and the shared before/after preview.
+      method combo, an Estimate calibration button, and the shared before/after preview.
 
    Alpha is calibrated inline, in the **α (detector balance)** section of the
    Corrections column: pick the calibration run, choose a method, and press
-   **Estimate α**. The shared live preview below doubles as the before (α = 1)
-   / after (fitted α) comparison once α is calibrated.
+   **Estimate calibration**. The live preview shows the current reduction; estimated values remain staged
+   until Apply.
 
 Alpha is calibrated inline, in the **α (detector balance)** section of the
 Corrections column. Pick a run from the **Calibration run** dropdown — every run
@@ -778,42 +778,18 @@ ambiguous between a weak-TF calibration run and a run whose only relation to the
 window is coincidence. This heuristic only changes what is highlighted and
 pre-selected: any loaded run remains choosable from the dropdown.
 
-Choose a **Method** from three options:
+Choose **TF calibration fit** for the fresh explicit default. It compares four
+common-phase envelopes and displays the selected model. **Calibrate β** fits both
+coefficients in a single-pair layout; unchecked fixes beta one. Quick
+**Diamagnetic**, **Decay balance** (stored ``general``), and **Count ratio ΣF/ΣB**
+remain available, with the beta checkbox disabled and unchecked.
 
-* **Diamagnetic (TF)** — the standard balance method for a silver or other
-  non-relaxing transverse-field run: :math:`\alpha` is fitted so the forward
-  and backward precession signals oscillate symmetrically about zero.
-* **General (LF/ZF)** — a fit that also accommodates a genuinely relaxing or
-  multi-component signal.
-* **Count ratio ΣF/ΣB** — the simple forward/backward integral ratio over the
-  good-bin window (Mantid's ``AlphaCalc``), with no oscillation model.
-
-Press **Estimate α**. The estimate runs on a worker thread over the *corrected*
-forward/backward counts — deadtime-corrected and background-subtracted exactly
-as the reduction forms them — so a calibrated :math:`\alpha` centres the reduced
-asymmetry rather than the raw totals. A note under the result reports which
-corrections the estimate reflected (for example "α is estimated on corrected
-counts (deadtime, background (range))", or a warning when a requested correction
-could not be applied to the calibration run). The shared live preview doubles as
-the **before/after** comparison: once :math:`\alpha` is calibrated it overlays
-the asymmetry at :math:`\alpha = 1` against the asymmetry at the fitted
-:math:`\hat\alpha`, and reports the residual baseline :math:`\langle A \rangle`
-so the balance is self-evident.
-
-A successful estimate sets the profile's alpha policy to ``calibrated`` and
-records its **provenance** — method, source run, and uncertainty where available.
-For example, a quick result displays "α = 1.2345 · Diamagnetic (TF) · run 2923".
-**Diamagnetic (TF)** and **General (LF/ZF)** return alpha without an added
-uncertainty; **Count ratio ΣF/ΣB** retains first-order error propagation.
-An explicit new estimate replaces the selected calibration record, clearing any
-recorded error when the new result has none. This also applies to per-projection
-estimates. Typing a value into
-the alpha field directly instead switches the policy to ``fixed`` and the
-provenance to plain "manual", since a hand-typed number no longer carries a
-measurement behind it. If you change the deadtime or background settings after
-calibrating, an amber banner — "α was calibrated under different
-deadtime/background corrections — re-estimate so it centres the corrected
-asymmetry" — flags that the calibration is stale until you re-estimate.
+**Estimate calibration** stages the current result. TF errors are conditional
+on its selected count model and corrections. Diamagnetic and Decay balance have
+no added uncertainty; ratio uses first-order errors. **Stop** and dependency
+changes invalidate work. The existing **Apply** commits both coefficients and
+the full captured source/model record. Changing controls alone never writes
+manual or saved values. Loading historical projects does not start a fit.
 
 Per-projection alpha (WEP / vector)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -836,33 +812,14 @@ Beta calibration
 .. figure:: /_generated/screenshots/beta_calibration_dialog.png
    :width: 80%
    :align: center
-   :alt: The inline beta calibration controls in the grouping window's
-      Corrections column — a calibration run picker, a Count fit / Single-
-      histogram protocol combo, an Estimate β button, and the fitted-α
-      consistency readout beside a completed β result.
+   :alt: Shared TF calibration with Calibrate beta checked, selected model, and conditional errors.
 
-   β is calibrated inline, in the **β (asymmetry balance)** card's
-   "Measure from run" section: pick the calibration run, choose a protocol,
-   and press **Estimate β**. The result row shows the fitted α alongside β as
-   a consistency readout; **Apply β** writes it and drives the shared
-   preview's β = 1 ↔ β̂ comparison.
+   **Calibrate β** uses the same joint count fit for alpha and beta. **Apply**
+   commits both coefficients from its captured record.
 
-The **β (asymmetry balance)** card grows the same "Measure from run" section
-as α once a calibration run is selected: a **Calibration run** picker (the
-same weak-TF highlighting convention α's picker uses), a **Protocol** combo —
-**Count fit (recommended)**, the simultaneous forward+backward count fit, or
-**Single-histogram ratio**, a statistically weaker independent cross-check —
-and an **Estimate β** button. Press it to fit the selected run's precession
-signal; the result row reports β together with the fitted α as a consistency
-readout (warn-tinted when it disagrees with the card's applied α by more than
-roughly :math:`3\sigma`), and flags a fitted β outside the typical
-:math:`[0.5, 1.5]` range as suspicious. **Apply β** writes only β; a
-secondary **Also update α** checkbox additionally applies the fitted α. As
-with α, a successful estimate records **provenance** (method, source run,
-uncertainty) and goes stale — flagged with an amber banner and a
-**" · stale"** chip suffix — if the deadtime or background settings change
-afterwards. The physics, the two protocols, and the instrument-typical values
-(FLAME, GPS) are covered in :doc:`data_reduction/beta_calibration`.
+Manual beta entry remains in the **β (asymmetry balance)** card. Calibration
+uses the shared section described above; vector projections retain beta one.
+See :doc:`data_reduction/beta_calibration` for assumptions and reference comparisons.
 
 Deadtime correction
 --------------------
@@ -1315,7 +1272,7 @@ Comparing a correction's effect
 A **pipeline strip** across the top of the right pane, above both columns —
 ``Deadtime → group → Background → α → β`` — makes the reduction *order* visible
 and summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
-"α = 1.037 · Diamagnetic (TF)", "β = 1.0000"); the ``group`` divider is a
+"α = 1.037 · Diamagnetic", "β = 1.0000"); the ``group`` divider is a
 reminder that
 detector grouping, set in the **Grouping and timing** column, sits between deadtime
 and background. Clicking a chip focuses that stage's compare (below) and scrolls
@@ -1904,3 +1861,14 @@ contributing period, retaining valid deadtime correction. The preview keeps
 **Apply** enabled and shows "Automatic tail background subtraction skipped:"
 with the reason. No fitted level is drawn for that result. See
 :doc:`data_reduction/backgrounds` for correction outcomes.
+
+Explicit calibration
+--------------------
+
+The calibration section uses **TF calibration fit** for a fresh request and shows
+its selected count envelope. **Calibrate β** is available only in a single-pair
+TF layout. Vector requests retain per-projection alpha and beta one. Quick
+**Diamagnetic**, **Decay balance**, and **Count ratio ΣF/ΣB** requests keep their
+own error meanings. **Estimate calibration** stages results; **Stop** and input
+changes invalidate them, and the existing **Apply** commits the current result.
+See :doc:`data_reduction/alpha_calibration` for model assumptions and limitations.

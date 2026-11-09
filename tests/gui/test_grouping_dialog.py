@@ -52,14 +52,22 @@ def _estimate_vector_axis(dialog, axis: str) -> None:
     "Estimate All" is serialised, so waiting for the runner to drain covers a
     single axis or the whole table.
     """
+    dialog._alpha_section._method_combo.setCurrentIndex(
+        dialog._alpha_section._method_combo.findData("diamagnetic")
+    )
     dialog._estimate_alpha_for_axis(axis)
-    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
+    _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
+    dialog._commit_calibrations()
 
 
 def _estimate_all_vector_alpha(dialog) -> None:
     """Drive the inline "Estimate All α" flow and wait for the serialised runs."""
+    dialog._alpha_section._method_combo.setCurrentIndex(
+        dialog._alpha_section._method_combo.findData("diamagnetic")
+    )
     dialog._estimate_all_alpha()
-    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
+    _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
+    dialog._commit_calibrations()
 
 
 def _estimate_single_alpha(dialog, method: str | None = None) -> None:
@@ -70,12 +78,15 @@ def _estimate_single_alpha(dialog, method: str | None = None) -> None:
     on success the section emits ``alpha_estimated`` and the dialog applies it.
     """
     section = dialog._alpha_section
+    if method is None:
+        method = "diamagnetic"
     if method is not None:
         idx = section._method_combo.findData(method)
         assert idx >= 0
         section._method_combo.setCurrentIndex(idx)
     section._on_estimate()
     _wait_until(lambda: section._tasks.active_count == 0)
+    dialog._commit_calibrations()
 
 
 def _dataset_with_histograms() -> MuonDataset:
@@ -2352,7 +2363,7 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(
     result = dialog.get_grouping_result()
     assert "alpha_error" not in result
     assert "alpha_reference_run" not in result
-    assert result["alpha_method"] == "diamagnetic"
+    assert result["alpha_method"] == ""
     # A hand-edit flips the provenance status to "manual".
     assert dialog._alpha_provenance_label.text() == "manual"
 
@@ -2434,25 +2445,25 @@ def test_vector_alpha_estimate_survives_grouping_dialog_destruction(
 
     release = threading.Event()
     entered = threading.Event()
-    real_estimate = alpha_section_module.estimate_alpha_detailed
+    real_estimate = alpha_section_module.run_calibration
 
     def gated(*args, **kwargs):
         entered.set()
         release.wait(timeout=5.0)
         return real_estimate(*args, **kwargs)
 
-    monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", gated)
+    monkeypatch.setattr(alpha_section_module, "run_calibration", gated)
 
     dialog = GroupingDialog([_vector_dataset_with_ratio(5201, ratio=2.0)])
     dialog._estimate_alpha_for_axis("P_x")
     _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
-    assert dialog._vector_alpha_tasks.active_count == 1
+    assert dialog._alpha_section._tasks.active_count == 1
 
     # Identity-based for the same reason as the background-configure test
     # above: the process-global reaper can park/unpark other tests' orphans
     # during this test's event pump (seen on CI when the shard schedule
     # reshuffles), so an exact global count is racy.
-    worker_thread = dialog._vector_alpha_tasks._live[0][0]
+    worker_thread = dialog._alpha_section._tasks._live[0][0]
 
     def _parked() -> bool:
         reaper = tasks_mod._orphan_reaper

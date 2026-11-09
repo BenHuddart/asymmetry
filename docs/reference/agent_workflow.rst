@@ -573,9 +573,9 @@ sees nothing.
 ``alpha``
 ~~~~~~~~~
 
-Estimate the forward/backward detector balance α on one run. Without explicit
-calibration options this is the per-run integral ratio, separate from the GUI's
-Diamagnetic and General quick estimates.
+Estimate the forward/backward detector balance α on one run. The fresh explicit default is TF calibration fit with automatic four-envelope
+selection and beta fixed at one, shared with the GUI and omitted-option API call.
+Use ``--calibration-method automatic`` for the separate per-run integral ratio.
 
 .. code-block:: text
 
@@ -602,7 +602,7 @@ Explicit calibration uses the shared core operations::
    asymmetry reduce runs --runs 102-107 --alpha-from 101 --calibration-method tf_calibration_fit --fit-beta
 
 ``--calibration-method`` accepts ``tf_calibration_fit``, ``diamagnetic``,
-``general``, and ``ratio``. Omission retains the per-run integral ratio;
+``general``, ``ratio``, and ``automatic``. Omission selects TF calibration fit; ``automatic`` selects the per-run integral ratio;
 ``survey`` also retains that policy. ``--fit-beta`` requires
 ``tf_calibration_fit``; without it TF fixes beta at one. Other methods use
 beta one. ``--calibration-envelope undamped|exponential|gaussian|stretched``

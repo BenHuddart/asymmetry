@@ -16,7 +16,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 35
+CURRENT_SCHEMA_VERSION: int = 36
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -161,8 +161,10 @@ def migrate_to_current(data: dict) -> dict:
         if version == prior:
             version += 1
             migrated = convert(migrated) | {"schema_version": version}
-    if version == 34:
-        migrated = dict(migrated, schema_version=35)
+    for prior in (34, 35):
+        if version == prior:
+            version += 1
+            migrated = dict(migrated, schema_version=version)
     return migrated
 
 
@@ -323,13 +325,7 @@ def _migrate_v26_to_v27(data: dict) -> dict:
 
 
 def _migrate_v25_to_v26(data: dict) -> dict:
-    """Migrate schema v25 project state to v26.
-
-    v26 adds an optional per-dataset ``rotating_frame``, a single fit's
-    ``frame_snapshot`` and a series' ``projection`` and ``member_frames``. A
-    pre-v26 project has none of them, and their readers take an absent key as
-    none, so only the version moves.
-    """
+    """Absent rotating-frame fields retain their default meaning without rewriting values."""
     return dict(data) | {"schema_version": 26}
 
 

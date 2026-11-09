@@ -268,9 +268,9 @@ background corrections it can differ from the survey's.
 asymmetry alpha <folder> --run <calibration run>
 ```
 
-`alpha` takes no `--workdir` or `--plot`. Omitted calibration options retain the
-per-run integral ratio, distinct from GUI quick estimates. Explicit options:
-`--calibration-method tf_calibration_fit|diamagnetic|general|ratio`;
+`alpha` takes no `--workdir` or `--plot`. Omitted explicit options use TF calibration fit: four envelopes, beta fixed at one.
+Use `--calibration-method automatic` for the separate per-run ratio. Source-free reductions never start a TF fit. Explicit options:
+`--calibration-method tf_calibration_fit|diamagnetic|general|ratio|automatic`;
 `--fit-beta` only with TF (otherwise beta1); `--calibration-envelope
 undamped|exponential|gaussian|stretched` only with TF (omitted: minimum finite
 summed cost among usable candidates); `--calibration-frequency MHZ` is a TF seed.

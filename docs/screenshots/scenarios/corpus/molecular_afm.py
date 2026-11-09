@@ -193,6 +193,7 @@ class MolAfmAlphaScenario(CorpusScenario):
         # shows the α value and the balanced "after" curve, never the transient
         # "Computing estimate…" state.
         section = dialog._alpha_section
+        section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
         section._on_estimate()
         _wait_until(lambda: section._tasks.active_count == 0, timeout_ms=15000)
         # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.

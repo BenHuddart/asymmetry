@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from math import isfinite, isnan
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from asymmetry.core.fitting.count_results import CountFitDomain, CountFitParameter, JointCountFit
 from asymmetry.core.fitting.likelihood import Objective
@@ -20,6 +21,18 @@ from asymmetry.core.fitting.tf_calibration import (
 )
 from asymmetry.core.transform.corrections import CorrectionOutcome
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
+
+if TYPE_CHECKING:
+    from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
+
+
+CALIBRATION_PAYLOAD_KEYS = (
+    "calibration_records",
+    "alpha_policy",
+    "beta_policy",
+    "projection_alpha_policies",
+)
 
 
 @dataclass(frozen=True)
@@ -95,18 +108,135 @@ class CalibratedCoefficient:
         }
 
 
+@dataclass(frozen=True)
+class QuickCalibratedCoefficient:
+    """Scalar policy view backed by the workflow's full captured quick result."""
+
+    result: QuickCalibrationResult
+
+    @property
+    def mode(self):
+        return "calibrated"
+
+    @property
+    def value(self):
+        return self.result.estimate.alpha
+
+    @property
+    def error(self):
+        return self.result.estimate.alpha_error
+
+    @property
+    def method(self):
+        return self.result.estimate.method
+
+    @property
+    def source_run(self):
+        return self.result.run_number
+
+    def to_dict(self):
+        return {"quick_calibration": self.result.to_dict()}
+
+
+def restore_coefficient(data, records):
+    """Resolve one stored policy through the existing canonical result codecs."""
+    if "quick_calibration" in data:
+        from asymmetry.core.workflow.calibration_results import (
+            CalibrationOutcome,
+            QuickCalibrationResult,
+        )
+
+        result = QuickCalibrationResult.from_dict(data["quick_calibration"])
+        if CalibrationOutcome(result).alpha is None:
+            raise ValueError("Applied quick calibration requires a usable positive alpha")
+        return QuickCalibratedCoefficient(result)
+    by_id = {r.calibration_id: r for r in records}
+    if data["calibration_id"] not in by_id:
+        raise ValueError("Applied coefficient must reference its canonical calibration")
+    record = by_id[data["calibration_id"]]
+    view = CalibratedCoefficient(record, TFEnvelope(data["envelope"]), data["coefficient"])
+    candidates = (
+        record.result.candidates
+        if isinstance(record.result, TFCalibrationSelection)
+        else (record.result,)
+    )
+    if not any(c.envelope == view.envelope and c.ok for c in candidates):
+        raise ValueError("Applied calibration must reference a usable captured candidate")
+    return view
+
+
+def apply_calibration_outcome(profile, outcome, projection=None):
+    """Commit a current workflow outcome without inventing provenance from numbers."""
+    from asymmetry.core.project.profiles import BetaPolicy
+
+    if outcome.alpha is None:
+        raise ValueError("Cannot apply calibration without a usable result")
+    if outcome.record is None:
+        coefficient = QuickCalibratedCoefficient(outcome.result)
+    else:
+        record = outcome.record
+        if projection is None:
+            apply_calibration(profile, record)
+            return
+        if record.selected.request.fit_beta:
+            raise ValueError("Projection calibration requires beta fixed at one")
+        _capture_calibration(profile, record)
+        coefficient = CalibratedCoefficient(record, record.selected.envelope, "alpha")
+    if projection is None:
+        profile.alpha_policy = coefficient
+        profile.beta_policy = BetaPolicy(value=1.0)
+    else:
+        profile.projection_alpha_policies[projection] = coefficient
+        key = _AXIS_ALPHA_KEYS.get(projection)
+        if key:
+            profile.extra.pop(key, None)
+        for spec in profile.projections:
+            if spec["label"] == projection:
+                spec.pop("alpha", None)
+
+
+def resolve_projection_calibrations(policies, grouping):
+    """Derive projection scalars from their own captured pair's record."""
+    for label, policy in policies.items():
+        key = _AXIS_ALPHA_KEYS.get(label)
+        if key:
+            grouping[key] = policy.value
+        for spec in grouping.get("projections", ()):
+            if spec["label"] == label:
+                spec["alpha"] = policy.value
+        grouping["beta"] = 1.0
+
+
+def calibration_values(payload):
+    """Derive runtime coefficient views from canonical override transport at its boundary."""
+    if not any(key in payload for key in CALIBRATION_PAYLOAD_KEYS):
+        return payload
+    policies = restore_profile_calibrations(payload)
+    result = {**payload, "projections": [dict(p) for p in (payload.get("projections") or ())]}
+    for name in ("alpha", "beta"):
+        if f"{name}_policy" in policies:
+            result[name] = policies[f"{name}_policy"].value
+    resolve_projection_calibrations(policies["projection_alpha_policies"], result)
+    return result
+
+
 def apply_calibration(profile, record: CalibrationRecord) -> None:
     """Apply a usable captured result to the existing profile policy owner."""
     selected = record.selected
     if selected is None or not selected.ok:
         raise ValueError("Cannot apply a calibration without a usable candidate")
+    _capture_calibration(profile, record)
+    for name in ("alpha", "beta"):
+        setattr(profile, f"{name}_policy", CalibratedCoefficient(record, selected.envelope, name))
+
+
+def _capture_calibration(profile, record):
+    """One frozen identity belongs to exactly one captured result in history."""
     existing = {r.calibration_id: r for r in profile.calibration_records}
     if record.calibration_id in existing and existing[record.calibration_id] != record:
         raise ValueError("Calibration identity must name exactly one frozen record")
     existing[record.calibration_id] = record
     profile.calibration_records = tuple(existing.values())
-    for name in ("alpha", "beta"):
-        setattr(profile, f"{name}_policy", CalibratedCoefficient(record, selected.envelope, name))
 
 
 def _domain_payload(domain: CountFitDomain) -> dict:
@@ -293,12 +423,24 @@ def profile_calibration_payload(profile, data: dict) -> dict:
         data["calibration_records"] = [calibration_payload(r) for r in profile.calibration_records]
     for name in ("alpha", "beta"):
         policy = getattr(profile, f"{name}_policy")
-        if isinstance(policy, CalibratedCoefficient):
+        if isinstance(policy, QuickCalibratedCoefficient):
+            data[f"{name}_policy"] = policy.to_dict()
+        elif isinstance(policy, CalibratedCoefficient):
             if not any(r is policy.record for r in profile.calibration_records):
                 raise ValueError("Applied calibration must belong to profile history")
             for key in (name, f"{name}_method", f"{name}_error", f"{name}_reference_run"):
                 data.pop(key, None)
             data[f"{name}_policy"] = policy.to_dict()
+    if profile.projection_alpha_policies:
+        data["projection_alpha_policies"] = {
+            label: policy.to_dict() for label, policy in profile.projection_alpha_policies.items()
+        }
+    for label in profile.projection_alpha_policies:
+        key = _AXIS_ALPHA_KEYS.get(label)
+        data.get("extra", {}).pop(key, None)
+        for spec in data.get("projections", ()):
+            if spec["label"] == label:
+                spec.pop("alpha", None)
     return data
 
 
@@ -310,18 +452,23 @@ def restore_profile_calibrations(data: dict) -> dict:
     result = {"calibration_records": records}
     for name in ("alpha", "beta"):
         policy = data.get(f"{name}_policy", {})
-        if "calibration_id" in policy:
+        if "quick_calibration" in policy:
+            if name != "alpha":
+                raise ValueError("Quick calibration supplies alpha, with beta fixed at one")
+            result[f"{name}_policy"] = restore_coefficient(policy, records)
+        elif "calibration_id" in policy:
             if policy["calibration_id"] not in by_id or policy["coefficient"] != name:
                 raise ValueError("Applied coefficient must reference its canonical calibration")
-            view = CalibratedCoefficient(
-                by_id[policy["calibration_id"]], TFEnvelope(policy["envelope"]), name
-            )
-            candidates = (
-                view.record.result.candidates
-                if isinstance(view.record.result, TFCalibrationSelection)
-                else (view.record.result,)
-            )
-            if not any(c.envelope == view.envelope and c.ok for c in candidates):
-                raise ValueError("Applied calibration must reference a usable captured candidate")
+            view = restore_coefficient(policy, records)
             result[f"{name}_policy"] = view
+    projections = {
+        label: restore_coefficient(policy, records)
+        for label, policy in data.get("projection_alpha_policies", {}).items()
+    }
+    for policy in projections.values():
+        if isinstance(policy, CalibratedCoefficient) and (
+            policy.coefficient != "alpha" or not policy.result.beta_fixed
+        ):
+            raise ValueError("Projection calibration requires alpha with beta fixed at one")
+    result["projection_alpha_policies"] = projections
     return result
