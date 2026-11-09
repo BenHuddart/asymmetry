@@ -41,3 +41,44 @@ errors derive from its full fit. An unsuccessful selection may be retained in
 
 .. automodule:: asymmetry.core.project.calibration
    :members: CalibrationRecord, CalibratedCoefficient, apply_calibration
+
+Workflow calibration
+--------------------
+
+Scripted calibration and CLI requests use the same core operations::
+
+   from asymmetry.core.io import load
+   from asymmetry.core.workflow import CalibrationOptions, ReductionSettings, calibrate_run, reduce_run
+
+   source = load("calibrant.nxs")
+   settings = ReductionSettings(deadtime="from_file")
+   outcome = calibrate_run(source, settings,
+       CalibrationOptions("tf_calibration_fit", fit_beta=True, period=1))
+   if outcome.alpha is not None:
+       applied = ReductionSettings(alpha=outcome.record, deadtime="from_file")
+       signal = reduce_run(target.run, applied)
+
+``ReductionSettings.alpha`` accepts an authored scalar or a captured
+``CalibrationRecord``. ``effective_alpha`` and ``effective_alpha_source`` derive
+the applied scalar/identity; ``calibration`` exposes the record. The record is
+the authority for both alpha and beta. ``to_dict`` derives scalar output views
+and encodes the canonical block with the project nonfinite codec;
+``from_dict`` restores it without fitting, source-file access, or a new identity.
+Old scalar/source-only settings do not acquire inferred joint records.
+
+``CalibrationOptions()`` retains the automatic integral ratio; explicit
+``diamagnetic``, ``general``, and ``ratio`` return the shared typed quick result
+with source/count context. TF with ``envelope=None`` selects all four; an explicit
+``TFEnvelope`` constrains the actual fit. ``fit_tf_calibration`` also accepts
+``envelope=`` directly and retains exponential as its default. Historical
+``count_fit`` consumers retain their identity and exponential model.
+Parameter overrides and cancellation pass into the shared TF operation.
+A failed/no-selection result can be emitted for diagnostics but cannot become
+applied settings. :doc:`/reference/agent_workflow` documents CLI flags and
+independent source-period semantics.
+
+.. automodule:: asymmetry.core.workflow.calibration
+   :members: CalibrationOptions, CalibrationOutcome, calibrate_run, calibration_source
+
+.. automodule:: asymmetry.core.workflow.reduction
+   :members: ReductionSettings, estimate_alpha_for_run, reduce_run

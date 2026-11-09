@@ -34,9 +34,17 @@ from asymmetry.core.io.periods import (
     select_period,
     source_run_of,
 )
+from asymmetry.core.project.calibration import (
+    CalibrationRecord,
+    apply_calibration,
+    calibration_payload,
+    restore_calibration,
+)
+from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
+    BetaPolicy,
     DeadtimePolicy,
     GoodWindowPolicy,
     GroupingProfile,
@@ -86,6 +94,9 @@ class ReductionSettings:
     correction, no background subtraction, the file's own detector pair, t0 and
     good-bin window, no bunching and no time window.
 
+    ``alpha`` also accepts a canonical CalibrationRecord; its two coefficients
+    are applied together, without storing another scalar/covariance authority.
+
     ``alpha_source`` records *where* alpha came from so a later summary can
     say so: ``"assumed"`` (nobody measured it), ``"estimated:<run>"`` (a
     per-run estimate on that calibration run) or ``"user"``.
@@ -97,7 +108,7 @@ class ReductionSettings:
     difference of a two-period run.
     """
 
-    alpha: float = 1.0
+    alpha: float | CalibrationRecord = 1.0
     alpha_source: str = "assumed"
     deadtime: str = "off"
     background: str = "none"
@@ -135,16 +146,41 @@ class ReductionSettings:
                 )
         if isinstance(self.rebin, bool) or not isinstance(self.rebin, Integral) or self.rebin < 1:
             raise ValueError(f"Rebin factor must be an integer >= 1, got {self.rebin!r}.")
-        if self.alpha <= 0.0:
+        if isinstance(self.alpha, CalibrationRecord):
+            if self.alpha.selected is None or not self.alpha.selected.ok:
+                raise ValueError("Cannot apply a calibration without a usable candidate")
+        elif self.alpha <= 0.0:
             raise ValueError(f"Alpha must be positive, got {self.alpha}.")
         if self.t_min is not None and self.t_max is not None and self.t_min >= self.t_max:
             raise ValueError(f"Time window t_min={self.t_min} is not below t_max={self.t_max}.")
 
+    @property
+    def calibration(self) -> CalibrationRecord | None:
+        """The captured result, when alpha is supplied by explicit TF calibration."""
+        return self.alpha if isinstance(self.alpha, CalibrationRecord) else None
+
+    @property
+    def effective_alpha(self) -> float:
+        """Applied alpha derived from the captured result or authored scalar."""
+        return self.alpha.selected.alpha if self.calibration is not None else self.alpha
+
+    @property
+    def effective_alpha_source(self) -> str:
+        """Canonical identity for TF calibration; historical source text otherwise."""
+        return (
+            self.calibration.calibration_id if self.calibration is not None else self.alpha_source
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         return {
-            "alpha": float(self.alpha),
-            "alpha_source": str(self.alpha_source),
+            "alpha": float(self.effective_alpha),
+            "alpha_source": self.effective_alpha_source,
+            **(
+                {"calibration": encode_non_finite(calibration_payload(self.calibration))}
+                if self.calibration is not None
+                else {}
+            ),
             "deadtime": str(self.deadtime),
             "background": str(self.background),
             "background_range": None
@@ -163,8 +199,10 @@ class ReductionSettings:
     def from_dict(cls, data: dict[str, Any]) -> ReductionSettings:
         """Reconstruct settings from :meth:`to_dict` output."""
         return cls(
-            alpha=float(data["alpha"]),
-            alpha_source=str(data["alpha_source"]),
+            alpha=restore_calibration(decode_non_finite(data["calibration"]))
+            if "calibration" in data
+            else float(data["alpha"]),
+            alpha_source="assumed" if "calibration" in data else str(data["alpha_source"]),
             deadtime=str(data["deadtime"]),
             background=str(data["background"]),
             background_range=None
@@ -180,27 +218,6 @@ class ReductionSettings:
             t_max=None if data["t_max"] is None else float(data["t_max"]),
             period=None if data["period"] is None else str(data["period"]),
         )
-
-
-@dataclass(frozen=True)
-class AlphaEstimate:
-    """A per-run forward/backward balance estimate (the GUI's Estimate button)."""
-
-    run_number: int
-    alpha: float
-    method: str
-    forward_group: int
-    backward_group: int
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain, JSON-safe dict."""
-        return {
-            "run_number": self.run_number,
-            "alpha": self.alpha,
-            "method": self.method,
-            "forward_group": self.forward_group,
-            "backward_group": self.backward_group,
-        }
 
 
 def _group_id(run: Run, label: str) -> int:
@@ -254,6 +271,7 @@ def _profile_for_run(
     return replace(
         profile,
         alpha_policy=alpha_policy,
+        beta_policy=BetaPolicy(),
         deadtime_policy=DeadtimePolicy(mode=settings.deadtime),
         background_policy=_background_policy(run, settings),
     )
@@ -313,8 +331,10 @@ def _grouping_run(run: Run, settings: ReductionSettings) -> Run:
 def _fixed_alpha_grouping(run: Run, settings: ReductionSettings) -> dict[str, Any]:
     """*run*'s grouping resolved under *settings*, with their alpha applied as given."""
     profile = _profile_for_run(
-        run, settings, alpha_policy=AlphaPolicy(mode="fixed", value=float(settings.alpha))
+        run, settings, alpha_policy=AlphaPolicy(mode="fixed", value=settings.effective_alpha)
     )
+    if settings.calibration is not None:
+        apply_calibration(profile, settings.calibration)
     return resolve_effective_grouping(profile, run)
 
 
@@ -338,6 +358,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         forward_idx=forward_idx,
         backward_idx=backward_idx,
         alpha=float(grouping["alpha"]),
+        beta=float(grouping.get("beta", 1.0)),
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
@@ -404,25 +425,18 @@ def _check_rebin_bandwidth(dataset: MuonDataset, factor: int) -> None:
         )
 
 
-def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstimate:
-    """Estimate this run's forward/backward balance from its own counts.
+def estimate_alpha_for_run(run: Run, settings: ReductionSettings):
+    """Return the historical per-run integral ratio, including red for a difference.
 
-    The ``per_run_estimate`` alpha policy resolved against the run — the same
-    integral-ratio calculation the grouping window's *Estimate* button runs,
-    measured on the counts *settings* correct and group (their pair,
-    deadtime, background and t0), so alpha balances the spectra it will be
-    applied to; for the green − red difference, on the red period.
-    ``settings.alpha`` itself is not used.
+    This policy is separate from explicit quick and TF calibration methods.
     """
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+
     counts = _grouping_run(run, settings)
-    profile = _profile_for_run(counts, settings, alpha_policy=AlphaPolicy(mode="per_run_estimate"))
-    grouping = resolve_effective_grouping(profile, counts)
-    return AlphaEstimate(
-        run_number=source_run_of(run),
-        alpha=float(grouping["alpha"]),
-        method=str(grouping["alpha_method"]),
-        forward_group=int(grouping["forward_group"]),
-        backward_group=int(grouping["backward_group"]),
+    return calibrate_run(
+        MuonDataset(np.array([]), np.array([]), np.array([]), run=counts),
+        replace(settings, period=None),
+        CalibrationOptions(),
     )
 
 
@@ -431,7 +445,6 @@ __all__ = [
     "BACKGROUND_MODES",
     "DEADTIME_MODES",
     "GREEN_MINUS_RED",
-    "AlphaEstimate",
     "ReductionSettings",
     "estimate_alpha_for_run",
     "load_reduction_source",

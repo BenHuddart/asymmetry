@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, payload
-from asymmetry.cli._reduction import add_reduction_arguments, reduction_settings
+from asymmetry.cli._reduction import (
+    add_reduction_arguments,
+    calibration_options,
+    reduction_settings,
+)
 from asymmetry.cli._runs import add_instrument_argument, resolve_run
 
 
@@ -26,11 +31,11 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Estimate alpha on the named run and report it with a suitability verdict."""
+    from asymmetry.core.fitting.tf_calibration import TFCalibrationSelection
     from asymmetry.core.io import load
+    from asymmetry.core.workflow.calibration import calibrate_run, calibration_source
     from asymmetry.core.workflow.reduction import (
-        estimate_alpha_for_run,
         reduce_run,
-        reduction_source,
     )
     from asymmetry.core.workflow.survey import calibration_verdict, precession_evidence
     from asymmetry.core.workflow.workdir import RunSelection
@@ -39,12 +44,16 @@ def run(args: argparse.Namespace) -> None:
     settings = reduction_settings(args, selection)
     path = resolve_run(selection, args.run)
     try:
-        dataset = reduction_source(load(str(path)), settings.period)
-        estimate = estimate_alpha_for_run(dataset.run, settings)
+        loaded = load(str(path))
+        options = calibration_options(args)
+        estimate = calibrate_run(loaded, settings, options)
+        dataset = calibration_source(loaded, settings, options)
         # The run is loaded anyway, so say plainly whether it precesses at the
         # Larmor frequency of its recorded field — the thing that makes a run
         # usable for alpha, and the thing the file's own TF stamp does not settle.
-        evidence = precession_evidence(reduce_run(dataset.run, settings), dataset.field)
+        evidence = precession_evidence(
+            reduce_run(dataset.run, replace(settings, period=None)), dataset.field
+        )
     except (TypeError, ValueError) as exc:
         raise UserError(f"Run {args.run}: {exc}") from None
 
@@ -76,9 +85,38 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(f"Run {estimate.run_number} ({path.name})")
-    print(f"  alpha           : {estimate.alpha:.4f}")
+    summary = estimate.to_dict()
+    for name in ("alpha", "beta"):
+        value = summary.get(name)
+        error = summary.get(f"{name}_error")
+        text = "unavailable" if value is None else f"{value:.6g}"
+        text += f" +/- {error:.3g}" if error is not None else " (error unavailable)"
+        if name == "beta" and summary.get("beta_fixed"):
+            text = "1 (fixed)"
+        print(f"  {name:16}: {text}")
+    if summary.get("model"):
+        print(f"  model           : {summary['model']} (conditional covariance errors)")
+    if summary["message"]:
+        print(f"  diagnostic      : {summary['message']}")
+    if estimate.record is not None:
+        candidates = (
+            estimate.record.result.candidates
+            if isinstance(estimate.record.result, TFCalibrationSelection)
+            else (estimate.record.result,)
+        )
+        for candidate in candidates:
+            if not candidate.ok:
+                print(f"  {candidate.envelope.value}: {candidate.message}")
+        domain = candidates[0].fit.domains[0]
+        print(f"  deadtime        : {domain.deadtime.requested} -> {domain.deadtime.status.value}")
+        for label, outcome in domain.background_preflight:
+            print(f"  background {label}: {outcome.requested} -> {outcome.status.value}")
+        print("  TF backgrounds  : fitted in the count model")
+    else:
+        corrections = estimate.counts.corrections
+        for outcome in (corrections.deadtime, corrections.background):
+            print(f"  {outcome.name:16}: {outcome.requested} -> {outcome.status.value}")
     print(f"  method          : {estimate.method}")
-    print(f"  counts          : deadtime {settings.deadtime}, background {settings.background}")
     print(f"  forward group   : {estimate.forward_group}")
     print(f"  backward group  : {estimate.backward_group}")
     print(f"  calibration run : {'yes' if source is not None else 'no'} — {reason}")

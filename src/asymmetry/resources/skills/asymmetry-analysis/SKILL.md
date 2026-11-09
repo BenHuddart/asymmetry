@@ -75,7 +75,7 @@ do it*, and stop without producing fit numbers.
 
 | Case | How the survey shows it |
 |---|---|
-| Count-domain fitting | You need per-detector counts with N₀ and a relaxation term, not asymmetry. `reduce` only produces asymmetry. |
+| General count-domain science fitting | `reduce` produces asymmetry. Explicit TF calibration fits counts only for alpha/beta calibration. |
 | Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which): a many-group file is still analysed through that pair — lines, shifts, widths — and only the joint or angular step is declined. |
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
@@ -268,7 +268,20 @@ background corrections it can differ from the survey's.
 asymmetry alpha <folder> --run <calibration run>
 ```
 
-(`alpha` takes no `--workdir` and no `--plot`.)
+`alpha` takes no `--workdir` or `--plot`. Omitted calibration options retain the
+per-run integral ratio, distinct from GUI quick estimates. Explicit options:
+`--calibration-method tf_calibration_fit|diamagnetic|general|ratio`;
+`--fit-beta` only with TF (otherwise beta1); `--calibration-envelope
+undamped|exponential|gaussian|stretched` only with TF (omitted: minimum finite
+summed cost among usable candidates); `--calibration-frequency MHZ` is a TF seed.
+Use the same options with `reduce --alpha-from RUN` or `integral-scan --alpha-from RUN`.
+`--calibration-period RED|GREEN|N` selects the source independently of target
+`--period`; TF needs an acquired period, never a difference or cached-only curve.
+TF JSON/workdir settings retain one canonical result with both coefficients,
+source/support/corrections and full conditional covariance. Missing/unreliable
+errors are absent; fixed beta has no error/correlation. Quick Diamagnetic/General
+have no added uncertainty, explicit ratio uses first-order propagation. Failed
+TF candidates remain diagnostic and cannot be applied. Precession advice is advisory.
 
 The survey's candidate list has two sources, marked in the block it prints:
 
@@ -1585,7 +1598,7 @@ did not answer, with the reason, distinguishing **not attempted**, **fit
 failed** and **not implemented in this CLI**: a scan set aside and why, a fit
 that did not converge, or the step a full analysis would take that this tool
 cannot (section 1's out-of-scope table: MaxEnt field spectra, a multi-group
-field-distribution analysis, count-domain fits; also a radical ALC or site
+field-distribution analysis, general count-domain science fits; also a radical ALC or site
 Hamiltonian) and the couplings or sites it therefore cannot extract, so the
 reader sees where this preliminary analysis stops.
 "Not analysed" or "outside this analysis" without a reason is not an answer.
@@ -1632,21 +1645,8 @@ run 101 from its *measured* precession (`TF*`). Run 108's stamp is refuted —
 110 G with nothing precessing — so its geometry reads `-`, and it is not offered
 as a calibration candidate.
 
-```console
-$ asymmetry alpha runs --run 101
-Run 101 (SIM00000101.nxs)
-  alpha           : 1.2521
-  method          : per_run_estimate
-  calibration run : yes — precession at the Larmor frequency of the recorded 100 G (SNR 93)
-  precession      : at the Larmor frequency: yes — 1.363 MHz (SNR 93) against a Larmor 1.355 MHz
-
-$ asymmetry reduce runs --runs 102-107 --alpha-from 101 --deadtime from_file --plot
-run  T/K    B/G   points  A(0)/%   err/%  alpha   deadtime
----  -----  ----  ------  -------  -----  ------  --------
-102  10.00  0.00  500     8.537    2.366  1.2521  file
-...
-107  60.00  0.00  500     -11.301  2.321  1.2521  file
-```
+Reduce the sample block with `reduce runs --runs 102-107 --alpha-from 101
+--deadtime from_file --plot`; use the stored reduction's alpha and A(0).
 
 Run 107's A(0) is already odd. Screen the coldest run, which has the most
 signal:

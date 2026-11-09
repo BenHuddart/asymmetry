@@ -41,3 +41,45 @@ def test_cached_period_reduction_cannot_substitute_for_missing_acquired_histogra
     dataset = select_period(red, 2) if already_selected else red
     with pytest.raises(FitInputError, match="acquired period histograms"):
         fit_tf_calibration(dataset, _request(period=None if already_selected else 2))
+
+
+def test_workflow_source_period_is_separate_from_target_difference():
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
+
+    red, green = _raw_tf(beta=1), _raw_tf(beta=1, seed=43)
+    empty = (np.array([]), np.array([]), np.array([]))
+    red.run.metadata.update(source_run_number=7101, period_count=2)
+    red.run.grouping.update(
+        period_histograms=[red.run.histograms, green.run.histograms],
+        period_reduced=[empty, empty],
+        period_good_frames=[10.0, 20.0],
+    )
+    settings = ReductionSettings(period=GREEN_MINUS_RED)
+    options = CalibrationOptions(
+        "tf_calibration_fit", envelope="exponential", period=2, frequency_mhz=1.3
+    )
+    result = calibrate_run(red, settings, options).record.result
+    assert result.period_number == 2
+    assert result.source_run_number == 7101
+    direct = fit_tf_calibration(green, _request())
+    assert result.alpha == direct.alpha
+    assert result.fit.covariance == direct.fit.covariance
+    assert result.fit.domains[0].raw_windows == direct.fit.domains[0].raw_windows
+    with pytest.raises(ValueError, match="acquired source period"):
+        calibrate_run(red, settings, CalibrationOptions("tf_calibration_fit"))
+    with pytest.raises(ValueError, match="acquired source period"):
+        calibrate_run(red, ReductionSettings(), CalibrationOptions("tf_calibration_fit"))
+
+
+def test_workflow_does_not_calibrate_cached_period():
+    from asymmetry.core.fitting.likelihood import FitInputError
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    data = _raw_tf(beta=1)
+    empty = (np.array([]), np.array([]), np.array([]))
+    data.run.metadata.update(period_count=2)
+    data.run.grouping.update(period_reduced=[empty, empty])
+    with pytest.raises(FitInputError, match="acquired period histograms"):
+        calibrate_run(data, ReductionSettings(), CalibrationOptions("tf_calibration_fit", period=2))

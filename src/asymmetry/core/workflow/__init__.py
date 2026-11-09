@@ -9,6 +9,11 @@ GUI analysis of the same runs agree.
 Pure core: no Qt, no matplotlib, no ``asymmetry.gui``.
 """
 
+from asymmetry.core.workflow.calibration import (
+    CalibrationOptions,
+    CalibrationOutcome,
+    calibrate_run,
+)
 from asymmetry.core.workflow.fourier import (
     CorrelationSettings,
     FourierOutcome,
@@ -32,7 +37,6 @@ from asymmetry.core.workflow.reduction import (
     BACKGROUND_MODES,
     DEADTIME_MODES,
     GREEN_MINUS_RED,
-    AlphaEstimate,
     ReductionSettings,
     estimate_alpha_for_run,
     load_reduction_source,
@@ -96,6 +100,9 @@ from asymmetry.core.workflow.workdir import (
 )
 
 __all__ = [
+    "CalibrationOptions",
+    "CalibrationOutcome",
+    "calibrate_run",
     "BACKGROUND_MODES",
     "GREEN_MINUS_RED",
     "DEADTIME_MODES",
@@ -108,7 +115,6 @@ __all__ = [
     "SCHEMA",
     "SCOPE_PRESETS",
     "WORKDIR_NAME",
-    "AlphaEstimate",
     "AlphaStep",
     "CalibrationCandidate",
     "CorrelationSettings",

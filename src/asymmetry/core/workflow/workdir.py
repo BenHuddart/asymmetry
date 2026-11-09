@@ -785,11 +785,14 @@ class WorkDir:
 
     def alpha_calibration_runs(self) -> set[int]:
         """The runs alpha was estimated on (``--alpha-from``) for any stored reduction."""
-        return {
-            int(source.removeprefix(ALPHA_ESTIMATED_PREFIX))
-            for run in self.reduced_runs()
-            if (source := self.entry(run).settings.alpha_source).startswith(ALPHA_ESTIMATED_PREFIX)
-        }
+        sources = set()
+        for run in self.reduced_runs():
+            settings = self.entry(run).settings
+            if settings.calibration is not None:
+                sources.add(settings.calibration.selected.source_run_number)
+            elif settings.alpha_source.startswith(ALPHA_ESTIMATED_PREFIX):
+                sources.add(int(settings.alpha_source.removeprefix(ALPHA_ESTIMATED_PREFIX)))
+        return sources
 
     # -- integral scans and frequency spectra ------------------------------
 
