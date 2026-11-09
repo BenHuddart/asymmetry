@@ -229,3 +229,15 @@ no fitted error or correlation. Replacing beta with a manual policy removes its
 active joint link while keeping the captured fit in profile history. Stored
 independent scalar alpha and beta records do not imply a joint measurement,
 even when their source runs match. See :doc:`../project_files`.
+
+Workflow application
+---------------------
+
+``asymmetry alpha --calibration-method tf_calibration_fit --fit-beta`` and
+``reduce --alpha-from RUN`` with those options use the same joint TF solver.
+Without ``--fit-beta`` the request fixes beta at one, without a fitted error or
+alpha/beta correlation. Applying the captured record replaces both coefficient
+policies, including fixed beta one, and retains their common full covariance
+and conditional error meaning in the workflow workdir. See
+:doc:`../agent_workflow` for source-period and envelope options. Reduced-signal
+errors retain the existing conditional counting convention.

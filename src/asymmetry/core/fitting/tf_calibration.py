@@ -21,6 +21,8 @@ from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
+TF_CALIBRATION_METHOD = "tf_calibration_fit"
+
 _MIN_AMPLITUDE_SIGNIFICANCE = 3.0
 _MIN_FREQUENCY_SIGNIFICANCE = 3.0
 _FALLBACK_FREQUENCY_MHZ = 1.0
@@ -120,7 +122,7 @@ class TFCalibrationResult:
 
     @property
     def method(self) -> str:
-        return "tf_calibration_fit"
+        return TF_CALIBRATION_METHOD
 
     @property
     def model(self) -> str:
@@ -395,20 +397,20 @@ def fit_tf_calibration(
     dataset: MuonDataset,
     request: TFCalibrationRequest,
     *,
+    envelope: TFEnvelope = TFEnvelope.EXPONENTIAL,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> TFCalibrationResult:
-    """Fit the established exponential/common-phase TF model.
+    """Fit one explicit envelope (exponential/common-phase by default).
 
     Applied deadtime uses retained-variance weighted counts; off/skipped correction
     uses raw Poisson deviance. Input limitations raise FitInputError/ValueError;
     numerical failures retain the fit with ok=False. Cancellation raises
     FitCancelledError. This single-model operation does not select an envelope.
     """
+    envelope = TFEnvelope(envelope)
     dataset, groups, objective = _prepare_tf_counts(dataset, request, cancel_callback)
-    params = _tf_parameters(dataset, request, TFEnvelope.EXPONENTIAL)
-    return _fit_prepared_tf(
-        dataset, request, groups, objective, params, TFEnvelope.EXPONENTIAL, cancel_callback
-    )
+    params = _tf_parameters(dataset, request, envelope)
+    return _fit_prepared_tf(dataset, request, groups, objective, params, envelope, cancel_callback)
 
 
 @dataclass(frozen=True)

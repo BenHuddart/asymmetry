@@ -86,7 +86,12 @@ options:
 ## `asymmetry alpha`
 
 ```
-usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}] [--pair FWD/BWD]
+usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}]
+                       [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                       [--fit-beta]
+                       [--calibration-envelope {undamped,exponential,gaussian,stretched}]
+                       [--calibration-period RED|GREEN|N]
+                       [--calibration-frequency MHZ] [--pair FWD/BWD]
                        [--background none|tail_fit|range[:FIRST:LAST]]
                        [--t0-offset BINS] [--t-good-offset BINS]
                        [--period RED|GREEN|N|green-red] [--instrument NAME] [--json]
@@ -101,6 +106,18 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
+                        Explicit calibration operation (omitted: per-run integral
+                        ratio)
+  --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
+                        beta is fixed at 1)
+  --calibration-envelope {undamped,exponential,gaussian,stretched}
+                        Constrain TF to one envelope (omitted: compare all four)
+  --calibration-period RED|GREEN|N
+                        Acquired calibration source period, independent of the target
+                        --period
+  --calibration-frequency MHZ
+                        TF frequency seed in MHz (omitted: source field)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
@@ -128,7 +145,11 @@ options:
 ```
 usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                         [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                        [--pair FWD/BWD]
+                        [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                        [--fit-beta]
+                        [--calibration-envelope {undamped,exponential,gaussian,stretched}]
+                        [--calibration-period RED|GREEN|N]
+                        [--calibration-frequency MHZ] [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
                         [--period RED|GREEN|N|green-red] [--rebin REBIN]
@@ -154,6 +175,18 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
+                        Explicit calibration operation (omitted: per-run integral
+                        ratio)
+  --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
+                        beta is fixed at 1)
+  --calibration-envelope {undamped,exponential,gaussian,stretched}
+                        Constrain TF to one envelope (omitted: compare all four)
+  --calibration-period RED|GREEN|N
+                        Acquired calibration source period, independent of the target
+                        --period
+  --calibration-frequency MHZ
+                        TF frequency seed in MHz (omitted: source field)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
@@ -195,7 +228,11 @@ options:
 ```
 usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                               [--pair FWD/BWD]
+                               [--calibration-method {diamagnetic,general,ratio,tf_calibration_fit}]
+                               [--fit-beta]
+                               [--calibration-envelope {undamped,exponential,gaussian,stretched}]
+                               [--calibration-period RED|GREEN|N]
+                               [--calibration-frequency MHZ] [--pair FWD/BWD]
                                [--background none|tail_fit|range[:FIRST:LAST]]
                                [--t0-offset BINS] [--t-good-offset BINS]
                                [--period RED|GREEN|N|green-red] [--tmin TMIN]
@@ -221,6 +258,18 @@ options:
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
+  --calibration-method {diamagnetic,general,ratio,tf_calibration_fit}
+                        Explicit calibration operation (omitted: per-run integral
+                        ratio)
+  --fit-beta            Fit beta with alpha (requires tf_calibration_fit; otherwise
+                        beta is fixed at 1)
+  --calibration-envelope {undamped,exponential,gaussian,stretched}
+                        Constrain TF to one envelope (omitted: compare all four)
+  --calibration-period RED|GREEN|N
+                        Acquired calibration source period, independent of the target
+                        --period
+  --calibration-frequency MHZ
+                        TF frequency seed in MHz (omitted: source field)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
