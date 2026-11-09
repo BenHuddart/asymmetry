@@ -196,14 +196,25 @@ def apply_calibration_outcome(profile, outcome, projection=None):
 
 
 def resolve_projection_calibrations(policies, grouping):
-    """Derive projection scalars from their coefficient owners."""
+    """Derive projection values and attribution from their coefficient owners."""
     for label, policy in policies.items():
+        targets = [
+            (spec, "alpha") for spec in grouping.get("projections", ()) if spec["label"] == label
+        ]
         key = _AXIS_ALPHA_KEYS.get(label)
         if key:
-            grouping[key] = policy.value
-        for spec in grouping.get("projections", ()):
-            if spec["label"] == label:
-                spec["alpha"] = policy.value
+            targets.append((grouping, key))
+        for target, prefix in targets:
+            for suffix, value in (
+                ("", policy.value),
+                ("_error", policy.error),
+                ("_reference_run", policy.source_run),
+                ("_method", policy.method or None),
+            ):
+                if value is None:
+                    target.pop(prefix + suffix, None)
+                else:
+                    target[prefix + suffix] = value
 
 
 def calibration_values(payload):
@@ -439,10 +450,10 @@ def profile_calibration_payload(profile, data: dict) -> dict:
         }
     for label in profile.projection_alpha_policies:
         key = _AXIS_ALPHA_KEYS.get(label)
-        data.get("extra", {}).pop(key, None)
         if key is not None:
-            for field in (key, f"{key}_error", f"{key}_reference_run"):
-                data.pop(field, None)
+            for suffix in ("", "_error", "_reference_run", "_method"):
+                data.pop(key + suffix, None)
+                data.get("extra", {}).pop(key + suffix, None)
         for spec in data.get("projections", ()):
             if spec["label"] == label:
                 for field in ("alpha", "alpha_error", "alpha_reference_run", "alpha_method"):

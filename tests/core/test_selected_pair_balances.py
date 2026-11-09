@@ -285,3 +285,80 @@ def test_reduce_reports_the_selected_pair_coefficient_in_json_and_sidecar(
     assert saved["alpha"] == alpha
     cli.main(args)
     assert json.loads(capsys.readouterr().out)["entries"][0]["alpha"] == alpha
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize("operation", ["manual", "tf", "ratio", "general"])
+def test_explicit_projection_override_replaces_only_its_derived_provenance(canonical, operation):
+    from copy import deepcopy
+
+    from asymmetry.core.project.calibration import CalibrationRecord
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings, resolve_reduction_grouping
+    from docs.screenshots.data.calibration import calibration_control
+    from tests.project.test_tf_calibration_records import candidate
+
+    run = pair_run(canonical)
+    old = {"alpha_error": 0.03, "alpha_reference_run": 77, "alpha_method": "old"}
+    run.grouping["projections"][0].update(old)
+    if canonical:
+        run.grouping.update(alpha_x_error=0.03, alpha_x_reference_run=77, alpha_x_method="old")
+    run.grouping["projections"][1].update(old)
+    before = deepcopy(run.grouping)
+    settings = ReductionSettings(alpha=1.3, alpha_source="user")
+    error, reference, method = None, None, None
+    if operation == "tf":
+        record = CalibrationRecord("new", candidate(fit_beta=False))
+        settings = ReductionSettings(alpha=record)
+        error, reference, method = (
+            record.selected.alpha_error,
+            record.selected.source_run_number,
+            "tf_calibration_fit",
+        )
+    elif operation in ("ratio", "general"):
+        source = calibration_control(relaxing=operation == "general")
+        outcome = calibrate_run(source, ReductionSettings(), CalibrationOptions(operation))
+        settings = ReductionSettings(alpha=outcome.result)
+        error, reference, method = outcome.selected.alpha_error, source.run_number, operation
+    resolved = resolve_reduction_grouping(run, settings)
+    targets = [(resolved["projections"][0], "alpha")]
+    if canonical:
+        targets.append((resolved, "alpha_x"))
+    for target, prefix in targets:
+        assert target[prefix] == settings.effective_alpha
+        for suffix, expected in (
+            ("_error", error),
+            ("_reference_run", reference),
+            ("_method", method),
+        ):
+            key = prefix + suffix
+            if expected is None:
+                assert key not in target
+            else:
+                assert target[key] == expected
+    for key, value in old.items():
+        assert resolved["projections"][1][key] == value
+    assert run.grouping == before
+
+
+def test_saved_projection_policy_omits_derived_aliases_from_extra():
+    from asymmetry.core.project.calibration import CalibrationRecord, apply_calibration_outcome
+    from asymmetry.core.project.profiles import (
+        GroupingProfile,
+        profile_fingerprint_for_run,
+        profile_from_payload,
+    )
+    from asymmetry.core.workflow.calibration_results import CalibrationOutcome
+    from tests.project.test_tf_calibration_records import candidate
+
+    run = pair_run(canonical=True)
+    run.grouping.update(alpha_x_error=0.03, alpha_x_reference_run=77)
+    profile = profile_from_payload(run.grouping, "projection", profile_fingerprint_for_run(run))
+    outcome = CalibrationOutcome(CalibrationRecord("replacement", candidate(fit_beta=False)))
+    apply_calibration_outcome(profile, outcome, projection="P_x")
+    payload = profile.to_dict()
+    for key in ("alpha_x", "alpha_x_error", "alpha_x_reference_run", "alpha_x_method"):
+        assert key not in payload.get("extra", {})
+        assert key not in payload
+    restored = GroupingProfile.from_dict(payload)
+    assert restored.projection_alpha_policies["P_x"].record == outcome.record

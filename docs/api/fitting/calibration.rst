@@ -117,6 +117,9 @@ GUI application uses the same captured outcomes. Quick policies retain the full
 with its own captured coefficient; TF views reference the profile's canonical
 history. Each projection keeps beta fixed at one. Runtime scalar views are derived
 from these owners, including released-run override application and persistence.
+Projection value, error, method and source views update together; a manual
+override removes the previous measurement's attribution rather than retaining
+its error or reference run.
 
 For workflow reduction, implicit settings inherit a selected projection's alpha.
 An explicit calibration result or authored scalar overrides the requested pair;
