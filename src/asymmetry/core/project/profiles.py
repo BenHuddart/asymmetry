@@ -1289,13 +1289,11 @@ def resolve_effective_grouping(
             _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
             if profile.alpha_policy.mode != "per_run_estimate":
                 _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
-            if not profile.projections:
-                _apply_beta_policy(grouping, profile.beta_policy)
+            _apply_beta_policy(grouping, profile.beta_policy)
             if isinstance(exc, InvalidGroupingError):
                 raise
             raise InvalidGroupingError(str(exc), grouping) from exc
-        if not profile.projections:
-            _apply_beta_policy(grouping, profile.beta_policy)
+        _apply_beta_policy(grouping, profile.beta_policy)
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping

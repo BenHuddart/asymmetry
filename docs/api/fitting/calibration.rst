@@ -117,3 +117,12 @@ GUI application uses the same captured outcomes. Quick policies retain the full
 with its own captured coefficient; TF views reference the profile's canonical
 history. Each projection keeps beta fixed at one. Runtime scalar views are derived
 from these owners, including released-run override application and persistence.
+
+For workflow reduction, implicit settings inherit a selected projection's alpha.
+An explicit calibration result or authored scalar overrides the requested pair;
+other projections retain their own policies and beta one. Use
+``ReductionSettings(alpha=1.0, alpha_source="user")`` for authored unity;
+nondefault scalar values are explicit. A joint-beta record cannot be applied
+to a declared projection. A scalar pair outside the projections retains both
+coefficients, including the captured beta. Reduction cache identity includes
+the pair-balance policy so cached curves and reported coefficients agree.

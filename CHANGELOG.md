@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Preserve full quick/projection context and historical values across project upgrades.
 - Report zero or nonfinite coefficients as unusable calibration results.
 - Retain each projection's balance through display binning, Fourier input and re-reduction.
+  Honour explicit pair overrides and report applied coefficients; refresh affected caches.
   Discard incomplete vector calibration batches after failure or Stop.
 - Fill calibration spinboxes and preview immediately, retaining method labels until manual edits.
 - Replace calibration instructions with compact fit diagnostics and remove the beta-entry helper text.

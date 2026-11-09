@@ -239,7 +239,7 @@ and each is printed on the line under the command's table:
 - ``--period red``, ``--period green`` or ``--period N`` selects one period of
   a multi-period file; ``--period green-red`` reduces each period of a
   two-period run on its own and takes green − red.
-- ``--alpha X`` fixes the balance and ``--alpha-from RUN`` estimates it on a
+- ``--alpha X`` fixes the selected pair's balance and ``--alpha-from RUN`` estimates it on a
   calibration run reduced with the *same* options, so alpha balances the
   spectra it is applied to (``reduce`` and ``integral-scan``; ``alpha``
   measures it instead).

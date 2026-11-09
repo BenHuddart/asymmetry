@@ -4,6 +4,7 @@ import pytest
 
 from asymmetry.core.project.calibration import CalibrationRecord, apply_calibration
 from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
+from asymmetry.core.transform.grouping import grouping_balances
 from asymmetry.gui.windows.grouping.profile_bridge import profile_from_form_payload
 from tests.project.test_tf_calibration_records import candidate
 
@@ -151,7 +152,7 @@ def test_vector_records_keep_each_pair_with_beta_fixed(qapp, tmp_path):
     dialog._sync_draft_from_form()
     restored = GroupingProfile.from_dict(dialog._draft.to_dict())
     grouping = resolve_effective_grouping(restored, data.run)
-    assert grouping["beta"] == 1
+    assert grouping_balances(grouping)[1] == 1
     for label, outcome in outcomes.items():
         policy = restored.projection_alpha_policies[label]
         assert policy.record == outcome.record
@@ -430,7 +431,8 @@ def test_new_quick_projection_override_applies_full_context_without_global_beta(
     assert owner.beta_policy.value == 1.3
     window = MainWindow()
     assert window._apply_grouping_settings_to_dataset(data, payload)[0]
-    assert data.run.grouping["beta"] == 1
+    assert data.run.grouping["beta"] == 1.3
+    assert grouping_balances(data.run.grouping)[1] == 1
     assert data.run.grouping["alpha"] == owner.alpha_policy.value
     data.metadata["grouping_overrides"] = True
     window._data_browser.add_dataset(data)

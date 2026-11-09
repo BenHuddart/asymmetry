@@ -196,7 +196,7 @@ def apply_calibration_outcome(profile, outcome, projection=None):
 
 
 def resolve_projection_calibrations(policies, grouping):
-    """Derive projection scalars from their own captured pair's record."""
+    """Derive projection scalars from their coefficient owners."""
     for label, policy in policies.items():
         key = _AXIS_ALPHA_KEYS.get(label)
         if key:
@@ -204,7 +204,6 @@ def resolve_projection_calibrations(policies, grouping):
         for spec in grouping.get("projections", ()):
             if spec["label"] == label:
                 spec["alpha"] = policy.value
-        grouping["beta"] = 1.0
 
 
 def calibration_values(payload):
@@ -217,8 +216,6 @@ def calibration_values(payload):
         if f"{name}_policy" in policies:
             result[name] = policies[f"{name}_policy"].value
     resolve_projection_calibrations(policies["projection_alpha_policies"], result)
-    if result.get("projections"):
-        result["beta"] = 1.0
     return result
 
 

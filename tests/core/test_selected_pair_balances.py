@@ -135,7 +135,7 @@ def test_workflow_reduction_resolves_projection_instead_of_authored_fallback(can
     from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
     run = pair_run(canonical)
-    data = reduce_run(run, ReductionSettings(alpha=1.3, rebin=2))
+    data = reduce_run(run, ReductionSettings(rebin=2))
     np.testing.assert_allclose(data.asymmetry, 25.0)
     assert run.grouping["alpha"] == 1.3
 
@@ -153,3 +153,135 @@ def test_projection_reduction_uses_each_alpha_and_fixed_beta():
 
 def test_pair_outside_declared_projections_keeps_both_scalar_fallbacks():
     assert grouping_balances(pair_run().grouping, pair=(1, 4)) == (1.3, 1.4)
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+@pytest.mark.parametrize(
+    "operation", ["manual", "unity", "legacy_scalar", "automatic", "tf", "quick"]
+)
+def test_explicit_workflow_coefficient_overrides_only_the_selected_projection(canonical, operation):
+    from asymmetry.core.project.calibration import CalibrationRecord
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import (
+        ReductionSettings,
+        reduce_run,
+        resolve_reduction_grouping,
+    )
+    from tests.project.test_tf_calibration_records import candidate
+
+    run = pair_run(canonical)
+    settings = ReductionSettings(alpha=1.3, alpha_source="user")
+    if operation == "unity":
+        settings = ReductionSettings(alpha=1, alpha_source="user")
+    elif operation == "legacy_scalar":
+        settings = ReductionSettings(alpha=1.3)
+    elif operation == "automatic":
+        settings = ReductionSettings(alpha=1.25, alpha_source="estimated:7000")
+    elif operation == "tf":
+        settings = ReductionSettings(alpha=CalibrationRecord("explicit", candidate(fit_beta=False)))
+    elif operation == "quick":
+        result = calibrate_run(
+            reduce_run_to_dataset(run), ReductionSettings(), CalibrationOptions("ratio")
+        )
+        settings = ReductionSettings(alpha=result.result)
+    grouping = resolve_reduction_grouping(run, settings)
+    assert grouping_balances(grouping) == (settings.effective_alpha, 1.0)
+    assert grouping_balances(grouping, pair=(3, 4)) == (1.1, 1.0)
+    expected = 100 * (100 - settings.effective_alpha * 80) / (100 + settings.effective_alpha * 80)
+    np.testing.assert_allclose(reduce_run(run, settings).asymmetry, expected, atol=1e-12)
+    replay = ReductionSettings.from_dict(settings.to_dict())
+    np.testing.assert_array_equal(
+        reduce_run(run, replay).asymmetry, reduce_run(run, settings).asymmetry
+    )
+    assert run.grouping["alpha"] == 1.3
+
+
+def test_joint_record_applies_both_balances_to_an_unmatched_scalar_pair():
+    from asymmetry.core.project.calibration import CalibrationRecord
+    from asymmetry.core.workflow.reduction import (
+        ReductionSettings,
+        reduce_run,
+        resolve_reduction_grouping,
+    )
+    from tests.project.test_tf_calibration_records import candidate
+
+    run = pair_run()
+    record = CalibrationRecord("outside", candidate(fit_beta=True))
+    settings = ReductionSettings(alpha=record, pair=("1", "4"))
+    alpha, beta = record.selected.alpha, record.selected.beta
+    grouping = resolve_reduction_grouping(run, settings)
+    assert grouping_balances(grouping) == (alpha, beta)
+    expected = 100 * (100 - alpha * 60) / (beta * 100 + alpha * 60)
+    np.testing.assert_allclose(reduce_run(run, settings).asymmetry, expected, atol=1e-12)
+
+
+def test_joint_record_cannot_apply_beta_to_a_declared_projection():
+    from asymmetry.core.project.calibration import CalibrationRecord
+    from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+    from tests.project.test_tf_calibration_records import candidate
+
+    with pytest.raises(ValueError, match="beta fixed"):
+        reduce_run(
+            pair_run(),
+            ReductionSettings(alpha=CalibrationRecord("vector", candidate(fit_beta=True))),
+        )
+
+
+def test_projection_policy_transport_preserves_unmatched_scalar_beta():
+    from asymmetry.core.project.calibration import (
+        CalibrationRecord,
+        apply_calibration_outcome,
+        calibration_values,
+    )
+    from asymmetry.core.project.profiles import profile_fingerprint_for_run, profile_from_payload
+    from asymmetry.core.workflow.calibration_results import CalibrationOutcome
+    from tests.project.test_tf_calibration_records import candidate
+
+    run = pair_run()
+    profile = profile_from_payload(run.grouping, "paired", profile_fingerprint_for_run(run))
+    apply_calibration_outcome(
+        profile,
+        CalibrationOutcome(CalibrationRecord("projection", candidate(fit_beta=False))),
+        projection="FB",
+    )
+    payload = calibration_values(profile.to_dict())
+    assert payload["beta"] == 1.4
+    assert grouping_balances(payload, pair=(1, 4)) == (1.3, 1.4)
+    assert grouping_balances(payload, pair=(1, 2)) == (1.2, 1.0)
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_reduce_reports_the_selected_pair_coefficient_in_json_and_sidecar(
+    workflow_folder, tmp_path, capsys, monkeypatch, manual
+):
+    import json
+
+    from asymmetry import cli
+    from asymmetry.core.simulate import reduce_run_to_dataset
+    from asymmetry.core.workflow import reduction
+    from tests.core.conftest import SCAN_RUNS
+
+    run = pair_run()
+    run.run_number = SCAN_RUNS[0]
+    data = reduce_run_to_dataset(run)
+    monkeypatch.setattr(reduction, "load", lambda path: data)
+    args = [
+        "reduce",
+        str(workflow_folder),
+        "--runs",
+        str(SCAN_RUNS[0]),
+        "--workdir",
+        str(tmp_path / "state"),
+        "--json",
+    ]
+    if manual:
+        args += ["--alpha", "1"]
+    cli.main(args)
+    entry = json.loads(capsys.readouterr().out)["entries"][0]
+    alpha = 1.0 if manual else 0.75
+    assert entry["a0_percent"] == pytest.approx(100 * (100 - alpha * 80) / (100 + alpha * 80))
+    assert entry["alpha"] == alpha
+    saved = json.loads((tmp_path / "state" / "reduced" / f"{SCAN_RUNS[0]}.json").read_text())
+    assert saved["alpha"] == alpha
+    cli.main(args)
+    assert json.loads(capsys.readouterr().out)["entries"][0]["alpha"] == alpha
