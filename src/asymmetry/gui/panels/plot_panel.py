@@ -63,6 +63,7 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
+from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
@@ -4974,7 +4975,13 @@ class PlotPanel(QWidget):
                 key in run.grouping
                 for key in ("alpha", "alpha_x", "alpha_y", "alpha_z", "projections")
             ):
-                return grouping_balances(run.grouping)[0]
+                grouping = run.grouping
+                if not grouping.get("groups"):
+                    # A cached curve retains its recorded axis without acquired pair facts.
+                    axis = self._axis_canonical_key(grouping.get("vector_axis"))
+                    key = _AXIS_ALPHA_KEYS.get(axis, "alpha")
+                    grouping = {"alpha": grouping.get(key, grouping.get("alpha", 1.0))}
+                return grouping_balances(grouping)[0]
 
         alpha = dataset.metadata.get("alpha")
         try:
