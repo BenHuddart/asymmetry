@@ -73,7 +73,8 @@ results have no acquired-period ordinal. Combined acquired sources default to
 red for quick methods and record period 1. All methods require that source
 period's histograms, rather than a cached curve backed by another period's counts.
 ``calibration_source`` retains a matching selected cached curve when available;
-a source with held histograms alone has empty curve arrays.
+a source with held histograms alone has empty curve arrays. Period extraction
+retains the source ``Run`` identity without requiring duplicate run-number metadata.
 The ``quick_calibration`` view and JSON block retain that explicit operation;
 automatic legacy ratio settings remain scalar/source-only. Fixed beta one is
 applied authoritatively even when a target carries a historical nonunity beta.

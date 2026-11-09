@@ -252,7 +252,7 @@ def period_run(combined: Run, index: int) -> Run:
     metadata["raw_period_histograms_available"] = (
         acquired_period_histograms(grouping, index) is not None
     )
-    source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
+    source_run = source_run_of(combined)
     # Each period gets its own encoded run-number key so both survive in the
     # run-number-keyed data browser (otherwise the second add collapses the
     # first). The source run and the friendly run/period label stay in metadata.

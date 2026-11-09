@@ -257,3 +257,25 @@ def test_calibration_source_curve_matches_selected_period_or_is_raw_only(cached_
             np.testing.assert_array_equal(actual, expected)
     else:
         assert selected.time.size == selected.asymmetry.size == selected.error.size == 0
+
+
+@pytest.mark.parametrize("period", [None, 2])
+def test_source_period_retains_run_identity_without_duplicate_metadata(period):
+    from asymmetry.core.io.periods import source_run_of
+    from asymmetry.core.workflow.calibration import (
+        CalibrationOptions,
+        calibrate_run,
+        calibration_source,
+    )
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    combined, _ = _calibration_periods()
+    combined.run.metadata.pop("run_number")
+    combined.run.metadata.pop("source_run_number")
+    options = CalibrationOptions("ratio", period=period)
+    selected = calibration_source(combined, ReductionSettings(), options)
+    assert source_run_of(selected.run) == combined.run.run_number
+    assert selected.run.run_number == combined.run.run_number * 1000 + (period or 1)
+    assert (
+        calibrate_run(combined, ReductionSettings(), options).run_number == combined.run.run_number
+    )
