@@ -230,3 +230,30 @@ def test_default_combined_quick_source_records_effective_red_period(method, cach
         assert outcome.result.estimate == expected
     restored = QuickCalibrationResult.from_dict(json.loads(dumps(outcome.result.to_dict())))
     assert restored == outcome.result
+
+
+@pytest.mark.parametrize("cached_curves", [False, True])
+def test_calibration_source_curve_matches_selected_period_or_is_raw_only(cached_curves):
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibration_source
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    combined, green = _calibration_periods()
+    red_curve = tuple(np.full(3, level) for level in (1.0, 2.0, 3.0))
+    green_curve = tuple(np.full(4, level) for level in (4.0, 5.0, 6.0))
+    combined.time, combined.asymmetry, combined.error = red_curve
+    if cached_curves:
+        combined.run.grouping["period_reduced"] = [red_curve, green_curve]
+    else:
+        combined.run.grouping.pop("period_reduced")
+    selected = calibration_source(
+        combined, ReductionSettings(), CalibrationOptions("ratio", period=2)
+    )
+    assert selected.run.metadata["period_number"] == 2
+    np.testing.assert_array_equal(selected.run.histograms[1].counts, green.run.histograms[1].counts)
+    if cached_curves:
+        for actual, expected in zip(
+            (selected.time, selected.asymmetry, selected.error), green_curve, strict=True
+        ):
+            np.testing.assert_array_equal(actual, expected)
+    else:
+        assert selected.time.size == selected.asymmetry.size == selected.error.size == 0

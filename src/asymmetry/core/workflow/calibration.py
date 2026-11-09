@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from uuid import uuid4
 
+import numpy as np
+
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_results import CountFitParameter
 from asymmetry.core.fitting.engine import FitCancelledError
@@ -210,7 +212,11 @@ def calibration_source(
     settings: ReductionSettings,
     options: CalibrationOptions,
 ) -> MuonDataset:
-    """Resolve a source period separately from target reduction and cached views."""
+    """Resolve a source period separately from target reduction and cached views.
+
+    Keep the selected cached curve when available; a held-only acquisition has
+    empty curve arrays, so a parent's curve cannot acquire another period's label.
+    """
     tf = options.method == TF_CALIBRATION_METHOD
     period = options.period if options.period is not None else settings.period
     if period == GREEN_MINUS_RED:
@@ -241,8 +247,12 @@ def calibration_source(
         if tf and period is None and period_count(run) > 1:
             raise ValueError("TF calibration requires an explicit acquired source period")
         index = resolve_period_index(1 if period is None else period, period_count(run))
-        selected = period_run(run, index)
-        source = replace(source, run=selected, metadata=selected.metadata)
+        if len(run.grouping.get("period_reduced") or ()) >= 2:
+            source = select_period(source, index + 1)
+        else:
+            selected = period_run(run, index)
+            empty = np.empty(0)
+            source = MuonDataset(empty, empty, empty, metadata=selected.metadata, run=selected)
     elif run is not None and "period_number" in run.metadata:
         number = run.metadata["period_number"]
         count = max(2, number, period_count(source))
