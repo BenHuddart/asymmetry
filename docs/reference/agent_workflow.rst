@@ -616,7 +616,10 @@ require ``--alpha-from`` and never fit arbitrary target samples implicitly.
 ``--calibration-period RED|GREEN|N`` selects the acquired source period independently
 of the target ``--period``. Without it the source follows ``--period``. TF requires
 an explicit acquired period for a multi-period source and rejects a difference
-or cached-only period. Nontrivially mapped sets require the original acquired
+or cached-only period. All calibration methods require the source period's
+histograms; cached curves cannot supply counts for another period. Quick methods
+without a selector use red on a combined run and record acquired period 1.
+Nontrivially mapped TF sets require the original acquired
 source, since a mapped ordinal cannot name a source acquisition. An already-selected
 acquired period keeps its original ordinal, including when the matching selector
 is repeated. For a target difference, supply the source period explicitly.
@@ -643,7 +646,8 @@ refit or generate a new identity. Scalar/source-only documents remain scalar
 records without inferred joint provenance. Explicit quick results retain their
 shared typed estimate, method/error meaning, source, acquired period, pair,
 correction outcomes, contributor mapping, and timing/window context in
-``quick_calibration`` settings;
+``quick_calibration`` settings; a nontrivial mapped quick source retains its
+contributor recipe with no acquired-period ordinal;
 no TF covariance or joint record is inferred. General count-domain science fitting
 is a separate API capability.
 

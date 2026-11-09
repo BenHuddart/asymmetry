@@ -276,7 +276,7 @@ undamped|exponential|gaussian|stretched` only with TF (omitted: minimum finite
 summed cost among usable candidates); `--calibration-frequency MHZ` is a TF seed.
 Use the same options with `reduce --alpha-from RUN` or `integral-scan --alpha-from RUN`.
 `--calibration-period RED|GREEN|N` selects the source independently of target
-`--period`; TF needs an acquired period, never a difference or cached-only curve.
+`--period`; all methods need source-period counts; TF rejects a difference or mapped sum.
 Explicit quick settings retain their typed result/method/source context; TF settings
 retain one canonical result with both coefficients,
 source/support/corrections and full conditional covariance. Missing/unreliable

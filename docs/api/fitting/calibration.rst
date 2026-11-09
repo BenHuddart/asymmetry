@@ -68,7 +68,10 @@ Old scalar/source-only settings do not acquire inferred joint records.
 
 ``ReductionSettings.alpha`` also accepts a ``QuickCalibrationResult``, preserving
 its shared typed estimate and source/pair/period/correction/timing context,
-including the contributor mapping for a mapped quick calculation.
+including the contributor mapping for a mapped quick calculation. Such mapped
+results have no acquired-period ordinal. Combined acquired sources default to
+red for quick methods and record period 1. All methods require that source
+period's histograms, rather than a cached curve backed by another period's counts.
 The ``quick_calibration`` view and JSON block retain that explicit operation;
 automatic legacy ratio settings remain scalar/source-only. Fixed beta one is
 applied authoritatively even when a target carries a historical nonunity beta.

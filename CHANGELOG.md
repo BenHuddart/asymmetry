@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject cached-only calibration periods for quick methods and retain the effective
+  red-period identity in combined-run calibration results.
+
 - Reject invalid calibration identities before they can be applied or saved.
 
 - Identify unsupported processed channels in TF calibration without implying

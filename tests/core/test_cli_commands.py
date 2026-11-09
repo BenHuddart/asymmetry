@@ -1116,6 +1116,7 @@ def test_survey_reports_the_number_of_selectable_periods(
         dataset = real_load(path)
         reduced = (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy())
         dataset.run.grouping["period_reduced"] = [reduced, reduced]
+        dataset.run.grouping["period_histograms"] = [dataset.run.histograms, dataset.run.histograms]
         dataset.run.metadata["period_count"] = 2
         return dataset
 

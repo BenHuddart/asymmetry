@@ -9,6 +9,7 @@ from uuid import uuid4
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_results import CountFitParameter
 from asymmetry.core.fitting.engine import FitCancelledError
+from asymmetry.core.fitting.likelihood import FitInputError
 from asymmetry.core.fitting.tf_calibration import (
     TF_CALIBRATION_METHOD,
     TFCalibrationRequest,
@@ -18,6 +19,7 @@ from asymmetry.core.fitting.tf_calibration import (
 )
 from asymmetry.core.io.periods import (
     period_count,
+    period_run,
     reference_mapping_requires_replay,
     resolve_period_index,
     select_period,
@@ -92,7 +94,7 @@ def calibrate_run(
     *,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> CalibrationOutcome:
-    """Calibrate the source acquisition, never a target's cached or mapped curve.
+    """Calibrate source histograms; TF requires one acquired period.
 
     Explicit TF requests on multi-period acquisitions require a selected acquired
     period. The historical ratio uses red for a difference and preserves its
@@ -182,31 +184,31 @@ def calibrate_run(
                 first_good_bin=counts.window.first,
                 last_good_bin=counts.window.last,
             )
+        mapping = run.grouping.get("period_mapping", run.metadata.get("period_mapping", {}))
         result = QuickCalibrationResult(
             result,
             source_run_of(run),
             forward,
             backward,
-            run.metadata.get("period_number"),
+            None
+            if reference_mapping_requires_replay(mapping)
+            else run.metadata.get("period_number"),
             run.source_file,
             counts.corrections,
             counts.alignment,
             counts.window,
             counts.bin_width_us,
             counts.t0_time_us,
-            tuple(
-                (int(number), target)
-                for number, target in run.grouping.get(
-                    "period_mapping", run.metadata.get("period_mapping", {})
-                ).items()
-            ),
+            tuple((int(number), target) for number, target in mapping.items()),
         )
     check_cancel()
     return CalibrationOutcome(result)
 
 
 def calibration_source(
-    loaded, settings: ReductionSettings, options: CalibrationOptions
+    loaded: MuonDataset | list[MuonDataset],
+    settings: ReductionSettings,
+    options: CalibrationOptions,
 ) -> MuonDataset:
     """Resolve a source period separately from target reduction and cached views."""
     tf = options.method == TF_CALIBRATION_METHOD
@@ -233,22 +235,30 @@ def calibration_source(
     if isinstance(loaded, list):
         if tf and period is None and len(loaded) > 1:
             raise ValueError("TF calibration requires an explicit acquired source period")
-        return source
-    if (
-        run is not None
-        and "period_number" in run.metadata
-        and "period_histograms" not in run.grouping
-        and (tf or run.metadata.get("raw_period_histograms_available") is not False)
+    elif run is not None and (
+        "period_histograms" in run.grouping or "period_reduced" in run.grouping
     ):
+        if tf and period is None and period_count(run) > 1:
+            raise ValueError("TF calibration requires an explicit acquired source period")
+        index = resolve_period_index(1 if period is None else period, period_count(run))
+        selected = period_run(run, index)
+        source = replace(source, run=selected, metadata=selected.metadata)
+    elif run is not None and "period_number" in run.metadata:
         number = run.metadata["period_number"]
         count = max(2, number, period_count(source))
         requested = number if period is None else resolve_period_index(period, count) + 1
         selected = select_reference_run(run, {"period_number": requested})
         if selected is None:
-            raise ValueError(
+            raise FitInputError(
                 "Calibration needs the requested acquired period histograms; reload the source"
             )
-        return source
-    if tf and period is None and period_count(loaded) > 1:
+    elif tf and period is None and period_count(source) > 1:
         raise ValueError("TF calibration requires an explicit acquired source period")
-    return select_period(loaded, period) if period is not None else loaded
+    elif period is not None:
+        source = select_period(source, period)
+    if (
+        source.run is not None
+        and source.run.metadata.get("raw_period_histograms_available") is False
+    ):
+        raise FitInputError("Calibration needs acquired period histograms; reload the source")
+    return source

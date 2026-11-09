@@ -114,6 +114,7 @@ def test_workflow_never_labels_mapped_counts_as_an_acquired_period(mapping):
     selected = replace(mapped, run=red, metadata=red.metadata)
     ratio = calibrate_run(selected, ReductionSettings(), CalibrationOptions("ratio"))
     assert ratio.alpha is not None
+    assert ratio.period_number is None
     assert dict(ratio.result.period_mapping) == mapping
     from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
     from asymmetry.core.workflow.jsonio import json_safe
@@ -148,3 +149,84 @@ def test_workflow_rejects_mismatched_selected_source_period(method):
     data.run.metadata.update(source_run_number=7101, period_number=3, period_count=4)
     with pytest.raises(ValueError, match="requested acquired period"):
         calibrate_run(data, ReductionSettings(), CalibrationOptions(method, period=2))
+
+
+def _calibration_periods(*, cached_only=False):
+    """Different bank balances make accidental parent-period reuse observable."""
+    red, green = _raw_tf(beta=1), _raw_tf(beta=1, seed=43)
+    from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
+    time = red.run.histograms[0].time_axis
+    decay = np.exp(-time / MUON_LIFETIME_US)
+    polarization = 0.2 * np.exp(-0.3 * time)
+    for data in (red, green):
+        data.run.histograms[0].counts = np.rint(20000 * decay * (1 + polarization))
+        data.run.histograms[1].counts = np.rint(16000 * decay * (1 - polarization))
+    green.run.histograms[1].counts *= 2
+    empty = (np.array([]), np.array([]), np.array([]))
+    red.run.metadata.update(run_number=7101, source_run_number=7101, period_count=2)
+    red.run.grouping.update(period_reduced=[empty, empty], period_good_frames=[10.0, 20.0])
+    if not cached_only:
+        red.run.grouping["period_histograms"] = [red.run.histograms, green.run.histograms]
+    return red, green
+
+
+@pytest.mark.parametrize("method", [None, "ratio", "diamagnetic", "general", "tf_calibration_fit"])
+@pytest.mark.parametrize(
+    "source_form",
+    ["combined_default", "combined_green", "selected_default", "selected_green", "list_green"],
+)
+def test_all_workflow_methods_reject_cached_only_source_counts(method, source_form):
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    combined, _ = _calibration_periods(cached_only=True)
+    selected = select_period(combined, 2)
+    source = (
+        [combined, selected]
+        if source_form == "list_green"
+        else selected
+        if source_form.startswith("selected")
+        else combined
+    )
+    options = CalibrationOptions(method, period=2 if source_form.endswith("green") else None)
+    with pytest.raises(ValueError, match="acquired.*period"):
+        calibrate_run(source, ReductionSettings(), options)
+
+
+@pytest.mark.parametrize("method", [None, "ratio", "diamagnetic", "general"])
+@pytest.mark.parametrize("cached_curves", [False, True])
+def test_default_combined_quick_source_records_effective_red_period(method, cached_curves):
+    import json
+
+    from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_run
+    from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
+    from asymmetry.core.workflow.jsonio import dumps
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    combined, _ = _calibration_periods()
+    if not cached_curves:
+        combined.run.grouping.pop("period_reduced")
+    outcome = calibrate_run(combined, ReductionSettings(), CalibrationOptions(method))
+    assert outcome.period_number == 1
+    from asymmetry.core.transform.asymmetry import estimate_alpha_detailed
+    from asymmetry.core.transform.fb_counts import GroupCounts
+    from asymmetry.core.workflow.calibration import calibration_source
+
+    red = calibration_source(combined, ReductionSettings(), CalibrationOptions(method)).run
+    assert red.metadata["period_number"] == 1
+    assert red.grouping["good_frames"] == 10.0
+    expected = estimate_alpha_detailed(
+        GroupCounts(combined.run.histograms[0].counts),
+        GroupCounts(combined.run.histograms[1].counts),
+        method=method or "ratio",
+        time_us=combined.run.histograms[0].time_axis,
+        first_good_bin=4,
+        last_good_bin=498,
+    )
+    assert outcome.alpha == expected.alpha
+    if method is not None:
+        assert outcome.result.estimate == expected
+    restored = QuickCalibrationResult.from_dict(json.loads(dumps(outcome.result.to_dict())))
+    assert restored == outcome.result
