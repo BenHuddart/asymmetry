@@ -462,3 +462,27 @@ def test_new_quick_projection_override_applies_full_context_without_global_beta(
     reopened.close()
     window._clear_all_state()
     window.close()
+
+
+def test_manual_canonical_capture_preserves_an_unedited_custom_projection(qapp):
+    from tests.gui.test_grouping_dialog import _wait_until
+
+    dialog, data, label, _ = _stored_projection_override(qapp, "tf", True)
+    spec = {
+        "label": "Other pair",
+        "forward_group": 1,
+        "backward_group": 4,
+        "alpha": 0.88,
+        "alpha_method": "manual",
+    }
+    dialog._projection_specs.append(dict(spec))
+    try:
+        dialog._vector_alpha_spins[label].setValue(1.7)
+        dialog._preview_pane.flush()
+        _wait_until(lambda: dialog._preview_pane.corrections_complete)
+        dialog._on_apply()
+        payload = dialog.get_profile_result()["override_edits"][data.run_number]
+        assert next(p for p in payload["projections"] if p["label"] == spec["label"]) == spec
+    finally:
+        dialog._clear_dirty()
+        dialog.close()

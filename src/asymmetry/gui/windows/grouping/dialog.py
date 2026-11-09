@@ -5365,7 +5365,7 @@ class GroupingDialog(TimingControls, QDialog):
                 continue
             new_spec = dict(spec)
             label = str(new_spec.get("label"))
-            if canonical:
+            if canonical and label in CANONICAL_VECTOR_AXES:
                 for field in ("alpha", "alpha_error", "alpha_reference_run", "alpha_method"):
                     new_spec.pop(field, None)
             elif label in self._vector_alpha_spins:
