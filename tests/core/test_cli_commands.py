@@ -1116,6 +1116,7 @@ def test_survey_reports_the_number_of_selectable_periods(
         dataset = real_load(path)
         reduced = (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy())
         dataset.run.grouping["period_reduced"] = [reduced, reduced]
+        dataset.run.grouping["period_histograms"] = [dataset.run.histograms, dataset.run.histograms]
         dataset.run.metadata["period_count"] = 2
         return dataset
 
@@ -3652,7 +3653,7 @@ def test_an_alpha_measured_on_corrected_counts_says_it_differs_from_the_survey()
     raw = ReductionSettings(alpha=1.232, alpha_source="estimated:7")
     corrected = ReductionSettings(alpha=1.2373, alpha_source="estimated:7", deadtime="from_file")
     assert describe(raw).startswith("alpha 1.2320 (estimated:7), deadtime off")
-    assert "survey and `alpha` measure raw counts" in describe(corrected)
+    assert "survey measures raw counts" in describe(corrected)
 
 
 def test_a_result_command_ends_with_the_audit_step_and_a_reduction_does_not(

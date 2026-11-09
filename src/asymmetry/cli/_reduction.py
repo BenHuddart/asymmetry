@@ -53,6 +53,7 @@ def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = Tr
         default="off",
         help="Deadtime correction (default: off, matching the GUI's fresh-run default)",
     )
+    add_calibration_arguments(parser)
     add_pair_argument(parser)
     parser.add_argument(
         "--background",
@@ -89,6 +90,56 @@ def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = Tr
             "Select one period from a multi-period file (red is period 1, green "
             f"period 2), or {GREEN_RED} for the difference of a two-period run"
         ),
+    )
+
+
+def add_calibration_arguments(parser: argparse.ArgumentParser) -> None:
+    """Expose shared explicit operations without changing no-option behaviour."""
+    from asymmetry.core.fitting.tf_calibration import TFEnvelope
+    from asymmetry.core.workflow.calibration import CALIBRATION_METHODS
+
+    parser.add_argument(
+        "--calibration-method",
+        choices=CALIBRATION_METHODS,
+        default=None,
+        help="Explicit calibration operation (omitted: per-run integral ratio)",
+    )
+    parser.add_argument(
+        "--fit-beta",
+        action="store_true",
+        help="Fit beta with alpha (requires tf_calibration_fit; otherwise beta is fixed at 1)",
+    )
+    parser.add_argument(
+        "--calibration-envelope",
+        choices=[e.value for e in TFEnvelope],
+        default=None,
+        help="Constrain TF to one envelope (omitted: compare all four)",
+    )
+    parser.add_argument(
+        "--calibration-period",
+        default=None,
+        metavar="RED|GREEN|N",
+        help="Acquired calibration source period, independent of the target --period",
+    )
+    parser.add_argument(
+        "--calibration-frequency",
+        type=float,
+        default=None,
+        metavar="MHZ",
+        help="TF frequency seed in MHz (omitted: source field)",
+    )
+
+
+def calibration_options(args: argparse.Namespace):
+    """Parse once at the shared calibration request boundary."""
+    from asymmetry.core.workflow.calibration import CalibrationOptions
+
+    return CalibrationOptions(
+        method=args.calibration_method,
+        fit_beta=args.fit_beta,
+        envelope=args.calibration_envelope,
+        period=args.calibration_period,
+        frequency_mhz=args.calibration_frequency,
     )
 
 
@@ -137,13 +188,11 @@ def reduction_settings(
     spectra it will be applied to.
     """
     from asymmetry.core.io import load
-    from asymmetry.core.io.periods import period_count
+    from asymmetry.core.workflow.calibration import calibrate_run
     from asymmetry.core.workflow.reduction import (
         ALPHA_ESTIMATED_PREFIX,
         GREEN_MINUS_RED,
         ReductionSettings,
-        estimate_alpha_for_run,
-        reduction_source,
     )
 
     alpha, alpha_from = args.alpha, args.alpha_from
@@ -161,19 +210,23 @@ def reduction_settings(
             **_background(args.background),
             **window,
         )
+        options = calibration_options(args)
         if alpha_from is None:
+            if args.command != "alpha" and (
+                options.method is not None or options.period is not None
+            ):
+                raise ValueError("Explicit calibration options require --alpha-from")
             return settings
         loaded = load(str(resolve_run(selection, alpha_from)))
-        # Alpha is a detector balance, the same in every period, so a calibration
-        # run recorded in one period calibrates each period of a two-period scan.
-        periods = len(loaded) if isinstance(loaded, list) else period_count(loaded)
-        calibration_settings = settings if periods > 1 else replace(settings, period=None)
-        calibration = reduction_source(loaded, calibration_settings.period)
-        estimate = estimate_alpha_for_run(calibration.run, calibration_settings)
+        estimate = calibrate_run(loaded, settings, options)
+        if estimate.alpha is None:
+            raise ValueError(estimate.to_dict()["message"])
     except (TypeError, ValueError) as exc:
         # ReductionSettings owns the vocabulary the CLI accepts; a value it
         # rejects is the user's, so it exits 1 with a message, not 2.
         raise UserError(str(exc)) from None
+    if options.method is not None:
+        return replace(settings, alpha=estimate.result)
     return replace(
         settings, alpha=estimate.alpha, alpha_source=f"{ALPHA_ESTIMATED_PREFIX}{alpha_from}"
     )
@@ -231,14 +284,42 @@ def describe(settings: ReductionSettings) -> str:
         background += f" {settings.background_range[0]}:{settings.background_range[1]}"
     from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX
 
-    alpha = f"alpha {settings.alpha:.4f} ({settings.alpha_source}"
+    alpha = f"alpha {settings.effective_alpha:.4f} ({settings.effective_alpha_source}"
     if settings.alpha_source.startswith(ALPHA_ESTIMATED_PREFIX) and (
         settings.deadtime != "off" or settings.background != "none"
     ):
         alpha += (
-            " on these corrected counts — survey and `alpha` measure raw counts, so their "
+            " on these corrected counts — survey measures raw counts, so their "
             "value differs; this is the one applied"
         )
+    if settings.quick_calibration is not None:
+        estimate = settings.quick_calibration.estimate
+        error = (
+            "error unavailable"
+            if estimate.alpha_error is None
+            else f"+/- {estimate.alpha_error:.3g}"
+        )
+        alpha = (
+            f"alpha {estimate.alpha:.6g} {error} ({settings.effective_alpha_source}, beta 1 fixed"
+        )
+    if settings.calibration is not None:
+        result = settings.calibration.selected
+        error = (
+            "error unavailable" if result.alpha_error is None else f"+/- {result.alpha_error:.3g}"
+        )
+        beta = (
+            "1 fixed"
+            if result.beta_fixed
+            else (
+                f"{result.beta:.6g} "
+                + (
+                    "error unavailable"
+                    if result.beta_error is None
+                    else f"+/- {result.beta_error:.3g}"
+                )
+            )
+        )
+        alpha = f"alpha {result.alpha:.6g} {error} (run {result.source_run_number}, {result.model}, beta {beta}; conditional errors"
     parts = [
         alpha + ")",
         f"deadtime {settings.deadtime}",

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request shared TF alpha/beta, envelope selection, and quick calibration from the
+  workflow API and CLI, retaining complete TF records through workdir replay.
+
 - Preserve applied core TF calibration and model-selection records in projects,
   including shared covariance, effective constraints, source assumptions, and history.
 
@@ -38,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed
+
+- Preserve run and selected period identities in calibration results, and reject
+  cached curves without the corresponding source-period counts.
 
 - Reject invalid calibration identities before they can be applied or saved.
 
