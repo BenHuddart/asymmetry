@@ -29,6 +29,7 @@ from asymmetry.core.instrument import (
     instrument_display_name,
 )
 from asymmetry.core.project.calibration import (
+    CALIBRATION_PAYLOAD_KEYS,
     CalibratedCoefficient,
     QuickCalibratedCoefficient,
 )
@@ -129,13 +130,21 @@ def profile_from_form_payload(
     An explicit ``alpha_policy`` preserves the editor's selected policy; a
     numeric preview value alone cannot distinguish fixed and automatic alpha.
     """
-    profile = profile_from_payload(payload, name, fingerprint, active=active)
+    fields = (
+        payload
+        if calibration_source is None
+        else {key: value for key, value in payload.items() if key not in CALIBRATION_PAYLOAD_KEYS}
+    )
+    profile = profile_from_payload(fields, name, fingerprint, active=active)
     if alpha_policy is not None:
         profile.alpha_policy = alpha_policy
     if calibration_source is not None:
         profile.calibration_records = calibration_source.calibration_records
-        if alpha_policy is None and isinstance(
-            calibration_source.alpha_policy, (CalibratedCoefficient, QuickCalibratedCoefficient)
+        if alpha_policy is None and (
+            payload.get("projections")
+            or isinstance(
+                calibration_source.alpha_policy, (CalibratedCoefficient, QuickCalibratedCoefficient)
+            )
         ):
             profile.alpha_policy = calibration_source.alpha_policy
         bindings = {}

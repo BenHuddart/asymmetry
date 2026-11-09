@@ -187,9 +187,9 @@ B_i` (Mantid's ``AlphaCalc``), with no oscillation model; on a clean silver
 run the two agree closely. The **Decay balance** method balances
 lifetime-corrected counts and accommodates a genuinely relaxing signal, but
 needs visible relaxation. On this silver TF run the diamagnetic estimate
-gives :math:`\alpha = 0.88487`, and the shared before/after preview
-shows the balancing effect directly. The estimate applies immediately: the
-α card reads ``α = 0.8849 · β = 1 (fixed) · Diamagnetic``.
+gives :math:`\alpha = 0.88487`. The preview keeps the current applied
+coefficients until **Apply** commits the staged result. The result reads
+``α = 0.8849 · β = 1 (fixed) · Diamagnetic``.
 
 The quick estimate reports no added uncertainty. The same calculation is
 available from the Python API. The diamagnetic fit

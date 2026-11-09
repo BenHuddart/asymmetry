@@ -120,6 +120,7 @@ def test_held_worker_obsolete_results_never_publish_and_heartbeat(qapp, monkeypa
         "mapping",
         "mapping_draft",
         "window",
+        "binning",
         "timing",
         "deadtime",
         "background",
@@ -160,6 +161,8 @@ def test_dialog_dependency_edits_invalidate_held_result(qapp, monkeypatch, depen
         dialog.period_mapping_request = {"mapping": {1: "red", 2: "green"}}
     elif dependency == "window":
         dialog._last_good_spin.setValue(dialog._last_good_spin.value() - 1)
+    elif dependency == "binning":
+        dialog._bunch_spin.setValue(2)
     elif dependency == "timing":
         dialog._t0_spin.setValue(dialog._t0_spin.value() + 1)
     elif dependency == "deadtime":
@@ -312,3 +315,30 @@ def test_quick_difference_selects_red_once_without_reapplying_target_period_mode
     ).outcome
     direct = calibrate_run(data, ReductionSettings(), replace(options, period=GREEN_MINUS_RED))
     assert gui.result == direct.result
+
+
+def test_vector_manual_edit_invalidates_held_calibration(qapp, monkeypatch):
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from docs.screenshots.data.calibration import calibration_control
+    from tests.gui.test_grouping_dialog import _wait_for_t0_detection
+
+    dialog = GroupingDialog([calibration_control(vector=True)])
+    _wait_for_t0_detection(dialog)
+    entered, release = Event(), Event()
+    original = module.run_calibration
+
+    def held(worker, request):
+        entered.set()
+        assert release.wait(5)
+        return original(worker, request)
+
+    monkeypatch.setattr(module, "run_calibration", held)
+    dialog._estimate_alpha_for_axis("P_x")
+    _wait_until(entered.is_set)
+    dialog._vector_alpha_spins["P_x"].setValue(1.7)
+    release.set()
+    _wait_until(lambda: dialog._alpha_section._tasks.active_count == 0)
+    assert dialog._alpha_section.pending() == {}
+    assert dialog._vector_alpha_spins["P_x"].value() == 1.7
+    dialog._clear_dirty()
+    dialog.close()

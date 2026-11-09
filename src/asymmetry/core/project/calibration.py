@@ -217,6 +217,8 @@ def calibration_values(payload):
         if f"{name}_policy" in policies:
             result[name] = policies[f"{name}_policy"].value
     resolve_projection_calibrations(policies["projection_alpha_policies"], result)
+    if result.get("projections"):
+        result["beta"] = 1.0
     return result
 
 
@@ -423,14 +425,17 @@ def profile_calibration_payload(profile, data: dict) -> dict:
         data["calibration_records"] = [calibration_payload(r) for r in profile.calibration_records]
     for name in ("alpha", "beta"):
         policy = getattr(profile, f"{name}_policy")
-        if isinstance(policy, QuickCalibratedCoefficient):
+        if isinstance(policy, CalibratedCoefficient) and not any(
+            r is policy.record for r in profile.calibration_records
+        ):
+            raise ValueError("Applied calibration must belong to profile history")
+        if (
+            isinstance(policy, (CalibratedCoefficient, QuickCalibratedCoefficient))
+            or profile.projections
+        ):
             data[f"{name}_policy"] = policy.to_dict()
-        elif isinstance(policy, CalibratedCoefficient):
-            if not any(r is policy.record for r in profile.calibration_records):
-                raise ValueError("Applied calibration must belong to profile history")
             for key in (name, f"{name}_method", f"{name}_error", f"{name}_reference_run"):
                 data.pop(key, None)
-            data[f"{name}_policy"] = policy.to_dict()
     if profile.projection_alpha_policies:
         data["projection_alpha_policies"] = {
             label: policy.to_dict() for label, policy in profile.projection_alpha_policies.items()
@@ -438,9 +443,13 @@ def profile_calibration_payload(profile, data: dict) -> dict:
     for label in profile.projection_alpha_policies:
         key = _AXIS_ALPHA_KEYS.get(label)
         data.get("extra", {}).pop(key, None)
+        if key is not None:
+            for field in (key, f"{key}_error", f"{key}_reference_run"):
+                data.pop(field, None)
         for spec in data.get("projections", ()):
             if spec["label"] == label:
-                spec.pop("alpha", None)
+                for field in ("alpha", "alpha_error", "alpha_reference_run", "alpha_method"):
+                    spec.pop(field, None)
     return data
 
 
@@ -461,6 +470,12 @@ def restore_profile_calibrations(data: dict) -> dict:
                 raise ValueError("Applied coefficient must reference its canonical calibration")
             view = restore_coefficient(policy, records)
             result[f"{name}_policy"] = view
+        elif "mode" in policy:
+            from asymmetry.core.project.profiles import AlphaPolicy, BetaPolicy
+
+            result[f"{name}_policy"] = (AlphaPolicy if name == "alpha" else BetaPolicy).from_dict(
+                policy
+            )
     projections = {
         label: restore_coefficient(policy, records)
         for label, policy in data.get("projection_alpha_policies", {}).items()

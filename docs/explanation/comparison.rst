@@ -1335,8 +1335,10 @@ Workflow calibration entry points
 Explicit workflow/API/CLI TF requests share the documented core operation,
 model selection, and canonical alpha/beta record. ``--calibration-method`` also
 exposes Diamagnetic, General, and ratio as distinct operations. The no-option
-CLI and survey retain the integral-ratio policy, which is not WiMDA's
-Diamagnetic or General estimate. These adapters add no reference-program
+explicit CLI calibration uses TF calibration fit. Survey and
+automatic per-run calibration retain the separate integral-ratio policy, which
+is not WiMDA's Diamagnetic or General estimate. These adapters add no
+reference-program
 numerical agreement or physical-accuracy claim to the versioned comparisons
 above. General count-domain fitting remains a separate capability.
 

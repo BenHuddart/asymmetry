@@ -69,6 +69,10 @@ from asymmetry.core.io.periods import (
     selected_period_index,
 )
 from asymmetry.core.io.reference_selection import reference_observations
+from asymmetry.core.project.calibration import (
+    CALIBRATION_PAYLOAD_KEYS,
+    resolve_projection_calibrations,
+)
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
@@ -358,6 +362,7 @@ class GroupingDialog(TimingControls, QDialog):
         # one alongside the profile. ``_current_run`` mirrors the selected run so
         # the target can be resolved without touching the scope panel mid-reseed.
         self._override_drafts: dict[int, dict[str, Any]] = {}
+        self._override_profiles: dict[int, GroupingProfile] = {}
         #: overridden runs whose override draft has uncommitted edits this session.
         self._override_dirty_runs: set[int] = set()
         #: overridden runs whose edits were committed by the last Apply (read by
@@ -446,6 +451,7 @@ class GroupingDialog(TimingControls, QDialog):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
         self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
+        self._suppress_alpha_provenance_reset = False
         # Digest of the deadtime + background settings a calibrated alpha was
         # measured under. When the corrections later change, the calibrated alpha
         # no longer balances the reduced (corrected) asymmetry — the staleness
@@ -1661,6 +1667,18 @@ class GroupingDialog(TimingControls, QDialog):
         if target != "profile":
             # Override drafts retain edits across target switches.
             payload = dict(self._override_draft_for(int(target)))
+            owner = self._override_profiles[int(target)]
+            for name in ("alpha", "beta"):
+                policy = getattr(owner, f"{name}_policy")
+                payload[name] = policy.value
+                if policy.mode == "calibrated":
+                    payload[f"{name}_method"] = policy.method
+                    if policy.source_run is not None:
+                        payload[f"{name}_reference_run"] = policy.source_run
+                    if policy.error is not None:
+                        payload[f"{name}_error"] = policy.error
+            payload["projections"] = [dict(spec) for spec in payload.get("projections", ())]
+            resolve_projection_calibrations(owner.projection_alpha_policies, payload)
         else:
             seed_profile = self._draft
             if seed_profile.alpha_policy.mode == "per_run_estimate":
@@ -1725,8 +1743,16 @@ class GroupingDialog(TimingControls, QDialog):
                 None,
             )
             run = dataset.run if dataset is not None else None
-            grouping = run.grouping if run is not None and isinstance(run.grouping, dict) else {}
-            draft = dict(grouping)
+            if run is None:
+                raise ValueError("Override draft requires a loaded run")
+            draft = dict(run.grouping)
+            self._override_profiles[run_number] = profile_from_form_payload(
+                draft,
+                name="override",
+                fingerprint=profile_fingerprint_for_run(run),
+            )
+            for key in CALIBRATION_PAYLOAD_KEYS:
+                draft.pop(key, None)
             self._override_drafts[run_number] = draft
         return draft
 
@@ -1748,27 +1774,15 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _sync_override_draft_from_form(self, run_number: int) -> None:
         """Capture the live form payload into *run_number*'s override draft."""
-        from asymmetry.core.project.calibration import profile_calibration_payload
-
         payload = self._current_grouping_payload()
-        old = self._override_drafts.get(int(run_number), {})
-        if old.get("calibration_records") or "quick_calibration" in old.get("alpha_policy", {}):
-            source = profile_from_form_payload(
-                old, name=self._draft_name, fingerprint=self._fingerprint
-            )
-            for name in ("alpha", "beta"):
-                policy = getattr(source, f"{name}_policy")
-                if abs(float(payload.get(name, 1.0)) - policy.value) >= 0.5e-6:
-                    from asymmetry.core.project.profiles import BetaPolicy
-
-                    setattr(
-                        source,
-                        f"{name}_policy",
-                        AlphaPolicy(value=payload.get(name, 1.0))
-                        if name == "alpha"
-                        else BetaPolicy(value=payload.get(name, 1.0)),
-                    )
-            payload.update(profile_calibration_payload(source, {}))
+        source = self._override_profiles[int(run_number)]
+        self._override_profiles[int(run_number)] = profile_from_form_payload(
+            payload,
+            name=source.name,
+            fingerprint=source.fingerprint,
+            alpha_policy=source.alpha_policy if not self._vector_axis_pairs else None,
+            calibration_source=source,
+        )
         self._override_drafts[int(run_number)] = payload
 
     def _sync_draft_from_form(self) -> None:
@@ -2343,6 +2357,7 @@ class GroupingDialog(TimingControls, QDialog):
         for rn in list(self._override_drafts):
             if not self._run_is_overridden(int(rn)):
                 self._override_drafts.pop(int(rn), None)
+                self._override_profiles.pop(int(rn), None)
                 self._override_dirty_runs.discard(int(rn))
                 self._scope_panel.mark_override_dirty(int(rn), False)
         # Re-seed the form from the target the current run now resolves to.
@@ -3829,6 +3844,10 @@ class GroupingDialog(TimingControls, QDialog):
             self._t_good_offset_spin.value(),
             self._last_good_spin.value(),
             self._current_period_mode(),
+            self._bunch_spin.value(),
+            self._binning_mode_combo.currentData(),
+            self._bin0_spin.value(),
+            self._bin10_spin.value(),
             repr(self._deadtime_section.get_policy().to_dict()),
             self._background_mode,
             repr(self._background_section.details()),
@@ -4427,6 +4446,7 @@ class GroupingDialog(TimingControls, QDialog):
                 spin.setValue(self._projection_alpha_for_label(label, fallback))
             layout.addWidget(spin, row_idx, 3)
             self._vector_alpha_spins[label] = spin
+            spin.valueChanged.connect(partial(self._on_projection_alpha_edited, label))
 
             btn = QPushButton("Estimate α")
             btn.setAutoDefault(False)
@@ -4442,6 +4462,17 @@ class GroupingDialog(TimingControls, QDialog):
         self._estimate_all_btn.setDefault(False)
         self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
         layout.addWidget(self._estimate_all_btn, len(ordered_labels) + 1, 0, 1, 5)
+
+    def _on_projection_alpha_edited(self, label: str, _value: float) -> None:
+        """Manual projection edits revoke that applied link while retaining history."""
+        if self._suppress_dirty or self._suppress_alpha_provenance_reset:
+            return
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        owner.projection_alpha_policies.pop(label, None)
+        self._alpha_estimate_state.pop(label, None)
+        self._mark_dirty()
+        self._refresh_preview()
 
     def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
         """Resolve the InstrumentLayout to show in the detector layout editor.
@@ -4796,15 +4827,7 @@ class GroupingDialog(TimingControls, QDialog):
         if not outcomes:
             return
         target = self._editing_target()
-        owner = (
-            self._draft
-            if target == "profile"
-            else profile_from_form_payload(
-                self._current_grouping_payload(),
-                name=self._draft_name,
-                fingerprint=self._fingerprint,
-            )
-        )
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
         for slot, outcome in outcomes.items():
             policy = AlphaPolicy(
                 mode="calibrated",
@@ -4826,12 +4849,8 @@ class GroupingDialog(TimingControls, QDialog):
                 apply_calibration_outcome(owner, outcome, projection=slot)
 
         if target != "profile":
-            from asymmetry.core.project.calibration import profile_calibration_payload
-
-            payload = self._current_grouping_payload()
-            canonical = profile_calibration_payload(owner, {})
-            payload.update(canonical)
-            self._override_drafts[int(target)] = payload
+            self._override_profiles[int(target)] = owner
+            self._sync_override_draft_from_form(int(target))
 
     def _on_beta_section_estimated(self, policy: object) -> None:
         """Apply an inline β estimate to the β spin + provenance + staleness.
@@ -4916,11 +4935,12 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _on_alpha_spin_edited(self) -> None:
         """A hand-edit of the single alpha spin drops calibration provenance."""
-        if getattr(self, "_suppress_alpha_provenance_reset", False):
+        if self._suppress_alpha_provenance_reset:
             return
-        if not self._suppress_dirty and self._editing_target() == "profile":
-            self._draft.alpha_policy = AlphaPolicy(value=float(self._alpha_spin.value()))
         if not self._suppress_dirty:
+            target = self._editing_target()
+            owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+            owner.alpha_policy = AlphaPolicy(value=float(self._alpha_spin.value()))
             self._set_alpha_method("")
         self._alpha_estimate_state.pop("single", None)
         self._alpha_estimate_state.pop("P_z", None)
@@ -5503,7 +5523,13 @@ class GroupingDialog(TimingControls, QDialog):
                 continue
             draft = self._override_drafts.get(int(run_number))
             if draft is not None:
-                override_edits[int(run_number)] = dict(draft)
+                from asymmetry.core.project.calibration import profile_calibration_payload
+
+                payload = {**draft, "projections": [dict(p) for p in draft.get("projections", ())]}
+                override_edits[int(run_number)] = profile_calibration_payload(
+                    self._override_profiles[int(run_number)],
+                    payload,
+                )
         return {
             "profile": GroupingProfile.from_dict(self._draft.to_dict()),
             "inheriting": self._scope_panel.inheriting_run_numbers(),

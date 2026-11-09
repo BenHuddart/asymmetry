@@ -5702,7 +5702,9 @@ class MainWindow(QMainWindow):
                 "groups": groups,
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
-                "alpha": float(run_alpha),
+                "alpha": float(
+                    grouping_result.get("alpha", run_alpha) if axis_pairs else run_alpha
+                ),
                 "t0_bin": t0_bin,
                 "t_good_offset": t_good_offset,
                 "first_good_bin": first_good,
