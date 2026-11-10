@@ -1537,3 +1537,27 @@ def test_musrfit_2003_musr_file_is_a_conflict(loader: NexusLoader) -> None:
     assert ds.run.histograms[0].t0_bin == 39
     assert ds.run.grouping["t0_source"] == "conflict"
     assert "t0_time_us" not in ds.run.grouping
+
+
+@pytest.mark.parametrize("types,slots", [([2, 1, 2, 1], [2, 4]), ([1], []), (None, [])])
+def test_stored_period_identity_is_distinct_from_declared_dae_slots(tmp_path, loader, types, slots):
+    from asymmetry.core.io.periods import select_period
+
+    path = tmp_path / "period_identity.nxs"
+    _write_v2_file(path, multiperiod=True)
+    if types is not None:
+        with h5py.File(path, "a") as f:
+            beam = f["raw_data_1/instrument"].create_group("beam")
+            beam.create_dataset("period_type", data=types)
+            beam.create_dataset("period_labels", data=np.bytes_("ramp;on;ramp;off"))
+    combined = loader.load(str(path))
+    for index in range(2):
+        selected = select_period(combined, index + 1)
+        assert selected.metadata["data_period_number"] == index + 1
+        assert selected.metadata.get("dae_period_number") == (slots[index] if slots else None)
+        declaration = selected.metadata["period_declaration"]
+        assert declaration["data_dae_slots"] == slots
+        assert bool(declaration["limitation"]) == (not slots)
+        if types is not None:
+            assert declaration["types"] == types
+            assert declaration["labels"] == "ramp;on;ramp;off"

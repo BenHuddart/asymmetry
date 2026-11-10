@@ -43,7 +43,7 @@ def test_equal_reference_counts_from_another_acquisition_refresh_provenance(qapp
     assert first.histogram_observation.identity != second.histogram_observation.identity
 
 
-@pytest.mark.parametrize("nullable", [False, True])
+@pytest.mark.parametrize("nullable", [False, True, "ignored"])
 def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, nullable):
     from PySide6.QtCore import QThread
 
@@ -52,7 +52,14 @@ def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, n
     from tests.core.test_binning_entry_points import _run
 
     source = _run(np.full(8192, 100.0), np.full(8192, 80.0))
-    if nullable:
+    if nullable == "ignored":
+        from asymmetry.core.io.periods import combine_mapped_periods
+        from tests.io.test_period_mapping import _four_periods
+
+        periods = _four_periods()
+        periods[3].run.histograms = source.histograms
+        source = combine_mapped_periods(periods, {1: "red", 4: "ignore"}).run
+    elif nullable:
         source.grouping["period_histograms"] = None
     original = preparation.histogram_observation
     worker_threads = []

@@ -5252,6 +5252,7 @@ class MainWindow(QMainWindow):
         "period_good_frames",
         "period_dead_time_us",
         "period_histograms",
+        "period_inputs",
         "period_reduced",
         "period_t0_sources",
         "period_detector_t0_sources",
@@ -17124,13 +17125,9 @@ class MainWindow(QMainWindow):
                     if dataset is None and len(candidates) == 1:
                         dataset = candidates[0]
 
-                    # A period-mapped dataset is saved as {run_number: combined N,
-                    # source_file: the multi-period file}, but a 3+-period file
-                    # reloads as per-period siblings numbered by the loader's own
-                    # scheme — none match N, so the entry was being silently
-                    # dropped. Rebuild the combined dataset from the persisted
-                    # period_mapping (combine_mapped_periods reproduces exactly what
-                    # "Map periods…" built originally).
+                    # Mapped entries name a source run; three-plus-period files
+                    # return individually numbered siblings. Authored membership
+                    # reconstructs the held sets from those original observations.
                     if dataset is None:
                         overrides = ds_info.get("grouping_overrides")
                         persisted_mapping = (

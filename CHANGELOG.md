@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain acquired inputs and supplied count variances in period mappings, and
+  allow red-only mappings through ordinary reduction and period selection.
+
 - Gaussian histogram-asymmetry fits and wizard scores omit undefined and zero-variance ratios, report omissions, and retain full grids for counts-first binning.
 
 - Preserve run and selected period identities in calibration results, and reject

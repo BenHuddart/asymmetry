@@ -325,7 +325,7 @@ class MuonDataset:
                 grouping={
                     k: v
                     for k, v in run.grouping.items()
-                    if k not in {"period_histograms", "period_reduced"}
+                    if k not in {"period_histograms", "period_reduced", "period_inputs"}
                 },
             )
         return replace(
