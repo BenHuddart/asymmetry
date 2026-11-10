@@ -148,7 +148,7 @@ from asymmetry.core.instrument import (
     projection_memberships,
     recommend_grouping_preset_for_run,
 )
-from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
+from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
@@ -245,6 +245,7 @@ from asymmetry.core.transform.deadtime import (
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.grouping import InvalidGroupingError, grouping_balances
+from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
@@ -5752,12 +5753,6 @@ class MainWindow(QMainWindow):
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
         )
-        forward_idx = effective_group_indices(
-            grouping, forward_gid, n_histograms=len(run.histograms)
-        )
-        backward_idx = effective_group_indices(
-            grouping, backward_gid, n_histograms=len(run.histograms)
-        )
         alpha, beta = grouping_balances(grouping)
         flags = correction_flags_from_grouping(grouping)
         period_mode = str(grouping.get("period_mode", PeriodMode.RED))
@@ -5800,21 +5795,8 @@ class MainWindow(QMainWindow):
         )
 
         def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            reduced = reduce_period_asymmetry(
-                run.histograms,
-                grouping,
-                period_mode,
-                binning=binning,
-                forward_idx=forward_idx,
-                backward_idx=backward_idx,
-                alpha=alpha,
-                beta=beta,
-                use_deadtime=flags.use_deadtime,
-                deadtime_mode=flags.deadtime_mode,
-                use_background=flags.use_background,
-                facility=facility,
-                metadata=reference_observation_metadata(run),
-                reference_resolver=partial(background_reference_for_grouping, reference),
+            reduced = prepare_histogram_asymmetry(
+                run, merge=extra_bunch_factor, facility=facility, reference=reference
             )
             return reduced.time, reduced.asymmetry, reduced.error
 

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Expose scriptable counts-first replay of a selected run's reduction, sharing
+  the histogram toolbar's period, correction, and calibrated-pair preparation.
+
 - Honour authored bin merges without automatic spectral analysis; count fits retain
   the requested packing and report empty selections before unused corrections.
 

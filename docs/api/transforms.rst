@@ -91,6 +91,25 @@ Deadtime
 Rebinning
 ---------
 
+Replay a selected histogram observation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The toolbar and scripts share
+:func:`~asymmetry.core.transform.preparation.prepare_histogram_asymmetry`.
+The caller supplies the selected run and resolves any live reference acquisition
+before calling. The operation reads the run's grouping, preserves its base
+binning, and merges complete output bins before forming the percent asymmetry.
+It returns period-specific correction outcomes as well as the arrays.
+
+This synchronous operation consumes complete selected good-bin support. It does
+not recover the provenance or selected membership of an existing processed curve.
+Interactive callers retain worker, cancellation, and cache ownership; process
+workers that only fit the resulting arrays can use
+:meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record` afterwards.
+
+.. automodule:: asymmetry.core.transform.preparation
+   :members: prepare_histogram_asymmetry
+
 .. automodule:: asymmetry.core.transform.rebin
    :members:
    :undoc-members:
