@@ -504,3 +504,53 @@ def test_mapping_ordinals_do_not_rename_evidenced_acquired_data_periods():
         (2, 3, 0),
         (3, 3, 1),
     )
+
+
+@pytest.mark.parametrize("metadata", [None, {}])
+def test_quicklook_manual_exact_origin_and_support_do_not_depend_on_optional_metadata(metadata):
+    from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+
+    histograms = [
+        Histogram(np.full(8, value), 0.1, t0_bin=2, t0_time_us=0.25) for value in (60, 40)
+    ]
+    quick = quick_asymmetry(
+        histograms,
+        {"groups": {1: [1], 2: [2]}, "t0_policy": {"mode": "manual", "offset_bins": 2}},
+        metadata=metadata,
+    )
+    assert quick.unavailable_reason is None
+    assert quick.common_t0 == 4
+    assert quick.t0_time_us == pytest.approx(0.45)
+    assert quick.file_grouping["t0_time_us"] == pytest.approx(0.45)
+    assert (quick.window.first, quick.window.last) == (0, 7)
+    np.testing.assert_allclose(quick.time, (np.arange(8) + 0.5) * 0.1 - 0.45)
+
+
+def test_quicklook_explicit_auto_without_source_evidence_stays_unavailable():
+    from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+
+    quick = quick_asymmetry(
+        [Histogram(np.arange(8) + value, 0.1) for value in (60, 40)],
+        {"groups": {1: [1], 2: [2]}, "t0_policy": {"mode": "auto_detect"}},
+    )
+    assert quick.unavailable_reason is not None
+    assert "known source" in quick.unavailable_reason
+
+
+def test_mapped_timing_cannot_bypass_the_project_legacy_policy_guard():
+    from asymmetry.core.project.profiles import (
+        T0Policy,
+        profile_fingerprint_for_run,
+        profile_from_payload,
+        resolve_effective_grouping,
+    )
+
+    mapped = combine_mapped_periods(
+        [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)], {1: "red", 2: "red"}
+    )
+    profile = profile_from_payload(
+        mapped.run.grouping, "legacy", profile_fingerprint_for_run(mapped.run)
+    )
+    profile.t0_policy = T0Policy(mode="manual", legacy_value=6)
+    with pytest.raises(ValueError, match="pre-v21 absolute manual t0"):
+        resolve_effective_grouping(profile, mapped.run)

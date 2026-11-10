@@ -80,7 +80,7 @@ def quick_asymmetry(
             )
             histograms, timing = observation.histograms, dict(observation.grouping)
             timing["good_window_policy"] = {"mode": "from_file"}
-        if metadata is not None and "effective_detector_t0_bins" not in timing:
+        if "effective_detector_t0_bins" not in timing:
             policy = timing.get("t0_policy", {"mode": "from_file"})
             resolve_selected_timing(
                 histograms,

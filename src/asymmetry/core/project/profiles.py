@@ -1483,9 +1483,6 @@ def _apply_t0_policy(
 
     Detection keeps detector stagger; manual offsets move anchors by whole bins.
     Exact timing moves with those anchors while raw window facts stay fixed."""
-    if "period_inputs" in grouping:
-        grouping["t0_policy"] = policy.to_dict()
-        return
     if not run.histograms:
         return
     if policy.legacy_value is not None:
@@ -1493,6 +1490,9 @@ def _apply_t0_policy(
             f"Grouping profile {profile_name!r} still carries a pre-v21 absolute manual t0; "
             "convert it with T0Policy.from_legacy_value() on project open."
         )
+    if "period_inputs" in grouping:
+        grouping["t0_policy"] = policy.to_dict()
+        return
     resolve_selected_timing(
         run.histograms,
         grouping,
