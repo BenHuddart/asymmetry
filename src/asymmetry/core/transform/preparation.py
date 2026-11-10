@@ -92,10 +92,10 @@ WIZARD_PREPARATION = "counts_first_observation_v1"
 class HistogramObservation:
     """A resolved reduction snapshot and selections of its actual output bins.
 
-    The source owns acquired arrays; the snapshot copies settings and histogram
-    timing, sharing read-only count views. It is transient and is removed by
-    ``fit_record`` before process fan-out. Unknown historical curves have no
-    observation and retain independent-curve semantics.
+    The snapshot owns read-only counts and variances, sharing each copied array
+    within the capture, and copies settings and histogram timing. It is transient
+    and removed by ``fit_record`` before process fan-out. Unknown historical
+    curves have no observation and retain independent-curve semantics.
     """
 
     source: Run
@@ -148,11 +148,14 @@ def histogram_observation(
     for index, hist in enumerate(histograms):
         for role, array in (("counts", hist.counts), ("variance", hist.count_variance)):
             if array is not None:
-                view = np.asarray(array).view()
-                view.setflags(write=False)
-                memo[id(array)] = view
-                digest.update(pickle.dumps((index, role, view.shape, view.dtype.str)))
-                data = memoryview(np.ascontiguousarray(array)).cast("B")
+                if id(array) not in memo:
+                    if cancel_check is not None:
+                        cancel_check()
+                    memo[id(array)] = np.array(array, copy=True, order="C")
+                    memo[id(array)].setflags(write=False)
+                snapshot = memo[id(array)]
+                digest.update(pickle.dumps((index, role, snapshot.shape, snapshot.dtype.str)))
+                data = memoryview(snapshot).cast("B")
                 for first in range(0, data.nbytes, 1024 * 1024):
                     if cancel_check is not None:
                         cancel_check()

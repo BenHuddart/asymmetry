@@ -109,8 +109,13 @@ workers that only fit the resulting arrays can use
 
 Known reduction producers attach a transient ``HistogramObservation`` to a
 dataset. ``prepare_wizard_dataset`` composes complete-group merges with its
-recorded selections; ``time_range`` retains crop membership. Unknown custom or
-historical curves have no such context and use independent means. Explicit
+recorded selections; ``time_range`` retains crop membership. Capture owns read-only
+copies of sample, held-period, and reference counts and supplied variances,
+deduplicating repeated uses of the same array within that capture. Settings and
+timing are copied too. Later writes through the caller's arrays or their aliases
+do not alter the captured values or identity; the caller's arrays remain usable.
+A fresh explicit capture uses the edited values and identifies that observation.
+Unknown custom or historical curves have no such context and use independent means. Explicit
 ``merge_curve_bins`` drops histogram replay context. ``fit_record`` strips the
 context and period arrays before candidate process fan-out. No recipe is inferred
 from an attached Run or a median time step. Simulation reductions record the actual uncorrected settings and selected

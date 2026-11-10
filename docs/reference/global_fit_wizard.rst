@@ -979,6 +979,10 @@ or scored comparable, is never dropped this way.
 
 Histogram observations use the same counts-first preparation as the single-run
 wizard, preserving base and toolbar merges and selected crop membership.
+Captured sample, held-period, and reference counts and supplied variances have
+owned read-only storage. Later edits through original array aliases leave cached
+analyses and reconstructed curves stable; reduce edited inputs again and rerun
+the wizard to analyse a new observation.
 Each G±R period is binned before its asymmetry is combined. Curve-only, rotated,
 and unresolved historical/custom observations retain independent-curve means.
 Search decimation, common-resolution completion, and curve reconstruction use
