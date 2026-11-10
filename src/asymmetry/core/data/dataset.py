@@ -178,7 +178,7 @@ class MuonDataset:
     a 16 % asymmetry is stored as ``16.0``, not ``0.16``, and the built-in
     models default ``A0`` to ``25``). The low-level
     :func:`asymmetry.core.transform.compute_asymmetry` primitive instead
-    returns the dimensionless **fraction** :math:`A \\in [-1, 1]`; the loaders
+    returns the dimensionless **fraction**; the loaders
     multiply by 100 to populate these arrays. When a specific scale is needed,
     prefer the explicit :attr:`asymmetry_percent` / :attr:`asymmetry_fraction`
     (and :attr:`error_percent` / :attr:`error_fraction`) accessors so the two
@@ -215,7 +215,7 @@ class MuonDataset:
 
     @property
     def asymmetry_fraction(self) -> NDArray[np.float64]:
-        r"""Asymmetry as the dimensionless fraction :math:`A \in [-1, 1]` (percent / 100)."""
+        r"""Asymmetry as the dimensionless fraction (percent / 100)."""
         return np.asarray(self.asymmetry, dtype=np.float64) / 100.0
 
     @property

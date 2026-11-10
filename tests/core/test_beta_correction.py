@@ -1,13 +1,7 @@
-"""Tests for the β (intrinsic-asymmetry balance) correction.
+"""Tests for fixed alpha/beta corrected-ratio values and first-order errors.
 
-Port of musrfit's asymmetry-fit (fit type 2) beta: applied with alpha as
-``A = (F − αB)/(βF + αB)`` with the exact Poisson error
-``σ = |α|(1+β)·√(FB(F+B))/(βF+αB)²``. Pins the identities from
-``docs/porting/beta-correction/verification-plan.md``: β = 1 bit-identity with
-the pre-port formula, numerical equivalence with musrfit's α-on-forward form,
-ground-truth recovery on a synthetic two-detector model, the error closed
-form, sentinel/lenient-read guards, α-estimator independence, integral parity,
-and profile/payload persistence (emit-only-when-≠1).
+Independent algebra uses reciprocal musrfit alpha, with the same beta.
+Numerical formula checks here do not execute a reference program.
 """
 
 from __future__ import annotations

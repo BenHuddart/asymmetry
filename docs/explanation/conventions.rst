@@ -1,9 +1,8 @@
 Conventions and implementation notes
 ====================================
 
-This page records the conventions Asymmetry follows and points to where each is
-implemented, so that a number read off a fit, a plot, or an exported file can be
-interpreted unambiguously.
+This page records the conventions Asymmetry follows, so that a number read off
+a fit, a plot, or an exported file can be interpreted unambiguously.
 
 Units
 -----
@@ -132,20 +131,87 @@ fixed scalar or measured from a weak-TF calibration run's precession fit;
 see :doc:`/reference/data_reduction/beta_calibration`.
 This convention is used consistently across the interface, the loaders, the
 grouping tools, and the fitting inputs. Some other programs place :math:`\alpha`
-on the forward group instead, so take care when comparing α values between
-tools (:math:`\beta` is numerically identical in both conventions).
+on the forward group instead. In musrfit type 2,
+:math:`\alpha_{\mathrm{musrfit}}=1/\alpha`; :math:`\beta` is numerically
+identical after this conversion. See :ref:`comparison-asymmetry-errors` for
+the distinction between corrected curves and raw fitting coordinates.
+Count-to-ratio primitives return fractions; datasets and time-domain models use
+percent. Convert errors by the same factor; see :doc:`/reference/asymmetry_units`.
+Signed corrected counts or general :math:`\beta` can give estimates outside
+:math:`[-1,1]`; that range is not a universal validity condition.
 The standard count-based F/B path applies enabled detector deadtime correction
 before alignment and grouping, then enabled group background subtraction.
 Counts are binned before asymmetry is formed. The operation order and
 calibration dependencies are described in :doc:`reduction_pipeline`.
 
+.. _asymmetry-counting-errors:
+
 Errors
 ------
 
-Per-bin asymmetry uncertainties use exact Poisson error propagation through the
-asymmetry expression, rather than treating the numerator and denominator as
-independent, so the reported errors are well calibrated — a property the test
-suite checks with a pull distribution on every build (:doc:`/reference/simulation`).
+For fixed :math:`\alpha,\beta`, Asymmetry uses first-order propagation through
+:math:`A=(F-\alpha B)/D`, where :math:`D=\beta F+\alpha B`. For independent
+forward/backward groups with retained count variances :math:`V_F,V_B`,
+
+.. math::
+
+   \frac{\partial A}{\partial F}=\frac{\alpha(1+\beta)B}{D^2},\qquad
+   \frac{\partial A}{\partial B}=-\frac{\alpha(1+\beta)F}{D^2},
+
+   \operatorname{var}(A)\simeq
+   \frac{\alpha^2(1+\beta)^2(B^2V_F+F^2V_B)}{D^4}.
+
+This retains the covariance between numerator and denominator. For raw Poisson
+counts, :math:`V_F=F,V_B=B`; at unity balances it reduces to
+:math:`\operatorname{var}(A)\simeq(1-A^2)/(F+B)`. For example, 6000 forward
+and 4000 backward counts give 20 % asymmetry with a standard error of
+0.979795897 percentage points. This is a local approximation, not an exact
+finite-count variance or confidence interval; sparse counts and cancellation
+can make the Gaussian approximation poor. The uncertainty framework is the
+first-order law in `JCGM 100:2008, sections 5.1–5.2
+<https://doi.org/10.59161/JCGM100-2008E>`_.
+
+Corrected count means are not new Poisson observations. Corrections retain
+measured or supplied variances; count merging includes shared-background and
+estimation-window overlap terms as described in
+:ref:`background-count-uncertainty`. Ordinary Gaussian fits use marginal point
+errors, not the full between-bin covariance of those corrections.
+
+.. _conditional-calibration-errors:
+
+Calibration conditioning
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Ordinary reduced errors condition on the chosen :math:`\alpha,\beta`.
+Available calibration errors and covariance remain in the calibration record;
+they are not added independently to each reduced point or propagated as a full
+reduced-bin/run covariance into the ordinary fit. A common calibration shifts
+many observations together. Reusing the same counts for calibration also
+introduces count–calibration covariance. Fitting calibration coefficients within
+a count model is a separate treatment; see
+:doc:`/reference/data_reduction/alpha_calibration` and
+:doc:`/reference/data_reduction/beta_calibration`.
+
+.. _asymmetry-error-fallback:
+
+Undefined and degenerate bins
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For a zero denominator the current count-to-ratio operation returns a fallback
+value of zero and error of one fraction (100 percentage points). A defined
+ratio with zero first-order count contribution also receives that fallback
+error; raw one-sided Poisson counts are an example. These software values are
+not measured zero asymmetries or calibrated uncertainties. The Gaussian fit
+boundary accepts their finite positive errors, giving them finite weight;
+it does not identify or omit them automatically.
+
+A corrected zero group count can retain positive variance and a usable error.
+For raw :math:`F=5,B=10` with a fixed forward background of 10, the corrected
+counts are :math:`-5,10` with variances :math:`5,10`, giving :math:`A=-3` and
+:math:`\sigma_A=\sqrt{4.8}` in fractions. Finite small denominators are retained,
+and values are not clipped to :math:`[-1,1]`. Neither :math:`A=0` nor an error
+of 100 percentage points alone diagnoses an unusable observation. See
+:doc:`/reference/count_domain_fitting` for supported count-fitting alternatives.
 
 Fit functions
 -------------
@@ -165,9 +231,7 @@ convention above is exercised identically from the GUI and from a script. The
 relevant packages are :mod:`asymmetry.core.transform` (grouping, asymmetry,
 deadtime, background), :mod:`asymmetry.core.fitting` (models and engines),
 :mod:`asymmetry.core.fourier` (frequency-domain tools), and
-:mod:`asymmetry.core.io` (loaders). The API reference is :doc:`/api/index`, and
-the design rationale and study notes behind individual features are kept in the
-repository under ``docs/porting/``.
+:mod:`asymmetry.core.io` (loaders). The API reference is :doc:`/api/index`.
 
 
 .. rubric:: References

@@ -34,8 +34,7 @@ from asymmetry.core.transform.deadtime import DeadtimeCalibration
 class AsymmetryScaleWarning(UserWarning):
     """Emitted when fit seeds and data appear to be on different asymmetry scales.
 
-    The classic trap: a model seeded with fraction-scale amplitudes
-    (``A ∈ [-1, 1]``) is fitted against a loaded ``MuonDataset`` whose
+    The classic trap: fraction-scale seeds are fitted to a ``MuonDataset`` whose
     ``asymmetry`` is on the **percent** scale (``×100``). The fit either
     converges to a degenerate amplitude or to the wrong minimum. See
     :class:`asymmetry.core.data.dataset.MuonDataset` and its
@@ -58,9 +57,8 @@ class FixedFrequencyFieldMismatchWarning(UserWarning):
     """
 
 
-#: Upper bound on a peak magnitude that could plausibly be a *fraction*
-#: asymmetry. A true ``A`` lies in ``[-1, 1]``; the headroom absorbs noise and
-#: the ±1 one-sided sentinel. A peak above this can only be percent-scale.
+#: Magnitude heuristic for scale advice, not an estimator bound: signed counts
+#: and general beta can give fraction-scale values beyond [-1, 1].
 _FRACTION_SCALE_CEILING = 1.5
 
 #: Relative gap between a *fixed* frequency seed and γ_μ·B(field) above which the

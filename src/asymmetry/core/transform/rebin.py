@@ -229,7 +229,7 @@ def binned_fb_asymmetry(
     ``time_range`` optionally selects complete output bins by their centres;
     it never moves the bin edges. The validated spec selects raw edges inside
     the good-bin window, then
-    merges ``binning.merge`` recorded output bins. Counts and their full
+    merges ``binning.merge`` recorded output bins. Counts and their retained
     variance model are summed before the ratio is formed. Fixed binning drops
     a partial raw group; variable modes keep their last partial bin. An
     incomplete group of output bins is dropped when merge is greater than one.
@@ -242,8 +242,8 @@ def binned_fb_asymmetry(
     -------
     (time, asymmetry, error)
         ``time`` in µs relative to t0; ``asymmetry`` and ``error`` **as a
-        fraction** (``A ∈ [-1, 1]``) — *not* percent, since this delegates
-        straight to :func:`~asymmetry.core.transform.compute_asymmetry`. Callers
+        fraction** — *not* percent, since this delegates
+        to :func:`~asymmetry.core.transform.compute_asymmetry_with_count_errors`. Callers
         that need the percent scale apply the ×100 themselves;
         :func:`~asymmetry.core.transform.reduce_grouped_asymmetry` is the
         reduction that does, and its output is percent.

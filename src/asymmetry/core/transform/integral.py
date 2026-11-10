@@ -47,7 +47,7 @@ multi-period runs, select the period upstream with
 in.
 
 Scale: every integral asymmetry this module produces is the dimensionless
-**fraction** ``A ∈ [-1, 1]`` — the scale the field-scan / ALC parameter models
+**fraction** — the scale the field-scan / ALC parameter models
 expect — *not* the percent of a loaded
 :class:`~asymmetry.core.data.dataset.MuonDataset`. The exception is
 :func:`integrate_curve`, which averages a caller-supplied curve and so returns
@@ -307,7 +307,7 @@ def reduce_integral_run(
     Returns
     -------
     (value, error)
-        **As a fraction** (``A ∈ [-1, 1]``), from :func:`integrate_asymmetry` —
+        **As a fraction**, from :func:`integrate_asymmetry` —
         *not* the percent scale of ``data.asymmetry`` when ``data`` is a
         :class:`MuonDataset`. This function reduces the run's **counts**, so the
         dataset's own percent-scale curve is never involved.
@@ -409,7 +409,7 @@ class FieldScanPoint:
     """One run's contribution to a field scan.
 
     ``value``/``error`` are the integral asymmetry **as a fraction**
-    (``A ∈ [-1, 1]``), carried straight from the owning
+    carried straight from the owning
     :class:`FieldScan` — see its ``units`` field.
     """
 
@@ -430,7 +430,7 @@ class FieldScan:
     missing field log — Mantid skips such runs rather than failing the scan).
 
     Scale note: ``value``/``error`` are the integral asymmetry **as a fraction**
-    (``A ∈ [-1, 1]``, from :func:`compute_asymmetry` on summed counts) — the
+    (from :func:`compute_asymmetry` on summed counts) — the
     scale the field-scan / ALC parameter models expect (e.g. ``GaussianLCR``
     seeds ``f`` near 0.1), and the one the ``units`` field records. This differs
     from a loaded :class:`~asymmetry.core.data.dataset.MuonDataset`, whose
@@ -529,7 +529,7 @@ def build_field_scan(
     Returns
     -------
     FieldScan
-        Whose ``value``/``error`` are **as a fraction** (``A ∈ [-1, 1]``, with
+        Whose ``value``/``error`` are **as a fraction** (with
         ``units`` set to
         :data:`~asymmetry.core.transform.units.ASYMMETRY_FRACTION`) — *not*
         percent, since every point comes from :func:`integrate_run`. Sorted
