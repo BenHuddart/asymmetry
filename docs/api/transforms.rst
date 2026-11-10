@@ -99,7 +99,10 @@ The toolbar and scripts share
 The caller supplies the selected run and resolves any live reference acquisition
 before calling. The operation reads the run's grouping, preserves its base
 binning, and merges complete output bins before forming the percent asymmetry.
-It returns period-specific correction outcomes as well as the arrays.
+It returns correction outcomes for each requested observation as well as the
+arrays. G+R is one pooled prepared-count observation with group background once;
+G−R differences separately reduced sets on common native support. Both use
+one explicitly selected α/β. Final ratio usability follows the requested statistic.
 
 This synchronous operation consumes complete selected good-bin support. It does
 not recover the provenance or selected membership of an existing processed curve.

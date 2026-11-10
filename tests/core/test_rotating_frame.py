@@ -230,7 +230,7 @@ def test_a_period_combination_removes_the_same_combination_of_baselines():
     run = _two_period_run(None)
     red, green = (reduce_run_projections(run, index) for index in (0, 1))
     frame = _frame(B1Axis.X, -1, periods=2)
-    for mode, sign in ((PeriodMode.GREEN_MINUS_RED, -1.0), (PeriodMode.GREEN_PLUS_RED, 1.0)):
+    for mode, sign in ((PeriodMode.GREEN_MINUS_RED, -1.0),):
         combined = [
             MuonDataset(
                 time=red[label].time,

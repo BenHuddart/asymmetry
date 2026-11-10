@@ -203,6 +203,11 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
     if len(members) == 1:
         member = members[0]
         return ConstituentCounts(tuple(members), member.histograms, member.grouping, pair)
+    return pool_constituents(members, grouping, pair)
+
+
+def pool_constituents(members, grouping, pair):
+    """Put acquired detector buffers on one layout without changing authored membership."""
     flat = [h for member in members for h in member.histograms]
     expanded = tuple(
         tuple(
@@ -233,7 +238,8 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
             h.n_bins - 1 if h.good_bin_end < 0 else h.good_bin_end for h in flat
         ],
     )
-    effective.setdefault("good_window_policy", {"mode": "from_file"})
+    if "first_good_bin" not in effective and "last_good_bin" not in effective:
+        effective.setdefault("good_window_policy", {"mode": "from_file"})
     return ConstituentCounts(tuple(members), flat, effective, expanded)
 
 

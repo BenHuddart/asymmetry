@@ -18,6 +18,7 @@ from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
+from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
     PeriodAsymmetryReduction,
@@ -158,6 +159,8 @@ def histogram_observation(
         histograms.extend(reference.histograms)
     memo = {}
     digest = sha256(CONSTITUENT_PREPARATION_POLICY.encode())
+    if period_statistic_policy(grouping):
+        digest.update(pickle.dumps(period_statistic_policy(grouping)))
     for index, hist in enumerate(histograms):
         for role, array in (("counts", hist.counts), ("variance", hist.count_variance)):
             if array is not None:
@@ -219,6 +222,8 @@ def histogram_observation(
 def wizard_observation_identity(dataset: MuonDataset, *, policy: str = WIZARD_PREPARATION) -> str:
     """Identify the actual curve, replay context, and selected membership for reuse."""
     digest = sha256(policy.encode())
+    if dataset.run is not None and period_statistic_policy(dataset.run.grouping):
+        digest.update(pickle.dumps(period_statistic_policy(dataset.run.grouping)))
     for array in (dataset.time, dataset.asymmetry, dataset.error):
         values = np.ascontiguousarray(array)
         digest.update(pickle.dumps((values.shape, values.dtype.str)))

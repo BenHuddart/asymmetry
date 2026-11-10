@@ -723,15 +723,18 @@ The selected mode is applied during grouping recomputation:
 * **Green** uses period-2 histograms.
 * **G minus R** computes asymmetry for Green and Red separately, then subtracts
    them in asymmetry space: :math:`A_{G-R} = A_G - A_R`.
-* **G plus R** computes asymmetry for Green and Red separately, then adds them
-   in asymmetry space: :math:`A_{G+R} = A_G + A_R`.
+* **G plus R** pools corrected, aligned counts and retained variances, applies
+  group background once, then bins counts and forms one shared-α/β ratio:
+  :math:`A_{G+R}=A(F_G+F_R,B_G+B_R)`.
 
-For :math:`G \pm R`, the uncertainty is propagated from the two period
-asymmetry uncertainties using quadrature:
+Both combined modes use common observed native support before binning. Equal-total
+20%/80% periods give G+R 50% and G−R 60%.
+
+For G−R, the independent set asymmetry uncertainties add in quadrature:
 
 .. math::
 
-    \sigma_{G\pm R} = \sqrt{\sigma_G^2 + \sigma_R^2}
+    \sigma_{G-R} = \sqrt{\sigma_G^2 + \sigma_R^2}
 
 Colour behaviour in the main plot:
 

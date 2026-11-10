@@ -10,7 +10,6 @@ import warnings
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from functools import partial
 from typing import Any
 
 import numpy as np
@@ -31,7 +30,6 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     CorrectionOutcomes,
     CorrectionStatus,
-    result_tail_skip,
 )
 from asymmetry.core.transform.deadtime import (
     DeadtimeDomain,
@@ -43,16 +41,14 @@ from asymmetry.core.transform.fb_counts import (
     BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
-    native_count_time,
-    native_time_window,
 )
 from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair, fb_deadtime_domain
 from asymmetry.core.transform.grouping import (
     ForwardBackwardLayout,
     independent_pair_indices,
 )
+from asymmetry.core.transform.period_reduction import corrected_period_counts
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_observation
-from asymmetry.core.transform.t0 import resolve_selected_timing
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -213,12 +209,15 @@ def grouped_correction_plan(
     output_window,
     output_binning,
     output_time_range,
+    observation=None,
+    layout=None,
 ):
     """Resolve membership/support before any correction availability or saturation work."""
-    observation = resolve_constituent_counts(
-        histograms, grouping, pair, metadata, cancel_check=cancel_check
-    )
-    grouped = observation.layout
+    if observation is None:
+        observation = resolve_constituent_counts(
+            histograms, grouping, pair, metadata, cancel_check=cancel_check
+        )
+    grouped = observation.layout if layout is None else layout
     domain = fb_deadtime_domain(
         grouped,
         grouping,
@@ -553,156 +552,6 @@ def asymmetry_reduction_metadata(metadata: dict, reduced: dict) -> dict:
     } | deepcopy({key: value for key, value in reduced.items() if key in owned})
 
 
-def corrected_period_counts(
-    histograms: list[Histogram],
-    grouping: dict,
-    period_mode: str,
-    *,
-    binning: BinningSpec,
-    forward_idx: list[int],
-    backward_idx: list[int],
-    use_deadtime: bool,
-    deadtime_mode: str,
-    use_background: bool,
-    output_time_range: tuple[float | None, float | None] | None = None,
-    facility: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    reference_resolver: ReferenceResolver | None = None,
-    cancel_check: Callable[[], None] | None = None,
-    allow_incomplete: bool = False,
-    context: str = "",
-    timing_search: Callable | None = None,
-    native_time_range: tuple[float | None, float | None] | None = None,
-) -> dict[str, ForwardBackwardCounts]:
-    """Coordinate F/B and contributing-period corrections before any statistic."""
-    from asymmetry.core.io.periods import select_period_histograms
-    from asymmetry.core.utils.constants import PeriodMode
-
-    mode = PeriodMode(period_mode)
-    combined = mode in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}
-    labels = (PeriodMode.RED, PeriodMode.GREEN) if combined else (mode,)
-    periods = grouping.get("period_histograms")
-    if periods is not None and (not isinstance(periods, list) or len(periods) not in {1, 2}):
-        raise ValueError("Period asymmetry reduction requires one or two held periods.")
-    if periods is not None and len(periods) == 1 and mode != PeriodMode.RED:
-        raise ValueError("A green selection or two-set operation requires a real green set.")
-    if combined and periods is None:
-        raise ValueError("A period sum or difference requires two held periods.")
-    if periods is not None and any(
-        not isinstance(period, list)
-        or not period
-        or any(not isinstance(hist, Histogram) for hist in period)
-        for period in periods
-    ):
-        raise ValueError("Held periods must contain nonempty histogram lists.")
-    selections = {
-        label: select_period_histograms(histograms, grouping, int(label == PeriodMode.GREEN))
-        if periods is not None
-        else (histograms, grouping)
-        for label in labels
-    }
-    selections = {
-        label: (selected, dict(effective, period_mode=str(label)))
-        for label, (selected, effective) in selections.items()
-    }
-    for label, (selected, effective) in selections.items():
-        if (
-            periods is not None
-            and "period_inputs" not in effective
-            and "t0_policy" in effective
-            and "effective_t0_sources" not in effective
-        ):
-            policy = effective["t0_policy"]
-            resolve_selected_timing(
-                selected,
-                effective,
-                metadata,
-                mode=policy["mode"],
-                offset_bins=policy.get("offset_bins", 0),
-                search_provider=partial(timing_search, period_index=int(label == PeriodMode.GREEN))
-                if timing_search is not None
-                else None,
-            )
-    output_windows, plans = {}, {}
-    for label, (selected, effective) in selections.items():
-        selected_metadata = (
-            dict(metadata or {}, period_number=int(label == PeriodMode.GREEN) + 1)
-            if periods is not None
-            else metadata
-        )
-        plans[label] = grouped_correction_plan(
-            selected,
-            effective,
-            (tuple(forward_idx), tuple(backward_idx)),
-            use_background=use_background,
-            facility=facility,
-            metadata=selected_metadata,
-            reference_resolver=reference_resolver,
-            cancel_check=cancel_check,
-            output_window=None,
-            output_binning=binning,
-            output_time_range=output_time_range,
-        )
-        if native_time_range is not None:
-            layout = plans[label].grouped
-            time = native_count_time(
-                layout.alignment.length,
-                layout.bin_width_us,
-                layout.common_t0_bin,
-                layout.t0_time_us,
-            )
-            output_windows[label] = native_time_window(time, layout.window, native_time_range)
-            plans[label] = grouped_correction_plan(
-                selected,
-                effective,
-                (tuple(forward_idx), tuple(backward_idx)),
-                use_background=use_background,
-                facility=facility,
-                metadata=selected_metadata,
-                reference_resolver=reference_resolver,
-                cancel_check=cancel_check,
-                output_window=output_windows[label],
-                output_binning=binning,
-                output_time_range=output_time_range,
-            )
-    inputs = [item for plan in plans.values() for item in plan.inputs]
-    domains = [item for plan in plans.values() for item in plan.domains]
-    coordinated = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode, domains=domains)
-    first = 0
-    for label, plan in plans.items():
-        plans[label] = replace(plan, inputs=coordinated[first : first + len(plan.inputs)])
-        first += len(plan.inputs)
-    prepared = {}
-    for label, (selected, effective) in selections.items():
-        prepared[label] = prepare_grouped_corrections(
-            plan=plans[label],
-            histograms=selected,
-            grouping=effective,
-            output_binning=binning,
-            output_window=output_windows.get(label),
-            forward_idx=forward_idx,
-            backward_idx=backward_idx,
-            use_deadtime=use_deadtime,
-            deadtime_mode=deadtime_mode,
-            use_background=use_background,
-            output_time_range=output_time_range,
-            facility=facility,
-            metadata=dict(metadata or {}, period_number=int(label == PeriodMode.GREEN) + 1)
-            if periods is not None
-            else metadata,
-            reference_resolver=reference_resolver,
-            cancel_check=cancel_check,
-            allow_incomplete=allow_incomplete,
-            context=f"{context} {label}".strip() if combined else context,
-        )
-    skip = result_tail_skip(
-        {str(label): item.corrected.corrections.background for label, item in prepared.items()}
-    )
-    if skip is not None:
-        warnings.warn(skip.warning, UserWarning, stacklevel=2)
-    return {str(label): item.finish(skip) for label, item in prepared.items()}
-
-
 def reduce_period_asymmetry(
     histograms: list[Histogram],
     grouping: dict,
@@ -725,17 +574,12 @@ def reduce_period_asymmetry(
     context: str = "",
     timing_search: Callable | None = None,
 ) -> PeriodAsymmetryReduction:
-    """Reduce identical raw-bin edges per period before combining G +/- R.
-
-    Period selection supplies each period's own exposure and deadtime table.
-    A sum or difference combines asymmetries, with independent variances added;
-    it never sums or averages already reduced bins to implement bunching.
-    """
+    """Form pooled G+R once or difference independently reduced sets on common support."""
     from asymmetry.core.io.periods import combine_period_asymmetry
     from asymmetry.core.utils.constants import PeriodMode
 
     mode = PeriodMode(period_mode)
-    combined = mode in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}
+    combined = mode == PeriodMode.GREEN_MINUS_RED
     corrected = corrected_period_counts(
         histograms,
         grouping,

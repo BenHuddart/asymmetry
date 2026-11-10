@@ -95,8 +95,18 @@ def test_preparation_reduces_each_period_before_combining(mode):
     result = prepare_histogram_asymmetry(run, merge=2, facility=None, reference=None)
     ra, ga = 100 * 72 / 110, 100 * 64 / 100
     rv, gv = 40000 * 91 * 19 / 110**3, 40000 * 82 * 18 / 100**3
-    expected = {"red": ra, "green": ga, "green_minus_red": ga - ra, "green_plus_red": ga + ra}
-    variance = {"red": rv, "green": gv, "green_minus_red": gv + rv, "green_plus_red": gv + rv}
+    expected = {
+        "red": ra,
+        "green": ga,
+        "green_minus_red": ga - ra,
+        "green_plus_red": 100 * 136 / 210,
+    }
+    variance = {
+        "red": rv,
+        "green": gv,
+        "green_minus_red": gv + rv,
+        "green_plus_red": 40000 * 173 * 37 / 210**3,
+    }
     np.testing.assert_allclose(result.asymmetry, expected[mode])
     np.testing.assert_allclose(result.error, np.sqrt(variance[mode]))
 

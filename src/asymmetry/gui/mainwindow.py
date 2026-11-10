@@ -261,8 +261,8 @@ from asymmetry.core.transform.rotating_frame import (
     Provenance,
     RotatingFrame,
     estimate_frame,
-    period_weights,
     rotate_transverse,
+    run_period_weights,
 )
 from asymmetry.core.transform.t0 import common_t0_time_us, selected_t0_reference
 from asymmetry.core.utils.constants import (
@@ -3164,12 +3164,7 @@ class MainWindow(QMainWindow):
     # ── rotating frame (docs/plans/rotating-frame-projection.md) ─────────
 
     def _render_rotating_frame(self, targets: list[MuonDataset]) -> list[MuonDataset]:
-        """Draw the selected projections with the transverse pair in each run's frame.
-
-        The pair is rotated unbunched; the plot bunches the rotated values (D8).
-        Until every displayed run has a frame the plot asks for ν_RF instead (D6).
-        Returns the datasets drawn.
-        """
+        """Draw available projections in the requested frame, retaining its safeguards."""
         labels = self._plot_panel.selected_projection_labels()
         built = self._build_vector_axis_datasets(
             targets, [label for label in labels if label not in ROTATED_LABELS]
@@ -3179,7 +3174,7 @@ class MainWindow(QMainWindow):
             ds.run_number: self._project_model.rotating_frames.get(ds.run_number)
             for ds in pair_runs
         }
-        weights = {ds.run_number: self._frame_period_weights(ds) for ds in pair_runs}
+        weights = {ds.run_number: run_period_weights(ds.run) for ds in pair_runs}
         current = self._data_browser.get_current_dataset()
         selected = (
             current.run_number
@@ -3190,6 +3185,17 @@ class MainWindow(QMainWindow):
         rotated_shown = any(label in ROTATED_LABELS for label in labels)
         if rotated_shown and (not pair_runs or None in frames.values()):
             self._plot_panel.show_message(_FRAME_MISSING_MESSAGE)
+            return []
+        reason = next(
+            (
+                frame.rotation_unavailable(weights[n])
+                for n, frame in frames.items()
+                if frame is not None and frame.rotation_unavailable(weights[n])
+            ),
+            None,
+        )
+        if rotated_shown and reason:
+            self._plot_panel.show_message(reason)
             return []
         rotated = (
             [self._rotated_curves(ds, self._frame_snapshot(ds)) for ds in pair_runs]
@@ -3224,10 +3230,14 @@ class MainWindow(QMainWindow):
     def _frame_snapshot(self, dataset: MuonDataset) -> FrameSnapshot | None:
         """The frame *dataset*'s P′_x and P′_y are made in now; ``None`` when it has none."""
         frame = self._project_model.rotating_frames.get(dataset.run_number)
-        if frame is None or not self._has_transverse_pair(dataset):
+        if (
+            frame is None
+            or not self._has_transverse_pair(dataset)
+            or frame.rotation_unavailable(run_period_weights(dataset.run))
+        ):
             return None
         return FrameSnapshot(
-            frame, self._frame_period_weights(dataset), reduction_identity(dataset.run.grouping)
+            frame, run_period_weights(dataset.run), reduction_identity(dataset.run.grouping)
         )
 
     def _rotated_curves(
@@ -3243,23 +3253,12 @@ class MainWindow(QMainWindow):
         return {curve.metadata["projection"]: curve for curve in pair}
 
     def _fitted_in_old_frame(self, run_number: int, snapshot: FrameSnapshot) -> bool:
-        """Whether *run_number*'s rotated curves are no longer the ones *snapshot* fitted.
-
-        A run no longer loaded cannot be compared, so it never reads stale.
-        """
+        """Compare a saved rotation with its currently available loaded observation."""
         dataset = self._data_browser.get_dataset(int(run_number))
         if dataset is None:
             return False
         current = self._frame_snapshot(dataset)
         return current is None or not snapshot.same_rotation(current)
-
-    @staticmethod
-    def _frame_period_weights(dataset: MuonDataset) -> tuple[float, ...]:
-        """How *dataset*'s displayed curve combines its run's periods."""
-        run = dataset.run
-        return period_weights(
-            str(run.grouping.get("period_mode", PeriodMode.RED)), held_period_count(run)
-        )
 
     def _on_frame_field_edited(self, runs: list[int], name: str, value: object) -> None:
         """Write a typed frame field to *runs*; ν_RF on a run with no frame creates it.

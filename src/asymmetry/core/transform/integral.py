@@ -393,9 +393,12 @@ def reduce_period_integral(
             t_max=time[pair.window.last] if t_max is None else t_max,
             method=method,
         )
+    if mode == PeriodMode.GREEN_PLUS_RED:
+        value, error = values[str(mode)]
+        return PeriodIntegralReduction(value, error, {k: v.corrections for k, v in counts.items()})
     red, green = values["red"], values["green"]
     return PeriodIntegralReduction(
-        green[0] + (-1 if mode == PeriodMode.GREEN_MINUS_RED else 1) * red[0],
+        green[0] - red[0],
         float(np.hypot(red[1], green[1])),
         {label: pair.corrections for label, pair in counts.items()},
     )

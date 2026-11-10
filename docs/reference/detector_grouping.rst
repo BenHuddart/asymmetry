@@ -711,10 +711,10 @@ between the resolved first bound and effective t0; the bounds own selection.
 
 The preview, final reduction, and automatic integral-ratio alpha policy use
 this same resolved window. Independent projections and held periods resolve
-their own selected support; G±R still requires identical reduced grids.
-Fixed and one-shot calibrated coefficients stay
-fixed. The G±R preview uses the final per-period calculation and refuses
-mismatched grids. Reference-background subtraction uses each period's live
+their own selected support; combined modes establish common native support
+before count binning. Fixed and one-shot calibrated coefficients stay fixed.
+The G+R preview pools prepared counts before background and ratio formation;
+G−R subtracts independently reduced sets. Reference-background subtraction uses each period's live
 exposure; saved frame pairs and explicit scales retain their recorded meaning.
 Counts and correction-compare curves require a single
 selected period; a combined asymmetry has no single corresponding F/B spectrum. See :ref:`comparison-file-manual-windows` for the related reference

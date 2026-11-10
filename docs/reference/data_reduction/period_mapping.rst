@@ -39,8 +39,9 @@ condition — e.g. a laser-delay scan where periods 1 and 3 are light-off and
 2 and 4 are light-on at different delays: map {1, 3} → red and {2} → green
 to compare one delay against the off reference, then remap for the next
 delay without reloading anything. Each period retains its own measured
-good-frame count. G±R combines independently reduced asymmetries; it does not
-assume equal exposure or subtract raw counts without normalisation.
+good-frame count. G+R forms one asymmetry from the pooled prepared counts;
+G−R subtracts independently reduced set asymmetries without an exposure
+multiplier or a factor of one half.
 Summing periods with *different* conditions into one set is statistically
 fine but physically meaningless — the sums are labelled by your mapping,
 not by what the hardware did, so record the period legend (the acquisition
@@ -59,9 +60,9 @@ Original acquisitions, including ignored ones, retain their counts, supplied
 variances, timing, good-bin limits, exposure, and file coefficients. Mapping
 leaves the individually loaded observations available for another selection or
 mapping. A red-only mapping reduces and can be selected as period 1; a green
-selection or G±R operation requires an actual green set. G±R also requires
-matching final Red/Green time grids; incompatible sets remain individually
-inspectable.
+selection or G±R operation requires an actual green set. G±R establishes common observed native-bin support across both sets before
+binning. Incompatible widths or empty support affect the requested combination;
+the original observations remain individually inspectable.
 
 For a requested set, Asymmetry resolves current grouping, exclusions, and timing
 and correction policies against each original acquisition. It corrects each
@@ -108,8 +109,14 @@ and ADDRUN support whole-bin timing shifts. Asymmetry also checks compatible
 native widths and common observed support for the requested combination;
 a failed combination leaves individual observations available. These are selection
 and operation comparisons, not equivalence of exposure or error models.
-Asymmetry's current G+R adds independently reduced asymmetries; WiMDA's G+R forms
-one pooled-count ratio. See :doc:`/explanation/comparison`.
+WiMDA's G+R forms one pooled-count ratio, as does Asymmetry. In Mantid,
+``MuonPairingAsymmetry`` pools ``SummedPeriods`` before taking the ratio.
+With equal-total 20% and 80% inputs, G+R is 50% and G−R is 60%. Unequal totals
+do not generally give the arithmetic mean. One group-background operation acts
+on pooled G+R, including Manual levels in the requested observation's count
+units. Reference subtraction uses summed evidenced sample exposure for Automatic
+scaling or the explicit Manual coefficient once, retaining both-side variance.
+G−R keeps separate set preparation and independent marginal variance addition. See :doc:`/explanation/comparison`.
 
 **References**
 

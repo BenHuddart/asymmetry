@@ -502,16 +502,13 @@ def combine_period_asymmetry(
     green_error: NDArray[np.float64],
     mode: PeriodMode | str,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Combine reduced red/green spectra into a green∓red difference or sum.
+    """Difference independent curves; pooled G+R requires prepared counts.
 
-    Implements the "G minus R" and "G plus R" RG modes:
-
-    * ``GREEN_MINUS_RED``: ``green - red``
-    * ``GREEN_PLUS_RED``: ``green + red``
-
-    with errors added in quadrature. All arrays must have the same length and
-    the time coordinates must be identical; misaligned periods raise an error.
+    Arrays alone cannot determine the pooled count ratio. Both curves must have
+    identical time coordinates; errors of the difference add in quadrature.
     """
+    if str(mode) == str(PeriodMode.GREEN_PLUS_RED):
+        raise ValueError("Pooled G+R requires prepared counts; reload raw period data.")
     arrays = (red_time, red_asymmetry, red_error, green_time, green_asymmetry, green_error)
     if any(np.asarray(array).ndim != 1 or len(array) != len(red_time) for array in arrays):
         raise ValueError(
@@ -526,12 +523,8 @@ def combine_period_asymmetry(
     mode_key = str(mode)
     if mode_key == str(PeriodMode.GREEN_MINUS_RED):
         asymmetry = green_a - red_a
-    elif mode_key == str(PeriodMode.GREEN_PLUS_RED):
-        asymmetry = green_a + red_a
     else:
-        raise ValueError(
-            f"combine_period_asymmetry expects GREEN_MINUS_RED or GREEN_PLUS_RED, got {mode!r}"
-        )
+        raise ValueError(f"combine_period_asymmetry expects GREEN_MINUS_RED, got {mode!r}")
 
     error = np.sqrt(np.square(green_e) + np.square(red_e))
     return time, np.asarray(asymmetry, dtype=np.float64), error
@@ -782,9 +775,8 @@ _RF_DIFFERENCE_MODES = (str(PeriodMode.GREEN_MINUS_RED), str(PeriodMode.GREEN_PL
 def _resolve_run_for_rf(item: MuonDataset | Run) -> Run:
     """Return the :class:`Run` backing a loaded dataset or run.
 
-    Unlike :func:`asymmetry.core.transform.integral._resolve_run` (which needs
-    histograms), the RF scan reads the ``period_reduced`` cache, so the error
-    message names that instead.
+    Count-backed requests use current preparation; historical differences may
+    still use the stored per-period curves.
     """
     if isinstance(item, Run):
         return item
@@ -828,12 +820,15 @@ def build_rf_difference_scan(
 
     This is the RF-resonance analogue of
     :func:`asymmetry.core.transform.build_field_scan`. For each run it forms the
-    **(Green − Red)** time-domain asymmetry from the two acquisition periods
-    (Red = RF-on = period 1, Green = RF-off = period 2) via
-    :func:`combine_period_asymmetry`, time-integrates it over ``[t_min, t_max]``
+    selected time-domain observation from two acquisition periods, then integrates
+    it over ``[t_min, t_max]``
     with :func:`asymmetry.core.transform.integrate_curve`, and collects one value
     per run ordered by *order_key* (the swept static field). The result is the
-    W-shaped double dip that :class:`RFResonanceMuP` fits for ``A_µ`` and ``A_p``.
+    W-shaped double dip that :class:`RFResonanceMuP` fits for ``A_µ`` and ``A_p``
+    when the acquisition conditions identify that RF contrast. Colour labels
+    alone do not identify RF-on/off. G+R pools prepared counts. Curve-only
+    historical differences remain available; pooled reconstruction requires
+    verified count preparation and otherwise records an explicit reload reason.
 
     Parameters
     ----------
@@ -874,15 +869,45 @@ def build_rf_difference_scan(
             continue
         run_number = int(run.run_number)
 
-        rg = _red_green_reduced(run)
-        if rg is None:
-            excluded.append((run_number, "not a two-period (red/green) run"))
-            continue
-        (red_t, red_a, red_e), (green_t, green_a, green_e) = rg
+        # A retained observation establishes count replay; an attached Run alone
+        # does not establish the provenance of an arbitrary dataset's curve.
+        raw = isinstance(item, Run) or item.histogram_observation is not None
+        if raw and held_period_count(run) == 2 and run.histograms:
+            from asymmetry.core.io import resolve_background_reference
+            from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
 
-        time, diff, err = combine_period_asymmetry(
-            red_t, red_a, red_e, green_t, green_a, green_e, mode_key
-        )
+            effective = dict(run.grouping, period_mode=mode_key)
+            reference = (
+                resolve_background_reference(effective.get("background_run"))
+                if effective.get("background_correction")
+                and effective.get("background_mode") == "reference_run"
+                else None
+            )
+            result = prepare_histogram_asymmetry(
+                replace(run, grouping=effective),
+                merge=1,
+                facility=None,
+                reference=reference,
+            )
+            time, diff = result.time, result.asymmetry
+            err = result.ratio_validity.mathematical_error(result.error)
+        else:
+            if mode_key == str(PeriodMode.GREEN_PLUS_RED):
+                excluded.append(
+                    (
+                        run_number,
+                        "pooled G+R unavailable: reload raw period data with verified count preparation",
+                    )
+                )
+                continue
+            rg = _red_green_reduced(run)
+            if rg is None:
+                excluded.append((run_number, "not a two-period (red/green) run"))
+                continue
+            (red_t, red_a, red_e), (green_t, green_a, green_e) = rg
+            time, diff, err = combine_period_asymmetry(
+                red_t, red_a, red_e, green_t, green_a, green_e, mode_key
+            )
         if time.size == 0:
             excluded.append((run_number, "red/green spectra do not overlap"))
             continue

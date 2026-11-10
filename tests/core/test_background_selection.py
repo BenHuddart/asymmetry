@@ -350,10 +350,9 @@ def test_contributing_periods_use_their_own_resolved_good_support():
         deadtime_mode="off",
         use_background=True,
     )
-    assert results["red"].corrections.background.effective["ranges"] == ((70, 99), (70, 99))
-    assert results["green"].corrections.background.effective["ranges"] == ((80, 99), (80, 99))
-    assert results["red"].corrections.background.effective["values"] == pytest.approx((10.0, 8.0))
-    assert results["green"].corrections.background.effective["values"] == pytest.approx((12.0, 9.0))
+    outcome = results["green_plus_red"].corrections.background
+    assert outcome.effective["ranges"] == ((80, 99), (80, 99))
+    assert outcome.effective["values"] == pytest.approx((22.0, 17.0))
 
 
 @pytest.mark.parametrize("interval", ["0:0", "1:71"])
