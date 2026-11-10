@@ -9,8 +9,9 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import group_forward_backward, independent_pair_indices
 from asymmetry.core.transform.t0 import (
+    common_t0_time_us,
     effective_detector_t0_bins,
     good_window_for_groups,
     resolve_selected_timing,
@@ -72,7 +73,6 @@ def quick_asymmetry(
     try:
         if "period_inputs" in grouping:
             from asymmetry.core.transform.constituent_counts import resolve_constituent_counts
-            from asymmetry.core.transform.grouping import independent_pair_indices
 
             pair = independent_pair_indices(grouping, n_histograms=len(histograms))
             observation = resolve_constituent_counts(
@@ -89,6 +89,12 @@ def quick_asymmetry(
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
             )
+        pair = independent_pair_indices(timing, n_histograms=len(histograms))
+        indices = sorted(sum(pair, ()))
+        common_t0 = max(effective_detector_t0_bins(histograms, timing)[i] for i in indices)
+        reference = selected_t0_reference(histograms, timing, selected_indices=indices)
+        if histograms[reference].t0_time_us is not None:
+            t0_time_us = common_t0_time_us(histograms, timing, common_t0, selected_indices=indices)
         # File-good quick looks derive bounds from acquired histograms, never
         # a scalar window left by another selected pair or an unavailable one.
         file_grouping = {
@@ -101,15 +107,6 @@ def quick_asymmetry(
         if observation is not None:
             alignment = observation.acquired_alignment(alignment)
         common_t0 = grouped.common_t0 + alignment.first_bin
-        reference = selected_t0_reference(
-            histograms,
-            timing,
-            selected_indices=[i for i, _ in alignment.detector_offsets],
-        )
-        if histograms[reference].t0_time_us is not None:
-            t0_time_us = (
-                grouped.counts.t0_time_us + alignment.first_bin * grouped.counts.bin_width_us
-            )
         first, last = good_window_for_groups(
             [i for i, _ in alignment.detector_offsets],
             effective_detector_t0_bins(histograms, timing),

@@ -486,3 +486,21 @@ def test_reuse_metadata_does_not_copy_or_hash_original_count_buffers(monkeypatch
     monkeypatch.setattr("asymmetry.core.transform.projections.np.asarray", count_scan)
     assert reduction_identity(mapped.run.grouping)
     assert fourier_grouping_digest(mapped.run, "fb_asymmetry")
+
+
+def test_mapping_ordinals_do_not_rename_evidenced_acquired_data_periods():
+    sources = [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)]
+    for source, data_period, dae_period in zip(sources, (5, 3), (8, 4), strict=True):
+        source.run.metadata.update(data_period_number=data_period, dae_period_number=dae_period)
+    mapped = combine_mapped_periods(sources, {1: "red", 2: "red"})
+    result = prepare(mapped.run)
+    assert [
+        item["data_period_number"]
+        for item in result.corrections["red"].deadtime.effective["constituents"]
+    ] == [5, 3]
+    assert result.alignments["red"].acquired_detectors == (
+        (0, 5, 0),
+        (1, 5, 1),
+        (2, 3, 0),
+        (3, 3, 1),
+    )

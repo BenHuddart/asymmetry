@@ -192,7 +192,10 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
             )
         members.append(
             AcquiredCounts(
-                original.histograms, effective, reference_observation_metadata(original), number
+                original.histograms,
+                effective,
+                reference_observation_metadata(original),
+                original.metadata.get("data_period_number", number),
             )
         )
     if not members:
@@ -271,6 +274,8 @@ def constituent_metadata(grouping: dict) -> dict:
                 "source_file": run.source_file,
                 "run_number": run.metadata.get("source_run_number", run.run_number),
                 "period_number": number,
+                "data_period_number": run.metadata.get("data_period_number"),
+                "dae_period_number": run.metadata.get("dae_period_number"),
                 "grid": [
                     (
                         h.t0_bin,

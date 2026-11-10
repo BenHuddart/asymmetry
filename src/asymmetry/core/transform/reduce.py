@@ -625,13 +625,18 @@ def corrected_period_counts(
             )
     output_windows, plans = {}, {}
     for label, (selected, effective) in selections.items():
+        selected_metadata = (
+            dict(metadata or {}, period_number=int(label == PeriodMode.GREEN) + 1)
+            if periods is not None
+            else metadata
+        )
         plans[label] = grouped_correction_plan(
             selected,
             effective,
             (tuple(forward_idx), tuple(backward_idx)),
             use_background=use_background,
             facility=facility,
-            metadata=metadata,
+            metadata=selected_metadata,
             reference_resolver=reference_resolver,
             cancel_check=cancel_check,
             output_window=None,
@@ -653,7 +658,7 @@ def corrected_period_counts(
                 (tuple(forward_idx), tuple(backward_idx)),
                 use_background=use_background,
                 facility=facility,
-                metadata=metadata,
+                metadata=selected_metadata,
                 reference_resolver=reference_resolver,
                 cancel_check=cancel_check,
                 output_window=output_windows[label],

@@ -1838,7 +1838,6 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
     if not run.histograms:
         raise ValueError("Reduction requires a run with detector histograms.")
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
-
     period_lists = grouping.get("period_histograms")
     has_periods = (
         isinstance(period_lists, list)
@@ -1866,7 +1865,7 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
             grouping={
                 k: v
                 for k, v in grouping.items()
-                if k not in {"period_histograms", "period_reduced", "period_mode"}
+                if k not in {"period_histograms", "period_reduced"}
             },
         )
 
