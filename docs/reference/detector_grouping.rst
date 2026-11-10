@@ -139,8 +139,12 @@ of the number survives:
   source run, e.g. "diamagnetic · run 2923"); ``per_run_estimate`` computes
   each run's own forward/backward integral ratio at resolution time (Mantid's
   ``AlphaCalc`` convention). It uses the current effective pair, exclusions,
-  selected Red or Green period, good window and corrected counts. This is an
-  explicit policy, independent of the one-shot **Estimate** method.
+  selected observation, good window, and corrected counts: Red or Green for a
+  single set, pooled counts with background once for G+R, and Red for G−R.
+  Equal-total Red 60/40 and Green 90/10 counts give an automatic pooled α of 3;
+  explicitly selecting Red gives 1.5. The resulting one α is shared by the
+  requested comparison. Fixed or one-shot captured calibration stays fixed.
+  This explicit policy is independent of the one-shot **Estimate** method.
 * **Beta** — the intrinsic-asymmetry balance :math:`\beta = A_{0,b}/A_{0,f}`
   (musrfit's asymmetry-fit companion to :math:`\alpha`), applied with
   :math:`\alpha` in the asymmetry formula

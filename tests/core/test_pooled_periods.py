@@ -207,3 +207,180 @@ def test_rf_fourier_and_fit_use_the_actual_pooled_observation():
     assert fit.dof == 7
     assert fit.observation_report.used == 8
     np.testing.assert_allclose(fit.residuals, 0, atol=1e-7)
+
+
+@pytest.mark.parametrize("method", ["integral", "differential"])
+def test_public_integrate_run_respects_the_requested_period_statistic(method):
+    from asymmetry.core.transform.integral import integrate_run
+
+    run = two_periods()
+    assert integrate_run(run, method=method)[0] == pytest.approx(0.5)
+    run.grouping["period_mode"] = "green_minus_red"
+    assert integrate_run(run, method=method)[0] == pytest.approx(0.6)
+
+
+def test_signed_pooling_requires_supplied_variance_only_in_consumed_bins():
+    run = two_periods(red=(-5, 10), green=(20, 10))
+    with pytest.raises(ValueError, match="signed acquired counts requires supplied variance"):
+        prepare(run)
+    for period in run.grouping["period_histograms"]:
+        period[:] = [replace(h, count_variance=np.full(8, 25.0)) for h in period]
+    result = prepare(run)
+    np.testing.assert_allclose(result.asymmetry, -100 / 7)
+    np.testing.assert_allclose(result.error, 200 * np.sqrt(20**2 * 50 + 15**2 * 50) / 35**2)
+    run = two_periods()
+    run.grouping["good_window_policy"] = {
+        "mode": "manual",
+        "first_good_offset_bins": 1,
+        "last_good_offset_bins": 7,
+    }
+    # Keep explicit legacy bounds so the unused signed raw bin remains inspectable.
+    run.grouping.pop("good_window_policy")
+    run.grouping.update(first_good_bin=1, last_good_bin=7)
+    run.grouping["period_histograms"][0][0].counts[0] = -5
+    np.testing.assert_allclose(prepare(run).asymmetry, 50)
+
+
+def test_pooled_missing_reference_file_coefficient_skips_whole_request():
+    from asymmetry.core.transform.corrections import BackgroundReference
+    from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
+
+    run = two_periods()
+    run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="file",
+        period_good_frames=[1000, 2000],
+        period_dead_time_us=[[0.01, 0.02], [0.03, 0.04]],
+        background_correction=True,
+        background_mode="reference_run",
+    )
+    reference = BackgroundReference(
+        [Histogram(np.full(8, v), 0.1) for v in (4, 2)],
+        ReferenceScaleRequest("manual", 0.5).resolve(),
+        run_number=99,
+        deadtime_normaliser=5000,
+        file_dead_time_us=(0.01, None),
+    )
+    with pytest.warns(UserWarning, match="File deadtime correction not applied"):
+        result = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=reference)
+    outcome = result.corrections["green_plus_red"]
+    assert outcome.deadtime.status == "skipped"
+    assert outcome.background.effective["reference"]["deadtime"]["status"] == "skipped"
+    np.testing.assert_allclose(result.asymmetry, 100 * (148 - 49) / (148 + 49))
+
+
+def test_explicit_automatic_alpha_uses_one_pooled_target_and_fixed_stays_fixed():
+    from asymmetry.core.project.profiles import (
+        AlphaPolicy,
+        GroupingProfile,
+        ProfileFingerprint,
+        resolve_effective_grouping,
+    )
+
+    run = two_periods()
+    profile = GroupingProfile(
+        "test",
+        ProfileFingerprint("", 2),
+        groups={1: [1], 2: [2]},
+        forward_group=1,
+        backward_group=2,
+        period_mode="green_plus_red",
+        alpha_policy=AlphaPolicy(mode="per_run_estimate"),
+    )
+    automatic = resolve_effective_grouping(profile, run)
+    assert automatic["alpha"] == pytest.approx(3)
+    selected = resolve_effective_grouping(replace(profile, period_mode="red"), run)
+    assert selected["alpha"] == pytest.approx(1.5)
+    for mode in ("fixed", "calibrated"):
+        fixed = resolve_effective_grouping(
+            replace(profile, alpha_policy=AlphaPolicy(mode=mode, value=1.17)), run
+        )
+        assert fixed["alpha"] == 1.17
+
+
+def test_implicit_mapped_file_window_uses_acquired_support_not_held_quick_bounds():
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from tests.core.test_constituent_preparation import acquired
+
+    k = np.arange(20.0)
+    sources = [
+        acquired(i, 100 + 3 * k + k * k, 80 + 2 * k, t0=anchor, first=anchor, last=anchor + 10)
+        for i, anchor in enumerate((1, 3, 2), 1)
+    ]
+    for source in sources:
+        source.run.grouping.pop("good_window_policy")
+    mapped = combine_mapped_periods(sources, {1: "red", 2: "green", 3: "red"})
+    mapped.run.grouping.update(period_mode="green_plus_red", deadtime_correction=False)
+    result = prepare(mapped.run, 2)
+    f, b = (
+        sum(
+            np.array([h.counts[anchor : anchor + 10] for h in source.run.histograms])
+            for source, anchor in zip(sources, (1, 3, 2), strict=True)
+        )
+        .reshape(2, 5, 2)
+        .sum(axis=2)
+    )
+    np.testing.assert_allclose(result.asymmetry, 100 * (f - b) / (f + b))
+    np.testing.assert_allclose(result.time, np.arange(5) * 0.2 + 0.05, atol=1e-15)
+
+
+@pytest.mark.parametrize("correction", [False, True])
+@pytest.mark.parametrize("mixed_variance", [False, True])
+@pytest.mark.parametrize("background", [False, True])
+def test_unused_signed_context_does_not_supply_variance_or_fail_pooling(
+    correction, mixed_variance, background
+):
+    from copy import deepcopy
+
+    run = two_periods()
+    run.grouping.pop("good_window_policy")
+    run.grouping.update(
+        first_good_bin=4,
+        last_good_bin=7,
+        deadtime_correction=correction,
+        deadtime_mode="file",
+        period_good_frames=[1000, 2000],
+        period_dead_time_us=[[0.01, 0.02], [0.03, 0.04]],
+        background_correction=background,
+        background_mode="range",
+        background_ranges=[0, 1],
+    )
+    if mixed_variance:
+        run.grouping["period_histograms"][1][:] = [
+            replace(h, count_variance=np.full(8, 9.0)) for h in run.grouping["period_histograms"][1]
+        ]
+    control = prepare(deepcopy(run))
+    original = run.grouping["period_histograms"][0]
+    original[0].counts[2] = -1000
+    original[1].counts[3] = -1000
+    result = prepare(run)
+    np.testing.assert_array_equal(result.asymmetry, control.asymmetry)
+    np.testing.assert_array_equal(result.error, control.error)
+    assert original[0].counts[2] == -1000
+    assert original[1].counts[3] == -1000
+
+
+@pytest.mark.parametrize("correct", [False, True])
+def test_scoped_variance_excludes_raw_context_from_disjoint_domains(correct):
+    from asymmetry.core.transform.deadtime import DeadtimeDomain
+    from asymmetry.core.transform.fb_counts import BinWindow
+    from asymmetry.core.transform.grouping import resolve_alignment
+    from asymmetry.core.transform.scoped_counts import ScopedCounts
+
+    source = [
+        Histogram(np.array([-1000.0, 3, 4, -2000, 6, 7, -3000, 9]), 0.1),
+        Histogram(np.full(8, 2.0), 0.1, count_variance=np.full(8, 5.0)),
+    ]
+    domain = DeadtimeDomain(tuple((i, (BinWindow(1, 2), BinWindow(4, 5))) for i in (0, 1)))
+    scoped = ScopedCounts.prepare(
+        source,
+        {"good_frames": 1000, "dead_time_us": [0.01, 0.01]},
+        domain,
+        use_deadtime=correct,
+        mode="manual",
+    )
+    aligned = scoped.aligned([0, 1], resolve_alignment(source, [0], [1]))
+    np.testing.assert_array_equal(aligned.variance, [0, 8, 9, 0, 11, 12, 0, 0])
+    assert aligned.counts[0] == -998
+    assert source[0].counts[3] == -2000
+    assert source[0].count_variance is None

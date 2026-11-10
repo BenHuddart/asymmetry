@@ -872,7 +872,11 @@ def build_rf_difference_scan(
         # A retained observation establishes count replay; an attached Run alone
         # does not establish the provenance of an arbitrary dataset's curve.
         raw = isinstance(item, Run) or item.histogram_observation is not None
-        if raw and held_period_count(run) == 2 and run.histograms:
+        if (
+            raw
+            and run.histograms
+            and all(acquired_period_histograms(run.grouping, i) is not None for i in (0, 1))
+        ):
             from asymmetry.core.io import resolve_background_reference
             from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
 

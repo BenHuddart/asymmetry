@@ -106,6 +106,16 @@ class ConstituentCounts:
             if cancel_check is not None:
                 cancel_check()
             size = len(histograms)
+            if len(self.members) > 1:
+                for index, windows in domain.observations:
+                    hist = histograms[index]
+                    if hist.count_variance is None and any(
+                        np.any(hist.counts[window.slice] < 0) for window in windows
+                    ):
+                        raise ValueError(
+                            "Pooling signed acquired counts requires supplied variance "
+                            f"(period {member.period_number}, detector {index + 1})."
+                        )
 
             def local(values):
                 return tuple(
@@ -151,7 +161,9 @@ class ConstituentCounts:
                 return groups[0]
             return GroupCounts(
                 np.sum([g.counts for g in groups], axis=0),
-                np.sum([g.independent_variance for g in groups], axis=0),
+                np.sum([g.independent_variance for g in groups], axis=0)
+                if any(g.variance is not None for g in groups)
+                else None,
             )
 
         return pooled(forward), pooled(backward), outcome
@@ -238,7 +250,9 @@ def pool_constituents(members, grouping, pair):
             h.n_bins - 1 if h.good_bin_end < 0 else h.good_bin_end for h in flat
         ],
     )
-    if "first_good_bin" not in effective and "last_good_bin" not in effective:
+    if "period_inputs" in grouping or (
+        "first_good_bin" not in effective and "last_good_bin" not in effective
+    ):
         effective.setdefault("good_window_policy", {"mode": "from_file"})
     return ConstituentCounts(tuple(members), flat, effective, expanded)
 
@@ -267,6 +281,19 @@ def grouping_for_acquisition(run, live: dict) -> dict:
     return effective
 
 
+def acquisition_grid(histograms):
+    """Identify each acquired clock and good support without reading count values."""
+    return tuple(
+        (h.t0_bin, h.t0_time_us, h.bin_width, h.n_bins, h.good_bin_start, h.good_bin_end)
+        for h in histograms
+    )
+
+
+def held_period_grids(grouping):
+    """Describe held acquisition support for ordinary inputs without retained originals."""
+    return tuple(acquisition_grid(period) for period in grouping.get("period_histograms", ()))
+
+
 def constituent_metadata(grouping: dict) -> dict:
     """Identify acquired facts and preparation semantics without scanning count buffers."""
     from asymmetry.core.transform.deadtime import file_deadtime_table
@@ -282,17 +309,7 @@ def constituent_metadata(grouping: dict) -> dict:
                 "period_number": number,
                 "data_period_number": run.metadata.get("data_period_number"),
                 "dae_period_number": run.metadata.get("dae_period_number"),
-                "grid": [
-                    (
-                        h.t0_bin,
-                        h.t0_time_us,
-                        h.bin_width,
-                        h.n_bins,
-                        h.good_bin_start,
-                        h.good_bin_end,
-                    )
-                    for h in run.histograms
-                ],
+                "grid": acquisition_grid(run.histograms),
                 "good_frames": run.grouping.get("good_frames"),
                 "deadtime_file_us": file_deadtime_table(run.grouping),
                 "t0_source": run.grouping.get("t0_source"),

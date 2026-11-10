@@ -323,31 +323,26 @@ def test_combined_preview_shares_final_period_calculation_and_grid_checks(qapp, 
     dialog = GroupingDialog([dataset], profiles=[profile])
     pane = dialog._preview_pane
     pane.flush()
-    if mismatched:
-        _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
-        assert not pane.corrections_complete
-        assert not dialog._apply_btn.isEnabled()
-    else:
-        _wait_until(lambda: pane.corrections_complete)
-        grouping = resolve_effective_grouping(profile, dataset.run)
-        result = reduce_period_asymmetry(
-            dataset.run.histograms,
-            grouping,
-            mode,
-            binning=binning_spec(grouping),
-            forward_idx=[0],
-            backward_idx=[1],
-            alpha=1,
-            use_deadtime=False,
-            deadtime_mode="off",
-            use_background=False,
-        )
-        np.testing.assert_allclose(pane._last_result.time, result.time)
-        np.testing.assert_allclose(pane._last_result.asymmetry, result.asymmetry)
-        np.testing.assert_allclose(pane._last_result.error, result.error)
-        assert pane._last_result.counts is None
-        pane.set_view("counts")
-        assert any("single selected period" in text.get_text() for text in pane._axes.texts)
+    _wait_until(lambda: pane.corrections_complete)
+    grouping = resolve_effective_grouping(profile, dataset.run)
+    result = reduce_period_asymmetry(
+        dataset.run.histograms,
+        grouping,
+        mode,
+        binning=binning_spec(grouping),
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=False,
+    )
+    np.testing.assert_allclose(pane._last_result.time, result.time)
+    np.testing.assert_allclose(pane._last_result.asymmetry, result.asymmetry)
+    np.testing.assert_allclose(pane._last_result.error, result.error)
+    assert pane._last_result.counts is None
+    pane.set_view("counts")
+    assert any("single selected period" in text.get_text() for text in pane._axes.texts)
     dialog._clear_dirty()
     dialog.close()
 

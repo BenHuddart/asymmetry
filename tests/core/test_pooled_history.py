@@ -90,3 +90,71 @@ def test_pooled_baseline_selector_and_historical_linear_snapshot_remain_distinct
     assert restored.rotation[5] == (4.0, 6.0)
     assert current.rotation[5] == (2.0, 3.0)
     assert not old.same_rotation(current)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("t0_bin", 2), ("t0_time_us", 0.025), ("good_bin_start", 2), ("good_bin_end", 5)],
+)
+def test_ordinary_green_support_invalidates_fourier_and_projection(field, value):
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+    from asymmetry.core.transform.projections import reduction_identity
+
+    run = two_periods()
+    before = (fourier_grouping_digest(run, "fb_asymmetry"), reduction_identity(run.grouping))
+    run.grouping["period_histograms"][1] = [
+        replace(h, **{field: value}) for h in run.grouping["period_histograms"][1]
+    ]
+    after = (fourier_grouping_digest(run, "fb_asymmetry"), reduction_identity(run.grouping))
+    assert all(a != b for a, b in zip(before, after, strict=True))
+
+
+def test_historical_project_and_workdir_outputs_load_without_reduction(tmp_path, monkeypatch):
+    import asymmetry.core.workflow.workdir as workdir
+    from asymmetry.core.project import CURRENT_SCHEMA_VERSION, load_project, save_project
+    from asymmetry.core.transform.rotating_frame import FrameSnapshot, RotatingFrame
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    frame = FrameSnapshot(RotatingFrame.typed_frequency(1, 2), (1.0, 1.0), "historical sum")
+    historical = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [],
+        "plot_state": {"fit_curve": {"time": [0.0, 1.0], "asymmetry": [100.0, 100.0]}},
+        "saved_science": {
+            "chi_squared": 12.5,
+            "frame": frame.to_dict(),
+            "period_mode": "green_plus_red",
+        },
+    }
+    path = tmp_path / "historical.asymp"
+    save_project(historical, path)
+    assert load_project(path) == historical
+    run = two_periods()
+    ds = MuonDataset(np.arange(8) * 0.1, np.full(8, 100.0), np.ones(8), run=run)
+    settings = ReductionSettings(period="green_plus_red")
+    source = tmp_path / "source"
+    source.write_bytes(b"synthetic historical source")
+    with monkeypatch.context() as old:
+        old.setattr(workdir, "period_statistic_policy", lambda grouping: {})
+        digest = workdir.reduction_digest(source_files=[source], grouping={}, settings=settings)
+    entry = workdir.ReducedEntry(
+        1,
+        digest,
+        str(source),
+        8,
+        settings,
+        {"run_number": 1, "chi_squared": 12.5},
+        1.0,
+        "off",
+        1,
+        2,
+        [],
+    )
+    directory = workdir.WorkDir(tmp_path / "work")
+    directory.write_reduced(ds, entry)
+    restored = directory.reduced(1)
+    np.testing.assert_array_equal(restored.asymmetry, 100)
+    assert restored.metadata["chi_squared"] == 12.5
+    assert restored.run is None
+    current = workdir.reduction_digest(source_files=[source], grouping={}, settings=settings)
+    assert not directory.is_current(1, current)

@@ -77,7 +77,10 @@ One explicitly chosen α/β applies to the comparison; individual-period
 calibration requires an explicit source selection. Missing required File
 coefficients leave the complete requested result uncorrected with a warning,
 including required references. Ignored inputs and unused raw bins do not become
-correction requirements. Held raw-index arrays remain available for inspection;
+correction requirements. Scoped preparation retains raw context outside consumed
+bins; its excluded variance contribution does not certify those bins as
+observations. Signed contributors require supplied variance in consumed bins.
+Held raw-index arrays remain available for inspection;
 the quick look and its counts-first replay use native bins, file support,
 selected α, β one, and corrections off.
 Point errors retain first-order propagation at fixed α/β, with existing shared

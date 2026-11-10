@@ -259,7 +259,7 @@ def integrate_run(
     grouping_ref: dict | None = None,
 ) -> tuple[float, float]:
     """Return fractional integral asymmetry and error, warning for accepted skips."""
-    result = reduce_integral_run(
+    result = reduce_period_integral(
         data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
     )
     return result.value, result.error

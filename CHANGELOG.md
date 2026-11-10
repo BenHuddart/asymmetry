@@ -298,9 +298,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **Auto Phase** estimates each detector group's common phase through the sampled
   FFT response, preserves the measured spectrum on the percent scale, and refuses
   weak or unstable estimates with an explanation and conditional diagnostics.
@@ -393,9 +390,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is listed by ``audit`` until a fit covers it.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - Opening a project window is faster: the application stylesheet is applied
   once the window is built rather than during construction, so the first
@@ -696,9 +690,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **A Batch draft follows the plot's fit target.** Clicking another subplot of
   a grouping with several projections now moves a draft's members to that
   projection; before, the draft kept fitting the projection it was created
@@ -752,9 +743,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could crash it.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **The Grouping window's Preset dropdown shows the current preset.** It used
   to show the instrument's first preset whatever was applied, with a separate
@@ -811,9 +799,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **The plot toolbar fits a 13-inch display, including in vector mode.**
   **Pan** and **Zoom** are now icon buttons (name in the tooltip), and the
   waterfall Δ field appears only while **Waterfall** is on. The projection
@@ -827,9 +812,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.23.0] - 2026-10-03
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **The Global Fit Wizard now recommends the fit whose parameters trend best
   among those that fit adequately.** For every candidate model that fits about
@@ -998,9 +980,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `(at bound)` for one pinned on a bound, instead of the values alone.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **Both fit wizards choose their models with a model family picker.** It
   replaces the preset menu and component tree in the Fit Wizard and the Global
@@ -1447,9 +1426,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **Project schema bumped to v22: a top-level `joint_fits` list records each
   joint fit's members, shared-parameter table, and last result.** Purely
   additive — a pre-v22 project migrates with an empty list and every series
@@ -1794,9 +1770,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **The Fit Parameters panel is now a stack of per-parameter cards instead of
   a Y-parameter table above one shared plot.** Checking a chip on the new y
   rail opens (or closes) that parameter's **card**, which carries its own
@@ -2023,9 +1996,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the blind scan declined can still be measured by naming it.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **The Global Fit Wizard's candidate list for a series is now the union of what
   its runs actually show.** The series portfolio used to be built from the
@@ -2966,9 +2936,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **Seeding parity: the fit wizard's seed ladder now scales with a candidate's
   rate dimensionality.** Every Stage-2 family previously got the same fixed seed
   count, which covers a one-rate family's whole search space but a vanishing
@@ -3148,9 +3115,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **The Grouping window's right pane is tabless.** The former "Grouping and
   timing" / "Corrections" tabs are now two side-by-side columns under the
   pipeline strip, with the shared live preview pinned below both — everything
@@ -3276,9 +3240,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alongside.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **FFT amplitudes are now calibrated to fractional asymmetry in percent.** The
   grouped FFT previously plotted raw, unnormalised count-scale amplitudes whose
@@ -3557,9 +3518,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **Single-tab carry-forward is now refresh-unless-fitted.** Previously,
   selecting a new run always carried forward whatever the form was last
   showing, so a hand-edited draft could silently leak onto an unrelated run.
@@ -3626,9 +3584,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selector; needs at least five shared angles per curve.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **The joint K(θ) fit now records each curve's fit covariance**, serialised
   with the project alongside its parameters — previously
@@ -3861,9 +3816,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `gui/` outside the app-startup allowlist.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **Grouping detectors uses less memory and time.** ``apply_grouping_aligned``
   (the per-detector t0-aligned sum behind every grouped reduction) built a
@@ -4183,9 +4135,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - **GLE exports no longer block the interface.** The GLE compile step of every
   figure export (main plot, Fit Parameters, Global Parameter Fit window) now
   runs in the background; a wedged GLE process is stopped after a bounded
@@ -4309,9 +4258,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schematic orientations already matched their respective user manuals.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 
 - **"Instrument" replaces "fingerprint" throughout the Grouping window and its
   documentation.** The user-facing term for a run's `(instrument, histogram
@@ -4552,9 +4498,6 @@ application.
 
 ### Changed
 
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
-
 - `GlobalFitTab` constructor parameter `allowed_modes: tuple` replaced by
   `member_kind: str` (`"runs"` or `"groups"`); the member kind is fixed per
   instance and follows the active representation, not a UI selector.
@@ -4570,9 +4513,6 @@ application.
 ## [0.3.4] - 2026-05-20
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 - Vector-polarization plotting now keeps `Auto Y` active in `ALL` mode, recalculates per-polarization Y limits on redraw, and preserves the manual Y-lock for stacked views.
 - Vector-polarization `ALL` views now show fit-range indicators correctly across the stacked polarization subplots.
 - Returning from grouped or frequency views to F-B asymmetry now restores the vector-polarization selector reliably.
@@ -4583,9 +4523,6 @@ application.
 - Added grouped time-domain fitting support with a dedicated multi-group fit window, grouped count-model fitting flow, and initial documentation for the new workflow.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 - Improved plot responsiveness during navigation and updated grouped plotting so individual-group views retain full traces while fit previews and fitted overlays respect the active fit window.
 - Refined grouped fit parameter handling, including default fractionized multi-group models, stronger dependent-fraction enforcement, improved grouped parameter write-back, and clearer additive-term parameter numbering for fractionized sum-of-products.
 - Restored grouped fit-window controls and scrolling behavior in the individual-groups view, including clearer fit overlays and grouped plot interaction updates.
@@ -4599,9 +4536,6 @@ application.
 ## [0.3.2] - 2026-05-11
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 - Packaged GUI builds now load the splash logo more reliably from bundled resources and include the spinbox SVG arrow assets required by the Qt stylesheet.
 - GLE export compilation now runs from the export bundle directory so generated `.dat` and `.fit` sidecars resolve correctly in packaged builds, and preview handling is more robust after export failures.
 - Co-add compatibility now ignores per-run frame-count metadata when grouping settings otherwise match, and combined-run log temperatures now display as event-weighted averages.
@@ -4610,9 +4544,6 @@ application.
 ## [0.2.1] - 2026-04-17
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 - Combined datasets now mirror the grouping state of their hidden source datasets, and grouping edits on a combined row update the hidden sources before rebuilding the combined result.
 
 ### Documentation
@@ -4627,9 +4558,6 @@ application.
 - Parameter-model field component `GaussianLCR` in Eq. (4) notation from PRL 135, 046704 (2025): `lambda_LCR(B) = f * G(B; B0; Bwid)`.
 
 ### Changed
-
-- Form G+R from pooled prepared counts with background once and common native
-  support; retain independent G−R and require equal baselines for G+R rotation.
 - Parameter-model docs now explicitly state that Redfield exponent `m` is dimensionless.
 - In the model-fit GUI for field-series parameter fits, component selection now avoids redundant constants: Lambda-like y-parameters show `Lambda_bg` and hide `Constant`, while non-Lambda y-parameters show `Constant` and hide `Lambda_bg`.
 - Model parameter fits and cross-group parameter fits now run asynchronously in the GUI, with explicit in-progress status text and temporary control locking to avoid blocking the UI.
