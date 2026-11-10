@@ -211,6 +211,7 @@ def test_single_real_fit_scores_and_rebuilds_the_prepared_record(monkeypatch):
         assert record.histogram_observation is None
         assert not record.run.histograms
     assessment = recommendation.assessments[0]
+    dataset.run.histograms[0].counts.view()[:] = 10
     rebuilt = single.assessment_with_curves(recommendation, assessment.template.key, dataset)
     expected = single._with_dense_curves(assessment, prepare_wizard_dataset(dataset, 2))
     np.testing.assert_array_equal(rebuilt.fitted_time, expected.fitted_time)
@@ -282,6 +283,7 @@ def test_global_completion_fits_and_rebuilds_count_record():
     completed = global_wizard._assemble_completed_run(
         plan, {template.key: fitted}, (template,), rebin_factor=2, metric=SelectionMetric.AICC
     )
+    dataset.run.histograms[0].counts.view()[:] = 10
     rebuilt = single.assessment_with_curves(completed, template.key, dataset)
     eager = single._with_dense_curves(fitted, plan.analysis_dataset)
     np.testing.assert_array_equal(rebuilt.fitted_time, eager.fitted_time)
@@ -306,6 +308,18 @@ def test_global_completion_fits_and_rebuilds_count_record():
         sibling_values_by_template={},
     )
     assert not warm.tasks
+    fresh = observed(dataset.run)
+    changed = global_wizard._plan_run_completion(
+        fresh,
+        (template,),
+        completed,
+        rebin_factor=2,
+        metric=SelectionMetric.AICC,
+        sibling_values_by_template={},
+    )
+    assert len(changed.tasks) == 1
+    with pytest.raises(ValueError, match="observation changed"):
+        single.assessment_with_curves(completed, template.key, fresh)
 
 
 def test_reference_clock_and_both_variances_through_wizard_preparation():

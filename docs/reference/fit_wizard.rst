@@ -766,6 +766,12 @@ input retains its selected output-bin members before further merging. For
 F = [90, 1] and B = [10, 9], a factor of two gives 65.454545…%, whereas the
 mean of the two separate asymmetries is 0%.
 
+The captured observation owns read-only copies of sample, held-period, and
+reference counts and supplied variances, together with copied settings and timing.
+Editing the original arrays through the scripting API leaves that observation,
+its cached analysis, and rebuilt curves stable. To analyse edited counts, first
+reduce them again to capture a new observation, then rerun the wizard.
+
 Curves without resolved histogram context, including custom or historical curves
 that retain a Run, and rotated observations use the independent-curve mean.
 The wizards still fit asymmetry with conditional Gaussian point errors;
