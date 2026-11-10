@@ -42,6 +42,20 @@ share one implementation. See :ref:`selecting-periods` for a worked example.
 
 .. autofunction:: asymmetry.core.io.periods.resolve_period_index
 
+.. autofunction:: asymmetry.core.io.periods.combine_mapped_periods
+
+.. autofunction:: asymmetry.core.io.periods.sum_period_histograms
+
+Mapped runs retain original acquired ``Run`` records in
+``run.grouping["period_inputs"]``, ordered by stored data-period index.
+``period_mapping`` records authored membership; held histograms are pooled
+views. Pass the mapped dataset to ``combine_mapped_periods`` to remap these
+retained acquisitions, including ignored periods. The inputs are transient: projects
+reconstruct them from the source file and saved mapping. Fitting curve records
+remove these replay arrays. NeXus selections distinguish ``data_period_number``
+from an evidenced ``dae_period_number`` and retain ``period_declaration``
+metadata, including unresolved correspondence.
+
 Registry
 --------
 

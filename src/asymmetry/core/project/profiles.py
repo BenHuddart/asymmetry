@@ -64,7 +64,7 @@ good_frames                       per-run     deadtime normaliser (file-derived)
 dead_time_us                      per-run*    file deadtime values (deadtime_policy=from_file),
                                               or profile-stored values (manual/estimate)
 deadtime_loaded_us                per-run     legacy alias of file deadtime values
-period_histograms                 per-run     raw per-period histograms
+period_histograms, period_inputs  per-run     held sets and original acquired inputs
 period_reduced                    per-run     per-period reduced arrays cache
 period_good_frames                per-run     per-period good frames
 period_dead_time_us               per-run     per-period deadtime tables
@@ -629,15 +629,8 @@ def fingerprint_from_payload(
 # Instrument self-healing on re-detection
 # --------------------------------------------------------------------------- #
 
-#: Structural / instrument-dependent payload keys discarded when a stale
-#: persisted instrument identity is corrected by fresh detection. These describe
-#: a *detector layout* (which detectors form which group, the named preset the
-#: groups came from, the vector projections and their per-axis alphas); once the
-#: instrument changes they no longer apply and would paste the wrong instrument's
-#: group names/geometry over the run. Everything else — the per-run/file-derived
-#: facts (:data:`_PER_RUN_FACT_KEYS`) and the instrument-independent correction
-#: *policies* (deadtime/background modes, scalar ``alpha``, binning) — is trivially
-#: separable and kept, so the whole payload need not be discarded.
+#: Detector membership and geometry belong to the detected layout. Acquisition
+#: facts and instrument-independent correction policies survive identity repair.
 _INSTRUMENT_DEPENDENT_STRUCTURE_KEYS: tuple[str, ...] = (
     "groups",
     "group_names",
@@ -1325,6 +1318,7 @@ _PER_RUN_FACT_KEYS = (
     "reference_exposure",
     "period_reference_exposure",
     "period_histograms",
+    "period_inputs",
     "period_reduced",
     "period_good_frames",
     "period_dead_time_us",
@@ -1336,7 +1330,7 @@ _PER_RUN_FACT_KEYS = (
 
 
 def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], run: Run) -> None:
-    """Copy the file-derived per-run facts from the run's grouping."""
+    """Copy file-derived per-run facts."""
     for key in _PER_RUN_FACT_KEYS:
         if key in run_grouping:
             grouping[key] = run_grouping[key]

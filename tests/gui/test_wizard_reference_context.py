@@ -43,7 +43,7 @@ def test_equal_reference_counts_from_another_acquisition_refresh_provenance(qapp
     assert first.histogram_observation.identity != second.histogram_observation.identity
 
 
-@pytest.mark.parametrize("nullable", [False, True])
+@pytest.mark.parametrize("nullable", [False, True, "ignored"])
 def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, nullable):
     from PySide6.QtCore import QThread
 
@@ -52,7 +52,14 @@ def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, n
     from tests.core.test_binning_entry_points import _run
 
     source = _run(np.full(8192, 100.0), np.full(8192, 80.0))
-    if nullable:
+    if nullable == "ignored":
+        from asymmetry.core.io.periods import combine_mapped_periods
+        from tests.io.test_period_mapping import _four_periods
+
+        periods = _four_periods()
+        periods[3].run.histograms = source.histograms
+        source = combine_mapped_periods(periods, {1: "red", 4: "ignore"}).run
+    elif nullable:
         source.grouping["period_histograms"] = None
     original = preparation.histogram_observation
     worker_threads = []
@@ -119,3 +126,62 @@ def test_warm_toolbar_refreshes_current_metadata_and_copies_reduction_provenance
     assert third.metadata["field"] == 100.0
     assert third.metadata["correction_outcomes"]["red"]["background"]["status"] != "edited"
     window.close()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_mapping_constructs_snapshot_on_worker_and_registers_only_completed_result(
+    qapp, monkeypatch, cancelled
+):
+    import threading
+
+    from PySide6.QtCore import QThread, QTimer
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    import asymmetry.core.io.periods as period_io
+    from tests.io.test_period_mapping import _four_periods
+
+    window = MainWindow()
+    window.show()
+    periods = _four_periods()
+    for dataset in periods:
+        window._data_browser.add_dataset(dataset)
+    original = period_io.combine_mapped_periods
+    worker_threads, applied = [], []
+
+    def construct(*args, cancel_check, **kwargs):
+        worker_threads.append(QThread.currentThread() != qapp.thread())
+        if cancelled:
+            while True:
+                cancel_check()
+                threading.Event().wait(0.005)
+        return original(*args, cancel_check=cancel_check, **kwargs)
+
+    def apply(dataset, grouping):
+        assert QThread.currentThread() == qapp.thread()
+        applied.append(dataset)
+
+    def cancel():
+        dialog = QApplication.activeModalWidget()
+        assert dialog is not None
+        dialog.findChild(QPushButton).click()
+
+    monkeypatch.setattr(period_io, "combine_mapped_periods", construct)
+    monkeypatch.setattr(window, "_apply_grouping_settings_to_dataset", apply)
+    if cancelled:
+        QTimer.singleShot(20, cancel)
+    window._create_period_mapped_dataset(
+        {
+            "period_run_numbers": [ds.run_number for ds in periods],
+            "source_run_number": 900,
+            "mapping": {1: "red", 4: "ignore"},
+        },
+        {},
+    )
+    assert worker_threads == [True]
+    mapped = window._data_browser.get_dataset(900)
+    if cancelled:
+        assert mapped is None
+        assert applied == []
+    else:
+        assert applied == [mapped]
+        assert len(mapped.histogram_observation.source.grouping["period_inputs"]) == 4

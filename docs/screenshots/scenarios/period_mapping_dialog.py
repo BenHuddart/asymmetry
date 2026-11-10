@@ -9,7 +9,9 @@ own good-frame count (≈ 28,108). The dialog's defaults follow WiMDA — the fi
 period maps to **Red** and the second to **Green** — so the captured state shows
 exactly the red = period 1 / green = period 2 convention the page describes.
 
-No fit runs, so this scenario is cheap and needs no ``requires_fit`` flag.
+The rows are stored data indices; no dwell rows are synthesised. Red-only
+mapping is checked through core preparation while this default two-set dialog
+retains the same controls. No fit runs in this scenario.
 """
 
 from __future__ import annotations
