@@ -20,7 +20,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.frame_exposure import summed_period_exposures
 from asymmetry.core.io.period_counts import sum_period_histograms
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.transform.deadtime import DeadtimeCorrectionError, file_deadtime_table
+from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
     _X_LABELS,
@@ -267,12 +267,11 @@ def period_run(combined: Run, index: int) -> Run:
     for key in (
         "period_histograms",
         "period_reduced",
-        "period_mode",
         "period_t0_sources",
-        "period_inputs",
     ):
         period_grouping.pop(key, None)
 
+    period_grouping["period_mode"] = ("red", "green")[index]
     metadata = dict(combined.metadata)
     metadata["raw_period_histograms_available"] = (
         acquired_period_histograms(grouping, index) is not None
@@ -365,6 +364,7 @@ def _period_timing_facts(grouping: dict, period_index: int) -> dict:
 def select_period_grouping(grouping: dict, period_index: int) -> dict:
     """Select acquired calibration and exposure, preserving authored coefficients."""
     period_grouping = _period_timing_facts(grouping, period_index)
+    period_grouping["period_mode"] = ("red", "green")[period_index]
     origin = _period_timing_facts(grouping, grouping.get("effective_t0_period", period_index))
     manual_file = grouping.get("t0_policy", {}).get("mode") == "manual" and all(
         facts.get("t0_source") != "missing"
@@ -609,36 +609,11 @@ def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float | No
     tables = [file_deadtime_table(runs[p - 1].grouping) for p in periods]
     if len(tables) == 1:
         return list(tables[0])
-    weights = [_sum_period_good_frames(runs, [p]) for p in periods]
-    if (
-        tables
-        and len({len(table) for table in tables}) == 1
-        and all(
-            isinstance(value, (int, float)) and np.isfinite(value)
-            for table in tables
-            for value in table
-        )
-    ):
-        if all(np.allclose(table, tables[0]) for table in tables[1:]):
-            return list(tables[0])
-        if None in weights:
-            raise DeadtimeCorrectionError(
-                "combining different period coefficients requires good frames"
-            )
-        return np.average(tables, axis=0, weights=weights).tolist()
-    combined = []
-    for column in zip_longest(*tables):
-        if any(not isinstance(v, (int, float)) or not np.isfinite(v) for v in column):
-            combined.append(None)
-        elif np.allclose(column, column[0]):
-            combined.append(float(column[0]))
-        elif None in weights:
-            raise DeadtimeCorrectionError(
-                "combining different period coefficients requires good frames"
-            )
-        else:
-            combined.append(float(np.average(column, weights=weights)))
-    return combined
+    # A held view has no effective coefficient for a nonlinear correction.
+    return [
+        column[0] if all(value == column[0] for value in column) else None
+        for column in zip_longest(*tables)
+    ]
 
 
 def combine_mapped_periods(
@@ -652,7 +627,8 @@ def combine_mapped_periods(
     """Sum acquired periods into red/green sets without exposure scaling.
 
     Counts, DT normalisers, and evidenced exposures sum within each set.
-    Timing follows the first contributor. Pass a mapped dataset to remap its
+    Held views retain raw-index inspection; reduction corrects and aligns originals.
+    Pass a mapped dataset to remap its
     retained original acquisitions, including those previously ignored.
     """
     if cancel_check is not None:
@@ -719,7 +695,7 @@ def combine_mapped_periods(
         for run, metadata_source in zip(runs, metadata_sources, strict=True)
     )
     grouping["period_histograms"] = sets
-    # Summed histograms retain the first contributor's timing and its provenance.
+    # Held raw views borrow the first clock; numerical preparation uses originals.
     grouping["period_t0_sources"] = [
         runs[periods[0] - 1].grouping.get("t0_source", "file")
         for periods in (red_periods, green_periods)
@@ -763,7 +739,7 @@ def _quick_period_dataset(
     if cancel_check is not None:
         cancel_check()
     grouping, metadata = run.grouping, run.metadata
-    quick = quick_asymmetry(run.histograms, grouping, metadata=metadata)
+    quick = quick_asymmetry(run.histograms, grouping, metadata=metadata, cancel_check=cancel_check)
     grouping.pop("t0_time_us", None)
     grouping.update(quick.file_grouping)
     metadata.update(quick.metadata)

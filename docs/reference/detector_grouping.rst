@@ -1399,6 +1399,12 @@ B a lighter, dashed line of the same colour — the accent colour, or the
 focused stage's colour while a compare is focused. A fixed caption in the
 top-left corner names both with matching swatches, e.g. "F: Det 1 (0°) · as
 reduced" over "B: Det 2 (90°) · as reduced".
+For a mapped set, correction uses each acquired member's own applicable
+coefficient and supported exposure before whole-bin alignment and count pooling.
+The ordinary group background acts once on the resulting set; a missing required
+File coefficient withholds correction from the complete result. Inspection keeps
+borrowed raw views. See :doc:`data_reduction/period_mapping`.
+
 
 Four markers show what the asymmetry never does:
 

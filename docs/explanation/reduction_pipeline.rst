@@ -48,11 +48,18 @@ the authored positive coefficient. Reference alignment requires compatible
 native widths and enough observed support; it does not interpolate or pad counts.
 See :doc:`/reference/detector_grouping` for correction assumptions and failures.
 
+Mapped sets resolve these detector preparations against their original acquired
+members, including their own coefficients, exposure, file-good bins, and t0.
+Only selected members enter timing and correction domains. Missing required
+File coefficients withhold correction from the entire requested result.
+
 **Align, sum, and subtract group backgrounds.** Whole-bin shifts align the
 selected detectors without interpolation. The maximum selected integer anchor
 sets the reference, with acquired-channel ordinal breaking ties; its exact
 origin supplies the time stamps. Fractional residuals record the approximation,
-not a timing uncertainty. Only common observed support enters the group sums.
+not a timing uncertainty. Only common observed support enters the group sums,
+including across constituents of a mapped set. Counts and retained variances
+pool before one ordinary background operation for that set.
 Enabled range, tail-fit, fixed, or reference-run backgrounds then act on those
 grouped counts, rather than independently on each raw detector. These are
 alternative background modes. Reference subtraction retains both independent

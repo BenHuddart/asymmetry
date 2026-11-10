@@ -97,7 +97,8 @@ def test_mapped_and_fallback_detector_facts_follow_acquired_histograms(tmp_path,
     request = dict(mapped.run.grouping)
     index = 0
     if held != "present":
-        # A recorded contributor table must not override summed fallback counts.
+        # Legacy held-only fallback derives facts from its observed buffer.
+        request.pop("period_inputs", None)
         request["detector_first_good_bins"] = [11, 11]
         if held == "absent":
             del request["period_histograms"]

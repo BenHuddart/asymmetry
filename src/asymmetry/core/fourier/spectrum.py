@@ -46,6 +46,7 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.constituent_counts import constituent_metadata
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import group_names, grouping_balances
@@ -300,11 +301,10 @@ def _digest_int(value: object) -> int | None:
 
 
 def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
-    """Fingerprint correction requests, acquired exposures, timing, and F/B mapping."""
+    """Fingerprint correction requests, acquired facts, and numerical F/B preparation."""
     if run is None:
         return ""
     grouping = run.grouping
-
     payload: dict[str, object] = {
         "deadtime_scope": "required_grouped_observations",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
@@ -392,6 +392,8 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         payload["t0_source"] = str(t0_source)
 
     if signal_source == "fb_asymmetry":
+        if "period_inputs" in grouping:
+            payload["constituents"] = constituent_metadata(grouping)
         payload["signal_source"] = "fb_asymmetry"
         forward_group = _digest_int(grouping.get("forward_group", 1))
         backward_group = _digest_int(grouping.get("backward_group", 2))
@@ -400,7 +402,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         alpha, beta = grouping_balances(grouping)
         payload["fb_alpha"] = alpha
         if beta != 1.0:
-            # Emitted only when active so pre-beta recorded digests stay valid.
             payload["fb_beta"] = beta
         overrides = detector_t0_overrides(grouping, len(run.histograms))
         if overrides is not None:
@@ -410,8 +411,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         if binning.mode != "fixed":
             payload["fb_bin0_us"] = binning.bin0_us
             payload["fb_bin10_us"] = binning.bin10_us
-        # Two-period selection: only live when a valid two-period payload
-        # exists (mirrors reduce_run_to_dataset's has_periods gate).
         period_lists = grouping.get("period_histograms")
         has_periods = (
             isinstance(period_lists, list)

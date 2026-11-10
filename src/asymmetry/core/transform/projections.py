@@ -19,6 +19,7 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
+from asymmetry.core.transform.constituent_counts import constituent_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
 from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
 from asymmetry.core.transform.reduce import (
@@ -44,6 +45,7 @@ _SELECTION_KEYS = frozenset(
         "period_mode",
         "period_histograms",
         "period_reduced",
+        "period_inputs",
     }
 )
 
@@ -55,6 +57,8 @@ def reduction_identity(grouping: dict[str, Any]) -> str:
     change of groups, alpha, deadtime, background, t0 or binning changes it.
     """
     shaping = {key: value for key, value in grouping.items() if key not in _SELECTION_KEYS}
+    if "period_inputs" in grouping:
+        shaping["constituents"] = constituent_metadata(grouping)
     blob = json.dumps(
         {"binning_policy": BINNING_POLICY, "grouping": shaping},
         sort_keys=True,
@@ -120,7 +124,7 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             grouping, forward_group=forward, backward_group=backward, vector_axis=label
         )
         alpha, beta = grouping_balances(selected_grouping)
-        if "t0_policy" in grouping:
+        if "t0_policy" in grouping and "period_inputs" not in grouping:
             policy = grouping["t0_policy"]
             resolve_selected_timing(
                 source.histograms,

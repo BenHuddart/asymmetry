@@ -1510,6 +1510,30 @@ With unity calibration and corrections off, equal-total synthetic periods
 of 20% and 80% give Red/Green 20%/80%, G−R 60%, and G+R 50% in WiMDA 1.326
 under Wine 10. musrfit 1.12.1 (708f777b, ROOT 6.40.04) selected/grouped
 controls give 20%/80%/50%. Asymmetry currently gives G+R 100%, because it
-adds independently reduced asymmetries. Its mapped detector correction still
-acts after raw pooling, and mapped timing follows the first contributor.
-The value controls do not establish matching error conventions.
+adds independently reduced asymmetries. The value controls do not establish
+matching error conventions.
+
+Asymmetry corrects each acquired constituent before mapped pooling, with its
+own applicable detector coefficients and supported exposure. It then aligns
+whole bins using each resolved t0 on common observed support, retains supplied
+count variances, and applies group-background preparation once to the requested
+set. WiMDA 1.326 pools raw mapped counts before correction; this is a deliberate
+ordering difference. In Mantid, standard ``MuonPreProcess`` prepares individual
+period workspaces before grouping and pairing pool selected spectra.
+
+For synthetic F/B counts (80000, 20000) and (10000, 90000), 0.1 μs native bins,
+100000 frames per acquisition, and 0.05 μs coefficients, constituent correction
+then pooling gives −12.7378265%; raw-first correction gives −13.2890365%.
+musrfit 1.12.1 (708f777b, ROOT 6.40.04) exports −12.7378% for the equivalent
+histogram occupancies using a stored scalar 200000 frames and 0.1 μs coefficients
+(absolute tolerance 5×10⁻⁶ in fractional asymmetry). This checks correction order,
+not acquired per-period exposure interpretation or error equivalence.
+
+Structured shifted-count controls also agree with musrfit grouping and ADDRUN
+on matched interior observations with explicit integer anchors, corrections off,
+and native bins at the same tolerance. ADDRUN's edge and normaliser conventions
+are not adopted. Asymmetry records fractional residuals without interpolation
+and also checks common observed support and compatible native widths. One
+shared explicit α/β belongs to the comparison; there is no implicit separate
+calibration for each condition. Full cross-period/reference covariance remains
+outside the marginal, conditional error contract.

@@ -9,8 +9,9 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import group_forward_backward, independent_pair_indices
 from asymmetry.core.transform.t0 import (
+    common_t0_time_us,
     effective_detector_t0_bins,
     good_window_for_groups,
     resolve_selected_timing,
@@ -61,15 +62,25 @@ class QuickAsymmetry:
 
 
 def quick_asymmetry(
-    histograms: list[Histogram], grouping: dict, *, metadata: dict | None = None
+    histograms: list[Histogram], grouping: dict, *, metadata: dict | None = None, cancel_check=None
 ) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     alignment = None
+    observation = None
     common_t0 = max((hist.t0_bin for hist in histograms), default=0)
     t0_time_us = None
     timing = dict(grouping)
     try:
-        if metadata is not None and "effective_detector_t0_bins" not in timing:
+        if "period_inputs" in grouping:
+            from asymmetry.core.transform.constituent_counts import resolve_constituent_counts
+
+            pair = independent_pair_indices(grouping, n_histograms=len(histograms))
+            observation = resolve_constituent_counts(
+                histograms, grouping, pair, metadata, cancel_check=cancel_check
+            )
+            histograms, timing = observation.histograms, dict(observation.grouping)
+            timing["good_window_policy"] = {"mode": "from_file"}
+        if "effective_detector_t0_bins" not in timing:
             policy = timing.get("t0_policy", {"mode": "from_file"})
             resolve_selected_timing(
                 histograms,
@@ -78,6 +89,12 @@ def quick_asymmetry(
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
             )
+        pair = independent_pair_indices(timing, n_histograms=len(histograms))
+        indices = sorted(sum(pair, ()))
+        common_t0 = max(effective_detector_t0_bins(histograms, timing)[i] for i in indices)
+        reference = selected_t0_reference(histograms, timing, selected_indices=indices)
+        if histograms[reference].t0_time_us is not None:
+            t0_time_us = common_t0_time_us(histograms, timing, common_t0, selected_indices=indices)
         # File-good quick looks derive bounds from acquired histograms, never
         # a scalar window left by another selected pair or an unavailable one.
         file_grouping = {
@@ -87,16 +104,9 @@ def quick_asymmetry(
         }
         grouped = group_forward_backward(histograms, file_grouping)
         alignment = grouped.counts.alignment
+        if observation is not None:
+            alignment = observation.acquired_alignment(alignment)
         common_t0 = grouped.common_t0 + alignment.first_bin
-        reference = selected_t0_reference(
-            histograms,
-            timing,
-            selected_indices=[i for i, _ in alignment.detector_offsets],
-        )
-        if histograms[reference].t0_time_us is not None:
-            t0_time_us = (
-                grouped.counts.t0_time_us + alignment.first_bin * grouped.counts.bin_width_us
-            )
         first, last = good_window_for_groups(
             [i for i, _ in alignment.detector_offsets],
             effective_detector_t0_bins(histograms, timing),
@@ -125,7 +135,8 @@ def quick_asymmetry(
             timing={
                 k: v
                 for k, v in timing.items()
-                if k.startswith(("effective_", "t0_search", "t0_policy"))
+                if "period_inputs" not in grouping
+                and k.startswith(("effective_", "t0_search", "t0_policy"))
             },
         )
     asymmetry, error, validity = ratio_with_count_errors(
@@ -148,6 +159,7 @@ def quick_asymmetry(
         timing={
             k: v
             for k, v in timing.items()
-            if k.startswith(("effective_", "t0_search", "t0_policy"))
+            if "period_inputs" not in grouping
+            and k.startswith(("effective_", "t0_search", "t0_policy"))
         },
     )

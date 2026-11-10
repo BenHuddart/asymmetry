@@ -47,7 +47,11 @@ def test_acquired_selected_correction_matches_original_raw_samples(source):
     frames = grouping["good_frames"]
     # Synthetic coefficients test transport, not a physical acquisition calibration.
     coefficient = 0.01 * width * frames / max(float(np.max(h.counts)) for h in run.histograms[:2])
-    grouping = dict(grouping, deadtime_mode="file", deadtime_file_us=[coefficient, -coefficient])
+    grouping = dict(
+        grouping,
+        deadtime_mode="manual",
+        dead_time_us=[coefficient, -coefficient] + [0.0] * (len(run.histograms) - 2),
+    )
     original = [hist.counts.copy() for hist in run.histograms]
     result = corrected_grouped_counts(
         histograms=run.histograms,
@@ -55,11 +59,11 @@ def test_acquired_selected_correction_matches_original_raw_samples(source):
         forward_idx=[0],
         backward_idx=[1],
         use_deadtime=True,
-        deadtime_mode="file",
+        deadtime_mode="manual",
         use_background=False,
     )
     assert result.corrections.deadtime.status == "applied"
-    assert result.alignment == raw.alignment
+    assert replace(result.alignment, acquired_detectors=()) == raw.alignment
     assert result.window == raw.window
     assert result.t0_time_us == raw.t0_time_us
     for index, group in enumerate((result.forward, result.backward)):
