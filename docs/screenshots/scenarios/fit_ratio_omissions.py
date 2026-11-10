@@ -10,7 +10,7 @@ class FitRatioOmissionsScenario(Scenario):
     description = (
         "Sparse synthetic Ag histogram fits report omissions and unavailable residual spectra."
     )
-    size = (1180, 1100)
+    size = (1180, 280)
     requires_fit = True
 
     def build(self) -> QWidget:
@@ -34,9 +34,12 @@ class FitRatioOmissionsScenario(Scenario):
         window.set_cached_recommendation(recommendation)
         window._answer_card._residuals_toggle.setChecked(True)
         window._follow_a(recommendation.assessments[0].template.key)
-        window._result_scroll.ensureWidgetVisible(window._compare_warning_text)
+        details = window._compare_warning_text
+        details.setParent(None)
+        window.close()
+        window.deleteLater()
         _process_events_for(milliseconds=150)
-        return window
+        return details
 
 
 register(FitRatioOmissionsScenario())

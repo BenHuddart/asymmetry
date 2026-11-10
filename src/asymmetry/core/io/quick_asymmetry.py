@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
-from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
@@ -109,6 +109,9 @@ def quick_asymmetry(
             n_bins=alignment.first_bin + alignment.length,
         )
         window = alignment.window({"first_good_bin": first, "last_good_bin": last})
+        edges = np.arange(grouped.forward.size + 1)
+        vf = linear_combination_variance(grouped.counts.forward, edges)
+        vb = linear_combination_variance(grouped.counts.backward, edges)
     except ValueError as exc:
         return QuickAsymmetry(
             np.array([], dtype=np.float64),
@@ -128,8 +131,8 @@ def quick_asymmetry(
     asymmetry, error, validity = ratio_with_count_errors(
         grouped.forward,
         grouped.backward,
-        np.sqrt(grouped.forward),
-        np.sqrt(grouped.backward),
+        np.sqrt(vf),
+        np.sqrt(vb),
         alpha=grouped.alpha,
     )
     return QuickAsymmetry(

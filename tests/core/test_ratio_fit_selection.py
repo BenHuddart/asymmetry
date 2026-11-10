@@ -324,3 +324,79 @@ def test_cosubtract_worker_drops_detector_variance_arrays():
     assert "detector_variance" not in record.run.metadata["combination"]
     assert record.ratio_validity.report().used == 1000
     assert len(pickle.dumps(record)) < len(pickle.dumps(ds)) / 2
+
+
+def test_known_fit_record_mean_retains_final_definedness_and_variance():
+    ds = reduce_run(_run([0, 60, 0, 40], [0, 40, 10, 60]), ReductionSettings())
+    merged = prepare_wizard_dataset(ds.fit_record(), 2)
+    np.testing.assert_array_equal(merged.ratio_validity.reasons, [1, 0])
+    observed = _dataset_observations(merged, None, None)
+    assert observed.report.used == 1
+    np.testing.assert_allclose(observed.values, [-60.0])
+    np.testing.assert_allclose(observed.sigma, [np.sqrt(24.0)])
+    assert not pickle.loads(pickle.dumps(merged)).ratio_validity.reasons.flags.writeable
+
+
+def test_existing_positional_gaussian_window_still_selects_same_support():
+    from asymmetry.core.fitting.likelihood import GaussianObservations
+
+    observed = GaussianObservations(np.arange(5.0), np.zeros(5), np.ones(5), None, 1.0, 2.0)
+    np.testing.assert_array_equal(observed.time, [1.0, 2.0])
+    assert observed.report is None
+    restored = pickle.loads(pickle.dumps(observed))
+    np.testing.assert_array_equal(restored.time, [1.0, 2.0])
+
+
+def test_global_prescreen_completion_and_partition_count_only_fitted_observations():
+    from dataclasses import replace
+
+    import asymmetry.core.fitting.fit_wizard as single
+    import asymmetry.core.fitting.global_fit_wizard as global_wizard
+
+    template = single.build_null_baseline_templates()[0]
+    datasets = []
+    sources = {}
+    for number in [1, 2]:
+        run = _run([0, 0, 52, 48] * 12, [0, 10, 48, 52] * 12)
+        run.run_number = number
+        dataset = reduce_run(run, ReductionSettings())
+        datasets.append(dataset)
+        source = single.build_fit_wizard_recommendation_for_templates(
+            dataset, (template,), variant_budget=1
+        )
+        assert source.analysed_points == 24
+        sources[number] = replace(
+            source, build_signature=single.single_fit_build_signature(None, dataset=dataset)
+        )
+    rows, _ = global_wizard._build_single_fit_prescreen_assessments(
+        datasets,
+        {n: r.fingerprint for n, r in sources.items()},
+        [template],
+        single_fit_recommendations_by_run=sources,
+        current_parameter_types={},
+        current_values={},
+        parameter_bounds={},
+        axis_key="run_number",
+        metric=sources[1].metric,
+        repair_partial_incomplete=False,
+    )
+    row = rows[template.key]
+    assert row.sample_count == 48
+    assert any("undefined ratio" in message for message in row.series_warnings)
+    table, _, count = global_wizard._partition_inputs_from_prescreen(
+        datasets, rows, analysed_points_by_run={n: r.analysed_points for n, r in sources.items()}
+    )
+    assert count == 48
+    for number in [1, 2]:
+        assert table[number][template.key] == pytest.approx(
+            row.fit_results_by_run[number].chi_squared + np.log(24)
+        )
+    plan = global_wizard._plan_run_completion(
+        datasets[0],
+        (template,),
+        sources[1],
+        rebin_factor=2,
+        metric=sources[1].metric,
+        sibling_values_by_template={},
+    )
+    assert plan.analysed_points == 12

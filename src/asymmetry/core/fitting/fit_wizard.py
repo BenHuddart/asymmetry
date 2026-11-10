@@ -3136,7 +3136,7 @@ def build_fit_wizard_recommendation(
             family_reports=family_reports,
             scope_note=scope_note,
             rebin_factor=rebin_factor,
-            analysed_points=int(analysis_dataset.n_points),
+            analysed_points=gaussian_selection(analysis_dataset).used,
             build_signature=build_signature,
         ),
         metric,
@@ -3206,6 +3206,7 @@ def build_fit_wizard_recommendation_for_templates(
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
             fingerprint=active_fingerprint,
+            analysed_points=gaussian_selection(dataset).used,
             templates=active_templates,
             assessments=assessments,
             metric=metric,

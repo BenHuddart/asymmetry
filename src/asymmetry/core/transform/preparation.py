@@ -249,7 +249,7 @@ def prepare_wizard_dataset(
         return dataset
     observation = dataset.histogram_observation
     if observation is None or "rotating_frame" in dataset.metadata:
-        return replace(dataset, ratio_validity=None).merge_curve_bins(factor)
+        return dataset.merge_curve_bins(factor)
     # Selection indices belong to the current output, not to new midpoint times.
     merged = observation.merge(dataset.n_points, factor)
     reduced = prepare_histogram_asymmetry(

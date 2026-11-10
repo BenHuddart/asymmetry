@@ -60,6 +60,9 @@ class RatioValidity:
         reasons.setflags(write=False)
         object.__setattr__(self, "reasons", reasons)
 
+    def __reduce__(self):
+        return type(self), (self.reasons,)
+
     def select(self, selection) -> "RatioValidity":
         """Select the same bins as a curve crop."""
         return RatioValidity(self.reasons[selection])

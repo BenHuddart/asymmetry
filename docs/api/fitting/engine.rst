@@ -10,9 +10,6 @@ Fit engine
    :show-inheritance:
 
 
-.. autoclass:: asymmetry.core.fitting.engine.FitResult
-   :members:
-
 Known histogram datasets carry :class:`~asymmetry.core.data.ratio_validity.RatioValidity`
 independently of their full display arrays. Gaussian dataset fitting selects
 usable observations within the fit window; array inputs keep strict validation.

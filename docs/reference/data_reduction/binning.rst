@@ -328,14 +328,6 @@ arrays, and valid selected windows at their input boundaries. A malformed
 request raises a contextual error; these checks do not impose new facility-file
 admission rules. See :ref:`comparison-binning` for the comparison scope.
 
-**References**
-
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
-  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
-  rebinning schemes and counting statistics.
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
-- `WiMDA homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_.
-
 Gaussian fitting support
 ------------------------
 
@@ -346,3 +338,11 @@ bin membership before another merge; it does not remove unusable observations
 before summing their counts. The full output time grid is retained for spectral
 operations. Gaussian fitting alone selects the usable observations, as described
 in :ref:`asymmetry-error-fallback`.
+
+**References**
+
+- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+  Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
+  rebinning schemes and counting statistics.
+- F. L. Pratt, Physica B **289–290**, 710 (2000).
+- `WiMDA homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_.

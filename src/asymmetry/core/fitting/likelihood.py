@@ -68,9 +68,9 @@ class GaussianObservations:
     values: NDArray[np.float64]
     sigma: NDArray[np.float64]
     run_number: int | str | None = None
-    report: ObservationReport | None = None
     t_min: InitVar[float | None] = None
     t_max: InitVar[float | None] = None
+    report: ObservationReport | None = None
 
     def __post_init__(self, t_min, t_max):
         time, values, sigma = _observation_arrays(
@@ -93,7 +93,15 @@ class GaussianObservations:
             object.__setattr__(self, name, array)
 
     def __reduce__(self):
-        return type(self), (self.time, self.values, self.sigma, self.run_number, self.report)
+        return type(self), (
+            self.time,
+            self.values,
+            self.sigma,
+            self.run_number,
+            None,
+            None,
+            self.report,
+        )
 
 
 @dataclass(frozen=True)

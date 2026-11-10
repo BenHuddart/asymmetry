@@ -900,6 +900,14 @@ physical judgement. Inspect the fit overlay, residuals, and parameter values
 before accepting the recommendation, especially when two candidates score
 similarly.
 
+.. figure:: /_generated/screenshots/fit_ratio_omissions.png
+   :width: 100%
+   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic Ag fit.
+
+   Sparse Ag control with an authored fixed-background sensitivity operation.
+   The fit keeps usable signed observations; the display retains the full grid.
+   Omission counts and unavailable residual diagnostics belong to the core result.
+
 .. [aic_primary] H. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
    `doi:10.1109/TAC.1974.1100705 <https://doi.org/10.1109/TAC.1974.1100705>`_.
 .. [aicc_primary] C. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
@@ -908,11 +916,3 @@ similarly.
    `doi:10.1080/03610927808827599 <https://doi.org/10.1080/03610927808827599>`_.
 .. [bic_primary] G. Schwarz, Ann. Statist. **6**, 461–464 (1978),
    `doi:10.1214/aos/1176344136 <https://doi.org/10.1214/aos/1176344136>`_.
-
-.. figure:: /_generated/screenshots/fit_ratio_omissions.png
-   :width: 100%
-   :alt: Sparse synthetic Ag fit with omission counts and selected residuals.
-
-   Sparse Ag control with an authored fixed-background sensitivity operation.
-   The fit keeps usable signed observations; the display retains the full grid.
-   Omission counts and unavailable residual diagnostics belong to the core result.

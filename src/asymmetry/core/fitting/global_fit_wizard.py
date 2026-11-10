@@ -1162,13 +1162,7 @@ def _run_wavefront_assignment_task(
 
 @dataclass(frozen=True)
 class _RunCompletionPlan:
-    """One run's share of the completion pass: what is kept, what must be fitted.
-
-    Built in the parent, so the source recommendation — tens of megabytes once
-    every cell carries its dense fitted curves — never crosses a process
-    boundary. Only the ``tasks`` do, and each of those carries the rebinned
-    record and one template.
-    """
+    """Keep source curves in the parent; worker tasks carry prepared fit records."""
 
     dataset: MuonDataset
     #: ``dataset`` at the series rebin factor: what every cell of this run's row
@@ -1255,7 +1249,7 @@ def _plan_run_completion(
         dataset=dataset,
         analysis_dataset=analysis_dataset,
         source=source,
-        analysed_points=int(analysis_dataset.n_points),
+        analysed_points=gaussian_selection(analysis_dataset).used,
         kept=kept,
         tasks=tuple(tasks),
     )
@@ -2679,7 +2673,8 @@ def _build_single_fit_prescreen_assessments(
         component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
         run_diagnostics: list[RunResidualDiagnostic] = []
         sample_count = sum(
-            analysis_dataset_by_run[int(dataset.run_number)].n_points for dataset in datasets
+            gaussian_selection(analysis_dataset_by_run[int(dataset.run_number)]).used
+            for dataset in datasets
         )
         missing_runs: list[str] = []
 
@@ -2752,6 +2747,12 @@ def _build_single_fit_prescreen_assessments(
                 ]
             )
 
+        series_warnings += tuple(
+            f"Run {dataset.run_label}: {message}"
+            for dataset in datasets
+            if int(dataset.run_number) in fit_results_by_run
+            for message in fit_results_by_run[int(dataset.run_number)].warnings
+        )
         assessments_by_key[template.key] = GlobalCandidateAssessment(
             template=template,
             fit_results_by_run=fit_results_by_run,
