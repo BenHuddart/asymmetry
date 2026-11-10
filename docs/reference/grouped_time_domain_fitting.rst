@@ -176,13 +176,20 @@ the existing fit path where practical:
 * grouping definitions come from the active dataset's **Grouping** payload
 * detector deadtime correction is applied to the requested cohort before summation
   when the grouping payload has it enabled
-* grouped detector traces honour the grouping good-bin limits and bunching factor
+* grouped detector traces honour the grouping good-bin limits and authored fixed
+  bunching factor
 * the active fit range still decides which part of the active dataset is sent to the grouped fitter
 
 The grouped plot view itself shows the grouped lifetime-corrected traces built
 from the current grouped analysis dataset, while the grouped fit uses the
 active fit-range restricted dataset. Required native bins follow merged-bin
 centres and fit exclusions, together with active background dependencies.
+If packing, time limits, or exclusions leave no complete fit bin, preparation
+reports ``Grouped time-domain fitting produced fewer than two usable groups``
+before unused corrections. Choose a smaller factor or a wider window; raw
+inspection and the saved request remain available. See
+:doc:`count_domain_fitting` for the shared input contract.
+
 Missing required File coefficients leave the whole joint fit cohort uncorrected;
 unused missing entries and inverse poles outside the required union do not
 block it. Applied correction retains measured or supplied variance and original

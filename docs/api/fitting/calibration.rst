@@ -121,6 +121,12 @@ Projection value, error, method and source views update together; a manual
 override removes the previous measurement's attribution rather than retaining
 its error or reference run.
 
+``reduce_run(run, settings)`` honours the authored count merge without spectral
+analysis. TF count preparation honours the fixed grouping factor; a selection
+with no complete fit bin raises the existing count-domain diagnostic before
+unused correction preflight. The raw run and stored historical results remain
+unchanged. See :doc:`/reference/count_domain_fitting`.
+
 For workflow reduction, implicit settings inherit a selected projection's alpha.
 An explicit calibration result or authored scalar overrides the requested pair;
 other projections retain their own policies and beta one. Use

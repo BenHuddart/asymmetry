@@ -665,7 +665,7 @@ directory.
                     [--background none|tail_fit|range[:FIRST:LAST]]
                     [--t0-offset BINS] [--t-good-offset BINS]
                     [--period RED|GREEN|N|green-red] [--rebin REBIN]
-                    [--allow-aliasing] [--tmin TMIN] [--tmax TMAX]
+                    [--tmin TMIN] [--tmax TMAX]
                     [--plot-tmax PLOT_TMAX]
                     [--plot] [--json] [--workdir WORKDIR]
                     [--instrument NAME]
@@ -2126,18 +2126,20 @@ need magnetic line-shift/splitting interpretations.
 Sampling bandwidth in stored reductions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``reduce --rebin`` merges raw counts before forming the asymmetry and lowers
-the Nyquist frequency used by later fits and transforms. Before merging, the workflow checks detected spectral
-lines on the native record. It rejects a factor that would fold a detected line
-through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
-factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
-applied field alone does not forbid averaging a nonprecessing LF trace; the
-check protects measured lines. Fit-recipe ``rebin`` uses independent curve-bin
-means, recorded as ``rebin_operation: merge_curve_bins`` in the recipe.
-To average a known fast line away on purpose, for example to study slower
-relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
-"Rebin even when a detected line lies above the new Nyquist frequency,
-deliberately averaging a known fast line away to study slower relaxation".
+``reduce --rebin`` merges counts before forming the asymmetry, composing with
+any base binning. It honours the requested merge without spectral analysis or
+a peak veto. The reduction summary reports precession as unmeasured; use an
+explicit survey or spectral operation to measure it. Cached records retain
+their recorded summaries.
+
+Merging can attenuate a fast line or fold it into the displayed band. Check the
+native-resolution spectrum and choose a width small enough for the frequencies
+of interest. Deliberately averaging a known fast line to study slower relaxation
+is permitted; record that choice. A shorter analysis window or ``--plot-tmax``
+can reduce fit cost or zoom without coarsening the stored observations.
+Actual FFT and MaxEnt operations retain their uniform-sampling requirements.
+Fit-recipe ``rebin`` uses independent curve-bin means, recorded as
+``rebin_operation: merge_curve_bins`` in the recipe.
 
 Automatic timing API
 --------------------
