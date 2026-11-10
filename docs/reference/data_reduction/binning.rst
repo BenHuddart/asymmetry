@@ -206,6 +206,29 @@ use the same count-level merge. For period sums and differences,
 period first, then combines :math:`A_g\pm A_r` with variances added. Periods
 must have identical output time arrays; mismatches raise ``ValueError``.
 
+To replay the selected pair, calibration, period operation, corrections, and
+base binning from an explicitly prepared run, use
+:func:`~asymmetry.core.transform.preparation.prepare_histogram_asymmetry`:
+
+.. code-block:: python
+
+   from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+   result = prepare_histogram_asymmetry(
+       run, merge=4, facility=None, reference=None,
+   )
+
+Here ``facility=None`` uses the existing facility resolution from the run's
+metadata and grouping; an empty string explicitly disables facility-specific
+conventions. ``reference=None`` supplies no reference acquisition.
+For reference subtraction, supply a resolved ``BackgroundReference`` with its own
+timing and scaling. The operation adapts the reference exposure for each selected
+period. It reads complete good-bin support from the run; it does not infer how an
+existing curve was cropped, rotated, or merged. An extra merge is relative to
+the run's base output bins. This is the same numerical operation used by the
+histogram toolbar. The API is synchronous; interactive applications run expensive
+preparation in their task infrastructure and can supply ``cancel_check``.
+
 Absent binning keys use fixed factor 1 and widths 0.08/0.25 µs. Present invalid
 values raise errors, for example
 ``binning mode 'Varaible' is not one of fixed, variable, constant_error.`` or
