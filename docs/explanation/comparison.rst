@@ -96,6 +96,73 @@ descriptions compare workflows without claiming executable numerical agreement;
 the `author's homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_
 provide general context.
 
+.. _comparison-asymmetry-errors:
+
+Asymmetry values, coordinates, and errors
+-----------------------------------------
+
+Asymmetry forms :math:`A=(F-\alpha B)/(\beta F+\alpha B)` from corrected,
+packed counts, with alpha on the backward group. Its first-order error uses
+retained count variances, including existing shared-background/overlap terms
+when counts are merged. See :ref:`asymmetry-counting-errors` for the derivation,
+signed-count example, and current fallback behaviour.
+Dataset values and errors are percent; count-to-ratio primitives are fractions.
+Neither scale imposes universal estimator bounds.
+
+WiMDA 1.326 ordinary F/B uses the beta-one ratio with a small positive-count
+variance adjustment. Its positive-count errors approach the derivative limit
+at high counts but are not identical. Its ordinary F/B fitting excludes
+nonpositive corrected groups, distinct from plotted fallback points and other
+count-fitting workflows. The versioned binning comparisons below check values;
+they do not establish identical error bars. The `WiMDA homepage/manual
+<https://shadow.nd.rl.ac.uk/wimda/>`_ provides workflow context.
+
+In Mantid's `AsymmetryCalc v1 documentation
+<https://docs.mantidproject.org/nightly/algorithms/AsymmetryCalc-v1.html>`_
+(reviewed 6.16 development), beta is one and alpha has no error. Its count-based
+rule is :math:`\sigma_A^2=(F+\alpha^2B)(1+A^2)/(F+\alpha B)^2`, treating
+numerator and denominator as independent. With 6000 forward and 4000 backward
+counts and unity alpha, both values are 20 %, but the documented rule gives
+1.019803903 percentage points, compared with Asymmetry's 0.979795897.
+This is documented arithmetic, not a native Mantid execution comparison.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) type 2 fits the raw coordinate
+:math:`r=(F-B)/(F+B)` with a transformed model and reciprocal alpha
+:math:`\alpha_m=1/\alpha`. Here raw means unbalanced; requested background
+subtraction is already applied. Its beta convention agrees after alpha
+conversion. For :math:`u=1+r,v=1-r`, converting to Asymmetry's coordinate gives
+
+.. math::
+
+   A(r)=\frac{u-\alpha v}{\beta u+\alpha v},\qquad
+   \sigma_A\simeq
+   \left|\frac{2\alpha(1+\beta)}{(\beta u+\alpha v)^2}\right|\sigma_r.
+
+For repeated counts :math:`F=60,B=40`, fixed :math:`\alpha=1.25,\beta=0.8`,
+zero backgrounds, corrections off, and packing one, native ASCII data/error
+columns give :math:`r=0.2,\sigma_r\simeq0.0979796` with :math:`\alpha_m=0.8`.
+Converting both gives :math:`A=0.1020408163,\sigma_A=0.1147720100` in fractions,
+agreeing with Asymmetry within the six-significant-digit export precision
+(relative tolerance :math:`5\times10^{-6}`). The unity dense control also
+agrees. These checks use interior points on owned synthetic NeXus inputs,
+one native thread, and fixed balances/backgrounds. The fitted theory column
+is not a reduction oracle. See the `musrfit type-2 manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_ and
+`packing tutorial <https://musruser.psi.ch/Tutorial/Tutorial1.html>`_.
+
+First-order local error agreement after a nonlinear coordinate change does not
+establish identical Gaussian objectives for arbitrary residuals or identical
+model recovery. musrfit's empty-native-bin variance treatment also differs from
+Asymmetry's current fallback errors; native packing is not a statistical
+coverage or wizard-ranking test.
+
+In these reviewed standard F/B workflows, none passes an external alpha/beta
+calibration covariance through a full reduced-bin/run covariance to the
+subsequent fit. Fitting coefficients within a model, as in musrfit, is a separate
+treatment. This statement does not restrict custom analyses in extensible
+platforms. Asymmetry's ordinary errors are conditional on the selected
+coefficients; see :ref:`conditional-calibration-errors`.
+
 .. _comparison-binning:
 
 Binning and timestamps

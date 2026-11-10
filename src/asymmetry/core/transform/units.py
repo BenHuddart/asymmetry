@@ -2,11 +2,11 @@ r"""Explicit asymmetry units — the fraction/percent divide, named.
 
 Two conventions coexist across the API and both are internally consistent:
 
-* the dimensionless **fraction** :math:`A \in [-1, 1]`, what the low-level
+* the dimensionless **fraction**, what the low-level
   primitives (:func:`~asymmetry.core.transform.compute_asymmetry`,
   :func:`~asymmetry.core.transform.binned_fb_asymmetry`,
   :func:`~asymmetry.core.transform.integrate_asymmetry`) return; and
-* **percent** :math:`0`–:math:`100`, what the loaders, the reductions
+* **percent** (fraction × 100), what the loaders, the reductions
   (:func:`~asymmetry.core.transform.reduce_grouped_asymmetry`),
   :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` and every built-in
   fit model's amplitude use (``A0`` defaults to ``25``).
@@ -52,9 +52,9 @@ class AsymmetryUnit(Enum):
     is that every producer can state which of the two it means.
     """
 
-    #: Dimensionless fraction, :math:`A \in [-1, 1]`.
+    #: Dimensionless fraction.
     FRACTION = "fraction"
-    #: Percent, :math:`0`–:math:`100` (fraction × 100).
+    #: Percent (fraction × 100).
     PERCENT = "percent"
 
     @property
@@ -76,12 +76,12 @@ class AsymmetryUnit(Enum):
         return other.per_fraction / self.per_fraction
 
 
-#: The dimensionless fraction :math:`A \in [-1, 1]`. Module-level alias for
+#: The dimensionless fraction. Module-level alias for
 #: :attr:`AsymmetryUnit.FRACTION`, so a keyword argument or a docstring can name
 #: the scale without importing the enum.
 ASYMMETRY_FRACTION = AsymmetryUnit.FRACTION
 
-#: Percent, :math:`0`–:math:`100`. Module-level alias for
+#: Percent, fraction × 100. Module-level alias for
 #: :attr:`AsymmetryUnit.PERCENT`.
 ASYMMETRY_PERCENT = AsymmetryUnit.PERCENT
 

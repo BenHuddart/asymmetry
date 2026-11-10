@@ -9,11 +9,11 @@ count-rate balance (detector efficiencies × solid angles) and β is the
 intrinsic-asymmetry balance β = A_{0,B}/A_{0,F} (musrfit asymmetry fit
 type 2; β multiplies the *forward* counts in our α-on-backward convention,
 which is algebraically identical to musrfit's α-on-forward form with
-α_musrfit = 1/α — see docs/porting/beta-correction/). β = 1 recovers the
+α_musrfit = 1/α). β = 1 recovers the
 standard formula A = (F − αB)/(F + αB).
 
-Scale: every asymmetry this module returns is the dimensionless **fraction**
-``A ∈ [-1, 1]``, never percent. See
+Scale: count-to-ratio outputs are dimensionless fractions, never percent.
+Signed corrected counts and general beta need not give values in [-1, 1]. See
 :mod:`asymmetry.core.transform.units` and "Asymmetry units across the API" in the
 documentation for the whole picture.
 """
@@ -44,11 +44,14 @@ def compute_asymmetry(
     alpha: float = 1.0,
     beta: float = 1.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Calculate asymmetry and its statistical error.
+    """Calculate fractional asymmetry and its first-order Poisson error.
+
+    Alpha/beta are fixed. Zero-denominator and degenerate raw-count bins use
+    a fallback error of one fraction, which still has finite Gaussian weight.
 
     Scale
     -----
-    This primitive returns the dimensionless **fraction** ``A ∈ [-1, 1]``
+    This primitive returns the dimensionless **fraction**
     (and a fractional error), matching the textbook definition above. Note
     this differs from the loaded :class:`~asymmetry.core.data.dataset.MuonDataset`
     surface: ``ds.asymmetry`` / ``ds.error`` are on the **percent** scale
@@ -71,7 +74,7 @@ def compute_asymmetry(
     Returns
     -------
     asymmetry, error
-        **As a fraction** (``A ∈ [-1, 1]``), with the error on the same scale —
+        **As a fraction**, with the error on the same scale —
         *not* percent. Arrays of the same length as the inputs. Scale by 100 (or
         :func:`asymmetry.core.transform.units.to_percent`) before handing these to
         anything percent-scale: a
@@ -85,27 +88,15 @@ def compute_asymmetry(
     # Only divide on non-zero denominator.
     safe = denominator != 0.0
     asym = np.zeros_like(f)
-    # Default error 1.0 is a "no information" sentinel used for both the
-    # zero-denominator bins and the degenerate one-sided bins below.
+    # Fallback error 1.0 has finite weight at the Gaussian fit boundary.
     err = np.ones_like(f)
 
     asym[safe] = numerator[safe] / denominator[safe]
 
-    # First-order Poisson propagation of A = (F - alpha B)/(beta F + alpha B) with
-    # var(F) = F, var(B) = B, keeping the num/den covariance:
-    #   dA/dF = alpha B (1 + beta)/D^2,  dA/dB = -alpha F (1 + beta)/D^2
-    #   var(A) = alpha^2 (1 + beta)^2 F B (F + B) / (beta F + alpha B)^4
-    #          = (1 - A^2)/(F + B)        at alpha = beta = 1.
-    # At beta = 1 this is the textbook / WiMDA / musrfit result. (The older
-    # Mantid AsymmetryCalc model propagated num and den as *independent*,
-    # dropping that covariance and over-estimating sigma_A by
-    # (1 + A^2)/(1 - A^2); see docs/porting/asymmetry-error-propagation/.
-    # musrfit itself weights fits with the *raw* asymmetry error, independent
-    # of alpha/beta — a recorded divergence, see docs/porting/beta-correction/.)
-    #
-    # One-sided bins (F * B == 0) have a degenerate zero first-order variance
-    # (A is pinned to +/-1), which is useless as a fit weight, so they keep
-    # the 1.0 sentinel rather than a zero error.
+    # At fixed alpha/beta, D = beta F + alpha B, with Poisson variances F,B:
+    # dA/dF = alpha B (1 + beta)/D²; dA/dB = -alpha F (1 + beta)/D².
+    # The first-order variance is alpha² (1 + beta)² F B (F + B)/D⁴.
+    # One-sided raw counts have zero first-order variance and retain error 1.
     informative = safe & (f * b > 0.0)
     if np.any(informative):
         den = denominator[informative]
@@ -131,8 +122,11 @@ def compute_asymmetry_with_count_errors(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Calculate asymmetry from counts with supplied count uncertainties.
 
-    This is used for musrfit-style background-corrected histograms, where the
-    count uncertainties are formed before or during background subtraction.
+    First-order propagation uses retained count uncertainties, including for
+    signed background-corrected counts, conditional on fixed alpha/beta.
+    A zero denominator returns value zero/error one; a defined ratio with
+    zero count-variance contribution retains error one. These fallbacks have
+    finite Gaussian weight. No calibration covariance is added.
     The asymmetry convention remains Asymmetry's convention, with ``alpha``
     multiplying the backward group (and ``beta`` the forward group in the
     denominator).
@@ -148,7 +142,7 @@ def compute_asymmetry_with_count_errors(
     Returns
     -------
     asymmetry, error
-        **As a fraction** (``A ∈ [-1, 1]``), exactly as
+        **As a fraction**, exactly as
         :func:`compute_asymmetry` — *not* percent.
     """
     f, b, ef, eb = validated_count_arrays(forward, backward, forward_error, backward_error)
