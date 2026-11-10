@@ -65,7 +65,7 @@ def test_large_observation_snapshot_runs_on_existing_worker(qapp, monkeypatch, n
     monkeypatch.setattr(preparation, "histogram_observation", record)
     result = capture_histogram_observation(source, facility=None, reference=None, parent=None)
     assert worker_threads == [True]
-    assert np.shares_memory(result.source.histograms[0].counts, source.histograms[0].counts)
+    assert not np.shares_memory(result.source.histograms[0].counts, source.histograms[0].counts)
     assert not result.source.histograms[0].counts.flags.writeable
 
 
