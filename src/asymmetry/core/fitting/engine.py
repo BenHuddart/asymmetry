@@ -7,7 +7,7 @@ import math
 import warnings
 from collections import Counter
 from collections.abc import Callable, Hashable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,13 +22,16 @@ from asymmetry.core.fitting.likelihood import (
     gaussian_chi2,
     poisson_deviance,
 )
+from asymmetry.core.fitting.likelihood import (
+    dataset_observations as _dataset_observations,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.results import FitResult
 from asymmetry.core.transform.corrections import (
     correction_metadata,
     correction_warnings,
     require_complete_dataset,
 )
-from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
 class AsymmetryScaleWarning(UserWarning):
@@ -209,17 +212,6 @@ def _warn_on_fixed_frequency_far_from_field(
             )
     except Exception:  # noqa: BLE001 - a guard must never break the fit it guards
         return
-
-
-def _dataset_observations(dataset, t_min, t_max):
-    return GaussianObservations(
-        dataset.time,
-        dataset.asymmetry,
-        dataset.error,
-        run_number=dataset.run_number,
-        t_min=t_min,
-        t_max=t_max,
-    )
 
 
 class FitCancelledError(RuntimeError):
@@ -583,63 +575,6 @@ COST_FACTORIES: dict[Objective, CostFactory] = {
     GAUSSIAN_COST.objective: GAUSSIAN_COST,
     POISSON_COST.objective: POISSON_COST,
 }
-
-
-@dataclass
-class FitResult:
-    """Container for the outcome of a fit.
-
-    Scale: :attr:`residuals`, and every asymmetry-valued entry of
-    :attr:`parameters` / :attr:`uncertainties` (an ``A0``, ``A``, ``baseline``),
-    are **on the scale of the data that was fitted** — percent (0–100) for a
-    :class:`~asymmetry.core.data.dataset.MuonDataset` and for the built-in models'
-    seeds. Nothing here rescales, so a fit run on fraction-scale arrays reports
-    fraction-scale amplitudes. See "Asymmetry units across the API" in the
-    documentation.
-    """
-
-    success: bool
-    objective: Objective
-    chi_squared: float = 0.0
-    reduced_chi_squared: float = 0.0
-    parameters: ParameterSet = field(default_factory=ParameterSet)
-    uncertainties: dict[str, float] = field(default_factory=dict)
-    covariance: NDArray[np.float64] | None = None
-    covariance_parameters: list[str] = field(default_factory=list)
-    #: ``data − model`` over the fitted window, on the **data's** asymmetry scale.
-    residuals: NDArray[np.float64] | None = None
-    message: str = ""
-    function_calls: int = 0
-    gradient_calls: int = 0
-    hessian_calls: int = 0
-    edm: float | None = None
-    covariance_accurate: bool = False
-    #: Degrees of freedom ν = N_data − N_free for this (sub)fit. Used by the χ²
-    #: quality verdict; 0 means "unknown" and callers fall back to inference.
-    dof: int = 0
-    #: Opt-in MINOS asymmetric 1σ intervals, ``{param: (lower, upper)}`` with
-    #: ``lower < 0 < upper`` (iminuit's signed offsets). ``None`` when MINOS was
-    #: not requested or every scan failed. A *display-only* overlay — the
-    #: symmetric HESSE :attr:`uncertainties` are unchanged and remain the value
-    #: every downstream surface (trends, export, propagation, promote) consumes.
-    minos_errors: dict[str, tuple[float, float]] | None = None
-    #: Fit warnings are both retained here and emitted through Python warnings.
-    warnings: list[str] = field(default_factory=list)
-    correction_metadata: dict = field(default_factory=dict)
-    deadtime_calibration: DeadtimeCalibration | None = None
-    #: Minimum over the whole minimized objective, shared by coupled members.
-    minimum_expected_count: float | None = None
-
-    def __post_init__(self):
-        self.objective = Objective(self.objective)
-        if self.minimum_expected_count is not None and (
-            self.objective is not Objective.POISSON
-            or not math.isfinite(self.minimum_expected_count)
-            or self.minimum_expected_count < 0
-        ):
-            raise ValueError(
-                "minimum expected count requires a finite non-negative Poisson expectation"
-            )
 
 
 @dataclass(frozen=True)
@@ -1136,6 +1071,23 @@ class _CoupledSolution:
     covariance_accurate: bool = False
 
 
+def _insufficient_coupled_solution(problem):
+    """Return an explicit failed outcome when selected N cannot leave positive dof."""
+    known = any(
+        isinstance(record, GaussianObservations) and record.report is not None
+        for record in problem.observations.values()
+    )
+    if known and len(problem.all_times) <= len(problem.initial_values):
+        return _CoupledSolution(
+            np.asarray(problem.initial_values),
+            lambda _: None,
+            None,
+            False,
+            "Insufficient usable Gaussian observations for coupled parameters.",
+        )
+    return None
+
+
 def _solve_coupled_minuit(
     problem: _CoupledGlobalProblem,
     *,
@@ -1152,6 +1104,9 @@ def _solve_coupled_minuit(
 ) -> _CoupledSolution:
     """Minimise the coupled problem with one Minuit over the whole parameter vector."""
 
+    insufficient = _insufficient_coupled_solution(problem)
+    if insufficient is not None:
+        return insufficient
     from iminuit import Minuit
     from iminuit.cost import LeastSquares
 
@@ -1267,6 +1222,9 @@ def _solve_coupled_least_squares(
 ) -> _CoupledSolution:
     """Minimise the coupled problem with a bounded sparse trust-region solve."""
 
+    insufficient = _insufficient_coupled_solution(problem)
+    if insufficient is not None:
+        return insufficient
     from scipy.optimize import least_squares
 
     lower = np.array([bounds[0] for bounds in problem.param_bounds], dtype=float)
@@ -1528,6 +1486,9 @@ def _pack_coupled_block(
             covariance=covariance_subset,
             covariance_parameters=covariance_order,
             residuals=residuals,
+            residual_time=record.time,
+            residual_sigma=record.sigma if isinstance(record, GaussianObservations) else None,
+            observation_report=record.report if isinstance(record, GaussianObservations) else None,
             message=invalid_model or solution.message,
             function_calls=solution.function_calls,
             gradient_calls=solution.gradient_calls,
@@ -1824,6 +1785,19 @@ class FitEngine:
 
         # Prepare parameter names, values, and constraints
         free = parameters.free_parameters
+        if (
+            isinstance(observations, GaussianObservations)
+            and observations.report is not None
+            and len(time) <= len(free)
+        ):
+            return FitResult(
+                success=False,
+                objective=Objective.GAUSSIAN,
+                parameters=parameters,
+                observation_report=observations.report,
+                message="Insufficient usable Gaussian observations for free parameters. "
+                + observations.report.summary(),
+            )
         fixed_kw = {p.name: p.value for p in parameters if p.fixed}
         # Equality link groups: each follower takes its group main's value, so
         # it drops out of the free-fit set (WiMDA "Ties").
@@ -2104,6 +2078,13 @@ class FitEngine:
             covariance=covariance,
             covariance_parameters=list(param_names) if m.valid else [],
             residuals=residuals,
+            residual_time=observations.time,
+            residual_sigma=observations.sigma
+            if isinstance(observations, GaussianObservations)
+            else None,
+            observation_report=observations.report
+            if isinstance(observations, GaussianObservations)
+            else None,
             message=invalid_model
             or _minuit_status_message(
                 m,
@@ -2398,6 +2379,29 @@ class FitEngine:
         # Hessian with n_global² plus G small per-dataset ones, so per-fit cost
         # scales ~linearly in G. Grouped local ties couple datasets, so they are
         # not separable — fall back to the joint path for those.
+        problem = _build_coupled_global_problem(
+            datasets=datasets,
+            model_fn=model_fn,
+            global_params=global_params,
+            local_params=local_params,
+            initial_params=initial_params,
+            free_global_params=free_global_params,
+            local_group_key=_local_group_key,
+            observations=observations,
+            t_min=t_min,
+            t_max=t_max,
+            cancel_callback=cancel_callback,
+        )
+
+        insufficient = _insufficient_coupled_solution(problem)
+        if insufficient is not None:
+            results, fitted_global, _ = _pack_coupled_block(
+                problem=problem,
+                block=problem.blocks[0],
+                solution=insufficient,
+                error_oversampling=error_oversampling,
+            )
+            return results, fitted_global
         if strategy == "profiled" and free_global_params and not grouped_local_ties:
             return self._global_fit_profiled(
                 datasets=datasets,
@@ -2429,19 +2433,6 @@ class FitEngine:
         # once here and the minimiser is the only thing that differs. The
         # builder is the joint fit's builder too, which is what keeps a global
         # fit's column layout and a joint fit's from ever drifting apart.
-        problem = _build_coupled_global_problem(
-            datasets=datasets,
-            model_fn=model_fn,
-            global_params=global_params,
-            local_params=local_params,
-            initial_params=initial_params,
-            free_global_params=free_global_params,
-            local_group_key=_local_group_key,
-            observations=observations,
-            t_min=t_min,
-            t_max=t_max,
-            cancel_callback=cancel_callback,
-        )
 
         # Sparse least-squares strategy. Same parameter vector, limits, ties and
         # model wrapper as the joint path — only the minimiser differs, so the
@@ -2980,6 +2971,9 @@ class FitEngine:
                 parameters=result_params,
                 uncertainties=uncertainties,
                 residuals=inner.residuals,
+                residual_time=inner.residual_time,
+                residual_sigma=inner.residual_sigma,
+                observation_report=inner.observation_report,
                 message=(
                     "Profiled global fit successful"
                     if outer_valid and inner.success

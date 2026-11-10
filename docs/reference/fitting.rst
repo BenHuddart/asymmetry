@@ -115,8 +115,9 @@ one-dimensional arrays. Times and values must be finite; stated uncertainties
 must be finite and strictly positive. These Gaussian objectives treat the stated errors as independent and known; a
 shared background contributes its marginal variance, without a full correlated
 likelihood. Ordinary reduced errors condition on the selected alpha/beta; see
-:ref:`conditional-calibration-errors`. Current reduction fallback errors also
-pass this boundary with finite weight; see :ref:`asymmetry-error-fallback`.
+:ref:`conditional-calibration-errors`. Known histogram reductions first omit
+undefined ratios and exactly zero propagated-variance observations; see
+:ref:`asymmetry-error-fallback`.
 Invalid points raise ``FitInputError``
 (a ``ValueError``) before minimization; no replacement weight is inserted.
 
@@ -135,6 +136,17 @@ The error identifies the run, zero-based point index and time. A zero error at
 point 3 of run 7 produces: "run 7, point 3 (t = 0.300 µs): uncertainty 0 is not
 finite and positive; Gaussian fits need finite positive errors".
 ``fit_arrays(..., run_number=7)`` supplies this context for bare arrays.
+
+``FitResult.observation_report`` records ``used``, ``omitted``,
+``undefined_ratio``, and ``zero_variance`` counts for a known histogram reduction.
+The shared JSON summary exposes these under ``observation_report``; generic and
+historical results without recorded classification use ``None``. The result's
+``residual_time`` pairs each residual with the exact fitted timestamp. The fit
+results card and CLI print, for example,
+``Gaussian observations: used 2, omitted 3 (undefined ratio 1, zero variance 2).``
+Valid signed values and corrected zeros with positive variance remain eligible.
+Raw count-domain fits and TF alpha/beta calibration retain their own contracts.
+
 
 ``fit(dataset, ...)`` and ``fit_arrays`` are Gaussian entry points. For a
 Poisson fit, construct ``PoissonCounts`` and pass it to

@@ -665,15 +665,11 @@ class NexusLoader(BaseLoader):
                 },
                 metadata=metadata_base,
             )
-            asymmetry, error = quick.asymmetry, quick.error
             alpha = 1.0
-
-            time_axis = quick.time
-            if quick.window is not None:
-                window = quick.window.slice
-                time_axis = time_axis[window]
-                asymmetry = asymmetry[window]
-                error = error[window]
+            window = quick.window.slice if quick.window is not None else slice(0, 0)
+            time_axis, asymmetry, error = (
+                a[window] for a in (quick.time, quick.asymmetry, quick.error)
+            )
 
             period_run_number = run_number
             run_label = str(run_number)
@@ -727,6 +723,9 @@ class NexusLoader(BaseLoader):
             datasets.append(
                 MuonDataset(
                     histogram_observation=histogram_observation(run),
+                    ratio_validity=quick.ratio_validity.select(window)
+                    if quick.ratio_validity is not None
+                    else None,
                     time=np.asarray(time_axis, dtype=np.float64),
                     asymmetry=np.asarray(asymmetry, dtype=np.float64),
                     error=np.asarray(error, dtype=np.float64),
@@ -760,16 +759,12 @@ class NexusLoader(BaseLoader):
             source_file=source_file,
         )
         combined.run.grouping["period_reduced"] = [
-            (
-                np.asarray(ds.time, dtype=np.float64).copy(),
-                np.asarray(ds.asymmetry, dtype=np.float64).copy(),
-                np.asarray(ds.error, dtype=np.float64).copy(),
-            )
-            for ds in period_datasets
+            tuple(a.copy() for a in (ds.time, ds.asymmetry, ds.error)) for ds in period_datasets
         ]
         combined.histogram_observation = replace(
             combined.histogram_observation,
             cached_periods=tuple(ds.histogram_observation for ds in period_datasets),
+            cached_validities=tuple(ds.ratio_validity for ds in period_datasets),
         )
         return combined
 

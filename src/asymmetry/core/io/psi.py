@@ -1152,26 +1152,18 @@ class PsiLoader(BaseLoader):
 
         return MuonDataset(
             histogram_observation=histogram_observation(run),
-            time=np.asarray(time_axis, dtype=np.float64),
-            asymmetry=np.asarray(asymmetry, dtype=np.float64),
-            error=np.asarray(error, dtype=np.float64),
+            ratio_validity=quick.ratio_validity.select(window)
+            if quick.ratio_validity is not None
+            else None,
+            time=time_axis,
+            asymmetry=asymmetry,
+            error=error,
             metadata=metadata,
             run=run,
         )
 
     def _detect_canonical_instrument(self, raw: _PsiRawRun, n_hist: int) -> str | None:
-        """Canonical instrument name for a freshly loaded PSI run, or ``None``.
-
-        Resolves the registry identity (e.g. ``"HAL"``) from the run's metadata,
-        detector labels, and filename via
-        :func:`~asymmetry.core.instrument.detect_instrument`. The loader stamps
-        this into ``grouping["instrument"]`` so downstream fingerprinting and the
-        stale-identity self-heal see the *canonical* name rather than the raw PSI
-        instrument string (HAL-9500 files report ``"HIFI"``, which would
-        otherwise be mistaken for the ISIS HiFi spectrometer and trigger a heal
-        that discards the loader grouping). The raw string is preserved in
-        ``metadata["instrument"]``.
-        """
+        """Resolve a canonical PSI instrument identity from acquired metadata."""
         return detect_instrument(
             n_hist,
             metadata={

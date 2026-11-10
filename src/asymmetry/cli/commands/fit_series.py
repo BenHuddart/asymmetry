@@ -367,6 +367,11 @@ def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) ->
             else ""
         )
     )
+    lines.extend(
+        f"Run {entry['run']}: {message}"
+        for entry in outcome.results
+        for message in entry.get("warnings", [])
+    )
     lines.append(f"Series written to {series_path}")
     if plot_paths:
         lines.append(f"{len(plot_paths)} plot(s) written under {plot_paths[0].parent.parent}")

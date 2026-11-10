@@ -366,7 +366,16 @@ def screen_run(
         confidence=recommendation.confidence.value,
         verdict=recommendation.verdict.value,
         caveat=recommendation.caveat,
-        summary=recommendation.summary,
+        summary=" ".join(
+            (
+                recommendation.summary,
+                *(
+                    recommendation.recommended_assessment.fit_result.warnings
+                    if recommendation.recommended_assessment is not None
+                    else ()
+                ),
+            )
+        ),
         recommended_key=recommendation.recommended_key,
         candidates=candidates,
         narrative=render_log_text(recommendation),

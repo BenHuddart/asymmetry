@@ -631,3 +631,26 @@ def test_ceiling_binning_cache_is_stale_but_history_remains_readable(reduced):
     current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     assert not workdir.is_current(entry.run_number, current)
     np.testing.assert_array_equal(workdir.reduced(entry.run_number).asymmetry, dataset.asymmetry)
+
+
+def test_current_ratio_classification_roundtrips_and_old_curves_stay_generic(reduced):
+    workdir, dataset, entry, *_ = reduced
+    workdir.write_reduced(dataset, entry)
+    restored = workdir.reduced(entry.run_number)
+    np.testing.assert_array_equal(restored.ratio_validity.reasons, dataset.ratio_validity.reasons)
+    arrays, _ = workdir._reduced_paths(entry.run_number)
+    np.savez(arrays, time=dataset.time, asymmetry=dataset.asymmetry, error=dataset.error)
+    assert workdir.reduced(entry.run_number).ratio_validity is None
+
+
+def test_ratio_policy_invalidates_reduction_reuse_without_changing_old_entries(
+    reduced, monkeypatch
+):
+    import asymmetry.core.workflow.workdir as module
+
+    workdir, dataset, entry, path, grouping, settings = reduced
+    workdir.write_reduced(dataset, entry)
+    monkeypatch.setattr(module, "RATIO_OBSERVATION_POLICY", "different_observation_policy")
+    current = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+    assert not workdir.is_current(entry.run_number, current)
+    assert workdir.reduced(entry.run_number).n_points == dataset.n_points

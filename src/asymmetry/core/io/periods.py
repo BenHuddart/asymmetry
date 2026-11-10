@@ -219,6 +219,12 @@ def select_period(
         time, asymmetry, error = reduced[index]
         run = period_run(data.run, index)
         return MuonDataset(
+            ratio_validity=(
+                data.histogram_observation.cached_validities[index]
+                if data.histogram_observation is not None
+                and data.histogram_observation.cached_validities
+                else None
+            ),
             histogram_observation=(
                 data.histogram_observation.cached_periods[index]
                 if data.histogram_observation is not None
@@ -732,6 +738,9 @@ def combine_mapped_periods(
 
     return MuonDataset(
         histogram_observation=histogram_observation(run),
+        ratio_validity=quick.ratio_validity.select(window)
+        if quick.ratio_validity is not None
+        else None,
         time=quick.time[window],
         asymmetry=quick.asymmetry[window],
         error=quick.error[window],

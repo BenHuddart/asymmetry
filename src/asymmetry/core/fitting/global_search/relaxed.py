@@ -15,6 +15,7 @@ from asymmetry.core.fitting.global_search.types import (
     RelaxedFitProblem,
     RelaxedFitResult,
 )
+from asymmetry.core.fitting.likelihood import dataset_observations
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -66,6 +67,8 @@ class SciPyRelaxedOptimizer:
         message = ""
         success = False
 
+        observations = {int(ds.run_number): dataset_observations(ds) for ds in problem.datasets}
+
         def objective(
             vector: np.ndarray,
             layout: _VariableLayout,
@@ -88,19 +91,14 @@ class SciPyRelaxedOptimizer:
                     problem.initial_params_by_run[run_number],
                     local_values[run_number],
                 )
+                record = observations[run_number]
                 model_values = np.asarray(
-                    structure.model.function(dataset.time, **params),
+                    structure.model.function(record.time, **params),
                     dtype=float,
                 )
                 if not np.all(np.isfinite(model_values)):
                     return 1.0e30
-                errors = np.asarray(dataset.error, dtype=float)
-                safe_errors = np.where(
-                    np.isfinite(errors) & (errors > 0.0),
-                    errors,
-                    1e-12,
-                )
-                residual = (np.asarray(dataset.asymmetry, dtype=float) - model_values) / safe_errors
+                residual = (record.values - model_values) / record.sigma
                 objective_value += float(np.sum(residual * residual))
 
             for name in layout.base_names:

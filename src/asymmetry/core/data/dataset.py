@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.data.ratio_validity import RatioValidity
+
 if TYPE_CHECKING:
     from asymmetry.core.transform.preparation import HistogramObservation
 
@@ -195,6 +197,8 @@ class MuonDataset:
         default=None, repr=False, compare=False
     )
 
+    ratio_validity: RatioValidity | None = field(default=None, repr=False, compare=False)
+
     # Convenience -------------------------------------------------------
 
     @property
@@ -299,6 +303,17 @@ class MuonDataset:
         *do* read ``run.histograms``; they must be handed the full record, not
         a fit record.
         """
+
+        def fit_metadata(metadata):
+            combination = metadata.get("combination")
+            if not isinstance(combination, dict) or "detector_variance" not in combination:
+                return metadata
+            return metadata | {
+                "combination": {
+                    key: value for key, value in combination.items() if key != "detector_variance"
+                }
+            }
+
         run = self.run
         if run is None and self.histogram_observation is None:
             return self
@@ -306,13 +321,16 @@ class MuonDataset:
             run = replace(
                 run,
                 histograms=[],
+                metadata=fit_metadata(run.metadata),
                 grouping={
                     k: v
                     for k, v in run.grouping.items()
                     if k not in {"period_histograms", "period_reduced"}
                 },
             )
-        return replace(self, run=run, histogram_observation=None)
+        return replace(
+            self, run=run, metadata=fit_metadata(self.metadata), histogram_observation=None
+        )
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
         r"""Merge independent curve bins by averaging values and adding variances.
@@ -329,7 +347,19 @@ class MuonDataset:
         from asymmetry.core.transform.rebin import merge_curve_bins
 
         time, asymmetry, error = merge_curve_bins(self.time, self.asymmetry, self.error, factor)
+        validity = None
+        if self.ratio_validity is not None and "rotating_frame" not in self.metadata:
+            from asymmetry.core.data.ratio_validity import RatioReason
+
+            count = len(time)
+            reasons = self.ratio_validity.reasons[: count * factor].reshape(count, factor)
+            actual = self.ratio_validity.mathematical_error(self.error)[: count * factor]
+            error = np.sqrt((actual.reshape(count, factor) ** 2).sum(axis=1)) / factor
+            validity = RatioValidity.from_ratio(
+                ~np.any(reasons == RatioReason.UNDEFINED, axis=1), error
+            )
         return MuonDataset(
+            ratio_validity=validity,
             time=time,
             asymmetry=asymmetry,
             error=error,
@@ -356,6 +386,9 @@ class MuonDataset:
             error=self.error[mask].copy(),
             metadata=dict(self.metadata),
             run=self.run,
+            ratio_validity=self.ratio_validity.select(mask)
+            if self.ratio_validity is not None
+            else None,
             histogram_observation=(
                 self.histogram_observation.select(mask)
                 if self.histogram_observation is not None

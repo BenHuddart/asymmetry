@@ -167,6 +167,9 @@ def fit_result_summary(
     }
     return {
         "success": bool(fit_result.success),
+        "observation_report": fit_result.observation_report.to_dict()
+        if fit_result.observation_report is not None
+        else None,
         "correction_metadata": dict(fit_result.correction_metadata),
         "warnings": list(fit_result.warnings),
         "objective": fit_result.objective.value,

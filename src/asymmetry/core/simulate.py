@@ -38,7 +38,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.io.periods import combine_period_asymmetry, period_run
+from asymmetry.core.io.periods import period_run
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
     grouping_balances,
@@ -1816,12 +1816,7 @@ def _reduce_histograms(
     *,
     alpha: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Loader-convention F-B reduction of one histogram set (percent).
-
-    Counts are summed onto the output bins (fixed bunching included) before
-    the asymmetry is formed, matching the GUI reduction and the reference
-    programs' counts-then-ratio order.
-    """
+    """Form percent asymmetry after summing counts and retained variances per bin."""
     fb = group_forward_backward(histograms, grouping)
 
     time, asymmetry, error = binned_fb_asymmetry(
@@ -1836,7 +1831,10 @@ def _reduce_histograms(
 
 def reduce_run_to_dataset(run: Run) -> MuonDataset:
     """Reduce synthetic counts and record their actual uncorrected observation."""
-    from asymmetry.core.transform.preparation import histogram_observation
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
 
     if not run.histograms:
         raise ValueError("Reduction requires a run with detector histograms.")
@@ -1853,10 +1851,7 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         str(PeriodMode.GREEN_MINUS_RED),
         str(PeriodMode.GREEN_PLUS_RED),
     }:
-        red_run, green_run = (period_run(run, index) for index in (0, 1))
-        red = _reduce_histograms(red_run.histograms, red_run.grouping)
-        green = _reduce_histograms(green_run.histograms, green_run.grouping)
-        time, asymmetry, error = combine_period_asymmetry(*red, *green, mode)
+        red_run = period_run(run, 0)
         context_grouping = dict(grouping, period_histograms=period_lists[:2])
         if "detector_first_good_bins" in grouping:
             # period_run uses acquired windows by default when detector facts exist.
@@ -1865,11 +1860,8 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
             context_grouping.setdefault("t0_policy", red_run.grouping["t0_policy"])
         source = replace(run, grouping=context_grouping)
     elif has_periods:
-        selected = period_run(run, 1 if mode == str(PeriodMode.GREEN) else 0)
-        time, asymmetry, error = _reduce_histograms(selected.histograms, selected.grouping)
-        source = selected
+        source = period_run(run, 1 if mode == str(PeriodMode.GREEN) else 0)
     else:
-        time, asymmetry, error = _reduce_histograms(run.histograms, grouping)
         source = replace(
             run,
             grouping={
@@ -1886,17 +1878,23 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         source,
         grouping=dict(source.grouping, deadtime_correction=False, background_correction=False),
     )
-    return MuonDataset(time, asymmetry, error, metadata, run, histogram_observation(source))
+    reduced = prepare_histogram_asymmetry(source, merge=1, facility=None, reference=None)
+    return MuonDataset(
+        reduced.time,
+        reduced.asymmetry,
+        reduced.error,
+        metadata,
+        run,
+        histogram_observation(source),
+        reduced.ratio_validity,
+    )
 
 
 def total_events_of(run: Run) -> float:
-    """Realised event total of a run: the sum of all histogram counts.
+    """Sum acquired counts, including background, for a simulation event budget.
 
-    The gross count (signal + background). Use it as the event-budget default
-    for a re-simulation or a dialog spinner; for a *signal-only* budget that
-    excludes a run's flat background, subtract
-    ``estimate_background_per_bin(run) * total bins`` (see
-    :func:`matched_statistics`).
+    For signal-only counts subtract the estimated flat background per bin
+    times the total bins, as in :func:`matched_statistics`.
     """
     return float(sum(float(h.counts.sum()) for h in run.histograms))
 

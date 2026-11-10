@@ -434,6 +434,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
     )
     return MuonDataset(
         histogram_observation=observation,
+        ratio_validity=result.ratio_validity,
         time=result.time,
         asymmetry=result.asymmetry,
         error=result.error,

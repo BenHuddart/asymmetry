@@ -27,7 +27,7 @@ from asymmetry.core.fitting.information_criteria import (
     information_weights,
     score_deltas,
 )
-from asymmetry.core.fitting.likelihood import Objective
+from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.parameters import Parameter
 
 if TYPE_CHECKING:
@@ -68,9 +68,24 @@ def shortlist(scores: Mapping[str, float]) -> tuple[str, ...]:
     return tuple(keys[index] for _delta, index in ranked[:SHORTLIST_MAX_SIZE])
 
 
-def normalised_residuals(dataset: MuonDataset, curve: Curve) -> Curve:
+def normalised_residuals(
+    dataset: MuonDataset, curve: Curve, *, result=None, observation_report=None
+) -> Curve:
     """``(y − f(t)) / σ`` on the dataset's own time grid within the curve's span, f linearly interpolated."""
+    if (
+        result is not None
+        and result.residuals is not None
+        and result.residual_time is not None
+        and result.residual_sigma is not None
+    ):
+        return result.residual_time, result.residuals / result.residual_sigma
+    if result is not None and result.observation_report is not None:
+        return np.array([], dtype=float), np.array([], dtype=float)
     curve_time, curve_value = curve
+    if observation_report is not None:
+        observations = dataset_observations(dataset, curve_time[0], curve_time[-1])
+        model = np.interp(observations.time, curve_time, curve_value)
+        return observations.time, (observations.values - model) / observations.sigma
     time = np.asarray(dataset.time, dtype=float)
     inside = (time >= curve_time[0]) & (time <= curve_time[-1])
     t = time[inside]
@@ -299,7 +314,10 @@ def _single_candidate_summary(
         run_label=dataset.run_label,
         axis_value=math.nan,
         curves=(
-            RunCurves(curve, normalised_residuals(dataset, curve))
+            RunCurves(
+                curve,
+                normalised_residuals(dataset, curve, result=fit),
+            )
             if assessment.fitted_time.size
             else None
         ),
@@ -368,7 +386,12 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
     x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
     curve = dense_fit_curve(model, values, x_min, x_max)
-    return RunCurves(curve, normalised_residuals(dataset, curve))
+    return RunCurves(
+        curve,
+        normalised_residuals(
+            dataset, curve, observation_report=(slot.result or {}).get("observation_report")
+        ),
+    )
 
 
 def _saved_fit_comparison_key(
@@ -511,6 +534,7 @@ def _candidate_summary(
                 normalised_residuals(
                     datasets_by_run[diagnostic.run_number],
                     assessment.fitted_curves_by_run[diagnostic.run_number],
+                    result=assessment.fit_results_by_run[diagnostic.run_number],
                 ),
             ),
             reduced_chi_squared=assessment.fit_results_by_run[

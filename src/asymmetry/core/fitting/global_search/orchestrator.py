@@ -19,6 +19,7 @@ from asymmetry.core.fitting.global_search.proposal import extract_discrete_candi
 from asymmetry.core.fitting.global_search.refine import SearchEvaluation, refine_candidate_search
 from asymmetry.core.fitting.global_search.relaxed import RelaxedOptimizer, SciPyRelaxedOptimizer
 from asymmetry.core.fitting.global_search.types import ModelStructure, RelaxedFitProblem
+from asymmetry.core.fitting.likelihood import gaussian_selection
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -65,7 +66,7 @@ class GlobalSearchOrchestrator:
         penalty_weight = float(config.penalty_weight)
         if penalty_weight <= 0.0:
             penalty_weight = max(
-                2.0, math.log(max(sum(dataset.n_points for dataset in datasets), 2))
+                2.0, math.log(max(sum(gaussian_selection(dataset).used for dataset in datasets), 2))
             )
         penalty_schedule = tuple(float(value) for value in config.penalty_schedule)
         if not penalty_schedule:

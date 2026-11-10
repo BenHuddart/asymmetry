@@ -13,6 +13,7 @@ from asymmetry.core.fitting.global_search.adapters import (
 )
 from asymmetry.core.fitting.global_search.types import DiscreteCandidate, ModelScore
 from asymmetry.core.fitting.information_criteria import InformationCriteria
+from asymmetry.core.fitting.likelihood import gaussian_selection
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -58,7 +59,7 @@ class ExactStructureFitter:
             max_calls=max_calls,
         )
         total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
-        sample_count = int(sum(dataset.n_points for dataset in datasets))
+        sample_count = int(sum(gaussian_selection(dataset).used for dataset in datasets))
         parameter_count = len(global_names) + len(local_names) * len(datasets)
         score = ModelScore(
             criteria=InformationCriteria(total_chi2, parameter_count, sample_count)

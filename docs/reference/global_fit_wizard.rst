@@ -991,8 +991,18 @@ existing final resolution before their scores enter the final leaderboard.
 Per-run preparation precedes worker fan-out, so candidate tasks carry fit arrays
 and lightweight provenance rather than detector, reference, or period arrays.
 
-For the calibration conditioning and current finite-weight reduction fallbacks,
+For conditional calibration errors and histogram Gaussian omission,
 see :ref:`conditional-calibration-errors` and :ref:`asymmetry-error-fallback`.
+Used/omitted counts and reasons travel with the core fit result through search,
+completion, and rebuilding; model scores count only the fitted observations.
+Detection keeps the full acquisition grid. When omission prevents a residual
+FFT or acquisition-lag autocorrelation, the diagnostic is unavailable; a valid
+fit remains available. No missing-bin interpolation is inserted. The single-run
+Details view shows ``unavailable`` and the core result explains
+``Residual autocorrelation and FFT unavailable: Gaussian selection omits acquisition bins.``
+Historical scores retain their recorded meaning, while numerical reuse requires
+the current observation policy.
+
 
 These remain asymmetry-domain fits with conditional point errors and
 centre-point model evaluation; TF alpha/beta count calibration stays separate.

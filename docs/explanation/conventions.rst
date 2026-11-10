@@ -197,13 +197,30 @@ a count model is a separate treatment; see
 Undefined and degenerate bins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For a zero denominator the current count-to-ratio operation returns a fallback
-value of zero and error of one fraction (100 percentage points). A defined
-ratio with zero first-order count contribution also receives that fallback
-error; raw one-sided Poisson counts are an example. These software values are
-not measured zero asymmetries or calibrated uncertainties. The Gaussian fit
-boundary accepts their finite positive errors, giving them finite weight;
-it does not identify or omit them automatically.
+For a zero denominator the count-to-ratio display returns a fallback value of
+zero and error of one fraction (100 percentage points). A defined ratio with
+zero first-order variance also receives that display error; raw one-sided
+Poisson counts are an example. These software values are not measured zero
+asymmetries or calibrated uncertainties.
+
+Asymmetry also checks the mathematical usability of known histogram reductions
+before assigning display fallbacks. Gaussian fits omit undefined ratios and
+exactly zero propagated-variance observations, reporting used and omitted counts
+with the reasons ``undefined ratio`` and ``zero variance``. The objective,
+degrees of freedom, information criteria, and residuals use the same selected
+observations within the requested fit window. Empty or insufficient usable
+support produces an explicit fit failure, without rejecting the file. Empty
+support raises ``FitInputError``; insufficient support returns an unsuccessful
+fit result so a wizard can still assess simpler candidates.
+
+Full grids and contributing counts remain available for counts-first merging
+and spectral operations. Each period is reduced before a G±R combination:
+an undefined constituent makes that combined observation undefined, while a
+defined zero-variance constituent contributes zero variance to a potentially
+usable final sum or difference. No new cutoff, error floor, positivity gate,
+automatic packing, or likelihood switch is applied. Custom, rotated, and legacy
+curves without verified histogram classification keep strict Gaussian input
+validation; bare arrays do not acquire classification from sentinel values.
 
 A corrected zero group count can retain positive variance and a usable error.
 For raw :math:`F=5,B=10` with a fixed forward background of 10, the corrected

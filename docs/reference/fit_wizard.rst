@@ -774,8 +774,18 @@ reduce them again to capture a new observation, then rerun the wizard.
 
 Curves without resolved histogram context, including custom or historical curves
 that retain a Run, and rotated observations use the independent-curve mean.
-For the calibration conditioning and current finite-weight reduction fallbacks,
+For conditional calibration errors and histogram Gaussian omission,
 see :ref:`conditional-calibration-errors` and :ref:`asymmetry-error-fallback`.
+Used/omitted counts and reasons travel with the core fit result through search,
+completion, and rebuilding; model scores count only the fitted observations.
+Detection keeps the full acquisition grid. When omission prevents a residual
+FFT or acquisition-lag autocorrelation, the diagnostic is unavailable; a valid
+fit remains available. No missing-bin interpolation is inserted. The single-run
+Details view shows ``unavailable`` and the core result explains
+``Residual autocorrelation and FFT unavailable: Gaussian selection omits acquisition bins.``
+Historical scores retain their recorded meaning, while numerical reuse requires
+the current observation policy.
+
 
 The wizards still fit asymmetry with conditional Gaussian point errors;
 TF alpha/beta count calibration is a separate operation. Models are evaluated
@@ -889,6 +899,14 @@ The wizard should be treated as a decision aid rather than a replacement for
 physical judgement. Inspect the fit overlay, residuals, and parameter values
 before accepting the recommendation, especially when two candidates score
 similarly.
+
+.. figure:: /_generated/screenshots/fit_ratio_omissions.png
+   :width: 100%
+   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic Ag fit.
+
+   Sparse Ag control with an authored fixed-background sensitivity operation.
+   The fit keeps usable signed observations; the display retains the full grid.
+   Omission counts and unavailable residual diagnostics belong to the core result.
 
 .. [aic_primary] H. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
    `doi:10.1109/TAC.1974.1100705 <https://doi.org/10.1109/TAC.1974.1100705>`_.

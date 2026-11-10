@@ -593,7 +593,6 @@ class RootLoader(BaseLoader):
             },
             metadata=metadata,
         )
-        asymmetry, error = quick.asymmetry, quick.error
         common_t0 = quick.common_t0
         alpha = 1.0
         first_good, last_good = first_good_bins[0], last_good_bins[0]
@@ -601,9 +600,9 @@ class RootLoader(BaseLoader):
             first_good = quick.window.first + quick.alignment.first_bin
             last_good = quick.window.last + quick.alignment.first_bin
         window = quick.window.slice if quick.window is not None else slice(0, 0)
-        time_axis = quick.time[window]
-        asymmetry = asymmetry[window]
-        error = error[window]
+        time_axis, asymmetry, error = (
+            a[window] for a in (quick.time, quick.asymmetry, quick.error)
+        )
 
         metadata.update(quick.metadata)
         grouping = {
@@ -643,9 +642,12 @@ class RootLoader(BaseLoader):
 
         return MuonDataset(
             histogram_observation=histogram_observation(run),
-            time=np.asarray(time_axis, dtype=np.float64),
-            asymmetry=np.asarray(asymmetry, dtype=np.float64),
-            error=np.asarray(error, dtype=np.float64),
+            ratio_validity=quick.ratio_validity.select(window)
+            if quick.ratio_validity is not None
+            else None,
+            time=time_axis,
+            asymmetry=asymmetry,
+            error=error,
             metadata=metadata,
             run=run,
         )
@@ -816,15 +818,10 @@ class RootLoader(BaseLoader):
     _TRANSVERSE_BASES = ("up", "down", "left", "right", "top", "bottom")
 
     def _paired_transverse_bases(self, labels: list[str]) -> set[str]:
-        """Transverse bases present as *both* their ``_B`` and ``_F`` halves.
+        """Recognise complete transverse B/F plate pairs independent of instrument labels.
 
-        The PSI **GPS** spectrometer splits each transverse plate into a
-        backward/forward pair that must be recombined into one physical group.
-        A lone ``Up_F`` (or a genuinely distinct detector) is not a pair and is
-        excluded, so a non-empty set is the structural signature of the GPS
-        split-half convention — it triggers the merge for real GPS files
-        whatever their instrument label reads, while non-paired layouts still
-        load one group per histogram.
+        A lone half stays a distinct detector; only complete pairs are merged
+        into physical groups under the GPS split-half convention.
         """
         half_suffixes: dict[str, set[str]] = {}
         for label in labels:

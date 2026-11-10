@@ -33,18 +33,15 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.periods import sum_period_histograms
-from asymmetry.core.transform.asymmetry import (
-    compute_asymmetry_with_count_errors,
-    slice_to_good_window,
-)
 from asymmetry.core.transform.background import subtract_scaled_counts
-from asymmetry.core.transform.grouping import good_frames, group_forward_backward
+from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.t0 import run_t0_time_us
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -216,7 +213,6 @@ def reduce_combined_run(run: Run) -> MuonDataset:
     # Imported lazily to avoid a module-load cycle (simulate imports widely).
     from asymmetry.core.simulate import reduce_run_to_dataset
 
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
     combination = run.metadata.get("combination") if isinstance(run.metadata, dict) else None
     is_subtract = isinstance(combination, dict) and int(combination.get("sign", 1)) == -1
 
@@ -229,32 +225,14 @@ def reduce_combined_run(run: Run) -> MuonDataset:
     variance = combination.get("detector_variance")
     variance_hists = _variance_histograms(run.histograms, variance)
 
-    fb = group_forward_backward(run.histograms, grouping)
-    var_fb = group_forward_backward(variance_hists, grouping)
-    asymmetry, error = compute_asymmetry_with_count_errors(
-        fb.forward,
-        fb.backward,
-        np.sqrt(np.maximum(var_fb.forward, 0.0)),
-        np.sqrt(np.maximum(var_fb.backward, 0.0)),
-        fb.alpha,
-        fb.beta,
+    prepared = replace(
+        run,
+        histograms=[
+            replace(hist, count_variance=var.counts)
+            for hist, var in zip(run.histograms, variance_hists, strict=True)
+        ],
     )
-    asymmetry = asymmetry * 100.0
-    error = error * 100.0
-
-    time, asymmetry, error = slice_to_good_window(
-        asymmetry,
-        error,
-        fb.counts.window,
-        common_t0=fb.common_t0,
-        bin_width=fb.counts.bin_width_us,
-        t0_time_us=fb.counts.t0_time_us,
-    )
-
-    metadata = dict(run.metadata)
-    metadata.setdefault("run_number", run.run_number)
-    metadata.setdefault("run_label", str(run.run_number))
-    return MuonDataset(time=time, asymmetry=asymmetry, error=error, metadata=metadata, run=run)
+    return reduce_run_to_dataset(prepared)
 
 
 # --- in-batch co-add windowing ------------------------------------------------

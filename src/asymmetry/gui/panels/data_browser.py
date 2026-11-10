@@ -5242,11 +5242,7 @@ class DataBrowserPanel(QWidget):
         reduced: MuonDataset,
         existing_dataset: MuonDataset | None,
     ) -> MuonDataset:
-        """Place a freshly reduced combined dataset, reusing ``existing_dataset``.
-
-        Rebuild paths (``.asymp`` load, regroup) hold a reference to the
-        combined dataset; mutate it in place so those references stay valid.
-        """
+        """Mutate a combined dataset in place so rebuild references stay valid."""
         if existing_dataset is None:
             return reduced
         existing_dataset.time = reduced.time
@@ -5254,6 +5250,8 @@ class DataBrowserPanel(QWidget):
         existing_dataset.error = reduced.error
         existing_dataset.metadata = reduced.metadata
         existing_dataset.run = reduced.run
+        existing_dataset.histogram_observation = reduced.histogram_observation
+        existing_dataset.ratio_validity = reduced.ratio_validity
         if hasattr(existing_dataset, "_grouping_source_arrays_cache"):
             delattr(existing_dataset, "_grouping_source_arrays_cache")
         return existing_dataset

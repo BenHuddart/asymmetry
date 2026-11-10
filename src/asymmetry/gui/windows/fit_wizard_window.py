@@ -1469,7 +1469,6 @@ class FitWizardWindow(WizardWindowBase):
                     self._compare_table.selectRow(row)
                 break
         assessment = self._recommendation.assessment_for_key(key)
-        # A failed fit has no parameters worth handing over, from either button.
         self._answer_card.set_apply_enabled(assessment.is_successful)
         self._model_compare.set_continue_enabled(assessment.is_successful)
         messages: list[str] = []
@@ -1478,10 +1477,7 @@ class FitWizardWindow(WizardWindowBase):
         else:
             messages.append("Residual gate warning(s):")
             messages.extend(f"• {reason}" for reason in assessment.residual_gate_reasons)
-        messages.append(f"Residual RMS: {assessment.residual_rms:.3f}")
-        messages.append(f"Runs z score: {assessment.runs_z_score:.3f}")
-        messages.append(f"Max |autocorrelation|: {assessment.max_abs_autocorrelation:.3f}")
-        messages.append(f"Residual FFT peak SNR: {assessment.residual_fft_peak_snr:.3f}")
+        messages.extend(assessment.diagnostic_summary())
         self._compare_warning_text.setPlainText("\n".join(messages))
 
     def _on_metric_changed(self, text: str) -> None:

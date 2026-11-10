@@ -28,7 +28,7 @@ from asymmetry.core.maxent import (
 )
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
+from asymmetry.core.transform.rebin import binned_fb_observation, binning_spec
 
 
 class TimeFBAsymmetry(Representation):
@@ -51,7 +51,7 @@ class TimeFBAsymmetry(Representation):
         backward_gid = fb.backward_gid
         alpha = fb.alpha
 
-        time, asymmetry, error = binned_fb_asymmetry(
+        time, asymmetry, error, validity = binned_fb_observation(
             fb.counts,
             binning=binning_spec(grouping),
             alpha=fb.alpha,
@@ -78,6 +78,7 @@ class TimeFBAsymmetry(Representation):
             metadata["beta"] = fb.beta
         return [
             MuonDataset(
+                ratio_validity=validity,
                 time=np.asarray(time, dtype=float),
                 asymmetry=np.asarray(asymmetry, dtype=float),
                 error=np.asarray(error, dtype=float),

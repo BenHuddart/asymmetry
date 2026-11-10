@@ -311,6 +311,11 @@ def _render(outcome: dict) -> str:
         "",
         f"Fit written to {outcome['series_path']}",
     ]
+    lines.extend(
+        f"Run {result['run']}: {message}"
+        for result in outcome["results"]
+        for message in result.get("warnings", [])
+    )
     if outcome["plots"]:
         lines.append(f"{len(outcome['plots'])} plot(s) written")
     return "\n".join(lines)
