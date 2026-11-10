@@ -104,6 +104,10 @@ arrays. G+R is one pooled prepared-count observation with group background once;
 G−R differences separately reduced sets on common native support. Both use
 one explicitly selected α/β. Final ratio usability follows the requested statistic.
 
+``integrate_run`` honours Red, Green, pooled G+R, and independent G−R for both
+existing native-bin estimators. Extracted sets and mapped originals use the same
+count preparation; held inspection clocks do not override acquired timing.
+
 This synchronous operation consumes complete selected good-bin support. It does
 not recover the provenance or selected membership of an existing processed curve.
 Interactive callers retain worker, cancellation, and cache ownership; process

@@ -40,11 +40,11 @@ bins**: it ignores the time-domain display ``bunching_factor`` (which is a
 plotting smoothing). The ``"integral"`` method is bunching-invariant anyway, and
 integrating native bins is the more faithful observable.
 
-Layering note: this is a pure transform.  It deliberately does **not** import
-``asymmetry.core.io`` (``io`` depends on ``transform``, not the reverse).  For
-multi-period runs, select the period upstream with
-:func:`asymmetry.core.io.periods.select_period` and pass the resulting dataset
-in.
+Native period selection and correction preparation share
+:func:`~asymmetry.core.transform.reduce.corrected_period_counts`. G+R uses one
+pooled observation before the selected estimator; G−R differences independently
+reduced set estimates. Red, Green, and extracted sets use their actual
+acquired clocks and support.
 
 Scale: every integral asymmetry this module produces is the dimensionless
 **fraction** — the scale the field-scan / ALC parameter models
@@ -71,25 +71,21 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
-    CorrectionStatus,
     reference_observation_metadata,
 )
 from asymmetry.core.transform.fb_counts import (
-    ForwardBackwardCounts,
     GroupCounts,
     linear_combination_variance,
     native_count_time,
-    native_time_window,
     validated_count_arrays,
 )
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
     effective_grouping,
-    resolve_forward_backward_layout,
+    grouping_balances,
 )
 from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.reduce import (
-    corrected_grouped_counts,
     corrected_period_counts,
     correction_flags_from_grouping,
 )
@@ -312,30 +308,15 @@ def reduce_integral_run(
         :class:`MuonDataset`. This function reduces the run's **counts**, so the
         dataset's own percent-scale curve is never involved.
     """
-    _validate_method(method)
     run = _resolve_run(data)
-    time, counts, alpha_used, beta_used, good = _reduce_run_to_fb(
-        run, alpha, grouping_ref, t_min=t_min, t_max=t_max
+    grouping = effective_grouping(run, grouping_ref)
+    mode = PeriodMode(grouping.get("period_mode", "red"))
+    if mode in {PeriodMode.GREEN_PLUS_RED, PeriodMode.GREEN_MINUS_RED}:
+        raise ValueError("Use reduce_period_integral for combined period correction outcomes.")
+    result = reduce_period_integral(
+        data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
     )
-
-    if t_min is None:
-        t_min = float(time[good[0]])
-    if t_max is None:
-        t_max = float(time[good[1]])
-    _validate_window(t_min, t_max)
-
-    value, error = integrate_asymmetry(
-        counts.forward,
-        counts.backward,
-        alpha=alpha_used,
-        beta=beta_used,
-        time=time,
-        t_min=t_min,
-        t_max=t_max,
-        method=method,
-    )
-
-    return IntegralReduction(value, error, counts.corrections)
+    return IntegralReduction(result.value, result.error, result.corrections[str(mode)])
 
 
 @dataclass(frozen=True)
@@ -354,12 +335,8 @@ def reduce_period_integral(
     run = _resolve_run(data)
     grouping = effective_grouping(run, grouping_ref)
     mode = PeriodMode(grouping.get("period_mode", "red"))
-    if mode not in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}:
-        result = reduce_integral_run(
-            data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
-        )
-        return PeriodIntegralReduction(result.value, result.error, {str(mode): result.corrections})
-    fb = resolve_forward_backward_layout(run.histograms, grouping)
+    _validate_method(method)
+    alpha_used, beta_used = grouping_balances(grouping)
     flags = correction_flags_from_grouping(grouping)
     counts = corrected_period_counts(
         run.histograms,
@@ -367,10 +344,10 @@ def reduce_period_integral(
         str(mode),
         binning=BinningSpec(),
         forward_idx=effective_group_indices(
-            grouping, fb.forward_gid, n_histograms=len(run.histograms)
+            grouping, int(grouping.get("forward_group", 1)), n_histograms=len(run.histograms)
         ),
         backward_idx=effective_group_indices(
-            grouping, fb.backward_gid, n_histograms=len(run.histograms)
+            grouping, int(grouping.get("backward_group", 2)), n_histograms=len(run.histograms)
         ),
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
@@ -386,14 +363,14 @@ def reduce_period_integral(
         values[label] = integrate_asymmetry(
             pair.forward,
             pair.backward,
-            alpha=fb.alpha if alpha is None else alpha,
-            beta=fb.beta,
+            alpha=alpha_used if alpha is None else alpha,
+            beta=beta_used,
             time=time,
             t_min=time[pair.window.first] if t_min is None else t_min,
             t_max=time[pair.window.last] if t_max is None else t_max,
             method=method,
         )
-    if mode == PeriodMode.GREEN_PLUS_RED:
+    if mode != PeriodMode.GREEN_MINUS_RED:
         value, error = values[str(mode)]
         return PeriodIntegralReduction(value, error, {k: v.corrections for k, v in counts.items()})
     red, green = values["red"], values["green"]
@@ -726,72 +703,6 @@ def _resolve_run(data: MuonDataset | Run) -> Run:
             "asymmetry.core.io.periods.select_period(...)."
         )
     raise TypeError(f"Expected a MuonDataset or Run, got {type(data).__name__}")
-
-
-def _reduce_run_to_fb(
-    run: Run,
-    alpha: float | None,
-    grouping_ref: dict | None,
-    *,
-    t_min: float | None = None,
-    t_max: float | None = None,
-) -> tuple[NDArray[np.float64], ForwardBackwardCounts, float, float, tuple[int, int]]:
-    """Form the corrected forward/backward counts + time axis + good-bin range of a run.
-
-    Uses the same shared grouping and correction path as
-    :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
-    (:func:`effective_grouping` + :func:`group_forward_backward` +
-    :func:`corrected_grouped_counts`), so the integral observable agrees with
-    the time-domain asymmetry on grouping, deadtime, background, ``alpha`` and
-    ``beta`` by construction. Returns
-    ``(time, counts, alpha_used, beta_used, (good_start, good_end))`` where the
-    good indices are 0-based into the counts' full-length arrays.
-
-    Accepted tail skips integrate unsubtracted counts. Applied reference-run
-    backgrounds without a constant level are unsupported by this transform.
-    """
-    histograms = list(run.histograms)
-    if not histograms:
-        raise ValueError("Integral reduction requires detector histograms.")
-
-    grouping = effective_grouping(run, grouping_ref)
-    fb = resolve_forward_backward_layout(histograms, grouping)  # raises on missing/empty grouping
-    flags = correction_flags_from_grouping(grouping)
-    raw = fb
-    width = raw.bin_width_us
-    time = native_count_time(raw.alignment.length, width, raw.common_t0_bin, raw.t0_time_us)
-    output_window = native_time_window(time, raw.window, (t_min, t_max))
-    counts = corrected_grouped_counts(
-        histograms=histograms,
-        grouping=grouping,
-        forward_idx=effective_group_indices(grouping, fb.forward_gid, n_histograms=len(histograms)),
-        backward_idx=effective_group_indices(
-            grouping, fb.backward_gid, n_histograms=len(histograms)
-        ),
-        use_deadtime=flags.use_deadtime,
-        deadtime_mode=flags.deadtime_mode,
-        use_background=flags.use_background,
-        metadata=reference_observation_metadata(run),
-        output_window=output_window,
-    )
-    if (
-        counts.corrections.background.status == CorrectionStatus.APPLIED
-        and counts.background_level is None
-    ):
-        raise ValueError(
-            "The grouping's background left no constant subtracted level "
-            f"({counts.corrections.background.to_dict()}); the integral takes a constant background only."
-        )
-
-    # alpha: explicit value is validated (user error surface); otherwise take the
-    # effective grouping's value leniently, exactly as the time-domain path does.
-    if alpha is None:
-        alpha_used = fb.alpha
-    else:
-        alpha_used = float(alpha)
-        _validate_alpha(alpha_used)
-
-    return time, counts, alpha_used, fb.beta, (counts.window.first, counts.window.last)
 
 
 def _order_value(run: Run, order_key: str) -> float | None:

@@ -99,7 +99,9 @@ class ScopedCounts:
                 "Prepared grouped counts do not match the requested source observations"
             )
 
-    def aligned(self, indices: list[int], alignment: AlignmentCrop) -> GroupCounts:
+    def aligned(
+        self, indices: list[int], alignment: AlignmentCrop, *, retain_variance: bool = False
+    ) -> GroupCounts:
         """Project required samples and noise; preserve excluded values as raw context.
 
         Outside-domain variance is an excluded statistical contribution, never a
@@ -129,7 +131,7 @@ class ScopedCounts:
         )
         variance = None
         if (
-            not complete
+            (retain_variance and not complete)
             or self.corrected
             or any(
                 self.histograms[i].count_variance is not None for i, _ in alignment.detector_offsets

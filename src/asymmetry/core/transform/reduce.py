@@ -351,7 +351,7 @@ def prepare_grouped_corrections(
 
         background_outcome = CorrectionOutcome("background", "none", CorrectionStatus.OFF)
         if use_background:
-            bin_width = float(histograms[forward_idx[0]].bin_width)
+            bin_width = grouped.bin_width_us
             reference_forward = None
             reference_backward = None
             reference_scale = None
@@ -399,7 +399,7 @@ def prepare_grouped_corrections(
                     effective["reference"]["deadtime"] = reference_outcome.to_dict()
                 background_outcome = replace(background_outcome, effective=effective)
 
-        bin_width = float(histograms[forward_idx[0]].bin_width)
+        bin_width = grouped.bin_width_us
         t0_time_us = grouped.t0_time_us
         if not use_background:
             forward_counts = forward

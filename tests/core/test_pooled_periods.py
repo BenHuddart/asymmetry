@@ -384,3 +384,48 @@ def test_scoped_variance_excludes_raw_context_from_disjoint_domains(correct):
     assert aligned.counts[0] == -998
     assert source[0].counts[3] == -2000
     assert source[0].count_variance is None
+
+
+@pytest.mark.parametrize("method", ["integral", "differential"])
+def test_integral_ordinary_and_extracted_green_are_the_selected_observation(method):
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.transform.integral import integrate_run
+
+    run = two_periods()
+    run.grouping["period_mode"] = "green"
+    original = [h.counts.copy() for period in run.grouping["period_histograms"] for h in period]
+    assert integrate_run(run, method=method)[0] == pytest.approx(0.8)
+    dataset = MuonDataset(np.arange(8) * 0.1, np.full(8, 20.0), np.ones(8), run=run)
+    extracted = select_period(dataset, 2)
+    assert integrate_run(extracted, method=method)[0] == pytest.approx(0.8)
+    for hist, expected in zip(
+        [h for period in run.grouping["period_histograms"] for h in period], original, strict=True
+    ):
+        np.testing.assert_array_equal(hist.counts, expected)
+
+
+@pytest.mark.parametrize("method", ["integral", "differential"])
+@pytest.mark.parametrize("mode", ["red", "green", "green_plus_red", "green_minus_red"])
+def test_integral_and_time_use_original_clocks_not_held_inspection_views(method, mode):
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from asymmetry.core.transform.integral import integrate_run
+    from tests.core.test_constituent_preparation import acquired
+
+    k = np.arange(20.0)
+    sources = [
+        acquired(i, 100 + 3 * k + k * k, 80 + 2 * k, t0=anchor, first=anchor, last=anchor + 10)
+        for i, anchor in enumerate((1, 3, 2), 1)
+    ]
+    mapped = combine_mapped_periods(sources, {1: "red", 2: "green", 3: "red"})
+    mapped.run.grouping.update(period_mode=mode, deadtime_correction=False)
+    expected = integrate_run(mapped, method=method)
+    time_result = prepare(mapped.run, 2)
+    # Held arrays are raw-index inspection views; originals remain authoritative.
+    for period in mapped.run.grouping["period_histograms"]:
+        period[0] = replace(period[0], bin_width=0.2)
+    mapped.run.histograms[0] = replace(mapped.run.histograms[0], bin_width=0.2)
+    np.testing.assert_allclose(integrate_run(mapped, method=method), expected)
+    actual = prepare(mapped.run, 2)
+    for field in ("time", "asymmetry", "error"):
+        np.testing.assert_array_equal(getattr(actual, field), getattr(time_result, field))

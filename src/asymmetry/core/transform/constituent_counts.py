@@ -133,7 +133,14 @@ class ConstituentCounts:
                 for indices in self.pair
             )
             f, b, outcome = deadtime_corrected_pair(
-                histograms, grouping, *pair, alignment, domain, use_deadtime=use_deadtime, mode=mode
+                histograms,
+                grouping,
+                *pair,
+                alignment,
+                domain,
+                use_deadtime=use_deadtime,
+                mode=mode,
+                retain_variance=len(self.members) > 1,
             )
             forward.append(f)
             backward.append(b)
