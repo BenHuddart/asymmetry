@@ -132,6 +132,11 @@ even when a manual or historical nonunity beta is present. The result displays
 fixed, fitted, and unavailable-error states distinctly; missing covariance does
 not by itself make an otherwise usable alpha-only fit fail.
 
+Reduced-curve errors remain conditional on the applied alpha/beta, even when
+the calibration record carries errors and covariance. Shared correction terms
+in marginal point errors do not make an ordinary fit a correlated likelihood;
+see :ref:`conditional-calibration-errors` and :ref:`asymmetry-counting-errors`.
+
 Instrument guidance
 --------------------
 

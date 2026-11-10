@@ -500,6 +500,11 @@ The selected result's ``model`` identifies its effective envelope, such as
 separate core operation; it does not change grouping-dialog choices, apply
 coefficients, or alter saved/manual calibrations.
 
+Reduced-curve errors remain conditional on the applied alpha/beta, even when
+the calibration record carries errors and covariance. Shared correction terms
+in marginal point errors do not make an ordinary fit a correlated likelihood;
+see :ref:`conditional-calibration-errors` and :ref:`asymmetry-counting-errors`.
+
 Compared with other programs
 ----------------------------
 

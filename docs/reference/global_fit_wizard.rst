@@ -991,6 +991,9 @@ existing final resolution before their scores enter the final leaderboard.
 Per-run preparation precedes worker fan-out, so candidate tasks carry fit arrays
 and lightweight provenance rather than detector, reference, or period arrays.
 
+For the calibration conditioning and current finite-weight reduction fallbacks,
+see :ref:`conditional-calibration-errors` and :ref:`asymmetry-error-fallback`.
+
 These remain asymmetry-domain fits with conditional point errors and
 centre-point model evaluation; TF alpha/beta count calibration stays separate.
 Internal FFT diagnostics still require a uniform input grid. Saved historical

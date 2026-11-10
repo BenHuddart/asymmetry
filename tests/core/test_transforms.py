@@ -45,19 +45,19 @@ class TestComputeAsymmetry:
         asym, err = compute_asymmetry(f, b, alpha=1.0)
         assert asym[0] == pytest.approx(1.0)
         # One-sided bins (F*B == 0) are degenerate: A is pinned to +/-1 and the
-        # exact first-order variance is zero, which is useless as a fit weight,
-        # so they fall back to the 1.0 "no information" sentinel.
+        # first-order variance is zero, which is useless as a fit weight,
+        # so they fall back to the 1.0 fallback error.
         assert err[0] == pytest.approx(1.0)
 
-    def test_exact_poisson_error_alpha_one(self):
-        # Exact propagation: var(A) = (1 - A^2)/(F + B) at alpha = 1.
+    def test_first_order_poisson_error_alpha_one(self):
+        # First-order propagation: var(A) = (1 - A^2)/(F + B) at alpha = 1.
         f = np.array([6000.0])
         b = np.array([4000.0])
         asym, err = compute_asymmetry(f, b, alpha=1.0)
         a = asym[0]
         assert err[0] ** 2 == pytest.approx((1.0 - a * a) / (f[0] + b[0]))
 
-    def test_exact_error_general_alpha(self):
+    def test_first_order_error_general_alpha(self):
         # var(A) = 4 alpha^2 F B (F + B) / (F + alpha B)^4 for any alpha.
         f = np.array([5200.0])
         b = np.array([4100.0])
@@ -69,7 +69,7 @@ class TestComputeAsymmetry:
 
     def test_error_matches_count_error_path(self):
         # compute_asymmetry must agree with the explicit count-error form when
-        # the count errors are the Poisson sqrt(N): both are exact propagation.
+        # the count errors are the Poisson sqrt(N): both use first-order propagation.
         f = np.array([90.0, 150.0, 5000.0])
         b = np.array([60.0, 150.0, 4800.0])
         alpha = 1.1
@@ -88,7 +88,7 @@ class TestComputeAsymmetry:
         assert np.isfinite(err[0])
         assert err[0] == pytest.approx(0.0)
 
-    def test_supplied_count_errors_use_musrfit_style_propagation(self):
+    def test_supplied_count_errors_use_retained_variance(self):
         f = np.array([90.0])
         b = np.array([60.0])
         ef = np.array([np.sqrt(105.0)])

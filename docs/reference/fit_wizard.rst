@@ -774,6 +774,9 @@ reduce them again to capture a new observation, then rerun the wizard.
 
 Curves without resolved histogram context, including custom or historical curves
 that retain a Run, and rotated observations use the independent-curve mean.
+For the calibration conditioning and current finite-weight reduction fallbacks,
+see :ref:`conditional-calibration-errors` and :ref:`asymmetry-error-fallback`.
+
 The wizards still fit asymmetry with conditional Gaussian point errors;
 TF alpha/beta count calibration is a separate operation. Models are evaluated
 at the prepared timestamps, so wide bins can attenuate rapid signals.

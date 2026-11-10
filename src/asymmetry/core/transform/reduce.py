@@ -405,7 +405,7 @@ def reduce_grouped_asymmetry(
     Returns
     -------
     GroupedAsymmetryReduction
-        Whose ``asymmetry`` and ``error`` are **in percent (0–100)** — ``units``
+        Whose ``asymmetry`` and ``error`` are **in percent (fraction × 100)** — ``units``
         is :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT`. This is the
         one step on the reduction path that applies the ×100, so its output drops
         straight into a :class:`~asymmetry.core.data.dataset.MuonDataset` and the

@@ -98,7 +98,7 @@ through ``fit_arrays`` returns a result identical to ``fit(dataset, …)`` down 
 last digit of every uncertainty.
 
 Two differences are worth knowing. The arrays are **expected in percent**
-(:math:`0`–:math:`100`), matching the models' seeds, and nothing rescales them —
+(fraction × 100), matching the models' seeds, and nothing rescales them —
 the reduction primitives return a fraction, hence the
 :func:`~asymmetry.core.transform.units.to_percent` above; see
 :doc:`asymmetry_units`. And because bare arrays carry no run metadata, the advisory
@@ -113,7 +113,11 @@ Single, array, global and joint Gaussian fits use the same observation boundary.
 It selects the requested fit window and requires non-empty, equally sized,
 one-dimensional arrays. Times and values must be finite; stated uncertainties
 must be finite and strictly positive. These Gaussian objectives treat the stated errors as independent and known; a
-shared background contributes its marginal variance. Invalid points raise ``FitInputError``
+shared background contributes its marginal variance, without a full correlated
+likelihood. Ordinary reduced errors condition on the selected alpha/beta; see
+:ref:`conditional-calibration-errors`. Current reduction fallback errors also
+pass this boundary with finite weight; see :ref:`asymmetry-error-fallback`.
+Invalid points raise ``FitInputError``
 (a ``ValueError``) before minimization; no replacement weight is inserted.
 
 .. list-table:: Likelihood inputs

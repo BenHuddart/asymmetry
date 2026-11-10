@@ -121,6 +121,11 @@ propagate these terms before forming the asymmetry ratio. Summing per-bin
 error squares alone loses the shared contribution. See
 :ref:`background-count-uncertainty` for the complete noise model.
 
+Reduced-curve errors remain conditional on the applied alpha/beta, even when
+the calibration record carries errors and covariance. Shared correction terms
+in marginal point errors do not make an ordinary fit a correlated likelihood;
+see :ref:`conditional-calibration-errors` and :ref:`asymmetry-counting-errors`.
+
 Fixed
 -----
 

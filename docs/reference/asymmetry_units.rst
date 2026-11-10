@@ -5,13 +5,17 @@ Asymmetry units across the API
 
 The μSR asymmetry is a ratio, so it has no physical unit — but it does have a
 *scale*, and Asymmetry's public API uses two of them. The low-level primitives
-return the dimensionless **fraction** :math:`A \in [-1, 1]`, the textbook
-definition; the loaders, the reductions, and every built-in fit model work **in
-percent** (:math:`0`–:math:`100`), the WiMDA-style convention in which a 16 %
-asymmetry is the number ``16.0``. Both conventions are internally consistent, and
+return a dimensionless **fraction**; the loaders, the reductions, and every
+built-in time-domain asymmetry model work **in percent** (fraction × 100),
+the WiMDA-style convention in which a 16 % asymmetry is the number ``16.0``. Both conventions are internally consistent, and
 each is the natural one where it is used: a fraction composes cleanly with
 polarisation functions, while percent is what a fitted amplitude is quoted as in
 a paper.
+
+These are scales, not bounds: signed corrected counts and general beta can
+produce estimates outside :math:`[-1,1]` in fractions. Errors in percent are
+percentage points. See :ref:`asymmetry-counting-errors` for propagation,
+calibration conditioning, and current sparse-bin fallbacks.
 
 The cost of having two is that mixing them is a silent factor of 100. It does not
 raise, and it rarely looks like an error: a 20 % transverse-field amplitude fitted
@@ -223,9 +227,10 @@ models' default seeds fits percent-scale amplitudes against it.
 
 Asymmetry guards that specific case at run time. When the data and the seeded
 model curve straddle the fraction/percent boundary — one peak at or below 1.5,
-where a true :math:`|A|` must lie, and the other necessarily percent — the engine
+a heuristic fraction-scale region, and the other above that region — the engine
 emits an :class:`~asymmetry.core.fitting.AsymmetryScaleWarning` before minimising.
-It is advisory only: it never raises and never changes the fit, and the message is
+This magnitude heuristic does not establish a physical range or prove a scale
+mismatch. It is advisory only: it never raises and never changes the fit, and the message is
 carried on ``FitResult.warnings`` and shown in the GUI fit panel's result box (see
 :ref:`fit-advisory-warnings`). A merely badly-guessed amplitude on the right scale
 is deliberately not flagged — the guard is about scale confusion, not seed quality.
@@ -241,3 +246,14 @@ output across the boundary.
 
 See also :ref:`cookbook-asymmetry-scale` for the worked seeding recipe, and
 :doc:`fitting` for the fit engine's own entry points.
+
+Compared with other programs
+----------------------------
+
+WiMDA 1.326 uses percent for ordinary asymmetry curves. musrfit 1.12.1
+(``708f777b``, ROOT 6.40.04) type-2 ASCII data/errors in the matched controls
+are in the raw fitting coordinate; multiply both by 100 only after any needed
+conversion to corrected asymmetry. Mantid's reviewed AsymmetryCalc v1 returns
+a fraction with a different error approximation. See
+:ref:`comparison-asymmetry-errors` for sources, settings, tolerances, and
+the distinction between documented arithmetic and native comparisons.

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify asymmetry scales, first-order counting errors, conditional calibration uncertainty,
+  and matched-coordinate comparisons with other μSR programs.
+
 - Keep captured histogram observations stable after caller edits to original
   sample, held-period, or reference arrays, preserving wizard cache and curve reconstruction.
 
