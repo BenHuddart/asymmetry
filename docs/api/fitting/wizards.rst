@@ -4,6 +4,12 @@ Fit wizards
 .. currentmodule:: asymmetry.core.fitting
 
 
+Single/global automatic merging uses
+:func:`~asymmetry.core.transform.preparation.prepare_wizard_dataset` before
+``fit_record`` and candidate fan-out. Recorded histogram context selects counts
+before the ratio; unknown and rotated curve observations use independent means.
+Reconstruction and numerical cache reuse identify the same fitted observation.
+
 Single-spectrum fit-wizard helpers:
 
 .. autoclass:: asymmetry.core.fitting.CandidateTemplate

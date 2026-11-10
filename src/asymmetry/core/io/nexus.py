@@ -17,7 +17,7 @@ mode selection in the grouping workflow.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -695,8 +695,6 @@ class NexusLoader(BaseLoader):
                 "backward_group": grouping.backward_group_id,
                 "alpha": alpha,
                 **quick.file_grouping,
-                # ISIS header bins are 1-based; the payload keeps 0-based values
-                # and records the file's convention for display only.
                 "bin_index_base": 1,
                 "bunching_factor": 1,
                 "deadtime_correction": False,
@@ -724,8 +722,11 @@ class NexusLoader(BaseLoader):
                 source_file=source_file,
             )
 
+            from asymmetry.core.transform.preparation import histogram_observation
+
             datasets.append(
                 MuonDataset(
+                    histogram_observation=histogram_observation(run),
                     time=np.asarray(time_axis, dtype=np.float64),
                     asymmetry=np.asarray(asymmetry, dtype=np.float64),
                     error=np.asarray(error, dtype=np.float64),
@@ -751,15 +752,7 @@ class NexusLoader(BaseLoader):
         source_run_number: int,
         source_file: str,
     ) -> MuonDataset:
-        """Merge two period datasets into one run with red/green period metadata.
-
-        Delegates the count / good-frame / deadtime assembly to the shared
-        :func:`asymmetry.core.io.periods.combine_mapped_periods` with the
-        trivial ``{1: red, 2: green}`` mapping, so the loader's two-period
-        combination and the N-period "Map periods…" reducer are one code path.
-        Period selection retains timing status and default reduced arrays.
-        Mapped sums discard the cache because they combine acquisition periods.
-        """
+        """Keep acquired periods and the context belonging to their cached curves."""
         combined = combine_mapped_periods(
             period_datasets,
             {1: "red", 2: "green"},
@@ -774,6 +767,10 @@ class NexusLoader(BaseLoader):
             )
             for ds in period_datasets
         ]
+        combined.histogram_observation = replace(
+            combined.histogram_observation,
+            cached_periods=tuple(ds.histogram_observation for ds in period_datasets),
+        )
         return combined
 
     def _build_histograms(

@@ -418,7 +418,22 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         context=f"Run {source_run_of(run)}",
         output_time_range=(settings.t_min, settings.t_max),
     )
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    observation = histogram_observation(
+        replace(
+            run,
+            grouping=dict(
+                grouping,
+                period_mode=(
+                    GREEN_MINUS_RED if settings.period == GREEN_MINUS_RED else str(PeriodMode.RED)
+                ),
+            ),
+        ),
+        binning=replace(spec, time_range=(settings.t_min, settings.t_max)),
+    )
     return MuonDataset(
+        histogram_observation=observation,
         time=result.time,
         asymmetry=result.asymmetry,
         error=result.error,

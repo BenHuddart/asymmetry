@@ -219,6 +219,12 @@ def select_period(
         time, asymmetry, error = reduced[index]
         run = period_run(data.run, index)
         return MuonDataset(
+            histogram_observation=(
+                data.histogram_observation.cached_periods[index]
+                if data.histogram_observation is not None
+                and data.histogram_observation.cached_periods
+                else None
+            ),
             time=np.asarray(time, dtype=np.float64).copy(),
             asymmetry=np.asarray(asymmetry, dtype=np.float64).copy(),
             error=np.asarray(error, dtype=np.float64).copy(),
@@ -722,7 +728,10 @@ def combine_mapped_periods(
     grouping.update(quick.file_grouping)
     metadata.update(quick.metadata)
     window = quick.window.slice if quick.window is not None else slice(0, 0)
+    from asymmetry.core.transform.preparation import histogram_observation
+
     return MuonDataset(
+        histogram_observation=histogram_observation(run),
         time=quick.time[window],
         asymmetry=quick.asymmetry[window],
         error=quick.error[window],

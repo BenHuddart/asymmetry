@@ -13,7 +13,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication

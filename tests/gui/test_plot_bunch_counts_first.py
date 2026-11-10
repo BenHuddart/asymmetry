@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication  # type: ignore
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
@@ -87,6 +88,7 @@ def _histogram_run_dataset(
         error=err * 100.0,
         metadata={"run_number": run_number},
         run=run,
+        histogram_observation=histogram_observation(run),
     )
 
 
@@ -230,7 +232,7 @@ class TestPanelProviderContract:
         np.testing.assert_allclose(analysis.asymmetry, a_ref)
         np.testing.assert_allclose(analysis.error, e_ref)
 
-    def test_provider_none_result_raises_a_named_error(self, qapp: QApplication) -> None:
+    def test_custom_curve_with_histograms_keeps_curve_means(self, qapp: QApplication) -> None:
         panel = PlotPanel()
         run = Run(
             run_number=7,
@@ -242,8 +244,9 @@ class TestPanelProviderContract:
         panel.set_counts_rebunch_provider(lambda ds, factor: None)
 
         panel.set_bunch_factor(4, emit_signal=False)
-        with pytest.raises(ValueError, match="provider must return"):
-            panel.get_analysis_dataset(dataset)
+        actual = panel.get_analysis_dataset(dataset)
+        expected = dataset.merge_curve_bins(4)
+        np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)
 
 
 @pytest.mark.parametrize("mode", ["variable", "constant_error"])
@@ -274,6 +277,7 @@ def test_period_display_bunches_each_period_before_combining(mainwindow, mode, s
     dataset.run.grouping.update(
         period_mode=mode, period_histograms=[dataset.run.histograms, green.run.histograms]
     )
+    dataset.histogram_observation = histogram_observation(dataset.run)
     dataset.asymmetry = green.asymmetry + sign * dataset.asymmetry
     dataset.error = np.sqrt(green.error**2 + dataset.error**2)
     mainwindow._data_browser.add_dataset(dataset)

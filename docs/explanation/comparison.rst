@@ -135,6 +135,14 @@ usable complete fit bins, before resolving unused corrections. The factor is
 never silently reduced to one. Raw inspection and request repair remain
 available; identical empty-bin diagnostics in other programs are not established.
 
+Both fit wizards use counts-first automatic preparation for resolved histogram
+observations. In the analytic F = [90, 1], B = [10, 9] control, merging gives
+65.454545…%, while averaging the separate ratios gives 0%. Curve-only, rotated,
+and unresolved historical/custom observations retain independent-curve means.
+The native count controls above support the input arithmetic and membership;
+they do not validate Asymmetry's wizard ranking or entire search. The wizards
+continue fitting asymmetry, separately from TF alpha/beta count calibration.
+
 Point-model fits use output timestamps and conditional point errors. Wide bins
 average the signal; their point-model approximation can attenuate oscillations
 or shift phase. Mantid's separate histogram-evaluation option is not a general

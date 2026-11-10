@@ -452,7 +452,9 @@ def test_gui_final_reduction_uses_canonical_run_identity(qapp, tmp_path, consume
         if consumer == "apply":
             window._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
         else:
-            window._counts_first_rebunched_arrays(dataset, 2)
+            from tests.gui.test_reduction_cache import rebunch_current_operation
+
+            rebunch_current_operation(window, dataset, 2)
 
 
 def test_inactive_reference_does_not_require_run_identity(qapp):

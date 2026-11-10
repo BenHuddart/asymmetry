@@ -72,13 +72,15 @@ Its tooltip is ``Merge this many recorded output bins.`` The grouping dialog
 sets the base binning; the toolbar composes with it. Fixed factor 4 and
 **Bunch:** 2 therefore combine eight acquisition bins per displayed point.
 The display factor is stored independently in each saved view mode.
+Large inputs show **Recording histogram observation…** with **Cancel** while
+the resolved operation context is captured; Cancel stops that preparation.
 
 For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant error**
 all merge counts and their shared-background uncertainty before forming the
 ratio. G±R views bin each period first, then combine their asymmetries and
 independent variances. The Groups and Raw counts views sum the corresponding
 count bins. A merge larger than the record leaves no complete output point.
-Curves without histograms and rotated projections use the independent
+Curves without a resolved histogram observation and rotated projections use the independent
 curve-bin mean described below.
 
 Direct reduction, the workflow, CLI, and histogram toolbar honour the same
@@ -246,7 +248,11 @@ of consecutive curve points and add their independent variances. This is exact
 for the mean of independent Gaussian measurements; it gives different values
 and uncertainties from counts-first reduction for sparse or
 background-subtracted counts. Workdir-stored curves, rotated-frame projections
-and fit-stage bin merging use this explicitly named curve operation.
+and unresolved custom/historical curves use this explicitly named curve operation.
+Single/global wizard merging instead uses counts-first preparation when the
+actual histogram observation is recorded. Attached raw counts alone do not
+establish that context. Cropping retains the selected output-bin membership
+before a subsequent merge; base, toolbar, and wizard factors compose once.
 
 .. code-block:: python
 

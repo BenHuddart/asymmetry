@@ -112,6 +112,10 @@ class BinningSpec:
     bin0_us: float = 0.08
     bin10_us: float = 0.25
     merge: int = 1
+    #: Successive (first, stop, merge) selections of recorded output bins.
+    selections: tuple[tuple[int, int, int], ...] = ()
+    #: Centre-selected support after base binning, before later selections.
+    time_range: tuple[float | None, float | None] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, str) or self.mode not in BINNING_MODES:
@@ -154,7 +158,20 @@ class BinningSpec:
                 index = min(index + step, n_bins)
                 boundaries.append(index)
             edges = np.asarray(boundaries, dtype=np.intp)
-        return edges[:: self.merge]
+        edges = edges[:: self.merge]
+        if self.time_range is not None and edges.size > 1:
+            times = t_start_us + (edges[:-1] + edges[1:] - 1) * 0.5 * bin_width_us
+            lower, upper = self.time_range
+            mask = np.ones(times.shape, dtype=bool)
+            if lower is not None:
+                mask &= times >= lower
+            if upper is not None:
+                mask &= times <= upper
+            selected = np.flatnonzero(mask)
+            edges = edges[:1] if not selected.size else edges[selected[0] : selected[-1] + 2]
+        for first, stop, merge in self.selections:
+            edges = edges[first : stop + 1 : merge]
+        return edges
 
 
 def binning_spec(grouping: dict[str, Any] | None) -> BinningSpec:

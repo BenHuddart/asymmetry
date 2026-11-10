@@ -620,7 +620,6 @@ class RootLoader(BaseLoader):
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
-            # Whole-run acquisition: τ must be calibrated in this normalisation.
             "good_frames": 1.0,
             "reference_exposure": ReferenceExposure(origin="whole_run_deadtime").to_dict(),
             "detector_t0_bins": detector_t0_bins,
@@ -640,7 +639,10 @@ class RootLoader(BaseLoader):
             grouping=grouping,
             source_file=str(path),
         )
+        from asymmetry.core.transform.preparation import histogram_observation
+
         return MuonDataset(
+            histogram_observation=histogram_observation(run),
             time=np.asarray(time_axis, dtype=np.float64),
             asymmetry=np.asarray(asymmetry, dtype=np.float64),
             error=np.asarray(error, dtype=np.float64),
@@ -950,10 +952,6 @@ class RootLoader(BaseLoader):
         if token.startswith(("back", "bwd")) or "backward" in token or "right" in token:
             return "backward"
         return None
-
-    # ------------------------------------------------------------------
-    # Small helpers
-    # ------------------------------------------------------------------
 
     def _int_from_value(self, value: str | None, *, default: int = 0) -> int:
         if value is None:

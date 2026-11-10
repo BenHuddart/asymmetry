@@ -245,9 +245,9 @@ the step shows the family leaderboard.
 *The Screen step after screening the Ag decoupling series with three*
 *Kubo–Toyabe models and the generic relaxation families in scope. Only three*
 *families survive to be scored. Longitudinal-field KT + Constant leads with every*
-*run's χ²ᵣ graded good, and is the only family within Δ ≤ 10, so it alone is*
-*ticked. The dynamic and broadened KT families trail by several hundred AICc*
-*units, with a fair cell at 15 G. On the right, the leader's per-run fits sit*
+*run's χ²ᵣ graded good. The dynamic and broadened KT families trail by about*
+*6 and 12 AICc units; the leading two lie within Δ ≤ 10 and are ticked.*
+*On the right, the leader's per-run fits sit*
 *above their residual strips.*
 
 The leaderboard has one row per screened family, best first. Each row carries:
@@ -977,13 +977,28 @@ the list before any scoring: one whose bare χ² on every run already exceeds so
 any sharing, whatever the segment. A candidate a run's own analysis recommended,
 or scored comparable, is never dropped this way.
 
+Histogram observations use the same counts-first preparation as the single-run
+wizard, preserving base and toolbar merges and selected crop membership.
+Each G±R period is binned before its asymmetry is combined. Curve-only, rotated,
+and unresolved historical/custom observations retain independent-curve means.
+Search decimation, common-resolution completion, and curve reconstruction use
+that same observation contract; coarse search winners are refitted at the
+existing final resolution before their scores enter the final leaderboard.
+Per-run preparation precedes worker fan-out, so candidate tasks carry fit arrays
+and lightweight provenance rather than detector, reference, or period arrays.
+
+These remain asymmetry-domain fits with conditional point errors and
+centre-point model evaluation; TF alpha/beta count calibration stays separate.
+Internal FFT diagnostics still require a uniform input grid. Saved historical
+scores load without automatic refitting or reinterpretation.
+
 Every remaining run is then scored against every candidate at one common
 rebinning factor — the smallest any run's own analysis chose — so the
 fit costs and point counts can be aggregated before applying a criterion's
 penalty. The separately named partition BIC charges each shared column
 :math:`\ln N` for the phase's total samples, and each local column
 :math:`\ln n_r` for its run. With all columns local this equals the sum of the
-per-run BICs; it differs from the series-total BIC used by the leaderboard. The cells a run's own analysis already holds at that factor are kept;
+per-run BICs; it differs from the series-total BIC used by the leaderboard. The cells a run's own analysis already holds at that factor and observation identity are kept;
 the rest are fitted, warm-started from that run's or a sibling run's values. A
 cell started from **that run's own** values for the same model at another
 binning is the same data and the same model at a different sampling — the same
@@ -1006,7 +1021,8 @@ script degrades to serial execution with a ``SpawnUnsafeWarning`` rather than
 crashing.
 
 A cached single-run analysis is reused instead of repeated when it answers the
-same question — same candidate scope, same user-declared frequencies. That is
+same question — same candidate scope, same user-declared frequencies, and the
+same observation, resolved reduction context, support, and preparation contract. That is
 what the Fit tabs' own wizard results give the global wizard: analyse a run once
 in the Fit Wizard and the series analysis does not pay for it again.
 
@@ -1151,6 +1167,15 @@ process table. Each ``stage_callback`` event carries the stage name, a
 ``start``/``item``/``end`` marker, items done and total, and the elapsed and CPU
 time so far, which is what you want a timeout to watch: absence of *progress*
 rather than total runtime.
+
+Compared with other programs
+----------------------------
+
+The count-packing comparison with WiMDA 1.326, musrfit 1.12.1, and documented
+Mantid muon preprocessing concerns the prepared observations. It does not
+establish an equivalent global model-search algorithm. See
+:ref:`comparison-binning` for sources, versions, and numerical limits.
+
 
 References
 ----------

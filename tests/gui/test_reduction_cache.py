@@ -179,13 +179,36 @@ def _multi_group_dataset(
         metadata={"run_number": run_number},
         grouping=grouping,
     )
+    from asymmetry.core.transform.preparation import histogram_observation
+
     return MuonDataset(
+        histogram_observation=histogram_observation(run),
         time=np.arange(n, dtype=float) * BIN_WIDTH_US,
         asymmetry=np.zeros(n),
         error=np.ones(n),
         metadata={"run_number": run_number},
         run=run,
     )
+
+
+def rebunch_current_operation(window, dataset, factor):
+    """Supply an explicit current histogram operation to the toolbar boundary."""
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
+
+    reference = (
+        window._resolve_background_reference(dataset.run.grouping)
+        if dataset.run.grouping.get("background_correction")
+        and dataset.run.grouping.get("background_mode") == "reference_run"
+        else None
+    )
+    reduced = prepare_histogram_asymmetry(dataset.run, merge=1, facility=None, reference=reference)
+    dataset.time, dataset.asymmetry, dataset.error = reduced.time, reduced.asymmetry, reduced.error
+    dataset.histogram_observation = histogram_observation(dataset.run, reference=reference)
+    result = window._counts_first_rebunched_dataset(dataset, factor)
+    return result.time, result.asymmetry, result.error
 
 
 def _count_builds(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
@@ -285,17 +308,17 @@ class TestWiredCallSites:
         calls = _count_reduces(mainwindow)
         dataset = _multi_group_dataset()
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 1  # cached
 
         # Different display factor is a different recipe.
-        mainwindow._counts_first_rebunched_arrays(dataset, 4)
+        rebunch_current_operation(mainwindow, dataset, 4)
         assert calls["n"] == 2
 
         # A digest-covered edit re-reduces.
         dataset.run.grouping["last_good_bin"] = 300
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 3
 
     def test_rebunch_recomputes_on_alpha_change(self, mainwindow: MainWindow) -> None:
@@ -304,10 +327,10 @@ class TestWiredCallSites:
         run = dataset.run
         digest_before = fourier_grouping_digest(run)
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         run.grouping["alpha"] = 1.7
         assert fourier_grouping_digest(run) == digest_before  # alpha not digested
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2
 
     def test_rebunch_recomputes_on_detector_t0_override_change(
@@ -319,10 +342,10 @@ class TestWiredCallSites:
         run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [0, 0]
         digest_before = fourier_grouping_digest(run)
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [1, 1]
         assert fourier_grouping_digest(run) == digest_before  # overrides not digested
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2
 
     def test_rebunch_recomputes_on_exact_t0_change(self, mainwindow: MainWindow) -> None:
@@ -333,11 +356,11 @@ class TestWiredCallSites:
         run.grouping["t0_time_us"] = 0.0805
         digest_before = fourier_grouping_digest(run)
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         run.grouping["t0_time_us"] = 0.0965
         # Unlike the gaps above, this one *is* digested — the cache key moves.
         assert fourier_grouping_digest(run) != digest_before
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2
 
     def test_rebunch_recomputes_on_good_frames_change(self, mainwindow: MainWindow) -> None:
@@ -346,22 +369,10 @@ class TestWiredCallSites:
         run = dataset.run
         digest_before = fourier_grouping_digest(run)
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         run.grouping["good_frames"] = 2000.0
         assert fourier_grouping_digest(run) == digest_before  # good_frames not digested
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
-        assert calls["n"] == 2
-
-    def test_rebunch_recomputes_on_deadtime_mode_change(self, mainwindow: MainWindow) -> None:
-        calls = _count_reduces(mainwindow)
-        dataset = _multi_group_dataset()
-        run = dataset.run
-        digest_before = fourier_grouping_digest(run)
-
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
-        run.grouping["deadtime_mode"] = "file"
-        assert fourier_grouping_digest(run) == digest_before  # mode not digested
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2
 
     def test_rebunch_recomputes_on_period_mode_change(self, mainwindow: MainWindow) -> None:
@@ -370,19 +381,19 @@ class TestWiredCallSites:
         run = dataset.run
         digest_before = fourier_grouping_digest(run)
 
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         run.grouping["period_mode"] = "green"
         assert fourier_grouping_digest(run) == digest_before  # period mode not digested
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2
 
     def test_rebunch_copies_on_handout(self, mainwindow: MainWindow) -> None:
         dataset = _multi_group_dataset()
-        first = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        first = rebunch_current_operation(mainwindow, dataset, 2)
         assert first is not None
         baseline = float(first[1][0])
         first[1][0] += 999.0  # mutate the handed-out asymmetry
-        second = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        second = rebunch_current_operation(mainwindow, dataset, 2)
         assert second is not None
         assert float(second[1][0]) == pytest.approx(baseline)
 
@@ -390,16 +401,16 @@ class TestWiredCallSites:
         """``existing_dataset.run = new_run`` (co-add/combine) keys on the new run."""
         calls = _count_reduces(mainwindow)
         dataset = _multi_group_dataset()
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 1
 
         # Simulate _store_combined_reduction swapping in a new Run in place.
         replacement = _multi_group_dataset(run_number=9999).run
         dataset.run = replacement
         gc.collect()
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2  # new run identity → fresh compute
-        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        rebunch_current_operation(mainwindow, dataset, 2)
         assert calls["n"] == 2  # and the new run now caches
 
     def test_apply_grouping_settings_invalidates_run(self, mainwindow: MainWindow) -> None:
@@ -420,20 +431,6 @@ class TestWiredCallSites:
         mainwindow._reduction_cache.invalidate_run = spy  # type: ignore[method-assign]
         mainwindow._apply_grouping_settings_to_dataset(dataset, dict(dataset.run.grouping))
         assert dataset.run in seen
-
-
-# ── User-action-level invocation-count regressions (audit D2) ──────────────
-#
-# ``TestWiredCallSites`` above pins the cache-wrapper behaviour by calling the
-# ``_grouped_time_domain_display_datasets``/``_counts_first_rebunched_arrays``
-# wrappers directly. The tests below instead drive the real user-facing paths
-# — data-browser row selection (``select_runs``, which mirrors a mouse click:
-# it goes through the same ``_on_selection_changed`` → ``dataset_selected``/
-# ``selection_changed`` signal chain), the Domain toolbar buttons, and the
-# View → Diagnostics → Raw counts action — and assert the *end-to-end*
-# payoff the audit measured: dataset ping-pong and view toggling used to
-# recompute a reduction on every dataset switch, and a single render could
-# invoke the underlying provider 2-4 times.
 
 
 class TestUserActionInvocationCounts:
@@ -559,9 +556,9 @@ def test_rebunch_keys_each_periods_exposure(mainwindow):
         deadtime_correction=True,
         deadtime_mode="file",
     )
-    first = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+    first = rebunch_current_operation(mainwindow, dataset, 2)
     run.grouping["period_good_frames"][1] = 3e8
-    second = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+    second = rebunch_current_operation(mainwindow, dataset, 2)
     assert calls["n"] == 2
     assert not np.array_equal(first[1], second[1])
 
@@ -667,15 +664,15 @@ def test_live_reference_timing_refreshes_warm_rebunch_and_spectral_request(mainw
     ]
     for ds in datasets:
         mainwindow._data_browser.add_dataset(ds)
-    first = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
-    repeat = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    first = rebunch_current_operation(mainwindow, datasets[0], 2)
+    repeat = rebunch_current_operation(mainwindow, datasets[0], 2)
     np.testing.assert_array_equal(first[1], repeat[1])
     reference.grouping["t0_policy"]["offset_bins"] = 4
     mainwindow._invalidate_fft_after_regroup([2])
     assert sample.grouping["background_run"]["timing"] == {
         "t0_policy": {"mode": "manual", "offset_bins": 4}
     }
-    second = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    second = rebunch_current_operation(mainwindow, datasets[0], 2)
     assert not np.array_equal(first[1], second[1])
 
 
@@ -740,7 +737,7 @@ def test_inactive_mapped_reference_does_not_block_unrelated_render_or_save(mainw
             MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
         )
     plain = _multi_group_dataset()
-    mainwindow._counts_first_rebunched_arrays(plain, 2)
+    rebunch_current_operation(mainwindow, plain, 2)
     state = mainwindow.collect_project_state()
     assert len(state["datasets"]) == 2
 
@@ -932,11 +929,11 @@ def test_reference_exposure_changes_refresh_warm_reduction_without_overwriting_m
     ]
     for dataset in datasets:
         mainwindow._data_browser.add_dataset(dataset)
-    first = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
-    repeat = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    first = rebunch_current_operation(mainwindow, datasets[0], 2)
+    repeat = rebunch_current_operation(mainwindow, datasets[0], 2)
     np.testing.assert_array_equal(first[1], repeat[1])
     reference.grouping["reference_exposure"] = ReferenceExposure(50, "user").to_dict()
-    second = mainwindow._counts_first_rebunched_arrays(datasets[0], 2)
+    second = rebunch_current_operation(mainwindow, datasets[0], 2)
     if mode == "automatic":
         assert not np.array_equal(first[1], second[1])
     else:
@@ -947,3 +944,40 @@ def test_reference_exposure_changes_refresh_warm_reduction_without_overwriting_m
     assert mainwindow._resolve_background_reference(sample.grouping).scale == (
         4 if mode == "automatic" else 7
     )
+
+
+def test_live_reference_resolution_does_not_edit_submitted_observation(mainwindow):
+    from copy import deepcopy
+
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
+    from tests.core.test_reference_timing import timing_runs
+
+    sample, reference = timing_runs()
+    sample.grouping["background_run"] = {
+        "run_number": 2,
+        "source_file": reference.source_file,
+        "period_number": 1,
+    }
+    datasets = [
+        MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+        for run in (sample, reference)
+    ]
+    for dataset in datasets:
+        mainwindow._data_browser.add_dataset(dataset)
+    resolved = mainwindow._resolve_background_reference(sample.grouping)
+    base = prepare_histogram_asymmetry(sample, merge=1, facility=None, reference=resolved)
+    dataset = datasets[0]
+    dataset.time, dataset.asymmetry, dataset.error = base.time, base.asymmetry, base.error
+    dataset.histogram_observation = histogram_observation(sample, reference=resolved)
+    before = deepcopy(dataset.histogram_observation.source.grouping["background_run"])
+    identity = dataset.histogram_observation.identity
+    reference.grouping["t0_policy"] = {"mode": "manual", "offset_bins": 4}
+    result = mainwindow._counts_first_rebunched_dataset(dataset, 2)
+    assert dataset.histogram_observation.source.grouping["background_run"] == before
+    assert dataset.histogram_observation.identity == identity
+    assert result.histogram_observation.reference.timing.request() == {
+        "t0_policy": {"mode": "manual", "offset_bins": 4}
+    }

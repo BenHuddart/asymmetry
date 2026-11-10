@@ -107,8 +107,17 @@ Interactive callers retain worker, cancellation, and cache ownership; process
 workers that only fit the resulting arrays can use
 :meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record` afterwards.
 
+Known reduction producers attach a transient ``HistogramObservation`` to a
+dataset. ``prepare_wizard_dataset`` composes complete-group merges with its
+recorded selections; ``time_range`` retains crop membership. Unknown custom or
+historical curves have no such context and use independent means. Explicit
+``merge_curve_bins`` drops histogram replay context. ``fit_record`` strips the
+context and period arrays before candidate process fan-out. No recipe is inferred
+from an attached Run or a median time step. Simulation reductions record the actual uncorrected settings and selected
+period policies, including an implicit acquired-window policy when used.
+
 .. automodule:: asymmetry.core.transform.preparation
-   :members: prepare_histogram_asymmetry
+   :members: prepare_histogram_asymmetry, histogram_observation, prepare_wizard_dataset, HistogramObservation
 
 .. automodule:: asymmetry.core.transform.rebin
    :members:
