@@ -78,6 +78,13 @@ returns fractional asymmetry and uncertainty. See
 :doc:`/reference/asymmetry_units` for API scales and
 :doc:`/reference/data_reduction/binning` for bin edges, partial bins, and errors.
 
+Single/global fit-wizard automatic merges replay the actual histogram
+observation through these same numerical stages, preserving base and toolbar
+merges and selected output-bin membership. Curves without resolved replay
+context and rotated curves retain independent-curve means. Scores and rebuilt
+curves refer to the prepared observation; historical saved scores are not refitted
+on load. The internal wizard FFT diagnostic still requires uniform input sampling.
+
 Each F/B consumer resolves alpha for its actual selected pair. Display binning,
 F/B Fourier input and re-reduction retain that projection's coefficient while
 the authored base alpha remains available as the fallback for other pairs.

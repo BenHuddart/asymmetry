@@ -330,14 +330,7 @@ def _stub_single_run_wizard(
     *,
     calls: list[int] | None = None,
 ) -> None:
-    """Make phase 1's per-run single-run wizard cheap and deterministic.
-
-    Phase 1 now runs the *full* single-run Fit Wizard per dataset — minutes of
-    fitting on a real series, seconds even on a synthetic one. Every test below
-    is about what phase 1 does with those analyses, not about the analyses
-    themselves, so the per-run build is replaced by an explicit-template table
-    stamped with the signature a real one would carry.
-    """
+    """Build deterministic template tables with real observation identities."""
     from asymmetry.core.fitting.fit_wizard import single_fit_build_signature
 
     def _fake_build(dataset, current_model=None, **kwargs):
@@ -351,7 +344,7 @@ def _stub_single_run_wizard(
         return replace(
             recommendation,
             build_signature=single_fit_build_signature(
-                kwargs.get("scope"), kwargs.get("user_frequencies_mhz")
+                kwargs.get("scope"), kwargs.get("user_frequencies_mhz"), dataset=dataset
             ),
         )
 
@@ -359,12 +352,7 @@ def _stub_single_run_wizard(
 
 
 def _force_serial_phase_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make phase 1 take its no-pool path: analyses and cells run in-parent.
-
-    Phase 1 opens one spawn pool for both of its stages. A test about *what* it
-    computes does not want real worker processes in it, so this is the same
-    fallback a spawn-unsafe environment gets.
-    """
+    """Keep phase-one tests serial in the parent process."""
     monkeypatch.setattr(global_fit_wizard_module, "_try_open_process_pool", lambda **_kwargs: None)
 
 
@@ -390,7 +378,9 @@ def test_build_or_complete_single_fit_tables_reuses_a_matching_single_run_analys
     _stub_single_run_wizard(monkeypatch, (template,), calls=generated_calls)
     _force_serial_phase_one(monkeypatch)
     existing_run = int(datasets[0].run_number)
-    identity = json.loads(fit_wizard_module.single_fit_build_signature(None, None))
+    identity = json.loads(
+        fit_wizard_module.single_fit_build_signature(None, None, dataset=datasets[0])
+    )
     if legacy_policy:
         identity.pop("binning_policy", None)
     existing_recommendation = replace(
@@ -441,7 +431,9 @@ def test_screening_table_fitted_assessments_are_the_fits_this_call_ran(
     reused_run = int(datasets[0].run_number)
     reused = replace(
         build_fit_wizard_recommendation_for_templates(datasets[0], (exp_constant,)),
-        build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+        build_signature=fit_wizard_module.single_fit_build_signature(
+            None, None, dataset=datasets[0]
+        ),
     )
 
     table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
@@ -646,7 +638,9 @@ def test_completion_refits_a_cell_recorded_at_another_rebin_factor(
         recommendation = build_fit_wizard_recommendation_for_templates(dataset, (template,))
         return replace(
             recommendation,
-            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            build_signature=fit_wizard_module.single_fit_build_signature(
+                None, None, dataset=dataset
+            ),
             rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
         )
 
@@ -851,7 +845,9 @@ def test_completion_reports_one_progress_message_per_run(
     def _fake_build(dataset, current_model=None, **kwargs):
         return replace(
             build_fit_wizard_recommendation_for_templates(dataset, (template,)),
-            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            build_signature=fit_wizard_module.single_fit_build_signature(
+                None, None, dataset=dataset
+            ),
             rebin_factor=3 if int(dataset.run_number) in coarse_runs else 1,
         )
 
@@ -902,7 +898,9 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
     def _fake_build(dataset, current_model=None, **kwargs):
         return replace(
             build_fit_wizard_recommendation_for_templates(dataset, (template,)),
-            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            build_signature=fit_wizard_module.single_fit_build_signature(
+                None, None, dataset=dataset
+            ),
             rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
         )
 
@@ -989,7 +987,9 @@ def test_completion_cells_carry_fit_records_not_raw_counts(
     def _fake_build(dataset, current_model=None, **kwargs):
         return replace(
             build_fit_wizard_recommendation_for_templates(dataset, (template,)),
-            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            build_signature=fit_wizard_module.single_fit_build_signature(
+                None, None, dataset=dataset
+            ),
             rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
         )
 
@@ -1050,18 +1050,13 @@ def _install_recording_single_run_wizard(
     delays: dict[int, float],
     on_start: Callable[[_Phase1Recorder], None] | None = None,
 ) -> dict[int, FitWizardRecommendation]:
-    """Replace the per-run analysis with a timed stand-in of known duration.
-
-    Every run's recommendation is fitted once up front and simply handed back
-    after the run's ``delays`` sleep, so the stage's timing is the sleep and
-    nothing else — which is what lets a test assert *completion* order.
-    """
+    """Return pre-fitted tables after controlled delays to test completion order."""
     from asymmetry.core.fitting.fit_wizard import single_fit_build_signature
 
     prepared = {
         int(dataset.run_number): replace(
             build_fit_wizard_recommendation_for_templates(dataset, (template,)),
-            build_signature=single_fit_build_signature(None, None),
+            build_signature=single_fit_build_signature(None, None, dataset=dataset),
         )
         for dataset in datasets
     }
@@ -3669,7 +3664,9 @@ def test_phase_one_screening_cancel_does_not_block_on_the_pool(
     def _fake_build(dataset, current_model=None, **kwargs):
         return replace(
             build_fit_wizard_recommendation_for_templates(dataset, (template,)),
-            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            build_signature=fit_wizard_module.single_fit_build_signature(
+                None, None, dataset=dataset
+            ),
             rebin_factor=1 if int(dataset.run_number) == fine_run else 3,
         )
 

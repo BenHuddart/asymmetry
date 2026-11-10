@@ -742,7 +742,7 @@ table around it should be read with that in mind. Pass
 
 A third thing matters on a long record: **the candidates are fitted on a
 rebinned copy of it**. A dozen multi-component fits on 10\ :sup:`5` points is
-minutes of arithmetic for information a value-rebinned record already carries,
+minutes of arithmetic for information a coarser observation already carries,
 so above roughly 8 000 points the wizard rebins — never so far that the
 highest seeded frequency drops below eight samples per cycle — and says which
 record it used:
@@ -757,6 +757,45 @@ sees the copy. Every number in the comparison table — ``AIC``, ``AICc``,
 is worth remembering when comparing a wizard score against one from a
 hand-built fit on the raw record. The recommendation records both the factor
 and the point count, as ``rebin_factor`` and ``analysed_points``.
+
+For a reproducible histogram observation the wizard merges counts and their
+retained variance before forming asymmetry. It preserves the selected period,
+projection, alpha/beta, timing, good support, corrections, reference acquisition,
+and base binning. Toolbar merges compose with the wizard factor once; a cropped
+input retains its selected output-bin members before further merging. For
+F = [90, 1] and B = [10, 9], a factor of two gives 65.454545…%, whereas the
+mean of the two separate asymmetries is 0%.
+
+Curves without resolved histogram context, including custom or historical curves
+that retain a Run, and rotated observations use the independent-curve mean.
+The wizards still fit asymmetry with conditional Gaussian point errors;
+TF alpha/beta count calibration is a separate operation. Models are evaluated
+at the prepared timestamps, so wide bins can attenuate rapid signals.
+
+Detection uses the original input grid. Variable and Constant error preparation
+is supported, but an actually nonuniform input can still be refused by the
+internal FFT diagnostic. Choosing a count-merge factor does not remove that
+sampling requirement.
+
+Asymmetry also checks that a current assessment's source observation is unchanged
+before rebuilding curves. A changed input raises
+``Wizard observation changed; rerun the analysis before rebuilding curves.``
+Rerun the analysis to obtain scores and curves for the edited observation; this
+prevents a different record from being drawn under the saved score.
+
+Cached analyses require the same observation, reduction context, selected
+support, scope, frequencies, and numerical preparation contract. Rebuilt curves
+use the same prepared grid as the fitted assessment. Saved historical results
+retain their values and curve-mean reconstruction semantics; opening them does
+not refit or relabel their scores.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA 1.326 grouping, musrfit 1.12.1 ordinary packing, and documented Mantid
+muon preprocessing combine counts before the F/B ratio. This comparison concerns
+input observations, not wizard search or ranking. See :ref:`comparison-binning`
+for public sources, uncertainty conventions, and matched-support limits.
 
 .. _fit-wizard-scripting-and-parallelism:
 

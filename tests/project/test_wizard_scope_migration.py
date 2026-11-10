@@ -219,3 +219,32 @@ def test_v22_project_round_trips_through_save_and_load(tmp_path):
     }
     # Re-migrating a current project is a no-op.
     assert migrate_to_current(loaded) == loaded
+
+
+def test_current_project_preserves_historical_wizard_observation_on_reopen(tmp_path):
+    project = migrate_to_current(_v22_project())
+    state = open_fit(project["datasets"][0]["representations"]["time_fb_asymmetry"])["ui_state"][
+        "wizard_state"
+    ]
+    state["recommendation"].update(
+        rebin_factor=2,
+        analysed_points=10,
+        assessments=[
+            {
+                "sample_count": 10,
+                "fit_result": {"chi_squared": 123.5},
+                "fitted_time": [0.1, 0.3],
+                "fitted_curve": [0.0, 0.0],
+            }
+        ],
+    )
+    historical = json.loads(json.dumps(state))
+    path = tmp_path / "historical.asymp"
+    save_project(project, path)
+    reopened = load_project(path)
+    restored = open_fit(reopened["datasets"][0]["representations"]["time_fb_asymmetry"])[
+        "ui_state"
+    ]["wizard_state"]
+    assert restored == historical
+    assert "observation" not in restored["signature"]
+    assert "counts_first_observation" not in restored["recommendation"]["build_signature"]

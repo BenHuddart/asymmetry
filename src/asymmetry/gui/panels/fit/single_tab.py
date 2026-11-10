@@ -60,6 +60,7 @@ from asymmetry.core.fitting.rrf_offset import (
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
 from asymmetry.core.representation.base import FitSlot
+from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
@@ -817,11 +818,12 @@ class SingleFitTab(FitTabBase):
         self._preview_btn.setToolTip(tooltip)
         self._fit_wizard_btn.setToolTip(tooltip)
 
-    def _wizard_context_signature(self) -> dict[str, object]:
-        dataset = self._current_dataset
+    def _wizard_context_signature(self, dataset: MuonDataset | None = None) -> dict[str, object]:
+        dataset = dataset if dataset is not None else self._current_dataset
         number = dataset.run_number if dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
+            "observation": wizard_observation_identity(dataset) if dataset is not None else None,
             "run_number": int(number) if number is not None else None,
             "model": self._composite_model.to_dict(),
         }
@@ -834,6 +836,7 @@ class SingleFitTab(FitTabBase):
         return (
             isinstance(cached_signature, dict)
             and cached_signature.get("binning_policy") == BINNING_POLICY
+            and cached_signature.get("observation") == current_signature["observation"]
             and cached_signature.get("run_number") == current_signature["run_number"]
             and cached_signature.get("model") in (None, current_signature["model"])
         )
@@ -1041,13 +1044,12 @@ class SingleFitTab(FitTabBase):
                 self.field_direction_answered.emit
             )
 
-        signature = self._wizard_context_signature()
-
         # Analyse the whole record, not the plot's fit-range crop: a heavily
         # damped line lives before most fit ranges start and a slow one needs
         # the tail, so cropping first answers a different question. The applied
         # fit still uses the user's range — the wizard only reports it.
         full_dataset, fit_range = self._full_fit_context()
+        signature = self._wizard_context_signature(full_dataset)
         self._fit_wizard_window.set_analysis_context(
             self._current_dataset,
             current_model=self._composite_model,
@@ -1589,23 +1591,16 @@ class SingleFitTab(FitTabBase):
     # ── project state helpers ──────────────────────────────────────────
 
     def get_state(self) -> dict:
-        """Return a snapshot of the single-fit tab state.
+        """Snapshot session state with cached recommendations held by reference.
 
-        The cached wizard analysis rides along as a
-        :class:`~asymmetry.gui.panels.fit.wizard_cache.WizardCacheEntry` — the
-        immutable recommendation *by reference*, never serialised. This method
-        is on the run-switch path (the fit panel saves the leaving run's form
-        and deep-copies the result), so serialising here cost seconds per
-        switch on a fine-resolution run; the entry deep-copies to itself.
-        Serialisation happens at persistence boundaries instead (see the
-        module docstring of ``wizard_cache``).
+        Persistence boundaries serialise the cache; run switches share it.
         """
         if self._fit_wizard_window is not None:
             recommendation = self._fit_wizard_window.current_recommendation()
             if recommendation is not None:
                 signature = self._cached_wizard_signature
                 if not isinstance(signature, dict):
-                    signature = self._wizard_context_signature()
+                    signature = {}
                 self._cache_wizard_analysis(
                     recommendation,
                     signature=signature,

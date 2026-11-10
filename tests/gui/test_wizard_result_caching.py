@@ -533,3 +533,27 @@ def test_reopened_wizard_does_not_serve_a_pre_policy_cache(qapp, dataset, monkey
     tab._open_fit_wizard()
     assert tab._fit_wizard_window.set_cached_recommendation_calls == []
     assert tab._cached_wizard_recommendation is recommendation
+
+
+def test_single_wizard_reopens_full_record_cache_while_fit_view_is_cropped(
+    qapp, dataset, monkeypatch
+):
+    from asymmetry.core.transform.preparation import wizard_observation_identity
+
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
+    tab = SingleFitTab()
+    cropped = dataset.time_range(2.0, 6.0)
+    tab.set_dataset(cropped)
+    tab.set_full_fit_context_provider(lambda: (dataset, (2.0, 6.0)))
+    tab._open_fit_wizard()
+    _assessment, recommendation = _single_wizard_payload(dataset)
+    # The real window signs the uncropped record it actually analyses.
+    signature = dict(
+        tab._wizard_context_signature(), observation=wizard_observation_identity(dataset)
+    )
+    assert signature["observation"] != wizard_observation_identity(cropped)
+    tab._on_fit_wizard_analysis_cached(recommendation, "full record", signature)
+    tab._open_fit_wizard()
+    assert tab._fit_wizard_window.set_cached_recommendation_calls == [
+        (recommendation, signature, "full record")
+    ]

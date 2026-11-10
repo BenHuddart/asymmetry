@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -142,7 +143,12 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             metadata=source.metadata,
             beta=beta,
         )
+        from asymmetry.core.transform.preparation import histogram_observation
+
         datasets[label] = MuonDataset(
+            histogram_observation=histogram_observation(
+                replace(source, grouping=selected_grouping)
+            ),
             time=result.time,
             asymmetry=result.asymmetry,
             error=result.error,

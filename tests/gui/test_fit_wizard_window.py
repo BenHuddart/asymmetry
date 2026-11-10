@@ -445,6 +445,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     assert payload.get("log_text") == ""
     assert payload.get("signature") == {
         "binning_policy": wizard_window_module.BINNING_POLICY,
+        "observation": wizard_window_module.wizard_observation_identity(dataset),
         "run_number": int(dataset.run_number),
         "model": None,
         "scope": WizardScope().to_payload(),
@@ -468,7 +469,6 @@ def test_fit_wizard_window_accepts_cached_recommendation(
 
     assert window.current_recommendation() is recommendation
     assert window.current_log_text() == "cached log"
-    # Cached reopen goes straight to the Result state.
     assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._compare_table.rowCount() == 2
     assert window._model_compare.a_key() == "exp_constant"
@@ -507,9 +507,6 @@ def test_fit_wizard_window_result_page_is_scrollable(
     assert content is not None
     assert content.isAncestorOf(window._answer_card)
     assert content.isAncestorOf(window._result_trail)
-
-
-# ── Welcome page: the picker open, peak seeding collapsed ────────────────────
 
 
 def test_fit_wizard_window_opens_on_welcome_with_the_picker_open(

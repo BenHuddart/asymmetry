@@ -17,7 +17,7 @@ def test_counts_first_rebunch_keeps_selected_pair_alpha(qapp, canonical):
     assert window._apply_grouping_settings_to_dataset(data, data.run.grouping)[0]
     np.testing.assert_allclose(data.asymmetry, 25.0)
     assert window._plot_panel._alpha_value_for_dataset(data) == 0.75
-    _, asymmetry, _ = window._counts_first_rebunched_arrays(data, 2)
+    asymmetry = window._counts_first_rebunched_dataset(data, 2).asymmetry
     np.testing.assert_allclose(asymmetry, 25.0)
     window._clear_all_state()
     window.close()

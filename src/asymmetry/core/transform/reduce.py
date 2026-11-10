@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any
@@ -470,11 +471,7 @@ class PeriodAsymmetryReduction:
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
-        result = {
-            key: value
-            for key, value in metadata.items()
-            if key not in {"grouped_alignment", "period_alignments", "correction_error"}
-        }
+        result = {}
         if len(self.alignments) == 1:
             result["grouped_alignment"] = next(iter(self.alignments.values())).to_dict()
         else:
@@ -484,7 +481,17 @@ class PeriodAsymmetryReduction:
         result["correction_outcomes"] = {
             label: item.to_dict() for label, item in self.corrections.items()
         }
-        return result
+        return asymmetry_reduction_metadata(metadata, result)
+
+
+def asymmetry_reduction_metadata(metadata: dict, reduced: dict) -> dict:
+    """Refresh live metadata while retaining independent reduction-owned provenance."""
+    owned = {"grouped_alignment", "period_alignments", "correction_outcomes"}
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in owned and key != "correction_error"
+    } | deepcopy({key: value for key, value in reduced.items() if key in owned})
 
 
 def corrected_period_counts(

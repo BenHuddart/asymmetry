@@ -11,10 +11,13 @@ The data model mirrors the structure of a typical μSR experiment:
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from asymmetry.core.transform.preparation import HistogramObservation
 
 
 @dataclass
@@ -188,6 +191,9 @@ class MuonDataset:
     error: NDArray[np.float64]
     metadata: dict[str, Any] = field(default_factory=dict)
     run: Run | None = None
+    histogram_observation: HistogramObservation | None = field(
+        default=None, repr=False, compare=False
+    )
 
     # Convenience -------------------------------------------------------
 
@@ -284,18 +290,29 @@ class MuonDataset:
         fraction of a megabyte pickles to tens of megabytes while it still
         holds them.
 
-        The copy shares the arrays, ``metadata`` and ``grouping`` with this
-        dataset (nothing is duplicated in the parent process) and differs only
-        in carrying a :class:`Run` with an empty ``histograms`` list. A dataset
-        with no source run already carries no counts and is returned unchanged.
+        The copy shares fitted arrays and metadata. Its Run omits histograms
+        and period-array caches, and its transient histogram observation is
+        removed. Scalar grouping provenance is retained. A curve without a Run
+        or histogram observation is returned unchanged.
 
         Count-domain fitting, β/α calibration and grouped time-domain fitting
         *do* read ``run.histograms``; they must be handed the full record, not
         a fit record.
         """
-        if self.run is None:
+        run = self.run
+        if run is None and self.histogram_observation is None:
             return self
-        return replace(self, run=replace(self.run, histograms=[]))
+        if run is not None:
+            run = replace(
+                run,
+                histograms=[],
+                grouping={
+                    k: v
+                    for k, v in run.grouping.items()
+                    if k not in {"period_histograms", "period_reduced"}
+                },
+            )
+        return replace(self, run=run, histogram_observation=None)
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
         r"""Merge independent curve bins by averaging values and adding variances.
@@ -339,6 +356,11 @@ class MuonDataset:
             error=self.error[mask].copy(),
             metadata=dict(self.metadata),
             run=self.run,
+            histogram_observation=(
+                self.histogram_observation.select(mask)
+                if self.histogram_observation is not None
+                else None
+            ),
         )
 
     def summary(self) -> str:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Both fit wizards merge reproducible histogram observations counts-first, preserving toolbar merges, crops, corrections, and reconstruction/cache identity. Curve-only and rotated inputs retain independent means.
+
 - Expose scriptable counts-first replay of a selected run's reduction, sharing
   the histogram toolbar's period, correction, and calibrated-pair preparation.
 

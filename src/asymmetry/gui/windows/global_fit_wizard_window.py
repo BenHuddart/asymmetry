@@ -80,6 +80,7 @@ from asymmetry.core.fitting.wizard_scope import (
     effort_tier_from_payload,
     set_user_field_direction,
 )
+from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -1587,13 +1588,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._set_busy(self._analysis_in_progress)
 
     def current_effort_tier(self) -> EffortTier:
-        """The effort tier the wizard will run.
-
-        The visible control is a single disabled "Optimize" item, so this always
-        returns the exact tier. The method (and the payload it feeds) is retained
-        so a future scope-based quick-look tier can be surfaced without reworking
-        persistence.
-        """
+        """Return the effort tier selected by the disabled Optimize control."""
         return effort_tier_from_payload(self._effort_combo.currentData())
 
     def _set_effort_tier(self, tier: EffortTier) -> None:
@@ -1610,6 +1605,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _analysis_signature(self) -> dict[str, object]:
         return {
             "binning_policy": BINNING_POLICY,
+            "observation": [wizard_observation_identity(ds) for ds in self._datasets],
             "run_numbers": [int(dataset.run_number) for dataset in self._datasets],
             "model": self._current_model.to_dict() if self._current_model is not None else None,
             "types": {str(key): str(value) for key, value in self._current_parameter_types.items()},

@@ -16,6 +16,7 @@ from concurrent.futures import (
     wait,
 )
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import combinations
 from typing import Protocol, TypeVar
 
@@ -136,6 +137,11 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fitting.wizard_timing import (
     WizardStageProgress,
     stage_timer,
+)
+from asymmetry.core.transform.preparation import (
+    WIZARD_PREPARATION,
+    prepare_wizard_dataset,
+    wizard_observation_matches,
 )
 
 #: Hard cap on the series template alphabet. The alphabet is a union over runs,
@@ -1176,6 +1182,12 @@ class _RunCompletionPlan:
     tasks: tuple[_AssessmentTask, ...]
 
 
+def _cancel_histogram_preparation(callback: Callable[[], bool] | None) -> None:
+    """Keep count preparation on the wizard's cooperative cancellation path."""
+    if callback is not None and callback():
+        raise FitCancelledError("Global fit wizard analysis cancelled.")
+
+
 def _plan_run_completion(
     dataset: MuonDataset,
     templates: tuple[CandidateTemplate, ...],
@@ -1184,37 +1196,21 @@ def _plan_run_completion(
     rebin_factor: int,
     metric: SelectionMetric,
     sibling_values_by_template: Mapping[str, ParameterSet],
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> _RunCompletionPlan:
-    """Work out how to score one run against the whole series alphabet.
+    """Score the alphabet on one run's common-resolution observation.
 
-    Cells the run's own single-fit table already holds *at this rebin factor* are
-    kept verbatim; everything else becomes an assessment task on the rebinned
-    record, seeded from the run's own peak analysis so a multiplet template's
-    lines start on the lines this run actually shows, and warm-started:
-
-    * from **this run's own** fitted values for that template, when it has them
-      at another rebin factor. That is the same data and the same model at
-      another binning — the same basin by construction — so the cell is fitted
-      once from the answer and no ladder runs (``variant_budget=0``).
-    * from the **best sibling run's** values otherwise. A sibling is a different
-      record, and a sibling-seeded cell measurably can converge into a far worse
-      basin than the base seed finds, so those keep the base rung as well
-      (``variant_budget=1``, which the warm-aware ladder in
-      :func:`~asymmetry.core.fitting.fit_wizard._assess_candidate_template` runs
-      alongside the warm attempt).
-
-    Every alphabet template was fitted successfully on some run (that is what
-    :func:`series_template_alphabet` admits), so ``sibling_values_by_template``
-    covers every cell this run lacks and no cell ever starts cold.
+    Matching cells retain their fits. Other cells warm-start from the run's
+    own fitted parameters with no ladder, or from a sibling with a base rung.
     """
-    analysis_dataset = dataset.merge_curve_bins(rebin_factor) if rebin_factor > 1 else dataset
-    # One task per cell means the rebinned record is pickled once per cell this
-    # run lacks, and a series-wide completion pass is hundreds of cells. The
-    # tasks therefore carry the *fit record* — arrays and provenance, no raw
-    # counts — while the plan keeps the full record for the in-parent curve
-    # rebuild in :func:`_assemble_completed_run`.
+    analysis_dataset = prepare_wizard_dataset(
+        dataset, rebin_factor, cancel_check=partial(_cancel_histogram_preparation, cancel_callback)
+    )
+    # Fan-out shares one prepared observation; task records omit replay inputs.
     analysis_fit_record = analysis_dataset.fit_record()
-    same_resolution = int(source.rebin_factor) == int(rebin_factor)
+    same_resolution = int(source.rebin_factor) == int(rebin_factor) and wizard_observation_matches(
+        dataset, source.build_signature
+    )
     seed_context = TemplateSeedContext(
         peak_analysis=source.peak_analysis,
         multiplet_matches=source.multiplet_matches,
@@ -1298,6 +1294,9 @@ def _assemble_completed_run(
             scope_note=plan.source.scope_note,
             rebin_factor=int(rebin_factor),
             analysed_points=plan.analysed_points,
+            build_signature=single_fit_build_signature(
+                None, dataset=plan.dataset, table_role="completed"
+            ),
         ),
         metric,
     )
@@ -1524,7 +1523,7 @@ def series_rebin_factor(
     datasets: Sequence[MuonDataset],
     recommendations_by_run: Mapping[int, FitWizardRecommendation],
 ) -> int:
-    """One value-rebinning factor for the whole series: the smallest per run.
+    """One observation-merge factor for the whole series: the smallest per run.
 
     Every run's own factor already respects that run's bandwidth (see
     :func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`), so the
@@ -1615,26 +1614,19 @@ def single_fit_table_covers_portfolio(
     templates: Sequence[CandidateTemplate],
     recommendations_by_run: Mapping[int, FitWizardRecommendation],
 ) -> bool:
-    """True when ``recommendations_by_run`` is a usable series score table.
+    """Require every template cell on the same factor and actual observation.
 
-    Two conditions, and both are what the series arithmetic needs rather than
-    bookkeeping: every run carries a score for every template (a missing cell
-    makes that template's series sum meaningless), and every run was scored at
-    the *same* rebin factor (an information criterion computed on a coarser
-    record is not comparable with one computed on a finer one). A cell that
-    *failed* still covers: the completion pass already retried it from a
-    sibling run's values, so a failure in a completed table is the honest
-    answer that the template does not describe that run, not work left
-    undone. Coverage is not identity: a run's table may hold more templates
-    than the series ranks, which is exactly what a genuine single-run analysis
-    does.
+    Failed cells still cover after completion has retried them. A run's own
+    table may carry additional templates without changing its observations.
     """
     if not recommendations_by_run or not templates:
         return False
     factors: set[int] = set()
     for dataset in datasets:
         recommendation = recommendations_by_run.get(int(dataset.run_number))
-        if recommendation is None:
+        if recommendation is None or not wizard_observation_matches(
+            dataset, recommendation.build_signature
+        ):
             return False
         factors.add(int(recommendation.rebin_factor))
         for template in templates:
@@ -2077,12 +2069,12 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
             series_rebin_factor=1,
         )
 
-    expected_signature = single_fit_build_signature(scope, user_frequencies_mhz)
     source_by_run: dict[int, FitWizardRecommendation] = {
         int(dataset.run_number): existing[int(dataset.run_number)]
         for dataset in preview.ordered_datasets
         if int(dataset.run_number) in existing
-        and existing[int(dataset.run_number)].build_signature == expected_signature
+        and existing[int(dataset.run_number)].build_signature
+        == single_fit_build_signature(scope, user_frequencies_mhz, dataset=dataset)
     }
     missing_datasets = [
         dataset
@@ -2272,6 +2264,7 @@ def _complete_single_fit_table(
             rebin_factor=rebin_factor,
             metric=metric,
             sibling_values_by_template=sibling_values,
+            cancel_callback=cancel_callback,
         )
         for dataset in ordered_datasets
     ]
@@ -2627,17 +2620,12 @@ def _build_single_fit_prescreen_assessments(
     # fitted at, so it is what this row's dense curves are sampled between.
     analysis_dataset_by_run = {
         int(dataset.run_number): (
-            dataset.merge_curve_bins(factor)
-            if (
-                factor := int(
-                    single_fit_recommendations_by_run[int(dataset.run_number)].rebin_factor
-                )
-            )
-            > 1
-            else dataset
+            prepare_wizard_dataset(dataset, source.rebin_factor)
+            if WIZARD_PREPARATION in source.build_signature
+            else dataset.merge_curve_bins(source.rebin_factor)
         )
         for dataset in datasets
-        if int(dataset.run_number) in single_fit_recommendations_by_run
+        if (source := single_fit_recommendations_by_run.get(int(dataset.run_number))) is not None
     }
     if repair_partial_incomplete:
         # NOTE (measured, deliberately still serial): repair is a *fit* per failed
@@ -8647,10 +8635,7 @@ def _decimated_datasets_for_search(
     if not _decimation_is_nyquist_safe(datasets, aggregate_fingerprint, factor):
         _record_counter(instrumentation, "decimation_skipped_nyquist_gate")
         return datasets, 1
-    try:
-        decimated = [dataset.merge_curve_bins(factor) for dataset in datasets]
-    except ValueError:
-        return datasets, 1
+    decimated = [prepare_wizard_dataset(dataset, factor) for dataset in datasets]
     _record_counter(instrumentation, "decimation_applied")
     _append_metric(instrumentation, "decimation_factor", float(factor))
     return decimated, factor
@@ -9294,11 +9279,19 @@ def _separable_search_datasets(
     *,
     search_rebin_factor: int,
     instrumentation: dict[str, object] | None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> list[MuonDataset]:
     if search_rebin_factor <= 1:
         return datasets
     _record_counter(instrumentation, "separable_search_rebin_applied")
-    return [dataset.merge_curve_bins(search_rebin_factor) for dataset in datasets]
+    return [
+        prepare_wizard_dataset(
+            dataset,
+            search_rebin_factor,
+            cancel_check=partial(_cancel_histogram_preparation, cancel_callback),
+        )
+        for dataset in datasets
+    ]
 
 
 def _all_local_run_fit_results(
@@ -10294,13 +10287,9 @@ def _run_separable_search(
         datasets,
         search_rebin_factor=search_rebin_factor,
         instrumentation=instrumentation,
+        cancel_callback=cancel_callback,
     )
-    # What the anchor, elimination and flip tasks carry: every task holds the
-    # whole series, so the series crosses the process boundary once per task —
-    # as fit records, arrays and provenance without the runs' raw counts, which
-    # no fit in this search reads. Rebinning shares the source ``Run``
-    # (see :meth:`MuonDataset.merge_curve_bins`), so a search-resolution record still holds
-    # the full-resolution counts until this strips them. Built once, here.
+    # Prepare once before candidate fan-out; tasks carry no histogram replay context.
     search_fit_records = [dataset.fit_record() for dataset in search_datasets]
     if search_rebin_factor > 1:
         _progress_log(
@@ -10824,6 +10813,7 @@ def _optimise_partition_phases(
                 segment_datasets,
                 search_rebin_factor=search_rebin_factor,
                 instrumentation=None,
+                cancel_callback=cancel_callback,
             )
             seeds_by_window[(start, stop)] = {
                 key: base_by_run for key, (base_by_run, _fixed) in segment_contexts.items()

@@ -207,10 +207,53 @@ class ReductionCache:
 __all__ = ["ReductionCache"]
 
 
+_INLINE_INPUT_BYTES = 64 * 1024
+
+
+def capture_histogram_observation(run, *, facility, reference, parent):
+    """Snapshot large reduction inputs through the existing cancellable worker."""
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    histograms = [
+        *run.histograms,
+        *(h for period in (run.grouping.get("period_histograms") or []) for h in period),
+    ]
+    if reference is not None:
+        histograms.extend(reference.histograms)
+    size = sum(
+        array.nbytes
+        for hist in histograms
+        for array in (hist.counts, hist.count_variance)
+        if array is not None
+    )
+    if size <= _INLINE_INPUT_BYTES:
+        return histogram_observation(run, facility=facility, reference=reference)
+
+    def capture(worker):
+        return histogram_observation(
+            run,
+            facility=facility,
+            reference=reference,
+            cancel_check=partial(check_task_cancelled, worker),
+        )
+
+    dialog = ScientificInputDialog(
+        parent, "Recording histogram observation…", "Histogram observation"
+    )
+    try:
+        result = dialog.run(capture)
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+    if result is None:
+        raise ValueError("Histogram observation snapshot cancelled")
+    return result
+
+
 def histogram_content_key(histograms, parent):
     """Fingerprint mutable source contents; keep large scans off the GUI thread."""
     arrays = tuple(array for hist in histograms for array in (hist.counts, hist.count_variance))
-    if sum(array.nbytes for array in arrays if array is not None) <= 64 * 1024:
+    if sum(array.nbytes for array in arrays if array is not None) <= _INLINE_INPUT_BYTES:
         return _histogram_array_fingerprints(arrays)
     dialog = ScientificInputDialog(parent, "Checking histogram data…", "Histogram content check")
     try:

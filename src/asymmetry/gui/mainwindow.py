@@ -148,7 +148,7 @@ from asymmetry.core.instrument import (
     projection_memberships,
     recommend_grouping_preset_for_run,
 )
-from asymmetry.core.io import resolve_background_reference
+from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
@@ -245,10 +245,13 @@ from asymmetry.core.transform.deadtime import (
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.grouping import InvalidGroupingError, grouping_balances
-from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+from asymmetry.core.transform.preparation import prepare_wizard_dataset
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
-from asymmetry.core.transform.reduce import correction_flags_from_grouping
+from asymmetry.core.transform.reduce import (
+    asymmetry_reduction_metadata,
+    correction_flags_from_grouping,
+)
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
@@ -320,7 +323,11 @@ from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_edi
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
-from asymmetry.gui.utils.reduction_cache import ReductionCache, histogram_content_key
+from asymmetry.gui.utils.reduction_cache import (
+    ReductionCache,
+    capture_histogram_observation,
+    histogram_content_key,
+)
 from asymmetry.gui.utils.reference_timing import prepare_reference_timing
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -652,13 +659,7 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
 
 
 def _included_groups_key(grouping: dict) -> tuple:
-    """Stable, hashable image of a grouping's ``included_groups`` map.
-
-    ``included_groups`` (group_id -> shown?) drives how many grouped-count
-    datasets the build returns but is absent from ``fourier_grouping_digest``,
-    so the reduction cache keys on it explicitly. A missing/ill-typed map is an
-    empty key (every group defaults to included).
-    """
+    """Key group visibility explicitly; the numerical grouping digest omits it."""
     raw = grouping.get("included_groups")
     if not isinstance(raw, dict):
         return ()
@@ -672,26 +673,14 @@ def _included_groups_key(grouping: dict) -> tuple:
 
 
 def _period_histograms_key(period_histograms: object) -> tuple:
-    """Stable, hashable structural image of a grouping's ``period_histograms``.
+    """Summarise held periods without materialising their count arrays.
 
-    The counts-first rebunch selects a period slice from this structure (a list
-    of per-period histogram lists), which ``fourier_grouping_digest`` does not
-    capture. The slice contents are tied to the run and are never rewritten in
-    place — period mapping builds a *new* run — so ``id(run)`` already
-    discriminates them; this is a belt-and-braces structural summary (period
-    count and per-period histogram count) that avoids materialising the
-    (numpy-truncated, collision-prone) repr of the count arrays. Non-list
-    values collapse to an empty key.
+    Period remapping replaces the Run, whose identity also keys this summary.
     """
     if not isinstance(period_histograms, (list, tuple)):
         return ()
     shape = tuple(len(p) if isinstance(p, (list, tuple)) else -1 for p in period_histograms)
     return (len(period_histograms),) + shape
-
-
-def _rebunch_nbytes(result: tuple[np.ndarray, np.ndarray, np.ndarray]) -> int:
-    """Approximate byte size of a cached ``(time, asymmetry, error)`` triple."""
-    return sum(arr.nbytes for arr in result)
 
 
 def _grouped_time_domain_nbytes(datasets: list[MuonDataset]) -> int:
@@ -2046,7 +2035,7 @@ class MainWindow(QMainWindow):
         # chokepoint (counts-then-ratio) whenever the run still has raw
         # histograms, rather than value-domain rebinning the reduced curve.
         if hasattr(self._plot_panel, "set_counts_rebunch_provider"):
-            self._plot_panel.set_counts_rebunch_provider(self._counts_first_rebunched_arrays)
+            self._plot_panel.set_counts_rebunch_provider(self._counts_first_rebunched_dataset)
         if hasattr(self._plot_panel, "view_limits_changed"):
             self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
         if hasattr(self._plot_panel, "overlay_toggled"):
@@ -5665,6 +5654,11 @@ class MainWindow(QMainWindow):
         facility = resolve_facility(
             metadata=run.metadata, grouping=reduction_grouping
         ) or resolve_facility(metadata=dataset.metadata)
+        reference = (
+            self._resolve_background_reference(reduction_grouping)
+            if use_background and resolve_background_mode(reduction_grouping) == "reference_run"
+            else None
+        )
         reduced = reduce_period_asymmetry(
             run.histograms,
             reduction_grouping,
@@ -5679,7 +5673,7 @@ class MainWindow(QMainWindow):
             use_background=use_background,
             facility=facility,
             metadata=reference_observation_metadata(run),
-            reference_resolver=self._resolve_background_reference,
+            reference_resolver=partial(background_reference_for_grouping, reference),
         )
         time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
         outcomes = reduced.corrections
@@ -5687,7 +5681,14 @@ class MainWindow(QMainWindow):
             grouping.pop(key, None)
         grouping.update(background_grouping_metadata(outcomes))
 
+        observation = capture_histogram_observation(
+            replace(run, grouping=reduction_grouping),
+            facility=facility,
+            reference=reference,
+            parent=self,
+        )
         dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
+        dataset.histogram_observation = observation
         dataset.time = time_axis.copy()
         dataset.asymmetry = asymmetry.copy()
         dataset.error = error.copy()
@@ -5739,72 +5740,70 @@ class MainWindow(QMainWindow):
         dataset.metadata.pop("correction_error", None)
         return True, outcomes
 
-    def _counts_first_rebunched_arrays(
+    def _counts_first_rebunched_dataset(
         self, dataset: MuonDataset, extra_bunch_factor: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Replay recorded binning and corrections, merging output bins counts-first."""
-        run = dataset.run
-        if run is None or not run.histograms:
-            raise ValueError("Counts-first display bunching requires raw histograms.")
+    ) -> MuonDataset:
+        """Prepare the selected observation and retain its toolbar membership."""
+        observation = dataset.histogram_observation
+        if observation is None:
+            raise ValueError("Counts-first bunching requires a resolved histogram observation.")
         refresh_reference_timing_requests(self._data_browser.get_all_datasets())
-        grouping = run.grouping
-        binning = replace(binning_spec(grouping), merge=extra_bunch_factor)
-        forward_gid, backward_gid = (
-            int(grouping.get("forward_group", 1)),
-            int(grouping.get("backward_group", 2)),
-        )
-        alpha, beta = grouping_balances(grouping)
+        grouping = observation.source.grouping
         flags = correction_flags_from_grouping(grouping)
-        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
-        facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
-            metadata=dataset.metadata
-        )
         reference = (
-            self._resolve_background_reference(grouping)
+            self._resolve_background_reference(
+                grouping | {"background_run": copy.deepcopy(grouping.get("background_run"))}
+            )
             if flags.use_background and resolve_background_mode(grouping) == "reference_run"
             else None
         )
-        reference_content = (
-            histogram_content_key(reference.histograms, self) if reference is not None else ()
-        )
-        if reference_content is None:
-            raise ValueError("Reference input check cancelled")
-        key = (
-            fourier_grouping_digest(run),
-            reference_content,
-            reference.timing if reference is not None else None,
-            reference.resolved_timing if reference is not None else None,
-            (reference.scaling, reference.deadtime_normaliser, reference.file_dead_time_us)
-            if reference is not None
-            else None,
-            binning,
-            forward_gid,
-            backward_gid,
-            alpha,
-            beta,
-            flags.deadtime_mode,
-            tuple(detector_t0_overrides(grouping, len(run.histograms)) or ()),
-            grouping.get("good_frames"),
-            tuple(grouping.get("period_good_frames") or ()),
-            tuple(
-                tuple(row) if isinstance(row, list) else None
-                for row in (grouping.get("period_dead_time_us") or ())
-            ),
-            period_mode,
-            _period_histograms_key(grouping.get("period_histograms")),
-        )
-
-        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            reduced = prepare_histogram_asymmetry(
-                run, merge=extra_bunch_factor, facility=facility, reference=reference
+        if reference is not None:
+            content = histogram_content_key(reference.histograms, self)
+            if content is None:
+                raise ValueError("Reference input check cancelled")
+            reference_key = (
+                content,
+                (reference.run_number, reference.source_file, reference.period_number),
+                reference.timing,
+                reference.resolved_timing,
+                reference.scaling,
+                reference.deadtime_normaliser,
+                reference.file_dead_time_us,
+                tuple((h.bin_width, h.t0_bin, h.t0_time_us) for h in reference.histograms),
             )
-            return reduced.time, reduced.asymmetry, reduced.error
+            observation = replace(
+                observation,
+                reference=reference,
+                identity=repr((observation.identity, reference_key)),
+            )
+        selected = replace(dataset, histogram_observation=observation)
+        key = (observation.identity, observation.binning, extra_bunch_factor)
 
-        time, asymmetry, error = self._reduction_cache.get_or_compute(
-            run, "rebunch", key, _compute, _rebunch_nbytes
+        def compute():
+            result = prepare_wizard_dataset(selected, extra_bunch_factor)
+            return replace(
+                result,
+                run=None,
+                histogram_observation=None,
+                metadata=asymmetry_reduction_metadata({}, result.metadata),
+            )
+
+        prepared = self._reduction_cache.get_or_compute(
+            dataset.run,
+            "rebunch",
+            key,
+            compute,
+            lambda result: result.time.nbytes + result.asymmetry.nbytes + result.error.nbytes,
         )
-        # Display transforms can mutate their arrays; cached acquisition coordinates remain intact.
-        return time.copy(), asymmetry.copy(), error.copy()
+        return replace(
+            prepared,
+            metadata=asymmetry_reduction_metadata(dataset.metadata, prepared.metadata),
+            run=dataset.run,
+            histogram_observation=observation.merge(dataset.n_points, extra_bunch_factor),
+            time=prepared.time.copy(),
+            asymmetry=prepared.asymmetry.copy(),
+            error=prepared.error.copy(),
+        )
 
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""

@@ -87,6 +87,12 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.fft import fft_arrays
+from asymmetry.core.transform.preparation import (
+    WIZARD_PREPARATION,
+    prepare_wizard_dataset,
+    wizard_observation_identity,
+    wizard_observation_matches,
+)
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
@@ -458,13 +464,13 @@ class FitWizardRecommendation:
     #: resolved (``scope=None`` in :func:`build_fit_wizard_recommendation`).
     #: Additive — old payloads default to ``""``. GUI-facing.
     scope_note: str = ""
-    #: Value rebinning affects fits; peaks and fingerprints use the full record.
+    #: Observation merging affects fits; detection uses the full record.
     rebin_factor: int = 1
     #: Fitted points for this recommendation, including any analysis rebinning.
     #: Comparisons require the same resolution; zero denotes an unknown count.
     analysed_points: int = 0
     #: Scope and declared frequencies encoded by single_fit_build_signature.
-    #: Empty for derived tables that cannot be reused as a full single analysis.
+    #: Table role distinguishes full analyses from explicit/completed score tables.
     build_signature: str = ""
 
     @property
@@ -1467,7 +1473,7 @@ _RESOLUTION_MIN_RATE_PARAMS = 2
 #: actually does damage.
 _REFINEMENT_CANDIDATES = 3
 
-#: Point budget above which candidates are fitted on a value-rebinned copy of
+#: Point budget above which candidates are fitted on a prepared observation of
 #: the record. A continuous-source run at 0.1 ns binning is ~10⁵ points over a
 #: few µs, and a Stage-2 set of a dozen multi-component fits on that takes
 #: minutes — while carrying no more information than a record binned to a few
@@ -2570,7 +2576,7 @@ def build_fit_wizard_recommendation(
     10⁵-point run.
 
     On a record above ``_FIT_SAMPLE_BUDGET`` points every candidate is fitted on
-    a value-rebinned copy (:func:`analysis_rebin_factor`); peak detection and
+    a prepared observation (:func:`analysis_rebin_factor`); peak detection and
     the fingerprint still run on the full record. The result records the factor
     and the point count it used in :attr:`FitWizardRecommendation.rebin_factor`
     and :attr:`~FitWizardRecommendation.analysed_points`, and every information
@@ -2594,7 +2600,7 @@ def build_fit_wizard_recommendation(
     # (see ``wizard_scope.ScopeResolution.inference_note``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
     scope_note = resolution.inference_note if resolution is not None else ""
-    build_signature = single_fit_build_signature(scope, user_frequencies_mhz)
+    build_signature = single_fit_build_signature(scope, user_frequencies_mhz, dataset=dataset)
     families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
 
     def _progress(message: str) -> None:
@@ -2639,7 +2645,7 @@ def build_fit_wizard_recommendation(
         )
 
     # Everything from here on is fitted on ``analysis_dataset``: the record
-    # itself when it is small enough, a value-rebinned copy when it is not (see
+    # itself when it is small enough, a prepared copy when it is not (see
     # ``analysis_rebin_factor``). The detection above deliberately ran on the
     # full record — it is cheap and it needs the bandwidth — but a Stage-2 set
     # of a dozen multi-component fits on 10⁵ points is minutes of arithmetic
@@ -2647,7 +2653,7 @@ def build_fit_wizard_recommendation(
     # BIC, residual diagnostic and fitted curve below therefore refers to the
     # analysed record, which is what ``analysed_points`` records.
     rebin_factor = analysis_rebin_factor(dataset, peak_analysis, field_gauss=field_gauss)
-    analysis_dataset = dataset.merge_curve_bins(rebin_factor) if rebin_factor > 1 else dataset
+    analysis_dataset = prepare_wizard_dataset(dataset, rebin_factor, cancel_check=_check_cancelled)
     if rebin_factor > 1:
         _progress(
             f"Fitting a ×{rebin_factor} rebinned copy "
@@ -2655,13 +2661,7 @@ def build_fit_wizard_recommendation(
         )
         peak_analysis = _peaks_within_analysis_band(peak_analysis, analysis_dataset)
 
-    # What the fan-outs below actually ship to a worker: the analysed record
-    # without the run's raw detector histograms (see
-    # :meth:`MuonDataset.fit_record`). No fit here reads a count — the assessment
-    # path is time-domain throughout — and the counts are two orders of magnitude
-    # larger than the fitted arrays, so leaving them in would make every one of
-    # the two or three dozen task payloads of this build a copy of the whole run.
-    # Built once, here, rather than per task.
+    # Candidate workers receive fitted arrays and provenance, with replay inputs removed.
     analysis_fit_record = analysis_dataset.fit_record()
 
     stage1_context = TemplateSeedContext(
@@ -3103,14 +3103,6 @@ def build_fit_wizard_recommendation(
         ),
         metric,
     )
-    # The one place the dense-curve contract on :class:`CandidateAssessment` is
-    # discharged for this build. Every fan-out above fitted without curves;
-    # ranking reads none of them, so the rank is what decides which rows are the
-    # *answer* and therefore owe a drawable curve. ``analysis_dataset`` — the
-    # rebinned record the fits ran on — is deliberately what the curves are
-    # sampled between, so a row rebuilt later by
-    # :func:`assessment_with_curves` (which rebins by ``rebin_factor`` to get
-    # here) is identical to one materialised now.
     displayed = {key for key in (ranked.recommended_key, *ranked.comparable_keys) if key}
     return replace(
         ranked,
@@ -3154,10 +3146,6 @@ def build_fit_wizard_recommendation_for_templates(
     # The tasks carry the fit record, not the record: a task payload is built to
     # cross a process boundary, and no assessment reads a raw count.
     fit_record = dataset.fit_record()
-    # max_workers=1 preserves this function's historical serial semantics (one
-    # fit engine's worth of work at a time, in list order); the previous single
-    # shared FitEngine() is replaced by one-per-task, which is equivalent since
-    # FitEngine carries no state across calls.
     assessments = tuple(
         _run_template_assessments(
             [
@@ -3186,6 +3174,9 @@ def build_fit_wizard_recommendation_for_templates(
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            build_signature=single_fit_build_signature(
+                None, dataset=dataset, table_role="templates"
+            ),
         ),
         metric,
     )
@@ -3675,6 +3666,9 @@ def recommendation_template_keys(
 def single_fit_build_signature(
     scope: WizardScope | None,
     user_frequencies_mhz: Sequence[float] | None = None,
+    *,
+    dataset: MuonDataset | None = None,
+    table_role: str = "analysis",
 ) -> str:
     """Encode scope, declared frequencies, and the numerical binning contract.
 
@@ -3684,6 +3678,9 @@ def single_fit_build_signature(
     return json.dumps(
         {
             "binning_policy": BINNING_POLICY,
+            "wizard_preparation": WIZARD_PREPARATION,
+            "table_role": table_role,
+            "observation": wizard_observation_identity(dataset) if dataset is not None else None,
             "scope": scope.to_payload() if scope is not None else None,
             "user_frequencies_mhz": [float(value) for value in (user_frequencies_mhz or ())],
         },
@@ -4479,26 +4476,26 @@ def assessment_with_curves(
     key: str,
     dataset: MuonDataset,
 ) -> CandidateAssessment:
-    """Return ``recommendation``'s ``key`` row with its dense curves built.
+    """Rebuild one assessment on the exact observation grid used for its fit.
 
-    The public crossing of the dense-curve contract on
-    :class:`CandidateAssessment`: a build materialises curves only for the rows
-    it exposes as its answer, and a caller that wants to *draw* any other row
-    asks for it here. ``dataset`` is the record the recommendation was built
-    from — the same one handed to :func:`build_fit_wizard_recommendation`, at
-    full resolution. Rebinning it by the recommendation's own
-    :attr:`~FitWizardRecommendation.rebin_factor` reproduces the record the fits
-    ran on, which is the grid :func:`_dense_fit_curves` samples between, so the
-    rebuilt curve is identical to the one an eager build would have attached.
+    Supply the original full input dataset. The recommendation's merge factor
+    and numerical identity reproduce its fitted record; a changed current
+    observation requires a new analysis. Historical assessments keep their
+    curve-mean reconstruction. No fit or score is changed here.
 
-    ``key`` must name an assessment of ``recommendation``; a key that does not
-    is a caller bug and raises :class:`KeyError` rather than resolving to
-    anything. Calling this for a row that already carries curves rebuilds the
-    same arrays — it is idempotent, not an error.
+    ``key`` must name an assessment in the recommendation or raises KeyError.
     """
     assessment = {row.template.key: row for row in recommendation.assessments}[key]
+    if WIZARD_PREPARATION in recommendation.build_signature and not wizard_observation_matches(
+        dataset, recommendation.build_signature
+    ):
+        raise ValueError("Wizard observation changed; rerun the analysis before rebuilding curves.")
     factor = int(recommendation.rebin_factor)
-    analysis_dataset = dataset.merge_curve_bins(factor) if factor > 1 else dataset
+    analysis_dataset = (
+        prepare_wizard_dataset(dataset, factor)
+        if WIZARD_PREPARATION in recommendation.build_signature
+        else dataset.merge_curve_bins(factor)
+    )
     return _with_dense_curves(assessment, analysis_dataset)
 
 
@@ -5903,7 +5900,7 @@ def _peaks_within_analysis_band(
     """Drop every detected line the analysed record cannot represent.
 
     Detection runs on the full record for its bandwidth, but every fit runs on
-    ``analysis_dataset`` — the value-rebinned copy — whose Nyquist frequency is
+    ``analysis_dataset`` — the prepared copy — whose Nyquist frequency is
     lower. A line above it (a residual-FFT noise spike a few percent below the
     native Nyquist, say) would be seeded into a template whose frequency bounds
     then straddle a limit the rebinned record cannot reach, so it is removed
@@ -6075,7 +6072,7 @@ def _apply_frequency_support_disqualifiers(
 
     ``dataset`` must be the **full-resolution** record — the one peak detection
     and the fingerprint ran on — even when the candidates were fitted on a
-    value-rebinned copy (:func:`analysis_rebin_factor`). Rebinning averages the
+    prepared copy (:func:`analysis_rebin_factor`). Merging combines the
     per-bin scatter out of σ and so lengthens
     :func:`effective_analysis_window`'s verdict; anchoring the cycle floor and
     the tolerance to the analysed copy would let a cost heuristic decide whether

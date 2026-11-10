@@ -38,10 +38,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.io.periods import (
-    combine_period_asymmetry,
-    period_run,
-)
+from asymmetry.core.io.periods import combine_period_asymmetry, period_run
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
     grouping_balances,
@@ -65,11 +62,6 @@ _DERIVED_ACQUISITION_KEYS = (
     "reference_exposure",
     "period_reference_exposure",
 )
-
-
-# ---------------------------------------------------------------------------
-# Built-in ideal-instrument templates (simulate with no run loaded)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -1818,11 +1810,6 @@ def degrade_run(
     )
 
 
-# ---------------------------------------------------------------------------
-# Reduction to a browser-ready dataset
-# ---------------------------------------------------------------------------
-
-
 def _reduce_histograms(
     histograms: list[Histogram],
     grouping: dict,
@@ -1848,17 +1835,9 @@ def _reduce_histograms(
 
 
 def reduce_run_to_dataset(run: Run) -> MuonDataset:
-    """Reduce a run to its F-B asymmetry :class:`MuonDataset` (percent).
+    """Reduce synthetic counts and record their actual uncorrected observation."""
+    from asymmetry.core.transform.preparation import histogram_observation
 
-    Mirrors the loader reduction (``NexusLoader``): align and sum the
-    forward/backward groups, form the α-balanced asymmetry in percent, slice
-    to the good-bin window and build the time axis from the common t0. Runs
-    carrying a two-period payload are reduced according to their
-    ``period_mode`` (red, green, or the green∓red combinations), and a
-    ``bunching_factor`` above one is applied, so a derived run surfaces in
-    the Data Browser looking exactly like its source. Used for synthetic and
-    degraded runs.
-    """
     if not run.histograms:
         raise ValueError("Reduction requires a run with detector histograms.")
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
@@ -1878,27 +1857,36 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         red = _reduce_histograms(red_run.histograms, red_run.grouping)
         green = _reduce_histograms(green_run.histograms, green_run.grouping)
         time, asymmetry, error = combine_period_asymmetry(*red, *green, mode)
+        context_grouping = dict(grouping, period_histograms=period_lists[:2])
+        if "detector_first_good_bins" in grouping:
+            # period_run uses acquired windows by default when detector facts exist.
+            context_grouping.setdefault("good_window_policy", {"mode": "from_file"})
+        if "t0_policy" in red_run.grouping:
+            context_grouping.setdefault("t0_policy", red_run.grouping["t0_policy"])
+        source = replace(run, grouping=context_grouping)
     elif has_periods:
         selected = period_run(run, 1 if mode == str(PeriodMode.GREEN) else 0)
         time, asymmetry, error = _reduce_histograms(selected.histograms, selected.grouping)
+        source = selected
     else:
         time, asymmetry, error = _reduce_histograms(run.histograms, grouping)
+        source = replace(
+            run,
+            grouping={
+                k: v
+                for k, v in grouping.items()
+                if k not in {"period_histograms", "period_reduced", "period_mode"}
+            },
+        )
 
     metadata = dict(run.metadata)
     metadata.setdefault("run_number", run.run_number)
     metadata.setdefault("run_label", str(run.run_number))
-    return MuonDataset(
-        time=time,
-        asymmetry=asymmetry,
-        error=error,
-        metadata=metadata,
-        run=run,
+    source = replace(
+        source,
+        grouping=dict(source.grouping, deadtime_correction=False, background_correction=False),
     )
-
-
-# ---------------------------------------------------------------------------
-# Run statistics helpers (matched-statistics re-simulation, dialog defaults)
-# ---------------------------------------------------------------------------
+    return MuonDataset(time, asymmetry, error, metadata, run, histogram_observation(source))
 
 
 def total_events_of(run: Run) -> float:

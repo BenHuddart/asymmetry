@@ -64,7 +64,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
-from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
@@ -364,9 +364,7 @@ class PlotPanel(QWidget):
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
         #: Host-injected counts-first re-reduction hook for display bunching
         #: Histogram-backed bunching requires this provider; curve-only panels do not.
-        self._counts_rebunch_provider: (
-            Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray]] | None
-        ) = None
+        self._counts_rebunch_provider: Callable[[MuonDataset, int], MuonDataset] | None = None
         self._current_time_view_mode = "fb_asymmetry"
         self._available_time_view_modes = ["fb_asymmetry"]
         self._default_canvas_min_height = 360
@@ -2785,9 +2783,9 @@ class PlotPanel(QWidget):
 
     def set_counts_rebunch_provider(
         self,
-        provider: Callable[[MuonDataset, int], tuple[np.ndarray, np.ndarray, np.ndarray]] | None,
+        provider: Callable[[MuonDataset, int], MuonDataset] | None,
     ) -> None:
-        """Install the histogram-backed display reducer returning percent arrays.
+        """Install the histogram-backed display reducer returning a resolved dataset.
 
         The provider replays corrections and merges recorded output bins in
         every binning and period mode. Curve-only and rotated inputs are
@@ -2796,52 +2794,21 @@ class PlotPanel(QWidget):
         self._counts_rebunch_provider = provider
 
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
-        """Return the dataset that should be used for plotting and fitting.
-
-        When the bunch factor is 1, the original dataset is returned. For a
-        larger bunch factor, a rebinned MuonDataset copy is returned with the
-        same metadata and run association. Runs that still carry raw
-        histograms are re-reduced counts-first through the host-injected
-        provider for every binning and period mode. Curves without histograms
-        and rotated projections use :func:`merge_curve_bins`.
-        """
+        """Hand out toolbar observations with their actual count-bin membership."""
         if dataset is None:
             return None
-
         if self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(dataset):
             return dataset
-
         bunch_factor = self._bunch_factor.value()
         if bunch_factor <= 1:
             return dataset
-
-        curve_only = (
-            FRAME_METADATA_KEY in dataset.metadata
-            or dataset.run is None
-            or not dataset.run.histograms
-        )
-        if curve_only:
-            time, asymmetry, error = merge_curve_bins(
-                dataset.time, dataset.asymmetry, dataset.error, bunch_factor
+        if FRAME_METADATA_KEY in dataset.metadata or dataset.histogram_observation is None:
+            return dataset.merge_curve_bins(bunch_factor)
+        if self._counts_rebunch_provider is None:
+            raise ValueError(
+                "Histogram-backed bunching requires a counts-first reduction provider."
             )
-        else:
-            if self._counts_rebunch_provider is None:
-                raise ValueError(
-                    "Histogram-backed bunching requires a counts-first reduction provider."
-                )
-            result = self._counts_rebunch_provider(dataset, bunch_factor)
-            if result is None:
-                raise ValueError(
-                    "Counts-first reduction provider must return time, asymmetry, and error arrays."
-                )
-            time, asymmetry, error = result
-        return MuonDataset(
-            time=time,
-            asymmetry=asymmetry,
-            error=error,
-            metadata=dict(dataset.metadata),
-            run=dataset.run,
-        )
+        return self._counts_rebunch_provider(dataset, bunch_factor)
 
     def _raw_fit_seed_range(self, datasets: list[MuonDataset | None]) -> tuple[float, float] | None:
         """Default fit-range seed from the *untransformed* analysis time axes.

@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import pickle
 from collections.abc import Callable
-from dataclasses import replace
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from functools import partial
+from hashlib import sha256
 
-from asymmetry.core.data.dataset import Run
+import numpy as np
+
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
-from asymmetry.core.transform.rebin import binning_spec
+from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
     PeriodAsymmetryReduction,
     correction_flags_from_grouping,
@@ -26,6 +32,7 @@ def prepare_histogram_asymmetry(
     facility: str | None,
     reference: BackgroundReference | None,
     cancel_check: Callable[[], None] | None = None,
+    binning: BinningSpec | None = None,
 ) -> PeriodAsymmetryReduction:
     """Reduce the explicitly selected histogram observation, in percent and µs.
 
@@ -63,7 +70,7 @@ def prepare_histogram_asymmetry(
         run.histograms,
         grouping,
         str(grouping.get("period_mode", PeriodMode.RED)),
-        binning=replace(binning_spec(grouping), merge=merge),
+        binning=replace(binning_spec(grouping), merge=merge) if binning is None else binning,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
         alpha=alpha,
@@ -75,4 +82,182 @@ def prepare_histogram_asymmetry(
         metadata=reference_observation_metadata(run),
         reference_resolver=partial(background_reference_for_grouping, reference),
         cancel_check=cancel_check,
+    )
+
+
+WIZARD_PREPARATION = "counts_first_observation_v1"
+
+
+@dataclass(frozen=True)
+class HistogramObservation:
+    """A resolved reduction snapshot and selections of its actual output bins.
+
+    The source owns acquired arrays; the snapshot copies settings and histogram
+    timing, sharing read-only count views. It is transient and is removed by
+    ``fit_record`` before process fan-out. Unknown historical curves have no
+    observation and retain independent-curve semantics.
+    """
+
+    source: Run
+    facility: str | None
+    reference: BackgroundReference | None
+    binning: BinningSpec
+    identity: str
+    #: Context belonging to loader-cached period curves, independent of current grouping.
+    cached_periods: tuple[HistogramObservation, ...] = ()
+
+    def select(self, mask: np.ndarray) -> HistogramObservation:
+        """Retain a contiguous centre-selected crop before any subsequent merge."""
+        selected = np.flatnonzero(mask)
+        first, stop = (int(selected[0]), int(selected[-1]) + 1) if selected.size else (0, 0)
+        return replace(
+            self,
+            binning=replace(self.binning, selections=(*self.binning.selections, (first, stop, 1))),
+        )
+
+    def merge(self, size: int, factor: int) -> HistogramObservation:
+        """Combine complete groups after the current recorded selections."""
+        return replace(
+            self,
+            binning=replace(self.binning, selections=(*self.binning.selections, (0, size, factor))),
+        )
+
+
+def histogram_observation(
+    run: Run,
+    *,
+    facility: str | None = None,
+    reference: BackgroundReference | None = None,
+    binning: BinningSpec | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> HistogramObservation:
+    """Capture an explicitly resolved histogram operation at its producing boundary.
+
+    Call only where the supplied settings actually produced the observation;
+    attaching a Run to a custom curve does not authorise this replay.
+    """
+    if cancel_check is not None:
+        cancel_check()
+    grouping = {k: v for k, v in run.grouping.items() if k != "period_reduced"}
+    periods = grouping.get("period_histograms") or []
+    histograms = [*run.histograms, *(h for period in periods for h in period)]
+    if reference is not None:
+        histograms.extend(reference.histograms)
+    memo = {}
+    digest = sha256()
+    for index, hist in enumerate(histograms):
+        for role, array in (("counts", hist.counts), ("variance", hist.count_variance)):
+            if array is not None:
+                view = np.asarray(array).view()
+                view.setflags(write=False)
+                memo[id(array)] = view
+                digest.update(pickle.dumps((index, role, view.shape, view.dtype.str)))
+                data = memoryview(np.ascontiguousarray(array)).cast("B")
+                for first in range(0, data.nbytes, 1024 * 1024):
+                    if cancel_check is not None:
+                        cancel_check()
+                    digest.update(data[first : first + 1024 * 1024])
+    source = deepcopy(replace(run, grouping=grouping), memo)
+    resolved_reference = deepcopy(reference, memo)
+    # The small identity payload includes every setting and clock, but no counts.
+    light_grouping = {k: v for k, v in source.grouping.items() if k != "period_histograms"}
+    digest.update(
+        pickle.dumps(
+            (
+                light_grouping,
+                source.metadata,
+                facility,
+                [
+                    [
+                        (h.bin_width, h.t0_bin, h.good_bin_start, h.good_bin_end, h.t0_time_us)
+                        for h in period
+                    ]
+                    for period in [
+                        source.histograms,
+                        *(source.grouping.get("period_histograms") or []),
+                        resolved_reference.histograms if resolved_reference is not None else [],
+                    ]
+                ],
+                replace(resolved_reference, histograms=[])
+                if resolved_reference is not None
+                else None,
+            )
+        )
+    )
+    if cancel_check is not None:
+        cancel_check()
+    return HistogramObservation(
+        source, facility, resolved_reference, binning or binning_spec(grouping), digest.hexdigest()
+    )
+
+
+def wizard_observation_identity(dataset: MuonDataset) -> str:
+    """Identify the actual curve, replay context, and selected membership for reuse."""
+    digest = sha256(WIZARD_PREPARATION.encode())
+    for array in (dataset.time, dataset.asymmetry, dataset.error):
+        values = np.ascontiguousarray(array)
+        digest.update(pickle.dumps((values.shape, values.dtype.str)))
+        digest.update(values.view(np.uint8))
+    digest.update(
+        pickle.dumps(
+            (
+                "rotating_frame" in dataset.metadata,
+                dataset.field,
+                dataset.temperature,
+                tuple(
+                    dataset.metadata.get(key)
+                    for key in ("field_direction", "field_state", "title", "sample")
+                ),
+                (dataset.run.field, dataset.run.temperature) if dataset.run is not None else None,
+            )
+        )
+    )
+    observation = dataset.histogram_observation
+    if observation is not None:
+        digest.update(pickle.dumps((observation.identity, observation.binning)))
+    return digest.hexdigest()
+
+
+def wizard_observation_matches(dataset: MuonDataset, signature: str) -> bool:
+    """Whether a numerical result describes this exact prepared-observation source."""
+    if WIZARD_PREPARATION not in signature:
+        return False
+    recorded = json.loads(signature)
+    return recorded.get("wizard_preparation") == WIZARD_PREPARATION and recorded.get(
+        "observation"
+    ) == wizard_observation_identity(dataset)
+
+
+def prepare_wizard_dataset(
+    dataset: MuonDataset,
+    factor: int,
+    *,
+    cancel_check: Callable[[], None] | None = None,
+) -> MuonDataset:
+    """Merge the actual selected observation once, before making worker records."""
+    if cancel_check is not None:
+        cancel_check()
+    BinningSpec(merge=factor)
+    if factor == 1:
+        return dataset
+    observation = dataset.histogram_observation
+    if observation is None or "rotating_frame" in dataset.metadata:
+        return dataset.merge_curve_bins(factor)
+    # Selection indices belong to the current output, not to new midpoint times.
+    merged = observation.merge(dataset.n_points, factor)
+    reduced = prepare_histogram_asymmetry(
+        observation.source,
+        merge=1,
+        facility=observation.facility,
+        reference=observation.reference,
+        cancel_check=cancel_check,
+        binning=merged.binning,
+    )
+    return MuonDataset(
+        reduced.time,
+        reduced.asymmetry,
+        reduced.error,
+        reduced.metadata_with_alignment(dataset.metadata),
+        dataset.run,
+        merged,
     )

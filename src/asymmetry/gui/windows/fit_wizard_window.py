@@ -59,6 +59,7 @@ from asymmetry.core.fitting.wizard_scope import (
     set_user_field_direction,
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
@@ -192,10 +193,6 @@ class FitWizardWindow(WizardWindowBase):
             "compare curated candidate models."
         )
         self._show_welcome()
-
-    # ------------------------------------------------------------------
-    # Content region (overrides the base tab scaffolding)
-    # ------------------------------------------------------------------
 
     def _build_central(self) -> QWidget:
         """Build the three-state stacked content region.
@@ -758,8 +755,6 @@ class FitWizardWindow(WizardWindowBase):
             self.current_log_text(),
             copy.deepcopy(self._cached_signature) if self._cached_signature is not None else None,
         )
-        # The base cleared busy before calling us while _recommendation was None;
-        # re-assert enablement now it is set.
         self._update_action_enablement(False)
         self._show_result()
         record_fit_times(recommendation.assessments)
@@ -797,6 +792,9 @@ class FitWizardWindow(WizardWindowBase):
         number = self._dataset.run_number if self._dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
+            "observation": wizard_observation_identity(self._dataset)
+            if self._dataset is not None
+            else None,
             "run_number": int(number) if number is not None else None,
             "model": self._current_model.to_dict() if self._current_model is not None else None,
             "scope": self._picker.scope().to_payload(),
