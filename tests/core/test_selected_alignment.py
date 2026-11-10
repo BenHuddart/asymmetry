@@ -278,8 +278,8 @@ def test_final_period_provenance_replaces_inherited_loader_alignment():
         "title": "run",
     }
     metadata = result.metadata_with_alignment(inherited)
-    assert "grouped_alignment" not in metadata
-    assert set(metadata["period_alignments"]) == {"red", "green"}
+    assert "period_alignments" not in metadata
+    assert metadata["grouped_alignment"] == result.alignments["green_plus_red"].to_dict()
     assert metadata["title"] == "run"
     assert inherited["grouped_alignment"] == {"stale": True}
 

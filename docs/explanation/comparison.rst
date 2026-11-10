@@ -1509,9 +1509,9 @@ is claimed.
 With unity calibration and corrections off, equal-total synthetic periods
 of 20% and 80% give Red/Green 20%/80%, G−R 60%, and G+R 50% in WiMDA 1.326
 under Wine 10. musrfit 1.12.1 (708f777b, ROOT 6.40.04) selected/grouped
-controls give 20%/80%/50%. Asymmetry currently gives G+R 100%, because it
-adds independently reduced asymmetries. The value controls do not establish
-matching error conventions.
+controls give 20%/80%/50%. Asymmetry gives the same pooled G+R 50%, and its
+independent G−R is 60%. Unequal-total pooled results are not generally an
+arithmetic mean. The value controls do not establish matching error conventions.
 
 Asymmetry corrects each acquired constituent before mapped pooling, with its
 own applicable detector coefficients and supported exposure. It then aligns
@@ -1537,3 +1537,19 @@ and also checks common observed support and compatible native widths. One
 shared explicit α/β belongs to the comparison; there is no implicit separate
 calibration for each condition. Full cross-period/reference covariance remains
 outside the marginal, conditional error contract.
+
+For G+R, group-background subtraction acts once on the pooled observation;
+Manual levels retain their requested-observation count units. Automatic reference
+scaling uses summed evidenced sample exposure, while Manual scale applies once.
+WiMDA's ordinary grouped Auto/Man/region background subtraction and its F/B G−R
+path are distinct; FileBG acts earlier. Asymmetry applies the requested group
+background to each independently reduced G−R set.
+
+WiMDA 1.326 and musrfit 1.12.1 demodulate a formed scalar asymmetry in their
+checked RRF workflows. Mantid ``RRFMuon`` rotates a prepared transverse pair.
+Those interfaces do not define automatic synthesis of a pooled baseline from
+unequal per-period transverse baselines. Asymmetry also checks that Red and Green
+transverse baselines agree for pooled G+R rotation, removing the common pair
+once. Unequal baselines make that rotation unavailable; Lab G+R and rotating
+Red, Green, and G−R remain available. This is an Asymmetry safeguard. See
+:doc:`/reference/rotating_frame_projection`.

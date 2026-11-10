@@ -8,10 +8,9 @@ is reached without a filter (docs/plans/rotating-frame-projection.md):
 - s is the measured sense of the labels: −1 when (P_x, P_y, P_z) are
   right-handed about B₀, so that P_y is the physical y.
 - g = a_y/a_x is the transverse gain.
-- b_x and b_y are the baselines left after alpha, one pair per period: on RF
-  data the red and green baselines differ by up to 0.1 % in a way that follows
-  the detuning (docs/plans/rotating-frame-projection.md, D9). A period
-  combination's curve holds the same combination of them.
+- b_x and b_y are the baselines left after alpha, one pair per period.
+  G−R holds their difference; pooled G+R removes a common pair only when
+  the two pairs agree. Unequal pooled baselines require a separate model.
 - The muon precesses negatively about +z, so e^{+iθ} undoes the precession.
 - With φ the RF phase at t0, the drive's co-rotating field sits on the chosen
   lab axis of the frame, and a spin leaving +z nutates into +y′ (B₁ ∥ x′) or
@@ -60,12 +59,15 @@ ROTATED_LABELS: dict[str, str] = {"P_x": "P′_x", "P_y": "P′_y"}
 #: The rotated projections, which exist only for runs with a frame.
 ROTATED_PROJECTIONS: frozenset[str] = frozenset(ROTATED_LABELS.values())
 
-#: How a two-period run's display combines its periods (red is period 1).
+#: A pooled baseline selector is distinct from historical linear curve weights.
+_POOLED_BASELINE_SELECTOR = (0.5, 0.5)
+
+#: How a two-period run selects its baseline (red is period 1).
 _TWO_PERIOD_WEIGHTS: dict[str, tuple[float, float]] = {
     "red": (1.0, 0.0),
     "green": (0.0, 1.0),
     "green_minus_red": (-1.0, 1.0),
-    "green_plus_red": (1.0, 1.0),
+    "green_plus_red": _POOLED_BASELINE_SELECTOR,
 }
 
 #: Fields shared by the runs of one setup, then a run's scalar field; its
@@ -101,12 +103,19 @@ def _finite(name: str, value: Any) -> float:
 
 
 def period_weights(period_mode: str, periods: int) -> tuple[float, ...]:
-    """How the displayed curve combines a run's periods: one weight per period."""
+    """Select period baselines; the pooled selector requires an equal common pair."""
     if periods == 1:
         return (1.0,)
     if periods == 2:
         return _TWO_PERIOD_WEIGHTS[str(period_mode)]
     raise ValueError(f"A rotating frame covers one or two periods, not {periods}.")
+
+
+def run_period_weights(run) -> tuple[float, ...]:
+    """Resolve the selected period statistic for a run's rotating frame."""
+    from asymmetry.core.io.periods import held_period_count
+
+    return period_weights(str(run.grouping.get("period_mode", "red")), held_period_count(run))
 
 
 @dataclass(frozen=True)
@@ -186,12 +195,25 @@ class RotatingFrame:
         baselines[period] = PeriodBaseline(x, y, provenance)
         return replace(self, baselines=tuple(baselines))
 
+    def rotation_unavailable(self, weights: Sequence[float]) -> str | None:
+        """Explain the bounded pooled-baseline safeguard for the requested rotation."""
+        if tuple(weights) == _POOLED_BASELINE_SELECTOR and len(self.baselines) == 2:
+            red, green = self.baselines
+            if (red.x, red.y) != (green.x, green.y):
+                return "Pooled G+R rotation unavailable: Red and Green transverse baselines must agree. Use Lab, Red, Green, or G minus R."
+        return None
+
     def combined_baseline(self, weights: Sequence[float]) -> tuple[float, float]:
-        """The baselines (b_x, b_y) a curve combining the periods by ``weights`` holds."""
+        """Remove the common pooled baseline once, or the explicitly linear combination."""
         if len(weights) != len(self.baselines):
             raise ValueError(
                 f"{len(weights)} period weights for a frame of {len(self.baselines)} periods."
             )
+        reason = self.rotation_unavailable(weights)
+        if reason is not None:
+            raise ValueError(reason)
+        if tuple(weights) == _POOLED_BASELINE_SELECTOR:
+            return self.baselines[0].x, self.baselines[0].y
         return (
             float(sum(w * b.x for w, b in zip(weights, self.baselines, strict=True))),
             float(sum(w * b.y for w, b in zip(weights, self.baselines, strict=True))),

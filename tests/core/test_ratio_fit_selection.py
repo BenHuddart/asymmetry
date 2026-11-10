@@ -76,6 +76,17 @@ def test_period_final_variance_and_undefined_constituents(mode):
         [1] * 4, [1] * 4, period_mode=mode, period_histograms=[red.histograms, green.histograms]
     )
     result = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    if mode == "green_plus_red":
+        np.testing.assert_array_equal(result.ratio_validity.reasons, [0, 0, 0, 0])
+        np.testing.assert_allclose(result.asymmetry, [100 / 11, 20, 0, 0])
+        np.testing.assert_allclose(
+            result.error,
+            200
+            * np.sqrt(
+                np.array([60 * 50 / 110**3, 60 * 40 / 100**3, 10 * 10 / 20**3, 20 * 20 / 40**3])
+            ),
+        )
+        return
     np.testing.assert_array_equal(result.ratio_validity.reasons, [0, 1, 2, 0])
     # One-sided red has zero mathematical variance, rather than a 100%-error contribution.
     assert result.error[0] == pytest.approx(np.sqrt(96))

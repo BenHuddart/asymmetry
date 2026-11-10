@@ -115,12 +115,19 @@ def test_period_observations_and_worker_payload(mode):
     rv, gv = 40000 * 91 * 19 / 110**3, 40000 * 82 * 18 / 100**3
     np.testing.assert_allclose(
         result.asymmetry,
-        {"red": ra, "green": ga, "green_minus_red": ga - ra, "green_plus_red": ga + ra}[mode],
+        {"red": ra, "green": ga, "green_minus_red": ga - ra, "green_plus_red": 100 * 136 / 210}[
+            mode
+        ],
     )
     np.testing.assert_allclose(
         result.error,
         np.sqrt(
-            {"red": rv, "green": gv, "green_minus_red": rv + gv, "green_plus_red": rv + gv}[mode]
+            {
+                "red": rv,
+                "green": gv,
+                "green_minus_red": rv + gv,
+                "green_plus_red": 40000 * 173 * 37 / 210**3,
+            }[mode]
         ),
     )
     record = result.fit_record()
@@ -494,12 +501,14 @@ def test_simulated_period_context_records_implicit_acquired_windows(mode, sign):
     prepared = prepare_wizard_dataset(dataset, 2)
     f, b = (h.counts[4:20].reshape(-1, 4).sum(axis=1) for h in red.histograms)
     gf, gb = (h.counts[5:21].reshape(-1, 4).sum(axis=1) for h in green.histograms)
-    np.testing.assert_allclose(
-        prepared.asymmetry, 100 * (gf - gb) / (gf + gb) + sign * 100 * (f - b) / (f + b)
-    )
-    np.testing.assert_allclose(
-        prepared.error, np.sqrt(40000 * gf * gb / (gf + gb) ** 3 + 40000 * f * b / (f + b) ** 3)
-    )
+    if mode == "green_plus_red":
+        f, b = f + gf, b + gb
+        expected, variance = 100 * (f - b) / (f + b), 40000 * f * b / (f + b) ** 3
+    else:
+        expected = 100 * (gf - gb) / (gf + gb) - 100 * (f - b) / (f + b)
+        variance = 40000 * gf * gb / (gf + gb) ** 3 + 40000 * f * b / (f + b) ** 3
+    np.testing.assert_allclose(prepared.asymmetry, expected)
+    np.testing.assert_allclose(prepared.error, np.sqrt(variance))
     np.testing.assert_allclose(
         prepared.time, (np.arange(4, 20).reshape(-1, 4).mean(axis=1) - 2) * 0.125
     )

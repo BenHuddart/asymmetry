@@ -441,7 +441,7 @@ def test_run_reduction_boundaries_preserve_canonical_identity(monkeypatch, consu
     owner = reduction if consumer == "workflow" else integral
     name = {
         "workflow": "reduce_period_asymmetry",
-        "integral": "corrected_grouped_counts",
+        "integral": "corrected_period_counts",
         "period_integral": "corrected_period_counts",
     }[consumer]
     original = getattr(owner, name)

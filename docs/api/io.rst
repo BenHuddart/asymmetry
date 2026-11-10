@@ -46,6 +46,14 @@ share one implementation. See :ref:`selecting-periods` for a worked example.
 
 .. autofunction:: asymmetry.core.io.periods.sum_period_histograms
 
+.. autofunction:: asymmetry.core.io.periods.combine_period_asymmetry
+
+The arrays-only helper supports G−R. Arrays of separate ratios cannot determine
+pooled G+R; use the histogram preparation API with verified acquired counts.
+Historical curve-only records remain readable, but a fresh RF pooled scan excludes
+them with an explicit reload reason. Count-backed RF scans use current settings;
+scan values/errors are fractions, whereas time curves are percentages.
+
 Mapped runs retain original acquired ``Run`` records in
 ``run.grouping["period_inputs"]``, ordered by stored data-period index.
 ``period_mapping`` records authored membership; held histograms are pooled

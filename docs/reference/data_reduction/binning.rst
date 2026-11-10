@@ -77,8 +77,9 @@ the resolved operation context is captured; Cancel stops that preparation.
 
 For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant error**
 all merge counts and their shared-background uncertainty before forming the
-ratio. G±R views bin each period first, then combine their asymmetries and
-independent variances. The Groups and Raw counts views sum the corresponding
+ratio. G+R pools prepared counts and variances before background, binning, and
+one ratio. G−R bins each separately prepared set on common native support, then
+subtracts their asymmetries with independent marginal variances added. The Groups and Raw counts views sum the corresponding
 count bins. A merge larger than the record leaves no complete output point.
 Curves without a resolved histogram observation and rotated projections use the independent
 curve-bin mean described below.
@@ -209,9 +210,10 @@ run a new fit.
 Choose the zero-based detector indices for the required pair. The returned
 asymmetry and errors are in percent. The workflow and CLI ``reduce --rebin``
 use the same count-level merge. For period sums and differences,
-:func:`~asymmetry.core.transform.reduce.reduce_period_asymmetry` bins each
-period first, then combines :math:`A_g\pm A_r` with variances added. Periods
-must have identical output time arrays; mismatches raise ``ValueError``.
+:func:`~asymmetry.core.transform.reduce.reduce_period_asymmetry` prepares
+common observed native support before binning. G+R forms one ratio from pooled
+prepared counts with background once; G−R differences separately reduced sets.
+Incompatible widths or empty common support make that combination unavailable.
 
 To replay the selected pair, calibration, period operation, corrections, and
 base binning from an explicitly prepared run, use

@@ -166,10 +166,16 @@ def test_period_combination_is_counts_first(mode, sign):
         use_background=False,
     )
     r, g = _direct(red, spec), _direct(green, spec)
-    np.testing.assert_array_equal(result.asymmetry, g.asymmetry + sign * r.asymmetry)
-    np.testing.assert_array_equal(result.error, np.sqrt(g.error**2 + r.error**2))
+    if mode == "green_plus_red":
+        f, b = np.array([173, 44]), np.array([37, 66])
+        np.testing.assert_allclose(result.asymmetry, 100 * (f - b) / (f + b))
+        np.testing.assert_allclose(result.error, 200 * np.sqrt(f * b / (f + b) ** 3))
+        assert set(result.corrections) == {mode}
+    else:
+        np.testing.assert_array_equal(result.asymmetry, g.asymmetry - r.asymmetry)
+        np.testing.assert_array_equal(result.error, np.sqrt(g.error**2 + r.error**2))
+        assert set(result.corrections) == {"red", "green"}
     assert result.binning == spec
-    assert set(result.corrections) == {"red", "green"}
     if mode == "green_minus_red":
         workflow = reduce_run(run, ReductionSettings(period=mode, rebin=2))
         for key in ("time", "asymmetry", "error"):

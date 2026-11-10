@@ -983,7 +983,8 @@ Captured sample, held-period, and reference counts and supplied variances have
 owned read-only storage. Later edits through original array aliases leave cached
 analyses and reconstructed curves stable; reduce edited inputs again and rerun
 the wizard to analyse a new observation.
-Each G±R period is binned before its asymmetry is combined. Curve-only, rotated,
+G+R pools prepared counts before background, binning, and one ratio; G−R
+bins independently prepared sets on common native support before differencing. Curve-only, rotated,
 and unresolved historical/custom observations retain independent-curve means.
 Search decimation, common-resolution completion, and curve reconstruction use
 that same observation contract; coarse search winners are refitted at the

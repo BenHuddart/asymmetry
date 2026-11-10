@@ -19,8 +19,9 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
-from asymmetry.core.transform.constituent_counts import constituent_metadata
+from asymmetry.core.transform.constituent_counts import constituent_metadata, held_period_grids
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
+from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
@@ -57,6 +58,9 @@ def reduction_identity(grouping: dict[str, Any]) -> str:
     change of groups, alpha, deadtime, background, t0 or binning changes it.
     """
     shaping = {key: value for key, value in grouping.items() if key not in _SELECTION_KEYS}
+    shaping.update(period_statistic_policy(grouping))
+    if "period_histograms" in grouping:
+        shaping["held_period_grids"] = held_period_grids(grouping)
     if "period_inputs" in grouping:
         shaping["constituents"] = constituent_metadata(grouping)
     blob = json.dumps(

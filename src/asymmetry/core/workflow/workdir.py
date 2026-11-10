@@ -64,6 +64,7 @@ from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioVa
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
+from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
@@ -257,6 +258,9 @@ def reduction_digest(
 ) -> str:
     """Identify source contents, authored settings, and the numerical preparation policy."""
     payload = {
+        **period_statistic_policy(
+            dict(grouping, period_mode=settings.period) if settings.period is not None else grouping
+        ),
         "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
         "mapped_count_preparation_policy": CONSTITUENT_PREPARATION_POLICY,
         "schema": SCHEMA,

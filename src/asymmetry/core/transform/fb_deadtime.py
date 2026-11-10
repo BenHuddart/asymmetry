@@ -114,6 +114,7 @@ def deadtime_corrected_pair(
     *,
     use_deadtime: bool,
     mode: str,
+    retain_variance: bool = False,
 ) -> tuple[GroupCounts, GroupCounts, CorrectionOutcome]:
     """Correct required raw samples before summing; retain acquired noise.
 
@@ -125,7 +126,7 @@ def deadtime_corrected_pair(
         histograms, grouping, domain, use_deadtime=use_deadtime, mode=mode, allow_incomplete=True
     )
     return (
-        prepared.aligned(list(forward_idx), alignment),
-        prepared.aligned(list(backward_idx), alignment),
+        prepared.aligned(list(forward_idx), alignment, retain_variance=retain_variance),
+        prepared.aligned(list(backward_idx), alignment, retain_variance=retain_variance),
         prepared.outcome,
     )

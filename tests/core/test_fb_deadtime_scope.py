@@ -189,23 +189,25 @@ def test_period_cohort_uses_each_required_domain(period_mode, required_missing):
         c.deadtime.status == ("skipped" if skipped else "applied")
         for c in result.corrections.values()
     )
-    expected, variances = [], []
+    expected, variances, corrected_pairs = [], [], []
     for index in (0, 1):
         f, b = np.array([10.0, 8.0, 6.0]), np.array([5.0, 4.0, 3.0])
         if not skipped:
             f = f / (1 - f * tables[index][0] / [100, 200][index])
             if tables[index][1] is not None:
                 b = b / (1 - b * tables[index][1] / [100, 200][index])
+        corrected_pairs.append((f, b))
         expected.append(100 * (f - b) / (f + b))
         variances.append(
             100**2
             * ((2 * b / (f + b) ** 2) ** 2 * [10, 8, 6] + (2 * f / (f + b) ** 2) ** 2 * [5, 4, 3])
         )
+    f, b = np.sum(corrected_pairs, axis=0)
     oracle = {
         "red": expected[0],
         "green": expected[1],
         "green_minus_red": expected[1] - expected[0],
-        "green_plus_red": expected[1] + expected[0],
+        "green_plus_red": 100 * (f - b) / (f + b),
     }
     np.testing.assert_allclose(result.asymmetry, oracle[period_mode])
     noise = (
@@ -215,6 +217,10 @@ def test_period_cohort_uses_each_required_domain(period_mode, required_missing):
         if period_mode == "green"
         else variances[0] + variances[1]
     )
+    if period_mode == "green_plus_red":
+        noise = (
+            40000 * (b * b * np.array([20, 16, 12]) + f * f * np.array([10, 8, 6])) / (f + b) ** 4
+        )
     np.testing.assert_allclose(result.error, np.sqrt(noise))
 
 
@@ -489,7 +495,7 @@ def test_combined_period_reference_cohort_skips_only_required_missing_members(re
             "first_good_bin": 1,
             "last_good_bin": 2,
         },
-        period_mode="green_plus_red",
+        period_mode="green_minus_red",
         binning=BinningSpec(),
         forward_idx=[0],
         backward_idx=[1],

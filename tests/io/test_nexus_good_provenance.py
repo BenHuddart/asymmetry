@@ -124,7 +124,7 @@ def test_mapped_and_fallback_detector_facts_follow_acquired_histograms(tmp_path,
 
 
 @pytest.mark.parametrize("mode", ["green_minus_red", "green_plus_red"])
-def test_period_combination_keeps_explicit_matching_grid_requirement(tmp_path, mode):
+def test_period_combination_prepares_common_native_support(tmp_path, mode):
     path = tmp_path / "different-windows.nxs"
     raw = write_good_times(path)
     with h5py.File(path, "a") as f:
@@ -137,7 +137,13 @@ def test_period_combination_keeps_explicit_matching_grid_requirement(tmp_path, m
     loaded = NexusLoader().load(path)
     for period in (1, 2):
         assert select_period(loaded, period).n_points == 4
-    with pytest.raises(ValueError, match="time arrays must be identical"):
-        reduce_run_to_dataset(
-            replace(loaded.run, grouping=dict(loaded.run.grouping, period_mode=mode))
-        )
+    reduced = reduce_run_to_dataset(
+        replace(loaded.run, grouping=dict(loaded.run.grouping, period_mode=mode))
+    )
+    np.testing.assert_allclose(reduced.time, [0.0426, 0.0626, 0.0826], atol=1e-15)
+    f, b = raw[:, 12:15]
+    if mode == "green_plus_red":
+        expected = 100 * ((2 * f + 10) - (2 * b + 10)) / ((2 * f + 10) + (2 * b + 10))
+    else:
+        expected = 100 * ((f + 10) - (b + 10)) / ((f + 10) + (b + 10)) - 100 * (f - b) / (f + b)
+    np.testing.assert_allclose(reduced.asymmetry, expected)

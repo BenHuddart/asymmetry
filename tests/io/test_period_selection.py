@@ -318,10 +318,8 @@ def test_combine_period_asymmetry_difference_and_sum():
     assert np.allclose(err, np.sqrt(0.3**2 + 0.4**2))
     assert np.allclose(tm, t)
 
-    _, total, _ = combine_period_asymmetry(
-        t, red_a, red_e, t, green_a, green_e, PeriodMode.GREEN_PLUS_RED
-    )
-    assert np.allclose(total, green_a + red_a)
+    with pytest.raises(ValueError, match="requires prepared counts"):
+        combine_period_asymmetry(t, red_a, red_e, t, green_a, green_e, PeriodMode.GREEN_PLUS_RED)
 
 
 def test_combine_period_asymmetry_rejects_length_mismatch():
@@ -344,7 +342,7 @@ def test_combine_period_asymmetry_empty_and_bad_mode():
     )
     assert len(tm) == 0 and len(a) == 0 and len(e) == 0
 
-    with pytest.raises(ValueError, match="GREEN_MINUS_RED or GREEN_PLUS_RED"):
+    with pytest.raises(ValueError, match="expects GREEN_MINUS_RED"):
         combine_period_asymmetry(
             np.arange(3.0),
             np.arange(3.0),

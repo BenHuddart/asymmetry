@@ -190,7 +190,7 @@ def test_automatic_alpha_matches_atomic_native_counts_with_remainder():
     red.histograms[1].counts = (red.histograms[0].counts - 5) * 0.6 + 8
     red.grouping.update(
         period_histograms=[red.histograms, green.histograms],
-        period_mode="green_plus_red",
+        period_mode="green_minus_red",
         good_frames=1000.0,
     )
     profile = GroupingProfile(
@@ -199,7 +199,7 @@ def test_automatic_alpha_matches_atomic_native_counts_with_remainder():
         groups={1: [1], 2: [2]},
         forward_group=1,
         backward_group=2,
-        period_mode="green_plus_red",
+        period_mode="green_minus_red",
         binning=BinningSpec(factor=3),
         alpha_policy=AlphaPolicy(mode="per_run_estimate"),
         background_policy=BackgroundPolicy(mode="tail_fit"),

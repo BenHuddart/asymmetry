@@ -141,8 +141,11 @@ its differential estimator averages valid per-bin asymmetries. This branch
 therefore precedes the time-curve binning box and still depends on the applicable
 balances. It does not imply that every scan is made from a binned asymmetry curve.
 
-For two-period G±R asymmetry, each period is reduced separately on matching bin
-edges before the asymmetries are combined, with independent variances added.
+For two-period G+R, acquired detector corrections and own-t0 whole-bin
+alignment precede count/variance pooling on common observed support. Group
+background acts once on that pooled observation, followed by count binning and
+one ratio. G−R prepares both sets on that common native support, then subtracts
+their independently reduced asymmetries with marginal variances added.
 Run arithmetic has its own compatibility and uncertainty requirements; selecting
 runs at the start of the diagram does not authorise adding raw acquisitions
 before nonlinear detector corrections. Raw-count likelihood fits and specialised

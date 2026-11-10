@@ -205,11 +205,18 @@ baselines would leave the difference behind as a spurious oscillation at
 :math:`\nu_\mathrm{RF}` in the rotated curves.
 
 While the Grouping window's **RG Mode** shows **Red** or **Green**, the bar
-shows and edits that period's baselines. **G minus R** and **G plus R** remove
-the same combination of the period baselines as they apply to the data,
-:math:`b_G - b_R` and :math:`b_G + b_R`, and the bar shows these derived
-values read-only ("Derived from the periods' own baselines for this period
-combination; edit them on a single period (red or green).").
+shows and edits that period's baselines. **G minus R** removes
+:math:`b_G-b_R`. Pooled **G plus R** removes one common baseline pair.
+Asymmetry also checks that Red and Green transverse baselines agree exactly,
+including zero, before rotating pooled G+R. Unequal baselines show
+"Pooled G+R rotation unavailable: Red and Green transverse baselines must agree.
+Use Lab, Red, Green, or G minus R." The derived baseline fields are empty and
+read-only. Lab G+R, rotating Red, Green, and G−R remain available.
+
+WiMDA 1.326 and musrfit 1.12.1 demodulate formed scalar asymmetries; Mantid's
+``RRFMuon`` rotates a prepared real/imaginary pair. These checked workflows do
+not define automatic pooling of unequal period baselines. The equality check
+is an additional Asymmetry safeguard, not a restriction imposed by those programs.
 
 Read a difference with care. A period with the RF off carries no transverse
 signal, so when the RF is on in red and off in green, **G minus R** holds
@@ -412,6 +419,10 @@ References
 
 .. [4] F. Bloch and A. Siegert, Phys. Rev. **57**, 522 (1940).
 
+- `WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`_ (1.326).
+- musrfit, `Asymmetry RRF fit <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#asymmetry-rrf-fit-fit-type-3>`_ (1.12.1).
+- Mantid, `RRFMuon v1 <https://docs.mantidproject.org/v3.9.0/algorithms/RRFMuon-v1.html>`_.
+
 Related topics
 --------------
 
@@ -419,3 +430,10 @@ Related topics
 * :doc:`rotating_frame`
 * :doc:`data_reduction/period_mapping`
 * :doc:`fitting`
+
+.. figure:: /_generated/screenshots/pooled_frame_safeguard.png
+   :alt: Synthetic pooled G+R with unequal transverse baselines and an explicit unavailable message.
+   :width: 100%
+
+   Pooled G+R remains available in **Lab** when unequal transverse baselines
+   prevent rotation. The baseline fields show the reason in their tooltips.

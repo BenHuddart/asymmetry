@@ -124,3 +124,42 @@ class RotatingFrameReviewScenario(_MainWindowScenario):
 
 register(RotatingFrameProjectionScenario())
 register(RotatingFrameReviewScenario())
+
+
+class PooledFrameSafeguardScenario(_MainWindowScenario):
+    name = "pooled_frame_safeguard"
+    description = "Pooled G+R rotation explains unequal transverse baselines on synthetic data."
+    size = (1000, 650)
+
+    def build(self) -> QWidget:
+        from asymmetry.core.transform.rotating_frame import Provenance, RotatingFrame
+
+        window = self._window()
+        dataset = make_rf_nutation_vector()
+        dataset.run.grouping["period_mode"] = "green_plus_red"
+        frame = RotatingFrame.typed_frequency(float(_NU_RF_TEXT), 2).with_baseline(
+            1, Provenance.TYPED, 0.1, -0.15
+        )
+        window._project_model.rotating_frames[dataset.run_number] = frame
+        window._data_browser.add_dataset(dataset)
+        window._data_browser.select_runs([dataset.run_number])
+        for dock in (
+            window._dock_data_browser,
+            window._dock_fit,
+            window._dock_fit_parameters,
+            window._dock_log,
+        ):
+            dock.hide()
+        panel = window._plot_panel
+        bar = panel._projection_bar
+        bar.set_selected(["P_x", "P_y", "P_z"])
+        bar.selection_changed.emit(bar.selected_labels())
+        bar._rotating_btn.click()
+        _process_events_for(milliseconds=120)
+        self.size = (panel.width(), panel.height())
+        shot = QLabel()
+        shot.setPixmap(_grab_at_dpr(panel, 2.0))
+        return shot
+
+
+register(PooledFrameSafeguardScenario())

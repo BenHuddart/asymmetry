@@ -185,7 +185,7 @@ def test_independent_projections_resolve_their_own_file_limits_and_effective_t0(
     assert result["P_x"].time[0] == pytest.approx(expected_first * 0.01)
 
 
-def test_period_file_windows_keep_the_identical_grid_requirement():
+def test_period_file_windows_establish_common_native_support():
     from asymmetry.core.transform.reduce import reduce_period_asymmetry
 
     run = acquired_run()
@@ -193,19 +193,21 @@ def test_period_file_windows_keep_the_identical_grid_requirement():
     run.grouping["period_histograms"] = [run.histograms, green.histograms]
     profile = replace(request(), period_mode="green_minus_red")
     grouping = resolve_effective_grouping(profile, run)
-    with pytest.raises(ValueError, match="[Ii]dentical|[Ss]ame|[Ee]dges|[Gg]rid"):
-        reduce_period_asymmetry(
-            run.histograms,
-            grouping,
-            "green_minus_red",
-            binning=binning_spec(grouping),
-            forward_idx=[0],
-            backward_idx=[1],
-            alpha=1,
-            use_deadtime=False,
-            deadtime_mode="off",
-            use_background=False,
-        )
+    result = reduce_period_asymmetry(
+        run.histograms,
+        grouping,
+        "green_minus_red",
+        binning=binning_spec(grouping),
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=False,
+    )
+    np.testing.assert_allclose(result.asymmetry, 0)
+    assert result.alignments["red"].length == result.alignments["green"].length
+    assert len(result.time) == 21
 
 
 def test_held_period_timing_offsets_follow_its_acquired_anchors():

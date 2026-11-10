@@ -189,13 +189,13 @@ def test_fractional_residuals_and_selected_green_replay():
     np.testing.assert_allclose(replay.asymmetry, merged.asymmetry)
 
 
-def test_equal_rates_have_the_raw_first_limit_and_gp_r_stays_asymmetry_addition():
+def test_equal_rates_have_the_pooled_ratio_limit():
     sources = [acquired(i, [60] * 8, [40] * 8, frames=1000) for i in (1, 2, 3)]
     mapped = combine_mapped_periods(sources, {1: "red", 2: "red", 3: "green"})
     mapped.run.grouping["period_mode"] = "green_plus_red"
     result = prepare(mapped.run)
     f, b = 60 / (1 - 60 * 0.05 / 100), 40 / (1 - 40 * 0.05 / 100)
-    np.testing.assert_allclose(result.asymmetry, 200 * (f - b) / (f + b))
+    np.testing.assert_allclose(result.asymmetry, 100 * (f - b) / (f + b))
 
 
 def test_mapped_preparation_cancels_before_publishing_any_partial_result():

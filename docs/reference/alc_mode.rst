@@ -629,3 +629,16 @@ See also
 * :doc:`detector_grouping` — the F/B grouping and :math:`\alpha` used by the
   integral.
 * :doc:`project_files` — what is saved in a project and how it is restored.
+
+Period statistics
+-----------------
+
+For G+R, both count-integral and differential estimators use one pooled prepared
+count observation with group background once. The integral estimator sums its
+counts before the ratio; the differential estimator averages its per-bin ratios.
+G−R differences independently reduced set estimates on common observed native
+support. One explicit α/β applies throughout. RF scan construction integrates the
+selected time curve and returns fractional values/errors; time curves use percent.
+A historical curve-only record can reproduce a stored G−R, but pooled G+R requires
+verified raw-count preparation and otherwise reports a reload reason. Red and
+Green labels alone do not identify the RF acquisition conditions.

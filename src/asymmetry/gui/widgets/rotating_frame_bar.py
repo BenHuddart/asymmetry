@@ -387,10 +387,13 @@ class RotatingFrameBar(QWidget):
             self._show("gain", selected.gain, selected.provenance["gain"], enabled=True)
             period = self.shown_period()
             if period is None:
-                derived = selected.combined_baseline(self._selected_weights)
+                reason = selected.rotation_unavailable(self._selected_weights)
+                derived = (
+                    (None, None) if reason else selected.combined_baseline(self._selected_weights)
+                )
                 for name, value in zip(("baseline_x", "baseline_y"), derived, strict=True):
                     self._show(name, value, Provenance.ESTIMATED, enabled=False)
-                    self._edits[name].setToolTip(_DERIVED_TIP)
+                    self._edits[name].setToolTip(reason or _DERIVED_TIP)
             else:
                 baseline = selected.baselines[period]
                 for name, value in (("baseline_x", baseline.x), ("baseline_y", baseline.y)):
