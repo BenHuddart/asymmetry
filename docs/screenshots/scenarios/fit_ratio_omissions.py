@@ -10,7 +10,7 @@ class FitRatioOmissionsScenario(Scenario):
     description = (
         "Sparse synthetic Ag histogram fits report omissions and unavailable residual spectra."
     )
-    size = (1180, 280)
+    size = (1180, 160)
     requires_fit = True
 
     def build(self) -> QWidget:
