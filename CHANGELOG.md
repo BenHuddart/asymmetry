@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Correct and align acquired constituents before mapped-period pooling, retaining
+  their own exposure, timing, variance, and selected-set replay context.
+
 - Clarify asymmetry scales, first-order counting errors, conditional calibration uncertainty,
   and matched-coordinate comparisons with other μSR programs.
 

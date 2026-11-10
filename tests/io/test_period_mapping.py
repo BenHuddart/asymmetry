@@ -159,14 +159,16 @@ def test_mapped_dataset_reduces_through_standard_grouping():
     np.testing.assert_array_equal(fb.forward, expected_forward)
 
 
-def test_mismatched_deadtimes_get_frame_weighted_mean():
+def test_mismatched_deadtimes_keep_original_tables_without_effective_average():
     periods = _four_periods()[:2]
     periods[0].run.grouping["dead_time_us"] = [0.010, 0.010, 0.010]
     periods[1].run.grouping["dead_time_us"] = [0.020, 0.020, 0.020]
     mapped = combine_mapped_periods(periods, {1: "red", 2: "red"})
-    # Frame weights 1000:2000 → (0.010·1000 + 0.020·2000)/3000.
-    expected = (0.010 * 1000.0 + 0.020 * 2000.0) / 3000.0
-    assert mapped.run.grouping["dead_time_us"] == pytest.approx([expected] * 3)
+    assert mapped.run.grouping["dead_time_us"] == [None] * 3
+    assert [r.grouping["dead_time_us"] for r in mapped.run.grouping["period_inputs"]] == [
+        [0.010] * 3,
+        [0.020] * 3,
+    ]
 
 
 # --- corpus -----------------------------------------------------------------------
@@ -212,9 +214,7 @@ def test_ragged_contributing_tables_remain_unavailable():
     periods[1].run.grouping["dead_time_us"] = [0.020, 0.020]  # malformed: short
     mapped = combine_mapped_periods(periods, {1: "red", 2: "red"})
     table = mapped.run.grouping["dead_time_us"]
-    expected = (0.010 * 1000 + 0.020 * 2000) / 3000
-    assert table[:2] == pytest.approx([expected] * 2)
-    assert table[2] is None
+    assert table == [None] * 3
 
 
 @pytest.mark.parametrize("conflicting_period", [0, 1])

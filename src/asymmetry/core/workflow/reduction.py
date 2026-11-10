@@ -405,7 +405,9 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
     result = reduce_period_asymmetry(
         run.histograms,
         grouping,
-        GREEN_MINUS_RED if settings.period == GREEN_MINUS_RED else str(PeriodMode.RED),
+        GREEN_MINUS_RED
+        if settings.period == GREEN_MINUS_RED
+        else str(grouping.get("period_mode", PeriodMode.RED)),
         binning=spec,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
@@ -426,7 +428,9 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
             grouping=dict(
                 grouping,
                 period_mode=(
-                    GREEN_MINUS_RED if settings.period == GREEN_MINUS_RED else str(PeriodMode.RED)
+                    GREEN_MINUS_RED
+                    if settings.period == GREEN_MINUS_RED
+                    else str(grouping.get("period_mode", PeriodMode.RED))
                 ),
             ),
         ),

@@ -62,6 +62,7 @@ from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
+from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.workflow.jsonio import write_json as _write_json
@@ -232,9 +233,8 @@ def file_fingerprint(path: str | Path) -> dict[str, Any]:
     The whole file, not a leading slice: a slice leaves a file edited in place
     beyond it — same size, same mtime, different counts — fingerprinting
     identical, and this module's contract is that a stale cache entry is never
-    trusted. Reading to the end costs little on the sizes involved: on this
-    machine the test fixture's 41 kB run hashes in ~0.4 ms and a 5 MiB file
-    (the scale of a real ISIS run) in ~3 ms, against seconds to reduce one.
+    trusted. The complete source hash identifies the observations independently
+    of a file timestamp.
     """
     path = Path(path)
     stat = path.stat()
@@ -255,10 +255,10 @@ def reduction_digest(
     grouping: dict[str, Any],
     settings: ReductionSettings,
 ) -> str:
-    """The digest a reduced entry is keyed on: every source file it was reduced from."""
+    """Identify source contents, authored settings, and the numerical preparation policy."""
     payload = {
         "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
-        "mapped_count_variance_policy": "retained_independent_v1",
+        "mapped_count_preparation_policy": CONSTITUENT_PREPARATION_POLICY,
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",
@@ -269,7 +269,7 @@ def reduction_digest(
         "settings": settings.to_dict(),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
 def series_digest(series: dict[str, Any], fit_key: str | None) -> str:

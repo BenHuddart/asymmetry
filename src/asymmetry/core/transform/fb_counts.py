@@ -255,6 +255,7 @@ class AlignmentCrop:
     timing_residuals_us: tuple[tuple[int, float], ...] = ()
     timing_sources: tuple[tuple[int, str], ...] = ()
     timing_strategy: str = ""
+    acquired_detectors: tuple[tuple[int, int, int], ...] = ()
 
     @property
     def timing_spread_us(self) -> float:
@@ -303,6 +304,9 @@ class AlignmentCrop:
         )
         if len({index for index, _offset in offsets}) != len(offsets):
             raise ValueError("alignment crop must record each detector once.")
+        object.__setattr__(
+            self, "acquired_detectors", tuple(tuple(v) for v in self.acquired_detectors)
+        )
         object.__setattr__(self, "detector_offsets", offsets)
         object.__setattr__(self, "group_lengths", lengths)
         object.__setattr__(self, "length", length)
