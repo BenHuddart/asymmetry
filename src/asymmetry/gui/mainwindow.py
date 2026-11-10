@@ -329,6 +329,7 @@ from asymmetry.gui.utils.reduction_cache import (
     histogram_content_key,
 )
 from asymmetry.gui.utils.reference_timing import prepare_reference_timing
+from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -5262,11 +5263,7 @@ class MainWindow(QMainWindow):
     def _preserve_per_run_normalisers(
         self, target: dict, existing_grouping: dict, grouping_result: dict
     ) -> None:
-        """Keep this run's own per-run normalisers when rebuilding its grouping.
-
-        Acquisition facts come from this dataset before the grouping result;
-        templates cannot replace another run's exposure or period calibration.
-        """
+        """Keep acquisition facts ahead of template exposure and period calibration."""
         for key in self._PER_RUN_NORMALISER_KEYS:
             own = existing_grouping.get(key)
             if own is not None:
@@ -5825,13 +5822,17 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            mapped = combine_mapped_periods(
+            mapped = map_period_inputs(
                 siblings,
                 request.get("mapping", {}),
                 source_run_number=request.get("source_run_number"),
+                parent=self,
             )
         except ValueError as exc:
             self.statusBar().showMessage(f"Period mapping failed: {exc}", 8000)
+            return
+        if mapped is None:
+            self.statusBar().showMessage("Period mapping cancelled.", 8000)
             return
         self._apply_grouping_settings_to_dataset(mapped, grouping_result)
         self._data_browser.add_dataset(mapped)

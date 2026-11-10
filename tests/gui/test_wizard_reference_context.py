@@ -126,3 +126,62 @@ def test_warm_toolbar_refreshes_current_metadata_and_copies_reduction_provenance
     assert third.metadata["field"] == 100.0
     assert third.metadata["correction_outcomes"]["red"]["background"]["status"] != "edited"
     window.close()
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_mapping_constructs_snapshot_on_worker_and_registers_only_completed_result(
+    qapp, monkeypatch, cancelled
+):
+    import threading
+
+    from PySide6.QtCore import QThread, QTimer
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    import asymmetry.core.io.periods as period_io
+    from tests.io.test_period_mapping import _four_periods
+
+    window = MainWindow()
+    window.show()
+    periods = _four_periods()
+    for dataset in periods:
+        window._data_browser.add_dataset(dataset)
+    original = period_io.combine_mapped_periods
+    worker_threads, applied = [], []
+
+    def construct(*args, cancel_check, **kwargs):
+        worker_threads.append(QThread.currentThread() != qapp.thread())
+        if cancelled:
+            while True:
+                cancel_check()
+                threading.Event().wait(0.005)
+        return original(*args, cancel_check=cancel_check, **kwargs)
+
+    def apply(dataset, grouping):
+        assert QThread.currentThread() == qapp.thread()
+        applied.append(dataset)
+
+    def cancel():
+        dialog = QApplication.activeModalWidget()
+        assert dialog is not None
+        dialog.findChild(QPushButton).click()
+
+    monkeypatch.setattr(period_io, "combine_mapped_periods", construct)
+    monkeypatch.setattr(window, "_apply_grouping_settings_to_dataset", apply)
+    if cancelled:
+        QTimer.singleShot(20, cancel)
+    window._create_period_mapped_dataset(
+        {
+            "period_run_numbers": [ds.run_number for ds in periods],
+            "source_run_number": 900,
+            "mapping": {1: "red", 4: "ignore"},
+        },
+        {},
+    )
+    assert worker_threads == [True]
+    mapped = window._data_browser.get_dataset(900)
+    if cancelled:
+        assert mapped is None
+        assert applied == []
+    else:
+        assert applied == [mapped]
+        assert len(mapped.histogram_observation.source.grouping["period_inputs"]) == 4

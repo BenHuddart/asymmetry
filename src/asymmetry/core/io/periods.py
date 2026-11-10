@@ -8,6 +8,7 @@ exposure independently of authored corrections.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from itertools import zip_longest
@@ -17,6 +18,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.frame_exposure import summed_period_exposures
+from asymmetry.core.io.period_counts import sum_period_histograms
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.deadtime import DeadtimeCorrectionError, file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
@@ -434,15 +436,6 @@ def held_period_histograms(
 
 def acquired_period_histograms(grouping: dict, period_index: int) -> list[Histogram] | None:
     """Raw held counts only; cached curves cannot establish an acquired period."""
-    inputs = grouping.get("period_inputs")
-    if inputs is not None:
-        if not 0 <= period_index < len(grouping["period_histograms"]):
-            return None
-        target = ("red", "green")[period_index]
-        members = _periods_for_target(
-            {int(k): v for k, v in grouping["period_mapping"].items()}, target
-        )
-        return _sum_period_set(inputs, members) if members else None
     period_histograms = grouping.get("period_histograms")
     selected = (
         period_histograms[period_index]
@@ -591,69 +584,18 @@ def normalise_period_mapping(mapping: dict, n_periods: int) -> dict[int, str]:
     return normalised
 
 
-def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Histogram]:
-    """Sum per-period histogram lists detector-wise (count level).
-
-    Independent supplied variances add; raw Poisson contributions use their
-    counts. Timing follows the first contributor and bins use common raw-index
-    support. This operation does not align different acquisition clocks.
-    """
-    if not period_histograms:
-        raise ValueError("No period histograms to sum")
-    n_detectors = len(period_histograms[0])
-    if any(len(period) != n_detectors for period in period_histograms):
-        raise ValueError("Mapped periods require corresponding detector lists")
-    if n_detectors == 0:
-        raise ValueError("Period histogram lists are empty")
-    summed: list[Histogram] = []
-    for det in range(n_detectors):
-        first = period_histograms[0][det]
-        n_bins = min(len(period[det].counts) for period in period_histograms)
-        if any(
-            period[det].count_variance is None and np.any(period[det].counts[:n_bins] < 0)
-            for period in period_histograms
-        ):
-            raise ValueError(
-                "Signed period counts require supplied variance for independent pooling"
-            )
-        counts = np.zeros(n_bins, dtype=np.float64)
-        for period in period_histograms:
-            counts += np.asarray(period[det].counts[:n_bins], dtype=np.float64)
-        variance = None
-        if any(period[det].count_variance is not None for period in period_histograms):
-            variance = sum(
-                (
-                    period[det].count_variance
-                    if period[det].count_variance is not None
-                    else period[det].counts
-                )[:n_bins]
-                for period in period_histograms
-            )
-        summed.append(
-            Histogram(
-                counts=counts,
-                count_variance=variance,
-                bin_width=first.bin_width,
-                t0_bin=first.t0_bin,
-                good_bin_start=max(period[det].good_bin_start for period in period_histograms),
-                good_bin_end=min(
-                    period[det].good_bin_end if period[det].good_bin_end >= 0 else n_bins - 1
-                    for period in period_histograms
-                ),
-                t0_time_us=first.t0_time_us,
-            )
-        )
-    return summed
-
-
 def _periods_for_target(mapping: dict[int, str], target: str) -> list[int]:
     """1-based period numbers mapped to *target*, in ascending order."""
     return [p for p in sorted(mapping) if mapping[p] == target]
 
 
-def _sum_period_set(runs: list[Run], periods: list[int]) -> list[Histogram]:
+def _sum_period_set(
+    runs: list[Run], periods: list[int], cancel_check: Callable[[], None] | None = None
+) -> list[Histogram]:
     """Detector-wise count sum over the given 1-based periods."""
-    return sum_period_histograms([runs[p - 1].histograms for p in periods])
+    return sum_period_histograms(
+        [runs[p - 1].histograms for p in periods], cancel_check=cancel_check
+    )
 
 
 def _sum_period_good_frames(runs: list[Run], periods: list[int]) -> float | None:
@@ -700,33 +642,47 @@ def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float | No
 
 
 def combine_mapped_periods(
-    period_datasets: list[MuonDataset],
+    period_datasets: list[MuonDataset] | MuonDataset,
     mapping: dict,
     *,
     source_run_number: int | None = None,
     source_file: str = "",
+    cancel_check: Callable[[], None] | None = None,
 ) -> MuonDataset:
     """Sum acquired periods into red/green sets without exposure scaling.
 
     Counts, DT normalisers, and evidenced exposures sum within each set.
-    Timing follows the first contributor; the mapping remains provenance.
+    Timing follows the first contributor. Pass a mapped dataset to remap its
+    retained original acquisitions, including those previously ignored.
     """
-    runs = [ds.run for ds in period_datasets]
+    if cancel_check is not None:
+        cancel_check()
+    if isinstance(period_datasets, MuonDataset):
+        if period_datasets.run is None or "period_inputs" not in period_datasets.run.grouping:
+            raise ValueError("Remapping requires retained acquired period inputs")
+        source_file = source_file or period_datasets.run.source_file
+        if source_run_number is None:
+            source_run_number = source_run_of(period_datasets.run)
+        runs = list(period_datasets.run.grouping["period_inputs"])
+        metadata_sources = [run.metadata for run in runs]
+    else:
+        runs = [ds.run for ds in period_datasets]
+        metadata_sources = [ds.metadata for ds in period_datasets]
     if any(run is None or not run.histograms for run in runs):
         raise ValueError("Every period dataset needs run histograms to map periods")
-    n_periods = len(period_datasets)
+    n_periods = len(runs)
     normalised = normalise_period_mapping(mapping, n_periods)
 
     red_periods = _periods_for_target(normalised, "red")
     green_periods = _periods_for_target(normalised, "green")
 
     # Summation preserves the input arrays; only the returned Run owns new counts.
-    red_histograms = _sum_period_set(runs, red_periods)
+    red_histograms = _sum_period_set(runs, red_periods, cancel_check)
     sets: list[list[Histogram]] = [red_histograms]
     frames = [_sum_period_good_frames(runs, red_periods)]
     dead_times = [_combined_dead_times(runs, red_periods)]
     if green_periods:
-        sets.append(_sum_period_set(runs, green_periods))
+        sets.append(_sum_period_set(runs, green_periods, cancel_check))
         frames.append(_sum_period_good_frames(runs, green_periods))
         dead_times.append(_combined_dead_times(runs, green_periods))
 
@@ -734,7 +690,7 @@ def combine_mapped_periods(
     run_number = (
         int(source_run_number) if source_run_number is not None else source_run_of(base_run)
     )
-    metadata = dict(period_datasets[red_periods[0] - 1].metadata)
+    metadata = dict(metadata_sources[red_periods[0] - 1])
     metadata["run_number"] = run_number
     metadata["source_run_number"] = run_number
     metadata["run_label"] = str(run_number)
@@ -751,7 +707,7 @@ def combine_mapped_periods(
         replace(
             run,
             histograms=[replace(h) for h in run.histograms],
-            metadata=deepcopy(run.metadata),
+            metadata=deepcopy(metadata_source),
             grouping=deepcopy(
                 {
                     key: value
@@ -760,7 +716,7 @@ def combine_mapped_periods(
                 }
             ),
         )
-        for run in runs
+        for run, metadata_source in zip(runs, metadata_sources, strict=True)
     )
     grouping["period_histograms"] = sets
     # Summed histograms retain the first contributor's timing and its provenance.
@@ -797,11 +753,15 @@ def combine_mapped_periods(
         grouping=grouping,
         source_file=source_file or base_run.source_file,
     )
-    return _quick_period_dataset(run)
+    return _quick_period_dataset(run, cancel_check=cancel_check)
 
 
-def _quick_period_dataset(run: Run) -> MuonDataset:
+def _quick_period_dataset(
+    run: Run, *, cancel_check: Callable[[], None] | None = None
+) -> MuonDataset:
     """Capture a mapped/selected raw quick look with its actual replay settings."""
+    if cancel_check is not None:
+        cancel_check()
     grouping, metadata = run.grouping, run.metadata
     quick = quick_asymmetry(run.histograms, grouping, metadata=metadata)
     grouping.pop("t0_time_us", None)
@@ -810,23 +770,21 @@ def _quick_period_dataset(run: Run) -> MuonDataset:
     window = quick.window.slice if quick.window is not None else slice(0, 0)
     from asymmetry.core.transform.preparation import histogram_observation
 
-    # Quick looks use unity calibration, native bins, and no corrections.
+    # Quick looks use selected alpha, beta one, file support, and native bins.
     source = replace(
         run,
         grouping=dict(
             grouping,
-            alpha=1.0,
             beta=1.0,
-            group_names={},
-            projections=[],
             binning_mode="fixed",
             bunching_factor=1,
             deadtime_correction=False,
             background_correction=False,
         ),
     )
+    source.grouping.pop("good_window_policy", None)
     return MuonDataset(
-        histogram_observation=histogram_observation(source),
+        histogram_observation=histogram_observation(source, cancel_check=cancel_check),
         ratio_validity=quick.ratio_validity.select(window)
         if quick.ratio_validity is not None
         else None,

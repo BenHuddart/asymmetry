@@ -26,6 +26,10 @@ count-level sums of the chosen periods (independent supplied variances added,
 raw Poisson counts added when no variance is supplied, good frames added per set), and the full Red/Green machinery applies to it:
 plot either set, or the G−R difference that isolates the effect of the
 stimulus. The mapping is recorded with the grouping for provenance.
+``Mapping acquired periods…`` prepares the mapped counts and replay snapshot
+on a worker. **Cancel** leaves the original rows available and does not add an
+incomplete mapped result.
+
 Defaults follow WiMDA's period-mapping form: period 1 to red, period 2 to
 green, the rest ignored; with no green periods the result behaves as a
 single-set run and the G±R modes do not apply.

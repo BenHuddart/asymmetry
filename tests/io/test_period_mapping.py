@@ -330,7 +330,7 @@ def test_mapping_retains_ignored_inputs_and_snapshot_worker_ownership():
     for old, hist in zip(before, (h for ds in periods for h in ds.run.histograms), strict=True):
         np.testing.assert_array_equal(old, hist.counts)
     # Authored membership changes only the output; ignored observations remain usable.
-    remapped = combine_mapped_periods(periods, {4: "red", 1: "green"})
+    remapped = combine_mapped_periods(mapped, {4: "red", 1: "green"})
     np.testing.assert_array_equal(
         remapped.run.histograms[0].counts, periods[3].run.histograms[0].counts
     )
@@ -419,6 +419,7 @@ def test_mapped_and_selected_quicklook_replay_uses_its_actual_uncorrected_settin
             background_correction=True,
             background_mode="fixed",
             background_fixed_values=[2, 3, 4],
+            good_window_policy={"mode": "manual", "first_offset_bins": 2, "last_offset_bins": 5},
         )
     mapped = combine_mapped_periods(periods, {1: "red", 3: "red"})
     for dataset in [mapped, select_period(mapped, 1)]:
@@ -426,6 +427,38 @@ def test_mapped_and_selected_quicklook_replay_uses_its_actual_uncorrected_settin
         h = dataset.run.histograms
         f = (h[0].counts + h[1].counts).reshape(-1, 2).sum(axis=1)
         b = h[2].counts.reshape(-1, 2).sum(axis=1)
-        np.testing.assert_allclose(output.asymmetry, 100 * (f - b) / (f + b))
+        np.testing.assert_allclose(output.asymmetry, 100 * (f - 0.7 * b) / (f + 0.7 * b))
+        raw_f, raw_b = h[0].counts + h[1].counts, h[2].counts
+        np.testing.assert_allclose(
+            dataset.asymmetry, 100 * (raw_f - 0.7 * raw_b) / (raw_f + 0.7 * raw_b)
+        )
         assert output.n_points == 8
         assert dataset.run.grouping["alpha"] == 0.7
+
+
+def test_held_mapped_inspection_borrows_existing_buffers_without_pooling(monkeypatch):
+    import asymmetry.core.io.periods as period_io
+    from asymmetry.core.io.reference_selection import select_reference_run
+
+    mapped = combine_mapped_periods(_four_periods()[:2], {1: "red", 2: "green"})
+
+    def unexpected_sum(*args, **kwargs):
+        raise AssertionError("Inspection must not pool raw acquisition arrays")
+
+    monkeypatch.setattr(period_io, "sum_period_histograms", unexpected_sum)
+    selected = period_io.acquired_period_histograms(mapped.run.grouping, 1)
+    assert selected is mapped.run.grouping["period_histograms"][1]
+    reference = select_reference_run(mapped.run, {"run_number": 900, "period_number": 2})
+    assert reference.histograms is selected
+
+
+def test_mapping_polls_cancellation_before_capturing_ignored_inputs():
+    calls = []
+
+    def cancel():
+        calls.append(True)
+        raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        combine_mapped_periods(_four_periods(), {1: "red", 4: "ignore"}, cancel_check=cancel)
+    assert calls == [True]
