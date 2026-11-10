@@ -375,3 +375,114 @@ def test_corrected_pooled_ratio_retains_measured_supplied_variance():
     np.testing.assert_allclose(
         result.error, 200 * np.sqrt(b * b * 148 + f * f * 148) / (f + b) ** 2
     )
+
+
+def test_projection_alpha_quicklook_matches_its_counts_first_replay():
+    sources = [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)]
+    for source in sources:
+        source.run.grouping.update(
+            deadtime_correction=False,
+            alpha=1.0,
+            projections=[
+                {"label": "custom", "forward_group": 1, "backward_group": 2, "alpha": 0.7}
+            ],
+            vector_axis="custom",
+        )
+    mapped = combine_mapped_periods(sources, {1: "red", 2: "red"})
+    np.testing.assert_allclose(mapped.asymmetry, 100 * (60 - 0.7 * 40) / (60 + 0.7 * 40))
+    np.testing.assert_allclose(prepare_wizard_dataset(mapped, 2).asymmetry, mapped.asymmetry[:4])
+
+
+def test_mapped_reference_cannot_reuse_identical_acquisition_with_separate_buffers():
+    from copy import deepcopy
+
+    from asymmetry.core.transform.corrections import BackgroundReference
+    from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
+
+    sources = [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)]
+    for source in sources:
+        source.run.source_file = "same-source.nxs"
+        source.run.grouping["deadtime_correction"] = False
+    mapped = combine_mapped_periods(sources, {1: "red", 2: "red"})
+    mapped.run.grouping.update(background_correction=True, background_mode="reference_run")
+    reference = BackgroundReference(
+        deepcopy(sources[0].run.histograms),
+        ReferenceScaleRequest("manual", 1).resolve(),
+        run_number=10,
+        source_file="same-source.nxs",
+        period_number=1,
+    )
+    with pytest.raises(ValueError, match="identical observations"):
+        prepare_histogram_asymmetry(mapped.run, merge=1, facility=None, reference=reference)
+    distinct = replace(reference, period_number=3)
+    assert (
+        prepare_histogram_asymmetry(
+            mapped.run, merge=1, facility=None, reference=distinct
+        ).time.size
+        == 8
+    )
+
+
+def test_alignment_acquired_identity_restores_optional_json_provenance():
+    import json
+    from dataclasses import asdict
+
+    from asymmetry.core.transform.fb_counts import AlignmentCrop
+
+    alignment = prepare(
+        combine_mapped_periods(
+            [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)], {1: "red", 2: "red"}
+        ).run
+    ).alignments["red"]
+    payload = json.loads(json.dumps(asdict(alignment)))
+    for key in ("timing_residuals_us", "timing_sources"):
+        payload[key] = tuple(tuple(v) for v in payload[key])
+    assert AlignmentCrop(**payload) == alignment
+    payload.pop("acquired_detectors")
+    assert AlignmentCrop(**payload).acquired_detectors == ()
+
+
+@pytest.mark.parametrize("fact", ["clock", "good_bins", "frames", "coefficient", "selection"])
+def test_fourier_and_projection_reuse_identify_acquired_preparation(fact):
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+    from asymmetry.core.transform.projections import reduction_identity
+
+    mapped = combine_mapped_periods(
+        [acquired(i, [60] * 8, [40] * 8) for i in (1, 2, 3)], {1: "red", 2: "red", 3: "green"}
+    )
+    before = (
+        fourier_grouping_digest(mapped.run, "fb_asymmetry"),
+        reduction_identity(mapped.run.grouping),
+    )
+    original = mapped.run.grouping["period_inputs"][1]
+    if fact == "clock":
+        original.histograms[0].t0_bin += 1
+    elif fact == "good_bins":
+        original.histograms[0].good_bin_start += 1
+    elif fact == "frames":
+        original.grouping["good_frames"] *= 2
+    elif fact == "coefficient":
+        original.grouping["deadtime_file_us"] = [0.01, 0.02]
+    else:
+        mapped.run.grouping["period_mode"] = "green"
+    after = (
+        fourier_grouping_digest(mapped.run, "fb_asymmetry"),
+        reduction_identity(mapped.run.grouping),
+    )
+    assert all(a != b for a, b in zip(before, after, strict=True))
+
+
+def test_reuse_metadata_does_not_copy_or_hash_original_count_buffers(monkeypatch):
+    from asymmetry.core.fourier.spectrum import fourier_grouping_digest
+    from asymmetry.core.transform.projections import reduction_identity
+
+    mapped = combine_mapped_periods(
+        [acquired(i, [60] * 8, [40] * 8) for i in (1, 2)], {1: "red", 2: "red"}
+    )
+
+    def count_scan(*args, **kwargs):
+        raise AssertionError("Grouping identity must not scan original count buffers")
+
+    monkeypatch.setattr("asymmetry.core.transform.projections.np.asarray", count_scan)
+    assert reduction_identity(mapped.run.grouping)
+    assert fourier_grouping_digest(mapped.run, "fb_asymmetry")

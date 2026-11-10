@@ -65,6 +65,7 @@ def quick_asymmetry(
 ) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     alignment = None
+    observation = None
     common_t0 = max((hist.t0_bin for hist in histograms), default=0)
     t0_time_us = None
     timing = dict(grouping)
@@ -97,6 +98,8 @@ def quick_asymmetry(
         }
         grouped = group_forward_backward(histograms, file_grouping)
         alignment = grouped.counts.alignment
+        if observation is not None:
+            alignment = observation.acquired_alignment(alignment)
         common_t0 = grouped.common_t0 + alignment.first_bin
         reference = selected_t0_reference(
             histograms,

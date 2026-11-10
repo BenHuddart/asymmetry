@@ -59,7 +59,9 @@ Original acquisitions, including ignored ones, retain their counts, supplied
 variances, timing, good-bin limits, exposure, and file coefficients. Mapping
 leaves the individually loaded observations available for another selection or
 mapping. A red-only mapping reduces and can be selected as period 1; a green
-selection or G±R operation requires an actual green set.
+selection or G±R operation requires an actual green set. G±R also requires
+matching final Red/Green time grids; incompatible sets remain individually
+inspectable.
 
 For a requested set, Asymmetry resolves current grouping, exclusions, and timing
 and correction policies against each original acquisition. It corrects each
@@ -105,7 +107,7 @@ corrects selected histogram contributions before grouping, and its grouping
 and ADDRUN support whole-bin timing shifts. Asymmetry also checks compatible
 native widths and common observed support for the requested combination;
 a failed combination leaves individual observations available. These are selection
-and representation comparisons, not equivalence of exposure or error models.
+and operation comparisons, not equivalence of exposure or error models.
 Asymmetry's current G+R adds independently reduced asymmetries; WiMDA's G+R forms
 one pooled-count ratio. See :doc:`/explanation/comparison`.
 

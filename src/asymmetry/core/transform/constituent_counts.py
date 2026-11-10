@@ -7,11 +7,11 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.corrections import CorrectionStatus
+from asymmetry.core.transform.corrections import CorrectionStatus, reference_observation_metadata
 from asymmetry.core.transform.deadtime import DeadtimeDomain
 from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair
-from asymmetry.core.transform.grouping import resolve_forward_backward_layout
+from asymmetry.core.transform.grouping import grouping_balances, resolve_forward_backward_layout
 from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
     effective_t0_sources,
@@ -47,20 +47,22 @@ class ConstituentCounts:
         layout = resolve_forward_backward_layout(
             self.histograms, self.grouping, resolved_indices=self.pair
         )
+        return replace(layout, alignment=self.acquired_alignment(layout.alignment))
+
+    def acquired_alignment(self, alignment):
+        """Attach original acquired period/channel ordinals to flattened detector offsets."""
         if self.members[0].period_number is None:
-            return layout
+            return alignment
         identities = []
         offset = 0
         for member in self.members:
             identities.extend(
                 (offset + i, member.period_number, i)
                 for i in range(len(member.histograms))
-                if offset + i in dict(layout.alignment.detector_offsets)
+                if offset + i in dict(alignment.detector_offsets)
             )
             offset += len(member.histograms)
-        return replace(
-            layout, alignment=replace(layout.alignment, acquired_detectors=tuple(identities))
-        )
+        return replace(alignment, acquired_detectors=tuple(identities))
 
     @property
     def reference_sample(self):
@@ -188,7 +190,11 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
                 resolved_indices=pair,
                 cancel_check=cancel_check,
             )
-        members.append(AcquiredCounts(original.histograms, effective, original.metadata, number))
+        members.append(
+            AcquiredCounts(
+                original.histograms, effective, reference_observation_metadata(original), number
+            )
+        )
     if not members:
         raise ValueError(f"Mapped {target} set has no acquired constituents")
     if len(members) == 1:
@@ -204,6 +210,7 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
         for indices in pair
     )
     effective = dict(grouping)
+    effective["alpha"], effective["beta"] = grouping_balances(grouping)
     for key in ("projections", "vector_axis", "effective_t0_period"):
         effective.pop(key, None)
     effective.update(
@@ -249,3 +256,37 @@ def grouping_for_acquisition(run, live: dict) -> dict:
     if correction_flags_from_grouping(live).deadtime_mode not in {"manual", "estimate"}:
         effective["dead_time_us"] = list(file_deadtime_table(run.grouping))
     return effective
+
+
+def constituent_metadata(grouping: dict) -> dict:
+    """Identify acquired facts and preparation semantics without scanning count buffers."""
+    from asymmetry.core.transform.deadtime import file_deadtime_table
+
+    return {
+        "policy": CONSTITUENT_PREPARATION_POLICY,
+        "mapping": grouping["period_mapping"],
+        "selected_set": grouping.get("period_mode", "red"),
+        "inputs": [
+            {
+                "source_file": run.source_file,
+                "run_number": run.metadata.get("source_run_number", run.run_number),
+                "period_number": number,
+                "grid": [
+                    (
+                        h.t0_bin,
+                        h.t0_time_us,
+                        h.bin_width,
+                        h.n_bins,
+                        h.good_bin_start,
+                        h.good_bin_end,
+                    )
+                    for h in run.histograms
+                ],
+                "good_frames": run.grouping.get("good_frames"),
+                "deadtime_file_us": file_deadtime_table(run.grouping),
+                "t0_source": run.grouping.get("t0_source"),
+                "detector_t0_sources": run.grouping.get("detector_t0_sources"),
+            }
+            for number, run in enumerate(grouping["period_inputs"], 1)
+        ],
+    }

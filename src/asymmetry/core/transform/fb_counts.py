@@ -304,6 +304,9 @@ class AlignmentCrop:
         )
         if len({index for index, _offset in offsets}) != len(offsets):
             raise ValueError("alignment crop must record each detector once.")
+        object.__setattr__(
+            self, "acquired_detectors", tuple(tuple(v) for v in self.acquired_detectors)
+        )
         object.__setattr__(self, "detector_offsets", offsets)
         object.__setattr__(self, "group_lengths", lengths)
         object.__setattr__(self, "length", length)
