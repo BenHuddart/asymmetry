@@ -1485,3 +1485,31 @@ Asymmetry also checks that a displayed calibration coefficient is finite and
 positive before offering application. A numerical ratio of zero from an empty
 forward group cannot be used as a detector calibration; the workflow reports
 that diagnostic without changing the ratio formula or its error calculation.
+
+Acquired periods and mapped sets
+================================
+
+Asymmetry retains the original acquisitions behind a red/green mapping,
+including ignored periods. Independent supplied count variances add when
+periods are pooled; ordinary raw Poisson additions remain Poisson. A red-only
+mapping supports ordinary histogram preparation and period-1 selection.
+Stored data indices remain distinct from evidenced DAE sequence slots and
+dwell declarations. See :doc:`/reference/data_reduction/period_mapping`.
+
+WiMDA 1.326 maps acquired periods into red/green count sets and displays
+declared dwell slots. Mantid's 6.16 development documentation describes
+separate period workspaces in `MuonPreProcess v1
+<https://docs.mantidproject.org/nightly/algorithms/MuonPreProcess-v1.html>`_.
+musrfit 1.12.1 selects period histogram families explicitly in its
+`RUN/grouping manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
+These comparisons establish selection behaviour, not identical uncertainties
+or general facility exposure interpretation. No native Mantid period result
+is claimed.
+
+With unity calibration and corrections off, equal-total synthetic periods
+of 20% and 80% give Red/Green 20%/80%, G−R 60%, and G+R 50% in WiMDA 1.326
+under Wine 10. musrfit 1.12.1 (708f777b, ROOT 6.40.04) selected/grouped
+controls give 20%/80%/50%. Asymmetry currently gives G+R 100%, because it
+adds independently reduced asymmetries. Its mapped detector correction still
+acts after raw pooling, and mapped timing follows the first contributor.
+The value controls do not establish matching error conventions.

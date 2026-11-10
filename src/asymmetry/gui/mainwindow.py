@@ -329,6 +329,7 @@ from asymmetry.gui.utils.reduction_cache import (
     histogram_content_key,
 )
 from asymmetry.gui.utils.reference_timing import prepare_reference_timing
+from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
@@ -5252,6 +5253,7 @@ class MainWindow(QMainWindow):
         "period_good_frames",
         "period_dead_time_us",
         "period_histograms",
+        "period_inputs",
         "period_reduced",
         "period_t0_sources",
         "period_detector_t0_sources",
@@ -5261,11 +5263,7 @@ class MainWindow(QMainWindow):
     def _preserve_per_run_normalisers(
         self, target: dict, existing_grouping: dict, grouping_result: dict
     ) -> None:
-        """Keep this run's own per-run normalisers when rebuilding its grouping.
-
-        Acquisition facts come from this dataset before the grouping result;
-        templates cannot replace another run's exposure or period calibration.
-        """
+        """Keep acquisition facts ahead of template exposure and period calibration."""
         for key in self._PER_RUN_NORMALISER_KEYS:
             own = existing_grouping.get(key)
             if own is not None:
@@ -5824,13 +5822,17 @@ class MainWindow(QMainWindow):
             )
             return
         try:
-            mapped = combine_mapped_periods(
+            mapped = map_period_inputs(
                 siblings,
                 request.get("mapping", {}),
                 source_run_number=request.get("source_run_number"),
+                parent=self,
             )
         except ValueError as exc:
             self.statusBar().showMessage(f"Period mapping failed: {exc}", 8000)
+            return
+        if mapped is None:
+            self.statusBar().showMessage("Period mapping canceled.", 8000)
             return
         self._apply_grouping_settings_to_dataset(mapped, grouping_result)
         self._data_browser.add_dataset(mapped)
@@ -17124,13 +17126,9 @@ class MainWindow(QMainWindow):
                     if dataset is None and len(candidates) == 1:
                         dataset = candidates[0]
 
-                    # A period-mapped dataset is saved as {run_number: combined N,
-                    # source_file: the multi-period file}, but a 3+-period file
-                    # reloads as per-period siblings numbered by the loader's own
-                    # scheme — none match N, so the entry was being silently
-                    # dropped. Rebuild the combined dataset from the persisted
-                    # period_mapping (combine_mapped_periods reproduces exactly what
-                    # "Map periods…" built originally).
+                    # Mapped entries name a source run; three-plus-period files
+                    # return individually numbered siblings. Authored membership
+                    # reconstructs the held sets from those original observations.
                     if dataset is None:
                         overrides = ds_info.get("grouping_overrides")
                         persisted_mapping = (

@@ -55,3 +55,25 @@ class ScientificInputDialog(QProgressDialog):
     def _on_error(self, message):
         self._outcome = (False, message)
         self._loop.quit()
+
+
+def map_period_inputs(datasets, mapping, *, source_run_number, parent):
+    """Build mapped counts and their complete replay snapshot on a cancellable worker."""
+    from functools import partial
+
+    from asymmetry.core.io.periods import combine_mapped_periods
+    from asymmetry.gui.tasks import check_task_cancelled
+
+    def build(worker):
+        return combine_mapped_periods(
+            datasets,
+            mapping,
+            source_run_number=source_run_number,
+            cancel_check=partial(check_task_cancelled, worker),
+        )
+
+    dialog = ScientificInputDialog(parent, "Mapping acquired periods…", "Period mapping")
+    try:
+        return dialog.run(build)
+    finally:
+        dialog.deleteLater()

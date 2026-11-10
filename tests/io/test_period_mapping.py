@@ -247,3 +247,227 @@ def test_mapping_keeps_authored_and_acquired_deadtime_tables_separate(mode):
         _, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, index)
         assert grouping["dead_time_us"] == [0.01, -0.02, 0.03]
         assert grouping["deadtime_file_us"] == [0.004] * 3
+
+
+@pytest.mark.parametrize("counts", [(10, 30), (-10, 50)])
+def test_mapped_supplied_variance_reaches_normal_preparation(counts):
+    from dataclasses import replace
+
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+    periods = _four_periods()[:2]
+    for dataset, count, variance in zip(periods, counts, [25, 49], strict=True):
+        dataset.run.histograms = [
+            replace(h, counts=np.full(16, count), count_variance=np.full(16, variance))
+            for h in dataset.run.histograms
+        ]
+    mapped = combine_mapped_periods(periods, {1: "red", 2: "red"})
+    assert mapped.run.histograms[0].count_variance is not None
+    np.testing.assert_array_equal(mapped.run.histograms[0].count_variance, 74)
+    result = prepare_histogram_asymmetry(mapped.run, merge=2, facility=None, reference=None)
+    # Two forward detectors, one backward: F=160, B=80; VF=296, VB=148.
+    np.testing.assert_allclose(result.asymmetry, 100 / 3)
+    np.testing.assert_allclose(result.error, 200 * np.sqrt(80**2 * 296 + 160**2 * 148) / 240**2)
+
+
+def test_red_only_mapping_prepares_and_requires_real_green():
+    from dataclasses import replace
+
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+    mapped = combine_mapped_periods(_four_periods(), {1: "red", 3: "red", 4: "ignore"})
+    reduced = prepare_histogram_asymmetry(mapped.run, merge=1, facility=None, reference=None)
+    assert reduced.time.size
+    selected = select_period(mapped, 1)
+    np.testing.assert_allclose(selected.asymmetry, reduced.asymmetry)
+    for mode in ["green", "green_plus_red", "green_minus_red"]:
+        run = replace(mapped.run, grouping=mapped.run.grouping | {"period_mode": mode})
+        with pytest.raises(ValueError, match="green|two held"):
+            prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+
+
+def test_mixed_raw_and_retained_variance_add_independently():
+    periods = [
+        [Histogram(np.array([10.0, 20.0]), 0.1)],
+        [Histogram(np.array([-2.0, 30.0]), 0.1, count_variance=np.array([25.0, 49.0]))],
+    ]
+    summed = sum_period_histograms(periods)[0]
+    np.testing.assert_array_equal(summed.counts, [8, 50])
+    np.testing.assert_array_equal(summed.count_variance, [35, 69])
+    raw = sum_period_histograms([periods[0], periods[0]])[0]
+    assert raw.count_variance is None
+    np.testing.assert_array_equal(raw.counts, [20, 40])
+
+
+def test_mapping_retains_ignored_inputs_and_snapshot_worker_ownership():
+    import pickle
+    from dataclasses import replace
+
+    from asymmetry.core.transform.preparation import histogram_observation, prepare_wizard_dataset
+
+    periods = _four_periods()
+    periods[2].run.histograms = [
+        replace(h, count_variance=np.full(16, 49.0)) for h in periods[2].run.histograms
+    ]
+    before = [h.counts.copy() for ds in periods for h in ds.run.histograms]
+    mapped = combine_mapped_periods(periods, {1: "red", 3: "red", 2: "green", 4: "ignore"})
+    inputs = mapped.run.grouping["period_inputs"]
+    assert len(inputs) == 4
+    assert [r.metadata["period_number"] for r in inputs] == [1, 2, 3, 4]
+    assert inputs[2].histograms[0].count_variance[0] == 49
+    assert inputs[3].grouping["good_frames"] == 4000
+    snapshot = histogram_observation(mapped.run)
+    captured = snapshot.source.grouping["period_inputs"]
+    assert not captured[3].histograms[0].counts.flags.writeable
+    inputs[3].histograms[0].counts[0] += 1
+    assert captured[3].histograms[0].counts[0] != inputs[3].histograms[0].counts[0]
+    assert histogram_observation(mapped.run).identity != snapshot.identity
+    inputs[3].histograms[0].counts[0] -= 1
+    worker = pickle.loads(pickle.dumps(prepare_wizard_dataset(mapped, 2).fit_record()))
+    assert "period_inputs" not in worker.run.grouping
+    assert not worker.run.histograms
+    for old, hist in zip(before, (h for ds in periods for h in ds.run.histograms), strict=True):
+        np.testing.assert_array_equal(old, hist.counts)
+    # Authored membership changes only the output; ignored observations remain usable.
+    remapped = combine_mapped_periods(mapped, {4: "red", 1: "green"})
+    np.testing.assert_array_equal(
+        remapped.run.histograms[0].counts, periods[3].run.histograms[0].counts
+    )
+    np.testing.assert_array_equal(
+        mapped.run.grouping["period_histograms"][0][0].counts,
+        periods[0].run.histograms[0].counts + periods[2].run.histograms[0].counts,
+    )
+
+
+def test_signed_unknown_variance_cannot_become_poisson_by_pooling():
+    with pytest.raises(ValueError, match="supplied variance"):
+        sum_period_histograms(
+            [[Histogram(np.array([-10.0]), 0.1)], [Histogram(np.array([50.0]), 0.1)]]
+        )
+
+
+def test_mapping_does_not_drop_unmatched_detectors():
+    with pytest.raises(ValueError, match="corresponding detector"):
+        sum_period_histograms(
+            [[Histogram(np.ones(3), 0.1)], [Histogram(np.ones(3), 0.1), Histogram(np.ones(3), 0.1)]]
+        )
+
+
+def test_red_only_workdir_preserves_recorded_results_and_replay_changes_identity(tmp_path):
+    from dataclasses import replace
+
+    from asymmetry.core.io.reference_selection import resolve_loaded_reference
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+    from asymmetry.core.workflow.reduction import ReductionSettings
+    from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir, reduction_digest
+
+    periods = _four_periods()
+    mapped = combine_mapped_periods(periods, {1: "red", 3: "red"})
+    reduced = prepare_histogram_asymmetry(mapped.run, merge=2, facility=None, reference=None)
+    dataset = replace(
+        mapped,
+        time=reduced.time,
+        asymmetry=reduced.asymmetry,
+        error=reduced.error,
+        ratio_validity=reduced.ratio_validity,
+    )
+    settings = ReductionSettings()
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"synthetic identity")
+    digest = reduction_digest(
+        source_files=[source], grouping={"period_mapping": {1: "red", 3: "red"}}, settings=settings
+    )
+    entry = ReducedEntry(
+        900,
+        digest,
+        str(source),
+        dataset.n_points,
+        settings,
+        {"run_number": 900},
+        1.0,
+        "off",
+        1,
+        2,
+        [],
+    )
+    workdir = WorkDir(tmp_path / "work")
+    workdir.write_reduced(dataset, entry)
+    restored = workdir.reduced(900)
+    np.testing.assert_array_equal(restored.error, dataset.error)
+    np.testing.assert_array_equal(restored.asymmetry, dataset.asymmetry)
+    np.testing.assert_array_equal(restored.ratio_validity.reasons, dataset.ratio_validity.reasons)
+    assert restored.run is None
+    assert workdir.is_current(900, digest)
+    # A pooled set cannot masquerade as one independent acquired reference.
+    with pytest.raises(ValueError, match="mapped reference"):
+        resolve_loaded_reference([mapped.run], {"run_number": 900, "period_number": 1})
+    selected = resolve_loaded_reference([periods[2].run], {"run_number": 900, "period_number": 3})
+    assert selected is periods[2].run
+
+
+def test_mapped_and_selected_quicklook_replay_uses_its_actual_uncorrected_settings():
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.transform.preparation import prepare_wizard_dataset
+
+    periods = _four_periods()
+    for ds in periods:
+        ds.run.grouping.update(
+            alpha=0.7,
+            beta=1.2,
+            bunching_factor=3,
+            background_correction=True,
+            background_mode="fixed",
+            background_fixed_values=[2, 3, 4],
+            good_window_policy={"mode": "manual", "first_offset_bins": 2, "last_offset_bins": 5},
+        )
+    mapped = combine_mapped_periods(periods, {1: "red", 3: "red"})
+    for dataset in [mapped, select_period(mapped, 1)]:
+        output = prepare_wizard_dataset(dataset, 2)
+        h = dataset.run.histograms
+        f = (h[0].counts + h[1].counts).reshape(-1, 2).sum(axis=1)
+        b = h[2].counts.reshape(-1, 2).sum(axis=1)
+        np.testing.assert_allclose(output.asymmetry, 100 * (f - 0.7 * b) / (f + 0.7 * b))
+        raw_f, raw_b = h[0].counts + h[1].counts, h[2].counts
+        np.testing.assert_allclose(
+            dataset.asymmetry, 100 * (raw_f - 0.7 * raw_b) / (raw_f + 0.7 * raw_b)
+        )
+        assert output.n_points == 8
+        assert dataset.run.grouping["alpha"] == 0.7
+
+
+def test_held_mapped_inspection_borrows_existing_buffers_without_pooling(monkeypatch):
+    import asymmetry.core.io.periods as period_io
+    from asymmetry.core.io.reference_selection import select_reference_run
+
+    mapped = combine_mapped_periods(_four_periods()[:2], {1: "red", 2: "green"})
+
+    def unexpected_sum(*args, **kwargs):
+        raise AssertionError("Inspection must not pool raw acquisition arrays")
+
+    monkeypatch.setattr(period_io, "sum_period_histograms", unexpected_sum)
+    selected = period_io.acquired_period_histograms(mapped.run.grouping, 1)
+    assert selected is mapped.run.grouping["period_histograms"][1]
+    reference = select_reference_run(mapped.run, {"run_number": 900, "period_number": 2})
+    assert reference.histograms is selected
+
+
+def test_mapping_polls_cancellation_before_capturing_ignored_inputs():
+    calls = []
+
+    def cancel():
+        calls.append(True)
+        raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        combine_mapped_periods(_four_periods(), {1: "red", 4: "ignore"}, cancel_check=cancel)
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_public_period_sum_cancels_before_copying_or_pooling(count):
+    def cancel():
+        raise RuntimeError("cancelled before counts")
+
+    with pytest.raises(RuntimeError, match="cancelled before counts"):
+        sum_period_histograms([[Histogram(np.ones(4), 0.1)]] * count, cancel_check=cancel)

@@ -2032,8 +2032,9 @@ class TestMainWindowProjectState:
         assert recorded.metadata["field_direction"] == "Transverse"
         assert "field_direction_source" not in recorded.metadata
 
+    @pytest.mark.parametrize("green", [True, False])
     def test_period_mapped_dataset_survives_reload(
-        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path, green
     ) -> None:
         """A 3+-period mapped dataset reloads even though the file's per-period
         siblings are numbered by the loader's scheme and never match the saved
@@ -2081,7 +2082,7 @@ class TestMainWindowProjectState:
                 _period_dataset(9004, 40.0),
             ]
 
-        mapping = {1: "red", 2: "red", 3: "green", 4: "ignore"}
+        mapping = {1: "red", 2: "red", 3: "green" if green else "ignore", 4: "ignore"}
         mapped = combine_mapped_periods(
             _periods(), mapping, source_run_number=900, source_file=str(source_file)
         )
@@ -2112,9 +2113,14 @@ class TestMainWindowProjectState:
         assert restored.run.grouping.get("period_mapping") == {
             "1": "red",
             "2": "red",
-            "3": "green",
+            "3": "green" if green else "ignore",
             "4": "ignore",
         }
+        from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+        result = prepare_histogram_asymmetry(restored.run, merge=1, facility=None, reference=None)
+        np.testing.assert_allclose(result.asymmetry, 100 * (30 - 32) / 62)
+        assert len(restored.run.grouping["period_inputs"]) == 4
         # Red set sums periods 1+2 detector-wise: group 1 forward = 10 + 20 = 30.
         from asymmetry.core.transform import group_forward_backward
 

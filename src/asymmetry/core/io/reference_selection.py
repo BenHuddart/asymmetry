@@ -93,7 +93,7 @@ def select_reference_run(run: Run, payload: dict, *, advisory: bool = False) -> 
         # Reference resolution reads acquired counts; it never reduces a preview
         # or copies detector arrays on the GUI thread.
         grouping = select_period_grouping(run.grouping, period - 1)
-        for key in ("period_histograms", "period_reduced", "period_mode"):
+        for key in ("period_histograms", "period_reduced", "period_mode", "period_inputs"):
             grouping.pop(key, None)
         return replace(
             run,

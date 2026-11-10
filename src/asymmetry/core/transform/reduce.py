@@ -527,8 +527,10 @@ def corrected_period_counts(
     combined = mode in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}
     labels = (PeriodMode.RED, PeriodMode.GREEN) if combined else (mode,)
     periods = grouping.get("period_histograms")
-    if periods is not None and (not isinstance(periods, list) or len(periods) != 2):
-        raise ValueError("Period asymmetry reduction requires exactly two held periods.")
+    if periods is not None and (not isinstance(periods, list) or len(periods) not in {1, 2}):
+        raise ValueError("Period asymmetry reduction requires one or two held periods.")
+    if periods is not None and len(periods) == 1 and mode != PeriodMode.RED:
+        raise ValueError("A green selection or two-set operation requires a real green set.")
     if combined and periods is None:
         raise ValueError("A period sum or difference requires two held periods.")
     if periods is not None and any(

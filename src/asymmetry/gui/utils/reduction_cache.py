@@ -212,12 +212,9 @@ _INLINE_INPUT_BYTES = 64 * 1024
 
 def capture_histogram_observation(run, *, facility, reference, parent):
     """Snapshot large reduction inputs through the existing cancellable worker."""
-    from asymmetry.core.transform.preparation import histogram_observation
+    from asymmetry.core.transform.preparation import histogram_observation, observation_histograms
 
-    histograms = [
-        *run.histograms,
-        *(h for period in (run.grouping.get("period_histograms") or []) for h in period),
-    ]
+    histograms = observation_histograms(run)
     if reference is not None:
         histograms.extend(reference.histograms)
     size = sum(

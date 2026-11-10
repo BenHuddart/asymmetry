@@ -55,6 +55,7 @@ GroupSignal = Callable[[NDArray[np.float64]], NDArray[np.float64]] | NDArray[np.
 #: Altered counts cannot inherit measured exposures or the source period arrays.
 _DERIVED_ACQUISITION_KEYS = (
     "period_histograms",
+    "period_inputs",
     "period_reduced",
     "period_mode",
     "period_good_frames",
@@ -1737,8 +1738,6 @@ def degrade_run(
         and all(isinstance(period, list) and period for period in period_lists)
     )
 
-    # The period payload holds full histogram arrays; exclude it from the
-    # deepcopy and rebuild it from the thinned periods below.
     grouping = copy.deepcopy(
         {k: v for k, v in source_grouping.items() if k not in _DERIVED_ACQUISITION_KEYS}
     )

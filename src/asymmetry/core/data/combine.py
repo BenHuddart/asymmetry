@@ -65,6 +65,7 @@ _BIN_WIDTH_RTOL = 1e-6
 #: Grouping keys holding the per-period payload (mirrors simulate._PERIOD_KEYS).
 _PERIOD_KEYS = (
     "period_histograms",
+    "period_inputs",
     "period_reduced",
     "period_good_frames",
     "period_dead_time_us",

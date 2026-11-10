@@ -28,6 +28,7 @@ from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
+from asymmetry.core.io.nexus_periods import logged_data_periods, period_declaration
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.io.physical_units import physical_unit
@@ -435,8 +436,13 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
+        metadata_base["period_declaration"] = period_declaration(
+            entry, self._read_optional, self._safe_str, len(counts_periods)
+        )
         _add_period_hall_offset(
-            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+            metadata_base,
+            time_series,
+            logged_data_periods(entry, self._read_optional, len(counts_periods)),
         )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
@@ -571,8 +577,13 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
+        metadata_base["period_declaration"] = period_declaration(
+            entry, self._read_optional, self._safe_str, len(counts_periods)
+        )
         _add_period_hall_offset(
-            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+            metadata_base,
+            time_series,
+            logged_data_periods(entry, self._read_optional, len(counts_periods)),
         )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
@@ -595,20 +606,6 @@ class NexusLoader(BaseLoader):
             good_windows=good_windows,
             source_file=source_file,
         )
-
-    def _data_periods(self, entry: Any, n_periods: int) -> list[int]:
-        """The DAE period numbers of the file's *n_periods* data periods, in order.
-
-        ``instrument/beam/period_type`` marks each DAE period as data-taking
-        (1) or dwell: a HiFi red/green run cycles ramp up, field on, ramp down,
-        field off (``[2, 1, 2, 1]``), so its data periods are DAE periods 2 and
-        4. Without that field the DAE periods are the data periods.
-        """
-        beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
-        types = np.asarray(self._read_optional(beam, "period_type", default=[]), dtype=float)
-        if types.size:
-            return [int(number) for number in np.flatnonzero(types == 1) + 1]
-        return list(range(1, n_periods + 1))
 
     def _build_period_datasets(
         self,
@@ -683,6 +680,10 @@ class NexusLoader(BaseLoader):
             run_meta["source_run_number"] = run_number
             run_meta["run_label"] = run_label
             run_meta["period_number"] = period_idx
+            run_meta["data_period_number"] = period_idx
+            slots = metadata_base["period_declaration"]["data_dae_slots"]
+            if slots:
+                run_meta["dae_period_number"] = slots[period_idx - 1]
             run_meta["period_count"] = n_periods
 
             run_grouping = {
@@ -883,12 +884,7 @@ class NexusLoader(BaseLoader):
         )
 
     def _encode_period_run_number(self, run_number: int, period_idx: int) -> int:
-        """Encode a stable unique run number for a specific period row.
-
-        Delegates to :func:`asymmetry.core.io.periods.encode_period_run_number`
-        so the loader's list path and the scriptable ``select_period`` reducer
-        share one encoding scheme.
-        """
+        """Use the shared source/period browser-key encoding."""
         return encode_period_run_number(run_number, period_idx)
 
     def _extract_tree(self, node: Any) -> Any:

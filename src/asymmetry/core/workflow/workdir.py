@@ -258,6 +258,7 @@ def reduction_digest(
     """The digest a reduced entry is keyed on: every source file it was reduced from."""
     payload = {
         "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
+        "mapped_count_variance_policy": "retained_independent_v1",
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",

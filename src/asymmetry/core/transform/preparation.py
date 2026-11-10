@@ -12,7 +12,7 @@ from hashlib import sha256
 
 import numpy as np
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
@@ -125,6 +125,15 @@ class HistogramObservation:
         )
 
 
+def observation_histograms(run: Run) -> list[Histogram]:
+    """All buffers owned by a histogram replay, including ignored acquisitions."""
+    return [
+        *run.histograms,
+        *(h for period in (run.grouping.get("period_histograms") or []) for h in period),
+        *(h for acquired in run.grouping.get("period_inputs", ()) for h in acquired.histograms),
+    ]
+
+
 def histogram_observation(
     run: Run,
     *,
@@ -141,8 +150,7 @@ def histogram_observation(
     if cancel_check is not None:
         cancel_check()
     grouping = {k: v for k, v in run.grouping.items() if k != "period_reduced"}
-    periods = grouping.get("period_histograms") or []
-    histograms = [*run.histograms, *(h for period in periods for h in period)]
+    histograms = observation_histograms(run)
     if reference is not None:
         histograms.extend(reference.histograms)
     memo = {}
@@ -165,7 +173,12 @@ def histogram_observation(
     source = deepcopy(replace(run, grouping=grouping), memo)
     resolved_reference = deepcopy(reference, memo)
     # The small identity payload includes every setting and clock, but no counts.
-    light_grouping = {k: v for k, v in source.grouping.items() if k != "period_histograms"}
+    light_grouping = {
+        k: v for k, v in source.grouping.items() if k not in {"period_histograms", "period_inputs"}
+    }
+    light_grouping["period_inputs"] = tuple(
+        replace(acquired, histograms=[]) for acquired in source.grouping.get("period_inputs", ())
+    )
     digest.update(
         pickle.dumps(
             (
@@ -180,6 +193,10 @@ def histogram_observation(
                     for period in [
                         source.histograms,
                         *(source.grouping.get("period_histograms") or []),
+                        *(
+                            acquired.histograms
+                            for acquired in source.grouping.get("period_inputs", ())
+                        ),
                         resolved_reference.histograms if resolved_reference is not None else [],
                     ]
                 ],
