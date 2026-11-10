@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
+
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.simulate import BUILTIN_TEMPLATES, simulate_run
+from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
@@ -73,6 +76,12 @@ class BunchingComparisonScenario(Scenario):
                 analysis = window._plot_panel.get_analysis_dataset(raw_dataset)
                 assert analysis.n_points == raw_dataset.n_points // factor
                 assert raw_dataset.run.grouping["bunching_factor"] == 1
+                replay = prepare_histogram_asymmetry(
+                    run, merge=factor, facility="ISIS", reference=None
+                )
+                np.testing.assert_array_equal(analysis.asymmetry, replay.asymmetry)
+                np.testing.assert_array_equal(analysis.error, replay.error)
+                np.testing.assert_array_equal(analysis.time, replay.time)
                 # The separate capture panel receives the already reduced curve.
                 panels.append(_grab_plot(replace(analysis, run=None), caption=caption))
         finally:
