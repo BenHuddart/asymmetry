@@ -204,10 +204,6 @@ class PsiLoader(BaseLoader):
             perf.detail(detectors=len(raw.counts), bins=dataset.n_points)
             return dataset
 
-    # ------------------------------------------------------------------
-    # PSI-BIN
-    # ------------------------------------------------------------------
-
     def _read_bin(self, path: Path) -> _PsiRawRun:
         data = path.read_bytes()
         if len(data) < _BIN_HEADER_SIZE:
@@ -1142,9 +1138,6 @@ class PsiLoader(BaseLoader):
             "instrument": canonical_instrument or raw.instrument,
         }
         if preset_name is not None:
-            # Record the applied preset so the grouping window shows it as the
-            # live grouping (not merely the pre-selected default) and provenance
-            # is preserved through save/reload.
             grouping["grouping_preset"] = preset_name
             grouping["projections"] = preset_projections
 
@@ -1155,7 +1148,10 @@ class PsiLoader(BaseLoader):
             grouping=grouping,
             source_file=raw.source_file,
         )
+        from asymmetry.core.transform.preparation import histogram_observation
+
         return MuonDataset(
+            histogram_observation=histogram_observation(run),
             time=np.asarray(time_axis, dtype=np.float64),
             asymmetry=np.asarray(asymmetry, dtype=np.float64),
             error=np.asarray(error, dtype=np.float64),

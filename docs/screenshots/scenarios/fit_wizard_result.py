@@ -11,6 +11,9 @@ beneath it, with the recommendation as candidate A. The wizard typically
 recommends ``StaticGKT_ZF + Constant`` for an Ag ZF dataset: the canonical
 nuclear-dipolar fingerprint (Blundell et al. Ch 5.2).
 
+The seeded detector histograms exceed the automatic point budget, exercising
+counts-first preparation and later on-demand curve reconstruction.
+
 All rows derive their criteria from their fitted objective, free columns and
 sample count. This scenario checks that the displayed AICc comes from the
 recorded criteria; unavailable values use the same cells with a reason tooltip.
@@ -31,7 +34,6 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_zf_gkt
 from ._base import Scenario, _process_events_for, register
 
 
@@ -45,6 +47,8 @@ class FitWizardResultScenario(Scenario):
     requires_fit = True
 
     def build(self) -> QWidget:
+        from dataclasses import replace
+
         from asymmetry.core.fitting.fit_wizard import (
             SelectionMetric,
             build_fit_wizard_recommendation,
@@ -53,9 +57,29 @@ class FitWizardResultScenario(Scenario):
             SHORTLIST_MAX_DELTA,
             summarise_single_candidates,
         )
+        from asymmetry.core.fitting.models import MODELS
+        from asymmetry.core.simulate import BUILTIN_TEMPLATES, reduce_run_to_dataset, simulate_run
         from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
-        dataset = make_ag_zf_gkt()
+        template = replace(
+            BUILTIN_TEMPLATES["ideal_pulsed_fb"],
+            n_detectors=2,
+            n_bins=20000,
+            bin_width_us=8 / 19999,
+            t0_bin=0,
+            forward_detectors=(1,),
+            backward_detectors=(2,),
+        ).build()
+        run = simulate_run(
+            template,
+            MODELS["StaticGKT_ZF"].function,
+            {"A0": 24.0, "Delta": 0.39, "baseline": 0.3},
+            total_events=1.2e8,
+            seed=23,
+            run_number=4101,
+        )
+        run.metadata.update(title="Synthetic ZF Ag polycrystal", field=0.0, temperature=20.0)
+        dataset = reduce_run_to_dataset(run)
         window = FitWizardWindow()
         window.set_analysis_context(dataset)
         _process_events_for(milliseconds=60)
@@ -64,8 +88,10 @@ class FitWizardResultScenario(Scenario):
         # then hand the recommendation to the window the same way the fit-panel
         # cache does when a previously analysed run is reopened.
         recommendation = build_fit_wizard_recommendation(
-            dataset, current_model=None, metric=SelectionMetric.AICC
+            dataset, current_model=None, metric=SelectionMetric.AICC, max_workers=4
         )
+        assert recommendation.rebin_factor > 1
+        assert dataset.histogram_observation is not None
         assert recommendation.recommended_assessment.aicc is not None
         window.set_cached_recommendation(recommendation)
         _process_events_for(milliseconds=150)

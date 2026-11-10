@@ -1756,24 +1756,13 @@ class TestPlotPanel:
             run=run,
         )
 
-        from asymmetry.core.transform.rebin import BinningSpec
-        from asymmetry.core.transform.reduce import reduce_period_asymmetry
+        from asymmetry.core.transform.preparation import (
+            histogram_observation,
+            prepare_wizard_dataset,
+        )
 
-        def reduce_counts(dataset, factor):
-            result = reduce_period_asymmetry(
-                dataset.run.histograms,
-                dataset.run.grouping,
-                "red",
-                binning=BinningSpec(merge=factor),
-                forward_idx=[0],
-                backward_idx=[1],
-                alpha=1.0,
-                use_deadtime=False,
-                deadtime_mode="off",
-                use_background=False,
-            )
-            return result.time, result.asymmetry, result.error
-
+        ds.histogram_observation = histogram_observation(run)
+        reduce_counts = prepare_wizard_dataset
         panel.set_counts_rebunch_provider(reduce_counts)
         analysis_ds = panel.get_analysis_dataset(ds)
         assert analysis_ds is not None

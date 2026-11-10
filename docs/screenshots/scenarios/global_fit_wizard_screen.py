@@ -8,9 +8,9 @@ runs are answered Longitudinal, and the generic relaxation families are screened
 alongside three Kubo–Toyabe models. The families no partition of the series
 could select are dropped before scoring, so three rows remain:
 ``Longitudinal-field KT + Constant`` leads with every run's χ²ᵣ graded good.
-The two dynamic and broadened KT families trail by several hundred AICc units,
-with a fair cell at 15 G. Only the leader is within Δ ≤ 10, so it alone is
-pre-ticked and the footer reads "Optimise 1 family →". The preview on the right
+The dynamic and broadened KT families trail by about 6 and 12 AICc units.
+The leading two are within Δ ≤ 10 and pre-ticked; the footer reads
+"Optimise 2 families →". The preview on the right
 draws the leader's per-run fits over residual strips.
 
 Marked ``requires_fit = True``: the screening runs real fits.
@@ -42,6 +42,7 @@ class GlobalFitWizardScreenScenario(Scenario):
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
         datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+        assert all(dataset.histogram_observation is None for dataset in datasets)
         set_user_field_direction(datasets, FieldGeometry.LF)
         scope = WizardScope(
             physics=frozenset({PhysicsClass.GENERIC_RELAXATION}),

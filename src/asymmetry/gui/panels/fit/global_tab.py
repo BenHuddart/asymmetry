@@ -103,6 +103,7 @@ from asymmetry.core.fitting.spectral import (
 )
 from asymmetry.core.representation.naming import format_run_range
 from asymmetry.core.representation.series import FitSeries, normalise_recipe
+from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
@@ -459,7 +460,6 @@ class GlobalFitTab(FitTabBase):
     # is the main window's bookkeeping, so the tab only asks.
     trends_requested = Signal()
 
-    # ── Series row (D1): the tab asks, the main window resolves ──────────────
     #: Open this recorded series in the tab (carries its ``batch_id``).
     series_open_requested = Signal(str)
     #: Start a draft over the browser's current selection (today's ad-hoc batch).
@@ -489,9 +489,6 @@ class GlobalFitTab(FitTabBase):
         #: Where the Parameters rail's chip states live. Injectable so a test can
         #: use a scratch scope (mirrors ``SingleFitTab`` and ``gui/fit_settings``).
         self._settings = settings if settings is not None else QSettings()
-        # Member kind is fixed per instance and follows the active representation:
-        # the groups surface (Individual-groups representation) is group-membered,
-        # every other surface is run-membered. (Phase 3: scope is derived, not selected.)
         self._member_kind = member_kind if member_kind in ("runs", "groups") else "runs"
         # The single grouped fit (one dataset's detector groups) shares one
         # fit-function across its groups, so its physics params take the
@@ -1979,12 +1976,7 @@ class GlobalFitTab(FitTabBase):
         self._update_mode_ui(preserve_result=False)
 
     def _seed_member_datasets(self) -> list[MuonDataset]:
-        """Return the records this surface's seeds describe.
-
-        The runs surface fits its included members; a grouped surface fits one
-        run's detector groups, so its "members" are the grouped fit's member
-        runs (the active dataset when there is only one).
-        """
+        """Return included run members, or the grouped surface's member runs."""
         if self._member_kind == "groups":
             return self._grouped_member_datasets()
         return list(self._datasets)
@@ -2140,6 +2132,7 @@ class GlobalFitTab(FitTabBase):
     def _wizard_context_signature(self, parsed: dict[str, object]) -> dict[str, object]:
         return {
             "binning_policy": BINNING_POLICY,
+            "observation": [wizard_observation_identity(ds) for ds in self._datasets],
             "run_numbers": list(self._normalized_wizard_run_set()),
             "model": self._composite_model.to_dict(),
             "types": {str(key): str(value) for key, value in dict(parsed["types"]).items()},
@@ -2266,7 +2259,14 @@ class GlobalFitTab(FitTabBase):
             persist(
                 run_key,
                 recommendation,
-                signature={"run_number": run_key, "model": None, "binning_policy": BINNING_POLICY},
+                signature={
+                    "run_number": run_key,
+                    "model": None,
+                    "binning_policy": BINNING_POLICY,
+                    "observation": json.loads(recommendation.build_signature).get("observation")
+                    if recommendation.build_signature
+                    else None,
+                },
                 log_text="Updated by Global Fit Wizard screening.",
             )
 
@@ -2973,7 +2973,14 @@ class GlobalFitTab(FitTabBase):
     ) -> bool:
         if not isinstance(cached_signature, dict):
             return False
-        for key in ("binning_policy", "run_numbers", "model", "values", "types"):
+        for key in (
+            "binning_policy",
+            "observation",
+            "run_numbers",
+            "model",
+            "values",
+            "types",
+        ):
             if cached_signature.get(key) != base_signature.get(key):
                 return False
         cached_bounds = cached_signature.get("bounds")
@@ -2984,15 +2991,7 @@ class GlobalFitTab(FitTabBase):
         )
 
     def _effective_initial_values_by_run(self, parsed: dict) -> dict[int, dict[str, float]]:
-        """Per-run initial values used by the batch fit.
-
-        Precedence: parameter-table value < inherited single-fit seed (Local
-        only, per run) < explicit Initial-values dialog entry. A Global or Fixed
-        value is one number for every run, so the table is its only source: the
-        inherited average is written there (see
-        :meth:`_refresh_inherited_single_fit_defaults`), where the user can see
-        and edit it.
-        """
+        """Resolve table, inherited local, then explicit per-run initial values."""
         model = self._composite_model
         if model is None:
             return {}
