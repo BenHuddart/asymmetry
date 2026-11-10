@@ -362,48 +362,20 @@ def test_the_background_error_names_the_source_run_of_a_period_selection() -> No
 
 
 @pytest.mark.parametrize("frequency", [40.0, 60.0])
-def test_user_rebinning_cannot_fold_detected_lines(frequency: float) -> None:
-    from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.workflow.reduction import _check_rebin_bandwidth
+def test_reduction_honors_deliberate_fast_line_averaging(frequency) -> None:
+    from dataclasses import replace
+
+    from tests.core.test_binning_entry_points import _run
 
     time = np.arange(8192) * 0.001
-    dataset = MuonDataset(
-        time=time,
-        asymmetry=12 * np.cos(2 * np.pi * frequency * time),
-        error=np.ones_like(time) * 0.1,
-        metadata={"run_number": 7},
-    )
-    assert _check_rebin_bandwidth(dataset, 4) is None
-    with pytest.raises(ValueError, match="would alias a detected"):
-        _check_rebin_bandwidth(dataset, 20)
-    assert dataset.n_points == 8192
-
-
-def test_relaxation_only_data_can_be_rebinned_in_a_high_field() -> None:
-    from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.workflow.reduction import _check_rebin_bandwidth
-
-    time = np.arange(8192) * 0.001
-    dataset = MuonDataset(
-        time=time,
-        asymmetry=20 * np.exp(-time),
-        error=np.ones_like(time),
-        metadata={"field": 80000},
-    )
-    assert _check_rebin_bandwidth(dataset, 20) is None
-
-
-def test_reduction_rejects_aliasing_before_returning_a_cached_spectrum() -> None:
-    run = simulate_run(
-        BUILTIN_TEMPLATES["ideal_pulsed_fb"].build(),
-        lambda time: 15 * np.cos(2 * np.pi * 8 * time),
-        total_events=1e8,
-        seed=11,
-        run_number=18,
-    )
-    with pytest.raises(ValueError, match="would alias a detected"):
-        reduce_run(run, ReductionSettings(rebin=10))
-    assert reduce_run(run, ReductionSettings(rebin=2)).n_points > 0
-    # Averaging a known fast line away is a deliberate choice the caller can make.
-    allowed = reduce_run(run, ReductionSettings(rebin=10), allow_aliasing=True)
-    assert allowed.n_points == reduce_run(run, ReductionSettings()).n_points // 10
+    oscillation = 0.15 * np.cos(2 * np.pi * frequency * time)
+    run = _run(1e5 * (1 + oscillation), 1e5 * (1 - oscillation))
+    run.histograms = [replace(h, bin_width=0.001) for h in run.histograms]
+    result = reduce_run(run, ReductionSettings(rebin=20))
+    midpoint = (20 * np.arange(8192 // 20) + 9.5) * 0.001
+    attenuation = np.sin(20 * np.pi * frequency * 0.001) / (20 * np.sin(np.pi * frequency * 0.001))
+    expected = 15 * attenuation * np.cos(2 * np.pi * frequency * midpoint)
+    np.testing.assert_allclose(result.time, midpoint, atol=1e-15)
+    np.testing.assert_allclose(result.asymmetry, expected, rtol=0, atol=1e-11)
+    assert abs(attenuation) < 0.25
+    assert result.n_points == 8192 // 20

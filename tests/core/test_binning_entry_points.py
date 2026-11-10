@@ -47,7 +47,7 @@ def test_counts_first_anchor_all_entry_points():
     run = _run([90, 1], [10, 9])
     spec = BinningSpec(factor=2)
     direct = _direct(run, spec)
-    workflow = reduce_run(run, ReductionSettings(rebin=2), allow_aliasing=True)
+    workflow = reduce_run(run, ReductionSettings(rebin=2))
     gui = reduce_period_asymmetry(
         run.histograms,
         run.grouping,
@@ -107,7 +107,7 @@ def test_fixed_merge_equals_product_factor():
 def test_factor_one_is_bit_identical():
     run = _run([90, 1, 15], [10, 9, 20])
     direct = _direct(run, BinningSpec())
-    workflow = reduce_run(run, ReductionSettings(), allow_aliasing=True)
+    workflow = reduce_run(run, ReductionSettings())
     for key in ("time", "asymmetry", "error"):
         np.testing.assert_array_equal(getattr(direct, key), getattr(workflow, key))
     assert direct.binning == BinningSpec()
@@ -117,7 +117,7 @@ def test_sparse_tail_matches_hand_sums():
     rng = np.random.default_rng(20261101)
     f, b = rng.poisson(2.4, 11), rng.poisson(1.6, 11)
     run = _run(f, b)
-    result = reduce_run(run, ReductionSettings(rebin=3), allow_aliasing=True)
+    result = reduce_run(run, ReductionSettings(rebin=3))
     forward = f[:9].reshape(3, 3).sum(axis=1)
     backward = b[:9].reshape(3, 3).sum(axis=1)
     total = forward + backward
@@ -171,7 +171,7 @@ def test_period_combination_is_counts_first(mode, sign):
     assert result.binning == spec
     assert set(result.corrections) == {"red", "green"}
     if mode == "green_minus_red":
-        workflow = reduce_run(run, ReductionSettings(period=mode, rebin=2), allow_aliasing=True)
+        workflow = reduce_run(run, ReductionSettings(period=mode, rebin=2))
         for key in ("time", "asymmetry", "error"):
             np.testing.assert_array_equal(getattr(result, key), getattr(workflow, key))
 
@@ -193,7 +193,7 @@ def test_shared_background_through_workflow():
     run.histograms = [replace(hist, t0_bin=2, good_bin_start=2) for hist in run.histograms]
     run.metadata = {"instrument": "GPS", "facility": "PSI"}
     settings = ReductionSettings(background="range", background_range=(0, 1), rebin=4)
-    result = reduce_run(run, settings, allow_aliasing=True)
+    result = reduce_run(run, settings)
     assert result.error[0] == pytest.approx(100 * 0.04420992805650498, rel=1e-12)
 
 
@@ -235,7 +235,7 @@ def test_nonfixed_merge_includes_a_partial_raw_tail(mode):
         np.arange(1.0, 12.0), np.arange(21.0, 32.0), binning_mode=mode, bin0_us=0.25, bin10_us=0.25
     )
     direct = _direct(run, replace(binning_spec(run.grouping), merge=2))
-    workflow = reduce_run(run, ReductionSettings(rebin=2), allow_aliasing=True)
+    workflow = reduce_run(run, ReductionSettings(rebin=2))
     # Both rules give raw edges [0, 3, 6, 10 or 9, 11]; merging pairs gives [0, 6, 11].
     f = np.array([sum(range(1, 7)), sum(range(7, 12))], dtype=float)
     b = np.array([sum(range(21, 27)), sum(range(27, 32))], dtype=float)
@@ -281,7 +281,7 @@ def test_nonuniform_consumers_share_actual_membership(mode, points):
     )
     run.histograms = [replace(h, good_bin_start=2, good_bin_end=13) for h in run.histograms]
     direct = _direct(run, binning_spec(run.grouping))
-    workflow = reduce_run(run, ReductionSettings(), allow_aliasing=True)
+    workflow = reduce_run(run, ReductionSettings())
     fourier = build_fb_signal_dataset(run)
     representation = TimeFBAsymmetry().compute(run)[0]
     assert len(direct.time) == points
@@ -325,3 +325,82 @@ def test_nonuniform_real_alignment_crop_retains_fractional_timing(mode, exact_of
     )
     np.testing.assert_array_equal(run.histograms[0].counts, f)
     np.testing.assert_array_equal(run.histograms[1].counts, b)
+
+
+@pytest.mark.parametrize("mode", ["fixed", "variable", "constant_error"])
+@pytest.mark.parametrize("merge", [1, 2, 3])
+def test_authored_merge_never_requests_spectral_analysis(monkeypatch, mode, merge):
+    from asymmetry.core.fitting import peak_detection
+
+    def unsolicited_spectrum(*args, **kwargs):
+        pytest.fail("Ordinary binning requested spectral analysis")
+
+    monkeypatch.setattr(peak_detection, "analyze_dataset_peaks", unsolicited_spectrum)
+    run = _run(
+        1000 + 10 * np.arange(128),
+        700 + 3 * np.arange(128),
+        binning_mode=mode,
+        bunching_factor=2,
+        bin0_us=0.12,
+        bin10_us=0.25,
+    )
+    spec = replace(binning_spec(run.grouping), merge=merge)
+    direct = _direct(run, spec)
+    workflow = reduce_run(run, ReductionSettings(rebin=merge))
+    toolbar = reduce_period_asymmetry(
+        run.histograms,
+        run.grouping,
+        "red",
+        binning=spec,
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1.0,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=False,
+    )
+    for result in (workflow, toolbar):
+        for key in ("time", "asymmetry", "error"):
+            np.testing.assert_array_equal(getattr(result, key), getattr(direct, key))
+
+
+def test_nonuniform_merge_succeeds_but_actual_fft_refuses():
+    from asymmetry.core.fourier.fft import fft_arrays
+
+    run = _run(
+        1000 + 10 * np.arange(128),
+        700 + 3 * np.arange(128),
+        binning_mode="variable",
+        bin0_us=0.12,
+        bin10_us=0.25,
+    )
+    result = reduce_run(run, ReductionSettings(rebin=2))
+    direct = _direct(run, replace(binning_spec(run.grouping), merge=2))
+    np.testing.assert_array_equal(result.time, direct.time)
+    with pytest.raises(ValueError, match="not uniformly sampled"):
+        fft_arrays(result.time, result.asymmetry)
+
+
+def test_variable_composed_merge_matches_independent_raw_sums():
+    f, b = 1000 + 10 * np.arange(256), 700 + 3 * np.arange(256)
+    run = _run(f, b, binning_mode="variable", bin0_us=0.1, bin10_us=0.4)
+    run.histograms = [replace(h, bin_width=0.05) for h in run.histograms]
+    edges = [0]
+    while edges[-1] < 256:
+        left = edges[-1] * 0.05 - 0.025
+        quotient = 0.1 * 4 ** (max(left, 0) / 10) / 0.05
+        width = max(1, int(np.floor(quotient + 0.5)))
+        edges.append(min(256, edges[-1] + width))
+    merged = edges[::2]
+    spans = list(zip(merged[:-1], merged[1:], strict=True))
+    forward = np.array([f[first:last].sum() for first, last in spans])
+    backward = np.array([b[first:last].sum() for first, last in spans])
+    time = np.array([(first + last - 1) * 0.025 for first, last in spans])
+    total = forward + backward
+    result = reduce_run(run, ReductionSettings(rebin=2))
+    np.testing.assert_allclose(result.time, time, atol=1e-15)
+    np.testing.assert_allclose(result.asymmetry, 100 * (forward - backward) / total)
+    np.testing.assert_allclose(
+        result.error,
+        200 * np.sqrt(backward**2 * forward + forward**2 * backward) / total**2,
+    )

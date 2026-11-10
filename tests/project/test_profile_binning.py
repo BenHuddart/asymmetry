@@ -56,3 +56,33 @@ def test_profile_base_binning_cannot_silently_discard_a_display_merge():
 
     with pytest.raises(ValueError, match="base binning; merge must be 1"):
         GroupingProfile("test", ProfileFingerprint("test", 2), binning=BinningSpec(merge=2))
+
+
+def test_oversized_authored_packing_survives_project_loading_and_repair(tmp_path):
+    from dataclasses import replace
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.fitting.grouped_time_domain import build_count_group
+    from tests.core.test_binning_entry_points import _run
+
+    run = _run([10] * 6, [5] * 6, bunching_factor=8)
+    state = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [
+            {"run_number": 1, "source_file": "sample.nxs", "grouping_overrides": run.grouping}
+        ],
+    }
+    path = tmp_path / "packing.asymp"
+    save_project(state, path)
+    loaded = load_project(path)
+    restored = replace(run, grouping=dict(loaded["datasets"][0]["grouping_overrides"]))
+    dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=restored)
+    with pytest.raises(ValueError, match="produced no usable bins"):
+        build_count_group(dataset, 1)
+    assert restored.grouping["bunching_factor"] == 8
+    restored.grouping["bunching_factor"] = 2
+    np.testing.assert_array_equal(
+        build_count_group(dataset, 1, lifetime_corrected=False).counts, [20] * 3
+    )
+    assert load_project(path) == loaded
+    np.testing.assert_array_equal(restored.histograms[0].counts, [10] * 6)

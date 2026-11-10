@@ -112,6 +112,17 @@ Raw-count preparation uses the requested groups, good-bin limits, bunching,
 and fit masks. Every native bin contributing to a retained merged bin is
 corrected before summation; incomplete terminal bunches and unconsumed excluded
 bins add no dependency. Active background checks retain their estimator samples.
+Fixed packing keeps the authored grouping factor, including when it exceeds
+the selected window. Asymmetry also checks that the request leaves usable fit
+bins after complete-group trimming, centre-based time limits, and exclusions.
+A single/pair count request with none raises, for example,
+``Count-domain group 1 produced no usable bins``; grouped fitting reports
+``Grouped time-domain fitting produced fewer than two usable groups``.
+This outcome precedes unused deadtime/background preflight. Reduce the factor
+or widen the selected window to repair the request. Raw loading, inspection,
+and saved settings remain available; no source observations are changed.
+TF calibration uses this same fixed-packing boundary.
+
 Explicit single-group fits remain available when that group is not included in
 a multi-group fit.
 

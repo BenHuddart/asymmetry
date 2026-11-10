@@ -3,11 +3,14 @@
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
+
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.simulate import BUILTIN_TEMPLATES, simulate_run
 from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
+from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
 from ._base import CaptureContext, Scenario, register
 from .bunching_comparison import _compose, _grab_plot
@@ -54,6 +57,30 @@ class NonuniformBinningScenario(Scenario):
                 use_background=False,
                 binning=BinningSpec(mode=mode, factor=5, bin0_us=0.12, bin10_us=0.25),
             )
+            request = replace(
+                run,
+                grouping=grouping
+                | {
+                    "binning_mode": mode,
+                    "bunching_factor": 5,
+                    "bin0_us": 0.12,
+                    "bin10_us": 0.25,
+                },
+            )
+            merged = reduce_run(request, ReductionSettings(rebin=2))
+            direct_merge = reduce_grouped_asymmetry(
+                histograms=run.histograms,
+                grouping=grouping,
+                forward_idx=[0],
+                backward_idx=[1],
+                alpha=1,
+                use_deadtime=False,
+                deadtime_mode="off",
+                use_background=False,
+                binning=BinningSpec(mode=mode, factor=5, bin0_us=0.12, bin10_us=0.25, merge=2),
+            )
+            for key in ("time", "asymmetry", "error"):
+                np.testing.assert_array_equal(getattr(merged, key), getattr(direct_merge, key))
             support = (
                 "complete bins"
                 if mode == "fixed"

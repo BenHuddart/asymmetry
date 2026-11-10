@@ -81,6 +81,11 @@ count bins. A merge larger than the record leaves no complete output point.
 Curves without histograms and rotated projections use the independent
 curve-bin mean described below.
 
+Direct reduction, the workflow, CLI, and histogram toolbar honour the same
+authored merge without a spectral peak veto. This permits deliberate averaging
+of a known fast line. Inspect native-resolution data when choosing the width;
+FFT and MaxEnt sampling checks apply when those operations are requested.
+
 Good-bin window
 ---------------
 
@@ -232,8 +237,11 @@ Notes
 -----
 
 Fourier and MaxEnt analyses require uniform sampling. Count fitting retains
-its explicit fixed packing. Curve fits evaluate the model at the prepared
-point timestamps, with each point's own error. This centre-point approximation
+its explicit fixed packing, even for a shorter selected window. If no complete
+fit bin remains, the requested fit reports no usable input before preparing
+unused corrections; see :doc:`/reference/count_domain_fitting`. Curve fits
+evaluate the model at the prepared point timestamps, with each point's own error.
+This centre-point approximation
 does not account for signal averaging within wide bins: rapid oscillations can
 lose amplitude and acquire a phase shift. Nyquist is a sampling limit, not a
 guarantee of negligible bin averaging. Nonuniform weights alone do not make the
@@ -276,6 +284,10 @@ algorithms (reviewed Mantid 6.16 development); no native Mantid binning run is
 claimed. `Fit
 <https://docs.mantidproject.org/nightly/algorithms/Fit-v1.html>`_ defaults to
 ``CentrePoint`` and separately offers histogram evaluation for supported models.
+
+The compared WiMDA grouping, musrfit packing, and Mantid Rebin/Rebunch
+operations accept authored binning without an automatic spectral peak veto.
+This does not establish identical no-bin diagnostics across these programs.
 
 Asymmetry also checks positive finite native widths, compatible count/variance
 arrays, and valid selected windows at their input boundaries. A malformed

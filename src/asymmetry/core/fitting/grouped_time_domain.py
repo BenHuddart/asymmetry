@@ -227,6 +227,8 @@ def build_grouped_time_domain_groups(
         )
     ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
 
+    if ctx is None:
+        raise ValueError("Grouped time-domain fitting produced fewer than two usable groups")
     built_groups: list[GroupedTimeDomainGroup] = []
     for group_id, indices in specs:
         group = _build_one_count_group(
@@ -238,11 +240,8 @@ def build_grouped_time_domain_groups(
             lifetime_corrected=lifetime_corrected,
             exclude=exclude,
         )
-        if group is not None:
-            built_groups.append(group)
+        built_groups.append(group)
 
-    if len(built_groups) < 2:
-        raise ValueError("Grouped time-domain fitting produced fewer than two usable groups")
     return built_groups
 
 
@@ -264,6 +263,8 @@ def build_count_groups(
         specs.append((gid, indices))
     ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
 
+    if ctx is None:
+        raise ValueError(f"Count-domain group {specs[0][0]!r} produced no usable bins")
     built: list[GroupedTimeDomainGroup] = []
     for gid, indices in specs:
         group = _build_one_count_group(
@@ -275,8 +276,6 @@ def build_count_groups(
             lifetime_corrected=lifetime_corrected,
             exclude=exclude,
         )
-        if group is None:
-            raise ValueError(f"Count-domain group {gid!r} produced no usable bins")
         built.append(group)
     return built
 

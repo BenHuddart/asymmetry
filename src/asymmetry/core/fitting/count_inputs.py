@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 def count_time_selection(first, last, factor, axis_start, width, residual, t_min, t_max, exclude):
     """Use merged-bin centres for selection, retaining every contributing raw bin."""
     size = last - first + 1
-    factor = factor if size >= factor else 1
     time = (np.arange(size, dtype=float) + axis_start) * width + residual
     if factor > 1:
         time = time[: size // factor * factor].reshape(-1, factor).mean(axis=1)
@@ -42,7 +41,7 @@ def count_time_selection(first, last, factor, axis_start, width, residual, t_min
         mask &= time <= float(t_max)
     if exclude is not None and float(exclude[1]) > float(exclude[0]):
         mask &= ~((time >= float(exclude[0])) & (time <= float(exclude[1])))
-    return time, mask, factor
+    return time, mask
 
 
 @dataclass
@@ -105,7 +104,7 @@ def _count_group_context(
     t_min,
     t_max,
     exclude,
-) -> _CountGroupContext:
+) -> _CountGroupContext | None:
     require_complete_dataset(dataset)
     prepared_histograms = list(run.histograms)
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
@@ -129,7 +128,7 @@ def _count_group_context(
     group_names = (
         grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
     )
-    time, mask, factor = count_time_selection(
+    _, mask = count_time_selection(
         first_good,
         last_good,
         bunch_factor,
@@ -140,8 +139,10 @@ def _count_group_context(
         t_max,
         exclude,
     )
+    if not np.any(mask):
+        return None
     windows = [
-        BinWindow(first_good + i * factor, first_good + (i + 1) * factor - 1)
+        BinWindow(first_good + i * bunch_factor, first_good + (i + 1) * bunch_factor - 1)
         for i in np.flatnonzero(mask)
     ]
     parts = [(alignment, selected, windows)]
@@ -183,25 +184,23 @@ def _build_one_count_group(
     t_max: float | None,
     lifetime_corrected: bool,
     exclude: tuple[float, float] | None = None,
-) -> GroupedTimeDomainGroup | None:
+) -> GroupedTimeDomainGroup:
     """Align counts and measured variance before bunching and masking."""
     from asymmetry.core.fitting.grouped_time_domain import GroupedTimeDomainGroup
 
     run = ctx.run
     aligned = [ctx.prepared.aligned([index], ctx.alignment) for index in indices]
-    terminal_bin = min(ctx.last_good + 1, *(trace.counts.size for trace in aligned))
+    terminal_bin = ctx.last_good + 1
     detector_counts = np.asarray([trace.counts[ctx.first_good : terminal_bin] for trace in aligned])
     counts = detector_counts.sum(axis=0)
-    if counts.size == 0:
-        return None
     variance = counts
     if any(trace.variance is not None for trace in aligned):
         variance = np.sum(
             [trace.independent_variance[ctx.first_good : terminal_bin] for trace in aligned], axis=0
         )
     trimmed_counts = counts
-    bunch_factor = ctx.bunch_factor if counts.size >= ctx.bunch_factor else 1
-    time, mask, bunch_factor = count_time_selection(
+    bunch_factor = ctx.bunch_factor
+    time, mask = count_time_selection(
         ctx.first_good,
         terminal_bin - 1,
         bunch_factor,
@@ -225,9 +224,6 @@ def _build_one_count_group(
     scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
     out_counts = trimmed_counts * scale
     errors = np.sqrt(np.clip(variance, 1.0, None)) * scale
-
-    if not np.any(mask):
-        return None
 
     group_name = ctx.group_names.get(group_id, f"Group {group_id}")
     metadata = dict(run.metadata)

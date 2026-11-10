@@ -11,7 +11,6 @@ grouping or the corrections here.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from numbers import Integral
@@ -428,9 +427,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
     )
 
 
-def reduce_run(
-    run: Run, settings: ReductionSettings, *, allow_aliasing: bool = False
-) -> MuonDataset:
+def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
     """Reduce *run* to a :class:`MuonDataset` under *settings*.
 
     With default settings the result is identical to the loader's own
@@ -440,42 +437,17 @@ def reduce_run(
     run and each period is reduced alone before the difference is formed.
     ``rebin`` merges recorded bins at the count level before the ratio is formed;
     the time window selects that final curve's bin centres. Correction uses
-    their contributing raw samples plus active estimators. A ``rebin`` that would fold a
-    detected line above the new Nyquist frequency raises :class:`ValueError`
-    unless *allow_aliasing*.
+    their contributing raw samples plus active estimators. Authored merging does
+    not request spectral analysis; sampling checks belong to spectral operations.
     """
     if settings.period == GREEN_MINUS_RED and period_count(run) != 2:
         raise ValueError(
             f"Run {run.run_number} is not a two-period (red/green) run; there is no green − red difference."
         )
-    if settings.rebin > 1 and not allow_aliasing:
-        _check_rebin_bandwidth(
-            _reduce_binned_run(run, replace(settings, t_min=None, t_max=None), 1), settings.rebin
-        )
     dataset = _reduce_binned_run(run, settings, settings.rebin)
     if settings.t_min is not None or settings.t_max is not None:
         dataset = dataset.time_range(settings.t_min, settings.t_max)
     return dataset
-
-
-def _check_rebin_bandwidth(dataset: MuonDataset, factor: int) -> None:
-    """Reject user binning that would alias a detected line in the original record."""
-    from asymmetry.core.fitting.peak_detection import analyze_dataset_peaks
-
-    analysis = analyze_dataset_peaks(dataset, min_snr=6.0, burg_check="never", damped_pass=False)
-    dt = float(np.median(np.diff(dataset.time)))
-    nyquist = 0.5 / (dt * factor)
-    frequencies = [peak.frequency_mhz for peak in analysis.peaks if peak.frequency_mhz >= nyquist]
-    if frequencies:
-        highest = max(frequencies)
-        maximum = max(1, math.ceil(0.5 / (dt * highest)) - 1)
-        raise ValueError(
-            f"Run {dataset.run_number}: rebin {factor} lowers Nyquist to {nyquist:.6g} MHz "
-            f"and would alias a detected {highest:.6g} MHz line. Use rebin <= {maximum}, "
-            "or keep rebin 1 and shorten the fit window or zoom the plot. "
-            "A folded line is not a physical frequency shift; to average a known fast "
-            "line away on purpose, pass --allow-aliasing."
-        )
 
 
 def estimate_alpha_for_run(run: Run, settings: ReductionSettings):

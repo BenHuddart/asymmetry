@@ -151,10 +151,9 @@ usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                         [--calibration-frequency MHZ] [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
-                        [--period RED|GREEN|N|green-red] [--rebin REBIN]
-                        [--allow-aliasing] [--tmin TMIN] [--tmax TMAX]
-                        [--plot-tmax PLOT_TMAX] [--plot] [--json] [--workdir WORKDIR]
-                        [--instrument NAME]
+                        [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
+                        [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--plot] [--json]
+                        [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -203,9 +202,6 @@ options:
                         period run
   --rebin REBIN         Merge this many bins' counts before forming the asymmetry
                         (default: 1)
-  --allow-aliasing      Rebin even when a detected line lies above the new Nyquist
-                        frequency, deliberately averaging a known fast line away to
-                        study slower relaxation
   --tmin TMIN           Discard points below this time/µs from the stored reduction
                         every later fit uses
   --tmax TMAX           Discard points above this time/µs from the stored reduction
