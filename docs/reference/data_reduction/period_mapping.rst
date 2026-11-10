@@ -61,8 +61,22 @@ leaves the individually loaded observations available for another selection or
 mapping. A red-only mapping reduces and can be selected as period 1; a green
 selection or G±R operation requires an actual green set.
 
-Mapped sets pool raw-index counts before the selected set's correction. Timing
-follows the first contributor; this is not alignment of different period clocks.
+For a requested set, Asymmetry resolves current grouping, exclusions, and timing
+and correction policies against each original acquisition. It corrects each
+required detector with that acquisition's applicable coefficient and supported
+exposure, aligns whole bins using its own resolved t0, and pools counts and
+retained variances on common observed support. Group-background preparation
+then acts once on the requested set, followed by count binning and the ratio.
+There is no effective deadtime-coefficient average or fractional resampling.
+Fractional timing residuals remain recorded with the acquisition/channel mapping.
+
+One explicitly chosen α/β applies to the comparison; individual-period
+calibration requires an explicit source selection. Missing required File
+coefficients leave the complete requested result uncorrected with a warning,
+including required references. Ignored inputs and unused raw bins do not become
+correction requirements. Held raw-index arrays remain available for inspection;
+the quick look and its counts-first replay use native bins, file support,
+selected α, β one, and corrections off.
 Point errors retain first-order propagation at fixed α/β, with existing shared
 background terms. This does not provide full cross-period/reference covariance.
 Asymmetry also checks that detector lists correspond and that signed input has
@@ -84,9 +98,13 @@ See :doc:`backgrounds` for the selection and uncertainty contract.
 Compared with other programs
 ----------------------------
 
-WiMDA 1.326 maps acquired periods into red/green count sets and exposes declared
-dwell slots. Mantid's documented period workspaces retain separate observations;
-musrfit 1.12.1 addresses period histogram families explicitly. These are selection
+WiMDA 1.326 pools mapped raw counts before correcting the resulting set.
+Asymmetry corrects acquired constituents before pooling, following the order
+of Mantid's documented per-workspace ``MuonPreProcess``. musrfit 1.12.1 also
+corrects selected histogram contributions before grouping, and its grouping
+and ADDRUN support whole-bin timing shifts. Asymmetry also checks compatible
+native widths and common observed support for the requested combination;
+a failed combination leaves individual observations available. These are selection
 and representation comparisons, not equivalence of exposure or error models.
 Asymmetry's current G+R adds independently reduced asymmetries; WiMDA's G+R forms
 one pooled-count ratio. See :doc:`/explanation/comparison`.

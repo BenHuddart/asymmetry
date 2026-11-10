@@ -49,7 +49,11 @@ share one implementation. See :ref:`selecting-periods` for a worked example.
 Mapped runs retain original acquired ``Run`` records in
 ``run.grouping["period_inputs"]``, ordered by stored data-period index.
 ``period_mapping`` records authored membership; held histograms are pooled
-views. Pass the mapped dataset to ``combine_mapped_periods`` to remap these
+inspection views. Normal reduction corrects each selected acquisition with its
+own coefficient/exposure and aligns its own t0 on common observed support before
+pooling. Extracted sets retain this context; selected-set reduction and histogram
+replay use the same preparation. ``sum_period_histograms`` remains an explicit
+raw-index addition helper. Pass the mapped dataset to ``combine_mapped_periods`` to remap these
 retained acquisitions, including ignored periods. The inputs are transient: projects
 reconstruct them from the source file and saved mapping. Fitting curve records
 remove these replay arrays. NeXus selections distinguish ``data_period_number``

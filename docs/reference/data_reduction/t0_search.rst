@@ -152,6 +152,19 @@ The per-selected-success safeguard above is an Asymmetry request rule; no claim
 is made that all three programs enforce it. See
 :ref:`comparison-selected-timing` for conditions and limits.
 
+Mapped acquired constituents
+----------------------------
+
+Each selected acquired constituent resolves its own timing before count pooling.
+The common grid uses the maximum selected effective integer anchor, breaking ties
+by acquired period and channel order. Each file-good interval stays attached to
+its own raw bins. Fractional residuals are recorded without resampling or padding;
+incompatible widths or empty common support make the requested combination
+unavailable while the original observations remain inspectable. Automatic
+searches use original acquired counts; a Red/Green held-set search cannot supply
+an anchor for several distinct acquisitions. See :doc:`period_mapping`.
+
+
 References
 ----------
 

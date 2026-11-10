@@ -255,6 +255,7 @@ class AlignmentCrop:
     timing_residuals_us: tuple[tuple[int, float], ...] = ()
     timing_sources: tuple[tuple[int, str], ...] = ()
     timing_strategy: str = ""
+    acquired_detectors: tuple[tuple[int, int, int], ...] = ()
 
     @property
     def timing_spread_us(self) -> float:

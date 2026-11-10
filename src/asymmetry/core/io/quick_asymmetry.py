@@ -61,7 +61,7 @@ class QuickAsymmetry:
 
 
 def quick_asymmetry(
-    histograms: list[Histogram], grouping: dict, *, metadata: dict | None = None
+    histograms: list[Histogram], grouping: dict, *, metadata: dict | None = None, cancel_check=None
 ) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     alignment = None
@@ -69,6 +69,16 @@ def quick_asymmetry(
     t0_time_us = None
     timing = dict(grouping)
     try:
+        if "period_inputs" in grouping:
+            from asymmetry.core.transform.constituent_counts import resolve_constituent_counts
+            from asymmetry.core.transform.grouping import independent_pair_indices
+
+            pair = independent_pair_indices(grouping, n_histograms=len(histograms))
+            observation = resolve_constituent_counts(
+                histograms, grouping, pair, metadata, cancel_check=cancel_check
+            )
+            histograms, timing = observation.histograms, dict(observation.grouping)
+            timing["good_window_policy"] = {"mode": "from_file"}
         if metadata is not None and "effective_detector_t0_bins" not in timing:
             policy = timing.get("t0_policy", {"mode": "from_file"})
             resolve_selected_timing(
@@ -125,7 +135,8 @@ def quick_asymmetry(
             timing={
                 k: v
                 for k, v in timing.items()
-                if k.startswith(("effective_", "t0_search", "t0_policy"))
+                if "period_inputs" not in grouping
+                and k.startswith(("effective_", "t0_search", "t0_policy"))
             },
         )
     asymmetry, error, validity = ratio_with_count_errors(
@@ -148,6 +159,7 @@ def quick_asymmetry(
         timing={
             k: v
             for k, v in timing.items()
-            if k.startswith(("effective_", "t0_search", "t0_policy"))
+            if "period_inputs" not in grouping
+            and k.startswith(("effective_", "t0_search", "t0_policy"))
         },
     )

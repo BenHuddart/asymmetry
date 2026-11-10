@@ -15,6 +15,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.io import background_reference_for_grouping
+from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
@@ -86,7 +87,9 @@ def prepare_histogram_asymmetry(
     )
 
 
-WIZARD_PREPARATION = f"counts_first_observation_{RATIO_OBSERVATION_POLICY}"
+WIZARD_PREPARATION = (
+    f"counts_first_observation_{RATIO_OBSERVATION_POLICY}_{CONSTITUENT_PREPARATION_POLICY}"
+)
 
 
 @dataclass(frozen=True)
@@ -154,7 +157,7 @@ def histogram_observation(
     if reference is not None:
         histograms.extend(reference.histograms)
     memo = {}
-    digest = sha256()
+    digest = sha256(CONSTITUENT_PREPARATION_POLICY.encode())
     for index, hist in enumerate(histograms):
         for role, array in (("counts", hist.counts), ("variance", hist.count_variance)):
             if array is not None:

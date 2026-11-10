@@ -1238,20 +1238,15 @@ def resolve_effective_grouping(
         if profile.projections:
             grouping["projections"] = [dict(p) for p in profile.projections]
 
-        # Structure/provenance extras (grouping_preset, vector_axis, per-axis alpha).
         for key, value in profile.extra.items():
             grouping[key] = value
 
         resolve_projection_calibrations(profile.projection_alpha_policies, grouping)
 
-        # Instrument is part of the fingerprint but also a payload key downstream
-        # code reads (background gating, fingerprinting on reload).
         if profile.fingerprint.instrument:
             grouping["instrument"] = profile.fingerprint.instrument
 
-        # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
-        # -- period mode --------------------------------------------------------
         if profile.period_mode is not None:
             grouping["period_mode"] = str(profile.period_mode)
         elif "period_mode" in run_grouping:
@@ -1266,7 +1261,7 @@ def resolve_effective_grouping(
                 profile_name=profile.name,
                 timing_search=timing_search,
             )
-            if run.histograms:
+            if run.histograms and "period_inputs" not in grouping:
                 first, last = resolve_run_good_window(profile.good_window_policy, run, grouping)
                 grouping.update(
                     first_good_bin=first,
@@ -1488,6 +1483,9 @@ def _apply_t0_policy(
 
     Detection keeps detector stagger; manual offsets move anchors by whole bins.
     Exact timing moves with those anchors while raw window facts stay fixed."""
+    if "period_inputs" in grouping:
+        grouping["t0_policy"] = policy.to_dict()
+        return
     if not run.histograms:
         return
     if policy.legacy_value is not None:

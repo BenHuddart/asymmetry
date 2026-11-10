@@ -22,6 +22,10 @@ from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
 )
+from asymmetry.core.transform.constituent_counts import (
+    ConstituentCounts,
+    resolve_constituent_counts,
+)
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcome,
@@ -30,6 +34,7 @@ from asymmetry.core.transform.corrections import (
     result_tail_skip,
 )
 from asymmetry.core.transform.deadtime import (
+    DeadtimeDomain,
     deadtime_operation_inputs,
     normalise_deadtime_mode,
 )
@@ -43,8 +48,8 @@ from asymmetry.core.transform.fb_counts import (
 )
 from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair, fb_deadtime_domain
 from asymmetry.core.transform.grouping import (
+    ForwardBackwardLayout,
     independent_pair_indices,
-    resolve_forward_backward_layout,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_observation
 from asymmetry.core.transform.t0 import resolve_selected_timing
@@ -183,6 +188,82 @@ def corrected_grouped_counts(
     return prepared.corrected
 
 
+@dataclass(frozen=True)
+class GroupedCorrectionPlan:
+    """Required acquired observations and reference on the requested set's grid."""
+
+    observation: ConstituentCounts
+    grouped: ForwardBackwardLayout
+    reference: BackgroundReference | None
+    reference_crop: AlignmentCrop | None
+    inputs: list[tuple[list[Histogram], dict]]
+    domains: list[DeadtimeDomain]
+
+
+def grouped_correction_plan(
+    histograms,
+    grouping,
+    pair,
+    *,
+    use_background,
+    facility,
+    metadata,
+    reference_resolver,
+    cancel_check,
+    output_window,
+    output_binning,
+    output_time_range,
+):
+    """Resolve membership/support before any correction availability or saturation work."""
+    observation = resolve_constituent_counts(
+        histograms, grouping, pair, metadata, cancel_check=cancel_check
+    )
+    grouped = observation.layout
+    domain = fb_deadtime_domain(
+        grouped,
+        grouping,
+        *observation.pair,
+        use_background=use_background,
+        facility=facility,
+        metadata=metadata,
+        output_window=output_window,
+        output_binning=output_binning,
+        output_time_range=output_time_range,
+    )
+    inputs, domains = observation.participants(domain)
+    reference = (
+        reference_resolver(grouping)
+        if use_background
+        and resolve_background_mode(grouping) == "reference_run"
+        and reference_resolver is not None
+        else None
+    )
+    reference_crop = None
+    if reference is not None:
+        sample = observation.reference_sample
+        reference_crop = reference.alignment(
+            sample.histograms, sample.grouping, grouped.alignment, *pair, cancel_check=cancel_check
+        )
+        for member in observation.members:
+            reference.require_independent(member.histograms, member.metadata, list(sum(pair, ())))
+        inputs.append((reference.histograms, reference.deadtime_grouping(grouping)))
+        domains.append(
+            fb_deadtime_domain(
+                grouped,
+                grouping,
+                *pair,
+                use_background=False,
+                facility=facility,
+                metadata=metadata,
+                alignment=reference_crop,
+                output_window=output_window,
+                output_binning=output_binning,
+                output_time_range=output_time_range,
+            )
+        )
+    return GroupedCorrectionPlan(observation, grouped, reference, reference_crop, inputs, domains)
+
+
 def prepare_grouped_corrections(
     *,
     histograms: list[Histogram],
@@ -201,6 +282,7 @@ def prepare_grouped_corrections(
     output_window: BinWindow | None = None,
     output_binning: BinningSpec | None = None,
     output_time_range: tuple[float | None, float | None] | None = None,
+    plan: GroupedCorrectionPlan | None = None,
 ) -> GroupedCorrectionPreparation:
     """Run the reduction's correction stages up to (not including) the asymmetry.
 
@@ -237,62 +319,35 @@ def prepare_grouped_corrections(
             n_histograms=len(histograms),
             resolved_indices=(forward_idx, backward_idx),
         )
-        resolved = (
-            reference_resolver(grouping)
-            if use_background
-            and resolve_background_mode(grouping) == "reference_run"
-            and reference_resolver is not None
-            else None
-        )
-        grouped = resolve_forward_backward_layout(
-            histograms, grouping, resolved_indices=(forward_idx, backward_idx)
-        )
+        if plan is None:
+            plan = grouped_correction_plan(
+                histograms,
+                grouping,
+                (forward_idx, backward_idx),
+                use_background=use_background,
+                facility=facility,
+                metadata=metadata,
+                reference_resolver=reference_resolver,
+                cancel_check=cancel_check,
+                output_window=output_window,
+                output_binning=output_binning,
+                output_time_range=output_time_range,
+            )
+        resolved, grouped = plan.reference, plan.grouped
+        reference_crop = plan.reference_crop
         crop = grouped.alignment
         common_t0, n_grouped, window = grouped.common_t0_bin, crop.length, grouped.window
-        domain = fb_deadtime_domain(
-            grouped,
-            grouping,
-            forward_idx,
-            backward_idx,
-            use_background=use_background,
-            facility=facility,
-            metadata=metadata,
-            output_window=output_window,
-            output_binning=output_binning,
-            output_time_range=output_time_range,
+        inputs = deadtime_operation_inputs(
+            plan.inputs, use_deadtime, deadtime_mode, domains=plan.domains
         )
-        inputs = [(histograms, grouping)]
-        domains = [domain]
-        if resolved is not None:
-            reference_crop = resolved.alignment(
-                histograms, grouping, crop, forward_idx, backward_idx, cancel_check=cancel_check
-            )
-            resolved.require_independent(histograms, metadata, forward_idx + backward_idx)
-            inputs.append((resolved.histograms, resolved.deadtime_grouping(grouping)))
-            domains.append(
-                fb_deadtime_domain(
-                    grouped,
-                    grouping,
-                    forward_idx,
-                    backward_idx,
-                    use_background=False,
-                    facility=facility,
-                    metadata=metadata,
-                    alignment=reference_crop,
-                    output_window=output_window,
-                    output_binning=output_binning,
-                    output_time_range=output_time_range,
-                )
-            )
-        inputs = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode, domains=domains)
-        forward, backward, deadtime_outcome = deadtime_corrected_pair(
-            *inputs[0],
-            forward_idx,
-            backward_idx,
+        n_members = len(plan.observation.members)
+        forward, backward, deadtime_outcome = plan.observation.corrected_pair(
+            inputs[:n_members],
+            plan.domains[:n_members],
             crop,
-            domain,
             use_deadtime=use_deadtime,
             mode=deadtime_mode,
+            cancel_check=cancel_check,
         )
 
         background_outcome = CorrectionOutcome("background", "none", CorrectionStatus.OFF)
@@ -304,11 +359,11 @@ def prepare_grouped_corrections(
             if resolved is not None:
                 reference_scale = resolved.scale
                 reference_forward, reference_backward, reference_outcome = deadtime_corrected_pair(
-                    *inputs[1],
+                    *inputs[-1],
                     forward_idx,
                     backward_idx,
                     reference_crop,
-                    domains[1],
+                    plan.domains[-1],
                     use_deadtime=use_deadtime,
                     mode=deadtime_mode,
                 )
@@ -546,9 +601,14 @@ def corrected_period_counts(
         else (histograms, grouping)
         for label in labels
     }
+    selections = {
+        label: (selected, dict(effective, period_mode=str(label)))
+        for label, (selected, effective) in selections.items()
+    }
     for label, (selected, effective) in selections.items():
         if (
             periods is not None
+            and "period_inputs" not in effective
             and "t0_policy" in effective
             and "effective_t0_sources" not in effective
         ):
@@ -563,12 +623,23 @@ def corrected_period_counts(
                 if timing_search is not None
                 else None,
             )
-    output_windows = {}
-    if native_time_range is not None:
-        for label, (selected, effective) in selections.items():
-            layout = resolve_forward_backward_layout(
-                selected, effective, resolved_indices=(forward_idx, backward_idx)
-            )
+    output_windows, plans = {}, {}
+    for label, (selected, effective) in selections.items():
+        plans[label] = grouped_correction_plan(
+            selected,
+            effective,
+            (tuple(forward_idx), tuple(backward_idx)),
+            use_background=use_background,
+            facility=facility,
+            metadata=metadata,
+            reference_resolver=reference_resolver,
+            cancel_check=cancel_check,
+            output_window=None,
+            output_binning=binning,
+            output_time_range=output_time_range,
+        )
+        if native_time_range is not None:
+            layout = plans[label].grouped
             time = native_count_time(
                 layout.alignment.length,
                 layout.bin_width_us,
@@ -576,64 +647,30 @@ def corrected_period_counts(
                 layout.t0_time_us,
             )
             output_windows[label] = native_time_window(time, layout.window, native_time_range)
-    if combined:
-        inputs, domains, layouts = [], [], []
-        for label, (selected, effective) in selections.items():
-            pair = independent_pair_indices(
-                effective, n_histograms=len(selected), resolved_indices=(forward_idx, backward_idx)
+            plans[label] = grouped_correction_plan(
+                selected,
+                effective,
+                (tuple(forward_idx), tuple(backward_idx)),
+                use_background=use_background,
+                facility=facility,
+                metadata=metadata,
+                reference_resolver=reference_resolver,
+                cancel_check=cancel_check,
+                output_window=output_windows[label],
+                output_binning=binning,
+                output_time_range=output_time_range,
             )
-            grouped = resolve_forward_backward_layout(selected, effective, resolved_indices=pair)
-            layouts.append((grouped, pair))
-            inputs.append((selected, effective))
-            domains.append(
-                fb_deadtime_domain(
-                    grouped,
-                    effective,
-                    *pair,
-                    use_background=use_background,
-                    facility=facility,
-                    metadata=metadata,
-                    output_window=output_windows.get(label),
-                    output_binning=binning,
-                    output_time_range=output_time_range,
-                )
-            )
-        if (
-            use_background
-            and resolve_background_mode(grouping) == "reference_run"
-            and reference_resolver is not None
-        ):
-            for (label, (selected, effective)), (grouped, pair) in zip(
-                selections.items(), layouts, strict=True
-            ):
-                reference = reference_resolver(effective)
-                if reference is not None:
-                    crop = grouped.alignment
-                    reference_crop = reference.alignment(
-                        selected, effective, crop, *pair, cancel_check=cancel_check
-                    )
-                    inputs.append((reference.histograms, reference.deadtime_grouping(effective)))
-                    domains.append(
-                        fb_deadtime_domain(
-                            grouped,
-                            effective,
-                            *pair,
-                            use_background=False,
-                            facility=facility,
-                            metadata=metadata,
-                            output_binning=binning,
-                            output_time_range=output_time_range,
-                            alignment=reference_crop,
-                            output_window=output_windows.get(label),
-                        )
-                    )
-        prepared_inputs = deadtime_operation_inputs(
-            inputs, use_deadtime, deadtime_mode, domains=domains
-        )
-        selections = dict(zip(labels, prepared_inputs[: len(labels)], strict=True))
+    inputs = [item for plan in plans.values() for item in plan.inputs]
+    domains = [item for plan in plans.values() for item in plan.domains]
+    coordinated = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode, domains=domains)
+    first = 0
+    for label, plan in plans.items():
+        plans[label] = replace(plan, inputs=coordinated[first : first + len(plan.inputs)])
+        first += len(plan.inputs)
     prepared = {}
     for label, (selected, effective) in selections.items():
         prepared[label] = prepare_grouped_corrections(
+            plan=plans[label],
             histograms=selected,
             grouping=effective,
             output_binning=binning,
