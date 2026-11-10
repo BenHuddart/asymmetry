@@ -60,6 +60,7 @@ import numpy as np
 
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.rebin import BINNING_POLICY
@@ -256,6 +257,7 @@ def reduction_digest(
 ) -> str:
     """The digest a reduced entry is keyed on: every source file it was reduced from."""
     payload = {
+        "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",
@@ -528,6 +530,11 @@ class WorkDir:
         array_path, json_path = self._reduced_paths(entry.run_number)
         np.savez(
             array_path,
+            **(
+                {"ratio_validity": dataset.ratio_validity.reasons}
+                if dataset.ratio_validity is not None
+                else {}
+            ),
             time=np.asarray(dataset.time, dtype=np.float64),
             asymmetry=np.asarray(dataset.asymmetry, dtype=np.float64),
             error=np.asarray(dataset.error, dtype=np.float64),
@@ -568,6 +575,9 @@ class WorkDir:
         array_path, _ = self._reduced_paths(run_number)
         with np.load(array_path) as arrays:
             return MuonDataset(
+                ratio_validity=RatioValidity(arrays["ratio_validity"])
+                if "ratio_validity" in arrays
+                else None,
                 time=arrays["time"],
                 asymmetry=arrays["asymmetry"],
                 error=arrays["error"],

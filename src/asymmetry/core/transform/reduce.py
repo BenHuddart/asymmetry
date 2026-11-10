@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
@@ -45,7 +46,7 @@ from asymmetry.core.transform.grouping import (
     independent_pair_indices,
     resolve_forward_backward_layout,
 )
-from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
+from asymmetry.core.transform.rebin import BinningSpec, binned_fb_observation
 from asymmetry.core.transform.t0 import resolve_selected_timing
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
@@ -68,6 +69,7 @@ class GroupedAsymmetryReduction:
     corrections: CorrectionOutcomes
     binning: BinningSpec
     alignment: AlignmentCrop
+    ratio_validity: RatioValidity
     #: Scale of :attr:`asymmetry` and :attr:`error`. Always
     #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
     #: has no other mode; the field exists so a consumer can assert the scale it
@@ -445,7 +447,7 @@ def reduce_grouped_asymmetry(
 
 def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
     """Form the ratio once, converting fraction to public percent units."""
-    time, asymmetry, error = binned_fb_asymmetry(
+    time, asymmetry, error, validity = binned_fb_observation(
         counts, binning=binning, alpha=alpha, beta=beta, time_range=time_range
     )
     return GroupedAsymmetryReduction(
@@ -455,6 +457,7 @@ def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
         counts.corrections,
         binning,
         counts.alignment,
+        validity,
     )
 
 
@@ -468,6 +471,7 @@ class PeriodAsymmetryReduction:
     corrections: dict[str, CorrectionOutcomes]
     binning: BinningSpec
     alignments: dict[str, AlignmentCrop]
+    ratio_validity: RatioValidity
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
@@ -716,15 +720,17 @@ def reduce_period_asymmetry(
         time, asymmetry, error = combine_period_asymmetry(
             red.time,
             red.asymmetry,
-            red.error,
+            red.ratio_validity.mathematical_error(red.error),
             green.time,
             green.asymmetry,
-            green.error,
+            green.ratio_validity.mathematical_error(green.error),
             mode,
         )
+        validity = red.ratio_validity.combine(green.ratio_validity, error)
     else:
         single = reduced[mode]
         time, asymmetry, error = single.time, single.asymmetry, single.error
+        validity = single.ratio_validity
     return PeriodAsymmetryReduction(
         time,
         asymmetry,
@@ -732,6 +738,7 @@ def reduce_period_asymmetry(
         {str(label): result.corrections for label, result in reduced.items()},
         binning,
         {str(label): result.alignment for label, result in reduced.items()},
+        validity,
     )
 
 

@@ -181,6 +181,7 @@ def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> st
     if at_bound:
         lines.append(f"at bound : {', '.join(at_bound)}")
     lines.append(f"flags    : {', '.join(flags) if flags else 'none'}")
+    lines.extend(result.get("warnings", []))
     if plot_path is not None:
         lines.append(f"Plot written to {plot_path}")
     return "\n".join(lines)

@@ -16,9 +16,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.transform.asymmetry import (
-    compute_asymmetry_with_count_errors,
-)
+from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_combination_variance
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -216,14 +214,14 @@ def fb_binning_edges(
     return edges + window.first, t_start
 
 
-def binned_fb_asymmetry(
+def binned_fb_observation(
     counts: ForwardBackwardCounts,
     *,
     binning: BinningSpec,
     alpha: float,
     beta: float = 1.0,
     time_range: tuple[float | None, float | None] | None = None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], RatioValidity]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
     ``time_range`` optionally selects complete output bins by their centres;
@@ -240,7 +238,8 @@ def binned_fb_asymmetry(
 
     Returns
     -------
-    (time, asymmetry, error)
+    (time, asymmetry, error, validity)
+        ``validity`` classifies each final ratio before display fallbacks.
         ``time`` in µs relative to t0; ``asymmetry`` and ``error`` **as a
         fraction** — *not* percent, since this delegates
         to :func:`~asymmetry.core.transform.compute_asymmetry_with_count_errors`. Callers
@@ -256,7 +255,7 @@ def binned_fb_asymmetry(
     edges = absolute_edges - window.first
     if edges.size < 2:
         empty = np.array([], dtype=np.float64)
-        return empty, empty.copy(), empty.copy()
+        return empty, empty.copy(), empty.copy(), RatioValidity(np.array([], dtype=np.uint8))
     # reduceat runs its last segment to the array end; exclude dropped raw bins.
     f = f[: edges[-1]]
     b = b[: edges[-1]]
@@ -265,11 +264,32 @@ def binned_fb_asymmetry(
     b_out = np.add.reduceat(b, starts)
     vf = linear_combination_variance(counts.forward, absolute_edges)
     vb = linear_combination_variance(counts.backward, absolute_edges)
-    asymmetry, error = compute_asymmetry_with_count_errors(
+    from asymmetry.core.transform.asymmetry import ratio_with_count_errors
+
+    asymmetry, error, validity = ratio_with_count_errors(
         f_out, b_out, np.sqrt(vf), np.sqrt(vb), alpha=alpha, beta=beta
     )
     # Mean of the merged raw bins' stamps: for the slice [e0, e1) that is
     # t_start + ((e0 + e1 − 1)/2)·w — matching the fixed-mode path, where
     # merge_curve_bins() averages the same per-bin stamps.
     time = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * float(bin_width_us)
-    return np.asarray(time, dtype=np.float64), asymmetry, error
+    return np.asarray(time, dtype=np.float64), asymmetry, error, validity
+
+
+def binned_fb_asymmetry(
+    counts: ForwardBackwardCounts,
+    *,
+    binning: BinningSpec,
+    alpha: float,
+    beta: float = 1.0,
+    time_range: tuple[float | None, float | None] | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Return the full binned time, fractional ratio and display-error arrays.
+
+    Known dataset producers use :func:`binned_fb_observation` to retain the
+    mathematical classification for Gaussian fits alongside these full grids.
+    """
+    time, asymmetry, error, _ = binned_fb_observation(
+        counts, binning=binning, alpha=alpha, beta=beta, time_range=time_range
+    )
+    return time, asymmetry, error

@@ -105,7 +105,7 @@ Asymmetry forms :math:`A=(F-\alpha B)/(\beta F+\alpha B)` from corrected,
 packed counts, with alpha on the backward group. Its first-order error uses
 retained count variances, including existing shared-background/overlap terms
 when counts are merged. See :ref:`asymmetry-counting-errors` for the derivation,
-signed-count example, and current fallback behaviour.
+signed-count example, and Gaussian omission policy.
 Dataset values and errors are percent; count-to-ratio primitives are fractions.
 Neither scale imposes universal estimator bounds.
 
@@ -153,8 +153,15 @@ is not a reduction oracle. See the `musrfit type-2 manual
 First-order local error agreement after a nonlinear coordinate change does not
 establish identical Gaussian objectives for arbitrary residuals or identical
 model recovery. musrfit's empty-native-bin variance treatment also differs from
-Asymmetry's current fallback errors; native packing is not a statistical
-coverage or wizard-ranking test.
+Asymmetry's Gaussian omission policy: musrfit supplies nonzero empty-native-bin
+variance, while Asymmetry omits exactly undefined or zero-first-order-variance
+histogram ratios. WiMDA omits nonpositive corrected groups; Asymmetry retains
+usable signed values and corrected zeros with positive variance. In Mantid,
+AsymmetryCalc uses the distinct error approximation above. These are deliberate
+method differences, not identical sparse-bin likelihoods. Asymmetry also checks
+final ratio usability after requested binning and period composition, reports
+omission reasons, and leaves raw/count-fitting access available. Native packing
+is not a statistical coverage or wizard-ranking test.
 
 In these reviewed standard F/B workflows, none passes an external alpha/beta
 calibration covariance through a full reduced-bin/run covariance to the

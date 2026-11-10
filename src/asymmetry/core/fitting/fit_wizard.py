@@ -39,7 +39,7 @@ from asymmetry.core.fitting.information_criteria import (
     ranking_value,
 )
 from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
-from asymmetry.core.fitting.likelihood import Objective
+from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
 from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.parameters import (
@@ -69,6 +69,18 @@ from asymmetry.core.fitting.resolution import (
     assess_component_resolution,
     relaxation_rate_parameter_names,
 )
+from asymmetry.core.fitting.result_payload import (
+    _deserialize_fit_result as _deserialize_fit_result,
+)
+from asymmetry.core.fitting.result_payload import (
+    _deserialize_parameter_set as _deserialize_parameter_set,
+)
+from asymmetry.core.fitting.result_payload import (
+    _serialize_fit_result as _serialize_fit_result,
+)
+from asymmetry.core.fitting.result_payload import (
+    _serialize_parameter_set as _serialize_parameter_set,
+)
 from asymmetry.core.fitting.seeding import (
     phase_seed_from_sign,
     record_scale_estimate,
@@ -91,7 +103,7 @@ from asymmetry.core.transform.preparation import (
     WIZARD_PREPARATION,
     prepare_wizard_dataset,
     wizard_observation_identity,
-    wizard_observation_matches,
+    wizard_rebuild_dataset,
 )
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
@@ -356,6 +368,32 @@ class CandidateAssessment:
     #: ``None`` on a row restored from a cache: it is never persisted, so a past
     #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
     timing: FitTiming | None = None
+
+    @property
+    def residual_diagnostics_available(self) -> bool:
+        """Whether every recorded residual diagnostic is a finite value."""
+        return all(
+            np.isfinite(value)
+            for value in (
+                self.residual_rms,
+                self.runs_z_score,
+                self.max_abs_autocorrelation,
+                self.residual_fft_peak_snr,
+            )
+        )
+
+    def diagnostic_summary(self) -> tuple[str, ...]:
+        """Format available residual diagnostics and the core observation report."""
+        metrics = (
+            ("Residual RMS", self.residual_rms),
+            ("Runs z score", self.runs_z_score),
+            ("Max |autocorrelation|", self.max_abs_autocorrelation),
+            ("Residual FFT peak SNR", self.residual_fft_peak_snr),
+        )
+        return tuple(
+            f"{label}: {value:.3f}" if np.isfinite(value) else f"{label}: unavailable"
+            for label, value in metrics
+        ) + tuple(self.fit_result.warnings)
 
     @property
     def is_disqualified(self) -> bool:
@@ -3098,7 +3136,7 @@ def build_fit_wizard_recommendation(
             family_reports=family_reports,
             scope_note=scope_note,
             rebin_factor=rebin_factor,
-            analysed_points=int(analysis_dataset.n_points),
+            analysed_points=gaussian_selection(analysis_dataset).used,
             build_signature=build_signature,
         ),
         metric,
@@ -3168,6 +3206,7 @@ def build_fit_wizard_recommendation_for_templates(
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
             fingerprint=active_fingerprint,
+            analysed_points=gaussian_selection(dataset).used,
             templates=active_templates,
             assessments=assessments,
             metric=metric,
@@ -3484,7 +3523,7 @@ def rerank_fit_wizard_recommendation(
             )
 
     # A genuine structured recommendation. Gates classify the confidence.
-    if primary.residual_gate_passed:
+    if primary.residual_gate_passed and primary.residual_diagnostics_available:
         confidence = ConfidenceTier.HIGH
         caveat = ""
     else:
@@ -3493,6 +3532,12 @@ def rerank_fit_wizard_recommendation(
             "Structured residuals remain: "
             + ("; ".join(primary.residual_gate_reasons) or "residual checks flagged this fit")
             + "."
+        )
+
+    if not primary.residual_diagnostics_available:
+        caveat = (caveat + " " if not primary.residual_gate_passed else "") + (
+            "Residual FFT and autocorrelation are unavailable after Gaussian observation omission; "
+            "inspect the available residual checks."
         )
 
     # Edge-of-window caveat: keep the tier as computed, but flag an
@@ -3811,46 +3856,6 @@ def deserialize_family_screening_report(payload: object) -> FamilyScreeningRepor
     )
 
 
-def _serialize_parameter_set(parameters: ParameterSet) -> list[dict[str, object]]:
-    return [
-        {
-            "name": parameter.name,
-            "value": float(parameter.value),
-            "min": float(parameter.min),
-            "max": float(parameter.max),
-            "fixed": bool(parameter.fixed),
-            "expr": parameter.expr,
-        }
-        for parameter in parameters
-    ]
-
-
-def _deserialize_parameter_set(payload: object) -> ParameterSet:
-    parameters = ParameterSet()
-    if not isinstance(payload, list):
-        return parameters
-    for entry in payload:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if not isinstance(name, str):
-            continue
-        try:
-            parameters.add(
-                Parameter(
-                    name=name,
-                    value=float(entry.get("value", 0.0)),
-                    min=float(entry.get("min", -float("inf"))),
-                    max=float(entry.get("max", float("inf"))),
-                    fixed=bool(entry.get("fixed", False)),
-                    expr=str(entry["expr"]) if entry.get("expr") is not None else None,
-                )
-            )
-        except (TypeError, ValueError):
-            continue
-    return parameters
-
-
 #: Point budget applied to each stored curve when a wizard recommendation is
 #: serialised for *persistence* (``compact=True``).
 #:
@@ -3918,64 +3923,6 @@ def _persisted_curve_list(values: object, *, stride: int = 1, compact: bool = Fa
     if stride > 1 and full.size > 1 and (full.size - 1) % stride:
         array = np.append(array, full[-1])
     return (_round_significant(array) if compact else array).tolist()
-
-
-def _serialize_fit_result(
-    result: FitResult, *, include_residuals: bool = True
-) -> dict[str, object]:
-    """Persist parameters, advisories and corrections; optionally omit residuals.
-
-    Cached diagnostics own their scalar residual statistics. Decimating residuals
-    would mismatch the cached time grid, so compact caches omit that array.
-    """
-    return {
-        "success": bool(result.success),
-        "warnings": list(result.warnings),
-        "correction_metadata": dict(result.correction_metadata),
-        "chi_squared": float(result.chi_squared),
-        "reduced_chi_squared": float(result.reduced_chi_squared),
-        "parameters": _serialize_parameter_set(result.parameters),
-        "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
-        "residuals": (
-            np.asarray(result.residuals, dtype=float).tolist()
-            if (include_residuals and result.residuals is not None)
-            else None
-        ),
-        "message": result.message,
-    }
-
-
-def _deserialize_fit_result(payload: object) -> FitResult | None:
-    if not isinstance(payload, dict):
-        return None
-    try:
-        uncertainties = {
-            str(name): float(value)
-            for name, value in (payload.get("uncertainties", {}) or {}).items()
-        }
-    except (TypeError, ValueError):
-        uncertainties = {}
-    residuals_payload = payload.get("residuals")
-    residuals: NDArray[np.float64] | None
-    if residuals_payload is None:
-        residuals = None
-    else:
-        try:
-            residuals = np.asarray(residuals_payload, dtype=float)
-        except (TypeError, ValueError):
-            residuals = None
-    return FitResult(
-        objective=Objective.GAUSSIAN,
-        warnings=list(payload.get("warnings", [])),
-        correction_metadata=dict(payload.get("correction_metadata", {})),
-        success=bool(payload.get("success", False)),
-        chi_squared=float(payload.get("chi_squared", 0.0)),
-        reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
-        parameters=_deserialize_parameter_set(payload.get("parameters", [])),
-        uncertainties=uncertainties,
-        residuals=residuals,
-        message=str(payload.get("message", "")),
-    )
 
 
 def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> FitResult:
@@ -4389,7 +4336,7 @@ def _assess_candidate_template(
         )
         best_parameters = ParameterSet()
 
-    n_points = int(dataset.n_points)
+    n_points = gaussian_selection(dataset).used
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
         _residual_diagnostics(dataset, best_result)
@@ -4441,30 +4388,32 @@ def _with_dense_curves(
     assessment: CandidateAssessment,
     dataset: MuonDataset,
 ) -> CandidateAssessment:
-    """Give a score-table cell the curves a displayed assessment owes.
+    """Draw one assessment over the record it was fitted on, without refitting.
 
-    The counterpart of ``_AssessmentTask.dense_curves`` and the one crossing of
-    the contract on :class:`CandidateAssessment`. ``dataset`` must be the record
-    the assessment was *fitted* on — the rebinned one, at the table's factor —
-    because that is what :func:`_dense_fit_curves` samples between.
-
-    Assembly passes the winning attempt's *seed* as ``fallback_parameters``, to
-    name any parameter the fit itself did not return. A converged fit returns
-    every parameter of its model, so for the rows this is called on — a
-    recommendation's own and its comparable alternatives, which are converged by
-    :func:`rerank_fit_wizard_recommendation`'s construction — the fitted values
-    are the whole of it and the rebuilt arrays are identical. A row that never
-    converged is drawable too (:func:`_curve_parameter_values` names anything
-    missing from the model's own defaults), it is simply not a fit.
+    Counts-first prepared timestamps delimit the displayed dense curves.
+    Missing model parameters use the model defaults for an unsuccessful row.
     """
-
     fitted_time, fitted_curve, component_curves = _dense_fit_curves(
         dataset,
         assessment.template.model,
         assessment.fit_result.parameters,
     )
+    result = assessment.fit_result
+    if result.success and result.observation_report is not None:
+        observations = dataset_observations(dataset)
+        values = _curve_parameter_values(assessment.template.model, result.parameters)
+        residuals = observations.values - assessment.template.model.function(
+            observations.time, **values
+        )
+        result = replace(
+            result,
+            residuals=residuals,
+            residual_time=observations.time,
+            residual_sigma=observations.sigma,
+        )
     return replace(
         assessment,
+        fit_result=result,
         fitted_time=fitted_time,
         fitted_curve=fitted_curve,
         component_curves=component_curves,
@@ -4486,15 +4435,8 @@ def assessment_with_curves(
     ``key`` must name an assessment in the recommendation or raises KeyError.
     """
     assessment = {row.template.key: row for row in recommendation.assessments}[key]
-    if WIZARD_PREPARATION in recommendation.build_signature and not wizard_observation_matches(
-        dataset, recommendation.build_signature
-    ):
-        raise ValueError("Wizard observation changed; rerun the analysis before rebuilding curves.")
-    factor = int(recommendation.rebin_factor)
-    analysis_dataset = (
-        prepare_wizard_dataset(dataset, factor)
-        if WIZARD_PREPARATION in recommendation.build_signature
-        else dataset.merge_curve_bins(factor)
+    analysis_dataset = wizard_rebuild_dataset(
+        dataset, int(recommendation.rebin_factor), recommendation.build_signature
     )
     return _with_dense_curves(assessment, analysis_dataset)
 
@@ -5721,6 +5663,7 @@ def _scipy_fit_fallback(
             message="SciPy fallback unavailable and iminuit fit backend could not be imported.",
         )
 
+    observations = dataset_observations(dataset)
     free = parameters.free_parameters
     fixed = {parameter.name: parameter.value for parameter in parameters if parameter.fixed}
     names = [parameter.name for parameter in free]
@@ -5733,13 +5676,12 @@ def _scipy_fit_fallback(
         [parameter.max if np.isfinite(parameter.max) else np.inf for parameter in free],
         dtype=float,
     )
-    errors = np.asarray(dataset.error, dtype=float)
-    safe_errors = np.where(np.isfinite(errors) & (errors > 0.0), errors, 1.0)
+    safe_errors = observations.sigma
 
     def _residual_vector(values: NDArray[np.float64]) -> NDArray[np.float64]:
         kwargs = {**fixed, **dict(zip(names, values, strict=True))}
-        model_values = np.asarray(model_fn(dataset.time, **kwargs), dtype=float)
-        return (np.asarray(dataset.asymmetry, dtype=float) - model_values) / safe_errors
+        model_values = np.asarray(model_fn(observations.time, **kwargs), dtype=float)
+        return (observations.values - model_values) / safe_errors
 
     result = least_squares(_residual_vector, x0=x0, bounds=(lower, upper), max_nfev=4000)
     fitted_values = result.x if result.x.size else x0
@@ -5753,7 +5695,7 @@ def _scipy_fit_fallback(
             jt_j = jac.T @ jac
             cov = np.linalg.pinv(jt_j)
             reduced = float(np.sum(np.square(_residual_vector(fitted_values)))) / max(
-                len(dataset.time) - len(free), 1
+                len(observations.time) - len(free), 1
             )
             diag = np.diag(cov) * max(reduced, 0.0)
             for name, variance in zip(names, diag, strict=True):
@@ -5788,10 +5730,10 @@ def _scipy_fit_fallback(
         )
 
     fitted_kwargs = {parameter.name: parameter.value for parameter in fitted_parameters}
-    fitted_model = np.asarray(model_fn(dataset.time, **fitted_kwargs), dtype=float)
-    residuals = np.asarray(dataset.asymmetry, dtype=float) - fitted_model
+    fitted_model = np.asarray(model_fn(observations.time, **fitted_kwargs), dtype=float)
+    residuals = observations.values - fitted_model
     chi_squared = float(np.sum(np.square(residuals / safe_errors)))
-    reduced_chi_squared = chi_squared / max(len(dataset.time) - len(free), 1)
+    reduced_chi_squared = chi_squared / max(len(observations.time) - len(free), 1)
     return FitResult(
         objective=Objective.GAUSSIAN,
         success=bool(result.success),
@@ -5801,6 +5743,10 @@ def _scipy_fit_fallback(
         uncertainties=uncertainties,
         covariance=cov,
         residuals=residuals,
+        residual_time=observations.time,
+        residual_sigma=observations.sigma,
+        dof=len(observations.time) - len(free),
+        observation_report=observations.report,
         message="Fit successful (SciPy fallback)" if result.success else str(result.message),
     )
 
@@ -5813,16 +5759,21 @@ def _residual_diagnostics(
         return float("inf"), 0.0, 0.0, float("inf")
 
     residuals = np.asarray(fit_result.residuals, dtype=float)
-    errors = np.asarray(dataset.error, dtype=float)
-    if residuals.size != errors.size:
-        errors = errors[: residuals.size]
-    safe_errors = np.where(np.isfinite(errors) & (errors > 0.0), errors, 1.0)
+    observations = dataset_observations(dataset)
+    safe_errors = observations.sigma
+    if residuals.size != safe_errors.size:
+        raise ValueError("Residuals must describe the selected Gaussian observations.")
     standardized = residuals / safe_errors
     residual_rms = (
         float(np.sqrt(np.mean(np.square(standardized)))) if standardized.size else float("inf")
     )
 
     runs_z_score = _runs_test_z_score(standardized)
+    if observations.report is not None and observations.report.omitted:
+        message = "Residual autocorrelation and FFT unavailable: Gaussian selection omits acquisition bins."
+        if message not in fit_result.warnings:
+            fit_result.warnings.append(message)
+        return residual_rms, runs_z_score, float("nan"), float("nan")
     max_abs_autocorrelation = _max_abs_autocorrelation(standardized)
     if residual_rms <= 0.1 or float(np.max(np.abs(standardized), initial=0.0)) <= 0.25:
         return residual_rms, runs_z_score, max_abs_autocorrelation, 0.0
@@ -5831,7 +5782,7 @@ def _residual_diagnostics(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
         frequencies, _real, magnitude = fft_arrays(
-            np.asarray(dataset.time, dtype=float)[: residuals.size],
+            observations.time,
             residuals,
             safe_errors,
             window=_DEFAULT_FFT_WINDOW,

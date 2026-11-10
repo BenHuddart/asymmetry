@@ -431,7 +431,13 @@ def confidence_statement(recommendation: FitWizardRecommendation) -> str:
         return _HIGH_STATEMENT
     if recommendation.confidence is ConfidenceTier.MEDIUM:
         caveat = recommendation.caveat.strip()
-        return f"{_MEDIUM_STATEMENT} {caveat}".strip() if caveat else _MEDIUM_STATEMENT
+        primary = recommendation.recommended_assessment
+        statement = (
+            "Medium confidence — some residual diagnostics are unavailable."
+            if primary is not None and not primary.residual_diagnostics_available
+            else _MEDIUM_STATEMENT
+        )
+        return f"{statement} {caveat}".strip() if caveat else statement
     # confidence is NONE.
     if recommendation.verdict is RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE:
         return _NO_STRUCTURE_STATEMENT

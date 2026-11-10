@@ -126,7 +126,9 @@ def compute_asymmetry_with_count_errors(
     signed background-corrected counts, conditional on fixed alpha/beta.
     A zero denominator returns value zero/error one; a defined ratio with
     zero count-variance contribution retains error one. These fallbacks have
-    finite Gaussian weight. No calibration covariance is added.
+    finite weight if passed as bare arrays. Known histogram datasets carry a
+    separate mathematical classification so Gaussian fits omit these fallbacks.
+    No calibration covariance is added.
     The asymmetry convention remains Asymmetry's convention, with ``alpha``
     multiplying the backward group (and ``beta`` the forward group in the
     denominator).
@@ -145,6 +147,16 @@ def compute_asymmetry_with_count_errors(
         **As a fraction**, exactly as
         :func:`compute_asymmetry` — *not* percent.
     """
+    asymmetry, error, _ = ratio_with_count_errors(
+        forward, backward, forward_error, backward_error, alpha, beta
+    )
+    return asymmetry, error
+
+
+def ratio_with_count_errors(forward, backward, forward_error, backward_error, alpha=1.0, beta=1.0):
+    """Form a histogram ratio and classify it before numerical display fallbacks."""
+    from asymmetry.core.data.ratio_validity import RatioValidity
+
     f, b, ef, eb = validated_count_arrays(forward, backward, forward_error, backward_error)
     if np.any(ef < 0) or np.any(eb < 0):
         raise ValueError("count errors must be non-negative.")
@@ -153,7 +165,7 @@ def compute_asymmetry_with_count_errors(
     denominator = beta * f + alpha * b
     safe = denominator != 0.0
     asym = np.zeros_like(f)
-    err = np.ones_like(f)
+    err = np.zeros_like(f)
 
     asym[safe] = numerator[safe] / denominator[safe]
     variance_term = (b * ef) ** 2 + (f * eb) ** 2
@@ -163,7 +175,9 @@ def compute_asymmetry_with_count_errors(
         scale = abs(float(alpha)) * (1.0 + float(beta))
         err[informative] = scale * np.sqrt(variance_term[informative]) / (den_safe * den_safe)
 
-    return asym, err
+    validity = RatioValidity.from_ratio(safe & np.isfinite(asym), err)
+    err[~safe | (err == 0.0)] = 1.0
+    return asym, err, validity
 
 
 def slice_to_good_window(

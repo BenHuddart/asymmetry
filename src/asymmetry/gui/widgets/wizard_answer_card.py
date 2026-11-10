@@ -379,22 +379,14 @@ class WizardAnswerCard(QWidget):
         if ax_res is not None and assessment is not None:
             residuals = assessment.fit_result.residuals
             if residuals is not None and getattr(residuals, "size", 0):
-                # The wizard fits a value-rebinned copy of a large record, so a
-                # residual here is one MERGED bin, not one raw bin: pairing it
-                # with the leading slice of the full time axis would draw the
-                # whole residual series squeezed into the first 1/factor of the
-                # record. Rebin the axis by the factor the recommendation
-                # recorded, then slice as before (a fit range shorter than the
-                # record still trims from the front).
-                res_time = np.asarray(self._time, dtype=float)
-                factor = self._recommendation.rebin_factor if self._recommendation else 1
-                if factor > 1 and res_time.size >= factor:
-                    # Mean of each merged bin — the same axis ``rebin`` would
-                    # return, computed directly rather than through its
-                    # value/error path.
-                    n_bins = res_time.size // factor
-                    res_time = res_time[: n_bins * factor].reshape(n_bins, factor).mean(axis=1)
-                res_time = res_time[: residuals.size]
+                res_time = assessment.fit_result.residual_time
+                if res_time is None:
+                    res_time = np.asarray(self._time, dtype=float)
+                    factor = self._recommendation.rebin_factor if self._recommendation else 1
+                    if factor > 1 and res_time.size >= factor:
+                        n_bins = res_time.size // factor
+                        res_time = res_time[: n_bins * factor].reshape(n_bins, factor).mean(axis=1)
+                    res_time = res_time[: residuals.size]
                 ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=1.0)
                 ax_res.plot(res_time, residuals, color=tokens.TRACE_GREEN)
             else:

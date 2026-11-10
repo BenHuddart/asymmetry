@@ -6,8 +6,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.asymmetry import compute_asymmetry
-from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.transform.asymmetry import ratio_with_count_errors
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
@@ -31,6 +32,7 @@ class QuickAsymmetry:
     unavailable_reason: str | None = None
     t0_time_us: float | None = None
     timing: dict = field(default_factory=dict)
+    ratio_validity: RatioValidity | None = None
 
     @property
     def file_grouping(self) -> dict:
@@ -107,6 +109,9 @@ def quick_asymmetry(
             n_bins=alignment.first_bin + alignment.length,
         )
         window = alignment.window({"first_good_bin": first, "last_good_bin": last})
+        edges = np.arange(grouped.forward.size + 1)
+        vf = linear_combination_variance(grouped.counts.forward, edges)
+        vb = linear_combination_variance(grouped.counts.backward, edges)
     except ValueError as exc:
         return QuickAsymmetry(
             np.array([], dtype=np.float64),
@@ -123,7 +128,13 @@ def quick_asymmetry(
                 if k.startswith(("effective_", "t0_search", "t0_policy"))
             },
         )
-    asymmetry, error = compute_asymmetry(grouped.forward, grouped.backward, alpha=grouped.alpha)
+    asymmetry, error, validity = ratio_with_count_errors(
+        grouped.forward,
+        grouped.backward,
+        np.sqrt(vf),
+        np.sqrt(vb),
+        alpha=grouped.alpha,
+    )
     return QuickAsymmetry(
         asymmetry * PERCENT_PER_FRACTION,
         error * PERCENT_PER_FRACTION,
@@ -132,6 +143,7 @@ def quick_asymmetry(
         common_t0,
         alignment,
         window,
+        ratio_validity=validity,
         t0_time_us=t0_time_us,
         timing={
             k: v

@@ -118,6 +118,7 @@ def test_preparation_shared_background_variance_and_selected_good_support():
     np.testing.assert_allclose(
         result.error, [200 * np.sqrt(b * b * vf + f * f * vb) / (f + b) ** 2]
     )
+    assert result.ratio_validity.report().used == 1
     np.testing.assert_allclose(result.time, [0.35])
 
 
@@ -152,6 +153,8 @@ def test_preparation_reference_own_clock_scaling_and_both_supplied_variances(sca
     np.testing.assert_allclose(result.asymmetry, 100 * (f - b) / (f + b))
     np.testing.assert_allclose(result.error, 200 * np.sqrt(b * b * vf + f * f * vb) / (f + b) ** 2)
     np.testing.assert_allclose(result.time, [0.25, 0.45])
+    assert result.ratio_validity.report().used == 2
+    assert result.ratio_validity.report().omitted == 0
     np.testing.assert_array_equal(reference.histograms[0].counts, np.arange(10, 20))
     np.testing.assert_array_equal(run.histograms[0].counts, np.full(8, 200))
 
@@ -188,6 +191,8 @@ def test_preparation_deadtime_before_fixed_background_keeps_measured_variance():
     np.testing.assert_allclose(
         result.error, [200 * np.sqrt(b * b * 180 + f * f * 110) / (f + b) ** 2]
     )
+    assert result.ratio_validity.report().used == 1
+    assert result.ratio_validity.report().omitted == 0
     assert run.grouping == before
     np.testing.assert_array_equal(run.histograms[0].counts, [100, 80])
 

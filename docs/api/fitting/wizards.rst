@@ -8,7 +8,11 @@ Single/global automatic merging uses
 :func:`~asymmetry.core.transform.preparation.prepare_wizard_dataset` before
 ``fit_record`` and candidate fan-out. Recorded histogram context selects counts
 before the ratio; unknown and rotated curve observations use independent means.
-Reconstruction and numerical cache reuse identify the same fitted observation.
+Current reconstruction and numerical reuse identify the same fitted observation.
+Known histogram Gaussian fits omit undefined ratios and exactly zero propagated
+variance, carrying the core observation report through worker records, scoring,
+completion, and rebuilding. Historical scores retain their recorded meaning;
+compact caches omit residual arrays and current reuse requires the current policy.
 
 Single-spectrum fit-wizard helpers:
 

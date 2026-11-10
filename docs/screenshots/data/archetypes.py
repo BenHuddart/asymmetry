@@ -564,9 +564,7 @@ def make_ybco_vortex_lattice(seed: int = 103, n0: float = 1.2e6) -> MuonDataset:
 # ---------------------------------------------------------------------------
 
 
-def make_pbf2_fmuf(
-    seed: int = 89, *, relaxation_lambda_per_us: float | None = None
-) -> MuonDataset:
+def make_pbf2_fmuf(seed: int = 89, *, relaxation_lambda_per_us: float | None = None) -> MuonDataset:
     """PbF₂ F-μ-F entanglement signal at low T with r_μF=1.17 Å.
 
     PbF₂ provides a clean F-μ-F demonstration: the heavy Pb host carries no
@@ -833,12 +831,8 @@ def make_silicon_photomusr_periods(
     template.metadata["temperature"] = 291.0
     template.metadata["field"] = 2000.0
 
-    red = PeriodSpec(
-        exp_fn, {"A0": 20.0, "Lambda": 0.45, "baseline": 0.2}, label="red"
-    )
-    green = PeriodSpec(
-        exp_fn, {"A0": 20.0, "Lambda": 0.12, "baseline": 0.2}, label="green"
-    )
+    red = PeriodSpec(exp_fn, {"A0": 20.0, "Lambda": 0.45, "baseline": 0.2}, label="red")
+    green = PeriodSpec(exp_fn, {"A0": 20.0, "Lambda": 0.12, "baseline": 0.2}, label="green")
     run = simulate_two_period_run(
         template,
         [red, green],
@@ -947,4 +941,51 @@ def make_rf_nutation_vector(seed: int = 151) -> MuonDataset:
     )
     return MuonDataset(
         time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+    )
+
+
+def make_sparse_ag_ratio_control() -> MuonDataset:
+    """Sparse Ag ZF GKT with an authored fixed-background sensitivity control.
+
+    The GKT polarisation uses the Ag archetype width; the 0.5-count background
+    per group exercises signed ratios, not a certified physical background.
+    """
+    from dataclasses import replace
+
+    from asymmetry.core.simulate import BUILTIN_TEMPLATES, simulate_run
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
+
+    template = replace(
+        BUILTIN_TEMPLATES["ideal_pulsed_fb"],
+        n_detectors=2,
+        n_bins=160,
+        bin_width_us=0.05,
+        t0_bin=0,
+        forward_detectors=(1,),
+        backward_detectors=(2,),
+    ).build()
+    run = simulate_run(
+        template,
+        MODELS["StaticGKT_ZF"].function,
+        {"A0": 24.0, "Delta": DELTA_AG_PER_US, "baseline": 0.3},
+        total_events=1200,
+        seed=23,
+        run_number=4101,
+    )
+    run.metadata.update(title="Synthetic sparse Ag: fixed-background sensitivity", field=0.0)
+    run.grouping.update(
+        background_correction=True, background_mode="fixed", background_fixed_values=[0.5, 0.5]
+    )
+    reduced = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    return MuonDataset(
+        reduced.time,
+        reduced.asymmetry,
+        reduced.error,
+        reduced.metadata_with_alignment(run.metadata),
+        run,
+        histogram_observation(run),
+        reduced.ratio_validity,
     )

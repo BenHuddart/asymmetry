@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gaussian histogram-asymmetry fits and wizard scores omit undefined and zero-variance ratios, report omissions, and retain full grids for counts-first binning.
+
 - Preserve run and selected period identities in calibration results, and reject
   cached curves without the corresponding source-period counts.
 
