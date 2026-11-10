@@ -1,6 +1,7 @@
 """Independent count and variance pooling on stored period bins."""
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import numpy as np
 
@@ -15,7 +16,10 @@ def sum_period_histograms(
     Independent supplied variances add; raw Poisson contributions use their
     counts. Timing follows the first contributor and bins use common raw-index
     support. This operation does not align different acquisition clocks.
+    A singleton is copied without inferring a variance or statistical eligibility.
     """
+    if cancel_check is not None:
+        cancel_check()
     if not period_histograms:
         raise ValueError("No period histograms to sum")
     n_detectors = len(period_histograms[0])
@@ -23,6 +27,13 @@ def sum_period_histograms(
         raise ValueError("Mapped periods require corresponding detector lists")
     if n_detectors == 0:
         raise ValueError("Period histogram lists are empty")
+    if len(period_histograms) == 1:
+        copied = []
+        for hist in period_histograms[0]:
+            if cancel_check is not None:
+                cancel_check()
+            copied.append(replace(hist, counts=np.array(hist.counts, dtype=float, copy=True)))
+        return copied
     summed: list[Histogram] = []
     for det in range(n_detectors):
         if cancel_check is not None:

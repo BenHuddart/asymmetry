@@ -1561,3 +1561,27 @@ def test_stored_period_identity_is_distinct_from_declared_dae_slots(tmp_path, lo
         if types is not None:
             assert declaration["types"] == types
             assert declaration["labels"] == "ramp;on;ramp;off"
+
+
+def test_identity_period_loading_retains_signed_raw_bins_outside_good_support(tmp_path, loader):
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+    path = tmp_path / "signed_raw_period.nxs"
+    _write_v2_file(path, multiperiod=True, first_good_bin_attr=2)
+    with h5py.File(path, "a") as f:
+        f["raw_data_1/instrument/detector_1/counts"][0, 0, 0] = -1.0
+    original = path.read_bytes()
+    combined = loader.load(str(path))
+    assert combined.run.grouping["period_inputs"][0].histograms[0].counts[0] == -1
+    selected = select_period(combined, 1)
+    assert selected.run.histograms[0].counts[0] == -1
+    assert selected.metadata["correction_error"] == (
+        "Poisson count variance requires non-negative counts or explicit variance."
+    )
+    usable = select_period(combined, 2)
+    assert usable.n_points == 3
+    reduced = prepare_histogram_asymmetry(usable.run, merge=1, facility=None, reference=None)
+    np.testing.assert_allclose(reduced.asymmetry, usable.asymmetry)
+    assert np.all(np.isfinite(reduced.error))
+    assert path.read_bytes() == original

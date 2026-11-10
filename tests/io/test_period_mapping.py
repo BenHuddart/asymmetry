@@ -462,3 +462,12 @@ def test_mapping_polls_cancellation_before_capturing_ignored_inputs():
     with pytest.raises(RuntimeError, match="cancelled"):
         combine_mapped_periods(_four_periods(), {1: "red", 4: "ignore"}, cancel_check=cancel)
     assert calls == [True]
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_public_period_sum_cancels_before_copying_or_pooling(count):
+    def cancel():
+        raise RuntimeError("cancelled before counts")
+
+    with pytest.raises(RuntimeError, match="cancelled before counts"):
+        sum_period_histograms([[Histogram(np.ones(4), 0.1)]] * count, cancel_check=cancel)

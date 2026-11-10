@@ -66,8 +66,10 @@ follows the first contributor; this is not alignment of different period clocks.
 Point errors retain first-order propagation at fixed α/β, with existing shared
 background terms. This does not provide full cross-period/reference covariance.
 Asymmetry also checks that detector lists correspond and that signed input has
-supplied variance before independent pooling. An unsupported sum raises an
-operation error; the original observations remain available.
+supplied variance before pooling multiple contributors. Single acquired
+observations remain loadable without a new statistical-eligibility inference.
+An unsupported sum raises an operation error; the original observations remain
+available.
 
 Reference-background selection
 ------------------------------

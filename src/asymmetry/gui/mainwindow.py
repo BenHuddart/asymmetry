@@ -5832,7 +5832,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Period mapping failed: {exc}", 8000)
             return
         if mapped is None:
-            self.statusBar().showMessage("Period mapping cancelled.", 8000)
+            self.statusBar().showMessage("Period mapping canceled.", 8000)
             return
         self._apply_grouping_settings_to_dataset(mapped, grouping_result)
         self._data_browser.add_dataset(mapped)
