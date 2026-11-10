@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Form G+R from pooled prepared counts with background once and common native
+  support; retain independent G−R and require equal baselines for G+R rotation.
+
 - Correct and align acquired constituents before mapped-period pooling, retaining
   their own exposure, timing, variance, and selected-set replay context.
 

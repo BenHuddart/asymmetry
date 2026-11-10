@@ -145,7 +145,7 @@ def test_period_outcomes_keep_distinct_background_levels(qapp):
     window = MainWindow()
     payload = dict(
         dataset.run.grouping,
-        period_mode="green_plus_red",
+        period_mode="green_minus_red",
         background_correction=True,
         background_mode="range",
         background_range=[0, 1],

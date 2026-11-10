@@ -20,7 +20,6 @@ from asymmetry.core.transform.deadtime import (
     resolve_deadtime,
 )
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, GroupCounts
-from asymmetry.core.transform.grouping import sum_aligned_counts
 
 
 def observation_domain(
@@ -100,8 +99,15 @@ class ScopedCounts:
                 "Prepared grouped counts do not match the requested source observations"
             )
 
-    def aligned(self, indices: list[int], alignment: AlignmentCrop) -> GroupCounts:
-        """Project corrected samples onto the unchanged alignment; retain measured noise."""
+    def aligned(
+        self, indices: list[int], alignment: AlignmentCrop, *, retain_variance: bool = False
+    ) -> GroupCounts:
+        """Project required samples and noise; preserve excluded values as raw context.
+
+        Outside-domain variance is an excluded statistical contribution, never a
+        measured source variance or an eligible observation. Original histograms
+        retain their full counts and variance; only declared consumers use this value.
+        """
         total = np.zeros(alignment.length, dtype=np.float64)
         offsets = dict(alignment.detector_offsets)
         for index in indices:
@@ -115,11 +121,32 @@ class ScopedCounts:
                 inside = (local >= 0) & (local < alignment.length)
                 values[local[inside]] = corrected[inside]
             total += values
+        required = dict(self.domain.observations)
+        complete = all(
+            any(
+                window.first <= -offsets[i] and window.last >= -offsets[i] + alignment.length - 1
+                for window in required.get(i, ())
+            )
+            for i in indices
+        )
         variance = None
-        if self.corrected or any(
-            self.histograms[i].count_variance is not None for i, _ in alignment.detector_offsets
+        if (
+            (retain_variance and not complete)
+            or self.corrected
+            or any(
+                self.histograms[i].count_variance is not None for i, _ in alignment.detector_offsets
+            )
         ):
-            variance = sum_aligned_counts(self.histograms, indices, alignment, variance=True)
+            variance = np.zeros(alignment.length, dtype=np.float64)
+            for index in indices:
+                hist = self.histograms[index]
+                values = hist.counts if hist.count_variance is None else hist.count_variance
+                start = -offsets[index]
+                for window in required.get(index, ()):
+                    first = max(start, window.first)
+                    stop = min(start + alignment.length, window.last + 1)
+                    if first < stop:
+                        variance[first - start : stop - start] += values[first:stop]
         return GroupCounts(total, variance)
 
 

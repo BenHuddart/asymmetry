@@ -125,7 +125,7 @@ def test_builder_window_restricts_integration() -> None:
     assert len(scan.excluded) == 2
 
 
-def test_builder_accepts_muondataset_and_green_plus_red_mode() -> None:
+def test_builder_rejects_curve_only_pooled_reconstruction() -> None:
     """MuonDataset inputs resolve to their run; GREEN_PLUS_RED is accepted."""
     run = _two_period_run(58000, 800.0, green_minus_red=1.5)
     ds = MuonDataset(
@@ -136,9 +136,8 @@ def test_builder_accepts_muondataset_and_green_plus_red_mode() -> None:
         run=run,
     )
     scan = build_rf_difference_scan([ds], mode=PeriodMode.GREEN_PLUS_RED)
-    assert scan.n_points == 1
-    # Green + Red = 0 + 1.5 (% ) → 0.015 fractional.
-    assert scan.value[0] == pytest.approx(1.5 / 100.0, rel=1e-6)
+    assert scan.n_points == 0
+    assert "reload raw period data" in scan.excluded[0][1]
 
 
 def test_builder_rejects_bad_arguments() -> None:

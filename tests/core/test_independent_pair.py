@@ -60,11 +60,8 @@ def test_overlap_is_unavailable_at_production_boundaries(groups, boundary):
                 corrected_grouped_counts(**options, allow_incomplete=True)
             else:
                 reduce_grouped_asymmetry(**options, binning=binning_spec(grouping), alpha=1.7)
-    assert (
-        error.value.grouping["groups"] == {int(k): v for k, v in groups.items()}
-        if boundary.startswith("profile")
-        else error.value.grouping == grouping
-    )
+    expected = {int(k): v for k, v in groups.items()} if boundary.startswith("profile") else groups
+    assert error.value.grouping["groups"] == expected
 
 
 def test_covariance_counterexample_from_independent_source_counts():

@@ -286,8 +286,12 @@ def test_period_display_bunches_each_period_before_combining(mainwindow, mode, s
     actual = mainwindow._plot_panel.get_analysis_dataset(dataset)
     _, _, ra, re = _packed_reference(red_f, red_b, 2)
     _, _, ga, ge = _packed_reference(green_f, green_b, 2)
-    np.testing.assert_allclose(actual.asymmetry, ga + sign * ra, rtol=1e-12)
-    np.testing.assert_allclose(actual.error, np.sqrt(ge**2 + re**2), rtol=1e-12)
+    if mode == "green_plus_red":
+        _, _, a, e = _packed_reference(red_f + green_f, red_b + green_b, 2)
+    else:
+        a, e = ga - ra, np.hypot(ge, re)
+    np.testing.assert_allclose(actual.asymmetry, a, rtol=1e-12)
+    np.testing.assert_allclose(actual.error, e, rtol=1e-12)
 
 
 def test_bunching_larger_than_the_record_returns_no_points(mainwindow):

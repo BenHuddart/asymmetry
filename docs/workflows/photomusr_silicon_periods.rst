@@ -56,6 +56,10 @@ uses. The names follow the long-standing WiMDA convention that this
 experiment reuses: **Red = laser ON**, **Green = laser OFF**. Each period
 carries its own provenance, including its own good-frame normaliser, so
 dead-time correction and counting statistics stay correct per period.
+**G plus R** forms one asymmetry from their pooled prepared counts with group
+background once; **G minus R** subtracts the independently reduced set
+asymmetries. Both use one explicitly chosen α/β and common observed native
+support, without an extra exposure multiplier or half factor.
 
 For runs that carry three or more periods the **Map periods…** button opens
 the **Map Periods** dialog, which generalises the two-way choice to summing

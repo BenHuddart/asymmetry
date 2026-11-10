@@ -98,6 +98,11 @@ def test_contributing_periods_skip_atomically_with_deadtime(bad_periods, mode):
         use_deadtime=True,
         deadtime_mode="manual",
     )
+    if mode == "green_plus_red" and len(bad_periods) == 1:
+        # Tail availability belongs to the pooled requested observation.
+        actual = reduce_period_asymmetry(**kwargs, use_background=True)
+        assert actual.corrections[mode].background.status == "applied"
+        return
     expected = reduce_period_asymmetry(**kwargs, use_background=False)
     actual = reduce_period_asymmetry(**kwargs, use_background=True)
     np.testing.assert_array_equal(actual.asymmetry, expected.asymmetry)

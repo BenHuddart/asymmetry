@@ -874,10 +874,11 @@ relaxation for your instrument. Out-of-range numbers and unknown labels raise a
 clear error at the boundary. The GUI red/green selector calls this same core
 API, so scripts and the desktop app agree on the per-period spectra.
 
-The G±R combination requires identical reduced time grids, including the
-selected interval. Differing file-good windows can make the combination
-unavailable while each period remains selectable. Asymmetry does not
-implicitly crop or resample these curves to make them match.
+The G±R combination aligns acquired observations in whole native bins on common
+observed support before binning and ratio formation. G+R pools prepared counts;
+G−R differences independently reduced sets. No fractional resampling or padding
+is applied. Empty support or incompatible widths make the requested combination
+unavailable while each period remains selectable.
 
 Accessing metadata
 ~~~~~~~~~~~~~~~~~~

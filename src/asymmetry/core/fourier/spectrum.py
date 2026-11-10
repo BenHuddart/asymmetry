@@ -46,10 +46,11 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     resolve_facility,
 )
-from asymmetry.core.transform.constituent_counts import constituent_metadata
+from asymmetry.core.transform.constituent_counts import constituent_metadata, held_period_grids
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import group_names, grouping_balances
+from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides
 from asymmetry.core.utils.coerce import optional_float
@@ -392,6 +393,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         payload["t0_source"] = str(t0_source)
 
     if signal_source == "fb_asymmetry":
+        payload.update(period_statistic_policy(grouping))
         if "period_inputs" in grouping:
             payload["constituents"] = constituent_metadata(grouping)
         payload["signal_source"] = "fb_asymmetry"
@@ -419,9 +421,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         )
         if has_periods:
             payload["fb_period_mode"] = str(grouping.get("period_mode", "red"))
-            payload["fb_period_histograms"] = [
-                [_digest_int(value) for value in period] for period in period_lists
-            ]
+            payload["fb_period_grids"] = held_period_grids(grouping)
 
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]

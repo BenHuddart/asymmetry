@@ -214,10 +214,10 @@ support raises ``FitInputError``; insufficient support returns an unsuccessful
 fit result so a wizard can still assess simpler candidates.
 
 Full grids and contributing counts remain available for counts-first merging
-and spectral operations. Each period is reduced before a G±R combination:
-an undefined constituent makes that combined observation undefined, while a
-defined zero-variance constituent contributes zero variance to a potentially
-usable final sum or difference. No new cutoff, error floor, positivity gate,
+and spectral operations. G+R usability is classified after count pooling, so
+an individually undefined ratio can contribute to a usable pooled result.
+G−R requires defined constituent ratios; a defined zero-variance term may
+contribute to a final difference with positive variance. No new cutoff, error floor, positivity gate,
 automatic packing, or likelihood switch is applied. Custom, rotated, and legacy
 curves without verified histogram classification keep strict Gaussian input
 validation; bare arrays do not acquire classification from sentinel values.
