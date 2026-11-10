@@ -150,12 +150,6 @@ def _duplicates(names: Sequence[str]) -> set[str]:
     return dups
 
 
-def _count_in_range(dataset: MuonDataset, t_min: float | None, t_max: float | None) -> int:
-    """Number of points that survive the optional ``[t_min, t_max]`` clip."""
-    clipped = dataset.time_range(t_min, t_max) if (t_min or t_max) else dataset
-    return int(len(clipped.time))
-
-
 def fit_global(
     datasets: Sequence[MuonDataset] | Mapping[Hashable, MuonDataset],
     model_fn: Callable[..., NDArray],
@@ -320,7 +314,7 @@ def fit_global(
         result = dataset_results.get(key)
         if result is not None:
             combined_chi2 += float(result.chi_squared)
-        total_points += _count_in_range(ds, t_min, t_max)
+        total_points += len(observations[index].time)
         param_set = engine_initial[index]
         n_free_local_total += sum(1 for name in local_params if not param_set[name].fixed)
 

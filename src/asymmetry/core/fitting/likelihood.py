@@ -13,6 +13,8 @@ from enum import Enum
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason
+
 
 class Objective(str, Enum):
     GAUSSIAN = "gaussian"
@@ -66,6 +68,7 @@ class GaussianObservations:
     values: NDArray[np.float64]
     sigma: NDArray[np.float64]
     run_number: int | str | None = None
+    report: ObservationReport | None = None
     t_min: InitVar[float | None] = None
     t_max: InitVar[float | None] = None
 
@@ -90,7 +93,61 @@ class GaussianObservations:
             object.__setattr__(self, name, array)
 
     def __reduce__(self):
-        return type(self), (self.time, self.values, self.sigma, self.run_number)
+        return type(self), (self.time, self.values, self.sigma, self.run_number, self.report)
+
+
+@dataclass(frozen=True)
+class GaussianSelection:
+    """Requested full-grid membership and its optional histogram omission report."""
+
+    mask: NDArray[np.bool_]
+    report: ObservationReport | None
+
+    @property
+    def used(self) -> int:
+        return int(np.count_nonzero(self.mask))
+
+
+def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
+    """Select a requested fit window and known usable histogram observations."""
+    mask = np.ones(dataset.n_points, dtype=bool)
+    if t_min is not None:
+        mask &= dataset.time >= t_min
+    if t_max is not None:
+        mask &= dataset.time <= t_max
+    report = None
+    if dataset.ratio_validity is not None and "rotating_frame" not in dataset.metadata:
+        validity = dataset.ratio_validity.select(mask)
+        report = validity.report()
+        mask[mask] = validity.reasons == RatioReason.USABLE
+    return GaussianSelection(mask, report)
+
+
+def dataset_observations(dataset, t_min=None, t_max=None):
+    """Select known histogram ratios once; generic curves retain strict validation."""
+    if dataset.ratio_validity is None or "rotating_frame" in dataset.metadata:
+        return GaussianObservations(
+            dataset.time,
+            dataset.asymmetry,
+            dataset.error,
+            run_number=dataset.run_number,
+            t_min=t_min,
+            t_max=t_max,
+        )
+    selection = gaussian_selection(dataset, t_min, t_max)
+    if selection.report is not None and not selection.used:
+        raise FitInputError(
+            f"run {dataset.run_number}: no usable Gaussian observations. "
+            + selection.report.summary()
+        )
+    mask = selection.mask
+    return GaussianObservations(
+        dataset.time[mask],
+        dataset.asymmetry[mask],
+        dataset.error[mask],
+        run_number=dataset.run_number,
+        report=selection.report,
+    )
 
 
 @dataclass(frozen=True)

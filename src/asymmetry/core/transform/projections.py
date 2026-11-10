@@ -149,6 +149,7 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             histogram_observation=histogram_observation(
                 replace(source, grouping=selected_grouping)
             ),
+            ratio_validity=result.ratio_validity,
             time=result.time,
             asymmetry=result.asymmetry,
             error=result.error,

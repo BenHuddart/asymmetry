@@ -486,3 +486,30 @@ def test_refresh_curves_draws_the_row_without_disturbing_the_selection(
     assert np.array_equal(
         np.asarray(fit_lines[0].get_ydata(), dtype=float), alternative.fitted_curve
     )
+
+
+def test_residual_axis_uses_core_selected_times_with_middle_omissions(qapp):
+    from dataclasses import replace
+
+    recommendation = _recommendation()
+    winner = recommendation.recommended_assessment
+    selected_time = np.array([0.0, 0.8, 3.2, 7.2])
+    result = replace(
+        winner.fit_result,
+        residuals=np.array([1.0, -1.0, 2.0, -2.0]),
+        residual_time=selected_time,
+        residual_sigma=np.ones(4),
+    )
+    recommendation = replace(recommendation, assessments=(replace(winner, fit_result=result),))
+    card = _card()
+    card.set_plot_data(np.linspace(0, 8, 41), np.zeros(41), np.ones(41))
+    card.set_recommendation(recommendation)
+    card._residuals_toggle.setChecked(True)
+    lines = [
+        line
+        for axes in card._plot_widget._figure.axes
+        if axes.get_title() == "Residuals"
+        for line in axes.get_lines()
+        if len(line.get_xdata()) == 4
+    ]
+    np.testing.assert_array_equal(lines[0].get_xdata(), selected_time)

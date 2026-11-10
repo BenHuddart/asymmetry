@@ -6,7 +6,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.t0 import (
@@ -31,6 +32,7 @@ class QuickAsymmetry:
     unavailable_reason: str | None = None
     t0_time_us: float | None = None
     timing: dict = field(default_factory=dict)
+    ratio_validity: RatioValidity | None = None
 
     @property
     def file_grouping(self) -> dict:
@@ -123,7 +125,13 @@ def quick_asymmetry(
                 if k.startswith(("effective_", "t0_search", "t0_policy"))
             },
         )
-    asymmetry, error = compute_asymmetry(grouped.forward, grouped.backward, alpha=grouped.alpha)
+    asymmetry, error, validity = ratio_with_count_errors(
+        grouped.forward,
+        grouped.backward,
+        np.sqrt(grouped.forward),
+        np.sqrt(grouped.backward),
+        alpha=grouped.alpha,
+    )
     return QuickAsymmetry(
         asymmetry * PERCENT_PER_FRACTION,
         error * PERCENT_PER_FRACTION,
@@ -132,6 +140,7 @@ def quick_asymmetry(
         common_t0,
         alignment,
         window,
+        ratio_validity=validity,
         t0_time_us=t0_time_us,
         timing={
             k: v

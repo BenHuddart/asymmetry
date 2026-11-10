@@ -5689,6 +5689,7 @@ class MainWindow(QMainWindow):
         )
         dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
         dataset.histogram_observation = observation
+        dataset.ratio_validity = reduced.ratio_validity
         dataset.time = time_axis.copy()
         dataset.asymmetry = asymmetry.copy()
         dataset.error = error.copy()
@@ -5743,7 +5744,6 @@ class MainWindow(QMainWindow):
     def _counts_first_rebunched_dataset(
         self, dataset: MuonDataset, extra_bunch_factor: int
     ) -> MuonDataset:
-        """Prepare the selected observation and retain its toolbar membership."""
         observation = dataset.histogram_observation
         if observation is None:
             raise ValueError("Counts-first bunching requires a resolved histogram observation.")
@@ -15881,8 +15881,7 @@ class MainWindow(QMainWindow):
             except TypeError:
                 # A source that cannot be weakly referenced is never memoised.
                 return crop
-        # Never hold the source itself (no fit range → the crop *is* the
-        # source): the entry must not keep a removed run alive.
+        # A memo entry must not keep a removed source run alive.
         memo[id(dataset)] = (key, None if crop is dataset else crop)
         return crop
 

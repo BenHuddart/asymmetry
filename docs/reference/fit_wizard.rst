@@ -774,8 +774,18 @@ reduce them again to capture a new observation, then rerun the wizard.
 
 Curves without resolved histogram context, including custom or historical curves
 that retain a Run, and rotated observations use the independent-curve mean.
-For the calibration conditioning and current finite-weight reduction fallbacks,
+For conditional calibration errors and histogram Gaussian omission,
 see :ref:`conditional-calibration-errors` and :ref:`asymmetry-error-fallback`.
+Used/omitted counts and reasons travel with the core fit result through search,
+completion, and rebuilding; model scores count only the fitted observations.
+Detection keeps the full acquisition grid. When omission prevents a residual
+FFT or acquisition-lag autocorrelation, the diagnostic is unavailable; a valid
+fit remains available. No missing-bin interpolation is inserted. The single-run
+Details view shows ``unavailable`` and the core result explains
+``Residual autocorrelation and FFT unavailable: Gaussian selection omits acquisition bins.``
+Historical scores retain their recorded meaning, while numerical reuse requires
+the current observation policy.
+
 
 The wizards still fit asymmetry with conditional Gaussian point errors;
 TF alpha/beta count calibration is a separate operation. Models are evaluated
@@ -898,3 +908,11 @@ similarly.
    `doi:10.1080/03610927808827599 <https://doi.org/10.1080/03610927808827599>`_.
 .. [bic_primary] G. Schwarz, Ann. Statist. **6**, 461–464 (1978),
    `doi:10.1214/aos/1176344136 <https://doi.org/10.1214/aos/1176344136>`_.
+
+.. figure:: /_generated/screenshots/fit_ratio_omissions.png
+   :width: 100%
+   :alt: Sparse synthetic Ag fit with omission counts and selected residuals.
+
+   Sparse Ag control with an authored fixed-background sensitivity operation.
+   The fit keeps usable signed observations; the display retains the full grid.
+   Omission counts and unavailable residual diagnostics belong to the core result.

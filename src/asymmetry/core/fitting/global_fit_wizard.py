@@ -121,7 +121,7 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
     fold_legacy_product_amplitude_set,
 )
-from asymmetry.core.fitting.likelihood import Objective
+from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
@@ -139,9 +139,9 @@ from asymmetry.core.fitting.wizard_timing import (
     stage_timer,
 )
 from asymmetry.core.transform.preparation import (
-    WIZARD_PREPARATION,
     prepare_wizard_dataset,
     wizard_observation_matches,
+    wizard_rebuild_dataset,
 )
 
 #: Hard cap on the series template alphabet. The alphabet is a union over runs,
@@ -2620,9 +2620,7 @@ def _build_single_fit_prescreen_assessments(
     # fitted at, so it is what this row's dense curves are sampled between.
     analysis_dataset_by_run = {
         int(dataset.run_number): (
-            prepare_wizard_dataset(dataset, source.rebin_factor)
-            if WIZARD_PREPARATION in source.build_signature
-            else dataset.merge_curve_bins(source.rebin_factor)
+            wizard_rebuild_dataset(dataset, source.rebin_factor, source.build_signature)
         )
         for dataset in datasets
         if (source := single_fit_recommendations_by_run.get(int(dataset.run_number))) is not None
@@ -3940,7 +3938,7 @@ def rerank_global_fit_wizard_recommendation(
     )
     if primary.series_warnings:
         summary += (
-            " Every run passes its residual checks, but the series as a whole was flagged: "
+            " Available residual checks pass; review these series notes: "
             f"{' '.join(primary.series_warnings)} Review before applying."
         )
     return replace(
@@ -4918,7 +4916,10 @@ def _supported_oscillatory_run_numbers(
         fingerprint = fingerprints_by_run.get(run_number)
         if diagnostic is None or fingerprint is None:
             continue
-        if diagnostic.residual_fft_peak_snr < _OSCILLATORY_RESCUE_RESIDUAL_FFT_SNR:
+        if (
+            not np.isfinite(diagnostic.residual_fft_peak_snr)
+            or diagnostic.residual_fft_peak_snr < _OSCILLATORY_RESCUE_RESIDUAL_FFT_SNR
+        ):
             continue
 
         fingerprint_supported = (
@@ -5727,7 +5728,7 @@ def _assemble_assignment_assessment(
     :func:`_with_dense_curves` puts both back on the assessments that leave.
     """
 
-    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    sample_count = sum(gaussian_selection(dataset).used for dataset in datasets)
     if not fit_success:
         results_by_run = {
             run: replace(result, success=False) for run, result in results_by_run.items()
@@ -5783,12 +5784,16 @@ def _assemble_assignment_assessment(
             fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
             component_curves_by_run[run_number] = component_curves
 
-    series_warnings = tuple(_series_warnings(datasets, run_diagnostics))
+    series_warnings = tuple(_series_warnings(datasets, run_diagnostics)) + tuple(
+        f"Run {dataset.run_label}: {message}"
+        for dataset in datasets
+        for message in results_by_run[int(dataset.run_number)].warnings
+    )
     if not dense_curves:
         # The diagnostics above are the last read of the residual series; a
         # search node keeps only what the search itself ranks on.
         results_by_run = {
-            run_number: replace(result, residuals=None)
+            run_number: replace(result, residuals=None, residual_time=None, residual_sigma=None)
             for run_number, result in results_by_run.items()
         }
     return GlobalCandidateAssessment(
@@ -5814,20 +5819,10 @@ def _with_dense_curves(
     *,
     base_by_run: Mapping[int, ParameterSet],
 ) -> GlobalCandidateAssessment:
-    """Give a search node the curves and residuals a displayed assessment owes.
+    """Rebuild displayed curves and residuals on the exact prepared records.
 
-    The one crossing of the dense-curve contract on
-    :class:`GlobalCandidateAssessment`: call it on every assessment that leaves a
-    search for a :class:`GlobalFitWizardRecommendation`, and on nothing else.
-
-    ``datasets`` must be the records the assessment was *fitted* on — the same
-    ones :func:`_assemble_assignment_assessment` saw — and ``base_by_run`` the
-    same seed sets, because both feed :func:`_dense_fit_curves` verbatim here.
-    Give it the search-resolution records for a node fitted at a coarser binning
-    and the arrays are bit-for-bit what assembly would have produced. The
-    residual series is likewise the engine's own definition (``asymmetry −
-    model`` on the fitted record), so a restored assessment is indistinguishable
-    from one assembled with ``dense_curves=True``.
+    The dense display grid spans the fitted record; residuals and stated sigma
+    retain only the observations used by its Gaussian objective.
     """
 
     fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
@@ -5855,10 +5850,13 @@ def _with_dense_curves(
             values = _curve_parameter_values(
                 model, result.parameters, fallback_parameters=fallback_parameters
             )
-            model_values = np.asarray(model.function(dataset.time, **values), dtype=float)
+            observations = dataset_observations(dataset)
+            model_values = np.asarray(model.function(observations.time, **values), dtype=float)
             results_by_run[run_number] = replace(
                 result,
-                residuals=np.asarray(dataset.asymmetry, dtype=float) - model_values,
+                residuals=observations.values - model_values,
+                residual_time=observations.time,
+                residual_sigma=observations.sigma,
             )
     return replace(
         assessment,
@@ -6741,7 +6739,7 @@ def _assess_single_fit_candidate_from_attempts(
         )
         best_parameters = ParameterSet()
 
-    n_points = int(dataset.n_points)
+    n_points = gaussian_selection(dataset).used
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
         _residual_diagnostics(dataset, best_result)
@@ -9364,7 +9362,7 @@ def _run_estimates_from_results(
             results_by_run[int(dataset.run_number)],
             free_param_names,
             run_number=int(dataset.run_number),
-            n_points=int(dataset.n_points),
+            n_points=gaussian_selection(dataset).used,
             at_bound=_bound_hit_names(results_by_run[int(dataset.run_number)].parameters),
         )
         for dataset in datasets
@@ -10398,7 +10396,7 @@ def _run_separable_search(
     # A template whose all-local chi-squared floor plus the smallest penalty any
     # of its assignments could carry still loses to the best converged IC found
     # so far cannot produce the winner, so it never earns a coupled fit.
-    sample_count = int(sum(dataset.n_points for dataset in search_datasets))
+    sample_count = sum(gaussian_selection(dataset).used for dataset in search_datasets)
     converged_ics = [
         float(result.state.best_assessment.metric_value(metric))
         for result in anchor_results
@@ -11127,7 +11125,7 @@ def _run_exhaustive_wavefront_search(
     # more than _LAYER_BOUND_MARGIN. Only a *cleanly converged* anchor arms the
     # bound — a mis-converged anchor floor could over-prune once a better low-layer
     # incumbent exists, so we disable the bound for that template instead.
-    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    sample_count = sum(gaussian_selection(dataset).used for dataset in datasets)
     for state in states:
         if state.free_param_count == 0:
             continue

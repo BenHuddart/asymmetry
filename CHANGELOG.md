@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Gaussian histogram-asymmetry fits and wizard scores omit undefined and zero-variance ratios, report omissions, and retain full grids for counts-first binning.
+
 ### Changed
 
 - Clarify asymmetry scales, first-order counting errors, conditional calibration uncertainty,

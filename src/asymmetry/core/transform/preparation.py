@@ -13,6 +13,7 @@ from hashlib import sha256
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
@@ -85,7 +86,7 @@ def prepare_histogram_asymmetry(
     )
 
 
-WIZARD_PREPARATION = "counts_first_observation_v1"
+WIZARD_PREPARATION = f"counts_first_observation_{RATIO_OBSERVATION_POLICY}"
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class HistogramObservation:
     identity: str
     #: Context belonging to loader-cached period curves, independent of current grouping.
     cached_periods: tuple[HistogramObservation, ...] = ()
+    cached_validities: tuple[RatioValidity | None, ...] = ()
 
     def select(self, mask: np.ndarray) -> HistogramObservation:
         """Retain a contiguous centre-selected crop before any subsequent merge."""
@@ -194,9 +196,9 @@ def histogram_observation(
     )
 
 
-def wizard_observation_identity(dataset: MuonDataset) -> str:
+def wizard_observation_identity(dataset: MuonDataset, *, policy: str = WIZARD_PREPARATION) -> str:
     """Identify the actual curve, replay context, and selected membership for reuse."""
-    digest = sha256(WIZARD_PREPARATION.encode())
+    digest = sha256(policy.encode())
     for array in (dataset.time, dataset.asymmetry, dataset.error):
         values = np.ascontiguousarray(array)
         digest.update(pickle.dumps((values.shape, values.dtype.str)))
@@ -215,6 +217,8 @@ def wizard_observation_identity(dataset: MuonDataset) -> str:
             )
         )
     )
+    if policy == WIZARD_PREPARATION and dataset.ratio_validity is not None:
+        digest.update(dataset.ratio_validity.reasons.tobytes())
     observation = dataset.histogram_observation
     if observation is not None:
         digest.update(pickle.dumps((observation.identity, observation.binning)))
@@ -245,7 +249,7 @@ def prepare_wizard_dataset(
         return dataset
     observation = dataset.histogram_observation
     if observation is None or "rotating_frame" in dataset.metadata:
-        return dataset.merge_curve_bins(factor)
+        return replace(dataset, ratio_validity=None).merge_curve_bins(factor)
     # Selection indices belong to the current output, not to new midpoint times.
     merged = observation.merge(dataset.n_points, factor)
     reduced = prepare_histogram_asymmetry(
@@ -263,4 +267,18 @@ def prepare_wizard_dataset(
         reduced.metadata_with_alignment(dataset.metadata),
         dataset.run,
         merged,
+        reduced.ratio_validity,
     )
+
+
+def wizard_rebuild_dataset(dataset: MuonDataset, factor: int, signature: str) -> MuonDataset:
+    """Reconstruct recorded preparation without authorising reuse of historical scores."""
+    recorded = json.loads(signature) if signature else {}
+    policy = recorded.get("wizard_preparation")
+    if policy in {WIZARD_PREPARATION, "counts_first_observation_v1"}:
+        if recorded.get("observation") != wizard_observation_identity(dataset, policy=policy):
+            raise ValueError(
+                "Wizard observation changed; rerun the analysis before rebuilding curves."
+            )
+        return prepare_wizard_dataset(dataset, factor)
+    return replace(dataset, ratio_validity=None).merge_curve_bins(factor)
