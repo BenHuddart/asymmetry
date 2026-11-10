@@ -158,13 +158,13 @@ def test_seeded_poisson_recovery():
     assert abs(result.parameters["DT0"].value - 0.02) < 3 * result.uncertainties["DT0"]
 
 
-def test_short_trace_records_actual_bin_width():
+def test_short_trace_preserves_authored_packing_without_unpacking():
     from asymmetry.core.fitting.grouped_time_domain import build_count_group
 
     ds, _ = _rational_dataset((0.8, 0.2), (0.5, 0.5), bunch=5000)
-    group = build_count_group(ds, 1, lifetime_corrected=False)
-    assert len(group.time) == 2500
-    assert group.metadata["grouped_time_domain_bunch_factor"] == 1
+    with pytest.raises(ValueError, match="Count-domain group 1 produced no usable bins"):
+        build_count_group(ds, 1, lifetime_corrected=False)
+    assert ds.run.grouping["bunching_factor"] == 5000
 
 
 def test_detector_traces_share_alignment_crop_and_fit_mask():

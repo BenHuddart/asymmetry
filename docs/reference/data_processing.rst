@@ -7,8 +7,8 @@ active-background samples before deadtime availability and correction. Unused
 File coefficients and saturated observations outside that union do not affect
 the result. In scripted reduction, explicit time limits select final bin
 centres; only their contributing native bins enter correction, together with
-active estimator samples. A requested rebin aliasing check still consumes its
-full unmerged spectrum. Grouped fits select merged-bin centres before resolving
+active estimator samples. Ordinary merging performs no spectral analysis.
+Grouped fits select merged-bin centres before resolving
 the contributing raw bins, including disjoint fit exclusions. Spectral preparation
 also retains active baseline, conditioning, phase, and background dependencies;
 a final display crop alone does not remove those observations. Shared preparation

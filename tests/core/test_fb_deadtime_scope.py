@@ -438,7 +438,7 @@ def test_layout_does_not_sum_raw_counts_before_signed_detector_inverse():
     assert histograms[0].counts[0] == 1e308
 
 
-def test_workflow_time_window_limits_inverse_but_bandwidth_estimator_keeps_its_inputs():
+def test_workflow_time_window_limits_inverse_without_an_unsolicited_spectrum():
     from asymmetry.core.data.dataset import Run
     from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
@@ -450,12 +450,14 @@ def test_workflow_time_window_limits_inverse_but_bandwidth_estimator_keeps_its_i
         grouping={"groups": {1: [1], 2: [2]}, "dead_time_us": [1, -1], "good_frames": 100},
     )
     settings = ReductionSettings(deadtime="from_file", t_min=1.0, t_max=2.0)
-    result = reduce_run(run, settings, allow_aliasing=True)
+    result = reduce_run(run, settings)
     f, b = 10 / 0.9, 5 / 1.05
     np.testing.assert_allclose(result.asymmetry, 100 * (f - b) / (f + b))
     np.testing.assert_array_equal(result.time, [1.0, 2.0])
+    empty = reduce_run(run, replace(settings, rebin=2))
+    assert empty.n_points == 0
     with pytest.raises(DeadtimeCorrectionError):
-        reduce_run(run, replace(settings, rebin=2))
+        reduce_run(run, replace(settings, rebin=2, t_min=0.0, t_max=3.0))
 
 
 @pytest.mark.parametrize("required_missing", [False, True])

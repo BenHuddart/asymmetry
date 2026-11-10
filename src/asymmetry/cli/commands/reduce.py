@@ -59,14 +59,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Merge this many bins' counts before forming the asymmetry (default: 1)",
     )
     parser.add_argument(
-        "--allow-aliasing",
-        action="store_true",
-        help=(
-            "Rebin even when a detected line lies above the new Nyquist frequency, "
-            "deliberately averaging a known fast line away to study slower relaxation"
-        ),
-    )
-    parser.add_argument(
         "--tmin",
         type=float,
         default=None,
@@ -107,7 +99,7 @@ def run(args: argparse.Namespace) -> None:
         reduce_run,
         resolve_reduction_grouping,
     )
-    from asymmetry.core.workflow.survey import build_run_row, has_file_deadtime, precession_evidence
+    from asymmetry.core.workflow.survey import PrecessionEvidence, build_run_row, has_file_deadtime
     from asymmetry.core.workflow.workdir import ReducedEntry, reduction_digest
 
     folder = Path(args.folder)
@@ -164,7 +156,7 @@ def run(args: argparse.Namespace) -> None:
             recomputed = False
         else:
             try:
-                dataset = reduce_run(dataset_in.run, settings, allow_aliasing=args.allow_aliasing)
+                dataset = reduce_run(dataset_in.run, settings)
             except ValueError as exc:
                 raise UserError(str(exc)) from None
             row = build_run_row(
@@ -172,9 +164,13 @@ def run(args: argparse.Namespace) -> None:
                 path=paths[0],
                 prefix=prefix,
                 run_number=run_number,
-                # Measured on the record this command actually produced, so a
-                # rebinned or trimmed reduction is judged on what it reduced to.
-                precession=precession_evidence(dataset, dataset_in.field),
+                precession=PrecessionEvidence(
+                    state=None,
+                    frequency_mhz=None,
+                    snr=None,
+                    larmor_mhz=None,
+                    note="reduction does not measure precession; request survey or spectral analysis",
+                ),
                 n_periods=period_count(dataset_in),
             )
             entry = ReducedEntry(

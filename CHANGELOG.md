@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Honour authored bin merges without automatic spectral analysis; count fits retain
+  the requested packing and report empty selections before unused corrections.
+
 - Preserve canonical integer run IDs in saved wizard cache signatures.
 
 - Indent nonuniform bin-width fields below the grouping binning selector to avoid horizontal scrolling.

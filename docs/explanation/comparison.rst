@@ -127,6 +127,14 @@ The Mantid comparison is documented behaviour, with no native binning execution.
 See :doc:`/reference/data_reduction/binning` for algorithm references, terminal
 qualifications, and uncertainty assumptions.
 
+Ordinary binning honours authored merges without a spectral peak veto, as in
+the compared WiMDA 1.326 grouping, musrfit 1.12.1 packing, and documented Mantid
+Rebin/Rebunch operations. Actual FFT requests still require a uniform grid.
+Asymmetry also checks that an authored count-fit factor and selection leave
+usable complete fit bins, before resolving unused corrections. The factor is
+never silently reduced to one. Raw inspection and request repair remain
+available; identical empty-bin diagnostics in other programs are not established.
+
 Point-model fits use output timestamps and conditional point errors. Wide bins
 average the signal; their point-model approximation can attenuate oscillations
 or shift phase. Mantid's separate histogram-evaluation option is not a general

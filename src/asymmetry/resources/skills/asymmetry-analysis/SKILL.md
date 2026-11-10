@@ -1147,12 +1147,12 @@ temperature law from them.
 
 **Preserve bandwidth before reducing fit cost.** Rebinning lowers Nyquist and can
 fold a real line into a false low-frequency line or reverse an apparent shift.
-The CLI rejects rebinning that aliases a detected line in the original record.
-Use the printed safe factor or retain native bins and shorten the analysis
-window; a plot zoom alone does not change the stored spectrum. Lack of a line
-after averaging is not evidence it was absent at native resolution. Pass
-`reduce --allow-aliasing` only to average away a line you have already measured
-at native resolution, and say so in the report.
+Ordinary reduction honours authored binning without a spectral veto; inspect native
+bandwidth first. Shorten the fit window when fast structure matters; zoom does not
+change stored data. Absence after averaging does not establish absence at native
+resolution. Record deliberate averaging of a measured fast line. FFT/MaxEnt still
+require uniform sampling. Count fits keep fixed packing; no complete selected bin
+reports no usable input. Repair the factor/window; raw inspection stays available.
 
 **Keep provenance per measurement.** Name the calibrant and applied alpha for
 every fitted exercise, period and block, including beam and detector changes;
