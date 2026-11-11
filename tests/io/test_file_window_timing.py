@@ -79,27 +79,24 @@ def test_acquired_raw_membership_with_file_and_manual_timing(source):
     first = counts.alignment.first_bin + 5
     last = min(first + 20, counts.alignment.first_bin + counts.alignment.length - 1)
     t0 = grouping["t0_bin"]
+    first_offset = first - t0
+    last_offset = last - t0
     manual = replace(
         profile,
         t0_policy=T0Policy(mode="manual", offset_bins=5),
         good_window_policy=GoodWindowPolicy(
-            mode="manual", first_offset_bins=first - t0, last_offset_bins=last - t0
+            mode="manual", first_offset_bins=first_offset, last_offset_bins=last_offset
         ),
     )
     resolved = resolve_effective_grouping(manual, run)
     observed = group_forward_backward(run.histograms, resolved).counts
-    for group, gid in zip(
-        (observed.forward, observed.backward),
-        (resolved["forward_group"], resolved["backward_group"]),
-    ):
-        offsets = dict(observed.alignment.detector_offsets)
-        raw = np.arange(first, last + 1) - observed.alignment.first_bin
-        from asymmetry.core.transform.grouping import effective_group_indices
-
-        oracle = sum(
-            run.histograms[i].counts[raw - offsets[i]]
-            for i in effective_group_indices(resolved, gid, n_histograms=len(run.histograms))
-        )
+    elapsed_bins = np.arange(first_offset, last_offset + 1)
+    for detector, group in enumerate((observed.forward, observed.backward)):
+        # Elapsed bin q belongs to acquired bin t0_i + manual shift + q,
+        # independently of the common native alignment's stagger and crop.
+        histogram = run.histograms[detector]
+        raw = histogram.t0_bin + manual.t0_policy.offset_bins + elapsed_bins
+        oracle = histogram.counts[raw]
         np.testing.assert_array_equal(group.counts[observed.window.slice], oracle)
     for histogram, original in zip(run.histograms, originals):
         np.testing.assert_array_equal(histogram.counts, original)

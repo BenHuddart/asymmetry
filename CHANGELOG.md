@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Correct the project documentation to describe preserved combination history
+  and authored conditions when reconstruction is unavailable.
+
 - Form G+R from pooled prepared counts with background once and common native
   support; retain independent G−R and require equal baselines for G+R rotation.
 

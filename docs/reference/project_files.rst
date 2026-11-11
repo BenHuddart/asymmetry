@@ -79,9 +79,9 @@ provenance. Invalid inactive declarations remain editable and saveable.
 Combination definitions retain ordered sources and the operation. An optional
 ``metadata_overrides`` on a combined definition holds deliberate target condition
 edits; source rebuilds retain them. Missing condition values remain JSON null.
-Reconstruction failures retain a ``Combination unavailable`` row with its
-``Corrections incomplete`` diagnosis, definition, and history, while keeping
-the source rows available. Saved arrays, fit records, and recorded condition
+When loaded source rows cannot be combined, reconstruction retains a
+``Combination unavailable`` row with its ``Corrections incomplete`` diagnosis,
+definition, and history, while keeping the source rows available. Saved arrays, fit records, and recorded condition
 coordinates retain their meaning without automatic refitting.
 
 What is stored
@@ -127,9 +127,12 @@ Project files store:
   carries the combined run's ``representations`` and ``rotating_frame`` like a
   dataset entry. A combined run is rebuilt on load under its saved
   ``combined_run_number``, so every record keyed by it still names it. A
-  combined run that cannot be rebuilt has its records dropped — its fits,
-  frame, series membership and results, exclusions and data-group membership —
-  so they cannot attach to the next combination.
+  combination rejected during reconstruction from loaded source rows retains
+  a ``Combination unavailable`` row, its definition, authored target conditions,
+  and historical records,
+  including fits, frame, series membership and results, exclusions, and
+  data-group membership. Source rows remain available. Preserved history does
+  not supply newly reconstructed numerical observations for the unavailable row.
 * **Fit series (batches)** — each batch, global, grouped or scan fit over
   multiple runs (or multiple runs' detector groups) is recorded as a
   ``FitSeries`` that carries the member list, parameter roles, per-member
