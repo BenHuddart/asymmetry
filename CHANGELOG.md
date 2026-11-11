@@ -96,6 +96,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rotated vector errors include reused detector/reference counting noise and
+  shared-background effects through display packing and single-component fit inputs.
+
 - Preserve master condition labels and missing values in run arithmetic, with active constituent ranges; diagnose known correspondence/reuse conflicts without restricting file loading.
 
 - Correct and align original acquired runs before weighted pooling, retaining

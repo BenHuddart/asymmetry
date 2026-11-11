@@ -1554,6 +1554,31 @@ once. Unequal baselines make that rotation unavailable; Lab G+R and rotating
 Red, Green, and G−R remain available. This is an Asymmetry safeguard. See
 :doc:`/reference/rotating_frame_projection`.
 
+Shared counting noise in vector rotation
+----------------------------------------
+
+Asymmetry's vector reduction retains acquisition/reference-bin identity,
+coefficients, and counting variance across projections. Its transverse rotation
+propagates this covariance through the actual gain, sense, and phase. Range and
+tail-background estimator influence survives rotation and display packing; cohort
+tail-fit uncertainty uses retained acquisition variance while preserving fitted
+levels. Errors remain conditional on calibration, baselines, gain, and correction
+values. Corrected marginals do not establish an independent joint likelihood or
+validate an overlapping-group MaxEnt objective.
+
+In Mantid, `RRFMuon v1
+<https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_ provides a
+comparable two-spectrum coordinate rotation after matching signs, phase, and
+units. The v1 documentation associated with the 6.16 development snapshot is a
+formula comparison, not native execution or shared-detector error agreement.
+WiMDA 1.326 and musrfit 1.12.1 scalar RRF workflows use different inputs and
+smoothing or packing; no equivalent covariance contract for these overlapping
+ratios is established. Independent analytic and seeded Poisson controls support
+Asymmetry's propagation. Acquired ISIS and PSI file execution, including musrfit
+example ROOT files, checks the changed operation with authored groupings; it does
+not establish acquired vector geometry or reference-program numerical agreement.
+See :doc:`/reference/rotating_frame_projection` for the equations and limitations.
+
 Run addition and subtraction
 -----------------------------
 

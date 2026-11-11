@@ -17,6 +17,8 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 from tests.core.vector_synthetic import synthetic_vector_run
 
+pytestmark = pytest.mark.gui
+
 
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
@@ -97,3 +99,91 @@ def test_applied_exact_timing_uses_selected_reference_after_spectator_and_manual
     payload["t0_bin"] = 1
     assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
     assert "t0_time_us" not in dataset.run.grouping
+
+
+def test_shared_detector_rotation_reaches_display_and_single_fit_input(mainwindow):
+    from asymmetry.core.transform.rotating_frame import Provenance, rotate_transverse
+    from tests.core.test_projection_noise import small_run
+    from tests.gui.test_rotating_frame_projection import _rotate, _show
+
+    run = small_run()
+    dataset = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), run=run)
+    frame = RotatingFrame.typed_frequency(0.61, 1).with_values(
+        Provenance.TYPED, sense=1, rf_phase_deg=23.0, gain=1.7
+    )
+    mainwindow._project_model.rotating_frames[run.run_number] = frame
+    panel = _show(mainwindow, dataset)
+    _rotate(panel)
+    panel.set_fit_target_projection("P′_y")
+    expected = rotate_transverse(*reduce_run_projections(run, 0).values(), frame, weights=(1.0,))[1]
+    shown = panel._vector_subplot_datasets["P′_y"][0]
+    np.testing.assert_allclose(shown.error, expected.error)
+    np.testing.assert_allclose(mainwindow._fit_panel.single_dataset().error, expected.error)
+    assert shown.counting_noise is not None
+    assert shown.fit_record().counting_noise is None
+
+
+def test_cohort_snapshot_and_rotation_use_cancellable_scientific_worker(
+    mainwindow, monkeypatch, qapp
+):
+    from PySide6.QtCore import QThread
+
+    import asymmetry.core.transform.projections as core
+    import asymmetry.gui.utils.reduction_cache as cache
+    import asymmetry.gui.utils.vector_projections as adapter
+    from asymmetry.core.transform.rotating_frame import FrameSnapshot
+    from tests.core.test_projection_noise import small_run
+
+    run = small_run()
+    dataset = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), run=run)
+    original = core.reduce_selected_projections
+    checks = []
+
+    def checked(*args, **kwargs):
+        assert QThread.currentThread() != qapp.thread()
+        assert kwargs["cancel_check"] is not None
+        kwargs["cancel_check"]()
+        checks.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cache, "_INLINE_INPUT_BYTES", 0)
+    monkeypatch.setattr(core, "reduce_selected_projections", checked)
+    monkeypatch.setattr(adapter, "reduce_selected_projections", checked)
+    mainwindow._build_vector_axis_datasets([dataset])
+    snapshot = FrameSnapshot(RotatingFrame.typed_frequency(0.61, 1), (1.0,), "owned")
+    rotated = mainwindow._rotated_curves(dataset, snapshot)
+    assert len(checks) == 2
+    assert rotated["P′_x"].counting_noise is not None
+
+
+def test_authored_dataset_conditions_survive_core_vector_preparation(mainwindow):
+    from asymmetry.core.transform.rotating_frame import FrameSnapshot
+    from tests.core.test_projection_noise import small_run
+
+    run = small_run()
+    run.metadata.update(field=2.0, temperature=8.0, title="acquired")
+    dataset = MuonDataset(
+        np.zeros(1),
+        np.zeros(1),
+        np.ones(1),
+        run=run,
+        metadata={
+            "field": 50.0,
+            "temperature": 20.0,
+            "title": "authored",
+            "projection": "old-label",
+            "grouped_alignment": {"old": True},
+        },
+    )
+    cohorts = mainwindow._build_vector_axis_datasets([dataset])
+    rotated = mainwindow._rotated_curves(
+        dataset, FrameSnapshot(RotatingFrame.typed_frequency(0.61, 1), (1.0,), "owned")
+    )
+    for label, curve in [(label, curves[0]) for label, curves in cohorts.items()] + list(
+        rotated.items()
+    ):
+        assert curve.field == 50.0
+        assert curve.temperature == 20.0
+        assert curve.metadata["title"] == "authored"
+        assert curve.metadata["projection"] == label
+        assert "old" not in curve.metadata["grouped_alignment"]

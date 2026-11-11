@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.data.ratio_validity import RatioReason, RatioValidity
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
@@ -32,6 +32,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     CorrectionStatus,
 )
+from asymmetry.core.transform.counting_noise import CountingNoise, combine_noise
 from asymmetry.core.transform.deadtime import (
     DeadtimeDomain,
     deadtime_operation_inputs,
@@ -50,7 +51,7 @@ from asymmetry.core.transform.grouping import (
     shared_automatic_alpha,
 )
 from asymmetry.core.transform.period_reduction import corrected_period_counts
-from asymmetry.core.transform.rebin import BinningSpec, binned_fb_observation
+from asymmetry.core.transform.rebin import BinningSpec, binned_ratio_observation
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -80,6 +81,7 @@ class GroupedAsymmetryReduction:
     #: reduction could not arrive silently.
     units: AsymmetryUnit = ASYMMETRY_PERCENT
     effective_alpha: float | None = None
+    counting_noise: CountingNoise | None = None
 
 
 @dataclass(frozen=True)
@@ -534,7 +536,7 @@ def estimate_prepared_alpha(counts):
 
 def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
     """Form the ratio once, converting fraction to public percent units."""
-    time, asymmetry, error, validity = binned_fb_observation(
+    time, asymmetry, error, validity, noise = binned_ratio_observation(
         counts, binning=binning, alpha=alpha, beta=beta, time_range=time_range
     )
     return GroupedAsymmetryReduction(
@@ -545,6 +547,9 @@ def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
         binning,
         counts.alignment,
         validity,
+        counting_noise=noise.scale(np.full(time.size, PERCENT_PER_FRACTION))
+        if noise is not None
+        else None,
     )
 
 
@@ -560,6 +565,7 @@ class PeriodAsymmetryReduction:
     alignments: dict[str, AlignmentCrop]
     ratio_validity: RatioValidity
     effective_alpha: float | None = None
+    counting_noise: CountingNoise | None = None
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
@@ -655,10 +661,19 @@ def reduce_period_asymmetry(
             mode,
         )
         validity = red.ratio_validity.combine(green.ratio_validity, error)
+        noise = (
+            combine_noise(green.counting_noise, red.counting_noise.scale(-np.ones(time.size)))
+            if red.counting_noise is not None
+            else None
+        )
     else:
         single = reduced[mode]
         time, asymmetry, error = single.time, single.asymmetry, single.error
         validity = single.ratio_validity
+        noise = single.counting_noise
+    if noise is not None:
+        error = np.where(validity.reasons == RatioReason.USABLE, noise.error, error)
+        validity = RatioValidity.from_ratio(validity.reasons != RatioReason.UNDEFINED, noise.error)
     return PeriodAsymmetryReduction(
         time,
         asymmetry,
@@ -668,6 +683,7 @@ def reduce_period_asymmetry(
         {str(label): result.alignment for label, result in reduced.items()},
         validity,
         alpha if automatic else None,
+        noise,
     )
 
 

@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 from scipy.optimize import brentq
 
 from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
+from asymmetry.core.transform.counting_noise import combine_noise
 from asymmetry.core.transform.fb_counts import (
     BinWindow,
     GroupCounts,
@@ -445,6 +446,7 @@ def apply_grouped_background_correction(
                     (bin_width_us * fitted.rate_error_per_us) ** 2,
                     covariance,
                     independent_variance,
+                    source.noise,
                 )
             )
         return _background_result(
@@ -480,8 +482,24 @@ def apply_grouped_background_correction(
         f_corr, f_var = subtract_scaled_counts(f_input, reference_forward, reference_scale)
         b_corr, b_var = subtract_scaled_counts(b_input, reference_backward, reference_scale)
         return _background_result(
-            forward=GroupCounts(f_corr, f_var),
-            backward=GroupCounts(b_corr, b_var),
+            forward=GroupCounts(
+                f_corr,
+                f_var,
+                noise=combine_noise(
+                    f_input.noise, reference_forward.noise.scale(np.full(f.size, -reference_scale))
+                )
+                if f_input.noise is not None
+                else None,
+            ),
+            backward=GroupCounts(
+                b_corr,
+                b_var,
+                noise=combine_noise(
+                    b_input.noise, reference_backward.noise.scale(np.full(b.size, -reference_scale))
+                )
+                if b_input.noise is not None
+                else None,
+            ),
             mode=mode,
             details={"scale": float(reference_scale)},
         )
@@ -499,8 +517,8 @@ def apply_grouped_background_correction(
                 reason="fixed background values are unavailable",
             )
         return _background_result(
-            forward=GroupCounts(f - fixed[0], vf),
-            backward=GroupCounts(b - fixed[1], vb),
+            forward=GroupCounts(f - fixed[0], vf, noise=f_input.noise),
+            backward=GroupCounts(b - fixed[1], vb, noise=b_input.noise),
             mode=mode,
             values=fixed,
             ranges=None,
@@ -519,9 +537,9 @@ def apply_grouped_background_correction(
     f_value = float(np.mean(f_slice))
     b_value = float(np.mean(b_slice))
     corrected = []
-    for raw, variance, limits, level in (
-        (f, vf, f_range, f_value),
-        (b, vb, b_range, b_value),
+    for raw, variance, limits, level, source in (
+        (f, vf, f_range, f_value, f_input),
+        (b, vb, b_range, b_value, b_input),
     ):
         values = variance[limits.slice]
         covariance = np.zeros(raw.size)
@@ -533,6 +551,7 @@ def apply_grouped_background_correction(
                 float(np.sum(values)) / values.size**2,
                 covariance,
                 variance,
+                source.noise,
             )
         )
     return _background_result(
@@ -665,11 +684,22 @@ def _estimated_background_group(
     level_variance: float,
     count_covariance: NDArray[np.float64],
     independent_variance: NDArray[np.float64],
+    noise=None,
 ) -> GroupCounts:
     """Keep independent Poisson noise separate from one shared subtracted level."""
     return GroupCounts(
         raw - level,
         independent_variance,
+        noise=noise.subtract_estimate(
+            np.divide(
+                count_covariance,
+                independent_variance,
+                out=np.zeros(raw.size),
+                where=independent_variance > 0,
+            )
+        )
+        if noise is not None
+        else None,
         shared=(
             SharedComponent(
                 "background",

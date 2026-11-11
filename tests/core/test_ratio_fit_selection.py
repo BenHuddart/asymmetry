@@ -411,3 +411,42 @@ def test_global_prescreen_completion_and_partition_count_only_fitted_observation
         sibling_values_by_template={},
     )
     assert plan.analysed_points == 12
+
+
+def test_rotated_undefined_ratios_are_omitted_from_actual_fit_observations():
+    from asymmetry.core.data.dataset import Histogram, Run
+    from asymmetry.core.fitting.likelihood import dataset_observations
+    from asymmetry.core.transform.projections import reduce_selected_projections, reduction_identity
+    from asymmetry.core.transform.rotating_frame import (
+        FrameSnapshot,
+        RotatingFrame,
+        rotate_transverse,
+    )
+
+    run = Run(
+        601,
+        histograms=[
+            Histogram(np.r_[0.0, 0.0, np.full(14, rate)], 0.1)
+            for rate in (1200.0, 800.0, 700.0, 1400.0)
+        ],
+        grouping={
+            "groups": {1: [1, 2], 2: [3, 4], 3: [1, 3], 4: [2, 4]},
+            "alpha": 1.0,
+            "t0_bin": 0,
+            "projections": [
+                {"label": "P_x", "forward_group": 1, "backward_group": 2},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+            ],
+        },
+    )
+    frame = RotatingFrame.typed_frequency(0.61, 1)
+    curves = reduce_selected_projections(run)
+    rotated = rotate_transverse(curves["P_x"], curves["P_y"], frame, weights=(1.0,))
+    for curve in rotated:
+        curve.metadata["rotating_frame"] = FrameSnapshot(
+            frame, (1.0,), reduction_identity(run.grouping)
+        )
+        assert curve.ratio_validity.report().undefined_ratio == 2
+        observations = dataset_observations(curve)
+        assert len(observations.time) == 14
+        assert observations.report.undefined_ratio == 2
