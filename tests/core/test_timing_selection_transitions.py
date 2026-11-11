@@ -3,9 +3,16 @@
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import Histogram, Run
-from asymmetry.core.io.periods import select_period_histograms
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.periods import (
+    combine_mapped_periods,
+    select_period_histograms,
+)
+from asymmetry.core.io.periods import (
+    period_run as acquired_period_run,
+)
 from asymmetry.core.project.profiles import (
+    GoodWindowPolicy,
     T0Policy,
     profile_fingerprint_for_run,
     profile_from_payload,
@@ -165,3 +172,71 @@ def test_deferred_manual_offset_uses_explicit_resolved_pair():
     counts = group_forward_backward(histograms, grouping, resolved_indices=([1], [2])).counts
     assert counts.alignment.common_t0_bin + counts.alignment.first_bin == 5
     assert counts.alignment.timing_sources == ((1, "manual"), (2, "manual"))
+
+
+@pytest.mark.parametrize("selection", ["ordinary", "red", "green"])
+def test_manual_elapsed_window_retains_acquired_bins_after_deferred_timing(selection):
+    sources = []
+    for number, anchors in enumerate(((3, 7), (11, 14)), start=1):
+        histograms = [
+            Histogram(
+                1000 * number + 100 * i + np.arange(40) ** 2,
+                bin_width=0.1,
+                t0_bin=anchor,
+                good_bin_start=anchor + 2,
+                good_bin_end=anchor + 12,
+            )
+            for i, anchor in enumerate(anchors)
+        ]
+        run = Run(
+            number,
+            histograms=histograms,
+            metadata={"run_number": number, "source_run_number": 1, "period_number": number},
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "t0_source": "file",
+                "t0_bin": max(anchors),
+                "detector_t0_bins": list(anchors),
+                "good_window_policy": {"mode": "from_file"},
+            },
+        )
+        sources.append(MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), run=run))
+    originals = [[h.counts.copy() for h in source.run.histograms] for source in sources]
+    if selection == "ordinary":
+        run = sources[0].run
+    else:
+        mapped = combine_mapped_periods(sources, {1: "red", 2: "green"})
+        run = acquired_period_run(mapped.run, int(selection == "green"))
+    profile = profile_from_payload(run.grouping, "window", profile_fingerprint_for_run(run))
+    file_selected = []
+    for shift in (0, 5):
+        profile.t0_policy = T0Policy(mode="manual", offset_bins=shift)
+        grouping = resolve_effective_grouping(profile, run)
+        if selection != "ordinary":
+            assert "period_inputs" in grouping
+            assert "effective_detector_t0_bins" not in grouping
+        counts = group_forward_backward(run.histograms, grouping).counts
+        assert counts.alignment.first_bin > 0
+        file_selected.append(
+            [group.counts[counts.window.slice] for group in (counts.forward, counts.backward)]
+        )
+    for before, after in zip(*file_selected, strict=True):
+        np.testing.assert_array_equal(before, after)
+    profile.good_window_policy = GoodWindowPolicy(
+        mode="manual", first_offset_bins=4, last_offset_bins=9
+    )
+    grouping = resolve_effective_grouping(profile, run)
+    counts = group_forward_backward(run.histograms, grouping).counts
+    source = sources[int(selection == "green")].run
+    for histogram, group in zip(source.histograms, (counts.forward, counts.backward), strict=True):
+        # The authored elapsed bins 4..9 follow t0 + 5, even past file-good bounds.
+        raw = histogram.t0_bin + np.arange(9, 15)
+        expected = histogram.counts[raw]
+        np.testing.assert_array_equal(group.counts[counts.window.slice], expected)
+        assert not np.array_equal(expected, histogram.counts[raw - 5])
+        assert raw[-1] > histogram.good_bin_end
+    for source, before in zip(sources, originals, strict=True):
+        for histogram, original in zip(source.run.histograms, before, strict=True):
+            np.testing.assert_array_equal(histogram.counts, original)
