@@ -1,5 +1,7 @@
 """Declared period order and actual selected/mapped observation identity."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -98,3 +100,52 @@ def test_selected_nested_ranges_exclude_unselected_green_conditions():
     red = period_run(full, 0)
     result = combine_runs([red, sources[4]])
     assert result.metadata["temperature_spread"] == (10, 50)
+
+
+def mapping_dataset(run):
+    return MuonDataset(np.arange(12), np.zeros(12), np.ones(12), dict(run.metadata), run)
+
+
+def test_selected_nested_mapping_list_requires_original_acquisitions():
+    nested = combine_runs([acquisition(1), acquisition(2)])
+    with pytest.raises(ValueError, match="original acquired"):
+        combine_mapped_periods(
+            [mapping_dataset(nested), mapping_dataset(acquisition(3))], {1: "red", 2: "green"}
+        )
+
+
+def test_direct_mapping_preserves_unit_support_and_inactive_coefficients():
+    a, b = acquisition(1), acquisition(2)
+    unit = combine_mapped_periods(mapping_dataset(combine_runs([a, b])), {1: "red", 2: "green"})
+    assert len(unit.run.grouping["period_inputs"]) == 2
+    assert "implicit_period_inputs" not in unit.run.grouping
+    weighted = mapping_dataset(combine_runs([a, b], scales=[1, 0.5]))
+    with pytest.raises(ValueError, match="coefficient"):
+        combine_mapped_periods(weighted, {1: "red", 2: "green"})
+    selected = combine_mapped_periods(weighted, {1: "red", 2: "ignore"})
+    np.testing.assert_array_equal(selected.run.histograms[0].counts, a.histograms[0].counts)
+    with pytest.raises(ValueError, match="coefficient"):
+        combine_mapped_periods(selected, {1: "red", 2: "green"})
+
+
+def test_ignored_nested_source_keeps_compact_identity_and_later_diagnosis():
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    a, b = acquisition(1), acquisition(2)
+    nested = combine_runs([a, b], scales=[1, 0.5])
+    result = combine_mapped_periods(
+        [mapping_dataset(a), mapping_dataset(nested)], {1: "red", 2: "ignore"}
+    )
+    snapshot = histogram_observation(result.run)
+    original = snapshot.source.grouping["period_inputs"][1]
+    assert all(not source.histograms for source in original.grouping["period_inputs"])
+    np.testing.assert_array_equal(result.run.histograms[0].counts, a.histograms[0].counts)
+    with pytest.raises(ValueError, match="original acquired"):
+        combine_mapped_periods(result, {1: "red", 2: "green"})
+    requested = replace(
+        result.run, grouping=dict(result.run.grouping, period_mapping={"1": "red", "2": "red"})
+    )
+    from asymmetry.core.data.combine import reduce_combined_run
+
+    with pytest.raises(ValueError, match="original acquired"):
+        reduce_combined_run(requested)

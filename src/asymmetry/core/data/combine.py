@@ -400,6 +400,8 @@ def _compatibility_error(runs: list[Run]) -> str | None:
     for run in runs:
         if not run.histograms:
             return f"run {run.run_number} has no histograms to combine"
+        if any(not member.histograms for member in combination_members(run)):
+            return "Original acquired histograms are unavailable; select original file periods explicitly"
 
     if any(run.metadata.get("combination") for run in runs):
         from asymmetry.core.transform.background import resolve_background_mode

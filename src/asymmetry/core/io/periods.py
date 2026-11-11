@@ -626,6 +626,7 @@ def combine_mapped_periods(
     """
     if cancel_check is not None:
         cancel_check()
+    coefficients = None
     if isinstance(period_datasets, MuonDataset):
         if period_datasets.run is None or "period_inputs" not in period_datasets.run.grouping:
             raise ValueError("Remapping requires retained acquired period inputs")
@@ -633,6 +634,7 @@ def combine_mapped_periods(
         if source_run_number is None:
             source_run_number = source_run_of(period_datasets.run)
         runs = list(period_datasets.run.grouping["period_inputs"])
+        coefficients = period_datasets.run.grouping.get("constituent_coefficients")
         metadata_sources = [run.metadata for run in runs]
     else:
         runs = [ds.run for ds in period_datasets]
@@ -641,6 +643,17 @@ def combine_mapped_periods(
         raise ValueError("Every period dataset needs run histograms to map periods")
     n_periods = len(runs)
     normalised = normalise_period_mapping(mapping, n_periods)
+    selected = [number for number, target in normalised.items() if target != "ignore"]
+    if any("period_inputs" in runs[number - 1].grouping for number in selected):
+        raise ValueError(
+            "Map original acquired periods; nested set inputs need their original periods, "
+            "or pass the existing mapped dataset directly to remap it."
+        )
+    if coefficients is not None and any(coefficients[number - 1] != 1 for number in selected):
+        raise ValueError(
+            "Period mapping cannot discard a selected run-arithmetic coefficient; "
+            "select original acquired periods or ignore the nonunit input."
+        )
 
     red_periods = _periods_for_target(normalised, "red")
     green_periods = _periods_for_target(normalised, "green")
@@ -671,6 +684,9 @@ def combine_mapped_periods(
             metadata.pop(key, None)
 
     grouping = dict(base_run.grouping) if isinstance(base_run.grouping, dict) else {}
+    grouping.pop("implicit_period_inputs", None)
+    if coefficients is not None:
+        grouping["constituent_coefficients"] = tuple(coefficients)
     # Acquired inputs own constituent facts; held sums are pooled display views.
     grouping["period_inputs"] = tuple(
         replace(
@@ -683,6 +699,27 @@ def combine_mapped_periods(
                     for key, value in run.grouping.items()
                     if key not in {"period_inputs", "period_histograms", "period_reduced"}
                 }
+            )
+            | (
+                {
+                    "period_inputs": tuple(
+                        replace(
+                            original,
+                            histograms=[],
+                            grouping={},
+                            metadata={
+                                key: original.metadata.get(key)
+                                for key in (
+                                    "data_period_number",
+                                    "dae_period_number",
+                                )
+                            },
+                        )
+                        for original in run.grouping["period_inputs"]
+                    )
+                }
+                if "period_inputs" in run.grouping
+                else {}
             ),
         )
         for run, metadata_source in zip(runs, metadata_sources, strict=True)

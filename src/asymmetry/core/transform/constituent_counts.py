@@ -272,6 +272,10 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
     for number, original, coefficient in active_acquisitions(grouping):
         if cancel_check is not None:
             cancel_check()
+        if "period_inputs" in original.grouping or not original.histograms:
+            raise ValueError(
+                "Select original acquired periods; nested inspection counts cannot supply acquired inputs"
+            )
         effective = grouping_for_acquisition(original, grouping)
         policy = effective.get("t0_policy")
         if policy is not None:
