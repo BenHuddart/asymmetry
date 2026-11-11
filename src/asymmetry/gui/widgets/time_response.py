@@ -1,10 +1,10 @@
 """Fixed ordinary-fit source response controls shared by model authoring."""
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFormLayout, QWidget
+from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QLabel, QLineEdit, QWidget
 
 from asymmetry.core.fitting.time_response import TimeResponse
-from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubleSpinBox
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 
 
 class TimeResponseEditor(QWidget):
@@ -23,21 +23,21 @@ class TimeResponseEditor(QWidget):
             "Two instantaneous pulses with equal incident strengths and muon-survival "
             "weighting. Times use the supplied pulse midpoint on the observation clock."
         )
-        self.separation = NoScrollDoubleSpinBox()
-        self.separation.setDecimals(6)
-        self.separation.setRange(0, 1e6)
-        self.separation.setSuffix(" µs")
+        self.separation = QLineEdit()
         self.separation.setToolTip(
             "Supplied fixed separation in the double-delta approximation; never fitted. "
             "This setting does not move acquired time zero or model finite pulse width."
         )
         self.mode.setCurrentIndex(self.mode.findData(response.mode))
-        self.separation.setValue(response.separation_us if response.mode != "off" else 0.324)
+        self.separation.setText(str(response.separation_us if response.mode != "off" else 0.324))
         self.separation.setEnabled(response.mode != "off")
         layout.addRow("Time response", self.mode)
-        layout.addRow("Pulse separation", self.separation)
+        separation_row = QHBoxLayout()
+        separation_row.addWidget(self.separation)
+        separation_row.addWidget(QLabel("µs"))
+        layout.addRow("Pulse separation", separation_row)
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        self.separation.valueChanged.connect(self.changed)
+        self.separation.textChanged.connect(self.changed)
 
     def _mode_changed(self) -> None:
         self.separation.setEnabled(self.mode.currentData() != "off")
@@ -45,4 +45,4 @@ class TimeResponseEditor(QWidget):
 
     def value(self) -> TimeResponse:
         """Return the typed consumed settings for a new model snapshot."""
-        return TimeResponse(self.mode.currentData(), self.separation.value())
+        return TimeResponse(self.mode.currentData(), self.separation.text())

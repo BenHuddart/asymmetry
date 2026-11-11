@@ -1185,19 +1185,10 @@ def _format_fit_worker_exception(exc: Exception) -> str:
 
 
 def _fit_curve_time_bounds(dataset: MuonDataset) -> tuple[float, float]:
-    """Return the x-range to draw a fitted curve over.
+    """Return the literal requested display range or finite observation extent.
 
-    Prefers the literal fit range stamped onto *dataset* by
-    ``PlotPanel.get_fit_dataset`` (``dataset.metadata["fit_range"]``) over
-    ``dataset.time.min()``/``.max()``: after cropping to that range, the
-    *surviving* first/last bin can sit strictly inside it when no bin lands
-    exactly on an edge (e.g. a range set to start at 0 with the first bin at
-    0.01 µs), which then falsely looks like the fit was never asked to start
-    at t=0. Falls back to the dataset's own *finite* extent when no range was
-    active (the whole dataset is being fitted) or the dataset was never
-    produced by that crop (e.g. built directly in a test) — a grouped count
-    domain can carry non-finite padding at the ends (mirrors
-    ``GlobalFitTab._finite_time_span``).
+    Literal window edges and retained bin centres share the observation clock
+    but need not coincide. Source support is applied when sampling the overlay.
     """
     fit_range = dataset.metadata.get("fit_range")
     if fit_range is not None:
@@ -1214,7 +1205,9 @@ def _sample_fit_curve(
 ) -> tuple[np.ndarray, np.ndarray, tuple[tuple[str, np.ndarray], ...]]:
     """A fitted curve over *dataset*'s fit range: ``(t, y, additive components)``."""
     t_min, t_max = _fit_curve_time_bounds(dataset)
-    t_fit = np.linspace(t_min, t_max, fit_curve_sample_count(model, param_values, t_min, t_max))
+    t_fit = model.time_response.curve_times(
+        t_min, t_max, fit_curve_sample_count(model, param_values, t_min, t_max)
+    )
     components = tuple(model.evaluate_components(t_fit, additive_only=True, **param_values))
     return t_fit, model.function(t_fit, **param_values), components
 

@@ -913,23 +913,19 @@ class SingleFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Set the active composite model and rebuild the parameter table.
+        """Set the model and rebuild parameter rows, carrying identified components.
 
-        ``origins[i]`` is the index, in the *current* model, of the component
-        that is now at index ``i`` — ``None`` for a component that did not
-        exist before. The function builder reports one on accept
-        (``component_origins()``), and given it every surviving component's
-        value, Fix, bounds, batch role, link group and tie follow that
-        component onto its new rows, whatever its parameters are now called.
-        Callers that replace the model outright — Reset (the route back to
-        defaults), a domain switch, dropping the background, the fit wizard, a
-        project restore — pass no origins, and the table is rebuilt from seeds
-        alone.
-
-        Restore paths pass ``seed_from_record=False`` because restored
-        parameter values are replayed by ``restore_parameters`` and must not be
-        re-derived from the bound record (see :meth:`_seed_context`).
+        ``origins[i]`` maps a new component to its old index, or None for a new
+        component. Surviving values, bounds, and constraints follow that identity.
+        Restore passes ``seed_from_record=False`` so recorded values take priority.
         """
+        if model.time_response != self._composite_model.time_response:
+            self._last_fit_result = self._last_fit_parameters = self._last_fit_snapshot = None
+            self._chi2_chip.hide()
+            self._results_card.set_message(
+                "Time response changed; fit again to update results.", tag="Setup"
+            )
+            self._update_card_actions()
         carried = (
             carry_parameter_entries(
                 self._composite_model, model, origins, self._param_table.parameters_state()
@@ -1147,7 +1143,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
             t_fit,
@@ -1212,7 +1208,7 @@ class SingleFitTab(FitTabBase):
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         # Generate fitted curve for plotting
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
 
         component_curves = self._composite_model.evaluate_components(
@@ -1462,7 +1458,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
             t_fit, additive_only=True, **param_dict
@@ -1583,7 +1579,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {p.name: p.value for p in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = fit_curve_sample_count(model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = model.function(t_fit, **param_dict)
         component_curves = model.evaluate_components(t_fit, additive_only=True, **param_dict)
         self.fit_completed.emit(result, (t_fit, y_fit), component_curves)

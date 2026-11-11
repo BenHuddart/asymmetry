@@ -191,3 +191,24 @@ def test_global_recovery_and_selected_observations():
     results, globals_ = result
     assert all(r.success for r in results.values())
     assert globals_["Lambda"].value == pytest.approx(0.7, abs=2e-4)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, [], "double_delta", {"mode": []}, {"mode": "double_delta", "separation_us": None}],
+)
+def test_malformed_authored_response_has_a_scoped_diagnosis(payload):
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    with pytest.raises(ValueError, match="[Tt]ime response|[Ss]upply.*separation"):
+        TimeResponse.from_dict(payload)
+
+
+def test_human_result_description_records_response_without_changing_expression():
+    from asymmetry.core.fitting.time_response import TimeResponse
+
+    off = CompositeModel(["Exponential", "Constant"])
+    active = off.with_time_response(TimeResponse("double_delta", 0.324))
+    assert "d=0.324 µs" in active.formula_string()
+    assert "midpoint" in active.to_model_definition().description
+    assert active.component_expression_string() == off.component_expression_string()

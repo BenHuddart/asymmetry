@@ -19,7 +19,7 @@ def test_shared_builder_authors_response_without_mutating_open_model(qapp):
     editor = dialog._response_editor
     assert editor.value().mode == "off"
     editor.mode.setCurrentIndex(1)
-    editor.separation.setValue(0.4)
+    editor.separation.setText("0.4")
     dialog._on_accept()
     active = dialog.get_composite_model()
     assert active.time_response == TimeResponse("double_delta", 0.4)
@@ -77,7 +77,6 @@ def test_live_single_worker_fits_restored_response_and_ignores_changed_launch(qa
         assert tab.wait_for_fit()
         assert tab._last_fit_result.success
         assert tab._last_fit_result.parameters["Lambda"].value == pytest.approx(0.7, abs=1e-4)
-        recorded = tab._last_fit_result
 
         def delayed(data, source, parameters, **kwargs):
             assert release.wait(10)
@@ -89,7 +88,7 @@ def test_live_single_worker_fits_restored_response_and_ignores_changed_launch(qa
         tab._set_composite_model(replacement)
         release.set()
         assert tab.wait_for_fit()
-        assert tab._last_fit_result is recorded
+        assert tab._last_fit_result is None
         assert model.time_response.separation_us == 0.324
     finally:
         release.set()

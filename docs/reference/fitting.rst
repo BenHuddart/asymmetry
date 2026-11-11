@@ -36,7 +36,8 @@ to **Fixed double pulse** and supply **Pulse separation** in µs. **Off** is the
 default. The tooltip describes “Two instantaneous pulses with equal incident
 strengths and muon-survival weighting.” The supplied pulse midpoint is the
 origin on the resolved observation clock; acquired time zero and good bounds
-are unchanged. Separation is fixed, with no added fit parameter.
+are unchanged. Separation is fixed, with no added fit parameter. Result labels and exports
+include the consumed separation, midpoint, and weighting convention.
 
 For supplied separation :math:`d`, births are :math:`b_j=\pm d/2` and live
 ages are :math:`u_j=t-b_j\geq0`, including age zero. With equal incident
@@ -90,7 +91,9 @@ on nonnegative times; **Off** preserves the source model's existing domain.
 Asymmetry also checks that active separation is finite and nonnegative and that
 requested model points have a live source population. Points before the first
 arrival receive a model/window diagnosis; inactive negative ages are never
-evaluated. These checks concern the requested fit, with no file-format or
+evaluated. Dense overlays start at the first supported birth if a literal
+window edge extends beyond the retained observation centres; this clips only
+display extrapolation and never drops requested fit observations. These checks concern the requested fit, with no file-format or
 facility restriction. Selected errors, masks, and objectives stay with the
 observations. Parameter errors remain conditional on supplied pulse settings
 and fixed calibration. This time response applies to time-asymmetry source

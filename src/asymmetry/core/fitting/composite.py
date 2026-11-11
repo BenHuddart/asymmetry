@@ -2638,6 +2638,7 @@ class CompositeModel:
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
             fraction_groups=[whole_span],
+            time_response=self.time_response,
             # Rebuilding from an existing instance: its names were already
             # vetted (possibly as placeholders), so never re-raise here.
             allow_missing=True,
@@ -2886,7 +2887,17 @@ class CompositeModel:
         return curves
 
     def formula_string(self) -> str:
-        """Return a symbolic formula preview string."""
+        """Describe the prediction, including consumed response settings."""
+        source = self._source_formula_string()
+        if self.time_response.mode == "off":
+            return source
+        return (
+            f"Double pulse d={self.time_response.separation_us} µs "
+            f"(equal incident, muon survival, midpoint): ({source})"
+        )
+
+    def _source_formula_string(self) -> str:
+        """Return the unsmeared source expression on its declared scale."""
         if self.fraction_groups:
             return self._formula_string_with_fraction_groups()
 

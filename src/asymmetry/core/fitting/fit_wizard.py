@@ -3004,6 +3004,10 @@ def build_fit_wizard_recommendation(
                         name in resolution.included_set for name in extra.model.component_names
                     ):
                         continue
+                    extra = replace(
+                        extra,
+                        model=extra.model.with_time_response(family.stage1_rep.model.time_response),
+                    )
                     members.append((extra, True))
             kept: list[str] = []
             for member, is_peak_seeded in members:
@@ -6374,7 +6378,9 @@ def _dense_fit_curves(
         model, parameters, fallback_parameters=fallback_parameters
     )
     n_samples = _curve_sample_count(dataset, param_values)
-    fitted_time = np.linspace(float(dataset.time.min()), float(dataset.time.max()), n_samples)
+    fitted_time = model.time_response.curve_times(
+        float(dataset.time.min()), float(dataset.time.max()), n_samples
+    )
     fitted_curve = np.asarray(model.function(fitted_time, **param_values), dtype=float)
     component_curves = tuple(
         model.evaluate_components(

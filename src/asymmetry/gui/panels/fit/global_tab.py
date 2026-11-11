@@ -2503,30 +2503,16 @@ class GlobalFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Set the active composite model and rebuild classification rows.
+        """Set the model and rebuild classification rows with carried identities.
 
-        ``seed_values`` (parameter name → value text) supplies initial values
-        that take priority over carried state and model defaults. It is used
-        when seeding a batch from the single-fit tab so the batch starts from
-        the current single-fit seeds rather than defaults or stale table state
-        (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
-        likewise carries the single-fit min/max so a bound set there survives
-        the hand-off rather than reverting to the model default.
-
-        ``origins[i]`` is the index, in the *current* model, of the component
-        that is now at index ``i`` — ``None`` for a component that did not
-        exist before. The function builder reports one on accept
-        (``component_origins()``), and given it the value, role and bounds of
-        every surviving component follow that component onto its new rows in
-        both parameter tables, as do the per-run initial values. Callers that
-        replace the model outright — a domain switch, the fit wizard, inherited
-        single-fit seeds, a project restore — pass no origins, and the rows are
-        rebuilt from seeds alone.
-
-        Restore paths pass ``seed_from_record=False`` because restored
-        parameter values are replayed over the seeds and must not be re-derived
-        from the bound records (see :meth:`_seed_context`).
+        Supplied seeds override carried values and model defaults. ``origins``
+        identifies surviving components for both tables and per-run seeds.
+        Restore passes ``seed_from_record=False`` to retain recorded values.
         """
+        if self.is_grouped_time_domain_mode() and model.time_response.mode != "off":
+            raise ValueError(
+                "Time response applies to ordinary asymmetry fits; choose Off for count fitting."
+            )
         seed_values = seed_values or {}
         seed_bounds = seed_bounds or {}
         carried_state, carried_grouped_state, carried_initial_values = self._carry_row_state(
@@ -2729,7 +2715,10 @@ class GlobalFitTab(FitTabBase):
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
         dialog = FitFunctionBuilderDialog(
-            self, initial_model=self._composite_model, domain=self._domain
+            self,
+            initial_model=self._composite_model,
+            domain=self._domain,
+            allow_time_response=not self.is_grouped_time_domain_mode(),
         )
         if dialog.exec():
             new_model = dialog.get_composite_model()

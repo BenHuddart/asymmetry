@@ -39,7 +39,10 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         parent: QWidget | None = None,
         initial_model: CompositeModel | None = None,
         domain: str = "time",
+        *,
+        allow_time_response: bool = True,
     ) -> None:
+        self._allow_time_response = allow_time_response
         self._domain = coerce_domain(domain)
         domain_components = components_for_domain(self._domain)
         self._allowed_components = set(domain_components)
@@ -85,9 +88,12 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             parent=parent,
         )
 
-        self._response_editor.setVisible(self._domain == "time")
+        self._response_editor.setVisible(self._domain == "time" and allow_time_response)
         self.layout().insertWidget(self.layout().count() - 1, self._response_editor)
-        self._response_editor.changed.connect(self._on_structure_changed)
+        self._response_editor.changed.connect(self._on_response_changed)
+
+    def _on_response_changed(self) -> None:
+        self._validate_and_update(self._current_expression())
 
     # ------------------------------------------------------------ authoring
     def _create_user_function(self) -> object | None:
@@ -182,6 +188,11 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         persisted into COMPONENTS).
         """
         names, operators, opens, closes, fractions = self._expression_parser(expression)
+        response = self._response_editor.value()
+        if not self._allow_time_response and response.mode != "off":
+            raise ValueError(
+                "Time response applies to ordinary asymmetry fits; choose Off for count fitting."
+            )
         return CompositeModel(
             names,
             operators=operators,
@@ -189,7 +200,7 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             close_parentheses=closes,
             fraction_groups=fractions,
             allow_missing=True,
-            time_response=self._response_editor.value(),
+            time_response=response,
         )
 
     # --------------------------------------------------------------- result

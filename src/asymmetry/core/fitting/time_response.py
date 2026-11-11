@@ -25,7 +25,7 @@ class TimeResponse:
     separation_us: float | None = None
 
     def __post_init__(self) -> None:
-        if self.mode not in {"off", "double_delta"}:
+        if self.mode not in ("off", "double_delta"):
             raise ValueError("Time response must be off or double_delta.")
         if self.mode == "off":
             object.__setattr__(self, "separation_us", 0.0)
@@ -52,6 +52,8 @@ class TimeResponse:
         """Restore optional authored settings; absent historical settings are off."""
         if payload is None:
             return cls()
+        if not isinstance(payload, Mapping) or "mode" not in payload:
+            raise ValueError("Time response settings need an explicit off or double_delta mode.")
         mode = payload["mode"]
         if mode == "double_delta" and "separation_us" not in payload:
             raise ValueError("Supply a fixed pulse separation in µs for double_delta.")
@@ -85,6 +87,21 @@ class TimeResponse:
             numerator[live] += weight * source(age, **parameters)
             denominator[live] += weight
         return numerator / denominator
+
+    def curve_times(self, t_min: float, t_max: float, points: int) -> NDArray:
+        """Sample only the defined prediction interval for a display overlay.
+
+        Literal window edges need not coincide with retained bin centres.
+        Clipping extrapolation to the first birth does not omit observations;
+        :meth:`evaluate` still diagnoses unsupported requested model points.
+        """
+        if self.mode != "off":
+            t_min = max(t_min, -self.separation_us / 2)
+            if t_max < t_min:
+                raise ValueError(
+                    "Double-pulse curve window has no source population; choose a supported fit window."
+                )
+        return np.linspace(t_min, t_max, points)
 
     def compose(self, source: Callable) -> Callable:
         """Wrap a fractional or percent source callable without changing scale."""
