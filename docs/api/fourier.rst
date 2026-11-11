@@ -90,7 +90,8 @@ model, consumed parameters, units, source, origin, sign, and cutoff policy;
 Direct ``apply_spectrum_conditioning`` calls accept ``quantity="amplitude"``
 (default), ``"power"``, or ``"angle"``; unknown quantity tokens raise
 ``ValueError`` at this public input boundary. Limits below unity or NaN retain
-the unity amplitude limit, which applied metadata report. This lower-level result preserves array
+the unity amplitude limit, which applied metadata report. Ignore leaves that
+limit unused (recorded as ``None``). This lower-level result preserves array
 shape, marking pulse-removed values/errors as NaN and exposing the amplitude
 ``gain`` (zero for removed support). The public spectrum operation selects the
 retained bins before returning a dataset. Errors remain conditional on the

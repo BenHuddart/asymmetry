@@ -304,14 +304,15 @@ def apply_spectrum_conditioning(
     result = ConditioningResult(display=values, error=errors, quantity=quantity)
 
     if pulse_compensation and quantity != "angle":
-        result.amplitude_max_gain = _amplitude_gain_limit(pulse_max_gain)
         gain = pulse_compensation_gain(
             freqs,
             half_width_us=pulse_half_width_us,
             separation_us=pulse_separation_us,
             n_pulses=pulse_n_pulses,
-            max_gain=result.amplitude_max_gain,
+            max_gain=pulse_max_gain,
         )
+        if pulse_n_pulses != 0:
+            result.amplitude_max_gain = _amplitude_gain_limit(pulse_max_gain)
         multiplier = gain**2 if quantity == "power" else gain
         values *= multiplier
         errors *= multiplier

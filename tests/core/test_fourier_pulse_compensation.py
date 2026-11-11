@@ -284,3 +284,23 @@ def test_conditioning_rejects_unknown_authored_quantity(quantity):
         apply_spectrum_conditioning(
             [0, 1], [1, 1], quantity=quantity, pulse_compensation=True, pulse_half_width_us=0.05
         )
+
+
+def test_ignore_does_not_consume_dormant_gain_limit():
+    config = GroupSpectrumConfig(display="Power")
+    plain = compute_average_group_spectrum(_run(), config)
+    ignored = compute_average_group_spectrum(
+        _run(),
+        replace(
+            config,
+            pulse_compensation=True,
+            pulse_n_pulses=0,
+            pulse_half_width_us=float("nan"),
+            pulse_separation_us=-1,
+            pulse_max_gain=None,
+        ),
+    )
+    np.testing.assert_array_equal(ignored.asymmetry, plain.asymmetry)
+    np.testing.assert_array_equal(ignored.error, plain.error)
+    assert ignored.metadata["fourier_pulse_response"]["mode"] == "ignore"
+    assert ignored.metadata["fourier_pulse_response"]["amplitude_max_gain"] is None
