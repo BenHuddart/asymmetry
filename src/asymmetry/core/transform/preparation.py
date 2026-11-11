@@ -318,6 +318,7 @@ def prepare_wizard_dataset(
         dataset.run,
         merged,
         reduced.ratio_validity,
+        reduced.counting_noise,
     )
 
 

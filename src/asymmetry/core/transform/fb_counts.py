@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core.transform.corrections import CorrectionOutcomes
+from asymmetry.core.transform.counting_noise import CountingNoise
 
 
 def _bin_index(value: object, name: str, *, signed: bool = False) -> int:
@@ -139,6 +140,7 @@ class GroupCounts:
     counts: NDArray[np.float64]
     variance: NDArray[np.float64] | None = None
     shared: tuple[SharedComponent, ...] = ()
+    noise: CountingNoise | None = None
 
     @classmethod
     def from_value(cls, value: GroupCounts | ArrayLike) -> GroupCounts:

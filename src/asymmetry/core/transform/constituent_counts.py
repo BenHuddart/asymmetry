@@ -13,6 +13,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionStatus,
     reference_observation_metadata,
 )
+from asymmetry.core.transform.counting_noise import combine_noise
 from asymmetry.core.transform.deadtime import DeadtimeDomain
 from asymmetry.core.transform.fb_counts import GroupCounts, crop_to_good_support
 from asymmetry.core.transform.grouping import grouping_balances, resolve_forward_backward_layout
@@ -224,13 +225,22 @@ class PreparedConstituents:
                 groups.append(
                     group
                     if c == 1
-                    else GroupCounts(c * group.counts, c * c * group.independent_variance)
+                    else GroupCounts(
+                        c * group.counts,
+                        c * c * group.independent_variance,
+                        noise=group.noise.scale(np.full(group.counts.size, c))
+                        if group.noise is not None
+                        else None,
+                    )
                 )
             offset += size
         return GroupCounts(
             np.sum([g.counts for g in groups], axis=0),
             np.sum([g.independent_variance for g in groups], axis=0)
             if any(g.variance is not None for g in groups)
+            else None,
+            noise=combine_noise(*(g.noise for g in groups))
+            if all(g.noise is not None for g in groups)
             else None,
         )
 

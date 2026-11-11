@@ -3,16 +3,17 @@
 A vector-polarisation grouping (EMU's P_x/P_y/P_z) declares several
 forward/backward pairs; each projection is the same counts reduced through
 :func:`reduce_grouped_asymmetry` with its own pair and alpha.  This is the
-Qt-free path the RF vector fit and scripted analyses use; the GUI's stacked
-subplots reduce the same way (pinned by ``tests/gui/test_core_projections.py``).
+Qt-free path scripted analyses and the GUI's stacked
+subplots share (pinned by ``tests/gui/test_core_projections.py``).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -20,16 +21,22 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
 from asymmetry.core.transform.constituent_counts import constituent_metadata, held_period_grids
-from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
+from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.counting_noise import COUNTING_NOISE_POLICY
 from asymmetry.core.transform.period_reduction import period_statistic_policy
-from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
-from asymmetry.core.transform.reduce import (
-    correction_flags_from_grouping,
-    reduce_grouped_asymmetry,
-)
-from asymmetry.core.transform.t0 import find_t0_for_run, resolve_selected_timing
+from asymmetry.core.transform.rebin import BINNING_POLICY, BinningSpec
+from asymmetry.core.transform.t0 import resolve_selected_timing
 
-__all__ = ["projection_alphas", "reduce_run_projections", "reduction_identity"]
+if TYPE_CHECKING:
+    from asymmetry.core.transform.rotating_frame import RotatingFrame
+
+__all__ = [
+    "projection_alphas",
+    "reduce_run_projections",
+    "reduce_selected_projections",
+    "rotate_selected_projections",
+    "reduction_identity",
+]
 
 #: Grouping keys of the canonical axes' alpha, written by the per-axis alpha table.
 _AXIS_ALPHA_KEYS = dict(zip(CANONICAL_VECTOR_AXES, ("alpha_x", "alpha_y", "alpha_z"), strict=True))
@@ -65,7 +72,11 @@ def reduction_identity(grouping: dict[str, Any]) -> str:
     if "period_inputs" in grouping:
         shaping["constituents"] = constituent_metadata(grouping)
     blob = json.dumps(
-        {"binning_policy": BINNING_POLICY, "grouping": shaping},
+        {
+            "binning_policy": BINNING_POLICY,
+            "counting_noise_policy": COUNTING_NOISE_POLICY,
+            "grouping": shaping,
+        },
         sort_keys=True,
         default=lambda value: np.asarray(value).tolist(),
     )
@@ -95,7 +106,13 @@ def projection_alphas(grouping: dict[str, Any], *, explicit_only: bool = False) 
     }
 
 
-def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset]:
+def reduce_run_projections(
+    run: Run,
+    period_index: int,
+    *,
+    facility: str | None = None,
+    reference: BackgroundReference | None = None,
+) -> dict[str, MuonDataset]:
     """Reduce period ``period_index`` (0-based) of ``run`` to ``{label: dataset}``.
 
     The run's applied grouping (``run.grouping``) supplies the groups, the
@@ -108,74 +125,109 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
             f"Run {run.run_number} has {count} period(s); got period index {period_index}."
         )
     source = period_run(run, period_index) if count > 1 else run
+    return reduce_selected_projections(
+        source, period_index=period_index, facility=facility, reference=reference
+    )
+
+
+def reduce_selected_projections(
+    run: Run,
+    *,
+    facility: str | None = None,
+    reference: BackgroundReference | None = None,
+    period_index: int | None = None,
+    binning: BinningSpec | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> dict[str, MuonDataset]:
+    """Reduce the selected period statistic as one counting-observation cohort.
+
+    References must already be resolved by the file/UI boundary. Count variance
+    is conditional on calibration, correction values and frame settings.
+    """
+    from asymmetry.core.transform.counting_noise import capture_counting_observations
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
+
+    source, reference = capture_counting_observations(run, reference, cancel_check=cancel_check)
     grouping = source.grouping
     pairs = derive_projection_pairs(
         grouping["groups"], grouping.get("group_names"), grouping.get("projections")
     )
     if not pairs:
         raise ValueError(f"Run {run.run_number}'s grouping declares no asymmetry projections.")
-    flags = correction_flags_from_grouping(grouping)
-    n_histograms = len(source.histograms)
-    datasets: dict[str, MuonDataset] = {}
-    search = None
-
-    def search_timing(histograms, metadata, **options):
-        nonlocal search
-        if search is None:
-            search = find_t0_for_run(histograms, metadata, **options)
-        return search
-
+    datasets = {}
     for label, (forward, backward) in pairs.items():
+        if cancel_check is not None:
+            cancel_check()
         selected_grouping = dict(
             grouping, forward_group=forward, backward_group=backward, vector_axis=label
         )
-        alpha, beta = grouping_balances(selected_grouping)
-        if "t0_policy" in grouping and "period_inputs" not in grouping:
+        if (
+            "t0_policy" in grouping
+            and "period_inputs" not in grouping
+            and "period_histograms" not in grouping
+        ):
             policy = grouping["t0_policy"]
             resolve_selected_timing(
                 source.histograms,
                 selected_grouping,
                 source.metadata,
                 mode=policy["mode"],
+                cancel_check=cancel_check,
                 offset_bins=policy.get("offset_bins", 0),
-                search_provider=search_timing,
             )
-        result = reduce_grouped_asymmetry(
-            histograms=source.histograms,
-            binning=binning_spec(grouping),
-            grouping=selected_grouping,
-            forward_idx=effective_group_indices(grouping, forward, n_histograms=n_histograms),
-            backward_idx=effective_group_indices(grouping, backward, n_histograms=n_histograms),
-            alpha=alpha,
-            use_deadtime=flags.use_deadtime,
-            deadtime_mode=flags.deadtime_mode,
-            use_background=flags.use_background,
-            metadata=source.metadata,
-            beta=beta,
+        selected = replace(source, grouping=selected_grouping)
+        result = prepare_histogram_asymmetry(
+            selected,
+            merge=1,
+            facility=facility,
+            reference=reference,
+            binning=binning,
+            cancel_check=cancel_check,
         )
-        from asymmetry.core.transform.preparation import histogram_observation
-
         if result.effective_alpha is not None:
             selected_grouping["alpha"] = result.effective_alpha
         datasets[label] = MuonDataset(
             histogram_observation=histogram_observation(
-                replace(source, grouping=selected_grouping)
+                selected,
+                facility=facility,
+                reference=reference,
+                binning=binning,
+                cancel_check=cancel_check,
             ),
             ratio_validity=result.ratio_validity,
+            counting_noise=result.counting_noise,
             time=result.time,
             asymmetry=result.asymmetry,
             error=result.error,
-            metadata={
-                **source.metadata,
-                "projection": label,
-                "period_index": period_index,
-                "grouped_alignment": result.alignment.to_dict(),
-                **(
-                    {"effective_alpha": result.effective_alpha}
-                    if result.effective_alpha is not None
-                    else {}
-                ),
-            },
-            run=source,
+            metadata=result.metadata_with_alignment(
+                {**source.metadata, "projection": label, "period_index": period_index}
+            ),
+            run=selected,
         )
     return datasets
+
+
+def rotate_selected_projections(
+    run: Run,
+    frame: RotatingFrame,
+    *,
+    weights: Sequence[float],
+    facility: str | None = None,
+    reference: BackgroundReference | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> dict[str, MuonDataset]:
+    """Prepare and rotate one selected transverse counting cohort."""
+    from asymmetry.core.transform.rotating_frame import rotate_transverse
+
+    cohort = reduce_selected_projections(
+        run, facility=facility, reference=reference, cancel_check=cancel_check
+    )
+    if cancel_check is not None:
+        cancel_check()
+    pair = rotate_transverse(cohort["P_x"], cohort["P_y"], frame, weights=weights)
+    if cancel_check is not None:
+        cancel_check()
+    return {curve.metadata["projection"]: curve for curve in pair}

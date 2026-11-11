@@ -1,6 +1,6 @@
 """The rotating-frame projection of a synthetic RF nutation run, after Auto-detect.
 
-A two-period run on an idealised six-detector vector polarimeter
+A two-period run on an idealised eight-detector octant polarimeter
 (:func:`~docs.screenshots.data.archetypes.make_rf_nutation_vector`, invented
 numbers): B₀ = 100 G ∥ z, RF on in red with B₁ ∥ x at ν₀ ≈ 1.355 MHz, RF off
 in green. The plot shows red with all three chips selected and the switch on
@@ -14,6 +14,10 @@ The scenario's second capture is that review dialog
 """
 
 from __future__ import annotations
+
+from itertools import product
+
+import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
@@ -29,7 +33,9 @@ def _open_review(window):
     """Show the synthetic run rotated with ν_RF typed, run Auto-detect, return its review."""
     from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
 
-    dataset = make_rf_nutation_vector()
+    dataset = make_rf_nutation_vector(
+        detector_directions=np.array(list(product((-1.0, 1.0), repeat=3))) / np.sqrt(3)
+    )
     window._data_browser.add_dataset(dataset)
     window._data_browser.select_runs([dataset.run_number])
     panel = window._plot_panel
@@ -92,7 +98,7 @@ class RotatingFrameProjectionScenario(_MainWindowScenario):
         review = _open_review(window)
         review._apply_btn.click()
         panel = window._plot_panel
-        # Rotate first, then bunch (the bins stay independent): ×4 = 64 ns bins.
+        # Rotate first, then pack retained counting responses: ×4 = 64 ns bins.
         panel.set_bunch_factor(4)
         if not panel._auto_y_btn.isChecked():
             panel._auto_y_btn.click()

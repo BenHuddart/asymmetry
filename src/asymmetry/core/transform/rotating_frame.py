@@ -16,8 +16,8 @@ is reached without a filter (docs/plans/rotating-frame-projection.md):
   lab axis of the frame, and a spin leaving +z nutates into +y′ (B₁ ∥ x′) or
   −x′ (B₁ ∥ y′).
 
-P′_x = Re z′, P′_y = Im z′. Each bin is transformed alone, so bins stay
-independent and may be rebinned afterwards — unlike the filtered single-signal
+P′_x = Re z′, P′_y = Im z′. Each bin is transformed alone; retained
+shared correction influences survive subsequent curve packing — unlike the filtered single-signal
 demodulation of :mod:`asymmetry.core.transform.rrf`.
 """
 
@@ -34,6 +34,7 @@ from numpy.typing import NDArray
 from scipy.interpolate import BSpline
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.ratio_validity import RatioReason
 
 __all__ = [
     "FRAME_FIELDS",
@@ -309,17 +310,27 @@ def rotate_transverse(
     frame: RotatingFrame,
     *,
     weights: Sequence[float],
+    assume_independent: bool = False,
 ) -> tuple[MuonDataset, MuonDataset]:
     """The P′_x and P′_y datasets of one run's transverse pair, errors propagated.
 
     ``weights`` say how the curves combine the run's periods
     (:func:`period_weights`), so the same combination of the period baselines
     is removed. The rotated components share each bin's noise (their
-    covariance is (σ_y² − σ_x²)·sinθ·cosθ, zero at unit gain and equal errors);
-    each dataset carries its own per-bin error.
+    covariance includes retained counting-observation reuse, gain and sense);
+    each dataset carries its own per-bin error. Caller-supplied independent curves
+    require ``assume_independent=True``; retained cohorts never use that assumption.
     """
     if px.time.shape != py.time.shape or not np.array_equal(px.time, py.time):
         raise ValueError("P_x and P_y must share one time axis to be rotated together.")
+    from asymmetry.core.transform.counting_noise import combine_noise
+
+    if (px.counting_noise is None) != (py.counting_noise is None):
+        raise ValueError(
+            "A transverse pair must retain both counting observations or declare independent curves"
+        )
+    if px.counting_noise is None and not assume_independent:
+        raise ValueError("Curve-only transverse inputs must explicitly assume_independent=True")
     t = px.time
     bx, by = frame.combined_baseline(weights)
     x = px.asymmetry - bx
@@ -333,16 +344,36 @@ def rotate_transverse(
         "P′_x": (x * cos + s * y * sin, np.sqrt(var_x * cos**2 + var_y * sin**2)),
         "P′_y": (x * sin - s * y * cos, np.sqrt(var_x * sin**2 + var_y * cos**2)),
     }
-    pair = tuple(
-        MuonDataset(
-            time=t.copy(),
-            asymmetry=values,
-            error=errors,
-            metadata={**source.metadata, "projection": label},
-            run=source.run,
+    noises = (None, None)
+    if px.counting_noise is not None:
+        noises = (
+            combine_noise(
+                px.counting_noise.scale(cos), py.counting_noise.scale(s * sin / frame.gain)
+            ),
+            combine_noise(
+                px.counting_noise.scale(sin), py.counting_noise.scale(-s * cos / frame.gain)
+            ),
         )
-        for (label, (values, errors)), source in zip(rotated.items(), (px, py), strict=True)
-    )
+    pair = []
+    for (label, (values, errors)), source, noise in zip(
+        rotated.items(), (px, py), noises, strict=True
+    ):
+        validity = None
+        if noise is not None:
+            actual_error = noise.error
+            validity = px.ratio_validity.combine(py.ratio_validity, actual_error)
+            errors = np.where(validity.reasons != RatioReason.UNDEFINED, actual_error, errors)
+        pair.append(
+            MuonDataset(
+                counting_noise=noise,
+                ratio_validity=validity,
+                time=t.copy(),
+                asymmetry=values,
+                error=errors,
+                metadata={**source.metadata, "projection": label},
+                run=source.run,
+            )
+        )
     return pair[0], pair[1]
 
 

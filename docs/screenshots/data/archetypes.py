@@ -855,7 +855,9 @@ _VECTOR_DIRECTIONS = np.array(
 )
 
 
-def make_rf_nutation_vector(seed: int = 151) -> MuonDataset:
+def make_rf_nutation_vector(
+    seed: int = 151, *, detector_directions=_VECTOR_DIRECTIONS
+) -> MuonDataset:
     """Two-period RF run in B₀ = 100 G ∥ z on an idealised six-detector vector polarimeter.
 
     Invented numbers, no real sample. Period 1 (red) has the RF on at the Larmor
@@ -901,11 +903,16 @@ def make_rf_nutation_vector(seed: int = 151) -> MuonDataset:
                     bin_width=bin_width,
                     t0_bin=t0_bin,
                 )
-                for direction in _VECTOR_DIRECTIONS
+                for direction in detector_directions
             ]
         )
     grouping = {
-        "groups": {gid: [gid] for gid in range(1, 7)},
+        "groups": {
+            gid: (np.flatnonzero(detector_directions[:, axis] * sign > 0) + 1).tolist()
+            for gid, (axis, sign) in enumerate(
+                ((2, 1), (2, -1), (1, 1), (1, -1), (0, 1), (0, -1)), 1
+            )
+        },
         "group_names": {1: "Forward", 2: "Backward", 3: "Top", 4: "Bottom", 5: "Left", 6: "Right"},
         "projections": [
             {"label": "P_x", "forward_group": 5, "backward_group": 6},

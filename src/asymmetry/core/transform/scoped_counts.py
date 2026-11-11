@@ -7,6 +7,7 @@ import warnings
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.sparse import csr_matrix
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.corrections import (
@@ -14,6 +15,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     CorrectionStatus,
 )
+from asymmetry.core.transform.counting_noise import CountingNoise, Influence
 from asymmetry.core.transform.deadtime import (
     DeadtimeDomain,
     apply_deadtime_correction,
@@ -171,7 +173,25 @@ class ScopedCounts:
                     stop = min(start + alignment.length, window.last + 1)
                     if first < stop:
                         variance[first - start : stop - start] += values[first:stop]
-        return GroupCounts(total, variance)
+        terms = []
+        for index in indices:
+            hist = self.histograms[index]
+            if hist.counting_observation is not None:
+                start = -offsets[index]
+                local = np.arange(alignment.length)
+                raw = local + start
+                consumed = np.zeros(alignment.length, dtype=bool)
+                for window in required.get(index, ()):
+                    consumed |= (raw >= window.first) & (raw <= window.last)
+                direct = csr_matrix(
+                    (np.ones(np.sum(consumed)), (local[consumed], raw[consumed])),
+                    shape=(alignment.length, hist.n_bins),
+                )
+                terms.append(Influence(hist.counting_observation, direct))
+        noise = CountingNoise(tuple(terms)) if terms else None
+        if noise is not None and variance is None:
+            variance = total.copy()
+        return GroupCounts(total, variance, noise=noise)
 
 
 def scoped_source_digest(histograms, domain):

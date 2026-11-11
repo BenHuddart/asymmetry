@@ -19,6 +19,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.ratio_validity import RatioValidity
 
 if TYPE_CHECKING:
+    from asymmetry.core.transform.counting_noise import CountingNoise, CountingObservation
     from asymmetry.core.transform.preparation import HistogramObservation
 
 
@@ -58,6 +59,10 @@ class Histogram:
     good_bin_end: int = -1
     t0_time_us: float | None = None
     count_variance: NDArray[np.float64] | None = None
+
+    counting_observation: CountingObservation | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.count_variance is None:
@@ -205,6 +210,8 @@ class MuonDataset:
 
     ratio_validity: RatioValidity | None = field(default=None, repr=False, compare=False)
 
+    counting_noise: CountingNoise | None = field(default=None, repr=False, compare=False)
+
     # Convenience -------------------------------------------------------
 
     @property
@@ -311,7 +318,7 @@ class MuonDataset:
         """
 
         run = self.run
-        if run is None and self.histogram_observation is None:
+        if run is None and self.histogram_observation is None and self.counting_noise is None:
             return self
         if run is not None:
             run = replace(
@@ -323,7 +330,7 @@ class MuonDataset:
                     if k not in {"period_histograms", "period_reduced", "period_inputs"}
                 },
             )
-        return replace(self, run=run, histogram_observation=None)
+        return replace(self, run=run, histogram_observation=None, counting_noise=None)
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
         r"""Merge independent curve bins by averaging values and adding variances.
@@ -340,19 +347,28 @@ class MuonDataset:
         from asymmetry.core.transform.rebin import merge_curve_bins
 
         time, asymmetry, error = merge_curve_bins(self.time, self.asymmetry, self.error, factor)
+        noise = None
+        if self.counting_noise is not None:
+            from asymmetry.core.transform.counting_noise import bin_matrix
+
+            edges = np.arange(len(time) + 1) * factor
+            noise = self.counting_noise.transform(bin_matrix(edges, self.n_points, mean=True))
+            error = noise.error
         validity = None
-        if self.ratio_validity is not None and "rotating_frame" not in self.metadata:
+        if self.ratio_validity is not None:
             from asymmetry.core.data.ratio_validity import RatioReason
 
             count = len(time)
             reasons = self.ratio_validity.reasons[: count * factor].reshape(count, factor)
             actual = self.ratio_validity.mathematical_error(self.error)[: count * factor]
-            error = np.sqrt((actual.reshape(count, factor) ** 2).sum(axis=1)) / factor
+            if noise is None:
+                error = np.sqrt((actual.reshape(count, factor) ** 2).sum(axis=1)) / factor
             validity = RatioValidity.from_ratio(
                 ~np.any(reasons == RatioReason.UNDEFINED, axis=1), error
             )
         return MuonDataset(
             ratio_validity=validity,
+            counting_noise=noise,
             time=time,
             asymmetry=asymmetry,
             error=error,
@@ -368,12 +384,17 @@ class MuonDataset:
         copy pickles no smaller than the record it came from. Use
         :meth:`fit_record` for anything bound for a worker process.
         """
+        from scipy.sparse import eye
+
         mask = np.ones(self.n_points, dtype=bool)
         if t_min is not None:
             mask &= self.time >= t_min
         if t_max is not None:
             mask &= self.time <= t_max
         return MuonDataset(
+            counting_noise=self.counting_noise.transform(eye(self.n_points, format="csr")[mask])
+            if self.counting_noise is not None
+            else None,
             time=self.time[mask].copy(),
             asymmetry=self.asymmetry[mask].copy(),
             error=self.error[mask].copy(),
