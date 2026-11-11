@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
@@ -508,3 +510,37 @@ def test_fb_and_grouped_digests_differ_for_same_run():
     assert fourier_grouping_digest(
         _run(grouping), signal_source="fb_asymmetry"
     ) != fourier_grouping_digest(_run(grouping))
+
+
+def test_single_pulse_does_not_consume_dormant_separation():
+    current = GroupSpectrumConfig(
+        pulse_compensation=True,
+        pulse_half_width_us=0.05,
+        pulse_n_pulses=1,
+        pulse_separation_us=-1.0,
+    )
+    recorded = GroupSpectrumConfig(
+        pulse_compensation=True,
+        pulse_half_width_us=0.05,
+        pulse_n_pulses=1,
+        pulse_separation_us=0.324,
+    )
+    assert config_differences(current, recorded) == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pulse_half_width_us": float("nan")},
+        {"pulse_separation_us": -1.0},
+        {"pulse_max_gain": 100.0},
+        {"pulse_compensation": False},
+    ],
+)
+def test_explicit_ignore_consumes_no_dormant_pulse_settings(changes):
+    from dataclasses import replace
+
+    current = GroupSpectrumConfig(
+        pulse_compensation=True, pulse_n_pulses=0, pulse_half_width_us=0.05
+    )
+    assert config_differences(current, replace(current, **changes)) == []

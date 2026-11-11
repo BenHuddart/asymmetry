@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QScrollArea, QWidget
 
 from ..data import make_ybco_vortex_lattice
 from ..data.required_observations import with_unused_saturated_detector
@@ -93,6 +93,8 @@ class FourierTfScenario(Scenario):
         # Auto-Y collapses to degenerate limits on non-negative data (its
         # masking is tuned for signed time-domain asymmetry), so the spectrum
         # is read back and framed explicitly from its in-window peak below.
+        window._fourier_panel._conditioning_section.setExpanded(True)
+        window._fourier_panel._pulse_width_edit.setText("0.05")
         window._on_compute_fourier()
 
         # The recompute runs on a worker thread and its render lands via a
@@ -132,6 +134,9 @@ class FourierTfScenario(Scenario):
         _process_events_for(milliseconds=100)
         _raise_inspector_tab(widget, widget._dock_fourier.windowTitle())
         super().settle(widget)
+        panel = widget._fourier_panel
+        panel.findChild(QScrollArea).ensureWidgetVisible(panel._pulse_width_edit, 0, 120)
+        _process_events_for(milliseconds=80)
 
 
 # Local import alias kept inside the module to avoid leaking constants from

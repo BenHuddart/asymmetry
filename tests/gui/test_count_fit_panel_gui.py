@@ -240,21 +240,18 @@ def test_colliding_model_name_reports_error(qapp, fb_dataset):
         tab._count_fit_seed_params(fb_dataset, _Model(), mode="fb")
 
 
-def test_dpsep_fit_toggle_routes_to_tab(qapp, fb_dataset):
-    """The dpsep 'fit' checkbox flips the tab into scan-refinement mode."""
+def test_separation_control_supplies_fixed_input_to_both_tabs(qapp, fb_dataset):
+    from PySide6.QtWidgets import QCheckBox
+
     window = MultiGroupFitWindow()
     window.set_dataset(fb_dataset)
-    window._target_combo.setCurrentIndex(2)  # single → count mode enables dpsep
+    window._target_combo.setCurrentIndex(2)
     window._dpsep_spin.setValue(0.324)
-    window._dpsep_fit_check.setChecked(True)
-    tab = window._single_fit_tab
-    assert window._dpsep_fit_check.isEnabled()
-    assert tab._count_dpsep_fit is True
-    # A scan-mode seed yields a FREE dpsep bracketing the instrument value.
-    params = tab._count_fit_seed_params(fb_dataset, tab._grouped_fit_model(), mode="single")
-    dpsep = params["dpsep"]
-    assert not dpsep.fixed
-    assert dpsep.min < 0.324 < dpsep.max
+    assert "fit" not in [check.text() for check in window.findChildren(QCheckBox)]
+    for tab in (window._single_fit_tab, window._batch_fit_tab):
+        params = tab._count_fit_seed_params(fb_dataset, tab._grouped_fit_model(), mode="single")
+        assert params["dpsep"].fixed
+        assert params["dpsep"].value == pytest.approx(0.324)
 
 
 def test_promote_button_without_fit_shows_hint(qapp, fb_dataset):
@@ -643,3 +640,19 @@ def test_grouped_single_state_pruned_on_run_removal(qapp):
 
     win.prune_grouped_single_state([712])
     assert 712 not in win._single_grouped_state_by_run
+
+
+def test_count_scan_is_not_a_persisted_authored_recipe(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)
+    window._dpsep_spin.setValue(0.324)
+    state = window.get_state()
+    assert set(state) == {"single", "batch", "count_skip_window"}
+    restored = MultiGroupFitWindow()
+    restored.set_dataset(fb_dataset)
+    restored.restore_state(state)
+    assert restored._dpsep_spin.value() == 0
+    assert "dpsep" not in restored._single_fit_tab._count_fit_seed_params(
+        fb_dataset, restored._single_fit_tab._grouped_fit_model(), mode="single"
+    )

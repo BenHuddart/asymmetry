@@ -359,3 +359,62 @@ def test_multi_group_fit_window_exposes_phase_exchange_methods(qapp: QApplicatio
     finally:
         window.close()
         window.deleteLater()
+
+
+@pytest.mark.parametrize("text", ["0", "", "nan", "-0.05"])
+def test_panel_keeps_invalid_active_width_for_request_diagnosis(qapp, text):
+    from asymmetry.core.maxent import build_maxent_input
+    from asymmetry.core.maxent.pulse import PulseRequestError
+    from asymmetry.gui.panels.maxent_panel import MaxEntPanel
+    from tests.core.test_maxent_pulse import _single_line_run
+
+    panel = MaxEntPanel()
+    panel.set_group_definitions({1: "F", 2: "B"})
+    panel._pulse_mode_combo.setCurrentIndex(1)
+    panel._pulse_half_width_edit.setText(text)
+    with pytest.raises(PulseRequestError, match="half.width"):
+        build_maxent_input(_single_line_run(), panel.maxent_config(cycles=1))
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"pulse_mode": "single", "pulse_half_width_us": None},
+        {"pulse_mode": "single", "pulse_half_width_us": "bad"},
+        {"pulse_mode": "unsupported"},
+    ],
+)
+def test_restore_keeps_unresolved_pulse_request_editable(qapp, state):
+    from asymmetry.core.maxent import PulseRequestError
+    from tests.core.test_maxent_pulse import _single_line_run
+
+    panel = MaxEntPanel()
+    panel.set_group_definitions({1: "F", 2: "B"})
+    panel.restore_state(state)
+    with pytest.raises(PulseRequestError):
+        build_maxent_input(_single_line_run(), panel.maxent_config(cycles=1))
+
+
+def test_real_maxent_worker_reports_invalid_request_then_accepts_ignore(qapp):
+    from asymmetry.core.simulate import reduce_run_to_dataset
+    from asymmetry.gui.mainwindow import MainWindow
+    from tests._qt_helpers import wait_for
+
+    window = MainWindow()
+    dataset = reduce_run_to_dataset(_fb_run())
+    window._data_browser.add_dataset(dataset)
+    window._on_dataset_selected(dataset.run_number)
+    window._on_domain_button_clicked("maxent")
+    panel = window._maxent_panel
+    panel._pulse_mode_combo.setCurrentIndex(2)
+    panel._pulse_half_width_edit.setText("0")
+    window._on_compute_maxent(1)
+    wait_for(lambda: not window._maxent_active, qapp, timeout_s=20)
+    assert "half-width must be positive and finite" in panel._action_footer._status_label.text()
+    assert dataset.run_number not in window._maxent_result_by_run
+    panel._pulse_mode_combo.setCurrentIndex(0)
+    window._on_compute_maxent(1)
+    wait_for(lambda: not window._maxent_active, qapp, timeout_s=20)
+    result, _config = window._maxent_result_by_run[dataset.run_number]
+    assert result.metadata["pulse_response"] == {"mode": "ignore"}
+    assert panel._pulse_half_width_edit.text() == "0"

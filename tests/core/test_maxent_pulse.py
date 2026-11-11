@@ -308,6 +308,111 @@ def test_maxent_config_pulse_and_units_round_trip() -> None:
     assert restored.pulse_separation_us == pytest.approx(0.324)
     assert restored.exclude_t_min_us == pytest.approx(1.0)
     assert restored.exclude_t_max_us == pytest.approx(2.0)
-    # Malformed values degrade to defaults, not exceptions.
+    # Unknown authored modes remain available for an actionable request diagnosis.
     bad = MaxEntConfig.from_dict({"pulse_mode": "wat"})
-    assert bad.pulse_mode == "ignore"
+    assert bad.pulse_mode == "wat"
+    with pytest.raises(ValueError, match="Choose Ignore"):
+        build_maxent_input(_single_line_run(), bad)
+
+
+@pytest.mark.parametrize("width", [0.0, -0.05, float("nan"), float("inf")])
+def test_active_width_is_required_at_preparation(width):
+    config = MaxEntConfig(pulse_mode="double", pulse_half_width_us=width)
+    with pytest.raises(ValueError, match="half.width.*positive.*finite"):
+        build_maxent_input(_single_line_run(), config)
+
+
+def test_ignore_does_not_consume_dormant_response_inputs():
+    config = MaxEntConfig(
+        pulse_mode="ignore", pulse_half_width_us=float("nan"), pulse_separation_us=-1.0
+    )
+    prepared = build_maxent_input(_single_line_run(), config)
+    assert prepared.pulse_amp is None
+
+
+@pytest.mark.parametrize("separation", [-1.0, float("nan"), float("inf")])
+def test_double_response_rejects_invalid_consumed_separation(separation):
+    with pytest.raises(ValueError, match="separation.*nonnegative.*finite"):
+        build_maxent_input(
+            _single_line_run(), MaxEntConfig(pulse_mode="double", pulse_separation_us=separation)
+        )
+
+
+@pytest.mark.parametrize("mode", ["single", "double"])
+def test_prepared_fixed_phase_operator_matches_arrival_integrals(mode):
+    from scipy.integrate import quad
+
+    from asymmetry.core.utils.constants import MUON_LIFETIME_US, PION_LIFETIME_US
+
+    config = MaxEntConfig(
+        n_spectrum_points=16,
+        f_min_mhz=0.0,
+        f_max_mhz=9.0,
+        auto_window=False,
+        auto_phase_seed=False,
+        fit_phases=False,
+        pulse_mode=mode,
+        pulse_half_width_us=0.05,
+        pulse_separation_us=0.324,
+        group_phase_degrees={1: 23.0, 2: 167.0},
+    )
+    run = _single_line_run()
+    original_t0 = [h.t0_bin for h in run.histograms]
+    prepared = build_maxent_input(run, config)
+    births = np.array([0.0]) if mode == "single" else np.array([-0.162, 0.162])
+    weights = np.exp(births / MUON_LIFETIME_US)
+    response = []
+    for frequency in prepared.frequencies_mhz:
+        omega = 2 * np.pi * frequency
+        source = quad(
+            lambda u: 0.75 / 0.05 * (1 - (u / 0.05) ** 2) * np.cos(omega * u),
+            -0.05,
+            0.05,
+            epsabs=1e-13,
+        )[0]
+        pion_cos = quad(
+            lambda v: np.exp(-v / PION_LIFETIME_US) / PION_LIFETIME_US * np.cos(omega * v),
+            0,
+            np.inf,
+            epsabs=1e-12,
+        )[0]
+        pion_sin = quad(
+            lambda v: np.exp(-v / PION_LIFETIME_US) / PION_LIFETIME_US * np.sin(omega * v),
+            0,
+            np.inf,
+            epsabs=1e-12,
+        )[0]
+        response.append(
+            source
+            * (pion_cos - 1j * pion_sin)
+            * np.sum(weights * np.exp(-1j * omega * births))
+            / weights.sum()
+        )
+    spectrum = np.linspace(0.01, 0.2, prepared.n_spectrum_points)
+    actual = opus(spectrum, prepared)
+    for group in prepared.groups:
+        phase = 2 * np.pi * np.outer(group.time_us, prepared.frequencies_mhz) + np.deg2rad(
+            group.phase_degrees
+        )
+        expected = np.real(np.exp(1j * phase) * np.array(response)) @ spectrum
+        np.testing.assert_allclose(actual[group.group_id], expected, atol=2e-11, rtol=2e-11)
+    assert [h.t0_bin for h in run.histograms] == original_t0
+    assert prepared.metadata["pulse_response"]["origin"] == "proton_pulse_centre_or_midpoint"
+
+
+def test_dormant_response_edits_do_not_restart_maxent():
+    from dataclasses import replace
+
+    from asymmetry.core.maxent.state_identity import state_signature
+
+    config = MaxEntConfig(pulse_mode="ignore")
+    prepared = build_maxent_input(_single_line_run(), config)
+    changed = replace(config, pulse_half_width_us=float("nan"), pulse_separation_us=-1.0)
+    assert state_signature(prepared, config) == state_signature(prepared, changed)
+
+
+@pytest.mark.parametrize("width", [0.0, -1.0, float("nan"), float("inf"), None, "bad"])
+def test_config_restore_keeps_invalid_authored_width_for_diagnosis(width):
+    config = MaxEntConfig.from_dict({"pulse_mode": "single", "pulse_half_width_us": width})
+    with pytest.raises(ValueError, match="half.width"):
+        build_maxent_input(_single_line_run(), config)

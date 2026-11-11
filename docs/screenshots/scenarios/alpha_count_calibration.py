@@ -36,7 +36,7 @@ class AlphaCountCalibrationScenario(Scenario):
         from asymmetry.core.simulate import (
             build_builtin_template,
             reduce_run_to_dataset,
-            simulate_run,
+            simulate_double_pulse_run,
         )
         from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 
@@ -46,11 +46,12 @@ class AlphaCountCalibrationScenario(Scenario):
         # a clean single-frequency precession — the count-domain unit-test recipe
         # (tests/core/test_count_domain_fits.py) promoted into a screenshot.
         template = build_builtin_template("ideal_pulsed_fb")
-        run = simulate_run(
+        run = simulate_double_pulse_run(
             template,
             _tf_asymmetry,
             {"A": 20.0, "f": 1.5, "phi": 0.3},
             total_events=40e6,
+            dpsep_us=0.324,
             alpha=1.25,
             seed=1,
         )
@@ -66,6 +67,7 @@ class AlphaCountCalibrationScenario(Scenario):
         # Fit target → F + B (free α). Item data drives the mode key, but the
         # index is stable (All groups / F + B / Single group).
         window._target_combo.setCurrentIndex(1)
+        window._dpsep_spin.setValue(0.324)
         _process_events_for(milliseconds=60)
 
         # Expand the two collapsed advanced sections so their real controls — the
