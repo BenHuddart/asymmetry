@@ -23,8 +23,8 @@ def sum_period_histograms(
 ) -> list[Histogram]:
     """Sum per-period histogram lists detector-wise (count level).
 
-    Independent supplied variances add; raw Poisson contributions use their
-    counts. Timing follows the first contributor and bins use common raw-index
+    Independent supplied variances add; genuinely raw Poisson contributions use
+    their counts. NaN retains unknown source noise for scoped consumer validation. Timing follows the first contributor and bins use common raw-index
     support. This operation does not align different acquisition clocks.
     A singleton is copied without inferring a variance or statistical eligibility.
     """
@@ -51,33 +51,28 @@ def sum_period_histograms(
             cancel_check()
         first = period_histograms[0][det]
         n_bins = min(len(period[det].counts) for period in period_histograms)
-        if any(
-            period[det].count_variance is None and np.any(period[det].counts[:n_bins] < 0)
-            for period in period_histograms
-        ):
-            raise ValueError(
-                "Signed period counts require supplied variance for independent pooling"
-            )
         counts = np.zeros(n_bins, dtype=np.float64)
+        variance = np.zeros(n_bins, dtype=np.float64)
+        retain_noise = any(c != 1 for c in coefficients)
         for period, coefficient in zip(period_histograms, coefficients, strict=True):
-            counts += coefficient * np.asarray(period[det].counts[:n_bins], dtype=np.float64)
-        variance = None
-        if any(c != 1 for c in coefficients) or any(
-            period[det].count_variance is not None for period in period_histograms
-        ):
-            variance = sum(
-                coefficient**2
-                * (
-                    period[det].count_variance
-                    if period[det].count_variance is not None
-                    else period[det].counts
-                )[:n_bins]
-                for period, coefficient in zip(period_histograms, coefficients, strict=True)
-            )
+            histogram = period[det]
+            values = np.asarray(histogram.counts[:n_bins], dtype=np.float64)
+            counts += coefficient * values
+            noise = histogram.count_variance
+            if noise is None:
+                # A signed/fractional source is not an acquired Poisson draw.
+                # Unknown noise stays unknown even when the total looks integral.
+                raw_poisson = np.isfinite(values) & (values >= 0) & (values == np.floor(values))
+                noise = np.where(raw_poisson, values, np.nan)
+            else:
+                noise = noise[:n_bins]
+                retain_noise = True
+            retain_noise |= bool(np.any(np.isnan(noise)))
+            variance += coefficient**2 * noise
         summed.append(
             Histogram(
                 counts=counts,
-                count_variance=variance,
+                count_variance=variance if retain_noise else None,
                 bin_width=first.bin_width,
                 t0_bin=first.t0_bin,
                 good_bin_start=max(period[det].good_bin_start for period in period_histograms),

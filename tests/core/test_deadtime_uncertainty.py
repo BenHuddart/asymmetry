@@ -52,7 +52,7 @@ def _counts(run, *, background=False, **kwargs):
     )
 
 
-@pytest.mark.parametrize("variance", [[1.0], [-1.0, 2.0], [np.nan, 2.0], [[1.0, 2.0]], [1j, 2j]])
+@pytest.mark.parametrize("variance", [[1.0], [-1.0, 2.0], [np.inf, 2.0], [[1.0, 2.0]], [1j, 2j]])
 def test_histogram_rejects_invalid_count_variance(variance):
     with pytest.raises(ValueError, match="variance"):
         Histogram(np.array([1.0, 2.0]), bin_width=1.0, count_variance=variance)

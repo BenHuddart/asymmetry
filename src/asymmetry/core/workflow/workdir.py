@@ -93,13 +93,10 @@ DERIVED_SERIES_KINDS = frozenset({"global-batch", "fit-trend"})
 #: added to it afterwards.
 _NOT_THE_FIT = frozenset({"schema", "asymmetry_version", "trend_fits"})
 
-#: Default work-directory name, resolved against the current directory. Not
-#: hidden: an analyst who has to find a plot, delete a stale session or put a
-#: recipe under version control should see it in a file listing.
+#: Visible work-directory name, resolved against the current directory.
 WORKDIR_NAME = "asymmetry-work"
 
-#: Chunk the source file is read in while hashing — a buffer size, not a limit
-#: on what is hashed (:func:`file_fingerprint` reads to the end).
+#: Hashing buffer size; file_fingerprint reads through the complete source.
 _FILE_HASH_CHUNK = 1024 * 1024
 
 #: Characters a name may never contain, because each one would make it
@@ -257,7 +254,7 @@ def reduction_digest(
     grouping: dict[str, Any],
     settings: ReductionSettings,
 ) -> str:
-    """Identify source contents, authored settings, and the numerical preparation policy."""
+    """Identify source contents, authored settings, and numerical preparation."""
     payload = {
         **period_statistic_policy(
             dict(grouping, period_mode=settings.period) if settings.period is not None else grouping

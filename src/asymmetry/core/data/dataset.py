@@ -46,8 +46,9 @@ class Histogram:
         sub-bin t0; see :attr:`t0_time_us_effective`.
     count_variance : NDArray or None
         Independent counting variance on the same acquisition bins. ``None``
-        denotes raw Poisson counts. Deadtime-prepared copies retain measured
-        variance rather than inferring it from their corrected count values.
+        denotes the raw Poisson assumption. NaN explicitly records unknown noise
+        on an acquisition bin; consumed unknown noise is an operation error.
+        Prepared copies retain noise rather than infer it from corrected counts.
     """
 
     counts: NDArray[np.float64]
@@ -66,10 +67,12 @@ class Histogram:
             variance.ndim != 1
             or variance.shape != np.shape(self.counts)
             or variance.dtype.kind not in "biuf"
-            or not np.all(np.isfinite(variance))
+            or np.any(np.isinf(variance))
             or np.any(variance < 0)
         ):
-            raise ValueError("count variance must be finite, non-negative and have the count shape")
+            raise ValueError(
+                "count variance must be non-negative or unknown (NaN), with the count shape"
+            )
         self.count_variance = np.array(variance, dtype=np.float64, copy=True)
         self.count_variance.setflags(write=False)
 

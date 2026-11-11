@@ -289,9 +289,6 @@ def independent_observations(
     same_source = (
         bool(source and other_source) and Path(source).resolve() == Path(other_source).resolve()
     )
-    same_run = metadata.get("source_run_number", metadata.get("run_number")) == other_metadata.get(
-        "source_run_number", other_metadata.get("run_number")
-    )
     same_period = metadata.get(
         "data_period_number", metadata.get("period_number", 1)
     ) == other_metadata.get("data_period_number", other_metadata.get("period_number", 1))
@@ -302,7 +299,7 @@ def independent_observations(
         for i in selected
         for j in other_selected
     )
-    return not (shared or (same_source and same_run and same_period))
+    return not (shared or (same_source and same_period))
 
 
 def reference_observation_metadata(run: Run) -> dict[str, Any]:

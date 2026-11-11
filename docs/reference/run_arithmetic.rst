@@ -37,6 +37,12 @@ requirements. Asymmetry also checks that coefficients are finite and at least
 one is nonzero: an invalid request raises ``CombineError`` without changing
 its sources. Signed source counts require supplied independent variance for
 pooling; a positive pooled total cannot establish missing source noise.
+``Histogram.count_variance`` records unknown independent noise as NaN, distinct
+from zero variance. Asymmetry also checks noise only on consumed detectors/bins
+before correction or ratio/count fitting. Unknown noise there requires supplied
+variance; unused raw context remains inspectable and does not block a selected
+reduction. Fractional sources without supplied noise cannot become Poisson
+observations by pooling to integer totals.
 
 For full period payloads the same coefficients act on every counterpart.
 Asymmetry also checks that contributing payloads have matching period counts,
@@ -128,8 +134,8 @@ musrfit 1.12.1 distinguishes standalone ``addRun`` from fit-time ``ADDRUN``.
 The `musrfit manual
 <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_ documents histogram
 addition and whole-bin timing shifts. Matched correction-off fit-time ADDRUN
-controls agree on unit-addition values and structured whole-bin interior counts
-to a tolerance of :math:`5\times10^{-6}` in fractional asymmetry. That does not
+controls agree on unit-addition values and interior asymmetry values formed
+from structured count inputs, to a tolerance of :math:`5\times10^{-6}` in fractional asymmetry. That does not
 establish endpoint, error, arbitrary signed-weight, or likelihood equivalence.
 At unequal correction facts the tested fit-time ADDRUN uses the primary RUN
 correction context for added data; reversing the primary run changes the result.

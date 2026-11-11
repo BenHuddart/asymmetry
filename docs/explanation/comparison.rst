@@ -1567,7 +1567,8 @@ ordinary padded alignment and period raw-index support remain distinct.
 
 WiMDA 1.326 co-add/Co-sub and musrfit 1.12.1 addRun/ADDRUN provide the ordinary
 count-addition comparison. Matched correction-off fit-time ADDRUN controls
-agree on unit-addition/whole-bin interior values within 5e-6 fractional asymmetry;
+agree on unit-addition and interior asymmetry values from whole-bin-aligned
+counts within 5e-6 fractional asymmetry;
 this establishes neither uncertainty nor endpoint equivalence. The tested
 unequal-fact ADDRUN applies the primary RUN correction context to added data.
 Mantid 6.16 development Scale/Plus/Minus document the explicit independent
