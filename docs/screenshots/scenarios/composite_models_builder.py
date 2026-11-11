@@ -18,6 +18,7 @@ from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.time_response import TimeResponse
 
 from ._base import CaptureContext, Scenario, register
 
@@ -33,7 +34,9 @@ class CompositeModelsBuilderScenario(Scenario):
         )
 
         initial_model = CompositeModel(
-            ["Oscillatory", "Exponential", "Constant"], operators=["+", "+"]
+            ["Oscillatory", "Exponential", "Constant"],
+            operators=["+", "+"],
+            time_response=TimeResponse("double_delta", 0.324),
         )
         dialog = FitFunctionBuilderDialog(initial_model=initial_model)
         dialog.resize(*self.size)

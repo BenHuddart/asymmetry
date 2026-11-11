@@ -39,9 +39,11 @@ already been through a persistence boundary can be restored again unchanged.
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TypeVar
 
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
     deserialize_fit_wizard_recommendation,
@@ -52,6 +54,16 @@ from asymmetry.core.fitting.global_fit_wizard import (
     deserialize_global_fit_wizard_recommendation,
     serialize_global_fit_wizard_recommendation,
 )
+
+
+def _wizard_response_error(
+    current: CompositeModel, candidates: Iterable[CompositeModel]
+) -> str | None:
+    """Diagnose a recommendation whose fixed response is no longer authored."""
+    if any(model.time_response != current.time_response for model in candidates):
+        return "Time response changed; reopen the wizard and analyse again before applying this result."
+    return None
+
 
 #: A form state passes through unchanged when it is not a dict (``None`` for an
 #: unset slot), so the helpers are typed as identity on the input type.

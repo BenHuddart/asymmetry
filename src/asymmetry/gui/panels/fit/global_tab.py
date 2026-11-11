@@ -12,6 +12,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from itertools import chain
 from types import MappingProxyType
 
 import numpy as np
@@ -188,7 +189,7 @@ from .tab_base import (
     fit_results_snapshot,
     param_name_col_width,
 )
-from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
+from .wizard_cache import GlobalWizardCacheEntry, _wizard_response_error, global_wizard_cache_entry
 
 #: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
 #: combobox and the ``Analysis ▸ Batch seeding`` menu so the two cannot drift.
@@ -2503,30 +2504,16 @@ class GlobalFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Set the active composite model and rebuild classification rows.
+        """Set the model and rebuild classification rows with carried identities.
 
-        ``seed_values`` (parameter name → value text) supplies initial values
-        that take priority over carried state and model defaults. It is used
-        when seeding a batch from the single-fit tab so the batch starts from
-        the current single-fit seeds rather than defaults or stale table state
-        (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
-        likewise carries the single-fit min/max so a bound set there survives
-        the hand-off rather than reverting to the model default.
-
-        ``origins[i]`` is the index, in the *current* model, of the component
-        that is now at index ``i`` — ``None`` for a component that did not
-        exist before. The function builder reports one on accept
-        (``component_origins()``), and given it the value, role and bounds of
-        every surviving component follow that component onto its new rows in
-        both parameter tables, as do the per-run initial values. Callers that
-        replace the model outright — a domain switch, the fit wizard, inherited
-        single-fit seeds, a project restore — pass no origins, and the rows are
-        rebuilt from seeds alone.
-
-        Restore paths pass ``seed_from_record=False`` because restored
-        parameter values are replayed over the seeds and must not be re-derived
-        from the bound records (see :meth:`_seed_context`).
+        Supplied seeds override carried values and model defaults. ``origins``
+        identifies surviving components for both tables and per-run seeds.
+        Restore passes ``seed_from_record=False`` to retain recorded values.
         """
+        if self.is_grouped_time_domain_mode() and model.time_response.mode != "off":
+            raise ValueError(
+                "Time response applies to ordinary asymmetry fits; choose Off for count fitting."
+            )
         seed_values = seed_values or {}
         seed_bounds = seed_bounds or {}
         carried_state, carried_grouped_state, carried_initial_values = self._carry_row_state(
@@ -2729,7 +2716,10 @@ class GlobalFitTab(FitTabBase):
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
         dialog = FitFunctionBuilderDialog(
-            self, initial_model=self._composite_model, domain=self._domain
+            self,
+            initial_model=self._composite_model,
+            domain=self._domain,
+            allow_time_response=not self.is_grouped_time_domain_mode(),
         )
         if dialog.exec():
             new_model = dialog.get_composite_model()
@@ -4582,6 +4572,10 @@ class GlobalFitTab(FitTabBase):
         """Apply a global-fit wizard assessment back into the global tab."""
         if not isinstance(assessment, GlobalCandidateAssessment):
             return
+        error = _wizard_response_error(self._composite_model, (assessment.template.model,))
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         if not assessment.is_successful:
             self._results_card.set_message(
                 "<b>Global Fit Wizard failed</b>", tag="Error", tone="error"
@@ -4698,14 +4692,21 @@ class GlobalFitTab(FitTabBase):
         recommendation: GlobalFitWizardRecommendation,
         partition_k: int,
     ) -> None:
-        """Pass the Transitions card's apply request up to the main window.
-
-        The tab cannot mint or reuse the *series* data group the phases nest
-        under — that is the main window's batch-group policy — so this only
-        forwards. The partitioned recommendation reaches the wizard cache through
-        the per-phase :meth:`_apply_fit_wizard_assessment` calls the window then
-        drives back through :meth:`apply_wizard_phase_assessments`.
-        """
+        """Forward phase creation only while its fixed response is current."""
+        error = _wizard_response_error(
+            self._composite_model,
+            chain(
+                (template.model for template in recommendation.templates),
+                (
+                    assessment.template.model
+                    for (k, _), assessment in recommendation.phase_assessments.items()
+                    if k == int(partition_k)
+                ),
+            ),
+        )
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         self.apply_wizard_phases_requested.emit(recommendation, int(partition_k))
 
     def apply_wizard_phase_assessments(
@@ -4713,17 +4714,17 @@ class GlobalFitTab(FitTabBase):
         recommendation: GlobalFitWizardRecommendation,
         phases: Sequence[tuple[str, str, GlobalCandidateAssessment]],
     ) -> None:
-        """Apply one assessment per phase, each bound to its own phase group.
+        """Apply current-response assessments bound to their owning phase groups.
 
-        *phases* is ``(group_id, group_name, assessment)`` in ordinal order. Each
-        application emits ``global_fit_completed``, which the main window records
-        as a :class:`FitSeries` owned by the bound phase group — so the series
-        recording seam needs no phase concept of its own. The tab is left bound
-        to the first phase with that phase's model loaded, which is what the user
-        sees when the wizard closes; on a multi-phase partition that means
-        re-applying phase 1 after the last one, which supersedes phase 1's own
-        series in place (same members, same model) rather than duplicating it.
+        Each application records through the normal series completion signal.
+        The first phase remains bound after a multi-phase application.
         """
+        error = _wizard_response_error(
+            self._composite_model, (assessment.template.model for _, _, assessment in phases)
+        )
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         for group_id, group_name, assessment in phases:
             self.set_bound_group(group_id, group_name)
             self._apply_fit_wizard_assessment(assessment, recommendation)
@@ -5314,20 +5315,18 @@ class GlobalFitTab(FitTabBase):
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
 
-        # Migrate pre-rework parameter entries before restoring the table rows:
-        # legacy ``fraction_<k>`` names to the n-1 free-fraction scheme, and
-        # legacy per-factor amplitudes onto the one-scale-per-product policy.
+        # Parameter rows use the canonical fraction and product names.
         state = migrate_legacy_fraction_state(state)
         state = fold_legacy_product_amplitude_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                # As in the single-fit tab: unregistered (user) component names
-                # degrade to named placeholders rather than silently replacing
-                # the saved model.
+                # Missing user components retain their names and payload.
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
+                if "time_response" in composite_data:
+                    raise
                 self._set_composite_model(
                     CompositeModel(["Exponential", "Constant"], operators=["+"]),
                     seed_from_record=False,

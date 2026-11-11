@@ -1,6 +1,11 @@
 Joint fits
 ==========
 
+Each ordinary time-asymmetry series retains its canonical model's
+:ref:`fixed time response <ordinary-time-response>` in joint fitting and replay.
+Shared parameter columns do not estimate pulse separation.
+
+
 .. image:: /_generated/screenshots/joint_fit_window.png
    :alt: Joint-fit window with an ordered-phase and a paramagnetic-phase
       series ticked and a suggested shared table
