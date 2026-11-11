@@ -19,8 +19,9 @@ restores the constituent rows. There is no GUI editor for arbitrary run weights.
    :alt: Synthetic acquired runs with different clocks and correction facts combined in the Data Browser
 
    **Co-add Selected** accepts shared authored intent while retaining the sources'
-   own clocks and file correction facts. The synthetic result contains only their
-   common observed good support; **Separate Combined** restores its source rows.
+   own clocks and file correction facts. The first selected input supplies the
+   condition labels; a missing master condition stays unknown. Finite active
+   constituent ranges remain in provenance. **Separate Combined** restores sources.
 
 Independent linear arithmetic
 -----------------------------
@@ -56,14 +57,36 @@ For full period payloads the same coefficients act on every counterpart.
 Asymmetry also checks that contributing payloads have matching period counts,
 detector counts, and native bin widths. Mixed ordinary/period payloads or
 mismatched periods require explicit corresponding period selection; the
-operation does not silently discard Green. Detector correspondence follows
-channel order; matching array shapes do not establish physical detector identity.
+operation does not silently discard Green.
 
-Asymmetry also checks known direct source/acquired-period identity and shared
+Asymmetry also checks complete recognised detector orientation tables on the
+retained originals, using the same spelling normalisation as layout presets
+(e.g. Forward/Forw and Backward/Back). Conflicting role/order tables make the
+requested combination unavailable: select acquisitions with corresponding
+counter order. Grouping selects counters but does not remap the physical
+histograms for count addition. Cosmetic labels, incomplete tables, instrument
+names, and ROOT histogram numbers in bank-specific namespaces do not establish
+physical correspondence. Unknown or incomparable facts retain the recorded
+channel-order assumption; matching shapes alone are not physical certification.
+
+For implicit full-period pairing, a permutation of the same complete, distinct
+NeXus data-slot captions requires explicit corresponding period selection or
+**Map periods…**. Dwell slot numbers alone are not condition conflicts. Missing
+or inconsistent optional declarations retain the data-order assumption.
+Authored Red/Green mappings remain distinct from acquired period identities;
+ROOT histogram banks are not periods. These checks affect the combination,
+while individual files remain available for inspection.
+
+Asymmetry also checks flattened original source/acquired-period identity and shared
 count buffers to prevent treating reused noise as independent. Equal run
 numbers or equal count values alone do not establish overlap. Unknown identity
-uses a recorded independence assumption. This is a direct-input safeguard,
-not a covariance model for nested combinations or shared references.
+uses a recorded independence assumption. Thus (A+B)+A and (A−R)+(B−R) cannot
+treat repeated acquisition/reference noise as independent. Zero or ignored terms
+do not cause overlap; separate acquired periods can remain independent. One
+shared reference request applied once to pooled original sample counts is valid.
+This bounded provenance check supplies no general covariance model or recovery
+of unknown processing history. Derived inputs with different reference-background
+requests require original acquisitions and one shared target reference.
 
 Reduction, errors, and limits
 -----------------------------
@@ -126,9 +149,23 @@ original count model. Grouped count/Fourier signals support pooled G+R; G−R
 requires the F/B asymmetry observable.
 
 Inspection frame totals accumulate for co-add; reference subtraction retains
-the sample frame total. Displayed field and temperature use the current good-frame
-weighted summary with constituent values and ranges in provenance; this label
-does not imply one physical sample condition.
+the sample frame total. Field, temperature, title, and instrument/facility/beamline
+labels come from the first ordered input (the master), including displayed
+scalar overrides. The master stays first even with coefficient zero. Missing,
+invalid, or nonfinite master conditions stay unknown, never another input's
+measurement or zero. Constituent values, source identity, and effective signed
+coefficients remain in one ordered provenance record; ``temperature_spread``
+and ``field_spread`` give finite active-constituent (minimum, maximum) ranges,
+including singleton ranges. They are not uncertainty bars or evidence for one
+physical condition. Inactive terms remain provenance outside these ranges.
+
+Browser co-add uses selected table order; the reference picker places the
+sample first, and signed subtraction places the chosen minuend first. The API
+uses caller order and CLI co-add uses its ordered source list. **Re-fit as
+Co-added** retains the supplied selection order. Browser log options use the
+master's log, with its existing header fallback, without scanning count arrays.
+Missing browser conditions show ``—`` and are excluded from that trend axis.
+An edited target field survives source rebuilds and project restoration.
 
 Reference subtraction
 ---------------------
@@ -162,22 +199,27 @@ Projects retain combination definitions and reconstruct rows from sources.
 Saved output arrays and fit records retain their recorded meaning without
 automatic refitting. Numerical arithmetic identities prevent historical scores
 from matching newly prepared observations. A definition without stored output
-arrays reconstructs through current arithmetic.
+arrays reconstructs through current arithmetic. A failed restoration retains a ``Combination unavailable`` row, the definition,
+and historical records, reports its ``Corrections incomplete`` diagnosis, and
+leaves source rows available. A failed
+source rebuild retains saved arrays with an explicit incomplete-correction
+marker. Condition labels alone do not authorise a numerical refit.
 
 Compared with other programs
 -----------------------------
 
 WiMDA 1.326 pools raw counts before correction and provides unit signed **Co-sub**; its **FileBG**
 reference subtraction uses a frame ratio. These are count operations, not
-asymmetry contrasts. WiMDA retains the master field and temperature, whereas
-Asymmetry uses the summary described above. The `WiMDA manual/homepage
+asymmetry contrasts. WiMDA retains the master field and temperature, as does
+Asymmetry; the latter also records active constituent ranges. The `WiMDA manual/homepage
 <https://shadow.nd.rl.ac.uk/wimda/>`_ describes the application; these checked
 features do not establish identical uncertainty conventions.
 
 musrfit 1.12.1 distinguishes standalone ``addRun`` from fit-time ``ADDRUN``.
 The `musrfit manual
 <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_ documents histogram
-addition and whole-bin timing shifts. Matched correction-off fit-time ADDRUN
+addition and whole-bin timing shifts. Standalone addRun retains master raw-run
+metadata; this is distinct from the fit-time ADDRUN correction context. Matched correction-off fit-time ADDRUN
 controls agree on unit-addition values and interior asymmetry values formed
 from structured count inputs, to a tolerance of :math:`5\times10^{-6}` in fractional asymmetry. That does not
 establish endpoint, error, arbitrary signed-weight, or likelihood equivalence.
@@ -198,8 +240,14 @@ different requests. These are documented arithmetic comparisons, not native
 Mantid numerical checks. `MuonPreProcess v1
 <https://docs.mantidproject.org/nightly/algorithms/MuonPreProcess-v1.html>`_
 can correct each workspace before merging. Generic merge alone does not choose
-the correction order. Asymmetry's direct-overlap and likelihood safeguards
-have the scope stated above; they are not attributed to these other programs.
+the correction order. `MergeRuns v1
+<https://docs.mantidproject.org/nightly/algorithms/MergeRuns-v1.html>`_ requires
+matching instrument names, spectrum counts, and units for histogram inputs and
+supports configurable sample-log merging. Asymmetry deliberately uses the
+bounded known-role/unknown-assumption policy above rather than a name-only gate.
+Its overlap and likelihood safeguards are additional checks with the scope
+stated above; no general shared-observation covariance solution is established
+by these reference operations.
 
 References
 ----------

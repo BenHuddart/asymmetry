@@ -332,9 +332,8 @@ def load_reduction_source(paths: Sequence[str | Path], period: str | None) -> Mu
     Several files are summed at the count level exactly as the GUI's data
     browser co-adds (:func:`combine_runs`), each member first narrowed to
     *period*. The sum is identified as its first member — it keeps that run's
-    number and instrument metadata, under the combination's event-weighted
-    temperature and field and its ``combination`` provenance — since
-    :func:`combine_runs` records only what it combined. Raises
+    number, master condition labels, and instrument metadata, together with
+    constituent values and active ranges in its ``combination`` provenance. Raises
     :class:`~asymmetry.core.data.combine.CombineError` (a :class:`ValueError`)
     when the members cannot be summed.
     """
@@ -343,7 +342,7 @@ def load_reduction_source(paths: Sequence[str | Path], period: str | None) -> Mu
         return sources[0]
     runs = runs_with_dataset_metadata(sources)
     combined = combine_runs(runs, sign=1)
-    return reduce_combined_run(replace(combined, metadata=runs[0].metadata | combined.metadata))
+    return reduce_combined_run(combined)
 
 
 def resolve_reduction_grouping(run: Run, settings: ReductionSettings) -> dict[str, Any]:

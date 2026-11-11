@@ -139,3 +139,19 @@ simulation provenance stored in a ``/run/simulation`` group.
 .. automodule:: asymmetry.core.io.nexus_writer
    :members:
    :undoc-members:
+
+Run arithmetic metadata
+------------------------
+
+``combine_runs`` retains the first caller-ordered input's finite field and
+temperature (or ``None``), title, and instrument/facility/beamline identity.
+``combination.constituents`` records ordered leaf conditions, source identities,
+effective signed coefficients, and the master relationship. The finite active
+ranges are ``temperature_spread`` and ``field_spread``; inactive terms stay
+provenance. Composite sources do not inherit a single file identity or cached
+single-acquisition diagnostics. ``coadd_compatibility_error`` shares the core
+correspondence/reuse checks without reducing or scanning counts.
+
+The float-valued ``Run.field`` and ``Run.temperature`` convenience accessors
+represent an explicit unknown (``None``) as NaN, so summaries and replay
+identities can carry it without a fabricated zero.

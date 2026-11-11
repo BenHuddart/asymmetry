@@ -205,3 +205,15 @@ joint calibration is requested for a single pair. The GUI stages the selected
 model and conditional errors until Apply; input changes invalidate pending work.
 Automatic per-run ratio, manual coefficients, and loaded historical records keep
 their own policies. A reduction without a calibration source never starts a TF fit.
+
+Combined condition labels
+--------------------------
+
+Run arithmetic retains the first ordered input's field, temperature, and
+instrument identity, including display/log overrides. These labels are not
+weighted estimates of a physical condition. Missing master values stay unknown;
+finite active constituent ranges and signed coefficients remain provenance.
+Known detector-role/order conflicts and evidenced implicit period permutations
+are checked at the combination request boundary. Unknown correspondence keeps
+recorded channel/data-order assumptions. See :doc:`/reference/run_arithmetic`
+for the bounded reuse checks, reference comparisons, and repair paths.

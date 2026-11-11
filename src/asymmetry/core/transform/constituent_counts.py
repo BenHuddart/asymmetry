@@ -445,6 +445,7 @@ def held_period_grids(grouping):
 
 def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
     """Identify acquired facts and preparation semantics without scanning count buffers."""
+    from asymmetry.core.data.correspondence import declared_period_labels, detector_roles
     from asymmetry.core.transform.deadtime import file_deadtime_table
 
     active = (
@@ -470,6 +471,8 @@ def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
         "selected_set": grouping.get("period_mode", "red"),
         "inputs": [
             {
+                "detector_roles": detector_roles(run),
+                "declared_period_labels": declared_period_labels(run),
                 "source_file": run.source_file,
                 "run_number": run.metadata.get("source_run_number", run.run_number),
                 "period_number": number,
