@@ -152,3 +152,39 @@ def test_ignored_nested_source_keeps_compact_identity_and_later_diagnosis():
         combine_runs([requested, acquisition(3)])
     with pytest.raises(ValueError, match="original acquired"):
         reduce_combined_run(requested)
+
+
+def test_loaded_implicit_pairing_survives_profile_application_and_explicit_selection(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    from asymmetry.core.io import load
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.project.profiles import (
+        profile_fingerprint_for_run,
+        profile_from_payload,
+        resolve_effective_grouping,
+    )
+    from tests.io.test_nexus_loader import _write_v2_file
+
+    loaded = []
+    for i, labels in enumerate(("on;off", "off;on")):
+        path = tmp_path / f"sequence-{i}.nxs"
+        _write_v2_file(path, multiperiod=True)
+        with h5py.File(path, "a") as handle:
+            beam = handle["raw_data_1/instrument"].create_group("beam")
+            beam.create_dataset("period_type", data=[1, 1])
+            beam.create_dataset("period_labels", data=np.bytes_(labels))
+        dataset = load(str(path))
+        assert dataset.histogram_observation.source.grouping["implicit_period_inputs"] == (1, 2)
+        profile = profile_from_payload(
+            dataset.run.grouping, "shared", profile_fingerprint_for_run(dataset.run)
+        )
+        dataset.run.grouping = resolve_effective_grouping(profile, dataset.run)
+        assert dataset.run.grouping["implicit_period_inputs"] == (1, 2)
+        loaded.append(dataset)
+    with pytest.raises(CombineError, match="period"):
+        combine_runs([dataset.run for dataset in loaded])
+    selected = [select_period(loaded[0], 1), select_period(loaded[1], 2)]
+    selected[0].metadata["temperature"] = 42
+    mapped = combine_mapped_periods(selected, {1: "red", 2: "green"})
+    assert "implicit_period_inputs" not in mapped.run.grouping
+    assert mapped.metadata["temperature"] == 42

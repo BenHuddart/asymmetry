@@ -28,7 +28,9 @@ plot either set, or the G−R difference that isolates the effect of the
 stimulus. The mapping is recorded with the grouping for provenance.
 Asymmetry also checks that selected list inputs are original acquired periods,
 because flattening a nested set would discard its own clocks or coefficients.
-Pass an existing mapped dataset directly to remap its originals. Direct
+A selected unit singleton is resolved to its original clock and file facts,
+preserving displayed scalar overrides. Pass an existing mapped dataset directly
+to remap its originals. Direct
 remapping of unit-weight arithmetic remains available; a selected nonunit
 coefficient requires original periods or **Ignore**, rather than silently
 replacing that coefficient with one. Ignored coefficients remain recorded for

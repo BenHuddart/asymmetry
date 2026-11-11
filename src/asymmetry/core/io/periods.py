@@ -71,17 +71,7 @@ GREEN_INDEX = 1
 
 
 def encode_period_run_number(run_number: int, period_number: int) -> int:
-    """Return a stable, unique integer run-number key for one period row.
-
-    The data browser keys datasets by integer run number, so the two periods
-    of a run must not share the source run's number or the second add would
-    overwrite (collapse) the first. This encodes ``run * 1000 + period`` — the
-    same scheme the loader's 3+-period list path uses in
-    ``NeXusReader._encode_period_run_number`` — while the user-facing
-    ``run/period`` label and the true ``source_run_number`` are carried in
-    metadata. Real ISIS/PSI run numbers are well under 1000×, so the encoded
-    keys never clash with single-period runs.
-    """
+    """Encode a period row as run * 1000 + period, preserving source identity separately."""
     return int(run_number) * 1000 + int(period_number)
 
 
@@ -616,14 +606,9 @@ def combine_mapped_periods(
     source_run_number: int | None = None,
     source_file: str = "",
     cancel_check: Callable[[], None] | None = None,
+    _implicit_pairing: bool = False,
 ) -> MuonDataset:
-    """Sum acquired periods into red/green sets without exposure scaling.
-
-    Counts, DT normalisers, and evidenced exposures sum within each set.
-    Held views retain raw-index inspection; reduction corrects and aligns originals.
-    Pass a mapped dataset to remap its
-    retained original acquisitions, including those previously ignored.
-    """
+    """Map acquired periods with own-clock reduction and retained original inputs."""
     if cancel_check is not None:
         cancel_check()
     coefficients = None
@@ -644,10 +629,29 @@ def combine_mapped_periods(
     n_periods = len(runs)
     normalised = normalise_period_mapping(mapping, n_periods)
     selected = [number for number, target in normalised.items() if target != "ignore"]
-    if any("period_inputs" in runs[number - 1].grouping for number in selected):
-        raise ValueError(
-            "Map original acquired periods; nested set inputs need their original periods, "
-            "or pass the existing mapped dataset directly to remap it."
+    from asymmetry.core.transform.constituent_counts import (
+        active_acquisitions,
+        grouping_for_acquisition,
+    )
+
+    for number in selected:
+        run = runs[number - 1]
+        if "period_inputs" not in run.grouping:
+            continue
+        active = active_acquisitions(run.grouping)
+        if (
+            run.grouping.get("period_histograms")
+            or len(active) != 1
+            or active[0][2] != 1
+            or "period_inputs" in active[0][1].grouping
+            or not active[0][1].histograms
+        ):
+            raise ValueError(
+                "Map original acquired periods; nested sets need their originals or direct remapping of the existing dataset."
+            )
+        original = active[0][1]
+        runs[number - 1] = replace(
+            original, grouping=grouping_for_acquisition(original, run.grouping)
         )
     if coefficients is not None and any(coefficients[number - 1] != 1 for number in selected):
         raise ValueError(
@@ -743,6 +747,8 @@ def combine_mapped_periods(
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)
     grouping["period_mapping"] = {str(k): v for k, v in sorted(normalised.items())}
+    if _implicit_pairing:
+        grouping["implicit_period_inputs"] = tuple(selected)
     grouping.pop("good_frames", None)
     if frames[0] is not None:
         grouping["good_frames"] = frames[0]
