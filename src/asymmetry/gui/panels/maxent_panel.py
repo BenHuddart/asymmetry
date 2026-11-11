@@ -113,8 +113,6 @@ class MaxEntPanel(QWidget):
     def _build_mode_section(self) -> PanelSection:
         section = PanelSection("Mode")
         mode_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         mode_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         mode_form.setContentsMargins(0, 0, 0, 0)
         self._mode_combo = QComboBox()
@@ -167,8 +165,6 @@ class MaxEntPanel(QWidget):
     def _build_spectrum_section(self) -> PanelSection:
         section = PanelSection("Spectrum")
         spectrum_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         spectrum_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         spectrum_form.setContentsMargins(0, 0, 0, 0)
         self._points_spin = self._make_scroll_guarded_int_spin()
@@ -189,8 +185,6 @@ class MaxEntPanel(QWidget):
     def _build_window_section(self) -> PanelSection:
         section = PanelSection("Window")
         window_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         window_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         window_form.setContentsMargins(0, 0, 0, 0)
         self._auto_window_check = QCheckBox("Auto window from field")
@@ -213,8 +207,6 @@ class MaxEntPanel(QWidget):
     def _build_time_section(self) -> PanelSection:
         section = PanelSection("Time")
         time_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         time_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         time_form.setContentsMargins(0, 0, 0, 0)
         self._auto_steer_check = QCheckBox("Auto workload steering")
@@ -263,9 +255,6 @@ class MaxEntPanel(QWidget):
     # ── Collapsed-by-default sections ───────────────────────────────────────
 
     def _build_pulse_section(self) -> PanelSection:
-        # Title kept short so the uppercase header (which cannot wrap) never
-        # forces the panel wider than the resting dock width; the pulsed-source
-        # context lives in the hint.
         section = PanelSection(
             "Pulse shape",
             collapsible=True,
@@ -274,8 +263,6 @@ class MaxEntPanel(QWidget):
             "pulsed source (ISIS); ignore for continuous beams.",
         )
         pulse_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         pulse_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         pulse_form.setContentsMargins(0, 0, 0, 0)
         self._pulse_mode_combo = QComboBox()
@@ -291,6 +278,9 @@ class MaxEntPanel(QWidget):
 
         self._pulse_half_width_edit = self._make_numeric_edit(
             "0.05", minimum=0.0, maximum=1_000.0, decimals=6
+        )
+        self._pulse_half_width_edit.setToolTip(
+            "Explicit parabolic support half-width in µs (FWHM / √2); must be positive when active."
         )
         pulse_form.addRow("Half-width (µs):", self._pulse_half_width_edit)
 
@@ -309,8 +299,6 @@ class MaxEntPanel(QWidget):
             settings_key="maxent/sections/cycle_refinement",
         )
         fit_form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         fit_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         fit_form.setContentsMargins(0, 0, 0, 0)
         self._inner_spin = self._make_scroll_guarded_int_spin()
@@ -613,7 +601,7 @@ class MaxEntPanel(QWidget):
         if pulse_mode == "ignore":
             self._pulse_section.set_title_suffix(None)
         else:
-            label = "single pulse" if pulse_mode == "single" else "double pulse"
+            label = self._pulse_mode_combo.currentText().lower()
             self._pulse_section.set_title_suffix(label)
 
         if self._specbg_enabled_check.isChecked():
@@ -714,8 +702,12 @@ class MaxEntPanel(QWidget):
             "exclude_t_min_us": self._parse_optional_float(self._exclude_t_min_edit.text()),
             "exclude_t_max_us": self._parse_optional_float(self._exclude_t_max_edit.text()),
             "pulse_mode": str(self._pulse_mode_combo.currentData() or "ignore"),
-            "pulse_half_width_us": self._parse_float(self._pulse_half_width_edit.text(), 0.05),
-            "pulse_separation_us": self._parse_float(self._pulse_separation_edit.text(), 0.324),
+            "pulse_half_width_us": self._parse_float(
+                self._pulse_half_width_edit.text(), float("nan")
+            ),
+            "pulse_separation_us": self._parse_float(
+                self._pulse_separation_edit.text(), float("nan")
+            ),
             "mode": str(self._mode_combo.currentData() or "general"),
             "specbg_enabled": bool(self._specbg_enabled_check.isChecked()),
             "specbg_gaussian_width_mhz": self._parse_float(self._specbg_gaussian_edit.text(), 0.1),
@@ -824,12 +816,17 @@ class MaxEntPanel(QWidget):
         self._exclude_t_max_edit.setText(self._format_float(state.get("exclude_t_max_us"), ""))
         pulse_mode = str(state.get("pulse_mode", "ignore"))
         pulse_index = self._pulse_mode_combo.findData(pulse_mode)
-        self._pulse_mode_combo.setCurrentIndex(pulse_index if pulse_index >= 0 else 0)
+        if pulse_index < 0:
+            self._pulse_mode_combo.addItem(
+                f"Unsupported pulse mode ({pulse_mode})", userData=pulse_mode
+            )
+            pulse_index = self._pulse_mode_combo.findData(pulse_mode)
+        self._pulse_mode_combo.setCurrentIndex(pulse_index)
         self._pulse_half_width_edit.setText(
-            self._format_float(state.get("pulse_half_width_us", 0.05), "0.05")
+            self._format_float(state.get("pulse_half_width_us", 0.05))
         )
         self._pulse_separation_edit.setText(
-            self._format_float(state.get("pulse_separation_us", 0.324), "0.324")
+            self._format_float(state.get("pulse_separation_us", 0.324))
         )
         mode = str(state.get("mode", "general"))
         mode_index = self._mode_combo.findData(mode)

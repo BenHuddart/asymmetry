@@ -23,8 +23,13 @@ one frequency becomes
 i.e. a per-frequency amplitude ``R = √(P_cos² + P_sin²)`` and phase shift
 ``δ = atan2(P_sin, P_cos)`` applied to the bare cosine kernel — the form the
 engine consumes.  A second proton pulse separated by *s* adds a cosine
-interference term weighted by ``tanh(s/2τ_µ)`` for the muon-decay depletion of
-the later pulse.
+interference term weighted by ``tanh(s/2τ_µ)`` for unequal muon survival at
+a common observation time.
+
+The source origin is the proton-pulse centre (single) or midpoint (double),
+relative to the already resolved observation clock. The causal pion delay is
+in the response, with no shift to acquired t0 or good bounds. The parabolic
+support is [-w, w]; its FWHM is sqrt(2) w, not 2w.
 
 This module is the pure pulse mathematics; the engine folds ``(R, δ)`` into its
 real cosine/sine forward and adjoint maps.  Frequencies are in MHz and times in
@@ -46,6 +51,33 @@ PULSE_MODES = ("ignore", "single", "double")
 _SMALL_X = 1.0e-2
 
 
+class PulseRequestError(ValueError):
+    """An authored pulse request lacks a supported physical input."""
+
+
+def pulse_provenance(*, half_width_us: float, separation_us: float, n_pulses: int) -> dict:
+    """Describe consumed response inputs on the resolved observation clock."""
+    if n_pulses == 0:
+        return {"mode": "ignore"}
+    return {
+        "mode": "single" if n_pulses == 1 else "double",
+        "shape": "parabolic_plus_pion",
+        "support_half_width_us": half_width_us,
+        "width_source": "explicit",
+        "origin": "proton_pulse_centre_or_midpoint",
+        "complex_sign": "P_cos-iP_sin",
+        **(
+            {
+                "separation_us": separation_us,
+                "incident_strengths": "equal",
+                "weighting": "muon_survival",
+            }
+            if n_pulses == 2
+            else {}
+        ),
+    }
+
+
 def pulse_response(
     frequencies_mhz: NDArray[np.float64],
     *,
@@ -55,19 +87,36 @@ def pulse_response(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Return ``(P_cos, P_sin)`` over *frequencies_mhz* for the pulse response.
 
-    ``n_pulses == 0`` (or a non-positive half-width) means no pulse shaping:
+    ``n_pulses == 0`` means no pulse shaping:
     ``P_cos = 1``, ``P_sin = 0``.  ``n_pulses == 1`` is the single proton pulse;
-    ``n_pulses >= 2`` adds the double-pulse interference at *separation_us*.
+    ``n_pulses == 2`` adds the double-pulse interference at *separation_us*.
 
     At DC (ν = 0) the response is exactly ``(1, 0)``.  The single-pulse case is
     the ``separation_us → 0`` limit of the double-pulse formula.
     """
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    if int(n_pulses) <= 0 or float(half_width_us) <= 0.0:
+    if n_pulses not in (0, 1, 2):
+        raise PulseRequestError("Choose Ignore, Single pulse or Double pulse (n_pulses=0, 1 or 2).")
+    if n_pulses == 0:
         return np.ones_like(frequencies), np.zeros_like(frequencies)
+    try:
+        width = float(half_width_us)
+        separation = float(separation_us) if n_pulses == 2 else 0.0
+    except (TypeError, ValueError) as exc:
+        raise PulseRequestError(
+            "Supply a numeric pulse support half-width in µs and, for double pulses, a fixed separation."
+        ) from exc
+    if not np.isfinite(width) or width <= 0.0:
+        raise PulseRequestError(
+            "Pulse support half-width must be positive and finite in µs; supply an explicit "
+            "parabolic support half-width or choose Ignore/disable compensation."
+        )
+    if n_pulses == 2 and (not np.isfinite(separation) or separation < 0.0):
+        raise PulseRequestError(
+            "Pulse separation must be nonnegative and finite in µs; supply a fixed value."
+        )
 
     omega = 2.0 * np.pi * frequencies  # rad/µs
-    width = float(half_width_us)
     x = omega * width
     # Parabolic proton-pulse cosine transform 3·(sin x/x³ − cos x/x²).  The
     # closed form suffers catastrophic cancellation as x→0 (the two large 1/x²
@@ -81,7 +130,6 @@ def pulse_response(
     tpion = PION_LIFETIME_US
     amplitude = gw / (1.0 + (omega * tpion) ** 2)
 
-    separation = float(separation_us) if int(n_pulses) >= 2 else 0.0
     tmuon = MUON_LIFETIME_US
     tanh_weight = np.tanh(separation / (2.0 * tmuon)) if tmuon > 0.0 else 0.0
     cos_half = np.cos(omega * separation / 2.0)
@@ -106,14 +154,14 @@ def pulse_amplitude_phase(
     None)`` when there is no pulse shaping, which the engine treats as the
     identity (R = 1, δ = 0) on its fast path.
     """
-    if int(n_pulses) <= 0 or float(half_width_us) <= 0.0:
-        return None, None
     p_cos, p_sin = pulse_response(
         frequencies_mhz,
         half_width_us=half_width_us,
         separation_us=separation_us,
         n_pulses=n_pulses,
     )
+    if n_pulses == 0:
+        return None, None
     amplitude = np.hypot(p_cos, p_sin)
     phase = np.arctan2(p_sin, p_cos)
     return amplitude, phase

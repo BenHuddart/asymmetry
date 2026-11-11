@@ -704,40 +704,16 @@ def test_double_pulse_wrong_dpsep_is_worse():
     assert r_good.reduced_chi_squared < r_bad.reduced_chi_squared
 
 
-def test_double_pulse_free_dpsep_refines_from_seed():
-    """A free dpsep refines to the true separation from a near-truth seed."""
-    ds = _double_pulse_dataset(dpsep_us=0.324)
-    params = _continuous_single()
+@pytest.mark.parametrize("target", ["single", "fb"])
+def test_free_separation_requires_fixed_supplied_input(target):
+    ds = _fb_double_pulse_dataset()
+    params = _continuous_single() if target == "single" else _fb_double_pulse_params()
     params.add(Parameter("dpsep", 0.33, min=0.1, max=0.5))
-    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
-    assert result.success
-    assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
-
-
-@pytest.mark.parametrize("seed_start", [0.12, 0.30, 0.48])
-def test_double_pulse_free_dpsep_recovers_from_arbitrary_start(seed_start):
-    """The coarse->fine scan finds dpsep from any in-range start (gate is non-smooth)."""
-    ds = _double_pulse_dataset(dpsep_us=0.324)
-    params = _continuous_single()
-    # The seed is deliberately far from the truth; the scan spans [min, max] and
-    # does not rely on starting near the minimum.
-    params.add(Parameter("dpsep", seed_start, min=0.1, max=0.5))
-    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
-    assert result.success
-    assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
-    assert result.reduced_chi_squared < 1.2
-
-
-def test_fb_double_pulse_free_dpsep_recovers_from_arbitrary_start():
-    """The F+B free-dpsep scan recovers both dpsep and α from a far start."""
-    ds = _fb_double_pulse_dataset(dpsep_us=0.324, alpha=1.25, seed=4)
-    params = _fb_double_pulse_params()
-    params.add(Parameter("dpsep", 0.46, min=0.1, max=0.5))  # far from truth
-    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
-    assert result.success
-    # dpsep is a shared (fixed-at-scan-value) parameter; α is per-side.
-    assert result.shared_parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
-    assert result.group_results[1].parameters["alpha"].value == pytest.approx(1.25, abs=0.03)
+    with pytest.raises(ValueError, match="dpsep.*fixed.*supplied"):
+        if target == "single":
+            fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+        else:
+            fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
 
 
 def _fb_double_pulse_dataset(*, dpsep_us=0.324, alpha=1.25, seed=4):
@@ -1108,3 +1084,38 @@ def test_promote_t0_round_trip_recovers_a_corrupted_time_zero(delta_bins):
     assert applied == pytest.approx(-delta_bins, abs=1)
     assert grouping["first_good_bin"] == first_good_before
     assert grouping["t_good_offset"] == first_good_before - grouping["t0_bin"]
+
+
+@pytest.mark.parametrize("value", [-0.1, float("nan"), float("inf")])
+@pytest.mark.parametrize("target", ["single", "fb"])
+def test_fixed_separation_requires_nonnegative_finite_value(value, target):
+    ds = _fb_double_pulse_dataset()
+    params = _continuous_single() if target == "single" else _fb_double_pulse_params()
+    params.add(Parameter("dpsep", value, fixed=True))
+    with pytest.raises(ValueError, match="dpsep.*nonnegative.*finite"):
+        if target == "single":
+            fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+        else:
+            fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+
+
+def test_count_model_matches_independent_causal_birth_sum():
+    from asymmetry.core.fitting.count_domain import _double_pulse_factor
+    from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
+    time = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
+
+    def polarization(age):
+        return 0.2 * np.exp(-0.7 * age) * np.cos(2 * np.pi * 2.5 * age + 0.3)
+
+    expected = np.zeros_like(time)
+    for birth in (-0.162, 0.162):
+        age = time - birth
+        live = age > 0
+        expected[live] += (
+            0.5 * np.exp(-age[live] / MUON_LIFETIME_US) * (1 + polarization(age[live]))
+        )
+    actual = np.exp(-time / MUON_LIFETIME_US) * _double_pulse_factor(
+        polarization, time, 0.324, 1.0, {}
+    )
+    np.testing.assert_allclose(actual, expected, atol=2e-15, rtol=2e-15)

@@ -318,23 +318,34 @@ Count loss and double pulse
   applied base has no recorded covariance with the residual fit; promotion
   does not invent a total uncertainty.
 
-* **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
-  source; 0 leaves the single-pulse model. The two pulses each carry the
-  polarisation, evaluated at t ± dpsep/2 and weighted by exp(∓dpsep/2τ_μ). This
-  applies to both the single-histogram and the free-α (F+B) targets — for the
-  latter the two pulses ride the same √α-tied forward/backward model, so α and
-  the double-pulse structure are recovered together. The separation defaults to
-  a fixed instrument value; tick **fit** to refine it.
+* **Double pulse (µs)** — supply a fixed separation; 0 selects the single-pulse
+  count model. Equal incident double-delta pulses carry polarisation evaluated
+  at t ± dpsep/2, with muon-survival weights exp(∓dpsep/2τ_μ). The clock origin
+  is the midpoint of the two births on the resolved observation axis. Both
+  single-histogram and F+B targets retain their established count objectives.
+  This instantaneous-pulse approximation consumes no finite source width.
 
-  .. note::
+  Separation estimation is unsupported. After both arrivals, a single TF line
+  can absorb a different separation into amplitude, phase, and count scale;
+  a sharp-gate simulator round trip does not establish separation recovery or
+  finite-width onset-bin accuracy. Supply an independently established value.
+  Errors are conditional on that fixed input.
 
-     The separation enters the model through a non-smooth pulse-onset gate, so
-     gradient (migrad) fitting of dpsep is unreliable. With **fit** ticked the
-     separation is instead located by a coarse→fine grid scan bracketing the
-     instrument value — at each grid point migrad refines the other parameters,
-     and the best χ² wins. This recovers dpsep robustly without depending on a
-     near-truth start. With the separation at its true value the model fits
-     cleanly (χ²ᵣ ≈ 1); a wrong separation visibly degrades the fit.
+  Asymmetry also checks that API ``dpsep`` parameters are fixed, nonnegative,
+  and finite, returning actionable input guidance before minimisation. A free
+  parameter is never silently fixed. Recorded results remain history.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA 1.326 provides a supplied **Double Pulse** setting. In Mantid,
+`DoublePulseFit v1 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
+uses supplied ``PulseOffset`` and pulse weights. These are configured source
+inputs, rather than evidence for free-separation estimation. Asymmetry uses
+fixed equal incident strengths with survival weighting. The comparison does
+not claim a fresh native WiMDA or full Mantid fit. musrfit 1.12.1 can represent
+an explicit two-component post-arrival TF signal; that is not a verified
+built-in pulse-response feature.
 
 Promoting α, t₀ and the background
 ----------------------------------

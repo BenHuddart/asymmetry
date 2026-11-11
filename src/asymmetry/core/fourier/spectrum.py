@@ -42,6 +42,7 @@ from asymmetry.core.fourier.phase_fit import (
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.io.period_counts import run_arithmetic_policy
+from asymmetry.core.maxent.pulse import pulse_provenance
 from asymmetry.core.transform.background import (
     background_range_is_explicit,
     resolve_background_mode,
@@ -554,7 +555,10 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
         pulse_active = current.pulse_compensation or recorded.pulse_compensation
         if pulse_active and (
             not _floats_equal(current.pulse_half_width_us, recorded.pulse_half_width_us)
-            or not _floats_equal(current.pulse_separation_us, recorded.pulse_separation_us)
+            or (
+                (current.pulse_n_pulses == 2 or recorded.pulse_n_pulses == 2)
+                and not _floats_equal(current.pulse_separation_us, recorded.pulse_separation_us)
+            )
             or current.pulse_n_pulses != recorded.pulse_n_pulses
             or not _floats_equal(current.pulse_max_gain, recorded.pulse_max_gain)
         ):
@@ -665,26 +669,6 @@ def _resolve_exclusion_ranges(
     if config.exclude_enabled:
         ranges.extend((float(c), float(w)) for c, w in config.exclusion_ranges)
     return ranges
-
-
-def _metadata_pulse_half_width_us(run: Run, dataset: MuonDataset | None) -> float:
-    """Resolve a pulse half-width (µs) from instrument metadata, else 0."""
-    sources: list[dict] = []
-    if dataset is not None and isinstance(dataset.metadata, dict):
-        sources.append(dataset.metadata)
-    run_metadata = getattr(run, "metadata", None)
-    if isinstance(run_metadata, dict):
-        sources.append(run_metadata)
-    for metadata in sources:
-        for key in ("pulse_half_width_us", "pulse_width_us", "pulse_fwhm_us"):
-            try:
-                value = float(metadata[key])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if value > 0.0:
-                # FWHM keys are stored as a full width; halve to a half-width.
-                return value / 2.0 if key == "pulse_fwhm_us" else value
-    return 0.0
 
 
 def compute_average_group_spectrum(
@@ -984,8 +968,6 @@ def compute_average_group_spectrum(
         reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
         exclusion_ranges = _resolve_exclusion_ranges(config, reference_mhz)
         pulse_half_width_us = config.pulse_half_width_us
-        if config.pulse_compensation and pulse_half_width_us <= 0.0:
-            pulse_half_width_us = _metadata_pulse_half_width_us(run, first_group_dataset)
         conditioning = apply_spectrum_conditioning(
             average_freqs,
             averaged_display,
@@ -1119,6 +1101,12 @@ def compute_average_group_spectrum(
                 metadata["fourier_diamag_skipped"] = (
                     f"the applied field is below {_MIN_DIAMAG_FIELD_GAUSS:g} G"
                 )
+    if conditioning is not None and conditioning.gain is not None:
+        metadata["fourier_pulse_response"] = pulse_provenance(
+            half_width_us=config.pulse_half_width_us,
+            separation_us=config.pulse_separation_us,
+            n_pulses=config.pulse_n_pulses,
+        )
     if conditioning is not None:
         if conditioning.cutoff_frequency_mhz is not None:
             metadata["fourier_compensation_cutoff_mhz"] = conditioning.cutoff_frequency_mhz

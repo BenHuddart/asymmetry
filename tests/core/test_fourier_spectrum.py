@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.fft import (
@@ -412,3 +413,57 @@ def test_fb_spectrum_identity_changes_with_binning_contract(monkeypatch):
     current = module.fourier_grouping_digest(run, "fb_asymmetry")
     monkeypatch.setattr(module, "BINNING_POLICY", "ceiling_first_centre")
     assert module.fourier_grouping_digest(run, "fb_asymmetry") != current
+
+
+@pytest.mark.parametrize(
+    "metadata", [None, "pulse_width_us", "pulse_fwhm_us", "pulse_half_width_us"]
+)
+def test_compensation_requires_explicit_supported_width(metadata):
+    run = _run()
+    if metadata:
+        run.metadata[metadata] = 0.08
+    with pytest.raises(ValueError, match="half.width.*positive.*finite"):
+        compute_average_group_spectrum(run, GroupSpectrumConfig(pulse_compensation=True))
+    assert compute_average_group_spectrum(run, GroupSpectrumConfig()) is not None
+
+
+@pytest.mark.parametrize("width", [0.0, -1.0, float("nan"), float("inf")])
+def test_invalid_active_fft_width_is_typed(width):
+    from asymmetry.core.maxent.pulse import PulseRequestError
+
+    config = GroupSpectrumConfig.from_dict(
+        {"pulse_compensation": True, "pulse_half_width_us": width}
+    )
+    with pytest.raises(PulseRequestError, match="half.width"):
+        compute_average_group_spectrum(_run(), config)
+
+
+def test_applied_fft_pulse_facts_and_inactive_identity():
+    from dataclasses import replace
+
+    config = GroupSpectrumConfig(
+        pulse_compensation=True,
+        pulse_half_width_us=0.05,
+        pulse_n_pulses=2,
+        pulse_separation_us=0.324,
+    )
+    result = compute_average_group_spectrum(_run(), config)
+    response = result.metadata["fourier_pulse_response"]
+    assert response["support_half_width_us"] == 0.05
+    assert response["separation_us"] == 0.324
+    assert response["incident_strengths"] == "equal"
+    assert response["complex_sign"] == "P_cos-iP_sin"
+    inactive = compute_average_group_spectrum(
+        _run(),
+        replace(
+            config,
+            pulse_compensation=False,
+            pulse_half_width_us=float("nan"),
+            pulse_separation_us=-1,
+        ),
+    )
+    assert "fourier_pulse_response" not in inactive.metadata
+    single = compute_average_group_spectrum(
+        _run(), replace(config, pulse_n_pulses=1, pulse_separation_us=float("nan"))
+    )
+    assert "separation_us" not in single.metadata["fourier_pulse_response"]

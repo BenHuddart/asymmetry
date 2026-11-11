@@ -46,6 +46,7 @@ from asymmetry.core.fitting.likelihood import (
     poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.maxent.pulse import PulseRequestError
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
@@ -369,84 +370,19 @@ def _solve(
     return m
 
 
-# --- dpsep refinement -------------------------------------------------------
-
-#: Grid sizes for the coarse -> fine dpsep scan. The second-pulse onset gate is
-#: non-smooth in dpsep, so migrad cannot descend it; a grid scan locates the
-#: separation and migrad still refines the other parameters at each grid point.
-_DPSEP_SCAN_COARSE = 17
-_DPSEP_SCAN_FINE = 9
-
-
-def _with_fixed_dpsep(params: ParameterSet, value: float) -> ParameterSet:
-    """Return a copy of ``params`` with ``dpsep`` fixed at ``value``."""
-    out = ParameterSet()
-    for p in params:
-        if p.name == "dpsep":
-            out.add(Parameter(name="dpsep", value=float(value), fixed=True))
-        else:
-            out.add(p)
-    return out
-
-
-def _dpsep_scan_bounds(dpsep_param: Parameter) -> tuple[float, float]:
-    """Return the ``(lo, hi)`` scan window for a free dpsep.
-
-    Uses the parameter's finite bounds when present; otherwise falls back to a
-    half-to-three-halves window around the seed (a refinement around the
-    instrument value).
-    """
-    lo = float(dpsep_param.min) if np.isfinite(dpsep_param.min) else None
-    hi = float(dpsep_param.max) if np.isfinite(dpsep_param.max) else None
-    seed = max(float(dpsep_param.value), 1.0e-6)
-    if lo is None:
-        lo = max(0.0, 0.5 * seed)
-    if hi is None:
-        hi = 1.5 * seed
-    lo = max(0.0, lo)
-    if hi <= lo:
-        hi = lo + max(seed, 1.0e-3)
-    return lo, hi
-
-
-def _refine_free_dpsep(
-    dpsep_param: Parameter,
-    fit_fixed: Callable[[float], object],
-    cost_of: Callable[[object], float],
-):
-    """Locate a free dpsep by a coarse -> fine grid scan and return the best fit.
-
-    ``fit_fixed(value)`` runs the standard count fit with dpsep fixed at
-    ``value`` (migrad refines the remaining parameters); ``cost_of(result)``
-    extracts that fit's cost. The coarse pass spans the scan window; the fine
-    pass refines around the coarse minimum to roughly the fine-grid spacing.
-    """
-
-    def _cost(result) -> float:
-        try:
-            value = float(cost_of(result))
-        except (TypeError, ValueError):
-            return _INF
-        return value if np.isfinite(value) else _INF
-
-    def _evaluate(grid):
-        return [(g, result := fit_fixed(g), _cost(result)) for g in grid]
-
-    lo, hi = _dpsep_scan_bounds(dpsep_param)
-    coarse = _evaluate(np.linspace(lo, hi, _DPSEP_SCAN_COARSE))
-    best_g, best_result, best_cost = min(coarse, key=lambda item: item[2])
-
-    step = (hi - lo) / (_DPSEP_SCAN_COARSE - 1)
-    fine_lo = max(lo, best_g - step)
-    fine_hi = min(hi, best_g + step)
-    for _g, result, cost in _evaluate(np.linspace(fine_lo, fine_hi, _DPSEP_SCAN_FINE)):
-        if cost < best_cost:
-            best_result, best_cost = result, cost
-    return best_result
-
-
-def _has_free_dpsep(params: ParameterSet) -> bool:
-    return "dpsep" in params and not params["dpsep"].fixed
+def _validate_fixed_separation(params: ParameterSet) -> None:
+    """Double-delta counts consume a supplied separation, never a source width."""
+    if "dpsep" not in params:
+        return
+    separation = params["dpsep"]
+    if not separation.fixed:
+        raise PulseRequestError(
+            "dpsep must be fixed at a supplied separation in µs; separation estimation is unsupported."
+        )
+    if not np.isfinite(separation.value) or separation.value < 0.0:
+        raise PulseRequestError(
+            "dpsep must be nonnegative and finite in µs; supply a fixed separation."
+        )
 
 
 # --- single histogram -------------------------------------------------------
@@ -490,9 +426,7 @@ def fit_single_histogram(
     parameters add a stretched-exponential baseline drift; the deadtime
     parameter ``DT0`` adds a rational non-paralysable count-loss term;
     a ``dpsep``
-    parameter switches on the ISIS double-pulse count model — fixed by default,
-    or located by a coarse->fine grid scan when supplied free (the non-smooth
-    pulse-onset gate defeats gradient fitting). A ``tau`` parameter frees the muon
+    parameter selects the double-delta count model with fixed supplied separation. A ``tau`` parameter frees the muon
     lifetime (musrfit-style; default fixed at the physical value); it is not
     supported together with the double-pulse model.
     """
@@ -500,22 +434,7 @@ def fit_single_histogram(
     _guard_model_param_collisions(model_fn)
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
-    if _has_free_dpsep(params):
-        return _refine_free_dpsep(
-            params["dpsep"],
-            fit_fixed=lambda value: fit_single_histogram(
-                dataset,
-                group_id,
-                model_fn,
-                _with_fixed_dpsep(params, value),
-                side=side,
-                cost=cost,
-                t_min=t_min,
-                t_max=t_max,
-                exclude=exclude,
-            ),
-            cost_of=lambda result: result.chi_squared,
-        )
+    _validate_fixed_separation(params)
     group = build_count_group(
         dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
@@ -673,21 +592,7 @@ def _fit_fb_count_groups(
     if estimate_beta:
         params = _ensure_beta_param(params)
 
-    # A free dpsep is located by a grid scan, not migrad (non-smooth pulse gate).
-    if _has_free_dpsep(params):
-        return _refine_free_dpsep(
-            params["dpsep"],
-            fit_fixed=lambda value: _fit_fb_count_groups(
-                dataset,
-                groups,
-                model_fn,
-                _with_fixed_dpsep(params, value),
-                cost=cost,
-                estimate_beta=estimate_beta,
-                cancel_callback=cancel_callback,
-            ),
-            cost_of=lambda result: sum(gr.chi_squared for gr in result.group_results.values()),
-        )
+    _validate_fixed_separation(params)
 
     time_f = np.asarray(g_fwd.time, dtype=float)
     counts_f = np.asarray(g_fwd.counts, dtype=float)
@@ -777,9 +682,6 @@ def _fit_fb_count_groups(
             observations_b, predict_b(args)
         )
 
-    # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
-    # free it is located by the non-smooth grid scan above, where a likelihood-walk
-    # interval is not well defined, so that path stays HESSE-only.
     m = _solve(free, total_cost, minos=minos, explicit_hesse=True, cancel_callback=cancel_callback)
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)

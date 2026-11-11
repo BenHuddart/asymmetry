@@ -34,7 +34,7 @@ from asymmetry.core.maxent.backend import (
     ProjectionBackend,
     resolve_backend,
 )
-from asymmetry.core.maxent.pulse import pulse_amplitude_phase
+from asymmetry.core.maxent.pulse import PulseRequestError, pulse_amplitude_phase, pulse_provenance
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.maxent.state_identity import state_signature
 from asymmetry.core.transform.grouping import (
@@ -182,15 +182,8 @@ class MaxEntConfig:
     inner_iterations: int = 12
     chi2_target_over_n: float = 1.0
     fit_phases: bool = True
-    # Seed each group's phase from the data (weighted lock-in at the joint
-    # spectral peak inside the frequency window) instead of the configured
-    # table.  Multi-group runs carry large geometric phase offsets (MUSR's
-    # quadrant groups sit ~90° apart) and the per-cycle phase refinement only
-    # moves ±4°/cycle, so an unseeded 0° start can never reach them — the
-    # mis-phased groups then either poison χ² or mute themselves out of the
-    # joint fit.  ``group_phase_degrees`` still applies where estimation fails
-    # (no coherent signal) or when this is off.  Ignored in ZF/LF mode (phases
-    # are pinned 0/180 there).
+    # The kernel subtracts the pulse phase; lock-in seeding restores it before
+    # the ±4°/cycle refinement. ZF/LF instead pins group phases to 0/180°.
     auto_phase_seed: bool = True
     fit_amplitudes: bool = True
     fit_backgrounds: bool = True
@@ -201,15 +194,10 @@ class MaxEntConfig:
     t_min_us: float | None = None
     t_max_us: float | None = None
     time_binning_factor: int = 1
-    # Workload auto-steering: fill *unset* workload knobs (binning left at 1,
-    # no end time, no explicit spectrum length) with values sized to the run
-    # and the frequency window, so high-resolution raw data is tractable out
-    # of the box.  Explicit user values always win — steering never overrides
-    # a field the user set.  See :func:`resolve_maxent_auto_steering`.
+    # Steering sizes unset binning/end-time/spectrum-length from the frequency
+    # window and acquired resolution; explicit user values always win.
     auto_steer: bool = True
-    # ISIS pulse-shape response folded into the forward model (Phase 2).
-    # ``pulse_mode`` is one of "ignore" / "single" / "double"; the widths are in
-    # microseconds.  Defaults: off (continuous-source data needs no shaping).
+    # Finite-width response on the resolved observation clock; Ignore consumes no width.
     pulse_mode: str = "ignore"
     pulse_half_width_us: float = 0.05
     pulse_separation_us: float = 0.324
@@ -317,11 +305,13 @@ class MaxEntConfig:
             t_max_us=optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
             auto_steer=bool(data.get("auto_steer", True)),
-            pulse_mode=_parse_choice(
-                data.get("pulse_mode"), ("ignore", "single", "double"), "ignore"
+            pulse_mode=str(data.get("pulse_mode", "ignore")),
+            pulse_half_width_us=_float_or_default(
+                data.get("pulse_half_width_us", 0.05), float("nan")
             ),
-            pulse_half_width_us=max(0.0, _float_or_default(data.get("pulse_half_width_us"), 0.05)),
-            pulse_separation_us=max(0.0, _float_or_default(data.get("pulse_separation_us"), 0.324)),
+            pulse_separation_us=_float_or_default(
+                data.get("pulse_separation_us", 0.324), float("nan")
+            ),
             exclude_t_min_us=optional_float(data.get("exclude_t_min_us")),
             exclude_t_max_us=optional_float(data.get("exclude_t_max_us")),
             mode=_parse_choice(data.get("mode"), ("general", "zf_lf"), "general"),
@@ -962,12 +952,12 @@ def _estimate_group_phase_seeds(
             peak_freq += shift * float(scan[1] - scan[0])
     refined = _weighted_lockin(groups, np.asarray([peak_freq], dtype=np.float64))
     delta_deg = 0.0
-    if int(n_pulses) > 0 and float(pulse_half_width_us) > 0.0:
+    if n_pulses > 0:
         _pulse_r, pulse_delta = pulse_amplitude_phase(
             np.asarray([peak_freq], dtype=np.float64),
-            half_width_us=float(pulse_half_width_us),
-            separation_us=float(pulse_separation_us),
-            n_pulses=int(n_pulses),
+            half_width_us=pulse_half_width_us,
+            separation_us=pulse_separation_us,
+            n_pulses=n_pulses,
         )
         if pulse_delta is not None:
             delta_deg = float(np.degrees(pulse_delta[0]))
@@ -1152,6 +1142,10 @@ def _maxent_input_from_group_signals(
     the pulse response all live here, so a count-array caller and a
     :class:`Run` caller cannot drift.
     """
+    if resolved_config.pulse_mode not in _PULSE_N_PULSES:
+        raise PulseRequestError(
+            "Choose Ignore, Single pulse or Double pulse for the MaxEnt response."
+        )
     groups: list[MaxEntGroupInput] = []
     max_points = 0
     for group_signal in group_signals:
@@ -1237,7 +1231,7 @@ def _maxent_input_from_group_signals(
             float(f_max),
             pulse_half_width_us=resolved_config.pulse_half_width_us,
             pulse_separation_us=resolved_config.pulse_separation_us,
-            n_pulses=_PULSE_N_PULSES.get(resolved_config.pulse_mode, 0),
+            n_pulses=_PULSE_N_PULSES[resolved_config.pulse_mode],
         )
         if seeds:
             groups = [
@@ -1247,7 +1241,7 @@ def _maxent_input_from_group_signals(
 
     n_points = int(n_points)
     frequencies = np.linspace(float(f_min), float(f_max), n_points)
-    n_pulses = _PULSE_N_PULSES.get(resolved_config.pulse_mode, 0)
+    n_pulses = _PULSE_N_PULSES[resolved_config.pulse_mode]
     pulse_amp, pulse_phase = pulse_amplitude_phase(
         frequencies,
         half_width_us=resolved_config.pulse_half_width_us,
@@ -1270,6 +1264,11 @@ def _maxent_input_from_group_signals(
             "group_ids": [group.group_id for group in groups],
             "time_binning_factor": int(resolved_config.time_binning_factor),
             "pulse_mode": str(resolved_config.pulse_mode),
+            "pulse_response": pulse_provenance(
+                half_width_us=resolved_config.pulse_half_width_us,
+                separation_us=resolved_config.pulse_separation_us,
+                n_pulses=n_pulses,
+            ),
             "maxent_mode": str(resolved_config.mode),
             "zf_lf_alpha": zf_lf_alpha,
             # Which workload knobs auto-steering filled (empty when none were):
