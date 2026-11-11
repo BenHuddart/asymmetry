@@ -73,14 +73,12 @@ from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.corrections import correction_warnings
 from asymmetry.core.transform.grouping import good_event_count, good_frames
-from asymmetry.core.transform.projections import projection_alphas
-from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.palette import is_dark_surface
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.tasks import TaskRunner, check_task_cancelled
 from asymmetry.gui.utils.phase_colors import (
     EXCLUDED_PHASE_HATCH_COLOR,
     format_phase_range,
@@ -3478,127 +3476,13 @@ class DataBrowserPanel(QWidget):
         self._datasets[combined_rn] = rebuilt
         return rebuilt
 
-    def _normalize_grouping_value(self, value):
-        """Return a deterministic representation for grouping comparisons."""
-        if isinstance(value, dict):
-            normalized: dict[str, object] = {}
-            for key in sorted(value, key=lambda item: str(item)):
-                try:
-                    norm_key = str(int(key))
-                except (TypeError, ValueError):
-                    norm_key = str(key)
-                normalized[norm_key] = self._normalize_grouping_value(value[key])
-            return normalized
-        if isinstance(value, (list, tuple)):
-            return [self._normalize_grouping_value(v) for v in value]
-        if isinstance(value, np.ndarray):
-            return [self._normalize_grouping_value(v) for v in value.tolist()]
-        if isinstance(value, (np.integer, int)) and not isinstance(value, bool):
-            return int(value)
-        if isinstance(value, (np.floating, float)):
-            val = float(value)
-            if not np.isfinite(val):
-                return str(val)
-            return round(val, 12)
-        if isinstance(value, str):
-            return value.strip()
-        return value
-
-    def _grouping_signature(self, dataset: MuonDataset):
-        """Return normalized grouping payload for co-add compatibility checks."""
-        run = getattr(dataset, "run", None)
-        grouping = getattr(run, "grouping", None)
-        if run is None or not isinstance(grouping, dict):
-            return None
-
-        groups = grouping.get("groups")
-        if not isinstance(groups, dict) or not groups:
-            return None
-
-        histograms = getattr(run, "histograms", None) or []
-        t0_default = 0
-        last_good_default = max(0, dataset.n_points - 1)
-        if histograms:
-            try:
-                t0_default = int(histograms[0].t0_bin)
-            except (TypeError, ValueError, IndexError):
-                t0_default = 0
-            try:
-                last_good_default = max(0, len(histograms[0].counts) - 1)
-            except (TypeError, ValueError, IndexError):
-                last_good_default = max(0, dataset.n_points - 1)
-
-        try:
-            t0_bin = int(grouping.get("t0_bin", t0_default))
-        except (TypeError, ValueError):
-            t0_bin = t0_default
-
-        raw_t_good = grouping.get("t_good_offset")
-        if raw_t_good is None:
-            try:
-                raw_t_good = int(grouping.get("first_good_bin", t0_bin)) - t0_bin
-            except (TypeError, ValueError):
-                raw_t_good = 0
-        try:
-            t_good_offset = int(raw_t_good)
-        except (TypeError, ValueError):
-            t_good_offset = 0
-
-        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
-        try:
-            last_good_bin = int(grouping.get("last_good_bin", last_good_default))
-        except (TypeError, ValueError):
-            last_good_bin = last_good_default
-
-        try:
-            bin_index_base = 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0
-        except (TypeError, ValueError):
-            bin_index_base = 0
-
-        bunching_factor = binning_spec(grouping).factor
-        signature = {
-            "groups": groups,
-            "forward_group": int(grouping.get("forward_group", 1)),
-            "backward_group": int(grouping.get("backward_group", 2)),
-            "alpha": float(grouping.get("alpha", 1.0)),
-            "projection_alphas": projection_alphas(grouping),
-            "alpha_x": grouping.get("alpha_x"),
-            "alpha_y": grouping.get("alpha_y"),
-            "alpha_z": grouping.get("alpha_z"),
-            "vector_axis": grouping.get("vector_axis"),
-            "group_names": grouping.get("group_names", {}),
-            "t0_bin": t0_bin,
-            "t_good_offset": t_good_offset,
-            "first_good_bin": first_good_bin,
-            "last_good_bin": last_good_bin,
-            "bin_index_base": bin_index_base,
-            "bunching_factor": bunching_factor,
-            "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
-            "dead_time_us": grouping.get("dead_time_us"),
-            "period_mode": grouping.get("period_mode"),
-            "period_dead_time_us": grouping.get("period_dead_time_us"),
-        }
-        return self._normalize_grouping_value(signature)
-
     def _coadd_compatibility_error(self, datasets: list[MuonDataset]) -> str | None:
-        """Return a user-facing error when selected datasets cannot be co-added."""
+        """Adapt the core's shared-intent preflight without inspecting acquired counts."""
+        from asymmetry.core.data.combine import coadd_compatibility_error
+
         if len(datasets) < 2:
             return "Select at least two grouped datasets to co-add."
-
-        signatures = [self._grouping_signature(ds) for ds in datasets]
-        if any(signature is None for signature in signatures):
-            return (
-                "Co-add requires identical grouping on every selected dataset. "
-                "Apply grouping to each source run before combining them."
-            )
-
-        first_signature = signatures[0]
-        if any(signature != first_signature for signature in signatures[1:]):
-            return (
-                "Co-add requires identical grouping on every selected dataset. "
-                "Align groups, alpha, good-bin limits, bunching, and deadtime settings first."
-            )
-        return None
+        return coadd_compatibility_error([dataset.run for dataset in datasets])
 
     def render_logbook_tsv(self) -> tuple[str, int]:
         """Render the TSV logbook to a string, reading widget/grouping state.
@@ -4956,10 +4840,13 @@ class DataBrowserPanel(QWidget):
         loop = QEventLoop(self)
 
         def _work(_worker):
+            from functools import partial
+
             return builder(
                 source_datasets,
                 run_numbers,
                 combined_run_number=combined_rn,
+                cancel_check=partial(check_task_cancelled, _worker),
             )
 
         def _finished(combined_dataset) -> None:
@@ -5140,15 +5027,9 @@ class DataBrowserPanel(QWidget):
         *,
         combined_run_number: int,
         existing_dataset: MuonDataset | None = None,
+        cancel_check=None,
     ) -> MuonDataset:
-        """Co-add source datasets at the raw-count level via ``combine_runs``.
-
-        Replaces the former curve-mean co-add (statistically wrong at low
-        counts, and it discarded histograms). The combined dataset now carries
-        real summed histograms, so it can be regrouped, deadtime-corrected,
-        count-fitted and transformed like any run. Combined results change
-        numerically — this is the correctness fix (study RA1/RA2/RA8).
-        """
+        """Prepare original acquisitions off-thread, then pool corrected independent counts."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
         runs = self._runs_for_combine(datasets)
@@ -5156,9 +5037,10 @@ class DataBrowserPanel(QWidget):
             runs,
             sign=1,
             run_number=combined_run_number,
+            cancel_check=cancel_check,
             label=" + ".join(map(str, run_numbers)),
         )
-        reduced = reduce_combined_run(combined_run)
+        reduced = reduce_combined_run(combined_run, cancel_check=cancel_check)
         return self._store_combined_reduction(reduced, existing_dataset)
 
     def _subtract_datasets(
@@ -5168,6 +5050,7 @@ class DataBrowserPanel(QWidget):
         *,
         combined_run_number: int,
         existing_dataset: MuonDataset | None = None,
+        cancel_check=None,
     ) -> MuonDataset:
         """Subtract with the core Automatic exposure scale and independent variance."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
@@ -5188,9 +5071,10 @@ class DataBrowserPanel(QWidget):
             sign=-1,
             scales=[1.0, scaling.coefficient],
             run_number=combined_run_number,
+            cancel_check=cancel_check,
             label=" − ".join(map(str, run_numbers)),
         )
-        reduced = reduce_combined_run(combined_run)
+        reduced = reduce_combined_run(combined_run, cancel_check=cancel_check)
         reduced.metadata["reference_scaling"] = scaling.provenance()
         reduced.metadata["reference_scale_summary"] = scaling.summary()
         return self._store_combined_reduction(reduced, existing_dataset)
@@ -5202,16 +5086,9 @@ class DataBrowserPanel(QWidget):
         *,
         combined_run_number: int,
         existing_dataset: MuonDataset | None = None,
+        cancel_check=None,
     ) -> MuonDataset:
-        """Symmetric N-run signed co-subtract ``runs[0] − Σ runs[k≥1]``.
-
-        ``datasets[0]`` is the sample (positive term); every other selected run
-        is subtracted at unit scale, each contributing its own Poisson variance.
-        The per-detector arithmetic runs through ``subtract_scaled_counts``
-        inside ``combine_runs`` (``subtract_method="signed"``, F9). Unlike the
-        reference path this takes two *or more* runs and applies no frame scaling
-        — for photo-µSR laser-on/off and background-style differences.
-        """
+        """Prepare independent acquisitions before applying the signed coefficients."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
         runs = self._runs_for_combine(datasets)
@@ -5221,9 +5098,10 @@ class DataBrowserPanel(QWidget):
             subtract_method="signed",
             scales=[1.0] * len(runs),
             run_number=combined_run_number,
+            cancel_check=cancel_check,
             label=" − ".join(map(str, run_numbers)),
         )
-        reduced = reduce_combined_run(combined_run)
+        reduced = reduce_combined_run(combined_run, cancel_check=cancel_check)
         return self._store_combined_reduction(reduced, existing_dataset)
 
     def _runs_for_combine(self, datasets: list[MuonDataset]) -> list:

@@ -75,6 +75,11 @@ finite positive integrals on both sides and a finite positive ratio. Failure
 makes the reduction unavailable instead of substituting a coefficient of one.
 Fixed unity remains an explicit valid choice. See :doc:`../detector_grouping`.
 
+For acquired-run arithmetic, an explicit ``per_run_estimate`` policy uses one
+ratio of the pooled corrected native-good sums. Output packing and time crops
+retain the complete calibration dependency. A G−R asymmetry uses the Red
+estimate on both conditions; explicit projection coefficients take precedence.
+
 :math:`\alpha` is estimated on the *corrected* forward/backward counts — the
 deadtime correction and the background subtraction configured in the grouping
 dialog are applied to the histograms **before** the estimate reads them, so the
@@ -627,3 +632,12 @@ period's counts. TF sources must name an acquired period rather than a
 nontrivial mapped sum, so a saved ordinal does not misidentify its observations.
 Routing equivalence establishes the same calculation across entry points;
 it does not extend the reference comparisons or physical-accuracy claims above.
+
+Run arithmetic and TF calibration
+---------------------------------
+
+TF calibration requires an original acquisition with its own count model.
+A co-added or signed run cannot supply one surrogate deadtime/exposure model
+for its retained acquisitions. Calibrate a source run and apply the resulting
+shared alpha/beta to the combination. Quick corrected-count preparation and
+ordinary asymmetry reduction retain each source's own correction facts.

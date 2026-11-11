@@ -30,6 +30,10 @@ class CountFitDomain:
     bin_width_us: float
     deadtime: CorrectionOutcome
     background_preflight: tuple[tuple[str, CorrectionOutcome], ...]
+    #: (flat offset, channel count, source, run, input ordinal, coefficient, data period, DAE period).
+    acquired_sources: tuple[
+        tuple[int, int, str, int | None, int | None, float, int | None, int | None], ...
+    ] = ()
 
 
 def count_fit_domain(group, dataset) -> CountFitDomain:
@@ -43,12 +47,13 @@ def count_fit_domain(group, dataset) -> CountFitDomain:
         tuple(group.time),
         tuple(BinWindow(*window) for window in metadata["count_fit_raw_windows"]),
         AlignmentCrop(**alignment),
-        dataset.run.histograms[group.detector_indices[0]].bin_width,
+        metadata["count_bin_width_us"],
         group.deadtime,
         tuple(
             (label, CorrectionOutcome.from_dict(outcome))
             for label, outcome in metadata["count_background_preflight"].items()
         ),
+        tuple(tuple(item) for item in metadata["acquired_sources"]),
     )
 
 

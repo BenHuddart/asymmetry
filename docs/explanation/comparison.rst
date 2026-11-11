@@ -1562,8 +1562,10 @@ Asymmetry retains signed coefficients and independent squared-weight variance
 for ordinary and counterpart-period payloads. Raw independent unit sums retain
 the Poisson limit; weighted/subtracted or supplied-noise results use retained
 Gaussian variance and do not acquire a raw-Poisson origin from integer totals.
-Pooling raw counts still precedes the existing aggregate correction path;
-ordinary padded alignment and period raw-index support remain distinct.
+Required original detectors are corrected with their own facts before signed
+weighting and pooling on whole-bin common observed good support. The raw pooled
+histograms remain inspection views. Group background and a selected reference
+act once on the pooled observation.
 
 WiMDA 1.326 co-add/Co-sub and musrfit 1.12.1 addRun/ADDRUN provide the ordinary
 count-addition comparison. Matched correction-off fit-time ADDRUN controls
@@ -1571,6 +1573,10 @@ agree on unit-addition and interior asymmetry values from whole-bin-aligned
 counts within 5e-6 fractional asymmetry;
 this establishes neither uncertainty nor endpoint equivalence. The tested
 unequal-fact ADDRUN applies the primary RUN correction context to added data.
+Asymmetry deliberately retains each input's correction facts and is invariant
+under primary-run reversal for shared authored intent. WiMDA pools raw inputs
+before correction. In Mantid, individual MuonPreProcess workspaces can be
+prepared before merging; generic merging does not determine correction order.
 Mantid 6.16 development Scale/Plus/Minus document the explicit independent
 weighted-arithmetic analogue, without a native numerical check here. The owning
 page links the public manuals and algorithms and distinguishes each operation.

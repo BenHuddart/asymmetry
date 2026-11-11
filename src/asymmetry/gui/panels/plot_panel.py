@@ -6511,14 +6511,9 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
-        # The denominator-reliability reduction below sums RAW grouped counts at
-        # fixed binning. Under variable / constant-error binning the displayed
-        # asymmetry is summed onto wider edges, so a per-raw-bin denominator no
-        # longer maps to the plotted bins; the saturation check above (computed
-        # on the displayed asymmetry) already flags unreliable bins there. Skip
-        # the raw-bin reduction explicitly rather than letting it self-disable
-        # via a silent array-shape mismatch.
-        if binning_spec(grouping).mode != "fixed":
+        # Raw aggregate denominators do not refine acquired-first or nonuniform
+        # observations. Their recorded plotted asymmetry supplies this display mask.
+        if binning_spec(grouping).mode != "fixed" or "period_inputs" in grouping:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,

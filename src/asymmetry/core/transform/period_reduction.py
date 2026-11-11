@@ -20,6 +20,7 @@ from asymmetry.core.transform.fb_counts import (
     native_count_time,
     native_time_window,
 )
+from asymmetry.core.transform.grouping import shared_automatic_alpha
 from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.t0 import resolve_selected_timing
 
@@ -88,6 +89,8 @@ def corrected_period_counts(
         label: (selected, dict(effective, period_mode=str(label)))
         for label, (selected, effective) in selections.items()
     }
+    if mode == PeriodMode.GREEN_MINUS_RED and shared_automatic_alpha(grouping, metadata):
+        selections[PeriodMode.GREEN][1].pop("alpha_policy", None)
     for label, (selected, effective) in selections.items():
         if (
             periods is not None
@@ -169,6 +172,15 @@ def corrected_period_counts(
                 offset += size
     output_windows, plans = {}, {}
     for label, (selected, effective) in selections.items():
+        if native_time_range is not None:
+            layout = layouts.get(label) or observations[label].layout
+            time = native_count_time(
+                layout.alignment.length,
+                layout.bin_width_us,
+                layout.common_t0_bin,
+                layout.t0_time_us,
+            )
+            output_windows[label] = native_time_window(time, layout.window, native_time_range)
         selected_metadata = (
             dict(metadata or {}, period_number=int(label == PeriodMode.GREEN) + 1)
             if periods is not None
@@ -185,34 +197,10 @@ def corrected_period_counts(
             cancel_check=cancel_check,
             observation=observations[label],
             layout=layouts.get(label),
-            output_window=None,
+            output_window=output_windows.get(label),
             output_binning=binning,
             output_time_range=output_time_range,
         )
-        if native_time_range is not None:
-            layout = plans[label].grouped
-            time = native_count_time(
-                layout.alignment.length,
-                layout.bin_width_us,
-                layout.common_t0_bin,
-                layout.t0_time_us,
-            )
-            output_windows[label] = native_time_window(time, layout.window, native_time_range)
-            plans[label] = grouped_correction_plan(
-                selected,
-                effective,
-                (tuple(forward_idx), tuple(backward_idx)),
-                use_background=use_background,
-                facility=facility,
-                metadata=selected_metadata,
-                reference_resolver=reference_resolver,
-                cancel_check=cancel_check,
-                observation=observations[label],
-                layout=layouts.get(label),
-                output_window=output_windows[label],
-                output_binning=binning,
-                output_time_range=output_time_range,
-            )
     inputs = [item for plan in plans.values() for item in plan.inputs]
     domains = [item for plan in plans.values() for item in plan.domains]
     coordinated = deadtime_operation_inputs(inputs, use_deadtime, deadtime_mode, domains=domains)

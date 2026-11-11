@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
@@ -46,6 +47,7 @@ from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair, fb_dea
 from asymmetry.core.transform.grouping import (
     ForwardBackwardLayout,
     independent_pair_indices,
+    shared_automatic_alpha,
 )
 from asymmetry.core.transform.period_reduction import corrected_period_counts
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_observation
@@ -77,6 +79,7 @@ class GroupedAsymmetryReduction:
     #: assumed instead of trusting a comment, and so a future fraction-scale
     #: reduction could not arrive silently.
     units: AsymmetryUnit = ASYMMETRY_PERCENT
+    effective_alpha: float | None = None
 
 
 @dataclass(frozen=True)
@@ -218,6 +221,7 @@ def grouped_correction_plan(
             histograms, grouping, pair, metadata, cancel_check=cancel_check
         )
     grouped = observation.layout if layout is None else layout
+    automatic = shared_automatic_alpha(grouping, metadata)
     domain = fb_deadtime_domain(
         grouped,
         grouping,
@@ -225,9 +229,9 @@ def grouped_correction_plan(
         use_background=use_background,
         facility=facility,
         metadata=metadata,
-        output_window=output_window,
-        output_binning=output_binning,
-        output_time_range=output_time_range,
+        output_window=None if automatic else output_window,
+        output_binning=None if automatic else output_binning,
+        output_time_range=None if automatic else output_time_range,
     )
     inputs, domains = observation.participants(domain)
     reference = (
@@ -240,6 +244,17 @@ def grouped_correction_plan(
     reference_crop = None
     if reference is not None:
         sample = observation.reference_sample
+        offsets = dict(grouped.alignment.detector_offsets)
+        required_last = max(
+            window.last + offsets[index]
+            for index, windows in domain.observations
+            for window in windows
+        )
+        grouped = replace(
+            grouped,
+            alignment=replace(grouped.alignment, length=required_last + 1),
+            window=BinWindow(grouped.window.first, min(grouped.window.last, required_last)),
+        )
         reference_crop = reference.alignment(
             sample.histograms, sample.grouping, grouped.alignment, *pair, cancel_check=cancel_check
         )
@@ -255,9 +270,9 @@ def grouped_correction_plan(
                 facility=facility,
                 metadata=metadata,
                 alignment=reference_crop,
-                output_window=output_window,
-                output_binning=output_binning,
-                output_time_range=output_time_range,
+                output_window=None if automatic else output_window,
+                output_binning=None if automatic else output_binning,
+                output_time_range=None if automatic else output_time_range,
             )
         )
     return GroupedCorrectionPlan(observation, grouped, reference, reference_crop, inputs, domains)
@@ -365,6 +380,7 @@ def prepare_grouped_corrections(
                     plan.domains[-1],
                     use_deadtime=use_deadtime,
                     mode=deadtime_mode,
+                    retain_variance=True,
                 )
                 if reference_outcome.status in {
                     CorrectionStatus.UNAVAILABLE,
@@ -418,6 +434,7 @@ def prepare_grouped_corrections(
             backward=backward_counts,
             alignment=crop,
             window=window if output_window is None else output_window,
+            calibration_window=window if shared_automatic_alpha(grouping, metadata) else None,
             bin_width_us=bin_width,
             t0_time_us=t0_time_us,
             corrections=corrections,
@@ -494,9 +511,25 @@ def reduce_grouped_asymmetry(
             output_binning=binning,
             output_time_range=output_time_range,
         )
+        automatic = shared_automatic_alpha(grouping, metadata)
+        if automatic:
+            alpha = estimate_prepared_alpha(corrected)
         result = grouped_asymmetry_from_counts(corrected, binning, alpha, beta, output_time_range)
+        if automatic:
+            result = replace(result, effective_alpha=alpha)
         perf.detail(bins=len(result.time))
         return result
+
+
+def estimate_prepared_alpha(counts):
+    """Estimate the shared native-good balance from the existing prepared count owner."""
+    window = counts.calibration_window or counts.window
+    return estimate_alpha(
+        counts.forward.counts,
+        counts.backward.counts,
+        first_good_bin=window.first,
+        last_good_bin=window.last,
+    )
 
 
 def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
@@ -526,6 +559,7 @@ class PeriodAsymmetryReduction:
     binning: BinningSpec
     alignments: dict[str, AlignmentCrop]
     ratio_validity: RatioValidity
+    effective_alpha: float | None = None
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
@@ -539,12 +573,14 @@ class PeriodAsymmetryReduction:
         result["correction_outcomes"] = {
             label: item.to_dict() for label, item in self.corrections.items()
         }
+        if self.effective_alpha is not None:
+            result["effective_alpha"] = self.effective_alpha
         return asymmetry_reduction_metadata(metadata, result)
 
 
 def asymmetry_reduction_metadata(metadata: dict, reduced: dict) -> dict:
     """Refresh live metadata while retaining independent reduction-owned provenance."""
-    owned = {"grouped_alignment", "period_alignments", "correction_outcomes"}
+    owned = {"grouped_alignment", "period_alignments", "correction_outcomes", "effective_alpha"}
     return {
         key: value
         for key, value in metadata.items()
@@ -599,6 +635,10 @@ def reduce_period_asymmetry(
         context=context,
         timing_search=timing_search,
     )
+    automatic = shared_automatic_alpha(grouping, metadata)
+    if automatic:
+        target = str(PeriodMode.RED) if combined else str(mode)
+        alpha = estimate_prepared_alpha(corrected[target])
     reduced = {
         label: grouped_asymmetry_from_counts(counts, binning, alpha, beta, output_time_range)
         for label, counts in corrected.items()
@@ -627,6 +667,7 @@ def reduce_period_asymmetry(
         binning,
         {str(label): result.alignment for label, result in reduced.items()},
         validity,
+        alpha if automatic else None,
     )
 
 

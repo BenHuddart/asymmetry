@@ -435,6 +435,14 @@ def test_run_reduction_boundaries_preserve_canonical_identity(monkeypatch, consu
     from asymmetry.core.workflow import reduction
 
     sample = _combined_two_period().run
+    if consumer == "period_integral":
+        # Fractional synthetic means have explicitly supplied independent noise.
+        from dataclasses import replace
+
+        sample.grouping["period_histograms"] = [
+            [replace(h, count_variance=np.full(h.n_bins, 25.0)) for h in period]
+            for period in sample.grouping["period_histograms"]
+        ]
     sample.metadata = {}
     sample.grouping["period_mode"] = "green_plus_red" if consumer == "period_integral" else "red"
     captured = []

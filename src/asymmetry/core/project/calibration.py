@@ -224,7 +224,7 @@ def calibration_values(payload):
     policies = restore_profile_calibrations(payload)
     result = {**payload, "projections": [dict(p) for p in (payload.get("projections") or ())]}
     for name in ("alpha", "beta"):
-        if f"{name}_policy" in policies:
+        if f"{name}_policy" in policies and policies[f"{name}_policy"].mode != "per_run_estimate":
             result[name] = policies[f"{name}_policy"].value
     resolve_projection_calibrations(policies["projection_alpha_policies"], result)
     return result
@@ -268,6 +268,7 @@ def _domain_payload(domain: CountFitDomain) -> dict:
 def _restore_domain(data: dict) -> CountFitDomain:
     return CountFitDomain(
         **{key: data[key] for key in ("group_id", "bin_width_us")},
+        acquired_sources=tuple(tuple(item) for item in data.get("acquired_sources", ())),
         detector_indices=tuple(data["detector_indices"]),
         time_us=tuple(data["time_us"]),
         raw_windows=tuple(BinWindow(**w) for w in data["raw_windows"]),

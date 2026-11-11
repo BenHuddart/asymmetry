@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct and align original acquired runs before weighted pooling, retaining
+  their own correction facts, common observed support, and count-first replay.
+
 - Preserve signed run weights and supplied counting variance in ordinary and period
   arithmetic; use retained Gaussian errors and reject weighted raw-Poisson fits.
 

@@ -383,7 +383,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         parsed = _digest_int(grouping.get(key))
         if parsed is not None:
             payload[key] = parsed
-
     t0_time_us = grouping.get("t0_time_us")
     if t0_time_us is not None:
         payload["t0_time_us"] = float(t0_time_us)
@@ -391,10 +390,10 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     if t0_source is not None:
         payload["t0_source"] = str(t0_source)
 
+    if "period_inputs" in grouping:
+        payload["constituents"] = constituent_metadata(grouping)
     if signal_source == "fb_asymmetry":
         payload.update(period_statistic_policy(grouping))
-        if "period_inputs" in grouping:
-            payload["constituents"] = constituent_metadata(grouping)
         payload["signal_source"] = "fb_asymmetry"
         forward_group = _digest_int(grouping.get("forward_group", 1))
         backward_group = _digest_int(grouping.get("backward_group", 2))

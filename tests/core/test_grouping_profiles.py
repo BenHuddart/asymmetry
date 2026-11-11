@@ -1291,8 +1291,8 @@ def test_run_file_good_window_without_tables_reads_the_payload_window():
         "last_good_bin": 17,
     }
     assert run_file_good_window(run, grouping, common_t0_bin=5) == (9, 17)
-    # Nothing stored at all: the full histogram range.
-    assert run_file_good_window(run, {}, common_t0_bin=5) == (0, 19)
+    # Without scalar overrides, acquired histogram bounds remain authoritative.
+    assert run_file_good_window(run, {}, common_t0_bin=5) == (6, 19)
 
 
 # --------------------------------------------------------------------------- #

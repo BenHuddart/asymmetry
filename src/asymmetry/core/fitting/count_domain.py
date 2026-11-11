@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_calibration import record_count_deadtime_calibration
+from asymmetry.core.fitting.count_inputs import count_model_frame_norm as _deadtime_frame_norm
 from asymmetry.core.fitting.count_results import (
     _result_from_minuit,
     count_bank_view,
@@ -45,7 +46,6 @@ from asymmetry.core.fitting.likelihood import (
     poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.deadtime import _deadtime_number
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
@@ -217,13 +217,6 @@ def _split_lifetime(kw: dict, default: float) -> float:
 
 
 # --- count loss (deadtime) --------------------------------------------------
-
-
-def _deadtime_frame_norm(dataset: MuonDataset, group) -> float:
-    """Exposure Δt·F per detector, with Δt the bunched bin width in µs."""
-    frames = _deadtime_number(dataset.run.grouping.get("good_frames"), "good frames", positive=True)
-    width = _deadtime_number(dataset.run.histograms[0].bin_width, "bin width (µs)", positive=True)
-    return width * group.metadata["grouped_time_domain_bunch_factor"] * frames
 
 
 def _apply_deadtime(counts, tau_us, *, frame_norm, detector_counts):

@@ -60,8 +60,8 @@ def test_acquired_grouped_counts_and_signal_use_original_observations(source):
     run.grouping = dict(
         grouping,
         deadtime_correction=True,
-        deadtime_mode="file",
-        deadtime_file_us=[coefficient, -coefficient],
+        deadtime_mode="manual",
+        dead_time_us=[coefficient, -coefficient] + [0.0] * (len(run.histograms) - 2),
         bunching_factor=1,
     )
     dataset = reduce_run_to_dataset(run)

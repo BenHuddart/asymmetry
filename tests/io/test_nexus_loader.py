@@ -1576,9 +1576,8 @@ def test_identity_period_loading_retains_signed_raw_bins_outside_good_support(tm
     assert combined.run.grouping["period_inputs"][0].histograms[0].counts[0] == -1
     selected = select_period(combined, 1)
     assert selected.run.histograms[0].counts[0] == -1
-    assert selected.metadata["correction_error"] == (
-        "Poisson count variance requires non-negative counts or explicit variance."
-    )
+    assert "correction_error" not in selected.metadata
+    assert selected.n_points == 3
     usable = select_period(combined, 2)
     assert usable.n_points == 3
     reduced = prepare_histogram_asymmetry(usable.run, merge=1, facility=None, reference=None)
