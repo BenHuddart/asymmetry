@@ -65,6 +65,13 @@ class ScopedCounts:
         cls, histograms, grouping, domain, *, use_deadtime, mode=None, allow_incomplete=False
     ):
         """Resolve once, then invert each required detector/bin once."""
+        for index, windows in domain.observations:
+            variance = histograms[index].count_variance
+            if variance is not None and any(np.any(np.isnan(variance[w.slice])) for w in windows):
+                raise ValueError(
+                    f"Detector {index + 1} requires supplied variance for consumed bins "
+                    "with unknown independent count noise"
+                )
         outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode, domain=domain)
         if not allow_incomplete:
             CorrectionOutcomes(deadtime=outcome).require_complete()

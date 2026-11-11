@@ -1,32 +1,9 @@
-"""Histogram-level run arithmetic: co-add and reference-run co-subtract.
+"""Independent linear run arithmetic before ordinary aggregate reduction.
 
-This is the Qt-free kernel behind the Data Browser's "Co-add Selected" and
-"Subtract Reference Run…" actions, and the scriptable entry point for combining
-runs at the **raw-count** level.
-
-The governing principle is *sum counts, then reduce* — never average reduced
-asymmetry curves. Errors and any nonlinear correction (deadtime, α, background)
-must see the total statistics, so the combined object is a first-class
-:class:`~asymmetry.core.data.dataset.Run` with real summed histograms that the
-normal grouping / deadtime / count-fit / MaxEnt pipelines can operate on.
-
-Two operations share one entry point, :func:`combine_runs`:
-
-* **Co-add** (``sign=+1``) — detector-wise count addition of repeated
-  measurements. The summed counts stay Poisson, so the result reduces through
-  the ordinary path (:func:`reduce_combined_run` delegates to
-  :func:`asymmetry.core.simulate.reduce_run_to_dataset`).
-* **Co-subtract** (``sign=-1``) — ``runs[0] − Σ scaleₖ·runsₖ``. Per-detector
-  arithmetic goes through :func:`asymmetry.core.transform.background.subtract_scaled_counts`
-  (the single count-level subtraction seam; F9 reconciliation), so variances
-  add. A difference spectrum is no longer Poisson, so the per-detector
-  propagated errors are carried on the run and consumed at reduction.
-
-WiMDA reference: WiMDA's run co-add (``cosign=-1``
-subtraction, frame/spill + per-period accumulation, ACC ``tshift`` alignment).
-See ``docs/porting/run-arithmetic/`` for the full study and divergences.
-
-This module must stay free of Qt / matplotlib / ``asymmetry.gui`` imports.
+Counts use signed coefficients and independent variances use their squares.
+Histogram.count_variance carries retained noise through every consumer. Raw
+independent unit sums retain the implicit Poisson variance. Correction and
+ordinary/period timing policies are supplied by the existing reduction owners.
 """
 
 from __future__ import annotations
@@ -40,7 +17,10 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.periods import sum_period_histograms
-from asymmetry.core.transform.background import subtract_scaled_counts
+from asymmetry.core.transform.corrections import (
+    independent_observations,
+    reference_observation_metadata,
+)
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.t0 import run_t0_time_us
 
@@ -103,7 +83,8 @@ def combine_runs(
         reference-run path: ``runs`` is ``[sample, reference]`` and ``scales``
         is ``[1.0, frame_ratio]``.
     scales
-        Per-run multipliers (length ``len(runs)``). Defaults to all ones.
+        Finite signed per-run multipliers (length ``len(runs)``), default one.
+        Zero terms do not participate in compatibility or noise requirements.
         ``runs[0]`` is always taken at its own scale (normally 1.0).
     run_number
         Run number for the combined run. Defaults to ``runs[0].run_number``
@@ -116,7 +97,7 @@ def combine_runs(
         reference subtraction ``[sample, reference]`` with ``scales =
         [1.0, frame_ratio]`` (exactly two runs). ``"signed"`` is the symmetric
         N-run signed co-subtract ``runs[0] − Σ scaleₖ·runsₖ`` (``k ≥ 1``), every
-        term contributing its own Poisson variance — for photo-µSR laser-on/off
+        term contributing its retained independent variance — for photo-µSR laser-on/off
         and background-style differences over more than two runs.
 
     Returns
@@ -125,8 +106,8 @@ def combine_runs(
         A first-class run with summed (or differenced) histograms, mirrored
         grouping, accumulated good frames, event-weighted scalar metadata with
         spread keys, and a ``metadata["combination"]`` provenance block. For a
-        subtraction the per-detector propagated errors are stored under
-        ``combination["detector_variance"]`` for :func:`reduce_combined_run`.
+        subtraction the independent noise is retained in each histogram's
+        ``count_variance``.
 
     Raises
     ------
@@ -134,7 +115,6 @@ def combine_runs(
         Fewer than two runs, empty histograms, or mismatched detector
         count / bin width.
     """
-    sign = int(sign)
     if sign not in (1, -1):
         raise CombineError("sign must be +1 (co-add) or -1 (co-subtract)")
     subtract_method = str(subtract_method)
@@ -155,19 +135,39 @@ def combine_runs(
     if len(scales) != len(runs):
         raise CombineError("scales must match the number of runs")
 
-    _validate_compatible(runs)
+    if not all(np.isfinite(scales)):
+        raise CombineError("scales must be finite")
+    coefficients = [scale if i == 0 else sign * scale for i, scale in enumerate(scales)]
+    active = [
+        (run, coefficient)
+        for run, coefficient in zip(runs, coefficients, strict=True)
+        if coefficient != 0
+    ]
+    if not active:
+        raise CombineError("combine_runs requires at least one nonzero coefficient")
+    contributors, weights = map(list, zip(*active, strict=True))
+    _validate_compatible(contributors)
+    observations = [combination_observations(run) for run in contributors]
+    for i, members in enumerate(observations):
+        for previous in observations[:i]:
+            if any(
+                not independent_observations(histograms, metadata, other_histograms, other_metadata)
+                for histograms, metadata in members
+                for other_histograms, other_metadata in previous
+            ):
+                raise CombineError(
+                    "Run arithmetic requires independent observations; a source is reused"
+                )
 
-    detector_variance: list[NDArray[np.float64]] | None = None
-    period_payload: dict[str, Any] | None = None
-    negative_bins = 0
-
-    if sign == 1 and _all_periodic(runs):
-        # W12: sum per-period histograms through the one periods.py helper.
-        histograms, period_payload = _combine_periodic(runs)
-    elif sign == 1:
-        histograms = _combine_histograms_add(runs, scales)
+    period_sizes = [len(run.grouping.get("period_histograms", ())) for run in contributors]
+    if any(period_sizes) and (not all(period_sizes) or len(set(period_sizes)) != 1):
+        raise CombineError("Incompatible period payloads; select corresponding periods explicitly")
+    period_payload = None
+    if any(period_sizes):
+        histograms, period_payload = _combine_periodic(contributors, weights, sign=sign)
     else:
-        histograms, detector_variance, negative_bins = _combine_histograms_subtract(runs, scales)
+        histograms = _combine_histograms(contributors, weights)
+    negative_bins = sum(int(np.count_nonzero(h.counts < 0)) for h in histograms)
 
     base = runs[0]
     number = base.run_number if run_number is None else int(run_number)
@@ -176,10 +176,10 @@ def combine_runs(
     # counts/(dt·frames) stays correct); a reference subtract keeps the sample's
     # exposure (the reference is frame-scaled and consumed).
     if sign == 1:
-        exposure = float(sum(max(good_frames(run.grouping, 0.0), 0.0) for run in runs))
+        exposure = float(sum(max(good_frames(run.grouping, 0.0), 0.0) for run in contributors))
     else:
-        exposure = max(good_frames(base.grouping, 0.0), 0.0)
-    grouping = _mirror_grouping(base, period_payload, exposure)
+        exposure = max(good_frames(contributors[0].grouping, 0.0), 0.0)
+    grouping = _mirror_grouping(contributors[0], period_payload, exposure)
     metadata = _combined_metadata(
         runs,
         scales=scales,
@@ -188,7 +188,6 @@ def combine_runs(
         number=number,
         label=label,
         exposure=exposure,
-        detector_variance=detector_variance,
         negative_bins=negative_bins,
     )
 
@@ -202,38 +201,10 @@ def combine_runs(
 
 
 def reduce_combined_run(run: Run) -> MuonDataset:
-    """Reduce a run produced by :func:`combine_runs` to a :class:`MuonDataset`.
-
-    Co-added runs hold Poisson counts, so this delegates to the ordinary
-    :func:`asymmetry.core.simulate.reduce_run_to_dataset`. Subtraction runs hold
-    a difference spectrum whose errors are *not* ``√counts``; this path groups
-    the carried per-detector variances in quadrature and forms the asymmetry
-    with :func:`compute_asymmetry_with_count_errors`, so the displayed error
-    bars are correct.
-    """
-    # Imported lazily to avoid a module-load cycle (simulate imports widely).
+    """Reduce canonical counts and retained variance through the normal owner."""
     from asymmetry.core.simulate import reduce_run_to_dataset
 
-    combination = run.metadata.get("combination") if isinstance(run.metadata, dict) else None
-    is_subtract = isinstance(combination, dict) and int(combination.get("sign", 1)) == -1
-
-    if not is_subtract:
-        return reduce_run_to_dataset(run)
-
-    if not run.histograms:
-        raise ValueError("Reduction requires a run with detector histograms.")
-
-    variance = combination.get("detector_variance")
-    variance_hists = _variance_histograms(run.histograms, variance)
-
-    prepared = replace(
-        run,
-        histograms=[
-            replace(hist, count_variance=var.counts)
-            for hist, var in zip(run.histograms, variance_hists, strict=True)
-        ],
-    )
-    return reduce_run_to_dataset(prepared)
+    return reduce_run_to_dataset(run)
 
 
 # --- in-batch co-add windowing ------------------------------------------------
@@ -255,7 +226,7 @@ def runs_with_dataset_metadata(datasets: Sequence[MuonDataset]) -> list[Run]:
 
     runs: list[Run] = []
     for dataset in datasets:
-        run = getattr(dataset, "run", None)
+        run = dataset.run
         if run is None:
             continue
         merged = dict(run.metadata)
@@ -319,6 +290,31 @@ def coadd_member_windows(
 # --- compatibility ------------------------------------------------------------
 
 
+def combination_observations(run: Run) -> list[tuple[list[Histogram], dict]]:
+    """Resolve direct acquired identities from active mapped or held period facts."""
+    originals = run.grouping.get("period_inputs")
+    if originals is not None:
+        mapping = run.grouping["period_mapping"]
+        selected = (
+            {run.grouping.get("period_mode", "red")}
+            if not run.grouping.get("period_histograms")
+            else {"red", "green"}
+        )
+        return [
+            (original.histograms, reference_observation_metadata(original))
+            for number, original in enumerate(originals, 1)
+            if mapping.get(str(number), mapping.get(number)) in selected
+        ]
+    periods = run.grouping.get("period_histograms")
+    metadata = reference_observation_metadata(run)
+    if periods:
+        return [
+            (histograms, dict(metadata, data_period_number=number))
+            for number, histograms in enumerate(periods, 1)
+        ]
+    return [(run.histograms, metadata)]
+
+
 def _validate_compatible(runs: list[Run]) -> None:
     """Enforce the count-level invariants: histograms, detector count, width."""
     for run in runs:
@@ -341,20 +337,6 @@ def _validate_compatible(runs: list[Run]) -> None:
                 raise CombineError(
                     f"detector {det + 1} bin widths differ ({width0} vs {width} µs); cannot combine"
                 )
-
-
-def _all_periodic(runs: list[Run]) -> bool:
-    """True when every run carries a >=2-period histogram payload."""
-    for run in runs:
-        grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        periods = grouping.get("period_histograms")
-        if not (isinstance(periods, list) and len(periods) >= 2):
-            return False
-    counts = {len(run.grouping["period_histograms"]) for run in runs}
-    return len(counts) == 1
-
-
-# --- count arithmetic ---------------------------------------------------------
 
 
 def _aligned_detector_arrays(
@@ -382,86 +364,56 @@ def _aligned_detector_arrays(
     return [a[:min_len] for a in shifted], common_t0
 
 
-def _combine_histograms_add(
-    runs: list[Run],
-    scales: list[float],
-) -> list[Histogram]:
-    """Detector-wise scaled count sum across runs, aligning per-detector t0."""
-    n_detectors = len(runs[0].histograms)
-    out: list[Histogram] = []
-    for det in range(n_detectors):
-        arrays = [np.asarray(run.histograms[det].counts, dtype=np.float64) for run in runs]
-        t0s = [int(run.histograms[det].t0_bin) for run in runs]
-        shifted, common_t0 = _aligned_detector_arrays(arrays, t0s)
-        total = np.zeros_like(shifted[0])
-        for arr, scale in zip(shifted, scales, strict=True):
-            total += scale * arr
-        det_t0_us = run_t0_time_us([run.histograms[det] for run in runs], common_t0)
-        out.append(_clone_geometry(runs[0].histograms[det], total, common_t0, det_t0_us))
-    return out
-
-
-def _combine_histograms_subtract(
-    runs: list[Run],
-    scales: list[float],
-) -> tuple[list[Histogram], list[NDArray[np.float64]], int]:
-    """Detector-wise ``runs[0] − Σ scaleₖ·runsₖ`` via ``subtract_scaled_counts``.
-
-    Returns the difference histograms, the per-detector variances (error²) so
-    the reduction can propagate them, and the count of negative difference bins
-    (the unphysical-counts guard, RA5). ``runs[0]`` is the sample at unit Poisson
-    variance ``clip(sample)``; each reference contributes ``scale·counts``
-    to the difference and ``scale²·clip(counts)`` to its variance. Zero variance
-    stays zero in the count domain; asymmetry formation handles degenerate
-    first-order uncertainties.
-    """
-    sample = runs[0]
-    n_detectors = len(sample.histograms)
-    out: list[Histogram] = []
-    variances: list[NDArray[np.float64]] = []
-    negative_bins = 0
-    for det in range(n_detectors):
-        arrays = [np.asarray(run.histograms[det].counts, dtype=np.float64) for run in runs]
-        t0s = [int(run.histograms[det].t0_bin) for run in runs]
-        aligned, common_t0 = _aligned_detector_arrays(arrays, t0s)
-        s_counts = aligned[0]
-        diff = s_counts.copy()
-        # Independent Poisson references add their scaled count variances.
-        variance = np.clip(s_counts, 0.0, None)
-        for ref_counts, ref_scale in zip(aligned[1:], scales[1:], strict=True):
-            # The count-level subtraction routes through the chokepoint (F9); the
-            # difference is no longer Poisson, so its variance is summed here.
-            contrib, contrib_variance = subtract_scaled_counts(
-                np.zeros_like(ref_counts), ref_counts, ref_scale
+def _combine_histograms(runs: list[Run], coefficients: list[float]) -> list[Histogram]:
+    """Keep the ordinary path's whole-bin padded alignment for counts and noise."""
+    aligned = [[] for _ in runs]
+    for det in range(len(runs[0].histograms)):
+        histograms = [run.histograms[det] for run in runs]
+        t0s = [h.t0_bin for h in histograms]
+        counts, common_t0 = _aligned_detector_arrays([h.counts for h in histograms], t0s)
+        variances, _ = _aligned_detector_arrays(
+            [h.counts if h.count_variance is None else h.count_variance for h in histograms], t0s
+        )
+        exact = run_t0_time_us(histograms, common_t0)
+        for target, hist, values, variance in zip(
+            aligned, histograms, counts, variances, strict=True
+        ):
+            target.append(
+                replace(
+                    hist,
+                    counts=values,
+                    t0_bin=common_t0,
+                    t0_time_us=exact,
+                    count_variance=variance if hist.count_variance is not None else None,
+                )
             )
-            diff = diff + contrib
-            variance = variance + contrib_variance
-        negative_bins += int(np.count_nonzero(diff < 0.0))
-        det_t0_us = run_t0_time_us([run.histograms[det] for run in runs], common_t0)
-        out.append(_clone_geometry(sample.histograms[det], diff, common_t0, det_t0_us))
-        variances.append(variance)
-    return out, variances, negative_bins
+    summed = sum_period_histograms(aligned, coefficients=coefficients)
+    return [
+        replace(hist, good_bin_start=base.good_bin_start, good_bin_end=base.good_bin_end)
+        for hist, base in zip(summed, aligned[0], strict=True)
+    ]
 
 
 def _combine_periodic(
     runs: list[Run],
+    coefficients: list[float],
+    *,
+    sign: int,
 ) -> tuple[list[Histogram], dict[str, Any]]:
-    """Co-add period-mode runs: sum each period set across runs (W12).
-
-    Uses :func:`asymmetry.core.io.periods.sum_period_histograms` so there is no
-    second period-summing implementation. Periods of repeated measurements
-    share detector layout, bin width and t0, so the helper's detector-wise sum
-    is exact.
-    """
+    """Apply coefficients to every counterpart on existing common raw-index support."""
     n_periods = len(runs[0].grouping["period_histograms"])
     summed_periods: list[list[Histogram]] = []
     for p in range(n_periods):
         per_run = [run.grouping["period_histograms"][p] for run in runs]
-        summed_periods.append(sum_period_histograms(per_run))
+        # Correspondence is required for each counterpart, not only the flat view.
+        _validate_compatible(
+            [replace(run, histograms=h) for run, h in zip(runs, per_run, strict=True)]
+        )
+        summed_periods.append(sum_period_histograms(per_run, coefficients=coefficients))
 
     # Per-period good frames accumulate across runs; deadtime tables come from
     # the first run (co-add requires identical grouping at the GUI gate).
-    good = _accumulate_period_good_frames(runs, n_periods)
+    good = _accumulate_period_good_frames(runs if sign == 1 else runs[:1], n_periods)
     base_grouping = runs[0].grouping
     payload: dict[str, Any] = {
         "period_histograms": summed_periods,
@@ -492,56 +444,6 @@ def _accumulate_period_good_frames(runs: list[Run], n_periods: int) -> list[floa
     return totals
 
 
-def _clone_geometry(
-    template: Histogram,
-    counts: NDArray[np.float64],
-    t0_bin: int,
-    t0_time_us: float | None,
-) -> Histogram:
-    """A histogram with ``counts`` but ``template``'s bin geometry at ``t0_bin``.
-
-    ``t0_time_us`` is the combined detector's exact t0 — the mean over the runs
-    that sit on ``t0_bin`` (:func:`~asymmetry.core.transform.t0.run_t0_time_us`
-    across runs for this detector), ``None`` when no contributing run carries
-    one. Dropping it here would silently reduce the combined run on the bin
-    centre while each source run reduced on its exact t0.
-    """
-    return Histogram(
-        counts=np.asarray(counts, dtype=np.float64),
-        bin_width=float(template.bin_width),
-        t0_bin=int(t0_bin),
-        good_bin_start=int(template.good_bin_start),
-        good_bin_end=int(template.good_bin_end),
-        t0_time_us=t0_time_us,
-    )
-
-
-def _variance_histograms(
-    histograms: list[Histogram],
-    variance: Any,
-) -> list[Histogram]:
-    """Wrap per-detector variances as histograms so they group like counts.
-
-    Falls back to the difference counts' own values (treated as Poisson) only
-    when the stored variance is missing or malformed — a defensive path that
-    should not trigger for runs built by :func:`combine_runs`.
-    """
-    if isinstance(variance, list) and len(variance) == len(histograms):
-        return [
-            _clone_geometry(hist, np.asarray(var, dtype=np.float64), hist.t0_bin, hist.t0_time_us)
-            for hist, var in zip(histograms, variance, strict=True)
-        ]
-    return [
-        _clone_geometry(
-            hist,
-            np.abs(np.asarray(hist.counts, dtype=np.float64)),
-            hist.t0_bin,
-            hist.t0_time_us,
-        )
-        for hist in histograms
-    ]
-
-
 # --- grouping / metadata ------------------------------------------------------
 
 
@@ -554,7 +456,7 @@ def _mirror_grouping(
 
     Period payloads (which would otherwise carry the *base* run's per-period
     histograms) are stripped first and replaced with the freshly summed payload,
-    or dropped entirely for a subtraction (period co-subtract is out of scope).
+    for either sign.
     The run-level ``good_frames`` is set to the accumulated ``exposure`` so the
     deadtime normaliser sees the combined frame count.
     """
@@ -583,7 +485,6 @@ def _combined_metadata(
     number: int,
     label: str | None,
     exposure: float,
-    detector_variance: list[NDArray[np.float64]] | None,
     negative_bins: int = 0,
 ) -> dict[str, Any]:
     """Build the combined run's metadata: identity, event-weighted scalars,
@@ -635,13 +536,13 @@ def _combined_metadata(
         "scales": list(scales),
         "constituents": constituents,
         "good_frames": good,
+        "independence_assumption": "distinct_observations_when_identity_unknown",
+        "detector_correspondence": "channel_order",
     }
     if good > 0.0:
         metadata.setdefault("good_frames", good)
     if sign == -1:
         combination["negative_count_bins"] = int(negative_bins)
-        if detector_variance is not None:
-            combination["detector_variance"] = detector_variance
         if subtract_method == "reference":
             # The reference-run path records its single designated reference.
             combination["reference_run_number"] = int(runs[1].run_number)

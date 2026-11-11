@@ -127,3 +127,19 @@ Physical constants
 .. automodule:: asymmetry.core.utils.constants
    :members:
    :member-order: bysource
+
+Run arithmetic
+--------------
+
+``asymmetry.core.data.combine.combine_runs`` accepts finite signed ``scales``.
+The first coefficient equals ``scales[0]``; later coefficients equal
+``sign * scales[i]``. Counts combine linearly and independent variances use
+squared coefficients, retained in ``Histogram.count_variance``. NaN denotes
+explicitly unknown per-bin noise; only a consumed unknown bin blocks preparation.
+Zero terms are
+recorded but excluded from operation domains; nonfinite/all-zero requests and
+known direct reuse raise ``CombineError``. Corresponding period payloads use
+the same coefficients; mixed/mismatched payloads require explicit selection.
+``reduce_combined_run`` uses the ordinary reduction owner and retained noise.
+See :doc:`/reference/run_arithmetic` for correction/support limits and likelihood
+eligibility. Ordinary GUI co-add remains unit weighted.

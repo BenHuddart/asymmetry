@@ -46,8 +46,9 @@ class Histogram:
         sub-bin t0; see :attr:`t0_time_us_effective`.
     count_variance : NDArray or None
         Independent counting variance on the same acquisition bins. ``None``
-        denotes raw Poisson counts. Deadtime-prepared copies retain measured
-        variance rather than inferring it from their corrected count values.
+        denotes the raw Poisson assumption. NaN explicitly records unknown noise
+        on an acquisition bin; consumed unknown noise is an operation error.
+        Prepared copies retain noise rather than infer it from corrected counts.
     """
 
     counts: NDArray[np.float64]
@@ -66,10 +67,12 @@ class Histogram:
             variance.ndim != 1
             or variance.shape != np.shape(self.counts)
             or variance.dtype.kind not in "biuf"
-            or not np.all(np.isfinite(variance))
+            or np.any(np.isinf(variance))
             or np.any(variance < 0)
         ):
-            raise ValueError("count variance must be finite, non-negative and have the count shape")
+            raise ValueError(
+                "count variance must be non-negative or unknown (NaN), with the count shape"
+            )
         self.count_variance = np.array(variance, dtype=np.float64, copy=True)
         self.count_variance.setflags(write=False)
 
@@ -304,16 +307,6 @@ class MuonDataset:
         a fit record.
         """
 
-        def fit_metadata(metadata):
-            combination = metadata.get("combination")
-            if not isinstance(combination, dict) or "detector_variance" not in combination:
-                return metadata
-            return metadata | {
-                "combination": {
-                    key: value for key, value in combination.items() if key != "detector_variance"
-                }
-            }
-
         run = self.run
         if run is None and self.histogram_observation is None:
             return self
@@ -321,16 +314,13 @@ class MuonDataset:
             run = replace(
                 run,
                 histograms=[],
-                metadata=fit_metadata(run.metadata),
                 grouping={
                     k: v
                     for k, v in run.grouping.items()
                     if k not in {"period_histograms", "period_reduced", "period_inputs"}
                 },
             )
-        return replace(
-            self, run=run, metadata=fit_metadata(self.metadata), histogram_observation=None
-        )
+        return replace(self, run=run, histogram_observation=None)
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
         r"""Merge independent curve bins by averaging values and adding variances.

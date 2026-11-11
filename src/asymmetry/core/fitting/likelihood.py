@@ -23,6 +23,7 @@ class Objective(str, Enum):
 
 class CountSource(str, Enum):
     RAW = "raw"
+    RETAINED_VARIANCE = "retained-variance arithmetic or supplied noise"
     DEADTIME_CORRECTED = "deadtime-corrected"
     LIFETIME_CORRECTED = "lifetime-corrected"
 

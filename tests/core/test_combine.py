@@ -1,10 +1,4 @@
-"""Tests for histogram-level run arithmetic (asymmetry.core.data.combine).
-
-Verification-plan of docs/porting/run-arithmetic/verification-plan.md: co-add
-distributional identity (pull test), co-subtract zero / √2 errors, two-period
-co-add, the negative-count guard, event-weighted metadata, and the F9
-chokepoint reuse.
-"""
+"""Distributional, geometry and independent-noise checks for run arithmetic."""
 
 from __future__ import annotations
 
@@ -313,12 +307,9 @@ def test_subtract_variances_add():
     a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
     b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
     d = combine_runs([a, b], sign=-1, scales=[1.0, 1.0])
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     expected = a.histograms[0].counts + b.histograms[0].counts
-    # Empty pre-t0 bins carry the chokepoint's 1.0 error sentinel (sliced out of
-    # the good window); compare the populated region where variance = a + r.
-    populated = expected > 0
-    np.testing.assert_allclose(var[populated], expected[populated], rtol=1e-12)
+    np.testing.assert_allclose(var, expected, rtol=1e-12)
 
 
 def test_subtract_scaled_reference():
@@ -331,7 +322,7 @@ def test_subtract_scaled_reference():
         a.histograms[0].counts - scale * b.histograms[0].counts,
         rtol=1e-12,
     )
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     expected_var = a.histograms[0].counts + scale * scale * b.histograms[0].counts
     populated = expected_var > 0
     np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
@@ -374,7 +365,7 @@ def test_signed_subtract_two_identical_runs_is_zero_with_propagated_errors():
     assert "reference_run_number" not in d.metadata["combination"]
     for det in range(2):
         np.testing.assert_array_equal(d.histograms[det].counts, np.zeros(N_BINS))
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     expected = a.histograms[0].counts + b.histograms[0].counts  # = 2·A
     populated = expected > 0
     np.testing.assert_allclose(var[populated], expected[populated], rtol=1e-12)
@@ -392,7 +383,7 @@ def test_signed_subtract_three_runs_difference_and_variance():
             a.histograms[det].counts - b.histograms[det].counts - c.histograms[det].counts,
             rtol=1e-12,
         )
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     expected_var = a.histograms[0].counts + b.histograms[0].counts + c.histograms[0].counts
     populated = expected_var > 0
     np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
@@ -413,9 +404,7 @@ def test_two_run_reference_matches_chokepoint_all_bins():
             a.histograms[det].counts, b.histograms[det].counts, scale
         )
         np.testing.assert_array_equal(d.histograms[det].counts, diff)
-        np.testing.assert_allclose(
-            d.metadata["combination"]["detector_variance"][det], variance, rtol=1e-12
-        )
+        np.testing.assert_allclose(d.histograms[det].count_variance, variance, rtol=1e-12)
 
 
 def test_signed_subtract_extra_reference_empty_bin_no_sentinel():
@@ -427,7 +416,7 @@ def test_signed_subtract_extra_reference_empty_bin_no_sentinel():
     zero_bin = int(N_BINS // 2)
     c.histograms[0].counts[zero_bin] = 0.0
     d = combine_runs([a, b, c], sign=-1, subtract_method="signed")
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     # variance at the zeroed bin = a + b + 0 (c contributes 0, no 1.0 sentinel).
     expected = a.histograms[0].counts[zero_bin] + b.histograms[0].counts[zero_bin]
     assert var[zero_bin] == pytest.approx(expected, rel=1e-12)
@@ -443,7 +432,7 @@ def test_signed_subtract_respects_per_run_scales():
         a.histograms[0].counts - 0.5 * b.histograms[0].counts - 0.25 * c.histograms[0].counts,
         rtol=1e-12,
     )
-    var = d.metadata["combination"]["detector_variance"][0]
+    var = d.histograms[0].count_variance
     expected_var = (
         a.histograms[0].counts + 0.25 * b.histograms[0].counts + 0.0625 * c.histograms[0].counts
     )
@@ -499,24 +488,6 @@ def test_two_period_coadd_sums_period_histograms():
 # ---------------------------------------------------------------------------
 # F9: chokepoint reuse
 # ---------------------------------------------------------------------------
-
-
-def test_subtract_routes_through_chokepoint(monkeypatch):
-    """Co-subtract must call subtract_scaled_counts, not a parallel impl (F9)."""
-    import asymmetry.core.data.combine as combine_mod
-
-    calls = {"n": 0}
-    real = combine_mod.subtract_scaled_counts
-
-    def spy(counts, reference, scale):
-        calls["n"] += 1
-        return real(counts, reference, scale)
-
-    monkeypatch.setattr(combine_mod, "subtract_scaled_counts", spy)
-    a = simulate_run(_template(), _cos, total_events=1e5, seed=1)
-    b = simulate_run(_template(), _cos, total_events=1e5, seed=2)
-    combine_runs([a, b], sign=-1, scales=[1.0, 1.0])
-    assert calls["n"] == 2  # one per detector
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,7 @@ import numpy as np
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
+from asymmetry.core.io.period_counts import RUN_ARITHMETIC_POLICY
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
@@ -92,13 +93,10 @@ DERIVED_SERIES_KINDS = frozenset({"global-batch", "fit-trend"})
 #: added to it afterwards.
 _NOT_THE_FIT = frozenset({"schema", "asymmetry_version", "trend_fits"})
 
-#: Default work-directory name, resolved against the current directory. Not
-#: hidden: an analyst who has to find a plot, delete a stale session or put a
-#: recipe under version control should see it in a file listing.
+#: Visible work-directory name, resolved against the current directory.
 WORKDIR_NAME = "asymmetry-work"
 
-#: Chunk the source file is read in while hashing — a buffer size, not a limit
-#: on what is hashed (:func:`file_fingerprint` reads to the end).
+#: Hashing buffer size; file_fingerprint reads through the complete source.
 _FILE_HASH_CHUNK = 1024 * 1024
 
 #: Characters a name may never contain, because each one would make it
@@ -256,13 +254,14 @@ def reduction_digest(
     grouping: dict[str, Any],
     settings: ReductionSettings,
 ) -> str:
-    """Identify source contents, authored settings, and the numerical preparation policy."""
+    """Identify source contents, authored settings, and numerical preparation."""
     payload = {
         **period_statistic_policy(
             dict(grouping, period_mode=settings.period) if settings.period is not None else grouping
         ),
         "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
         "mapped_count_preparation_policy": CONSTITUENT_PREPARATION_POLICY,
+        **({"run_arithmetic_policy": RUN_ARITHMETIC_POLICY} if len(source_files) > 1 else {}),
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",
