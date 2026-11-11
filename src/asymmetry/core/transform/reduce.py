@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.data.ratio_validity import RatioReason, RatioValidity
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
@@ -672,7 +672,8 @@ def reduce_period_asymmetry(
         validity = single.ratio_validity
         noise = single.counting_noise
     if noise is not None:
-        error = np.where(validity.reasons == 0, noise.error, error)
+        error = np.where(validity.reasons == RatioReason.USABLE, noise.error, error)
+        validity = RatioValidity.from_ratio(validity.reasons != RatioReason.UNDEFINED, noise.error)
     return PeriodAsymmetryReduction(
         time,
         asymmetry,

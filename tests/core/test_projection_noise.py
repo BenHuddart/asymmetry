@@ -6,8 +6,10 @@ import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
 
-from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.periods import combine_mapped_periods
 from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
 from asymmetry.core.transform.projections import reduce_run_projections, reduce_selected_projections
 from asymmetry.core.transform.reference_scale import ReferenceScaleRequest
 from asymmetry.core.transform.rotating_frame import Provenance, RotatingFrame, rotate_transverse
@@ -213,7 +215,10 @@ def test_disjoint_observations_recover_independent_curve_errors():
     frame = RotatingFrame.typed_frequency(0.4, 1)
     shared = rotate_transverse(curves["P_x"], curves["P_y"], frame, weights=(1.0,))
     plain = rotate_transverse(
-        *(replace(c, counting_noise=None) for c in curves.values()), frame, weights=(1.0,)
+        *(replace(c, counting_noise=None) for c in curves.values()),
+        frame,
+        weights=(1.0,),
+        assume_independent=True,
     )
     for a, b in zip(shared, plain, strict=True):
         np.testing.assert_allclose(a.error, b.error)
@@ -399,3 +404,159 @@ def test_undefined_rotated_ratios_remain_unusable_after_display_packing():
         assert curve.ratio_validity.report().undefined_ratio == 8
         packed = curve.merge_curve_bins(2)
         assert packed.ratio_validity.report().undefined_ratio == 4
+
+
+def period_projection_run(period=1, *, supplied=None):
+    rates = np.array([1200.0, 800.0, 700.0, 1400.0]) + period * 10
+    h = [
+        Histogram(
+            np.full(16, x), 0.1, count_variance=None if supplied is None else np.full(16, supplied)
+        )
+        for x in rates
+    ]
+    grouping = {
+        "groups": {1: [1, 2], 2: [3, 4], 3: [1, 3], 4: [2, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "projections": [
+            {"label": "P_x", "forward_group": 1, "backward_group": 2},
+            {"label": "P_y", "forward_group": 3, "backward_group": 4},
+        ],
+        "t0_bin": 0,
+        "alpha": 1.0,
+    }
+    return Run(
+        500000 + period,
+        h,
+        metadata={"source_run_number": 500, "data_period_number": period},
+        grouping=grouping,
+        source_file="owned-synthetic.nxs",
+    )
+
+
+def test_mapping_does_not_name_pooled_view_as_original_acquisition():
+    runs = [period_projection_run(i) for i in (1, 2)]
+    datasets = [
+        MuonDataset(np.arange(16) * 0.1, np.zeros(16), np.ones(16), metadata=r.metadata, run=r)
+        for r in runs
+    ]
+    mapped = combine_mapped_periods(datasets, {1: "red", 2: "red"})
+    expected = prepare_histogram_asymmetry(mapped.run, merge=1, facility=None, reference=None)
+    cohort = reduce_selected_projections(mapped.run)
+    np.testing.assert_allclose(cohort["P_x"].asymmetry, expected.asymmetry)
+
+
+def test_green_auto_detection_never_borrows_red_search():
+    from tests.core.test_selected_timing_policy import timing_run
+
+    red, green = timing_run(), timing_run()
+    red.grouping.update(
+        groups={1: [1], 2: [3], 3: [4]},
+        projections=[
+            {"label": "P_x", "forward_group": 1, "backward_group": 2},
+            {"label": "P_y", "forward_group": 2, "backward_group": 3},
+        ],
+        period_histograms=[red.histograms, green.histograms],
+        period_t0_sources=["file", "file"],
+        period_mode="green",
+        t0_policy={"mode": "auto_detect"},
+    )
+    green.histograms[0].counts[:] = 0
+    with pytest.raises(ValueError, match="selected channels 1"):
+        reduce_selected_projections(red)
+
+
+def test_cancelled_shared_reference_is_classified_zero_variance():
+    run = period_projection_run(supplied=0.0)
+    # Two independent deterministic acquisitions, one explicitly reused reference.
+    green = [replace(h, counts=h.counts.copy()) for h in run.histograms]
+    run.grouping.update(
+        period_histograms=[run.histograms, green],
+        period_mode="green_minus_red",
+        background_correction=True,
+        background_mode="reference_run",
+    )
+    run.metadata.pop("data_period_number")
+    reference = BackgroundReference(
+        [Histogram(np.full(16, 10.0), 0.1) for _ in range(4)],
+        ReferenceScaleRequest("manual", 0.4).resolve(),
+        run_number=777,
+    )
+    curves = reduce_selected_projections(run, reference=reference)
+    for curve in curves.values():
+        np.testing.assert_array_equal(curve.error, 0.0)
+        assert curve.ratio_validity.report().zero_variance == 16
+
+
+def test_plain_curves_must_explicitly_declare_independence():
+    curves = [MuonDataset(np.array([0.125]), np.array([1.0]), np.array([1.0])) for _ in range(2)]
+    # Missing counting lineage does not establish statistical independence.
+    with pytest.raises(ValueError, match="independent"):
+        rotate_transverse(*curves, RotatingFrame.typed_frequency(1.0, 1), weights=(1.0,))
+
+
+def test_defined_zero_variance_axis_does_not_reintroduce_display_fallback_error():
+    run = period_projection_run()
+    run.grouping["groups"] = {1: [1], 2: [2], 3: [3], 4: [4]}
+    run.histograms = [
+        replace(h, count_variance=np.zeros(16) if i < 2 else h.counts)
+        for i, h in enumerate(run.histograms)
+    ]
+    curves = reduce_selected_projections(run)
+    assert curves["P_x"].ratio_validity.report().zero_variance == 16
+    rotated = rotate_transverse(
+        curves["P_x"], curves["P_y"], RotatingFrame.typed_frequency(1.0, 1), weights=(1.0,)
+    )
+    theta = 2 * np.pi * rotated[0].time
+    expected = np.array([np.abs(np.sin(theta)), np.abs(np.cos(theta))]) * curves["P_y"].error
+    np.testing.assert_allclose([c.error for c in rotated], expected, atol=1e-12)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_packed_mean_minus_its_own_range_mean_has_exact_zero_noise(seed):
+    from asymmetry.core.transform.counting_noise import (
+        CountingNoise,
+        CountingObservation,
+        Influence,
+    )
+
+    variance = np.random.default_rng(seed).uniform(5e4, 2e5, size=1000)
+    weights = np.full(1000, 1 / 1000)
+    source = CountingObservation(variance, object())
+    noise = CountingNoise(
+        (Influence(source, csr_matrix(weights[None, :]), ((-np.ones(1), weights),)),)
+    )
+    np.testing.assert_array_equal(noise.error, [0.0])
+
+
+def test_declared_held_acquisitions_override_parent_period_and_buffer_aliases():
+    run = small_run()
+    single = reduce_selected_projections(run)
+    run.metadata["period_number"] = 1
+    run.grouping.update(
+        period_histograms=[run.histograms, run.histograms], period_mode="green_minus_red"
+    )
+    difference = reduce_selected_projections(run)
+    for label, curve in difference.items():
+        np.testing.assert_array_equal(curve.asymmetry, 0.0)
+        np.testing.assert_allclose(curve.error, np.sqrt(2) * single[label].error)
+
+
+def test_core_projection_cancellation_does_not_mutate_source():
+    from asymmetry.core.transform.projections import reduce_selected_projections
+    from tests.core.test_projection_noise import small_run
+
+    run = small_run()
+    before = [hist.counts.copy() for hist in run.histograms]
+    calls = 0
+
+    def cancel():
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("cancelled counting cohort")
+
+    with pytest.raises(RuntimeError, match="cancelled counting cohort"):
+        reduce_selected_projections(run, cancel_check=cancel)
+    for hist, counts in zip(run.histograms, before, strict=True):
+        np.testing.assert_array_equal(hist.counts, counts)

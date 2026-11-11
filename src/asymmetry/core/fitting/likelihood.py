@@ -125,7 +125,7 @@ def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
     if t_max is not None:
         mask &= dataset.time <= t_max
     report = None
-    if dataset.ratio_validity is not None and "rotating_frame" not in dataset.metadata:
+    if dataset.ratio_validity is not None:
         validity = dataset.ratio_validity.select(mask)
         report = validity.report()
         mask[mask] = validity.reasons == RatioReason.USABLE
@@ -134,7 +134,7 @@ def gaussian_selection(dataset, t_min=None, t_max=None) -> GaussianSelection:
 
 def dataset_observations(dataset, t_min=None, t_max=None):
     """Select known histogram ratios once; generic curves retain strict validation."""
-    if dataset.ratio_validity is None or "rotating_frame" in dataset.metadata:
+    if dataset.ratio_validity is None:
         return GaussianObservations(
             dataset.time,
             dataset.asymmetry,

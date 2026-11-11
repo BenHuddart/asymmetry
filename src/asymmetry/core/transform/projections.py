@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -23,13 +24,17 @@ from asymmetry.core.transform.constituent_counts import constituent_metadata, he
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.counting_noise import COUNTING_NOISE_POLICY
 from asymmetry.core.transform.period_reduction import period_statistic_policy
-from asymmetry.core.transform.rebin import BINNING_POLICY
-from asymmetry.core.transform.t0 import find_t0_for_run, resolve_selected_timing
+from asymmetry.core.transform.rebin import BINNING_POLICY, BinningSpec
+from asymmetry.core.transform.t0 import resolve_selected_timing
+
+if TYPE_CHECKING:
+    from asymmetry.core.transform.rotating_frame import RotatingFrame
 
 __all__ = [
     "projection_alphas",
     "reduce_run_projections",
     "reduce_selected_projections",
+    "rotate_selected_projections",
     "reduction_identity",
 ]
 
@@ -132,6 +137,7 @@ def reduce_selected_projections(
     reference: BackgroundReference | None = None,
     period_index: int | None = None,
     binning: BinningSpec | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, MuonDataset]:
     """Reduce the selected period statistic as one counting-observation cohort.
 
@@ -144,7 +150,7 @@ def reduce_selected_projections(
         prepare_histogram_asymmetry,
     )
 
-    source, reference = capture_counting_observations(run, reference)
+    source, reference = capture_counting_observations(run, reference, cancel_check=cancel_check)
     grouping = source.grouping
     pairs = derive_projection_pairs(
         grouping["groups"], grouping.get("group_names"), grouping.get("projections")
@@ -152,19 +158,17 @@ def reduce_selected_projections(
     if not pairs:
         raise ValueError(f"Run {run.run_number}'s grouping declares no asymmetry projections.")
     datasets = {}
-    search = None
-
-    def search_timing(histograms, metadata, **options):
-        nonlocal search
-        if search is None:
-            search = find_t0_for_run(histograms, metadata, **options)
-        return search
-
     for label, (forward, backward) in pairs.items():
+        if cancel_check is not None:
+            cancel_check()
         selected_grouping = dict(
             grouping, forward_group=forward, backward_group=backward, vector_axis=label
         )
-        if "t0_policy" in grouping and "period_inputs" not in grouping:
+        if (
+            "t0_policy" in grouping
+            and "period_inputs" not in grouping
+            and "period_histograms" not in grouping
+        ):
             policy = grouping["t0_policy"]
             resolve_selected_timing(
                 source.histograms,
@@ -172,17 +176,25 @@ def reduce_selected_projections(
                 source.metadata,
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
-                search_provider=search_timing,
             )
         selected = replace(source, grouping=selected_grouping)
         result = prepare_histogram_asymmetry(
-            selected, merge=1, facility=facility, reference=reference, binning=binning
+            selected,
+            merge=1,
+            facility=facility,
+            reference=reference,
+            binning=binning,
+            cancel_check=cancel_check,
         )
         if result.effective_alpha is not None:
             selected_grouping["alpha"] = result.effective_alpha
         datasets[label] = MuonDataset(
             histogram_observation=histogram_observation(
-                selected, facility=facility, reference=reference, binning=binning
+                selected,
+                facility=facility,
+                reference=reference,
+                binning=binning,
+                cancel_check=cancel_check,
             ),
             ratio_validity=result.ratio_validity,
             counting_noise=result.counting_noise,
@@ -195,3 +207,26 @@ def reduce_selected_projections(
             run=selected,
         )
     return datasets
+
+
+def rotate_selected_projections(
+    run: Run,
+    frame: RotatingFrame,
+    *,
+    weights: Sequence[float],
+    facility: str | None = None,
+    reference: BackgroundReference | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> dict[str, MuonDataset]:
+    """Prepare and rotate one selected transverse counting cohort."""
+    from asymmetry.core.transform.rotating_frame import rotate_transverse
+
+    cohort = reduce_selected_projections(
+        run, facility=facility, reference=reference, cancel_check=cancel_check
+    )
+    if cancel_check is not None:
+        cancel_check()
+    pair = rotate_transverse(cohort["P_x"], cohort["P_y"], frame, weights=weights)
+    if cancel_check is not None:
+        cancel_check()
+    return {curve.metadata["projection"]: curve for curve in pair}

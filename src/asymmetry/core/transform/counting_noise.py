@@ -78,32 +78,47 @@ class CountingNoise:
         return CountingNoise(tuple(terms))
 
     def covariance(self, other: CountingNoise) -> np.ndarray:
+        """Same-output-bin covariance from retained source responses."""
+        return self._contract(other)[0]
+
+    def _contract(self, other: CountingNoise) -> tuple[np.ndarray, np.ndarray]:
         size = self.terms[0].direct.shape[0]
         result = np.zeros(size)
+        magnitude = np.zeros(size)
         for left in self.terms:
             for right in other.terms:
                 if left.observation is not right.observation:
                     continue
                 variance = left.observation.variance
-                result += np.asarray(left.direct.multiply(right.direct) @ variance).ravel()
+                contribution = np.asarray(left.direct.multiply(right.direct) @ variance).ravel()
+                result += contribution
+                magnitude += np.abs(contribution)
                 for sensitivity, weights in left.estimators:
-                    result += sensitivity * (right.direct @ (variance * weights))
+                    contribution = sensitivity * (right.direct @ (variance * weights))
+                    result += contribution
+                    magnitude += np.abs(contribution)
                 for sensitivity, weights in right.estimators:
-                    result += sensitivity * (left.direct @ (variance * weights))
+                    contribution = sensitivity * (left.direct @ (variance * weights))
+                    result += contribution
+                    magnitude += np.abs(contribution)
                 for ls, lw in left.estimators:
                     for rs, rw in right.estimators:
-                        result += ls * rs * np.dot(lw * variance, rw)
-        return result
+                        contribution = ls * rs * np.dot(lw * variance, rw)
+                        result += contribution
+                        magnitude += np.abs(contribution)
+        return result, magnitude
 
     @property
     def error(self) -> np.ndarray:
-        variance = self.covariance(self)
-        tolerance = 128 * np.finfo(float).eps * max(1.0, float(np.max(np.abs(variance), initial=0)))
+        variance, magnitude = self._contract(self)
+        tolerance = 128 * np.finfo(float).eps * magnitude
         if not np.all(np.isfinite(variance)) or np.any(variance < -tolerance):
             raise ValueError(
                 "Retained counting influences must give finite nonnegative marginal variance"
             )
-        return np.sqrt(np.maximum(variance, 0))
+        # Opposing terms can cancel exactly, as when a packed mean subtracts
+        # its own range estimate. Roundoff scales with the uncontracted noise.
+        return np.sqrt(np.where(np.abs(variance) <= tolerance, 0.0, variance))
 
 
 def combine_noise(*items: CountingNoise) -> CountingNoise:
@@ -134,7 +149,7 @@ def bin_matrix(edges, length, *, mean=False):
 
 
 def capture_counting_observations(
-    run: Run, reference: BackgroundReference | None
+    run: Run, reference: BackgroundReference | None, *, cancel_check=None
 ) -> tuple[Run, BackgroundReference | None]:
     """Name borrowed detector acquisitions once before projection snapshots diverge.
 
@@ -142,16 +157,15 @@ def capture_counting_observations(
     acquisitions share only when the boundary explicitly supplies the same record.
     """
     registry: dict[tuple, CountingObservation] = {}
-    buffers: dict[int, CountingObservation] = {}
     cohort = object()
 
     def capture(histograms: list[Histogram], identity: tuple) -> list[Histogram]:
         result = []
         for channel, hist in enumerate(histograms):
+            if cancel_check is not None:
+                cancel_check()
             key = (*identity, channel)
-            if id(hist) in buffers:
-                observation = buffers[id(hist)]
-            elif key in registry:
+            if key in registry:
                 observation = registry[key]
                 variance = hist.counts if hist.count_variance is None else hist.count_variance
                 if not np.array_equal(
@@ -167,7 +181,6 @@ def capture_counting_observations(
                 owned.setflags(write=False)
                 observation = CountingObservation(owned, cohort)
                 registry[key] = observation
-            buffers[id(hist)] = observation
             result.append(replace(hist, counting_observation=observation))
         return result
 
@@ -176,21 +189,26 @@ def capture_counting_observations(
         return (
             source.source_file or id(source),
             metadata.get("source_run_number", source.run_number),
-            metadata.get("data_period_number", period),
+            metadata.get("data_period_number") or metadata.get("period_number") or period,
         )
 
     grouping = dict(run.grouping)
-    periods = grouping.get("period_histograms")
-    if periods is not None:
-        grouping["period_histograms"] = [
-            capture(h, identity(run, i + 1)) for i, h in enumerate(periods)
-        ]
     if "period_inputs" in grouping:
         grouping["period_inputs"] = [
-            replace(member, histograms=capture(member.histograms, identity(member, i + 1)))
-            for i, member in enumerate(grouping["period_inputs"])
+            replace(member, histograms=capture(member.histograms, identity(member, 1)))
+            for member in grouping["period_inputs"]
         ]
-    source = replace(run, grouping=grouping, histograms=capture(run.histograms, identity(run, 1)))
+        source = replace(run, grouping=grouping)
+    elif "period_histograms" in grouping:
+        grouping["period_histograms"] = [
+            capture(histograms, (*identity(run, 1)[:2], index + 1))
+            for index, histograms in enumerate(grouping["period_histograms"])
+        ]
+        source = replace(run, grouping=grouping)
+    else:
+        source = replace(
+            run, grouping=grouping, histograms=capture(run.histograms, identity(run, 1))
+        )
     if reference is not None:
         reference = replace(
             reference,

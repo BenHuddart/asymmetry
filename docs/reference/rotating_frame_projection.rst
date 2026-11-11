@@ -324,11 +324,14 @@ This is first-order uncertainty propagation for correlated inputs, following
 conditional on alpha, beta, baseline, gain, and the selected correction values.
 They do not include calibration or geometry uncertainty, certify a full cross-bin
 likelihood, or turn several correlated projections into independent fit data.
-Undefined ratios retain their Gaussian-fit omission classification. Asymmetry
+Undefined and defined zero-variance ratios retain their Gaussian-fit omission
+classification, including after shared-reference cancellation. Large histogram
+preparation and rotation run in the cancellable **Preparing vector projections…**
+worker; **Cancel** leaves the source observation unchanged. Asymmetry
 also checks that retained transverse projections belong to the same preparation
 cohort; reduce them together rather than mixing independently prepared snapshots.
-Caller-supplied curves without a retained histogram observation use the declared
-independent-curve error convention.
+Caller-supplied curves without retained counting observations require the explicit
+API argument ``assume_independent=True``.
 
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -336,7 +339,9 @@ Compared with other programs
 In Mantid, `RRFMuon v1
 <https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_ rotates two
 supplied transverse spectra. Signs, phase, and units must be matched before
-comparing that coordinate operation. The comparison uses the v1 documentation
+comparing that coordinate operation: set its real input to :math:`x`, imaginary
+input to :math:`sy`, and negate its imaginary output to obtain :math:`P'_y`.
+The comparison uses the v1 documentation
 associated with the 6.16 development snapshot; no native Mantid RRFMuon execution
 or shared-detector uncertainty agreement is established here.
 

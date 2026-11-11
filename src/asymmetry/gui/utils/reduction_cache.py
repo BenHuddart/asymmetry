@@ -212,7 +212,21 @@ _INLINE_INPUT_BYTES = 64 * 1024
 
 def capture_histogram_observation(run, *, facility, reference, parent):
     """Snapshot large reduction inputs through the existing cancellable worker."""
-    from asymmetry.core.transform.preparation import histogram_observation, observation_histograms
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    return prepare_histogram_operation(
+        run,
+        reference=reference,
+        parent=parent,
+        prepare=partial(histogram_observation, run, facility=facility, reference=reference),
+        label="Recording histogram observation…",
+        context="Histogram observation",
+    )
+
+
+def prepare_histogram_operation(run, *, reference, parent, prepare, label, context):
+    """Keep substantial count preparation and snapshots on a cancellable worker."""
+    from asymmetry.core.transform.preparation import observation_histograms
 
     histograms = observation_histograms(run)
     if reference is not None:
@@ -224,26 +238,19 @@ def capture_histogram_observation(run, *, facility, reference, parent):
         if array is not None
     )
     if size <= _INLINE_INPUT_BYTES:
-        return histogram_observation(run, facility=facility, reference=reference)
+        return prepare(cancel_check=None)
 
     def capture(worker):
-        return histogram_observation(
-            run,
-            facility=facility,
-            reference=reference,
-            cancel_check=partial(check_task_cancelled, worker),
-        )
+        return prepare(cancel_check=partial(check_task_cancelled, worker))
 
-    dialog = ScientificInputDialog(
-        parent, "Recording histogram observation…", "Histogram observation"
-    )
+    dialog = ScientificInputDialog(parent, label, context)
     try:
         result = dialog.run(capture)
     finally:
         dialog.close()
         dialog.deleteLater()
     if result is None:
-        raise ValueError("Histogram observation snapshot cancelled")
+        raise ValueError(f"{context} snapshot cancelled")
     return result
 
 
