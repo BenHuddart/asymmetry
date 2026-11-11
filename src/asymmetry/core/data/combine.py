@@ -15,12 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from asymmetry.core.data.correspondence import combination_members, correspondence_error
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.periods import sum_period_histograms
-from asymmetry.core.transform.corrections import (
-    independent_observations,
-    reference_observation_metadata,
-)
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.t0 import run_t0_time_us
 
@@ -37,7 +34,7 @@ __all__ = [
 ]
 
 #: Scalar metadata keys a dataset may override (display/log scalars not on the
-#: underlying run); merged onto run copies for combine's event-weighting.
+#: underlying run); merged onto run copies for combine's master labels.
 _DATASET_SCALAR_KEYS = ("temperature", "field", "title")
 
 #: Bin-width agreement tolerance (µs) for the count-level compatibility check.
@@ -110,7 +107,7 @@ def combine_runs(
     -------
     Run
         A first-class run with summed (or differenced) histograms, mirrored
-        grouping, accumulated good frames, event-weighted scalar metadata with
+        grouping, accumulated good frames, master scalar metadata with
         spread keys, and a ``metadata["combination"]`` provenance block. For a
         subtraction the independent noise is retained in each histogram's
         ``count_variance``.
@@ -154,41 +151,10 @@ def combine_runs(
     if not active:
         raise CombineError("combine_runs requires at least one nonzero coefficient")
     contributors, weights = map(list, zip(*active, strict=True))
-    if any(run.metadata.get("combination") for run in contributors):
-        from asymmetry.core.transform.background import resolve_background_mode
-
-        references = [
-            {
-                key: run.grouping.get("background_run", {}).get(key)
-                for key in ("source_file", "run_number", "period_number", "scale_request", "timing")
-            }
-            if run.grouping.get("background_correction")
-            and resolve_background_mode(run.grouping) == "reference_run"
-            else None
-            for run in contributors
-        ]
-        if any(request != references[0] for request in references[1:]):
-            raise CombineError(
-                "Derived run combinations require one shared reference-background request; choose original acquisitions and a shared reference."
-            )
     error = _compatibility_error(contributors)
     if error is not None:
         raise CombineError(error)
-    observations = [combination_observations(run) for run in contributors]
-    for i, members in enumerate(observations):
-        for previous in observations[:i]:
-            if any(
-                not independent_observations(histograms, metadata, other_histograms, other_metadata)
-                for histograms, metadata in members
-                for other_histograms, other_metadata in previous
-            ):
-                raise CombineError(
-                    "Run arithmetic requires independent observations; a source is reused"
-                )
-
     period_sizes = [len(run.grouping.get("period_histograms", ())) for run in contributors]
-    if any(period_sizes) and (not all(period_sizes) or len(set(period_sizes)) != 1):
-        raise CombineError("Incompatible period payloads; select corresponding periods explicitly")
     period_payload = None
     if any(period_sizes):
         histograms, period_payload = _combine_periodic(
@@ -218,6 +184,7 @@ def combine_runs(
             )
     metadata = _combined_metadata(
         runs,
+        grouping=grouping,
         scales=scales,
         sign=sign,
         subtract_method=subtract_method,
@@ -242,7 +209,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
     from asymmetry.core.io.periods import histogram_grouping_facts, select_period_grouping
     from asymmetry.core.transform.reference_scale import ReferenceExposure
 
-    originals, weights, mapping = [], [], {}
+    originals, weights, mapping, implicit = [], [], {}, []
     for run, coefficient in zip(runs, coefficients, strict=True):
         if cancel_check is not None:
             cancel_check()
@@ -257,6 +224,8 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
                 1,
             ):
                 originals.append(original)
+                if number in run.grouping.get("implicit_period_inputs", ()):
+                    implicit.append(len(originals))
                 weights.append(coefficient * weight)
                 mapping[str(len(originals))] = run.grouping["period_mapping"].get(
                     str(number), run.grouping["period_mapping"].get(number)
@@ -277,6 +246,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
                         metadata=dict(run.metadata, data_period_number=index + 1),
                     )
                 )
+                implicit.append(len(originals))
                 weights.append(coefficient)
                 mapping[str(len(originals))] = ("red", "green")[index]
         else:
@@ -287,6 +257,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
         period_inputs=tuple(originals),
         constituent_coefficients=tuple(weights),
         period_mapping=mapping,
+        implicit_period_inputs=tuple(implicit),
     )
     grouping.setdefault("period_mode", "red")
     # Only unit acquisition sums carry measured pooled exposure. The correction
@@ -350,7 +321,7 @@ def runs_with_dataset_metadata(datasets: Sequence[MuonDataset]) -> list[Run]:
     A :class:`MuonDataset`'s metadata is the display source of truth for scalars
     like temperature/field (it may carry browser or from-log overrides that the
     underlying :attr:`MuonDataset.run` metadata does not). Combining the raw runs
-    directly would event-weight on the stale run scalars, so this merges the
+    directly would retain stale master labels, so this merges the
     dataset's :data:`_DATASET_SCALAR_KEYS` onto a shallow run copy (sharing
     histograms/grouping, which :func:`combine_runs` never mutates). Datasets
     without a backing run are skipped. Use this to feed :func:`combine_runs` from
@@ -424,37 +395,35 @@ def coadd_member_windows(
 # --- compatibility ------------------------------------------------------------
 
 
-def combination_observations(run: Run) -> list[tuple[list[Histogram], dict]]:
-    """Resolve direct acquired identities from active mapped or held period facts."""
-    originals = run.grouping.get("period_inputs")
-    if originals is not None:
-        mapping = run.grouping["period_mapping"]
-        selected = (
-            {run.grouping.get("period_mode", "red")}
-            if not run.grouping.get("period_histograms")
-            else {"red", "green"}
-        )
-        return [
-            (original.histograms, reference_observation_metadata(original))
-            for number, original in enumerate(originals, 1)
-            if mapping.get(str(number), mapping.get(number)) in selected
-        ]
-    periods = run.grouping.get("period_histograms")
-    metadata = reference_observation_metadata(run)
-    if periods:
-        return [
-            (histograms, dict(metadata, data_period_number=number))
-            for number, histograms in enumerate(periods, 1)
-        ]
-    return [(run.histograms, metadata)]
-
-
 def _compatibility_error(runs: list[Run]) -> str | None:
     """Enforce the count-level invariants: histograms, detector count, width."""
     for run in runs:
         if not run.histograms:
             return f"run {run.run_number} has no histograms to combine"
+        if any(
+            not member.histograms or "period_inputs" in member.grouping
+            for member in combination_members(run)
+        ):
+            return "Original acquired histograms are unavailable; select original file periods explicitly"
 
+    if any(run.metadata.get("combination") for run in runs):
+        from asymmetry.core.transform.background import resolve_background_mode
+
+        references = [
+            {
+                key: run.grouping.get("background_run", {}).get(key)
+                for key in ("source_file", "run_number", "period_number", "scale_request", "timing")
+            }
+            if run.grouping.get("background_correction")
+            and resolve_background_mode(run.grouping) == "reference_run"
+            else None
+            for run in runs
+        ]
+        if any(request != references[0] for request in references[1:]):
+            return "Derived run combinations require one shared reference-background request; choose original acquisitions and a shared reference."
+    period_sizes = [len(run.grouping.get("period_histograms", ())) for run in runs]
+    if any(period_sizes) and (not all(period_sizes) or len(set(period_sizes)) != 1):
+        return "Incompatible period payloads; select corresponding periods explicitly"
     n_detectors = len(runs[0].histograms)
     for run in runs[1:]:
         if len(run.histograms) != n_detectors:
@@ -471,7 +440,7 @@ def _compatibility_error(runs: list[Run]) -> str | None:
                 return (
                     f"detector {det + 1} bin widths differ ({width0} vs {width} µs); cannot combine"
                 )
-    return None
+    return correspondence_error(runs)
 
 
 def _aligned_detector_arrays(
@@ -622,6 +591,7 @@ def _mirror_grouping(
 def _combined_metadata(
     runs: list[Run],
     *,
+    grouping: dict,
     scales: list[float],
     sign: int,
     subtract_method: str = "reference",
@@ -630,45 +600,47 @@ def _combined_metadata(
     exposure: float,
     negative_bins: int = 0,
 ) -> dict[str, Any]:
-    """Build the combined run's metadata: identity, event-weighted scalars,
-    spread keys, ``combined_from`` and the nested ``combination`` block (W3)."""
-    weights = [max(good_frames(run.grouping, 0.0), 0.0) for run in runs]
-    if not any(w > 0.0 for w in weights):
-        weights = [1.0] * len(runs)
-
+    """Keep ordered master labels and compact signed constituent conditions."""
+    base = runs[0]
+    coefficients = [c if i == 0 else sign * c for i, c in enumerate(scales)]
     source_numbers = [int(run.run_number) for run in runs]
     join = " + " if sign == 1 else " − "
     run_label = label if label is not None else join.join(str(n) for n in source_numbers)
-    title = _common_title(runs, sign)
-
-    temperature, temperature_spread = _weighted_scalar(runs, weights, "temperature")
-    field, field_spread = _weighted_scalar(runs, weights, "field")
 
     good = float(exposure)
 
     metadata: dict[str, Any] = {
         "run_number": number,
         "run_label": run_label,
-        "title": title,
-        "temperature": temperature,
-        "field": field,
+        "title": base.metadata.get("title", ""),
+        "temperature": _scalar(base, "temperature"),
+        "field": _scalar(base, "field"),
         "combined_from": list(source_numbers),
     }
-    if temperature_spread is not None:
-        metadata["temperature_spread"] = temperature_spread
-    if field_spread is not None:
-        metadata["field_spread"] = field_spread
+    for key in (
+        "instrument",
+        "facility",
+        "beamline",
+        "sample",
+        "field_direction",
+        "field_state",
+        "source_pulsed",
+        "source",
+        "area",
+        "muon_source",
+    ):
+        if key in base.metadata:
+            metadata[key] = base.metadata[key]
+    constituents = _constituent_conditions(runs, coefficients, grouping)
+    for key in ("temperature", "field"):
+        values = [
+            record[key]
+            for record in constituents
+            if record["coefficient"] != 0 and record[key] is not None
+        ]
+        if values:
+            metadata[f"{key}_spread"] = (min(values), max(values))
 
-    constituents = [
-        {
-            "run_number": int(run.run_number),
-            "source_file": run.source_file,
-            "good_frames": float(max(good_frames(run.grouping, 0.0), 0.0)),
-            "temperature": _scalar(run, "temperature"),
-            "field": _scalar(run, "field"),
-        }
-        for run in runs
-    ]
     if sign == 1:
         method = "coadd"
     else:
@@ -680,7 +652,8 @@ def _combined_metadata(
         "constituents": constituents,
         "good_frames": good,
         "independence_assumption": "distinct_observations_when_identity_unknown",
-        "detector_correspondence": "channel_order",
+        "detector_correspondence": "known_orientation_roles_else_channel_order",
+        "period_correspondence": "declared_order_else_authored_or_data_order",
     }
     if good > 0.0:
         metadata.setdefault("good_frames", good)
@@ -695,49 +668,70 @@ def _combined_metadata(
     return metadata
 
 
-def _common_title(runs: list[Run], sign: int) -> str:
-    titles = [str(run.metadata.get("title", "")).strip() for run in runs]
-    non_empty = [t for t in titles if t]
-    if non_empty and all(t == non_empty[0] for t in non_empty):
-        return non_empty[0]
-    verb = "Combined" if sign == 1 else "Difference of"
-    return f"{verb} {len(runs)} runs"
+def _condition_record(run, coefficient, input_ordinal):
+    """Snapshot scalar labels against their actual retained acquired input ordinal."""
+    return {
+        "run_number": int(run.run_number),
+        "source_file": run.source_file,
+        "source_run_number": run.metadata.get("source_run_number", run.run_number),
+        "temperature": _scalar(run, "temperature"),
+        "field": _scalar(run, "field"),
+        "instrument": run.metadata.get("instrument"),
+        "facility": run.metadata.get("facility"),
+        "beamline": run.metadata.get("beamline"),
+        "data_period_number": run.metadata.get("data_period_number"),
+        "dae_period_number": run.metadata.get("dae_period_number"),
+        "coefficient": coefficient,
+        "input_ordinal": input_ordinal,
+    }
+
+
+def _constituent_conditions(runs, coefficients, grouping):
+    """Read current acquired facts; inactive authored terms retain provenance only."""
+    targets = (
+        {"red", "green"}
+        if grouping.get("period_histograms")
+        else {grouping.get("period_mode", "red")}
+    )
+    records, offset = [], 0
+    for i, (run, coefficient) in enumerate(zip(runs, coefficients, strict=True)):
+        originals = run.grouping.get("period_inputs")
+        members = originals if originals is not None else combination_members(run)
+        previous = run.metadata.get("combination", {}).get("constituents", [])
+        ordinals = (
+            [record["input_ordinal"] for record in previous]
+            if originals is not None and previous and all("input_ordinal" in r for r in previous)
+            else list(range(1, len(members) + 1))
+        )
+        source_records = []
+        for j, ordinal in enumerate(ordinals):
+            if ordinal is None:
+                source_records.append(dict(previous[j], coefficient=0.0, input_ordinal=None))
+                continue
+            if coefficient == 0:
+                source_records.append(_condition_record(members[ordinal - 1], 0.0, None))
+                continue
+            number = offset + ordinal
+            original = grouping["period_inputs"][number - 1]
+            weight = grouping["constituent_coefficients"][number - 1]
+            target = grouping["period_mapping"][str(number)]
+            source_records.append(
+                _condition_record(original, weight if target in targets else 0.0, number)
+            )
+        records.extend(
+            dict(record, master=i == 0 and j == 0) for j, record in enumerate(source_records)
+        )
+        if coefficient != 0:
+            offset += len(members)
+    return records
 
 
 def _scalar(run: Run, key: str) -> float | None:
     try:
-        return float(run.metadata.get(key))
+        value = float(run.metadata.get(key))
     except (TypeError, ValueError):
         return None
-
-
-def _weighted_scalar(
-    runs: list[Run],
-    weights: list[float],
-    key: str,
-) -> tuple[float, tuple[float, float] | None]:
-    """Event-weighted mean of a scalar metadata field and its (min, max) spread.
-
-    Runs without a parseable value are skipped. Returns ``(0.0, None)`` when no
-    run carries the field.
-    """
-    values: list[float] = []
-    used_weights: list[float] = []
-    for run, weight in zip(runs, weights, strict=True):
-        value = _scalar(run, key)
-        if value is None:
-            continue
-        values.append(value)
-        used_weights.append(weight if weight > 0.0 else 0.0)
-    if not values:
-        return 0.0, None
-    weight_total = sum(used_weights)
-    if weight_total > 0.0:
-        mean = float(np.average(values, weights=used_weights))
-    else:
-        mean = float(np.mean(values))
-    spread = (float(min(values)), float(max(values))) if len(values) > 1 else None
-    return mean, spread
+    return value if np.isfinite(value) else None
 
 
 def coadd_compatibility_error(runs):
@@ -749,8 +743,13 @@ def coadd_compatibility_error(runs):
     error = _compatibility_error(runs)
     if error is not None:
         return error
-    fingerprint = profile_fingerprint_for_run(runs[0])
-    profiles = [profile_from_payload(run.grouping, "coadd", fingerprint) for run in runs]
-    if any(profile != profiles[0] for profile in profiles[1:]):
+    profiles = [
+        profile_from_payload(run.grouping, "coadd", profile_fingerprint_for_run(run))
+        for run in runs
+    ]
+    if any(
+        replace(profile, fingerprint=profiles[0].fingerprint) != profiles[0]
+        for profile in profiles[1:]
+    ):
         return "Co-add requires identical grouping intent. Align groups, alpha/beta, binning, and authored timing/correction policies first."
     return None

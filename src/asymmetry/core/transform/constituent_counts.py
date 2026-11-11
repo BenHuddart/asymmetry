@@ -272,6 +272,10 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
     for number, original, coefficient in active_acquisitions(grouping):
         if cancel_check is not None:
             cancel_check()
+        if "period_inputs" in original.grouping or not original.histograms:
+            raise ValueError(
+                "Select original acquired periods; nested inspection counts cannot supply acquired inputs"
+            )
         effective = grouping_for_acquisition(original, grouping)
         policy = effective.get("t0_policy")
         if policy is not None:
@@ -445,6 +449,7 @@ def held_period_grids(grouping):
 
 def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
     """Identify acquired facts and preparation semantics without scanning count buffers."""
+    from asymmetry.core.data.correspondence import declared_period_labels, detector_roles
     from asymmetry.core.transform.deadtime import file_deadtime_table
 
     active = (
@@ -470,6 +475,8 @@ def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
         "selected_set": grouping.get("period_mode", "red"),
         "inputs": [
             {
+                "detector_roles": detector_roles(run),
+                "declared_period_labels": declared_period_labels(run),
                 "source_file": run.source_file,
                 "run_number": run.metadata.get("source_run_number", run.run_number),
                 "period_number": number,

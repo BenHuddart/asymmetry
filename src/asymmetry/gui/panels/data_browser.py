@@ -1623,8 +1623,8 @@ class DataBrowserPanel(QWidget):
         if not datasets:
             return f"Group {group_count + 1}"
 
-        temps = [float(ds.metadata.get("temperature", np.nan)) for ds in datasets]
-        fields = [float(ds.metadata.get("field", np.nan)) for ds in datasets]
+        temps = [self._temperature_for_display(ds) for ds in datasets]
+        fields = [self._field_for_display(ds) for ds in datasets]
         if _is_effectively_constant(
             temps,
             abs_tol=_GROUP_TEMP_ABS_TOL_K,
@@ -2075,7 +2075,7 @@ class DataBrowserPanel(QWidget):
                 )
 
         temp = self._temperature_for_display(dataset)
-        temp_item = NumericTableWidgetItem(f"{temp:.2f}")
+        temp_item = NumericTableWidgetItem(f"{temp:.2f}" if np.isfinite(temp) else "—")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         temp_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         if self._temperature_uses_log_for_display(dataset):
@@ -2095,7 +2095,7 @@ class DataBrowserPanel(QWidget):
         self._table.setItem(row, 2, temp_item)
 
         field = self._field_for_display(dataset)
-        field_item = NumericTableWidgetItem(f"{field:.1f}")
+        field_item = NumericTableWidgetItem(f"{field:.1f}" if np.isfinite(field) else "—")
         field_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         if self._field_uses_log_for_display(dataset):
             # Log-sourced value: display-only and tinted, like the temperature
@@ -2835,9 +2835,9 @@ class DataBrowserPanel(QWidget):
             if log_temperature is not None:
                 return float(log_temperature)
         try:
-            return float(dataset.metadata.get("temperature", 0.0))
+            return float(dataset.metadata.get("temperature", np.nan))
         except (TypeError, ValueError):
-            return 0.0
+            return float("nan")
 
     def _temperature_uses_log_for_display(self, dataset: MuonDataset) -> bool:
         """Return whether the displayed temperature value came from a log."""
@@ -2892,26 +2892,8 @@ class DataBrowserPanel(QWidget):
 
     def _temperature_from_log_for_display(self, dataset: MuonDataset) -> float | None:
         """Return the log-derived temperature used by the browser column."""
-        source_datasets = self.get_combined_source_datasets(int(dataset.run_number))
-        if source_datasets:
-            weighted_sum = 0.0
-            total_weight = 0.0
-            fallback_temperatures: list[float] = []
-            for source_dataset in source_datasets:
-                source_temperature = self._series_mean_for_field(source_dataset, "temperature")
-                if source_temperature is None:
-                    continue
-                fallback_temperatures.append(float(source_temperature))
-                event_count = self._event_count_for_dataset(source_dataset)
-                if event_count is None or event_count <= 0.0:
-                    continue
-                weighted_sum += float(source_temperature) * event_count
-                total_weight += event_count
-            if total_weight > 0.0:
-                return weighted_sum / total_weight
-            if fallback_temperatures:
-                return float(np.mean(fallback_temperatures))
-        return self._series_mean_for_field(dataset, "temperature")
+        sources = self.get_combined_source_datasets(int(dataset.run_number))
+        return self._series_mean_for_field(sources[0] if sources else dataset, "temperature")
 
     def _field_for_display(self, dataset: MuonDataset) -> float:
         """Return the field shown in the fixed browser B column."""
@@ -2920,9 +2902,9 @@ class DataBrowserPanel(QWidget):
             if log_field is not None:
                 return float(log_field)
         try:
-            return float(dataset.metadata.get("field", 0.0))
+            return float(dataset.metadata.get("field", np.nan))
         except (TypeError, ValueError):
-            return 0.0
+            return float("nan")
 
     def _field_uses_log_for_display(self, dataset: MuonDataset) -> bool:
         """Return whether the displayed field value came from a log."""
@@ -2933,26 +2915,8 @@ class DataBrowserPanel(QWidget):
 
     def _field_from_log_for_display(self, dataset: MuonDataset) -> float | None:
         """Return the log-derived field used by the browser B column."""
-        source_datasets = self.get_combined_source_datasets(int(dataset.run_number))
-        if source_datasets:
-            weighted_sum = 0.0
-            total_weight = 0.0
-            fallback_fields: list[float] = []
-            for source_dataset in source_datasets:
-                source_field = self._series_mean_for_field(source_dataset, "field")
-                if source_field is None:
-                    continue
-                fallback_fields.append(float(source_field))
-                event_count = self._event_count_for_dataset(source_dataset)
-                if event_count is None or event_count <= 0.0:
-                    continue
-                weighted_sum += float(source_field) * event_count
-                total_weight += event_count
-            if total_weight > 0.0:
-                return weighted_sum / total_weight
-            if fallback_fields:
-                return float(np.mean(fallback_fields))
-        return self._series_mean_for_field(dataset, "field")
+        sources = self.get_combined_source_datasets(int(dataset.run_number))
+        return self._series_mean_for_field(sources[0] if sources else dataset, "field")
 
     def displayed_coordinate(self, run_number: int) -> dict[str, float | None]:
         """The ``field``/``temperature`` the browser currently *displays* for a run.
@@ -2964,7 +2928,7 @@ class DataBrowserPanel(QWidget):
         header setpoint. When the browser shows a logged value it replaces the
         scalar; an axis with no recorded value is ``None`` (off that axis), never
         ``0`` — preserving the trend's "missing coordinate" semantics rather than
-        the columns' ``0.0`` fallback.
+        the columns' missing-value marker.
         """
         dataset = self.get_dataset(int(run_number))
         if dataset is None:
@@ -2995,8 +2959,8 @@ class DataBrowserPanel(QWidget):
     ) -> float | None:
         """Displayed value for one trend axis: logged value if shown, else scalar.
 
-        ``log_value_source`` is resolved lazily so the (potentially weighted)
-        log mean is only computed when that axis is actually displaying the log
+        ``log_value_source`` is resolved lazily so the master
+        log value is only computed when that axis is actually displaying the log
         — the common setpoint path stays as cheap as the old metadata read.
         Returns ``None`` (not ``0``) when no finite value is recorded.
         """
@@ -3012,16 +2976,6 @@ class DataBrowserPanel(QWidget):
         except (TypeError, ValueError):
             return None
         return value if np.isfinite(value) else None
-
-    def _event_count_for_dataset(self, dataset: MuonDataset) -> float | None:
-        """Return the total histogram counts used to weight combined-run summaries."""
-        run = dataset.run
-        if run is None or not run.histograms:
-            return None
-        try:
-            return float(np.sum([np.sum(histogram.counts) for histogram in run.histograms]))
-        except (TypeError, ValueError):
-            return None
 
     def _series_mean_for_field(self, dataset: MuonDataset, field_key: str) -> float | None:
         """Return the mean from the time-series log associated with a summary field."""
@@ -3469,9 +3423,8 @@ class DataBrowserPanel(QWidget):
                 combined_run_number=combined_rn,
                 existing_dataset=self._datasets.get(combined_rn),
             )
-        except CombineError:
-            # Source runs no longer combine (e.g. histograms unavailable after a
-            # partial reload); leave the existing combined row untouched.
+        except CombineError as exc:
+            self._datasets[combined_rn].metadata["correction_error"] = str(exc)
             return None
         self._datasets[combined_rn] = rebuilt
         return rebuilt
@@ -3684,7 +3637,7 @@ class DataBrowserPanel(QWidget):
             run_display,
             str(meta.get("title", "")),
             f"{self._temperature_for_display(dataset):.2f}",
-            f"{float(meta.get('field', 0.0)):.1f}",
+            f"{self._field_for_display(dataset):.1f}",
             str(meta.get("comment", "")),
         ]
         for column in self._visible_extra_columns():
@@ -3722,19 +3675,24 @@ class DataBrowserPanel(QWidget):
 
         text = item.text().strip()
         try:
-            field_value = float(text.split()[0]) if text else 0.0
+            field_value = float(text.split()[0]) if text and text != "—" else None
+            if field_value is not None and not np.isfinite(field_value):
+                raise ValueError("Field must be finite")
         except ValueError:
             self._updating_table = True
-            item.setText(f"{float(dataset.metadata.get('field', 0.0)):.1f}")
+            previous = self._field_for_display(dataset)
+            item.setText(f"{previous:.1f}" if np.isfinite(previous) else "—")
             self._updating_table = False
             return
 
+        if run_number in self._combined_datasets:
+            dataset.metadata.setdefault("condition_overrides", {})["field"] = field_value
         dataset.metadata["field"] = field_value
         if dataset.run is not None:
             dataset.run.metadata["field"] = field_value
 
         self._updating_table = True
-        item.setText(f"{field_value:.1f}")
+        item.setText(f"{field_value:.1f}" if field_value is not None else "—")
         self._updating_table = False
 
     def _on_custom_column_edited(self, item: QTableWidgetItem, column_id: str) -> None:
@@ -5105,15 +5063,28 @@ class DataBrowserPanel(QWidget):
         return self._store_combined_reduction(reduced, existing_dataset)
 
     def _runs_for_combine(self, datasets: list[MuonDataset]) -> list:
-        """Shallow run copies whose metadata reflects the browser's scalars.
-
-        Thin wrapper over :func:`asymmetry.core.data.combine.runs_with_dataset_metadata`
-        — the dataset metadata is the browser's source of truth for the displayed
-        scalars (field overrides, from-log, …) that may not be on ``run.metadata``.
-        """
+        """Capture displayed master conditions without copying original count buffers."""
         from asymmetry.core.data.combine import runs_with_dataset_metadata
 
-        return runs_with_dataset_metadata(datasets)
+        backed = [dataset for dataset in datasets if dataset.run is not None]
+        runs = runs_with_dataset_metadata(backed)
+        conditions = (
+            (
+                "temperature",
+                self.dataset_uses_temperature_from_log,
+                self._temperature_from_log_for_display,
+            ),
+            ("field", self.dataset_uses_field_from_log, self._field_from_log_for_display),
+        )
+        for dataset, run in zip(backed, runs, strict=True):
+            for key, uses_log, resolve in conditions:
+                run.metadata[key] = self._displayed_axis_coordinate(
+                    dataset,
+                    key,
+                    uses_log=uses_log(int(dataset.run_number)),
+                    log_value_source=lambda ds=dataset, resolve=resolve: resolve(ds),
+                )
+        return runs
 
     def _store_combined_reduction(
         self,
@@ -5123,6 +5094,10 @@ class DataBrowserPanel(QWidget):
         """Mutate a combined dataset in place so rebuild references stay valid."""
         if existing_dataset is None:
             return reduced
+        overrides = existing_dataset.metadata.get("condition_overrides", {})
+        if overrides:
+            reduced.metadata.update(overrides, condition_overrides=dict(overrides))
+            reduced.run.metadata.update(overrides, condition_overrides=dict(overrides))
         existing_dataset.time = reduced.time
         existing_dataset.asymmetry = reduced.asymmetry
         existing_dataset.error = reduced.error
@@ -5228,20 +5203,13 @@ class DataBrowserPanel(QWidget):
         sign: int = 1,
         operation: str | None = None,
         combined_run_number: int,
+        metadata_overrides: dict | None = None,
     ) -> int | None:
-        """Recreate a combined row programmatically (``.asymp`` load).
+        """Restore a definition atomically, raising CombineError for incompatible inputs.
 
-        The row keeps *combined_run_number*, the number it was saved under, so
-        everything the project keys by run still names it; later combinations
-        are numbered below every restored one.
-
-        ``sign=+1`` co-adds; ``sign=-1`` subtracts. ``operation`` disambiguates
-        the subtractions: ``"subtract_signed"`` is the symmetric N-run signed
-        co-subtract (sample − every other source), any other value (or ``None``
-        with ``sign=-1``) is the two-run reference subtraction. Co-add requires
-        identical grouping; the subtractions only need the count-level
-        invariants (``combine_runs`` checks them), so the stricter grouping gate
-        is skipped for them.
+        Source order and the saved synthetic key retain their meaning. Both signs
+        use core correspondence; co-add additionally requires shared authored intent.
+        Sources are hidden only after successful numerical preparation.
         """
         datasets_to_combine = []
         for rn in source_run_numbers:
@@ -5253,16 +5221,16 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return None
 
+        from asymmetry.core.data.combine import CombineError
+
         signed = sign == -1 and operation == "subtract_signed"
         if sign == 1:
             incompatibility = self._coadd_compatibility_error(datasets_to_combine)
             if incompatibility is not None:
-                return None
+                raise CombineError(incompatibility)
         elif not signed and len(datasets_to_combine) != 2:
             # The reference subtraction is sample + one reference.
             return None
-
-        from asymmetry.core.data.combine import CombineError
 
         if sign != -1:
             builder = self._coadd_datasets
@@ -5272,14 +5240,16 @@ class DataBrowserPanel(QWidget):
             builder = self._subtract_datasets
         combined_rn = combined_run_number
         source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
-        try:
-            combined_dataset = builder(
-                source_datasets,
-                source_run_numbers,
-                combined_run_number=combined_rn,
+        combined_dataset = builder(
+            source_datasets, source_run_numbers, combined_run_number=combined_rn
+        )
+        if metadata_overrides:
+            combined_dataset.metadata.update(
+                metadata_overrides, condition_overrides=metadata_overrides
             )
-        except CombineError:
-            return None
+            combined_dataset.run.metadata.update(
+                metadata_overrides, condition_overrides=metadata_overrides
+            )
 
         self._next_combined_id = min(self._next_combined_id, combined_rn - 1)
         self._datasets[combined_rn] = combined_dataset
@@ -5298,6 +5268,32 @@ class DataBrowserPanel(QWidget):
         self._rebuild_table()
         self.datasets_changed.emit()
         return combined_rn
+
+    def restore_unavailable_combination(self, definition: dict, reason: str) -> None:
+        """Keep an unreconstructable definition and its history without hiding sources."""
+        number = int(definition["combined_run_number"])
+        sources = list(definition["source_run_numbers"])
+        self._combined_datasets[number] = sources
+        self._combined_source_datasets[number] = [self._datasets[rn] for rn in sources]
+        operation = definition.get("operation", "coadd")
+        if operation != "coadd":
+            self._combined_signs[number] = -1
+            self._combined_methods[number] = operation
+        self._next_combined_id = min(self._next_combined_id, number - 1)
+        self.add_dataset(
+            MuonDataset(
+                np.empty(0),
+                np.empty(0),
+                np.empty(0),
+                metadata={
+                    "run_number": number,
+                    "title": "Combination unavailable",
+                    "correction_error": reason,
+                    "condition_overrides": dict(definition.get("metadata_overrides", {})),
+                    **definition.get("metadata_overrides", {}),
+                },
+            )
+        )
 
     def get_state(self) -> dict:
         filters = {str(col): sorted(values) for col, values in self._column_filters.items()}

@@ -76,6 +76,14 @@ becomes Automatic and retains the coefficient as historical provenance. Cached a
 Unknown-exposure unity and the applied coefficient remain visible in result
 provenance. Invalid inactive declarations remain editable and saveable.
 
+Combination definitions retain ordered sources and the operation. An optional
+``metadata_overrides`` on a combined definition holds deliberate target condition
+edits; source rebuilds retain them. Missing condition values remain JSON null.
+Reconstruction failures retain a ``Combination unavailable`` row with its
+``Corrections incomplete`` diagnosis, definition, and history, while keeping
+the source rows available. Saved arrays, fit records, and recorded condition
+coordinates retain their meaning without automatic refitting.
+
 What is stored
 --------------
 

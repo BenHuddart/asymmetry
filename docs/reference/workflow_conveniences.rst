@@ -38,7 +38,8 @@ tinted and read-only (editing a measured mean is meaningless); turn the option o
 to return to the header value and the editable cell.
 
 The choice can be made per run from the run-information dialog, and for a co-added
-run the field is the event-weighted mean of its constituents. When a run carries no
+run the field follows the first ordered source (the master), as does temperature.
+Finite active constituent ranges remain provenance. When a master carries no
 field log, the header value stands — there is no silent substitution.
 
 As with temperature, the displayed B value is what a batch parameter trend plots

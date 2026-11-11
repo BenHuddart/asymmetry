@@ -1580,6 +1580,17 @@ prepared before merging; generic merging does not determine correction order.
 Mantid 6.16 development Scale/Plus/Minus document the explicit independent
 weighted-arithmetic analogue, without a native numerical check here. The owning
 page links the public manuals and algorithms and distinguishes each operation.
-Asymmetry also checks direct observation reuse and invalid coefficient/payload
-requests to prevent unsupported independent-noise calculations; this does not
-establish general nested/shared-reference covariance.
+WiMDA and standalone musrfit addRun retain master condition metadata. Asymmetry
+also retains the first ordered input's displayed conditions and identity, with
+finite active constituent ranges; missing master conditions remain unknown.
+Mantid MergeRuns checks instrument names, spectrum counts, and units and offers
+configured sample-log merging. Asymmetry uses complete recognised orientation
+facts and evidenced implicit period permutations, retaining channel/data-order
+assumptions for absent or incomparable identity. It does not reject on instrument
+names alone or certify physical identity from matching shapes.
+
+Asymmetry also checks flattened original observation reuse and invalid
+coefficient/payload requests to protect independent-noise calculations. Known
+nested repeated acquisitions or subtracted references are unavailable; a shared
+target reference applied once after sample pooling remains supported. This does
+not establish general covariance or reconstruct unknown processing history.

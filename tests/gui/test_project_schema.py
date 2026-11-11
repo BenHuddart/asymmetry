@@ -1537,6 +1537,9 @@ class _StubDataBrowserWithState(_StubDataBrowser):
     def __init__(self):
         super().__init__()
         self._combined_datasets = {}
+        self._combined_source_datasets = {}
+        self._combined_signs = {}
+        self._combined_methods = {}
         self._was_cleared = False
         self._use_temperature_from_log = False
         self._use_field_from_log = False
@@ -2467,11 +2470,9 @@ class TestMainWindowProjectState:
         class _StubDataBrowserCombined(_StubDataBrowserWithState):
             def __init__(self):
                 super().__init__()
-                # Combined run entry currently visible in browser.
                 self._datasets = {-1: _make_dataset(-1)}
                 self._combined_datasets = {-1: [3039, 3040]}
 
-                # Original source runs retained only in combined-source cache.
                 source_a = _make_dataset(3039)
                 source_b = _make_dataset(3040)
                 self._combined_source_datasets = {-1: [source_a, source_b]}
@@ -2489,8 +2490,6 @@ class TestMainWindowProjectState:
         saved_runs = {entry["run_number"] for entry in state["datasets"]}
         assert 3039 in saved_runs
         assert 3040 in saved_runs
-        # Combined dataset definitions are still persisted separately, with
-        # their own (here empty) representations.
         assert state["combined_datasets"] == [
             {
                 "combined_run_number": -1,

@@ -26,6 +26,18 @@ count-level sums of the chosen periods (independent supplied variances added,
 raw Poisson counts added when no variance is supplied, good frames added per set), and the full Red/Green machinery applies to it:
 plot either set, or the G−R difference that isolates the effect of the
 stimulus. The mapping is recorded with the grouping for provenance.
+Asymmetry also checks that selected list inputs are original acquired periods,
+because flattening a nested set would discard its own clocks or coefficients.
+A selected unit singleton is resolved to its original clock and file facts,
+preserving displayed scalar overrides. Pass an existing mapped dataset directly
+to remap its originals. Direct
+remapping of unit-weight arithmetic remains available; a selected nonunit
+coefficient requires original periods or **Ignore**, rather than silently
+replacing that coefficient with one. Ignored coefficients remain recorded for
+later remapping. Ignored unsupported nesting retains compact source identities,
+not another raw replay tree; selecting it later gives original-period guidance.
+Explicit mapping replaces inherited implicit counterpart intent. These checks
+affect mapping/preparation requests, not loading or inspection of source rows.
 ``Mapping acquired periods…`` prepares the mapped counts and replay snapshot
 on a worker. **Cancel** leaves the original rows available and does not add an
 incomplete mapped result.

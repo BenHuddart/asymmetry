@@ -2,9 +2,7 @@
 
 Runs follow their assigned profile until released into a per-run override.
 One active profile per instrument/detector fingerprint supplies fresh-run defaults.
-Resolution keeps file timing, good-bin windows, deadtime normalisers, and exposure
-attached to the acquisition. Policies own authored choices; calibrated policies
-reference captured results. Runtime coefficient views are derived from those owners.
+Resolution retains acquired facts; policies own choices and captured calibrations.
 
 Shareable keys live on the profile; per-run keys come from the selected run:
 
@@ -1306,6 +1304,7 @@ _PER_RUN_FACT_KEYS = (
     "period_reference_exposure",
     "period_histograms",
     "period_inputs",
+    "implicit_period_inputs",
     "constituent_coefficients",
     "period_reduced",
     "period_good_frames",

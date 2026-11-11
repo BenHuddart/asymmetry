@@ -71,6 +71,36 @@ def test_coadd_row_is_histogram_backed():
     assert panel._combined_run_display(crn) == "401 + 402"
 
 
+def test_master_missingness_rebuild_and_explicit_target_field():
+    panel = DataBrowserPanel()
+    a, b = _dataset(401), _dataset(402)
+    a.metadata.update(temperature=None, field=None)
+    b.metadata.update(temperature=20, field=200)
+    panel.add_dataset(a)
+    panel.add_dataset(b)
+    assert panel.add_combined_dataset([401, 402], combined_run_number=-1) == -1
+    assert panel.displayed_coordinate(-1) == {"temperature": None, "field": None}
+    assert panel._table.item(0, 2).text() == "—"
+    panel._table.item(0, 3).setText("42")
+    a.metadata.update(temperature=10, field=100)
+    rebuilt = panel.rebuild_combined_dataset(-1)
+    assert rebuilt.metadata["temperature"] == 10
+    assert rebuilt.metadata["field"] == 42
+    assert rebuilt.metadata["field_spread"] == (100, 200)
+
+
+def test_restore_conflict_preserves_sources_and_diagnosis():
+    panel = DataBrowserPanel()
+    a, b = _dataset(401), _dataset(402)
+    a.run.grouping["histogram_labels"] = ["Forward", "Backward"]
+    b.run.grouping["histogram_labels"] = ["Backward", "Forward"]
+    panel.add_dataset(a)
+    panel.add_dataset(b)
+    with pytest.raises(ValueError, match="correspondence"):
+        panel.add_combined_dataset([401, 402], combined_run_number=-1)
+    assert set(panel._datasets) == {401, 402}
+
+
 def test_custom_values_by_run_survives_combined_dataset():
     # Regression: custom_values_by_run() used to iterate _combined_datasets as
     # if its values were dataset objects, but it maps combined_run -> [source

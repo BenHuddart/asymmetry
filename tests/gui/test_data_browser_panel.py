@@ -924,7 +924,7 @@ def test_separate_combined_selects_restored_runs(qapp: QApplication) -> None:
     assert set(panel._get_selected_run_numbers()) == {66, 67}
 
 
-def test_coadded_temperature_from_log_uses_event_weighted_average(
+def test_coadded_temperature_from_log_uses_master(
     qapp: QApplication,
 ) -> None:
     panel = DataBrowserPanel()
@@ -963,13 +963,13 @@ def test_coadded_temperature_from_log_uses_event_weighted_average(
     combined_rn = panel.add_combined_dataset([611, 612], combined_run_number=-1)
 
     assert combined_rn is not None
-    assert panel._table.item(0, 2).text() == "60.00"
+    assert panel._table.item(0, 2).text() == "40.00"
 
     panel.set_use_temperature_from_log(True)
 
     log_foreground = QColor(176, 36, 36)
     assert panel._table.item(0, 0).data(Qt.ItemDataRole.UserRole) == combined_rn
-    assert panel._table.item(0, 2).text() == "8.50"
+    assert panel._table.item(0, 2).text() == "4.00"
     assert panel._table.item(0, 2).foreground().color() == log_foreground
 
 
