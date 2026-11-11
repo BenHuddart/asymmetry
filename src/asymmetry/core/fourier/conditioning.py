@@ -103,6 +103,11 @@ def sigma_clip_baseline(
     return loc, sigma
 
 
+def _amplitude_gain_limit(max_gain: float) -> float:
+    """Retain at least unity amplitude gain, including an unavailable limit."""
+    return max(1.0, float(max_gain))
+
+
 def pulse_compensation_gain(
     freqs_mhz: ArrayLike,
     *,
@@ -131,7 +136,7 @@ def pulse_compensation_gain(
     if amplitude is None:
         return np.ones_like(freqs)
 
-    cap = max(1.0, float(max_gain))
+    cap = _amplitude_gain_limit(max_gain)
     floor = 1.0 / cap
     gain = np.ones_like(freqs)
     above_floor = amplitude >= floor
@@ -258,9 +263,10 @@ class ConditioningResult:
     baseline: float = 0.0
     noise_sigma: float = 0.0
     cutoff_frequency_mhz: float | None = None
-    #: Amplitude gain, shared with companion quadratures; zero marks removed bins.
     quantity: Literal["amplitude", "power", "angle"] = "amplitude"
+    #: Amplitude gain, shared with companion quadratures; zero marks removed bins.
     gain: NDArray[np.float64] | None = None
+    amplitude_max_gain: float | None = None
 
 
 def apply_spectrum_conditioning(
@@ -288,6 +294,8 @@ def apply_spectrum_conditioning(
     Pulse-removed bins retain shape as NaN values/errors, with zero amplitude
     gain marking their support. Inputs are not mutated.
     """
+    if quantity not in {"amplitude", "power", "angle"}:
+        raise ValueError("Spectrum quantity must be 'amplitude', 'power' or 'angle'.")
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
     values = np.asarray(display, dtype=np.float64).copy()
     errors = (
@@ -296,12 +304,13 @@ def apply_spectrum_conditioning(
     result = ConditioningResult(display=values, error=errors, quantity=quantity)
 
     if pulse_compensation and quantity != "angle":
+        result.amplitude_max_gain = _amplitude_gain_limit(pulse_max_gain)
         gain = pulse_compensation_gain(
             freqs,
             half_width_us=pulse_half_width_us,
             separation_us=pulse_separation_us,
             n_pulses=pulse_n_pulses,
-            max_gain=pulse_max_gain,
+            max_gain=result.amplitude_max_gain,
         )
         multiplier = gain**2 if quantity == "power" else gain
         values *= multiplier

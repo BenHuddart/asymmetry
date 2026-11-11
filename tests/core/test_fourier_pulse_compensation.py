@@ -266,3 +266,21 @@ def test_companion_cutoff_and_baseline_share_retained_support():
     expected -= corrected.metadata["fourier_baseline"]
     np.testing.assert_allclose(corrected.metadata["fourier_imag"], expected)
     assert len(expected) == len(corrected.time)
+
+
+@pytest.mark.parametrize("limit", [0.25, float("nan")])
+def test_provenance_records_effective_amplitude_limit(limit):
+    config = GroupSpectrumConfig(
+        display="Power", pulse_compensation=True, pulse_half_width_us=0.05, pulse_max_gain=limit
+    )
+    spectrum = compute_average_group_spectrum(_run(), config)
+    assert spectrum.metadata["fourier_pulse_response"]["amplitude_max_gain"] == 1.0
+    assert spectrum.time.tolist() == [0.0]
+
+
+@pytest.mark.parametrize("quantity", ["Power", "unknown"])
+def test_conditioning_rejects_unknown_authored_quantity(quantity):
+    with pytest.raises(ValueError, match="Spectrum quantity"):
+        apply_spectrum_conditioning(
+            [0, 1], [1, 1], quantity=quantity, pulse_compensation=True, pulse_half_width_us=0.05
+        )

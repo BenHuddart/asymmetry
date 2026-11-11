@@ -940,7 +940,7 @@ def compute_average_group_spectrum(
             n_pulses=config.pulse_n_pulses,
         )
         metadata["fourier_pulse_response"].update(
-            amplitude_max_gain=config.pulse_max_gain,
+            amplitude_max_gain=conditioning.amplitude_max_gain,
             quantity=conditioning.quantity,
             gain_exponent=2 if conditioning.quantity == "power" else 1,
             cutoff_policy="first_sampled_positive_below_amplitude_floor",
