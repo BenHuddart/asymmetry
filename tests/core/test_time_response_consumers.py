@@ -185,3 +185,62 @@ def test_count_pull_diagnostic_preserves_single_source_limit(response, unavailab
                 total_events=10,
                 n_seeds=1,
             )
+
+
+def test_model_fraction_copy_preserves_response():
+    model = CompositeModel(
+        ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+    )
+    assert model.with_default_fraction_groups().time_response == model.time_response
+
+
+def test_peak_seeded_extra_receives_current_response(monkeypatch):
+    from dataclasses import replace
+
+    import asymmetry.core.fitting.fit_wizard as wizard
+
+    data = causal_dataset()
+    model = CompositeModel(
+        ["Oscillatory", "Exponential", "Constant"],
+        operators=["*", "+"],
+        time_response=TimeResponse("double_delta", 0.324),
+    )
+    original_families = wizard.build_wizard_families
+
+    def families(fingerprint, current_model=None, **kwargs):
+        return tuple(
+            replace(f, stage2_members=())
+            for f in original_families(fingerprint, current_model, **kwargs)
+            if f.key == "oscillatory"
+        )
+
+    monkeypatch.setattr(wizard, "build_wizard_families", families)
+    monkeypatch.setattr(
+        wizard,
+        "_decide_family_promotions",
+        lambda fs, rs, *args, **kwargs: [(f, r, True, "forced promotion") for f, r in zip(fs, rs)],
+    )
+    extra = wizard.CandidateTemplate(
+        key="extra_candidate",
+        title="Extra",
+        category="Oscillatory",
+        rationale="",
+        model=CompositeModel(["Gaussian", "Constant"]),
+    )
+    monkeypatch.setattr(
+        wizard, "build_oscillatory_multiplet_templates", lambda *args, **kwargs: (extra,)
+    )
+    seen = []
+    original_run = wizard._run_template_assessments
+
+    def run(tasks, **kwargs):
+        seen.extend(task.template for task in tasks)
+        return original_run(tasks, **kwargs)
+
+    monkeypatch.setattr(wizard, "_run_template_assessments", run)
+    wizard.build_fit_wizard_recommendation(
+        data, current_model=model, max_workers=1, refine_top_candidates=0
+    )
+    extras = [t for t in seen if t.key == "extra_candidate"]
+    assert extras
+    assert all(t.model.time_response == model.time_response for t in extras)

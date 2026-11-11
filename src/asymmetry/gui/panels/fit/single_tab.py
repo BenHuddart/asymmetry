@@ -110,7 +110,7 @@ from .tab_base import (
     dataset_error_oversampling,
     fit_results_snapshot,
 )
-from .wizard_cache import WizardCacheEntry, wizard_cache_entry
+from .wizard_cache import WizardCacheEntry, _wizard_response_error, wizard_cache_entry
 
 logger = logging.getLogger(__name__)
 
@@ -842,6 +842,10 @@ class SingleFitTab(FitTabBase):
             and cached_signature.get("observation") == current_signature["observation"]
             and cached_signature.get("run_number") == current_signature["run_number"]
             and cached_signature.get("model") in (None, current_signature["model"])
+            and (
+                cached_signature.get("model") is not None
+                or self._composite_model.time_response.mode == "off"
+            )
         )
 
     def _cache_wizard_analysis(
@@ -916,10 +920,7 @@ class SingleFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Rebuild rows; ``origins`` carries component values and constraints.
-
-        Restore disables record seeding so recorded values take priority.
-        """
+        """Rebuild model rows while carrying component values and constraints."""
         if model.time_response != self._composite_model.time_response:
             self._last_fit_result = self._last_fit_parameters = self._last_fit_snapshot = None
             self._chi2_chip.hide()
@@ -934,9 +935,7 @@ class SingleFitTab(FitTabBase):
             else []
         )
         self._composite_model = model
-        # Any model (re)build — including Reset, which reuses the same object —
-        # invalidates an in-flight fit's table/diagnostic write-back. (The table
-        # drops auxiliary non-model params from a prior restore in populate().)
+        # A launch generation binds write-back to the authored model.
         self._model_generation += 1
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
@@ -944,9 +943,7 @@ class SingleFitTab(FitTabBase):
         self._param_table.populate(
             model, seeds=seed_parameters(model, self._seed_context(from_record=seed_from_record))
         )
-        # The carried entries are seeds for surviving components, so they land
-        # on top of the freshly seeded rows; components with no predecessor keep
-        # the seeds populate() just wrote.
+        # Carried entries override seeds only for surviving components.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
         self._refresh_saved_fits_row()
         self._update_card_actions()
@@ -1078,6 +1075,10 @@ class SingleFitTab(FitTabBase):
         if self._current_dataset is None:
             return
         if not isinstance(assessment, CandidateAssessment):
+            return
+        error = _wizard_response_error(self._composite_model, (assessment.template.model,))
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
             return
 
         result = assessment.fit_result

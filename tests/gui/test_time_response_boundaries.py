@@ -8,13 +8,6 @@ from asymmetry.core.fitting.time_response import TimeResponse
 from tests.core.test_time_response_consumers import causal_dataset
 
 
-def test_model_fraction_copy_preserves_response():
-    model = CompositeModel(
-        ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
-    )
-    assert model.with_default_fraction_groups().time_response == model.time_response
-
-
 @pytest.mark.gui
 def test_supported_centres_allow_preview_with_earlier_literal_window_edge(qapp):
     from asymmetry.gui.panels.fit.single_tab import SingleFitTab
@@ -122,53 +115,108 @@ def test_unchanged_authored_separation_is_not_rounded_by_builder(qapp):
         dialog.close()
 
 
-def test_peak_seeded_extra_receives_current_response(monkeypatch):
-    from dataclasses import replace
+@pytest.mark.gui
+def test_missing_model_legacy_cache_cannot_override_active_response(qapp):
+    from asymmetry.gui.panels.fit.single_tab import SingleFitTab
 
-    import asymmetry.core.fitting.fit_wizard as wizard
+    tab = SingleFitTab()
+    try:
+        data = causal_dataset()
+        tab.set_dataset(data)
+        off = tab._wizard_context_signature(data)
+        legacy = {k: v for k, v in off.items() if k != "model"}
+        assert tab._wizard_base_signature_matches(legacy, off)
+        tab._set_composite_model(
+            CompositeModel(
+                ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+            )
+        )
+        active = tab._wizard_context_signature(data)
+        assert not tab._wizard_base_signature_matches(legacy, active)
+    finally:
+        tab.close()
+
+
+@pytest.mark.gui
+def test_stale_single_wizard_apply_cannot_reset_response(qapp):
+    from asymmetry.gui.panels.fit.single_tab import SingleFitTab
+    from tests.gui.test_wizard_result_caching import _single_wizard_payload
 
     data = causal_dataset()
-    model = CompositeModel(
-        ["Oscillatory", "Exponential", "Constant"],
-        operators=["*", "+"],
-        time_response=TimeResponse("double_delta", 0.324),
-    )
-    original_families = wizard.build_wizard_families
-
-    def families(fingerprint, current_model=None, **kwargs):
-        return tuple(
-            replace(f, stage2_members=())
-            for f in original_families(fingerprint, current_model, **kwargs)
-            if f.key == "oscillatory"
+    assessment, recommendation = _single_wizard_payload(data)
+    tab = SingleFitTab()
+    try:
+        tab.set_dataset(data)
+        active = CompositeModel(
+            ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
         )
+        tab._set_composite_model(active)
+        tab._apply_fit_wizard_assessment(assessment, recommendation)
+        assert tab._composite_model.time_response == active.time_response
+    finally:
+        tab.close()
 
-    monkeypatch.setattr(wizard, "build_wizard_families", families)
-    monkeypatch.setattr(
-        wizard,
-        "_decide_family_promotions",
-        lambda fs, rs, *args, **kwargs: [(f, r, True, "forced promotion") for f, r in zip(fs, rs)],
-    )
-    extra = wizard.CandidateTemplate(
-        key="extra_candidate",
-        title="Extra",
-        category="Oscillatory",
-        rationale="",
-        model=CompositeModel(["Gaussian", "Constant"]),
-    )
-    monkeypatch.setattr(
-        wizard, "build_oscillatory_multiplet_templates", lambda *args, **kwargs: (extra,)
-    )
-    seen = []
-    original_run = wizard._run_template_assessments
 
-    def run(tasks, **kwargs):
-        seen.extend(task.template for task in tasks)
-        return original_run(tasks, **kwargs)
+@pytest.mark.gui
+def test_stale_global_wizard_apply_cannot_reset_response(qapp):
+    from asymmetry.gui.panels.fit.global_tab import GlobalFitTab
+    from tests.gui.test_wizard_result_caching import _global_wizard_recommendation_for_dataset
 
-    monkeypatch.setattr(wizard, "_run_template_assessments", run)
-    wizard.build_fit_wizard_recommendation(
-        data, current_model=model, max_workers=1, refine_top_candidates=0
-    )
-    extras = [t for t in seen if t.key == "extra_candidate"]
-    assert extras
-    assert all(t.model.time_response == model.time_response for t in extras)
+    data = causal_dataset(101)
+    recommendation = _global_wizard_recommendation_for_dataset(data)
+    tab = GlobalFitTab(member_kind="runs")
+    try:
+        tab.set_datasets([data, causal_dataset(102)])
+        active = CompositeModel(
+            ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+        )
+        tab._set_composite_model(active)
+        tab._apply_fit_wizard_assessment(recommendation.assessments[0], recommendation)
+        assert tab._composite_model.time_response == active.time_response
+    finally:
+        tab.close()
+
+
+@pytest.mark.gui
+def test_stale_phase_apply_is_not_forwarded_under_changed_response(qapp):
+    from asymmetry.gui.panels.fit.global_tab import GlobalFitTab
+    from tests.gui.test_wizard_result_caching import _global_wizard_recommendation_for_dataset
+
+    data = causal_dataset(101)
+    recommendation = _global_wizard_recommendation_for_dataset(data)
+    tab = GlobalFitTab(member_kind="runs")
+    forwarded = []
+    tab.apply_wizard_phases_requested.connect(lambda *args: forwarded.append(args))
+    try:
+        tab.set_datasets([data, causal_dataset(102)])
+        active = CompositeModel(
+            ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+        )
+        tab._set_composite_model(active)
+        tab._on_fit_wizard_apply_phases_requested(recommendation, 2)
+        assert not forwarded
+    finally:
+        tab.close()
+
+
+@pytest.mark.gui
+def test_stale_direct_phase_application_keeps_bound_group_and_response(qapp):
+    from asymmetry.gui.panels.fit.global_tab import GlobalFitTab
+    from tests.gui.test_wizard_result_caching import _global_wizard_recommendation_for_dataset
+
+    data = causal_dataset(101)
+    recommendation = _global_wizard_recommendation_for_dataset(data)
+    tab = GlobalFitTab(member_kind="runs")
+    try:
+        tab.set_datasets([data, causal_dataset(102)])
+        active = CompositeModel(
+            ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+        )
+        tab._set_composite_model(active)
+        tab.apply_wizard_phase_assessments(
+            recommendation, [("phase", "Phase", recommendation.assessments[0])]
+        )
+        assert tab._bound_group_id is None
+        assert tab._composite_model.time_response == active.time_response
+    finally:
+        tab.close()

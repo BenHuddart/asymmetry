@@ -12,6 +12,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from itertools import chain
 from types import MappingProxyType
 
 import numpy as np
@@ -188,7 +189,7 @@ from .tab_base import (
     fit_results_snapshot,
     param_name_col_width,
 )
-from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
+from .wizard_cache import GlobalWizardCacheEntry, _wizard_response_error, global_wizard_cache_entry
 
 #: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
 #: combobox and the ``Analysis ▸ Batch seeding`` menu so the two cannot drift.
@@ -4571,6 +4572,10 @@ class GlobalFitTab(FitTabBase):
         """Apply a global-fit wizard assessment back into the global tab."""
         if not isinstance(assessment, GlobalCandidateAssessment):
             return
+        error = _wizard_response_error(self._composite_model, (assessment.template.model,))
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         if not assessment.is_successful:
             self._results_card.set_message(
                 "<b>Global Fit Wizard failed</b>", tag="Error", tone="error"
@@ -4687,14 +4692,21 @@ class GlobalFitTab(FitTabBase):
         recommendation: GlobalFitWizardRecommendation,
         partition_k: int,
     ) -> None:
-        """Pass the Transitions card's apply request up to the main window.
-
-        The tab cannot mint or reuse the *series* data group the phases nest
-        under — that is the main window's batch-group policy — so this only
-        forwards. The partitioned recommendation reaches the wizard cache through
-        the per-phase :meth:`_apply_fit_wizard_assessment` calls the window then
-        drives back through :meth:`apply_wizard_phase_assessments`.
-        """
+        """Forward phase creation only while its fixed response is current."""
+        error = _wizard_response_error(
+            self._composite_model,
+            chain(
+                (template.model for template in recommendation.templates),
+                (
+                    assessment.template.model
+                    for (k, _), assessment in recommendation.phase_assessments.items()
+                    if k == int(partition_k)
+                ),
+            ),
+        )
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         self.apply_wizard_phases_requested.emit(recommendation, int(partition_k))
 
     def apply_wizard_phase_assessments(
@@ -4702,17 +4714,17 @@ class GlobalFitTab(FitTabBase):
         recommendation: GlobalFitWizardRecommendation,
         phases: Sequence[tuple[str, str, GlobalCandidateAssessment]],
     ) -> None:
-        """Apply one assessment per phase, each bound to its own phase group.
+        """Apply current-response assessments bound to their owning phase groups.
 
-        *phases* is ``(group_id, group_name, assessment)`` in ordinal order. Each
-        application emits ``global_fit_completed``, which the main window records
-        as a :class:`FitSeries` owned by the bound phase group — so the series
-        recording seam needs no phase concept of its own. The tab is left bound
-        to the first phase with that phase's model loaded, which is what the user
-        sees when the wizard closes; on a multi-phase partition that means
-        re-applying phase 1 after the last one, which supersedes phase 1's own
-        series in place (same members, same model) rather than duplicating it.
+        Each application records through the normal series completion signal.
+        The first phase remains bound after a multi-phase application.
         """
+        error = _wizard_response_error(
+            self._composite_model, (assessment.template.model for _, _, assessment in phases)
+        )
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
         for group_id, group_name, assessment in phases:
             self.set_bound_group(group_id, group_name)
             self._apply_fit_wizard_assessment(assessment, recommendation)
