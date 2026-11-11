@@ -110,7 +110,10 @@ Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 WiMDA 1.326's **Double Pulse** asymmetry fit uses supplied separation and a
-normalised surviving-population mixture. In Mantid 6.16 development,
+normalised surviving-population mixture. WiMDA's **Simulate Data** also
+accounts for double-pulse count populations; Asymmetry's count-based
+**Diagnostic…** retains the single-source limit described above. A numerical
+match between those generators is not claimed. In Mantid 6.16 development,
 `DoublePulseFit v1 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
 uses supplied shifted functions and weights. Matching the late normalised model
 requires the same origin and survival weights; arbitrary equal observed weights

@@ -106,3 +106,25 @@ def test_invalid_authored_response_is_not_silently_restored_off(qapp, tab_class)
             tab.restore_state(state)
     finally:
         tab.close()
+
+
+def test_authored_response_immediately_explains_diagnostic_capability(qapp):
+    from asymmetry.gui.panels.fit.single_tab import DIAGNOSTIC_ACTION
+
+    tab = SingleFitTab()
+    try:
+        tab.set_dataset(causal_dataset())
+        tab._set_composite_model(
+            CompositeModel(
+                ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+            )
+        )
+        action = tab._results_card._actions[DIAGNOSTIC_ACTION]
+        assert not action.isEnabled()
+        assert "no matching pulse-count generator" in action.toolTip()
+        tab._set_composite_model(
+            tab._composite_model.with_time_response(TimeResponse("double_delta", 0))
+        )
+        assert "no matching pulse-count generator" not in action.toolTip()
+    finally:
+        tab.close()

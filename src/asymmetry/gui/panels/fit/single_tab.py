@@ -926,7 +926,6 @@ class SingleFitTab(FitTabBase):
             self._results_card.set_message(
                 "Time response changed; fit again to update results.", tag="Setup"
             )
-            self._update_card_actions()
         carried = (
             carry_parameter_entries(
                 self._composite_model, model, origins, self._param_table.parameters_state()
@@ -950,6 +949,7 @@ class SingleFitTab(FitTabBase):
         # the seeds populate() just wrote.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
         self._refresh_saved_fits_row()
+        self._update_card_actions()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
