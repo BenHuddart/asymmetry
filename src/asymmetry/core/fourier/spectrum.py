@@ -128,7 +128,7 @@ class GroupSpectrumConfig:
     # ── post-FFT conditioning (frequency-domain finishers) ──────────────
     #: Pulse frequency-response compensation (divide by R(ν) from pulse.py).
     pulse_compensation: bool = False
-    #: Pulse half-width in µs; ``0`` resolves from instrument metadata.
+    #: Parabolic support half-width (µs); active response needs a positive finite value.
     pulse_half_width_us: float = 0.0
     pulse_separation_us: float = 0.0
     pulse_n_pulses: int | float = 1
