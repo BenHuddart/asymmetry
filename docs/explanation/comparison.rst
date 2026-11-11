@@ -1648,3 +1648,36 @@ bins from numerical consumers. This grid-dependent safeguard is not a physical
 information-loss boundary or a recovery of response phase. Conditional errors
 do not include uncertainty in the fixed pulse response or full spectral
 covariance.
+
+Fixed supplied TF count response
+-------------------------------
+
+Asymmetry's TF alpha/beta calibration uses equal incident instantaneous births,
+absolute muon survival, and complete age-local polarisation, with each flat
+background added once. Beta is fixed at one or fitted as a backward amplitude
+ratio. All four envelopes share the same source settings, observations, and
+objective; minimum summed F+B cost selects a usable candidate. Counts are
+predicted at packed-bin centres, without rate integration. Errors include all
+fitted nuisances and are conditional on fixed source and selection assumptions.
+
+WiMDA 1.326 **Double Pulse** F/B/alpha fitting is the beta-one precedent;
+beta calibration is not verified WiMDA functionality. Mantid `DoublePulseFit v1
+<https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
+provides supplied shifted functions and weights, a forward-model analogue,
+without establishing the same count calibration or covariance. musrfit 1.12.1
+count models use an authored theory and reciprocal count balance; comparisons
+must match amplitude units, phase orientation, lifetime, and objective.
+Existing post-arrival shifted-TF polarisation agreement does not validate onset,
+bin integration, or calibration errors. No four-program estimator or uncertainty
+agreement is claimed. See :ref:`alpha-calibration` for the count equations.
+
+Matched musrfit 1.12.1/ROOT 6.40.04 global-histogram likelihood controls on
+rounded double-pulse counts agree within 0.0001 absolute alpha/beta for beta
+fixed at one and free beta. The comparison uses 16 ns bins, raw bins 13–498,
+zero fixed backgrounds, fixed lifetime, a shared free phase (native degrees
+with a 180-degree backward offset), and reciprocal native count balance.
+The native post-arrival damped-cosine representation absorbs the supplied
+source into its amplitude, phase, and normalisation. This checks point estimates
+after both births; it does not test native onset, bin integration, or error
+equivalence. Independent count and full-nuisance information controls provide
+the separate scientific targets.

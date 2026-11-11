@@ -73,6 +73,7 @@ class CalibrationOptions:
     parameters: tuple[CountFitParameter, ...] = ()
     exclude: tuple[float, float] | None = None
     minos: bool = False
+    pulse_separation_us: float | None = None
 
     def __post_init__(self):
         if self.method is not None and self.method not in CALIBRATION_METHODS:
@@ -84,9 +85,10 @@ class CalibrationOptions:
             or self.parameters
             or self.exclude is not None
             or self.minos
+            or self.pulse_separation_us is not None
         ):
             raise ValueError(
-                "Envelope, frequency, parameters and free beta require tf_calibration_fit"
+                "Envelope, frequency, parameters, pulse separation and free beta require tf_calibration_fit"
             )
         if self.envelope is not None:
             object.__setattr__(self, "envelope", TFEnvelope(self.envelope))
@@ -183,6 +185,7 @@ def calibrate_source(
             parameters=options.parameters,
             exclude=options.exclude,
             minos=options.minos,
+            pulse_separation_us=options.pulse_separation_us,
         )
         result = (
             select_tf_calibration(prepared, request, cancel_callback=cancel_callback)

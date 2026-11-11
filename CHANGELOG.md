@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fixed supplied double-pulse TF alpha/beta count calibration through the GUI,
+  workflow, CLI, and saved project records, with conditional nuisance errors.
+
 - Explicit fixed double-pulse prediction for ordinary asymmetry fits, retained
   through model authoring, wizards, shared fits, and saved re-fits.
 

@@ -16,6 +16,7 @@ from asymmetry.core.fitting.grouped_time_domain import build_count_groups
 from asymmetry.core.fitting.likelihood import CountSource, FitInputError, Objective, PoissonCounts
 from asymmetry.core.fitting.models import gaussian_relaxation, oscillatory, stretched_exponential
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.io.periods import select_period, source_run_of
 from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.grouping import effective_group_indices
@@ -95,7 +96,8 @@ class TFCalibrationRequest:
         if self.forward_group == self.backward_group:
             raise ValueError("TF calibration needs two distinct detector groups")
         if self.pulse_separation_us is not None:
-            raise FitInputError("TF calibration pulse-response fitting is unsupported")
+            response = TimeResponse("double_delta", self.pulse_separation_us)
+            object.__setattr__(self, "pulse_separation_us", response.separation_us)
 
 
 @dataclass(frozen=True)
@@ -351,6 +353,8 @@ def _tf_parameters(dataset, request, envelope):
                 f"TF fixed parameter {p.name!r} must lie in its physical domain and explicit bounds"
             )
         params.add(Parameter(p.name, p.value, min=lower, max=upper, fixed=p.fixed))
+    if request.pulse_separation_us is not None:
+        params.add(Parameter("dpsep", request.pulse_separation_us, fixed=True))
     return params
 
 

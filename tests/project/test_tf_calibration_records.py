@@ -387,3 +387,47 @@ def test_applied_quick_policy_requires_a_usable_alpha(invalid):
     payload["beta_policy" if invalid == "beta" else "alpha_policy"] = {"quick_calibration": result}
     with pytest.raises(ValueError, match="quick|Quick"):
         GroupingProfile.from_dict(payload)
+
+
+@pytest.mark.parametrize("fit_beta", [False, True])
+def test_fixed_pulse_actual_record_replay_and_target_independence(tmp_path, fit_beta):
+    import numpy as np
+
+    from asymmetry.core.fitting.tf_calibration import fit_tf_calibration
+    from asymmetry.core.fitting.time_response import TimeResponse
+    from asymmetry.core.project.profiles import profile_fingerprint_for_run, profile_from_payload
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(0.8 if fit_beta else 1)
+    result = fit_tf_calibration(
+        data,
+        TFCalibrationRequest(1, 2, fit_beta=fit_beta, frequency_mhz=1.3, pulse_separation_us=0.324),
+    )
+    target = _acquisition(1).run
+    target.grouping.update(
+        t0_bin=2,
+        first_good_bin=11,
+        last_good_bin=400,
+        time_response=TimeResponse("double_delta", 0.4).to_dict(),
+    )
+    profile = profile_from_payload(target.grouping, "target", profile_fingerprint_for_run(target))
+    before = (profile.t0_policy, profile.good_window_policy, dict(profile.extra))
+    arrays = [h.counts.copy() for h in target.histograms]
+    apply_calibration(profile, CalibrationRecord("pulse", result))
+    restored = round_trip(tmp_path, profile)
+    saved = restored.calibration_records[0].selected
+    assert saved == result
+    replay = fit_tf_calibration(data, saved.request, envelope=saved.envelope)
+    assert replay == result
+    assert (restored.t0_policy, restored.good_window_policy, restored.extra) == before
+    for actual, original in zip(target.histograms, arrays, strict=True):
+        np.testing.assert_array_equal(actual.counts, original)
+
+
+def test_restored_pulse_must_match_the_actual_fit():
+    from asymmetry.core.project.calibration import calibration_payload, restore_calibration
+
+    payload = calibration_payload(CalibrationRecord("invalid-pulse", candidate()))
+    payload["candidates"][0]["request"]["pulse_separation_us"] = 0.324
+    with pytest.raises(ValueError, match="pulse settings.*captured request"):
+        restore_calibration(payload)

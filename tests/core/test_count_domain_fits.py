@@ -679,7 +679,9 @@ def test_double_pulse_fixed_dpsep_matches():
     ds = _double_pulse_dataset(dpsep_us=0.324)
     params = _continuous_single()
     params.add(Parameter("dpsep", 0.324, fixed=True))
-    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    # The legacy generator excludes the second birth at age zero.
+    # Compare post-arrival bins; causal onset is checked independently.
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian", t_min=0.2)
     assert result.success
     assert result.reduced_chi_squared < 1.2
     assert result.parameters["A"].value == pytest.approx(20.0, abs=0.5)
@@ -746,7 +748,7 @@ def test_fb_double_pulse_recovers_alpha(alpha_true):
     ds = _fb_double_pulse_dataset(dpsep_us=0.324, alpha=alpha_true, seed=4)
     params = _fb_double_pulse_params()
     params.add(Parameter("dpsep", 0.324, fixed=True))
-    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian", t_min=0.2)
     assert result.success
     fwd = result.group_results[1]
     assert fwd.parameters["alpha"].value == pytest.approx(alpha_true, abs=0.03)

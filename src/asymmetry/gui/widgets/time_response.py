@@ -1,4 +1,4 @@
-"""Fixed ordinary-fit source response controls shared by model authoring."""
+"""Fixed source response controls shared by fits and TF calibration."""
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QLabel, QLineEdit, QWidget

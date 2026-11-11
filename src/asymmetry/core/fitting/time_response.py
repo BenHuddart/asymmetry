@@ -12,6 +12,19 @@ from numpy.typing import NDArray
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
+def live_source_ages(time: NDArray, separation_us: float):
+    """Yield live masks, ages, births and equal incident weights in µs.
+
+    Separation is validated by the consuming request boundary. Age zero is
+    live; ordinary ratios and absolute counts share these causal populations.
+    """
+    half = separation_us / 2
+    for birth in (-half, half):
+        live = time >= birth
+        if np.any(live):
+            yield live, time[live] - birth, birth, 0.5
+
+
 @dataclass(frozen=True)
 class TimeResponse:
     """Fixed equal-incident double-delta response, with midpoint origin in µs.
@@ -78,12 +91,8 @@ class TimeResponse:
         latest_birth = np.where(time >= half, half, -half)
         numerator = np.zeros_like(time)
         denominator = np.zeros_like(time)
-        for birth in (-half, half):
-            live = time >= birth
-            if not np.any(live):
-                continue
-            age = time[live] - birth
-            weight = np.exp((birth - latest_birth[live]) / MUON_LIFETIME_US)
+        for live, age, birth, incident in live_source_ages(time, self.separation_us):
+            weight = incident * np.exp((birth - latest_birth[live]) / MUON_LIFETIME_US)
             numerator[live] += weight * source(age, **parameters)
             denominator[live] += weight
         return numerator / denominator

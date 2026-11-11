@@ -13,7 +13,9 @@ from asymmetry.core.utils.constants import (
 )
 
 
-def calibration_control(*, beta=1.0, vector=False, run_number=7101, relaxing=False):
+def calibration_control(
+    *, beta=1.0, vector=False, run_number=7101, relaxing=False, pulse_separation_us=None
+):
     """Rounded count means with explicit acquisition windows and known balances."""
     time = np.arange(600) * 0.016
     decay = np.exp(-time / MUON_LIFETIME_US)
@@ -23,10 +25,21 @@ def calibration_control(*, beta=1.0, vector=False, run_number=7101, relaxing=Fal
         if relaxing:
             wave = 0.2 * np.exp(-0.4 * time)
         backgrounds = (0.0, 0.0) if relaxing else (7.0, 11.0)
-        for values in (
-            20000 * decay * (1 + wave) + backgrounds[0],
-            20000 / alpha * decay * (1 - beta * wave) + backgrounds[1],
-        ):
+        if pulse_separation_us is None:
+            means = (
+                20000 * decay * (1 + wave) + backgrounds[0],
+                20000 / alpha * decay * (1 - beta * wave) + backgrounds[1],
+            )
+        else:
+            means = [np.full_like(time, bg) for bg in backgrounds]
+            for birth in (-pulse_separation_us / 2, pulse_separation_us / 2):
+                live = time >= birth
+                age = time[live] - birth
+                survival = 0.5 * np.exp(-age / MUON_LIFETIME_US)
+                polar = 0.2 * np.exp(-0.15 * age) * np.cos(2 * np.pi * 1.3 * age + 0.17 + index)
+                means[0][live] += 20000 * survival * (1 + polar)
+                means[1][live] += 20000 / alpha * survival * (1 - beta * polar)
+        for values in means:
             histograms.append(Histogram(np.rint(values), 0.016))
             groups[len(histograms)] = [len(histograms)]
         projections.append(

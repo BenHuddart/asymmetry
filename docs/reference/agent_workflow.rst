@@ -2169,3 +2169,17 @@ Integral scans retain per-point, per-period correction outcomes, including
 accepted skips, in their saved payloads. Missing references and invalid authored
 settings retain their errors. Grouped count fits retain a background preflight
 without subtracting it from their joint-model inputs.
+
+
+Fixed supplied TF calibration response
+-------------------------------------
+
+Use ``--calibration-pulse-separation US`` with ``alpha`` or with
+``--alpha-from`` to supply a fixed TF double-pulse separation. Omission means
+Off; zero is the causal single-birth limit. ``CalibrationOptions`` uses
+``pulse_separation_us`` in scripts. Every envelope consumes the same supplied
+source, observations, and count objective. Other calibration methods reject an
+active TF pulse request. Saved workflow calibration records retain that source
+intent; applying coefficients does not replace the target timing or ordinary
+fit/Fourier response. See :ref:`alpha-calibration` for the centre approximation
+and conditional errors.

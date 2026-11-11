@@ -647,7 +647,7 @@ def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplica
     # A window tall enough that the α result + provenance rows still fit after the
     # estimate — the point is the settle pass (the pill must not linger stale
     # mid-relayout), not the default-size budget.
-    dialog.resize(1220, 860)
+    dialog.resize(1220, 860 + dialog._alpha_section._time_response.sizeHint().height())
     dialog.show()
     QApplication.processEvents()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -21,8 +22,15 @@ from asymmetry.core.data.calibration import best_calibration_run_index, classify
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.result_summary import reduced_statistic_label
+from asymmetry.core.fitting.time_response import TimeResponse
+from asymmetry.core.fourier.group_preparation import histogram_grid_identity
 from asymmetry.core.io import background_reference_for_grouping
-from asymmetry.core.project.profiles import AlphaPolicy, resolve_effective_grouping
+from asymmetry.core.io.periods import acquired_period_histograms
+from asymmetry.core.project.profiles import (
+    _PER_RUN_FACT_KEYS,
+    AlphaPolicy,
+    resolve_effective_grouping,
+)
 from asymmetry.core.transform.t0 import find_t0_for_run
 from asymmetry.core.workflow.calibration import (
     CalibrationOptions,
@@ -36,6 +44,7 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
+from asymmetry.gui.widgets.time_response import TimeResponseEditor
 from asymmetry.gui.windows.grouping.format import ALPHA_METHOD_ITEMS, format_value_with_uncertainty
 
 
@@ -180,57 +189,101 @@ def populate_calibration_run_combo(
     combo.setCurrentIndex(auto if auto is not None else 0)
 
 
-def source_identity(dataset):
-    """Bounded acquired facts; count arrays are replaced rather than edited by the GUI."""
-    run = dataset.run
-    if run is None:
-        return (id(dataset), None)
-    grouping = run.grouping
-    facts = (
-        "period_mode",
-        "t0_bin",
-        "t0_time_us",
-        "first_good_bin",
-        "last_good_bin",
-        "good_frames",
-        "dead_time_us",
-        "detector_t0_bins",
-        "detector_first_good_bins",
-        "detector_last_good_bins",
-    )
+_SOURCE_METADATA_KEYS = (
+    "source_run_number",
+    "period_number",
+    "raw_period_histograms_available",
+    "period_count",
+    "field",
+    "histogram_labels",
+    "period_mapping",
+)
+_SOURCE_GRAPH_KEYS = ("period_inputs", "implicit_period_inputs")
+_SOURCE_FACT_KEYS = tuple(
+    key
+    for key in _PER_RUN_FACT_KEYS
+    if key not in {*_SOURCE_GRAPH_KEYS, "period_histograms", "period_reduced"}
+) + ("period_mode", "dead_time_us")
+
+
+def histogram_source_identity(histograms):
+    """Bind native timing, support and immutable observation-array handles."""
     return (
-        id(dataset),
+        histogram_grid_identity(histograms),
+        tuple(
+            (id(h.counts), id(h.count_variance), h.good_bin_start, h.good_bin_end)
+            for h in histograms
+        ),
+    )
+
+
+def calibration_run_identity(run):
+    """Bounded acquired facts, including held periods and retained sources."""
+    grouping = run.grouping
+    periods = grouping.get("period_histograms") or ()
+    return (
         id(run),
         id(grouping),
         id(run.histograms),
         run.run_number,
         run.source_file,
-        tuple(id(h.counts) for h in run.histograms),
-        run.metadata.get("source_run_number"),
-        run.metadata.get("period_number"),
-        run.metadata.get("raw_period_histograms_available"),
-        tuple((grouping.get("period_mapping", run.metadata.get("period_mapping")) or {}).items()),
-        tuple((key, repr(grouping.get(key))) for key in facts),
-        id(grouping.get("period_histograms")),
+        histogram_source_identity(run.histograms),
+        tuple((key, repr(run.metadata.get(key))) for key in _SOURCE_METADATA_KEYS),
+        tuple((key, repr(grouping.get(key))) for key in _SOURCE_FACT_KEYS),
+        tuple(
+            histogram_source_identity(acquired_period_histograms(grouping, i) or [])
+            for i in range(len(periods))
+        ),
+        tuple(
+            tuple(calibration_run_identity(source) for source in grouping.get(key, ()))
+            for key in _SOURCE_GRAPH_KEYS
+        ),
         id(grouping.get("period_reduced")),
+    )
+
+
+def source_identity(dataset):
+    """Identify every acquired source consumed by a captured calibration."""
+    return (id(dataset), None if dataset.run is None else calibration_run_identity(dataset.run))
+
+
+def calibration_run_snapshot(run):
+    """Freeze mutable source containers while retaining owned observation arrays."""
+    grouping = {
+        key: deepcopy(value)
+        if key in _SOURCE_FACT_KEYS
+        else value.copy()
+        if isinstance(value, (dict, list))
+        else value
+        for key, value in run.grouping.items()
+    }
+    if isinstance(grouping.get("period_histograms"), list):
+        grouping["period_histograms"] = [
+            [copy(h) for h in acquired_period_histograms(run.grouping, i)]
+            if acquired_period_histograms(run.grouping, i) is not None
+            else None
+            for i in range(len(grouping["period_histograms"]))
+        ]
+    for key in _SOURCE_GRAPH_KEYS:
+        if key in grouping:
+            grouping[key] = tuple(calibration_run_snapshot(source) for source in grouping[key])
+    return replace(
+        run,
+        histograms=[copy(h) for h in run.histograms],
+        grouping=grouping,
+        metadata={
+            key: deepcopy(value) if key in _SOURCE_METADATA_KEYS else value
+            for key, value in run.metadata.items()
+        },
     )
 
 
 def source_snapshot(dataset):
     """Capture source containers while retaining owned, immutable acquisition arrays."""
-    run = dataset.run
-    if run is None:
-        return replace(dataset, metadata=dict(dataset.metadata))
-    grouping = {
-        key: value.copy() if isinstance(value, (dict, list)) else value
-        for key, value in run.grouping.items()
-    }
     return replace(
         dataset,
         metadata=dict(dataset.metadata),
-        run=replace(
-            run, histograms=list(run.histograms), grouping=grouping, metadata=dict(run.metadata)
-        ),
+        run=None if dataset.run is None else calibration_run_snapshot(dataset.run),
     )
 
 
@@ -301,6 +354,8 @@ class AlphaSectionWidget(QWidget):
         root.addWidget(self._method_combo)
         self._fit_beta = QCheckBox("Calibrate β")
         root.addWidget(self._fit_beta)
+        self._time_response = TimeResponseEditor(TimeResponse(), self)
+        root.addWidget(self._time_response)
         row = QHBoxLayout()
         self._estimate_btn = QPushButton("Estimate calibration")
         self._stop_btn = QPushButton("Stop")
@@ -320,6 +375,7 @@ class AlphaSectionWidget(QWidget):
         self._run_combo.currentIndexChanged.connect(self.invalidate)
         self._method_combo.currentIndexChanged.connect(self._method_changed)
         self._fit_beta.toggled.connect(self.invalidate)
+        self._time_response.changed.connect(self.invalidate)
 
     def configure(self, *, datasets, selected_run_number, context_provider):
         self.invalidate()
@@ -342,6 +398,7 @@ class AlphaSectionWidget(QWidget):
         enabled = supports_joint_calibration(
             self._method_combo.currentData(), projection_layout=self._vector
         )
+        self._time_response.setEnabled(supports_joint_calibration(self._method_combo.currentData()))
         self._fit_beta.setEnabled(enabled)
         if not enabled:
             self._fit_beta.setChecked(False)
@@ -406,9 +463,20 @@ class AlphaSectionWidget(QWidget):
             self._stop_btn.setEnabled(False)
             return
         slot, dataset, profile, reference = self._queue.pop(0)
-        options = CalibrationOptions(
-            str(self._method_combo.currentData()), self._fit_beta.isChecked(), period=None
-        )
+        try:
+            response = (
+                self._time_response.value() if self._time_response.isEnabled() else TimeResponse()
+            )
+            options = CalibrationOptions(
+                str(self._method_combo.currentData()),
+                self._fit_beta.isChecked(),
+                period=None,
+                pulse_separation_us=response.separation_us if response.mode != "off" else None,
+            )
+        except ValueError as exc:
+            self._queue.clear()
+            self._result_label.setText(f"Calibration unavailable: {exc}")
+            return
         request = CalibrationRequest(self._generation, dataset, profile, options, reference, slot)
         self._estimate_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
