@@ -1,6 +1,12 @@
 Scripting and AI-agent workflow
 ================================
 
+An ordinary recipe's ``model`` payload can include
+``"time_response": {"mode": "double_delta", "separation_us": 0.324}``.
+The same payload feeds ``fit_one``, series fits, and shared fits; an omitted
+setting means off. See :ref:`ordinary-time-response` for units and limits.
+
+
 A μSR temperature or field scan starts the same way every time: survey what
 is in the folder, calibrate the detector balance, reduce to asymmetry, screen
 a model, fit the scan, and read the trend. Doing that from the GUI is a guided

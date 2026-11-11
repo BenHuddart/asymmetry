@@ -27,6 +27,7 @@ from asymmetry.core.fitting.domain_library import (
     default_model_for_domain,
 )
 from asymmetry.gui.widgets.function_builder.dialog import FunctionBuilderDialog
+from asymmetry.gui.widgets.time_response import TimeResponseEditor
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 
@@ -38,7 +39,10 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         parent: QWidget | None = None,
         initial_model: CompositeModel | None = None,
         domain: str = "time",
+        *,
+        allow_time_response: bool = True,
     ) -> None:
+        self._allow_time_response = allow_time_response
         self._domain = coerce_domain(domain)
         domain_components = components_for_domain(self._domain)
         self._allowed_components = set(domain_components)
@@ -46,6 +50,8 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         model = (
             initial_model if initial_model is not None else default_model_for_domain(self._domain)
         )
+
+        self._response_editor = TimeResponseEditor(model.time_response)
 
         # A project model may reference a user function that is not registered in
         # this session. Materialise per-instance placeholder definitions for
@@ -81,6 +87,13 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             on_create_user_function=self._create_user_function,
             parent=parent,
         )
+
+        self._response_editor.setVisible(self._domain == "time" and allow_time_response)
+        self.layout().insertWidget(self.layout().count() - 1, self._response_editor)
+        self._response_editor.changed.connect(self._on_response_changed)
+
+    def _on_response_changed(self) -> None:
+        self._validate_and_update(self._current_expression())
 
     # ------------------------------------------------------------ authoring
     def _create_user_function(self) -> object | None:
@@ -175,6 +188,11 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         persisted into COMPONENTS).
         """
         names, operators, opens, closes, fractions = self._expression_parser(expression)
+        response = self._response_editor.value()
+        if not self._allow_time_response and response.mode != "off":
+            raise ValueError(
+                "Time response applies to ordinary asymmetry fits; choose Off for count fitting."
+            )
         return CompositeModel(
             names,
             operators=operators,
@@ -182,6 +200,7 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             close_parentheses=closes,
             fraction_groups=fractions,
             allow_missing=True,
+            time_response=response,
         )
 
     # --------------------------------------------------------------- result

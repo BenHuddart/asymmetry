@@ -9,6 +9,12 @@ physical interpretation. Asymmetry therefore prepares counts and their
 uncertainty information together, keeping timing, grouping, correction settings,
 and the selected interval with the result.
 
+An explicitly selected :ref:`ordinary double-pulse time response
+<ordinary-time-response>` acts on the fitted prediction after reduction. It
+changes neither acquired counts nor this ratio/error pipeline. Ordinary fits
+keep point predictions at retained times rather than integrating source counts
+over an arrival-straddling bin.
+
 .. figure:: /_static/reduction-pipeline.svg
    :figclass: reduction-pipeline
    :alt: Acquired counts pass through selection, detector deadtime correction,

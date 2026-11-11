@@ -59,6 +59,7 @@ from asymmetry.core.fitting.rrf_offset import (
 )
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
+from asymmetry.core.pull_diagnostic import pull_model_unavailable_reason
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
@@ -109,7 +110,7 @@ from .tab_base import (
     dataset_error_oversampling,
     fit_results_snapshot,
 )
-from .wizard_cache import WizardCacheEntry, wizard_cache_entry
+from .wizard_cache import WizardCacheEntry, _wizard_response_error, wizard_cache_entry
 
 logger = logging.getLogger(__name__)
 
@@ -579,11 +580,7 @@ class SingleFitTab(FitTabBase):
             self.send_model_to_batch_requested.emit()
 
     def _update_card_actions(self) -> None:
-        """Re-derive which hand-offs this run's state allows.
-
-        ``Send to Batch →`` needs no fit — it copies the *function* — so it is
-        never disabled; the other two need a completed fit for this run (F18).
-        """
+        """Derive hand-off and diagnostic eligibility from the recorded fit and setup."""
         have_fit = (
             self._last_fit_result is not None and self._last_fit_result.success
         ) or self._has_recorded_fit
@@ -594,7 +591,12 @@ class SingleFitTab(FitTabBase):
             if have_fit
             else "Fit this run first — there is no completed single fit to add to a series.",
         )
-        self._results_card.set_action_enabled(DIAGNOSTIC_ACTION, self._can_run_pull_diagnostic())
+        self._results_card.set_action_enabled(
+            DIAGNOSTIC_ACTION,
+            self._can_run_pull_diagnostic(),
+            pull_model_unavailable_reason(self._composite_model)
+            or "Re-simulate the fitted run and inspect parameter pulls.",
+        )
 
     def _show_fit_summary(
         self,
@@ -748,6 +750,7 @@ class SingleFitTab(FitTabBase):
         """A successful time-domain fit on a run with histograms is required."""
         return (
             self._domain == "time"
+            and pull_model_unavailable_reason(self._composite_model) is None
             and self._last_fit_result is not None
             and self._last_fit_result.success
             and self._last_fit_parameters is not None
@@ -839,6 +842,10 @@ class SingleFitTab(FitTabBase):
             and cached_signature.get("observation") == current_signature["observation"]
             and cached_signature.get("run_number") == current_signature["run_number"]
             and cached_signature.get("model") in (None, current_signature["model"])
+            and (
+                cached_signature.get("model") is not None
+                or self._composite_model.time_response.mode == "off"
+            )
         )
 
     def _cache_wizard_analysis(
@@ -913,23 +920,13 @@ class SingleFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Set the active composite model and rebuild the parameter table.
-
-        ``origins[i]`` is the index, in the *current* model, of the component
-        that is now at index ``i`` — ``None`` for a component that did not
-        exist before. The function builder reports one on accept
-        (``component_origins()``), and given it every surviving component's
-        value, Fix, bounds, batch role, link group and tie follow that
-        component onto its new rows, whatever its parameters are now called.
-        Callers that replace the model outright — Reset (the route back to
-        defaults), a domain switch, dropping the background, the fit wizard, a
-        project restore — pass no origins, and the table is rebuilt from seeds
-        alone.
-
-        Restore paths pass ``seed_from_record=False`` because restored
-        parameter values are replayed by ``restore_parameters`` and must not be
-        re-derived from the bound record (see :meth:`_seed_context`).
-        """
+        """Rebuild model rows while carrying component values and constraints."""
+        if model.time_response != self._composite_model.time_response:
+            self._last_fit_result = self._last_fit_parameters = self._last_fit_snapshot = None
+            self._chi2_chip.hide()
+            self._results_card.set_message(
+                "Time response changed; fit again to update results.", tag="Setup"
+            )
         carried = (
             carry_parameter_entries(
                 self._composite_model, model, origins, self._param_table.parameters_state()
@@ -938,9 +935,7 @@ class SingleFitTab(FitTabBase):
             else []
         )
         self._composite_model = model
-        # Any model (re)build — including Reset, which reuses the same object —
-        # invalidates an in-flight fit's table/diagnostic write-back. (The table
-        # drops auxiliary non-model params from a prior restore in populate().)
+        # A launch generation binds write-back to the authored model.
         self._model_generation += 1
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
@@ -948,11 +943,10 @@ class SingleFitTab(FitTabBase):
         self._param_table.populate(
             model, seeds=seed_parameters(model, self._seed_context(from_record=seed_from_record))
         )
-        # The carried entries are seeds for surviving components, so they land
-        # on top of the freshly seeded rows; components with no predecessor keep
-        # the seeds populate() just wrote.
+        # Carried entries override seeds only for surviving components.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
         self._refresh_saved_fits_row()
+        self._update_card_actions()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
@@ -1082,6 +1076,10 @@ class SingleFitTab(FitTabBase):
             return
         if not isinstance(assessment, CandidateAssessment):
             return
+        error = _wizard_response_error(self._composite_model, (assessment.template.model,))
+        if error is not None:
+            self._results_card.set_message(error, tag="Stale", tone="warn")
+            return
 
         result = assessment.fit_result
         if not result.success:
@@ -1147,7 +1145,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
             t_fit,
@@ -1212,7 +1210,7 @@ class SingleFitTab(FitTabBase):
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         # Generate fitted curve for plotting
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
 
         component_curves = self._composite_model.evaluate_components(
@@ -1462,7 +1460,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
             t_fit, additive_only=True, **param_dict
@@ -1583,7 +1581,7 @@ class SingleFitTab(FitTabBase):
         param_dict = {p.name: p.value for p in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = fit_curve_sample_count(model, param_dict, t_min, t_max)
-        t_fit = np.linspace(t_min, t_max, n_samples)
+        t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
         y_fit = model.function(t_fit, **param_dict)
         component_curves = model.evaluate_components(t_fit, additive_only=True, **param_dict)
         self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
@@ -1644,12 +1642,11 @@ class SingleFitTab(FitTabBase):
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                # Unregistered names (a user function whose plugin is not
-                # installed) materialise as named zero-valued placeholders so
-                # the saved model is never silently replaced; only structurally
-                # malformed data falls back to the default model.
+                # Missing user components retain their names and payload.
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
+                if "time_response" in composite_data:
+                    raise
                 fallback = (
                     default_frequency_model()
                     if self._domain == "frequency"

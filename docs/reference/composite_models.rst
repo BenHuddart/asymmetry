@@ -1,6 +1,13 @@
 Composite models
 ================
 
+The shared **Build Fit Function** dialog offers **Time response** (**Off** or
+**Fixed double pulse**) and **Pulse separation** for ordinary time fits. The
+serialized model owns this fixed setting independently of its expression and
+parameters. See :ref:`ordinary-time-response` for the normalised operator and
+point-evaluation limits.
+
+
 .. image:: /_generated/screenshots/composite_models_builder.png
    :alt: Fit Function Builder dialog with an Oscillatory + Exponential + Constant expression
    :width: 100%

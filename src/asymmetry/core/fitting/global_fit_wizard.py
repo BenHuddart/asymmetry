@@ -49,6 +49,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
     _migrate_fit_result_fractions,
+    _model_identity,
     _needs_fit_backend_fallback,
     _parameter_variants,
     _persisted_curve_list,
@@ -124,6 +125,7 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
     UNTIMED,
@@ -2068,7 +2070,14 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         for dataset in preview.ordered_datasets
         if int(dataset.run_number) in existing
         and existing[int(dataset.run_number)].build_signature
-        == single_fit_build_signature(scope, user_frequencies_mhz, dataset=dataset)
+        == single_fit_build_signature(
+            scope,
+            user_frequencies_mhz,
+            dataset=dataset,
+            time_response=current_model.time_response
+            if current_model is not None
+            else TimeResponse(),
+        )
     }
     missing_datasets = [
         dataset
@@ -3318,27 +3327,12 @@ def _build_global_fit_wizard_recommendation_staged(
     initial_assessments: dict[str, GlobalCandidateAssessment] = {}
     template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]] = {}
     single_run_prefit_caches: dict[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
+        tuple[object, ...],
         dict[
             tuple[tuple[str, ...], tuple[tuple[int, tuple[tuple[str, float], ...]], ...]],
             dict[int, ParameterSet],
         ],
     ] = {}
-
-    def _formula_signature_for_template(
-        eval_template: CandidateTemplate,
-    ) -> tuple[
-        tuple[str, ...],
-        tuple[str, ...],
-        tuple[bool, ...],
-        tuple[bool, ...],
-    ]:
-        return (
-            tuple(eval_template.model.component_names),
-            tuple(eval_template.model.operators),
-            tuple(eval_template.model.open_parentheses),
-            tuple(eval_template.model.close_parentheses),
-        )
 
     def _single_run_prefit_cache_for(
         eval_template: CandidateTemplate,
@@ -3347,7 +3341,7 @@ def _build_global_fit_wizard_recommendation_staged(
         dict[int, ParameterSet],
     ]:
         return single_run_prefit_caches.setdefault(
-            _formula_signature_for_template(eval_template),
+            _model_identity(eval_template.model),
             {},
         )
 

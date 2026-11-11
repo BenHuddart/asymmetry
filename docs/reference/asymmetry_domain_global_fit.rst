@@ -1,6 +1,12 @@
 Asymmetry-domain global fit (scripting)
 =======================================
 
+A shared ordinary time-asymmetry model can carry the fixed double-pulse
+:ref:`time response <ordinary-time-response>`. All members use that supplied
+response with their existing parameter roles, selected observations, and
+conditional errors. Separation is not a Global or Local fit parameter.
+
+
 :func:`asymmetry.core.fitting.fit_global` fits **one model across several
 asymmetry traces at once**, sharing chosen *global* parameters across all
 datasets while letting other *local* parameters vary per dataset. It works

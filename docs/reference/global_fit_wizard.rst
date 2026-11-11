@@ -1,6 +1,13 @@
 Global fit wizard
 =================
 
+The current ordinary model's :ref:`fixed time response <ordinary-time-response>`
+applies throughout screening, candidates, and phase application. An analysis
+with a different response cannot be applied to the current setup. Reopen the
+wizard and analyse again after changing **Time response**; separation remains
+supplied context, outside the sharing and candidate tables.
+
+
 The global fit wizard is the analogue of :doc:`fit_wizard` for an ordered
 series of runs — a longitudinal-field decoupling series, a temperature scan, a
 fallback run-order sweep — where the experiment is set up so that one common

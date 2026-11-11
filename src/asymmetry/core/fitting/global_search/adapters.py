@@ -148,7 +148,9 @@ def subset_additive_structure(
 
     component_names = [component.family for component in ordered]
     operators = ["+"] * max(len(component_names) - 1, 0)
-    new_model = CompositeModel(component_names, operators=operators)
+    new_model = CompositeModel(
+        component_names, operators=operators, time_response=structure.model.time_response
+    )
 
     old_tie_by_source = {tie.source_name: tie for tie in structure.parameter_ties}
     old_spec_by_source = {spec.source_name: spec for spec in structure.parameter_specs}

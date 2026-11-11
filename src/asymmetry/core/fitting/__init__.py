@@ -171,6 +171,7 @@ from asymmetry.core.fitting.spectral import (
     frequency_mhz_to_field_gauss,
     seed_peak_parameters_from_dataset,
 )
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     ExcludedComponent,
     ScopeQuery,
@@ -185,6 +186,7 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 
 __all__ = [
+    "TimeResponse",
     "FitEngine",
     "FitResult",
     "FitCancelledError",
