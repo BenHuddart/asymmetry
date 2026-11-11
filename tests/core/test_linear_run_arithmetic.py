@@ -429,3 +429,12 @@ def test_historical_wizard_score_identity_cannot_match_fresh_arithmetic(monkeypa
         (dataset.time, dataset.asymmetry, dataset.error), before, strict=True
     ):
         np.testing.assert_array_equal(actual, historical)
+
+
+def test_zero_weight_singleton_cannot_certify_fractional_source_after_packing():
+    run = source(1, 0.5)
+    run.grouping["bunching_factor"] = 2
+    result = combine_runs([run, source(2)], scales=[1, 0])
+    assert np.isnan(result.histograms[0].count_variance).all()
+    with pytest.raises(ValueError, match="supplied variance"):
+        reduce_combined_run(result)

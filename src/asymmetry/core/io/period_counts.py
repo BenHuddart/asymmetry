@@ -1,7 +1,6 @@
 """Independent count and variance pooling on stored period bins."""
 
 from collections.abc import Callable
-from dataclasses import replace
 
 import numpy as np
 
@@ -26,7 +25,7 @@ def sum_period_histograms(
     Independent supplied variances add; genuinely raw Poisson contributions use
     their counts. NaN retains unknown source noise for scoped consumer validation. Timing follows the first contributor and bins use common raw-index
     support. This operation does not align different acquisition clocks.
-    A singleton is copied without inferring a variance or statistical eligibility.
+    A unit singleton preserves supplied noise and records unknown raw noise too.
     """
     if cancel_check is not None:
         cancel_check()
@@ -38,13 +37,6 @@ def sum_period_histograms(
         raise ValueError("Mapped periods require corresponding detector lists")
     if n_detectors == 0:
         raise ValueError("Period histogram lists are empty")
-    if len(period_histograms) == 1 and coefficients == [1.0]:
-        copied = []
-        for hist in period_histograms[0]:
-            if cancel_check is not None:
-                cancel_check()
-            copied.append(replace(hist, counts=np.array(hist.counts, dtype=float, copy=True)))
-        return copied
     summed: list[Histogram] = []
     for det in range(n_detectors):
         if cancel_check is not None:
@@ -76,7 +68,9 @@ def sum_period_histograms(
                 bin_width=first.bin_width,
                 t0_bin=first.t0_bin,
                 good_bin_start=max(period[det].good_bin_start for period in period_histograms),
-                good_bin_end=min(
+                good_bin_end=first.good_bin_end
+                if len(period_histograms) == 1
+                else min(
                     period[det].good_bin_end if period[det].good_bin_end >= 0 else n_bins - 1
                     for period in period_histograms
                 ),
