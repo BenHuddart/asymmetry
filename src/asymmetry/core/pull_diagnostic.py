@@ -28,6 +28,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import reduce_run_to_dataset, simulate_run
 
 #: A refit maps a reduced dataset to ``(values, errors)`` dicts keyed by
@@ -106,6 +107,17 @@ class PullDistribution:
         return "\n".join(lines)
 
 
+def pull_model_unavailable_reason(model: object) -> str | None:
+    """Explain an unsupported count-generating request before simulating it."""
+    if isinstance(model, CompositeModel) and model.time_response.separation_us > 0:
+        return (
+            "The count-based Pull Diagnostic has no matching pulse-count generator for "
+            "positive ordinary pulse separation. Ordinary fitting and its conditional "
+            "parameter errors remain available."
+        )
+    return None
+
+
 def run_pull_distribution(
     template: Run,
     model: Any,
@@ -138,6 +150,9 @@ def run_pull_distribution(
     the run early (a cancel button), and the reported ``n_seeds`` is then the
     number actually attempted, so the converged fraction stays meaningful.
     """
+    unavailable = pull_model_unavailable_reason(model)
+    if unavailable is not None:
+        raise ValueError(unavailable)
     if n_seeds < 1:
         raise ValueError("n_seeds must be at least 1.")
     tracked = list(track) if track is not None else list(parameters.keys())

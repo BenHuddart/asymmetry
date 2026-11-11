@@ -56,9 +56,11 @@ def test_response_change_invalidates_last_fit_diagnostic(qapp):
         assert tab._last_fit_result.success
         # The diagnostic eligibility check only needs an actual histogram-bearing run.
         data.run = Run(run_number=1, histograms=[Histogram(np.ones(120), 0.04)])
-        assert tab._can_run_pull_diagnostic()
+        assert tab._last_fit_snapshot is not None
         tab._set_composite_model(model.with_time_response(TimeResponse("double_delta", 0.4)))
         assert not tab._can_run_pull_diagnostic()
+        assert tab._last_fit_result is None
+        assert tab._last_fit_snapshot is None
     finally:
         tab.shutdown_workers()
         tab.close()

@@ -59,6 +59,7 @@ from asymmetry.core.fitting.rrf_offset import (
 )
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
+from asymmetry.core.pull_diagnostic import pull_model_unavailable_reason
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
@@ -579,11 +580,7 @@ class SingleFitTab(FitTabBase):
             self.send_model_to_batch_requested.emit()
 
     def _update_card_actions(self) -> None:
-        """Re-derive which hand-offs this run's state allows.
-
-        ``Send to Batch →`` needs no fit — it copies the *function* — so it is
-        never disabled; the other two need a completed fit for this run (F18).
-        """
+        """Derive hand-off and diagnostic eligibility from the recorded fit and setup."""
         have_fit = (
             self._last_fit_result is not None and self._last_fit_result.success
         ) or self._has_recorded_fit
@@ -594,7 +591,12 @@ class SingleFitTab(FitTabBase):
             if have_fit
             else "Fit this run first — there is no completed single fit to add to a series.",
         )
-        self._results_card.set_action_enabled(DIAGNOSTIC_ACTION, self._can_run_pull_diagnostic())
+        self._results_card.set_action_enabled(
+            DIAGNOSTIC_ACTION,
+            self._can_run_pull_diagnostic(),
+            pull_model_unavailable_reason(self._composite_model)
+            or "Re-simulate the fitted run and inspect parameter pulls.",
+        )
 
     def _show_fit_summary(
         self,
@@ -748,6 +750,7 @@ class SingleFitTab(FitTabBase):
         """A successful time-domain fit on a run with histograms is required."""
         return (
             self._domain == "time"
+            and pull_model_unavailable_reason(self._composite_model) is None
             and self._last_fit_result is not None
             and self._last_fit_result.success
             and self._last_fit_parameters is not None
@@ -913,11 +916,9 @@ class SingleFitTab(FitTabBase):
         seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Set the model and rebuild parameter rows, carrying identified components.
+        """Rebuild rows; ``origins`` carries component values and constraints.
 
-        ``origins[i]`` maps a new component to its old index, or None for a new
-        component. Surviving values, bounds, and constraints follow that identity.
-        Restore passes ``seed_from_record=False`` so recorded values take priority.
+        Restore disables record seeding so recorded values take priority.
         """
         if model.time_response != self._composite_model.time_response:
             self._last_fit_result = self._last_fit_parameters = self._last_fit_snapshot = None

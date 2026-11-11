@@ -11,7 +11,7 @@ import difflib
 import re
 from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -3232,6 +3232,10 @@ class CompositeModel:
                     group=None,
                 )
             )
+        if self.time_response.mode != "off":
+            prefix = rf"\mathcal{{D}}_{{{self.time_response.separation_us}}}("
+            terms[0] = replace(terms[0], latex=prefix + terms[0].latex)
+            terms[-1] = replace(terms[-1], latex=terms[-1].latex + ")")
         return terms
 
     def latex_string(self) -> str:

@@ -49,6 +49,7 @@ strengths, the normalised prediction is
    \frac{\sum_{j:u_j\geq0}\tfrac12 e^{-u_j/\tau_\mu}P(u_j)}
         {\sum_{j:u_j\geq0}\tfrac12 e^{-u_j/\tau_\mu}}.
 
+In symbolic previews, :math:`\mathcal{D}_d` denotes this normalised operator.
 The complete source expression is evaluated at each age. A product of an
 envelope and an oscillation is transformed together, and an additive constant
 remains once. After both arrivals the normalised weights are proportional to
@@ -96,7 +97,11 @@ window edge extends beyond the retained observation centres; this clips only
 display extrapolation and never drops requested fit observations. These checks concern the requested fit, with no file-format or
 facility restriction. Selected errors, masks, and objectives stay with the
 observations. Parameter errors remain conditional on supplied pulse settings
-and fixed calibration. This time response applies to time-asymmetry source
+and fixed calibration. The count-based **Diagnostic…** pull test is unavailable for
+positive pulse separation because its generator does not model the two-birth
+count population. **Off** and the zero-separation limit retain that diagnostic;
+ordinary fitting and conditional fit errors remain available. This time response
+applies to time-asymmetry source
 models; it does not transform Fourier, field-scan, trend, or rotated display
 curves. Lab-frame fitting with frequency offsets retains its lab-frame source
 prediction.

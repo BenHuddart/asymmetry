@@ -295,6 +295,13 @@ trustworthy as its uncertainty, and the only way to test an uncertainty is to
 repeat the measurement many times and see whether the scatter matches. The
 pull diagnostic does exactly that, with synthetic repeats.
 
+For positive ordinary pulse separation, **Diagnostic…** explains that its
+count generator does not match the two-birth population. A correct normalised
+mean alone does not establish the time-dependent counting variances required
+by a pull test. The ordinary fit and its conditional errors remain available;
+**Off** and zero separation retain the single-source diagnostic. This is an
+Asymmetry request check, not a restriction on file loading or ordinary fitting.
+
 After a converged single fit, click **Diagnostic…** on the Single tab's Results
 card. The tool
 re-simulates the fitted run many times at matched statistics, refits each copy

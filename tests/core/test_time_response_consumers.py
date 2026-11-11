@@ -159,3 +159,29 @@ def test_wizard_build_identity_tracks_only_consumed_response():
     assert active != single_fit_build_signature(
         None, time_response=TimeResponse("double_delta", 0.4)
     )
+
+
+@pytest.mark.parametrize(
+    "response, unavailable",
+    [
+        (TimeResponse(), False),
+        (TimeResponse("double_delta", 0), False),
+        (TimeResponse("double_delta", 0.324), True),
+    ],
+)
+def test_count_pull_diagnostic_preserves_single_source_limit(response, unavailable):
+    from asymmetry.core.data.dataset import Run
+    from asymmetry.core.pull_diagnostic import pull_model_unavailable_reason, run_pull_distribution
+
+    model = CompositeModel(["Constant"], time_response=response)
+    assert (pull_model_unavailable_reason(model) is not None) == unavailable
+    if unavailable:
+        with pytest.raises(ValueError, match="no matching pulse-count generator"):
+            run_pull_distribution(
+                Run(run_number=1, histograms=[]),
+                model,
+                {"A_bg": 1},
+                lambda data: None,
+                total_events=10,
+                n_seeds=1,
+            )
