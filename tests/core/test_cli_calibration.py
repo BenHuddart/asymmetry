@@ -25,11 +25,15 @@ def strict_output(capsys):
 
 
 @pytest.mark.parametrize("fit_beta", [False, True])
+@pytest.mark.parametrize("pulse", [None, 0.324])
 @pytest.mark.parametrize("envelope", [None, *TFEnvelope])
-def test_actual_alpha_json_matches_core(workflow_folder, capsys, monkeypatch, fit_beta, envelope):
+def test_actual_alpha_json_matches_core(
+    workflow_folder, capsys, monkeypatch, fit_beta, envelope, pulse
+):
     from asymmetry.core import io
+    from tests.core.test_tf_pulse_calibration import _acquisition
 
-    data = _raw_tf(beta=0.8 if fit_beta else 1)
+    data = (_raw_tf if pulse is None else _acquisition)(beta=0.8 if fit_beta else 1)
     monkeypatch.setattr(io, "load", lambda path: data)
     args = [
         "alpha",
@@ -42,6 +46,8 @@ def test_actual_alpha_json_matches_core(workflow_folder, capsys, monkeypatch, fi
         "1.3",
         "--json",
     ]
+    if pulse is not None:
+        args += ["--calibration-pulse-separation", str(pulse)]
     if fit_beta:
         args += ["--fit-beta"]
     if envelope is not None:
@@ -52,7 +58,9 @@ def test_actual_alpha_json_matches_core(workflow_folder, capsys, monkeypatch, fi
     direct = calibrate_run(
         data,
         ReductionSettings(),
-        CalibrationOptions("tf_calibration_fit", fit_beta, envelope, frequency_mhz=1.3),
+        CalibrationOptions(
+            "tf_calibration_fit", fit_beta, envelope, frequency_mhz=1.3, pulse_separation_us=pulse
+        ),
     )
     assert captured.result == direct.record.result
     assert summary["alpha"] == (captured.selected.alpha if captured.selected.ok else None)
@@ -346,6 +354,7 @@ def test_quick_cli_rejects_cached_source_before_emitting_a_result(
         ["--calibration-period", "1"],
         ["--calibration-envelope", "gaussian"],
         ["--calibration-frequency", "1.3"],
+        ["--calibration-pulse-separation", "0.324"],
         ["--calibration-method", "tf_calibration_fit", "--fit-beta"],
     ],
 )

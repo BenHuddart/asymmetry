@@ -361,6 +361,55 @@ start exactly at the non-negative boundary; this is a starting value, not a
 fixed background or prior. The :doc:`/api/fitting/calibration` reference describes
 selection and result fields.
 
+Fixed supplied pulse response
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For a pulsed calibration, choose **Time response** → **Fixed double pulse**
+and supply **Pulse separation** in µs. **Off** is the default. These TF-only
+controls are inactive for Diamagnetic, Decay balance, and Count ratio ΣF/ΣB.
+The shared setting applies to every TF candidate and vector alpha projection;
+it adds no fitted parameter or model-selection candidate. **Calibrate β** keeps
+its single-pair scope. Changing the response invalidates pending calibration.
+
+Scripts use ``TFCalibrationRequest.pulse_separation_us`` or
+``CalibrationOptions.pulse_separation_us``; ``None`` means off. A supplied finite
+nonnegative separation :math:`d` selects two instantaneous births at
+:math:`b_j=\pm d/2`, with equal incident strengths :math:`q_j=1/2`.
+Age zero is live, and each complete fractional polarisation :math:`P(u)` is
+evaluated only at its own live age :math:`u=t-b_j\geq0`. The count means are
+
+.. math::
+
+   F(t)&=N_0\sqrt{\alpha}\sum_{j:u_j\geq0}q_j e^{-u_j/\tau_\mu}
+       [1+P(u_j)]+C_F,\\
+   B(t)&=\frac{N_0}{\sqrt{\alpha}}\sum_{j:u_j\geq0}q_j e^{-u_j/\tau_\mu}
+       [1-\beta P(u_j)]+C_B.
+
+The backgrounds occur once, outside the birth sum; a birthless observation has
+background-only predicted counts. The polarisation baseline is fixed at zero.
+Input amplitude is percent and is converted once to fractional polarisation;
+frequency is MHz, phase radians, and relaxation rates inverse µs. Detector beta
+scales only backward polarisation, independently of the stretched exponent.
+The absolute surviving population fixes count normalisation; the normalised
+ordinary-asymmetry response alone cannot predict these counts.
+
+The midpoint is on the resolved acquisition clock. No acquired t0, good bins,
+arrays, facility shift, pion delay, or finite source width is inferred or changed.
+Active zero separation is the causal single-birth limit, including age zero;
+Off preserves the ordinary no-pulse domain. Asymmetry also checks that supplied
+separation is finite and nonnegative and cannot become a free count nuisance.
+
+The count fitter evaluates packed-bin means at retained centres, with
+:math:`N_0,C_F,C_B` in counts per packed bin. It does not integrate rates across
+bin edges. A bin straddling a birth can therefore differ substantially from an
+integrated count expectation; finer post-arrival bins converge to the centre
+approximation. This is an observation-model limitation, without an automatic
+onset veto, cropping rule, or facility restriction. Choose an observation model
+and explicitly selected support suitable for the intended accuracy.
+HESSE/MINOS and alpha–beta correlation include all fitted nuisances but are
+conditional on the fixed response, selection, source, and envelope; they do not
+include source-setting or model-selection uncertainty.
+
 The operation consumes the supplied acquisition and its existing grouping,
 exclusions, native timing, good-bin support, and bunching. An explicit ``period``
 uses the existing acquired-period selector. It requires disjoint detector banks
@@ -377,7 +426,7 @@ include coefficient/exposure uncertainty.
 Asymmetry also checks the selected acquired counts before admitting a corrected
 fit, so correction does not admit fractional or negative source observations.
 Arbitrary supplied-variance observations without an applied deadtime correction
-and explicit pulse-response requests are unsupported; loading and inspection
+are unsupported; loading and inspection
 remain available. Integer values alone do not establish
 raw-Poisson provenance. Asymmetry also rejects selected channels explicitly
 labelled ``PostPileUp`` (using grouping labels when the metadata copy is absent)
@@ -501,7 +550,7 @@ explicitly supplied finite bounds; omitted endpoints stay unbounded for fixed
 values, independently of the numerical defaults used for free searches. Invalid requests raise ``ValueError``.
 The selected result's ``model`` identifies its effective envelope, such as
 ``gaussian_common_phase`` or ``stretched_common_phase``. Calling
-``fit_tf_calibration`` still fits only the exponential model. Selection is a
+``fit_tf_calibration`` fits one explicit envelope, exponential by default. Selection is a
 separate core operation; it does not change grouping-dialog choices, apply
 coefficients, or alter saved/manual calibrations.
 
@@ -539,6 +588,16 @@ Asymmetry retains measured/supplied variance, consistent with Mantid's muon
 correction and WiMDA's ordinary counting-error basis. These are distinct weights,
 not full propagation through deadtime correction. Conditions and limits are in
 :ref:`comparison-count-calibration`.
+
+WiMDA 1.326 **Double Pulse** F/B/alpha fitting is the beta-one precedent,
+with supplied separation and equal incident populations. Beta calibration is
+not verified WiMDA functionality. Mantid's `DoublePulseFit v1
+<https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
+uses supplied shifted functions and weights, a forward-model analogue rather
+than the same TF count estimator or covariance calculation. musrfit's authored
+count models require reciprocal count-balance and amplitude/phase conventions
+to be matched. A post-arrival shifted-TF polarisation check does not establish
+onset integration or calibration uncertainty agreement.
 
 Envelope selection is an Asymmetry convenience, not a shared default of these
 programs. The `musrfit THEORY documentation
@@ -609,6 +668,8 @@ The :doc:`../agent_workflow` ``alpha`` command and ``--alpha-from`` accept
 Omitting options in ``calibrate_run`` selects this fresh explicit default;
 passing ``CalibrationOptions()`` deliberately retains automatic ratio.
 ``--fit-beta`` enables joint alpha/beta; omission fixes beta at one.
+``--calibration-pulse-separation US`` supplies the fixed TF separation;
+omission means Off.
 ``--calibration-envelope`` constrains the requested model, while omission
 selects the minimum finite summed cost from all four usable candidates.
 Explicit ``diamagnetic``, ``general``, and ``ratio`` requests use the same
@@ -641,3 +702,14 @@ A co-added or signed run cannot supply one surrogate deadtime/exposure model
 for its retained acquisitions. Calibrate a source run and apply the resulting
 shared alpha/beta to the combination. Quick corrected-count preparation and
 ordinary asymmetry reduction retain each source's own correction facts.
+
+Matched musrfit 1.12.1/ROOT 6.40.04 global-histogram likelihood controls on
+rounded double-pulse counts agree within 0.0001 absolute alpha/beta for beta
+fixed at one and free beta. The comparison uses 16 ns bins, raw bins 13–498,
+zero fixed backgrounds, fixed lifetime, a shared free phase (native degrees
+with a 180-degree backward offset), and reciprocal native count balance.
+The native post-arrival damped-cosine representation absorbs the supplied
+source into its amplitude, phase, and normalisation. This checks point estimates
+after both births; it does not test native onset, bin integration, or error
+equivalence. Independent count and full-nuisance information controls provide
+the separate scientific targets.

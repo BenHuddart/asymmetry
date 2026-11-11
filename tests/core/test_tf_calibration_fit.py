@@ -249,7 +249,7 @@ def test_selected_support_uses_existing_native_bins_and_exclusion():
     assert result.n_bins_used == len(f.time_us)
 
 
-@pytest.mark.parametrize("kind", ["variance", "overlap", "fractional", "pulse", "deadtime"])
+@pytest.mark.parametrize("kind", ["variance", "overlap", "fractional", "deadtime"])
 def test_unsupported_observations_preserve_loading_and_requested_settings(kind):
     ds = _raw_tf(beta=1)
     request = _request()
@@ -259,10 +259,6 @@ def test_unsupported_observations_preserve_loading_and_requested_settings(kind):
         ds.run.grouping["groups"][2] = [1, 2]
     elif kind == "fractional":
         ds.run.histograms[0].counts[10] += 0.5
-    elif kind == "pulse":
-        with pytest.raises(FitInputError, match="pulse"):
-            _request(pulse_separation_us=0.324)
-        return
     else:
         ds.run.grouping.update(
             deadtime_correction=True,

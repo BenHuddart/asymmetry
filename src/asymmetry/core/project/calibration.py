@@ -373,6 +373,12 @@ def restore_calibration(data: dict) -> CalibrationRecord:
                     raise ValueError(
                         "Calibration balances and stretch require positive physical domains"
                     )
+        pulse = next((p for p in parameters if p.name == "dpsep"), None)
+        if (request.pulse_separation_us is None and pulse is not None) or (
+            request.pulse_separation_us is not None
+            and (pulse is None or not pulse.fixed or pulse.value != request.pulse_separation_us)
+        ):
+            raise ValueError("Calibration pulse settings must agree with the captured request")
         beta = next((p for p in parameters if p.name == "beta"), None)
         if (
             beta is None

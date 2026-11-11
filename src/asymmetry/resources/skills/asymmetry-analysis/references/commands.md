@@ -91,7 +91,8 @@ usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}]
                        [--fit-beta]
                        [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                        [--calibration-period RED|GREEN|N]
-                       [--calibration-frequency MHZ] [--pair FWD/BWD]
+                       [--calibration-frequency MHZ]
+                       [--calibration-pulse-separation US] [--pair FWD/BWD]
                        [--background none|tail_fit|range[:FIRST:LAST]]
                        [--t0-offset BINS] [--t-good-offset BINS]
                        [--period RED|GREEN|N|green-red] [--instrument NAME] [--json]
@@ -117,6 +118,9 @@ options:
                         --period
   --calibration-frequency MHZ
                         TF frequency seed in MHz (omitted: source field)
+  --calibration-pulse-separation US
+                        Fixed equal-incident TF double-pulse separation in µs
+                        (omitted: off)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
@@ -148,7 +152,8 @@ usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                         [--fit-beta]
                         [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                         [--calibration-period RED|GREEN|N]
-                        [--calibration-frequency MHZ] [--pair FWD/BWD]
+                        [--calibration-frequency MHZ]
+                        [--calibration-pulse-separation US] [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
                         [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
@@ -184,6 +189,9 @@ options:
                         --period
   --calibration-frequency MHZ
                         TF frequency seed in MHz (omitted: source field)
+  --calibration-pulse-separation US
+                        Fixed equal-incident TF double-pulse separation in µs
+                        (omitted: off)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
@@ -226,7 +234,8 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--fit-beta]
                                [--calibration-envelope {undamped,exponential,gaussian,stretched}]
                                [--calibration-period RED|GREEN|N]
-                               [--calibration-frequency MHZ] [--pair FWD/BWD]
+                               [--calibration-frequency MHZ]
+                               [--calibration-pulse-separation US] [--pair FWD/BWD]
                                [--background none|tail_fit|range[:FIRST:LAST]]
                                [--t0-offset BINS] [--t-good-offset BINS]
                                [--period RED|GREEN|N|green-red] [--tmin TMIN]
@@ -263,6 +272,9 @@ options:
                         --period
   --calibration-frequency MHZ
                         TF frequency seed in MHz (omitted: source field)
+  --calibration-pulse-separation US
+                        Fixed equal-incident TF double-pulse separation in µs
+                        (omitted: off)
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)

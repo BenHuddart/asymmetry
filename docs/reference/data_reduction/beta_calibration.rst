@@ -3,6 +3,18 @@
 Beta calibration
 ================
 
+Joint TF beta calibration accepts the same fixed supplied double-pulse response
+as alpha-only TF calibration. **Time response** defaults to **Off**; choose
+**Fixed double pulse** and supply **Pulse separation** in µs. Beta scales only
+the backward polarisation, independently of pulse strength and the stretched
+shape exponent. All nuisances share one covariance, conditional on the fixed
+source settings. The count-centre approximation and causal source contract are
+described in :ref:`alpha-calibration`. The compatibility API
+``estimate_beta_detailed(..., method="count_fit", pulse_separation_us=...)``
+delegates to that TF operation; the independent single-histogram protocol does
+not consume this setting.
+
+
 The corrected asymmetry
 
 .. math::

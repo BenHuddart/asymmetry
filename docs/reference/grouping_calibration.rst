@@ -388,3 +388,16 @@ Shared calibration controls
    :alt: Per-projection calibration with beta fixed at one.
 
    Vector results retain each projection's source pair.
+
+
+Fixed supplied TF calibration response
+-------------------------------------
+
+The shared TF calibration section offers **Time response**, default **Off**.
+**Fixed double pulse** consumes the supplied **Pulse separation** in µs for
+all four envelopes, including vector alpha projections. **Calibrate β** remains
+available only on a single F/B pair. Diamagnetic and Decay balance leave these
+TF-only controls inactive. Source-setting changes invalidate pending results;
+**Apply** commits coefficients and their captured calibration without changing
+target timing or response. See :ref:`alpha-calibration` for source and bin-mean
+approximations.

@@ -320,10 +320,17 @@ Count loss and double pulse
 
 * **Double pulse (µs)** — supply a fixed separation; 0 selects the single-pulse
   count model. Equal incident double-delta pulses carry polarisation evaluated
-  at t ± dpsep/2, with muon-survival weights exp(∓dpsep/2τ_μ). The clock origin
+  only at live ages t ± dpsep/2 ≥ 0, including age zero, with absolute
+  muon survival. The clock origin
   is the midpoint of the two births on the resolved observation axis. Both
   single-histogram and F+B targets retain their established count objectives.
-  This instantaneous-pulse approximation consumes no finite source width.
+  F+B also supports detector beta, fixed or free, on the shared count path:
+  beta scales only backward polarisation. Backgrounds occur once, and bins
+  before either birth predict background only. This instantaneous-pulse
+  approximation consumes no finite source width. Packed-bin expectations are
+  evaluated at retained centres, with N0/background in counts per packed bin,
+  without bin-edge integration. Onset-straddling bins can differ substantially
+  from an integrated-rate model; no automatic onset or facility veto is applied.
 
   Separation estimation is unsupported. After both arrivals, a single TF line
   can absorb a different separation into amplitude, phase, and count scale;
