@@ -398,9 +398,9 @@ only when those effects are known to be small.
 Worked example
 --------------
 
-The figures on this page use a synthetic run with invented numbers, made for
-the documentation: an idealised six-detector polarimeter with one detector
-along each of :math:`\pm x`, :math:`\pm y` and :math:`\pm z`, in
+The main rotation and Auto-detect review figures use a synthetic run with
+invented numbers, made for the documentation: an idealised eight-detector octant
+polarimeter with directions :math:`(\pm1,\pm1,\pm1)/\sqrt{3}`, in
 :math:`B_0 = 100` G along :math:`z`, so that
 :math:`\nu_0 = (\gamma_\mu/2\pi)B_0 \approx 1.355` MHz.
 
@@ -411,25 +411,26 @@ along each of :math:`\pm x`, :math:`\pm y` and :math:`\pm z`, in
   slowly.
 - In the lab, the drive's phase at :math:`t_0` is 40°, the labels have sense
   :math:`-1`, :math:`P_y`'s amplitude is 0.92 of :math:`P_x`'s, and the
-  periods' baselines differ: :math:`(b_x, b_y) = (0.25, -0.10)` % in red and
-  :math:`(0.10, -0.15)` % in green.
+  grouped projections' baselines differ:
+  :math:`(b_x, b_y) = (0.25, -0.10)/\sqrt{3}` % in red and
+  :math:`(0.10, -0.15)/\sqrt{3}` % in green. The geometric factor comes from
+  averaging the unit octant directions within each half-plane.
 
 1. Select the run with the ``P_x``, ``P_y`` and ``P_z`` chips on, and click
    **Rotating**. The plot asks for :math:`\nu_\mathrm{RF}`.
 2. Type ``1.355`` into **ν_RF** and leave **B₁ ∥** on **x**. The rotated curves
    appear in the default frame, with :math:`\varphi_\mathrm{RF} = 0` — still
    turning, because the frame's phase and the baselines are wrong.
-3. Click **Auto-detect…**. The review proposes sense :math:`-1` and
-   :math:`\varphi_\mathrm{RF} = 39.9°`, gain 0.923, red baselines
-   (0.24, −0.12) % and green (0.11, −0.17) %, all with contrast 65 and all
-   pre-ticked.
+3. Click **Auto-detect…**. The review proposes sense :math:`-1`, phase near
+   40°, gain near 0.92, and a baseline pair for each period. The estimates are
+   pre-ticked for application.
 4. Click **Apply 4 changes**. :math:`P'_y` now shows the nutation into
    :math:`+y'`, :math:`P'_x` stays at zero within its errors, and :math:`P_z`
    swings through zero and back at the same frequency, both damped, as in
    the figure at the top of the page (bunched ×4 after the rotation).
 
-Every recovered value lies within a few hundredths of a per cent, a tenth of a
-degree, or a few parts in a thousand of what was put in. Changing
+The estimates depend on the selected time range and these invented counting
+statistics; they do not establish acquired detector geometry. Changing
 **RG Mode** to **G minus R** would then show the nutation turned over into
 :math:`-y'`, as described under `Periods`_, without any change to the frame.
 
