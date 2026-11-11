@@ -147,5 +147,8 @@ def test_ignored_nested_source_keeps_compact_identity_and_later_diagnosis():
     )
     from asymmetry.core.data.combine import reduce_combined_run
 
+    assert "acquired" in coadd_compatibility_error([requested, acquisition(3)])
+    with pytest.raises(CombineError, match="acquired"):
+        combine_runs([requested, acquisition(3)])
     with pytest.raises(ValueError, match="original acquired"):
         reduce_combined_run(requested)
