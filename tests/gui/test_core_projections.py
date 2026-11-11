@@ -17,6 +17,8 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 from tests.core.vector_synthetic import synthetic_vector_run
 
+pytestmark = pytest.mark.gui
+
 
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:

@@ -104,6 +104,7 @@ def corrected_period_counts(
                 effective,
                 metadata,
                 mode=policy["mode"],
+                cancel_check=cancel_check,
                 offset_bins=policy.get("offset_bins", 0),
                 search_provider=partial(timing_search, period_index=int(label == PeriodMode.GREEN))
                 if timing_search is not None

@@ -175,6 +175,7 @@ def reduce_selected_projections(
                 selected_grouping,
                 source.metadata,
                 mode=policy["mode"],
+                cancel_check=cancel_check,
                 offset_bins=policy.get("offset_bins", 0),
             )
         selected = replace(source, grouping=selected_grouping)

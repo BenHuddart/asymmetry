@@ -560,3 +560,28 @@ def test_core_projection_cancellation_does_not_mutate_source():
         reduce_selected_projections(run, cancel_check=cancel)
     for hist, counts in zip(run.histograms, before, strict=True):
         np.testing.assert_array_equal(hist.counts, counts)
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_auto_timing_search_observes_cohort_cancellation(monkeypatch, held):
+    import asymmetry.core.transform.t0 as timing
+
+    run = small_run()
+    run.grouping["t0_policy"] = {"mode": "auto_detect"}
+    if held:
+        run.grouping.update(period_histograms=[run.histograms, run.histograms], period_mode="green")
+    cancelled = False
+
+    def cancel():
+        if cancelled:
+            raise RuntimeError("cancelled during timing search")
+
+    def search(*args, cancel_check=None, **kwargs):
+        nonlocal cancelled
+        cancelled = True
+        assert cancel_check is not None
+        cancel_check()
+
+    monkeypatch.setattr(timing, "find_t0_for_run", search)
+    with pytest.raises(RuntimeError, match="cancelled during timing search"):
+        reduce_selected_projections(run, cancel_check=cancel)
