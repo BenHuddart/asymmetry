@@ -171,7 +171,9 @@ def combine_runs(
             raise CombineError(
                 "Derived run combinations require one shared reference-background request; choose original acquisitions and a shared reference."
             )
-    _validate_compatible(contributors)
+    error = _compatibility_error(contributors)
+    if error is not None:
+        raise CombineError(error)
     observations = [combination_observations(run) for run in contributors]
     for i, members in enumerate(observations):
         for previous in observations[:i]:
@@ -326,6 +328,8 @@ def reduce_combined_run(run: Run, *, reference=None, cancel_check=None) -> MuonD
     reduced = prepare_histogram_asymmetry(
         run, merge=1, facility=None, reference=reference, cancel_check=cancel_check
     )
+    if reduced.effective_alpha is not None:
+        run = replace(run, grouping=dict(run.grouping, alpha=reduced.effective_alpha))
     return MuonDataset(
         reduced.time,
         reduced.asymmetry,
@@ -445,16 +449,16 @@ def combination_observations(run: Run) -> list[tuple[list[Histogram], dict]]:
     return [(run.histograms, metadata)]
 
 
-def _validate_compatible(runs: list[Run]) -> None:
+def _compatibility_error(runs: list[Run]) -> str | None:
     """Enforce the count-level invariants: histograms, detector count, width."""
     for run in runs:
         if not run.histograms:
-            raise CombineError(f"run {run.run_number} has no histograms to combine")
+            return f"run {run.run_number} has no histograms to combine"
 
     n_detectors = len(runs[0].histograms)
     for run in runs[1:]:
         if len(run.histograms) != n_detectors:
-            raise CombineError(
+            return (
                 "runs have different detector counts "
                 f"({n_detectors} vs {len(run.histograms)}); cannot combine"
             )
@@ -464,9 +468,10 @@ def _validate_compatible(runs: list[Run]) -> None:
         for run in runs[1:]:
             width = float(run.histograms[det].bin_width)
             if not np.isclose(width, width0, rtol=_BIN_WIDTH_RTOL, atol=0.0):
-                raise CombineError(
+                return (
                     f"detector {det + 1} bin widths differ ({width0} vs {width} µs); cannot combine"
                 )
+    return None
 
 
 def _aligned_detector_arrays(
@@ -541,9 +546,11 @@ def _combine_periodic(
     for p in range(n_periods):
         per_run = [run.grouping["period_histograms"][p] for run in runs]
         # Correspondence is required for each counterpart, not only the flat view.
-        _validate_compatible(
+        error = _compatibility_error(
             [replace(run, histograms=h) for run, h in zip(runs, per_run, strict=True)]
         )
+        if error is not None:
+            raise CombineError(error)
         summed_periods.append(
             sum_period_histograms(per_run, coefficients=coefficients, cancel_check=cancel_check)
         )
@@ -739,6 +746,9 @@ def coadd_compatibility_error(runs):
 
     if any(run is None or not run.histograms or not run.grouping.get("groups") for run in runs):
         return "Co-add requires identical grouping intent. Apply grouping to each source run before combining them."
+    error = _compatibility_error(runs)
+    if error is not None:
+        return error
     fingerprint = profile_fingerprint_for_run(runs[0])
     profiles = [profile_from_payload(run.grouping, "coadd", fingerprint) for run in runs]
     if any(profile != profiles[0] for profile in profiles[1:]):

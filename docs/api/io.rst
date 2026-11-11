@@ -55,7 +55,9 @@ them with an explicit reload reason. Count-backed RF scans use current settings;
 scan values/errors are fractions, whereas time curves are percentages.
 
 Mapped and arithmetically combined runs retain original acquired ``Run`` records in
-``run.grouping["period_inputs"]``, ordered by stored data-period index.
+``run.grouping["period_inputs"]``. Mappings retain stored input order; run arithmetic
+retains source order, then each source's acquired periods. Input ordinal and
+original acquired-period identity remain distinct.
 ``period_mapping`` records authored membership; held histograms are pooled
 inspection views. Normal reduction corrects each selected acquisition with its
 own coefficient/exposure and aligns its own t0 on common observed support before

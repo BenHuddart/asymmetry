@@ -184,7 +184,7 @@ def test_fourier_reference_must_cover_the_sample(monkeypatch, reference_length):
     sample.grouping = grouping
     if reference_length < 64:
         with pytest.raises(
-            ValueError, match="reference run has 40 aligned bins; sample requires 64"
+            ValueError, match="reference run has 32 aligned bins; sample requires 56"
         ):
             build_group_signal_dataset(
                 sample, 1, center_signal=False, apply_lifetime_correction=False

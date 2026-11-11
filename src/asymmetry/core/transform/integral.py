@@ -60,6 +60,7 @@ This module must stay free of Qt / matplotlib / ``asymmetry.gui`` imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -70,6 +71,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry_with_count_errors,
 )
 from asymmetry.core.transform.corrections import (
+    BackgroundReference,
     CorrectionOutcomes,
     reference_observation_metadata,
 )
@@ -253,10 +255,17 @@ def integrate_run(
     method: str = "integral",
     alpha: float | None = None,
     grouping_ref: dict | None = None,
+    reference: BackgroundReference | None = None,
 ) -> tuple[float, float]:
     """Return fractional integral asymmetry and error, warning for accepted skips."""
     result = reduce_period_integral(
-        data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
+        data,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        alpha=alpha,
+        grouping_ref=grouping_ref,
+        reference=reference,
     )
     return result.value, result.error
 
@@ -269,6 +278,7 @@ def reduce_integral_run(
     method: str = "integral",
     alpha: float | None = None,
     grouping_ref: dict | None = None,
+    reference: BackgroundReference | None = None,
 ) -> IntegralReduction:
     """Reduce a loaded run to a single integral-asymmetry ``(value, error)``.
 
@@ -299,6 +309,9 @@ def reduce_integral_run(
         window) merged over ``run.grouping`` — the same ``grouping_ref`` a
         :class:`TimeFBAsymmetry` recipe carries, so a GUI can pass the user's
         effective grouping and the scan matches the displayed asymmetry.
+    reference
+        Explicitly resolved reference acquisition for a configured reference-run
+        background. No reference files are opened by this transform.
 
     Returns
     -------
@@ -314,7 +327,13 @@ def reduce_integral_run(
     if mode in {PeriodMode.GREEN_PLUS_RED, PeriodMode.GREEN_MINUS_RED}:
         raise ValueError("Use reduce_period_integral for combined period correction outcomes.")
     result = reduce_period_integral(
-        data, t_min=t_min, t_max=t_max, method=method, alpha=alpha, grouping_ref=grouping_ref
+        data,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        alpha=alpha,
+        grouping_ref=grouping_ref,
+        reference=reference,
     )
     return IntegralReduction(result.value, result.error, result.corrections[str(mode)])
 
@@ -329,15 +348,26 @@ class PeriodIntegralReduction:
 
 
 def reduce_period_integral(
-    data, *, t_min=None, t_max=None, method="integral", alpha=None, grouping_ref=None
+    data,
+    *,
+    t_min=None,
+    t_max=None,
+    method="integral",
+    alpha=None,
+    grouping_ref=None,
+    reference=None,
 ):
     """Coordinate background before integrating held-period sums or differences."""
     run = _resolve_run(data)
     grouping = effective_grouping(run, grouping_ref)
+    if alpha is not None:
+        grouping.pop("alpha_policy", None)
     mode = PeriodMode(grouping.get("period_mode", "red"))
     _validate_method(method)
     alpha_used, beta_used = grouping_balances(grouping)
     flags = correction_flags_from_grouping(grouping)
+    from asymmetry.core.io import background_reference_for_grouping
+
     counts = corrected_period_counts(
         run.histograms,
         grouping,
@@ -354,7 +384,14 @@ def reduce_period_integral(
         use_background=flags.use_background,
         metadata=reference_observation_metadata(run),
         native_time_range=(t_min, t_max),
+        reference_resolver=partial(background_reference_for_grouping, reference),
     )
+    from asymmetry.core.transform.grouping import shared_automatic_alpha
+    from asymmetry.core.transform.reduce import estimate_prepared_alpha
+
+    if alpha is None and shared_automatic_alpha(grouping, reference_observation_metadata(run)):
+        target = str(PeriodMode.RED) if mode == PeriodMode.GREEN_MINUS_RED else str(mode)
+        alpha_used = estimate_prepared_alpha(counts[target])
     values = {}
     for label, pair in counts.items():
         time = native_count_time(
@@ -473,6 +510,7 @@ def build_field_scan(
     alpha: float | None = None,
     order_key: str = "field",
     grouping_ref: dict | None = None,
+    reference: BackgroundReference | None = None,
     filter: Callable[[Run], bool] | None = None,
 ) -> FieldScan:
     """Assemble a field scan from a series of loaded runs.
@@ -483,7 +521,7 @@ def build_field_scan(
         Iterable of loaded objects — each a :class:`MuonDataset` or :class:`Run`.
         For multi-period runs, select the period upstream and pass the per-period
         datasets in.
-    t_min, t_max, method, alpha, grouping_ref
+    t_min, t_max, method, alpha, grouping_ref, reference
         Passed through to :func:`integrate_run` (applied to every run in the
         scan — the grouping/alpha is normally common across a scan).
     order_key
@@ -554,6 +592,7 @@ def build_field_scan(
                 method=method,
                 alpha=alpha,
                 grouping_ref=grouping_ref,
+                reference=reference,
             )
         except ValueError as exc:
             excluded.append((run_number, str(exc)))

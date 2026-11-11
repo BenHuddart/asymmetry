@@ -14,7 +14,7 @@ from asymmetry.core.transform.corrections import (
     reference_observation_metadata,
 )
 from asymmetry.core.transform.deadtime import DeadtimeDomain
-from asymmetry.core.transform.fb_counts import GroupCounts
+from asymmetry.core.transform.fb_counts import GroupCounts, crop_to_good_support
 from asymmetry.core.transform.grouping import grouping_balances, resolve_forward_backward_layout
 from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
@@ -40,6 +40,7 @@ class AcquiredCounts:
     period_number: int | None = None
     coefficient: float = 1.0
     arithmetic: bool = False
+    input_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,20 @@ class ConstituentCounts:
         layout = resolve_forward_backward_layout(
             self.histograms, self.grouping, resolved_indices=self.pair
         )
+        from asymmetry.core.transform.background import resolve_background_mode
+
+        if (
+            self.grouping.get("background_correction")
+            and resolve_background_mode(self.grouping) == "reference_run"
+        ):
+            crop, window = crop_to_good_support(layout.alignment, layout.window)
+            layout = replace(
+                layout,
+                alignment=crop,
+                window=window,
+                t0_time_us=layout.t0_time_us
+                - (crop.first_bin - layout.alignment.first_bin) * layout.bin_width_us,
+            )
         return replace(layout, alignment=self.acquired_alignment(layout.alignment))
 
     def acquired_alignment(self, alignment):
@@ -171,7 +186,7 @@ class PreparedConstituents:
                 effective={
                     "constituents": [
                         {
-                            "source": member.metadata,
+                            "source": acquired_source_identity(member),
                             "data_period_number": member.period_number,
                             "coefficient": member.coefficient,
                             **item.to_dict(),
@@ -201,7 +216,9 @@ class PreparedConstituents:
                     timing_sources=local(alignment.timing_sources),
                 )
                 group = source.aligned(
-                    selected, crop, retain_variance=retain_variance or len(self.sources) > 1
+                    selected,
+                    crop,
+                    retain_variance=retain_variance or len(self.sources) > 1 or member.arithmetic,
                 )
                 c = member.coefficient
                 groups.append(
@@ -235,6 +252,8 @@ def resolve_group_observation(run, group_specs, *, cancel_check=None):
     ]
     grouping = dict(observation.grouping)
     grouping["groups"] = {gid: [i + 1 for i in indices] for gid, indices in specs}
+    grouping["forward_group"] = run.grouping.get("forward_group", 1)
+    grouping["backward_group"] = run.grouping.get("backward_group", 2)
     for key in ("period_inputs", "constituent_coefficients", "period_histograms", "period_reduced"):
         grouping.pop(key, None)
     return observation, replace(run, histograms=observation.histograms, grouping=grouping), specs
@@ -249,18 +268,8 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
         )
 
     target = grouping.get("period_mode", "red")
-    if target not in {"red", "green"}:
-        raise ValueError("Constituent preparation requires one selected mapped set")
     members = []
-    coefficients = grouping.get("constituent_coefficients", (1.0,) * len(originals))
-    for number, (original, coefficient) in enumerate(zip(originals, coefficients, strict=True), 1):
-        if coefficient == 0:
-            continue
-        if (
-            grouping["period_mapping"].get(str(number), grouping["period_mapping"].get(number))
-            != target
-        ):
-            continue
+    for number, original, coefficient in active_acquisitions(grouping):
         if cancel_check is not None:
             cancel_check()
         effective = grouping_for_acquisition(original, grouping)
@@ -289,14 +298,73 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
                 ),
                 coefficient,
                 True,
+                number,
             )
         )
     if not members:
         raise ValueError(f"Mapped {target} set has no acquired constituents")
-    if len(members) == 1:
-        member = members[0]
-        return ConstituentCounts(tuple(members), member.histograms, member.grouping, pair)
     return pool_constituents(members, grouping, pair)
+
+
+def active_acquisitions(grouping):
+    """Select nonzero acquired inputs without resolving clocks or reading count buffers."""
+    target = grouping.get("period_mode", "red")
+    if target not in {"red", "green", "green_plus_red"}:
+        raise ValueError("Grouped counts require Red or Green; use F/B asymmetry for G−R.")
+    targets = {"red", "green"} if target == "green_plus_red" else {target}
+    originals = grouping["period_inputs"]
+    weights = grouping.get("constituent_coefficients", (1.0,) * len(originals))
+    return [
+        (number, original, coefficient)
+        for number, (original, coefficient) in enumerate(zip(originals, weights, strict=True), 1)
+        if coefficient != 0
+        and grouping["period_mapping"].get(str(number), grouping["period_mapping"].get(number))
+        in targets
+    ]
+
+
+def single_acquisition_model_source(run):
+    """Resolve a unit singleton's own facts; multiple or weighted sources need another model."""
+    if "constituent_coefficients" not in run.grouping:
+        return run
+    if run.grouping.get("period_mode") == "green_minus_red":
+        return None
+    selected = active_acquisitions(run.grouping)
+    if len(selected) != 1 or selected[0][2] != 1:
+        return None
+    original = selected[0][1]
+    return replace(original, grouping=grouping_for_acquisition(original, run.grouping))
+
+
+def acquired_source_identity(member):
+    """Keep acquisition identity in correction/fit records without copying file log arrays."""
+    metadata = member.metadata or {}
+    return {
+        "source_file": metadata.get("source_file", ""),
+        "run_number": metadata.get("source_run_number", metadata.get("run_number")),
+    }
+
+
+def acquired_source_descriptors(observation):
+    """Map flat detector ordinals to source/channel coordinates without storing arrays."""
+    descriptors, offset = [], 0
+    for member in observation.members:
+        metadata = acquired_source_identity(member)
+        size = len(member.histograms)
+        descriptors.append(
+            (
+                offset,
+                size,
+                metadata.get("source_file", ""),
+                metadata["run_number"],
+                member.input_number,
+                member.coefficient,
+                (member.metadata or {}).get("data_period_number"),
+                (member.metadata or {}).get("dae_period_number"),
+            )
+        )
+        offset += size
+    return tuple(descriptors)
 
 
 def pool_constituents(members, grouping, pair):
@@ -375,16 +443,25 @@ def held_period_grids(grouping):
     return tuple(acquisition_grid(period) for period in grouping.get("period_histograms", ()))
 
 
-def constituent_metadata(grouping: dict) -> dict:
+def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
     """Identify acquired facts and preparation semantics without scanning count buffers."""
     from asymmetry.core.transform.deadtime import file_deadtime_table
 
+    active = (
+        {number for number, _, _ in active_acquisitions(grouping)}
+        if active_only
+        else set(range(1, len(grouping["period_inputs"]) + 1))
+    )
     return {
         "policy": CONSTITUENT_PREPARATION_POLICY,
-        "mapping": grouping["period_mapping"],
+        "mapping": {
+            key: value for key, value in grouping["period_mapping"].items() if int(key) in active
+        },
         **(
             {
-                "coefficients": grouping["constituent_coefficients"],
+                "coefficients": tuple(
+                    c for i, c in enumerate(grouping["constituent_coefficients"], 1) if i in active
+                ),
                 "run_preparation_policy": ACQUIRED_RUN_PREPARATION_POLICY,
             }
             if "constituent_coefficients" in grouping
@@ -405,5 +482,6 @@ def constituent_metadata(grouping: dict) -> dict:
                 "detector_t0_sources": run.grouping.get("detector_t0_sources"),
             }
             for number, run in enumerate(grouping["period_inputs"], 1)
+            if number in active
         ],
     }

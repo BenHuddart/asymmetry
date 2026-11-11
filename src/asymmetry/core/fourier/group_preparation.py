@@ -23,6 +23,7 @@ from asymmetry.core.transform.background import (
 )
 from asymmetry.core.transform.constituent_counts import (
     PreparedConstituents,
+    active_acquisitions,
     resolve_group_observation,
 )
 from asymmetry.core.transform.corrections import (
@@ -31,7 +32,7 @@ from asymmetry.core.transform.corrections import (
     result_tail_skip,
 )
 from asymmetry.core.transform.deadtime import DeadtimeDomain, deadtime_operation_inputs
-from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, crop_to_good_support
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -64,16 +65,34 @@ def preparation_identity(
         raise ValueError("Prepared reference counts and timing request must be supplied together")
     from asymmetry.core.transform.constituent_counts import constituent_metadata
 
-    grouping = {key: value for key, value in run.grouping.items() if key != "period_inputs"}
-    if "period_inputs" in run.grouping:
-        grouping["constituents"] = constituent_metadata(run.grouping)
+    retained = "period_inputs" in run.grouping
+    grouping = {
+        key: value
+        for key, value in run.grouping.items()
+        if not retained
+        or key
+        not in {
+            "period_inputs",
+            "period_histograms",
+            "period_reduced",
+            "period_mapping",
+            "constituent_coefficients",
+        }
+    }
+    histograms = (
+        [h for _, source, _ in active_acquisitions(run.grouping) for h in source.histograms]
+        if retained
+        else run.histograms
+    )
+    if retained:
+        grouping["constituents"] = constituent_metadata(run.grouping, active_only=True)
     return (
         reference_file_identity(run.grouping.get("background_run"))
         if correction_flags_from_grouping(run.grouping).use_background
         and resolve_background_mode(run.grouping) == "reference_run"
         else None,
-        tuple((id(h.counts), id(h.count_variance)) for h in run.histograms),
-        histogram_grid_identity(run.histograms),
+        tuple((id(h.counts), id(h.count_variance)) for h in histograms),
+        histogram_grid_identity(histograms),
         json.dumps(grouping, default=str),
         json.dumps(run.metadata, default=str),
         run.source_file,
@@ -263,6 +282,9 @@ def prepare_group_counts(
             window = alignment.window(dict(first_good_bin=first, last_good_bin=last))
         else:
             window = alignment.window(grouping, offset_bins=t0 + alignment.first_bin - declared)
+        if reference is not None:
+            alignment, window = crop_to_good_support(alignment, window)
+            t0 = alignment.common_t0_bin
         local_grouping = dict(
             grouping, t0_bin=t0, first_good_bin=window.first, last_good_bin=window.last
         )
@@ -293,6 +315,11 @@ def prepare_group_counts(
         reference_alignment = None
         if reference is not None:
             sample = observation.reference_sample if observation is not None else None
+            if windows:
+                length = max(window.last for window in windows) + 1
+                alignment = replace(alignment, length=length)
+                window = BinWindow(window.first, min(window.last, length - 1))
+                local_grouping["last_good_bin"] = window.last
             physical = effective_group_indices(
                 identity_run.grouping, group_id, n_histograms=len(identity_run.histograms)
             )
@@ -371,6 +398,7 @@ def prepare_group_counts(
                     identity_run.grouping, group_id, n_histograms=len(identity_run.histograms)
                 ),
                 layout.reference_alignment,
+                retain_variance=True,
             )
             if reference is not None
             else None,

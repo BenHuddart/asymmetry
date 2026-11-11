@@ -99,6 +99,15 @@ coefficients skip deadtime for the entire requested result. Zero terms, ignored
 periods, and unconsumed detectors/bins cannot trigger availability or saturation
 failures. Asymmetry also checks unknown original noise before nonlinear correction;
 packing or integer-looking sums cannot supply missing noise evidence.
+Integral reduction and field scans accept a resolved ``reference=`` acquisition;
+the transform does not load a reference implicitly. Its exposure scale adapts
+to each selected sample set through the same reference owner.
+
+The explicit profile policy ``per_run_estimate`` estimates one integral alpha
+from the pooled corrected native good window. Packing or a displayed time crop
+does not narrow that calibration dependency. A period asymmetry difference uses
+the Red estimate for both conditions. Explicit projection coefficients take
+precedence; individual source estimates do not become separate condition refits.
 
 Only compatible evidenced exposures in a unit acquisition sum establish pooled
 reference exposure. Arbitrary signed weights leave it unknown; a supported
@@ -112,6 +121,9 @@ Grouped Gaussian observations retain the prepared counts and noise. A fitted
 count-loss model cannot replace several acquired normalisers with one surrogate;
 that request receives an actionable fit-input error. TF calibration requires an
 original acquisition; apply its shared calibration to the combination.
+One retained unit-weight acquisition with zero-weight companions still has its
+original count model. Grouped count/Fourier signals support pooled G+R; G−R
+requires the F/B asymmetry observable.
 
 Inspection frame totals accumulate for co-add; reference subtraction retains
 the sample frame total. Displayed field and temperature use the current good-frame
@@ -142,6 +154,9 @@ independence/correspondence assumptions, and negative-count tally. Source arrays
 remain unchanged. Counts-first observation snapshots own their arrays and
 resolved settings; an attached Run alone is not a replay recipe. Lightweight
 fit records omit histogram replay buffers.
+Count-fit domains retain a compact mapping from flattened channels to original
+source/run, input ordinal, data/DAE period and coefficient. An input ordinal
+identifies a selected acquisition; it does not rename its acquired period.
 
 Projects retain combination definitions and reconstruct rows from sources.
 Saved output arrays and fit records retain their recorded meaning without

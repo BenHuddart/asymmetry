@@ -221,10 +221,16 @@ def _prepare_tf_counts(dataset, request, cancel_callback):
     run = dataset.run
     if run is None or not run.histograms:
         raise FitInputError("TF calibration needs a run with detector histograms")
-    if "constituent_coefficients" in run.grouping:
+    from asymmetry.core.transform.constituent_counts import single_acquisition_model_source
+
+    source = single_acquisition_model_source(run)
+    if source is None:
         raise FitInputError(
             "TF calibration requires an original acquisition; calibrate a source run and apply its shared alpha/beta to the combination."
         )
+    if source is not run:
+        run = source
+        dataset = replace(dataset, run=source, metadata=source.metadata)
     if run.metadata.get("raw_period_histograms_available") is False:
         raise FitInputError(
             "TF calibration needs acquired period histograms, not a cached reduction"

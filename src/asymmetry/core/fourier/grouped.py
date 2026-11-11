@@ -100,7 +100,7 @@ def build_group_signal_dataset(
     signal = trimmed_counts * scale
     if center_signal and signal.size > 0:
         signal -= float(np.mean(signal))
-    error = np.sqrt(np.clip(variance, 1.0, None)) * scale
+    error = np.sqrt(variance if group.variance is not None else np.maximum(variance, 1.0)) * scale
 
     group_names = grouping.get("group_names") if isinstance(grouping, dict) else None
     group_name = None

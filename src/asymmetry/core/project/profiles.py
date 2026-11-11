@@ -98,7 +98,6 @@ from asymmetry.core.project.calibration import (
     resolve_projection_calibrations,
     restore_profile_calibrations,
 )
-from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.fb_counts import AlignmentCrop
@@ -106,7 +105,6 @@ from asymmetry.core.transform.grouping import (
     InvalidGroupingError,
     common_t0_for_groups,
     effective_group_indices,
-    independent_pair_indices,
     resolve_alignment,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
@@ -952,11 +950,8 @@ def _payload_file_common_t0(
     in which case there is nothing to compare the stored ``t0_bin`` against.
     """
     n_hist = len(detector_t0)
-    forward_gid = _as_int(payload.get("forward_group"), 1) or 1
-    backward_gid = _as_int(payload.get("backward_group"), 2) or 2
     try:
-        indices = set(effective_group_indices(payload, forward_gid, n_histograms=n_hist))
-        indices |= set(effective_group_indices(payload, backward_gid, n_histograms=n_hist))
+        indices = _analysis_group_indices(payload, n_hist)
     except InvalidGroupingError:
         return None
     values = [v for v in (_as_int(detector_t0[i]) for i in sorted(indices)) if v is not None]
@@ -1055,14 +1050,9 @@ def profile_from_payload(
 
 
 def _alpha_policy_from_payload(payload: dict[str, Any]) -> AlphaPolicy:
-    """Derive an :class:`AlphaPolicy` from a payload's alpha + provenance keys.
-
-    A payload records a *value*, not a policy. We infer: an alpha carrying a
-    calibration method/reference (``alpha_method`` other than the bare default,
-    or an ``alpha_reference_run``) becomes ``calibrated``; otherwise the value is
-    a plain ``fixed`` value. The migration never infers ``per_run_estimate`` —
-    that is an explicit user choice with no payload footprint.
-    """
+    """Retain explicit automatic intent; legacy values never infer an automatic policy."""
+    if payload.get("alpha_policy", {}).get("mode") == "per_run_estimate":
+        return AlphaPolicy(mode="per_run_estimate")
     value = _as_float(payload.get("alpha", 1.0), 1.0)
     method = str(payload.get("alpha_method", "")).strip()
     reference = _as_int(payload.get("alpha_reference_run"))
@@ -1231,6 +1221,8 @@ def resolve_effective_grouping(
             **_base_binning_payload(profile.binning),
             "good_window_policy": profile.good_window_policy.to_dict(),
         }
+        if profile.alpha_policy.mode == "per_run_estimate":
+            grouping["alpha_policy"] = {"mode": "per_run_estimate"}
         if profile.included_groups:
             grouping["included_groups"] = {
                 int(gid): bool(v) for gid, v in profile.included_groups.items()
@@ -1336,9 +1328,16 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
 
 
 def _analysis_group_indices(grouping: dict[str, Any], n_hist: int) -> list[int]:
-    """0-based indices of the detectors the profile's forward+backward groups use."""
-    forward_idx, backward_idx = independent_pair_indices(grouping, n_histograms=n_hist)
-    return sorted(set(forward_idx) | set(backward_idx))
+    """Timing/window support uses the selected union; independence belongs to statistics."""
+    return sorted(
+        {
+            i
+            for key, default in (("forward_group", 1), ("backward_group", 2))
+            for i in effective_group_indices(
+                grouping, int(grouping.get(key, default)), n_histograms=n_hist
+            )
+        }
+    )
 
 
 def _common_t0_over_groups(
@@ -1392,36 +1391,39 @@ def run_file_good_window(
     common_t0_bin: int,
     alignment: AlignmentCrop | None = None,
 ) -> tuple[int, int]:
-    """Map file bounds through the selected-channel alignment.
-
-    Detector tables are acquisition facts; legacy scalars retain common coordinates.
-    """
-    if not _has_good_window_tables(grouping, len(run.histograms)):
+    """Map acquired file bounds through raw-bin offsets, retaining scalar legacy coordinates."""
+    if not _has_good_window_tables(grouping, len(run.histograms)) and (
+        "first_good_bin" in grouping or "last_good_bin" in grouping
+    ):
         return grouping.get("first_good_bin", 0), grouping.get(
-            "last_good_bin", len(run.histograms[0].counts) - 1
+            "last_good_bin", run.histograms[0].n_bins - 1
         )
     indices = (
         [i for i, _ in alignment.detector_offsets]
         if alignment is not None
         else _analysis_group_indices(grouping, len(run.histograms))
+        if grouping.get("groups")
+        else list(range(len(run.histograms)))
     )
     bins = effective_detector_t0_bins(run.histograms, grouping)
     if alignment is None:
         alignment = resolve_alignment(
             run.histograms, indices, detector_t0_bins=bins, common_t0_bin=common_t0_bin
         )
-    first, last = alignment.first_bin, alignment.first_bin + alignment.length - 1
-    first = max(
-        first,
-        max(
-            int(grouping["detector_first_good_bins"][i]) + common_t0_bin - bins[i] for i in indices
+    from asymmetry.core.transform.t0 import good_window_for_groups
+
+    first, last = good_window_for_groups(
+        indices,
+        bins,
+        grouping.get("detector_first_good_bins", [h.good_bin_start for h in run.histograms]),
+        grouping.get(
+            "detector_last_good_bins",
+            [h.n_bins - 1 if h.good_bin_end < 0 else h.good_bin_end for h in run.histograms],
         ),
+        common_t0_bin=common_t0_bin,
+        n_bins=alignment.first_bin + alignment.length,
     )
-    last = min(
-        last,
-        min(int(grouping["detector_last_good_bins"][i]) + common_t0_bin - bins[i] for i in indices),
-    )
-    return first, last
+    return max(alignment.first_bin, first), last
 
 
 def resolve_good_window(
@@ -1609,13 +1611,10 @@ def _estimate_run_alpha(
         metadata=reference_observation_metadata(run),
         reference_resolver=reference_resolver,
     )
-    corrected = next(iter(periods.values()))
-    return estimate_alpha(
-        corrected.forward.counts,
-        corrected.backward.counts,
-        first_good_bin=corrected.window.first,
-        last_good_bin=corrected.window.last,
-    )
+    from asymmetry.core.transform.reduce import estimate_prepared_alpha
+
+    mode = grouping.get("period_mode", "red")
+    return estimate_prepared_alpha(periods["red" if mode == "green_minus_red" else mode])
 
 
 def _apply_deadtime_policy(

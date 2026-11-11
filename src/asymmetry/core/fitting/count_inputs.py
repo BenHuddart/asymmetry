@@ -15,7 +15,9 @@ from asymmetry.core.fitting.count_corrections import (
 from asymmetry.core.fitting.likelihood import CountSource, FitInputError
 from asymmetry.core.transform.constituent_counts import (
     PreparedConstituents,
+    acquired_source_descriptors,
     resolve_group_observation,
+    single_acquisition_model_source,
 )
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
@@ -112,6 +114,10 @@ def _count_group_context(
     exclude,
 ) -> _CountGroupContext | None:
     require_complete_dataset(dataset)
+    if grouping.get("period_mode") == "green_minus_red":
+        raise FitInputError(
+            "G−R has no grouped-count observation; select Red or Green, or use an asymmetry fit."
+        )
     observation = None
     if "period_inputs" in grouping:
         observation, run, expanded = resolve_group_observation(run, group_specs)
@@ -124,6 +130,8 @@ def _count_group_context(
         *(indices for _, indices in group_specs),
         detector_t0_bins=detector_t0_bins,
     )
+    if observation is not None:
+        alignment = observation.acquired_alignment(alignment)
     if observation is not None and "good_window_policy" in grouping:
         from asymmetry.core.project.profiles import GoodWindowPolicy, resolve_run_good_window
 
@@ -275,6 +283,10 @@ def _build_one_count_group(
                 label: outcome.to_dict() for label, outcome in ctx.background_preflight.items()
             },
             "grouped_alignment": ctx.alignment.to_dict(),
+            "count_bin_width_us": ctx.bin_width,
+            "acquired_sources": acquired_source_descriptors(ctx.prepared.observation)
+            if isinstance(ctx.prepared, PreparedConstituents)
+            else (),
             "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
             "count_fit_raw_windows": tuple(
@@ -299,10 +311,11 @@ def _build_one_count_group(
 
 def count_model_frame_norm(dataset: MuonDataset, group) -> float:
     """Resolve Δt·F only for a representable single-acquisition count-loss model."""
-    if "constituent_coefficients" in dataset.run.grouping:
+    source = single_acquisition_model_source(dataset.run)
+    if source is None:
         raise FitInputError(
             "A fitted count-loss model cannot represent multiple acquired run facts; fit the original acquisitions or use an asymmetry fit."
         )
-    frames = _deadtime_number(dataset.run.grouping.get("good_frames"), "good frames", positive=True)
-    width = _deadtime_number(dataset.run.histograms[0].bin_width, "bin width (µs)", positive=True)
+    frames = _deadtime_number(source.grouping.get("good_frames"), "good frames", positive=True)
+    width = _deadtime_number(source.histograms[0].bin_width, "bin width (µs)", positive=True)
     return width * group.metadata["grouped_time_domain_bunch_factor"] * frames

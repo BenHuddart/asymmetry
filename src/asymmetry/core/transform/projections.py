@@ -72,7 +72,7 @@ def reduction_identity(grouping: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def projection_alphas(grouping: dict[str, Any]) -> dict[str, float]:
+def projection_alphas(grouping: dict[str, Any], *, explicit_only: bool = False) -> dict[str, float]:
     """Each declared projection's alpha.
 
     A canonical axis reads its ``alpha_x``/``alpha_y``/``alpha_z`` key and
@@ -91,6 +91,7 @@ def projection_alphas(grouping: dict[str, Any]) -> dict[str, float]:
         if label in _AXIS_ALPHA_KEYS
         else declared.get(label, base)
         for label in pairs
+        if not explicit_only or label in declared or _AXIS_ALPHA_KEYS.get(label) in grouping
     }
 
 
@@ -154,6 +155,8 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
         )
         from asymmetry.core.transform.preparation import histogram_observation
 
+        if result.effective_alpha is not None:
+            selected_grouping["alpha"] = result.effective_alpha
         datasets[label] = MuonDataset(
             histogram_observation=histogram_observation(
                 replace(source, grouping=selected_grouping)
@@ -167,6 +170,11 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
                 "projection": label,
                 "period_index": period_index,
                 "grouped_alignment": result.alignment.to_dict(),
+                **(
+                    {"effective_alpha": result.effective_alpha}
+                    if result.effective_alpha is not None
+                    else {}
+                ),
             },
             run=source,
         )
