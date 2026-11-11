@@ -14,10 +14,11 @@ Three steps, applied in WiMDA's order (compensation → baseline → exclusions)
   each bin by the per-frequency pulse amplitude ``R(ν)`` from
   :mod:`asymmetry.core.maxent.pulse` — the inverse of the same response the
   MaxEnt forward model folds into its kernel, so the FFT and MaxEnt spectra share
-  one pulse model.  ``1/R`` diverges as ``R → 0`` near the first node of the pulse
-  transform, so the gain is capped and the spectrum is cut off at the node: beyond
-  it the pulse has destroyed the information and no correction is physical.  This
-  replaces WiMDA's unbounded Gaussian ``exp((πfτ)²)`` factor.
+  one pulse model. Amplitudes receive ``1/R`` and Power receives ``1/R²``.
+  The first sampled positive frequency below ``1/max_gain`` and all following
+  bins are removed. This grid-dependent numerical safeguard is not an analytic
+  node or a statement that later response lobes contain no information.
+  WiMDA uses a different, Gaussian Fourier response.
 
 * **Robust baseline offset.** Iterative σ-clipping (the literature-standard robust
   continuum estimator — Sánchez-Monge *et al.*, *Astron. Astrophys.* **609**, A101
@@ -34,12 +35,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core.fourier.fft import exclude_frequency_ranges
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
+
+CONDITIONING_REVISION = "quantity_gain_sampled_support_v1"
 
 #: Baseline estimator modes accepted by :func:`apply_spectrum_conditioning`.
 BASELINE_MODES = ("none", "sigma_clip", "wimda")
@@ -99,6 +103,11 @@ def sigma_clip_baseline(
     return loc, sigma
 
 
+def _amplitude_gain_limit(max_gain: float) -> float:
+    """Retain at least unity amplitude gain, including an unavailable limit."""
+    return max(1.0, float(max_gain))
+
+
 def pulse_compensation_gain(
     freqs_mhz: ArrayLike,
     *,
@@ -111,9 +120,9 @@ def pulse_compensation_gain(
 
     ``R(ν)`` is the pulse amplitude from
     :func:`asymmetry.core.maxent.pulse.pulse_amplitude_phase`.  The gain is
-    ``1/R`` up to ``max_gain``; at and above the first node — the first bin where
-    ``R`` would demand more than ``max_gain`` — the gain is ``0`` (hard cutoff),
-    because the pulse has suppressed that frequency below recovery.  A
+    ``1/R`` up to ``max_gain``. The first sampled positive frequency with
+    ``R < 1/max_gain`` and every following bin has zero gain, marking removed
+    support. The grid and limit determine this numerical safeguard. A
     zero ``n_pulses`` is the identity. Active shaping requires a positive finite
     support half-width; double pulses require a nonnegative finite separation.
     """
@@ -127,21 +136,20 @@ def pulse_compensation_gain(
     if amplitude is None:
         return np.ones_like(freqs)
 
-    cap = max(1.0, float(max_gain))
+    cap = _amplitude_gain_limit(max_gain)
     floor = 1.0 / cap
     gain = np.ones_like(freqs)
     above_floor = amplitude >= floor
     np.divide(1.0, amplitude, out=gain, where=above_floor)
     gain[~above_floor] = 0.0
 
-    # Hard cutoff at and beyond the first node: once the pulse amplitude has
-    # fallen below the floor (above DC), everything past it is unrecoverable.
+    # A sampled amplitude floor bounds amplification, including later lobes.
     order = np.argsort(freqs, kind="stable")
     below = ~above_floor
     below_positive = below & (freqs > 0.0)
     if np.any(below_positive):
-        first_node_pos = int(np.argmax(below_positive[order]))
-        cut = order[first_node_pos:]
+        first_cut_pos = int(np.argmax(below_positive[order]))
+        cut = order[first_cut_pos:]
         gain[cut] = 0.0
     return gain
 
@@ -255,9 +263,10 @@ class ConditioningResult:
     baseline: float = 0.0
     noise_sigma: float = 0.0
     cutoff_frequency_mhz: float | None = None
-    #: The pulse-compensation gain applied to ``display`` (``None`` if no
-    #: compensation ran), so a companion channel can reuse the same gain.
+    quantity: Literal["amplitude", "power", "angle"] = "amplitude"
+    #: Amplitude gain, shared with companion quadratures; zero marks removed bins.
     gain: NDArray[np.float64] | None = None
+    amplitude_max_gain: float | None = None
 
 
 def apply_spectrum_conditioning(
@@ -265,6 +274,7 @@ def apply_spectrum_conditioning(
     display: ArrayLike,
     error: ArrayLike | None = None,
     *,
+    quantity: Literal["amplitude", "power", "angle"] = "amplitude",
     pulse_compensation: bool = False,
     pulse_half_width_us: float = 0.0,
     pulse_separation_us: float = 0.0,
@@ -279,16 +289,21 @@ def apply_spectrum_conditioning(
     Operates on the real display channel and its error on the canonical MHz axis,
     in WiMDA's order (compensation → baseline → exclusions).  Returns the
     conditioned channels and the baseline/noise/cutoff diagnostics the readouts
-    surface.  Inputs are not mutated.
+    surface. ``quantity`` specifies the observable, never inferred from values.
+    Power receives squared amplitude gain; angles receive no pulse gain.
+    Pulse-removed bins retain shape as NaN values/errors, with zero amplitude
+    gain marking their support. Inputs are not mutated.
     """
+    if quantity not in {"amplitude", "power", "angle"}:
+        raise ValueError("Spectrum quantity must be 'amplitude', 'power' or 'angle'.")
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
     values = np.asarray(display, dtype=np.float64).copy()
     errors = (
         np.asarray(error, dtype=np.float64).copy() if error is not None else np.zeros_like(values)
     )
-    result = ConditioningResult(display=values, error=errors)
+    result = ConditioningResult(display=values, error=errors, quantity=quantity)
 
-    if pulse_compensation:
+    if pulse_compensation and quantity != "angle":
         gain = pulse_compensation_gain(
             freqs,
             half_width_us=pulse_half_width_us,
@@ -296,8 +311,13 @@ def apply_spectrum_conditioning(
             n_pulses=pulse_n_pulses,
             max_gain=pulse_max_gain,
         )
-        values *= gain
-        errors *= gain
+        if pulse_n_pulses != 0:
+            result.amplitude_max_gain = _amplitude_gain_limit(pulse_max_gain)
+        multiplier = gain**2 if quantity == "power" else gain
+        values *= multiplier
+        errors *= multiplier
+        values[gain == 0.0] = np.nan
+        errors[gain == 0.0] = np.nan
         result.gain = gain
         cut = freqs[gain == 0.0]
         cut_positive = cut[cut > 0.0]
@@ -321,6 +341,8 @@ def apply_spectrum_conditioning(
     if exclusion_ranges:
         values = exclude_frequency_ranges(freqs, values, exclusion_ranges)
 
+    if result.gain is not None:
+        values[result.gain == 0.0] = np.nan
     result.display = values
     result.error = errors
     return result

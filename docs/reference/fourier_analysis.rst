@@ -1357,8 +1357,37 @@ an explicit positive finite support half-width. Ambiguous ``pulse_width_us`` and
 ``pulse_half_width_us`` metadata key alone does not establish shape or source.
 Disable compensation for the identity operation. MaxEnt and Fourier applied
 metadata record consumed width, shape, units, source, origin, and assumptions.
-Fourier amplitude conditioning does not provide a complex phase deconvolution;
-Power scaling and the gain-limited sampled cutoff need separate interpretation.
+For response amplitude R, amplitude displays (**Magnitude**, **(Power)^1/2**,
+**Cos**, **Sin**, **Real**, **Imaginary**, **Real+Imag**, and **Phase**) receive
+an inverse gain g = 1/R; **Power** receives g². Existing standard errors receive
+the same multiplier as their displayed quantity. They remain conditional on the
+fixed response and existing group-error estimator, without response-parameter
+uncertainty, transform covariance, or baseline uncertainty. Missing/zero errors
+do not acquire nonzero statistical information. **Phase Spectrum** angles receive
+no pulse gain; **Auto Phase**, **Resolution (Burg)**, and **Correlation** retain
+their separate supported operations. Scaling real/imaginary amplitudes does not
+remove response phase and is not complex phase deconvolution.
+
+For one selected group, with baseline, exclusions, and area normalisation off,
+compensated Power equals compensated Magnitude squared. Across several groups,
+Asymmetry averages each displayed quantity: mean(Power) generally differs from
+mean(Magnitude)².
+
+Asymmetry also checks amplification against an amplitude gain limit (default 25,
+allowing a Power multiplier up to 625). On the sampled positive-frequency grid,
+the first bin with R < 1/25 and all following bins are removed at the default
+limit. The cutoff depends on the grid and chosen limit; it is a numerical
+safeguard, not the analytic response node or proof that later lobes carry no
+information. Removed bins are omitted from the output arrays and companion
+quadrature, baseline estimate, area normalisation, fits, moments, and exports;
+they are not measured zeros. Frequency exclusions keep their separate display
+zeroing convention.
+
+Applied metadata retain the quantity, gain exponent, amplitude limit, cutoff
+policy, and sampled cutoff when reached. Recomputing uses the current rule;
+saved historical fit curves and errors retain their recorded meaning. The
+spectrum identity distinguishes computations made under a different conditioning
+policy.
 
 Compared with other programs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

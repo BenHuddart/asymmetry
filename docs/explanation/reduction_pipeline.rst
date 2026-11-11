@@ -224,7 +224,12 @@ Pulse response belongs to prediction
 A supplied count-fit separation selects a double-delta forward model with equal
 incident strengths and muon-survival weighting; it consumes no finite width.
 MaxEnt folds the parabolic-plus-pion response into prediction on the resolved
-observation clock. Fourier compensation uses its amplitude. These operations
+observation clock. Fourier compensation divides amplitude displays by the
+response amplitude R and Power by R², scaling existing conditional standard
+errors in the same units. Its sampled amplitude-gain limit removes bins from
+output support before baseline and area normalisation; removed bins are not
+measured zeros. This numerical cutoff depends on the grid and limit, and
+amplitude compensation does not invert response phase. These operations
 preserve raw counts, file t₀, and good bounds. Explicit Ignore/off is the identity;
 active finite-width requests need a positive finite support half-width. Source
 labels and ambiguous file width fields do not establish that input. See

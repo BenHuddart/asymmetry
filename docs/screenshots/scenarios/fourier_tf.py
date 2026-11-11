@@ -18,7 +18,9 @@ The scenario:
 4. Raises the **Fourier** inspector tab (apodisation / padding / units —
    the transform's own controls, which are what the embedding pages
    discuss) rather than the Fit tab, whose carried-over state is
-   irrelevant to these pages.
+   irrelevant to these pages. The pulse-compensation tooltip describes quantity
+   scaling and the sampled numerical cutoff, independently of the unchecked
+   compensation control in this uncorrected high-field example.
 """
 
 from __future__ import annotations

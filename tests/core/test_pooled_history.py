@@ -47,7 +47,7 @@ def test_changed_pooled_identity_blocks_historical_score_reuse_and_reconstructio
 
 @pytest.mark.parametrize("mode", ["red", "green", "green_minus_red", "green_plus_red"])
 def test_scoped_policy_in_observation_workdir_fourier_and_projection(mode, monkeypatch, tmp_path):
-    import asymmetry.core.fourier.spectrum as spectrum
+    import asymmetry.core.fourier.grouping_identity as spectrum
     import asymmetry.core.transform.projections as projections
     import asymmetry.core.workflow.workdir as workdir
     from asymmetry.core.workflow.reduction import ReductionSettings

@@ -63,3 +63,47 @@ def test_pulse_config_json_keeps_authored_request(mode):
         GroupSpectrumConfig.from_dict(json.loads(json.dumps(fft.to_dict()))).to_dict()
         == fft.to_dict()
     )
+
+
+def test_historical_power_fit_survives_current_recomputation(tmp_path, monkeypatch):
+    import copy
+
+    import numpy as np
+
+    import asymmetry.core.fourier.grouping_identity as identity
+    from tests.core.test_fourier_spectrum import _run
+
+    run = _run()
+    current_digest = identity.fourier_grouping_digest(run)
+    with monkeypatch.context() as patch:
+        patch.setattr(identity, "CONDITIONING_REVISION", "amplitude_gain_all_displays")
+        recorded_digest = identity.fourier_grouping_digest(run)
+    assert recorded_digest != current_digest
+    project = _v24_project()
+    rep = project["datasets"][0]["representations"]["freq_fft"]
+    config = GroupSpectrumConfig(
+        display="Power", pulse_compensation=True, pulse_half_width_us=0.05, selected_group_ids=[1]
+    )
+    rep["recipe"] = {"fourier_config": config.to_dict(), "grouping_digest": recorded_digest}
+    history = {
+        "success": True,
+        "values": {"A": 1.2},
+        "errors": {"A": 0.3},
+        "time": [0.0, 0.5],
+        "curve": [1.0, 2.0],
+    }
+    rep["fit"]["result"] = history
+    path = tmp_path / "power.asymp"
+    save_project(project, path)
+    loaded = load_project(path)
+    model = ProjectModel.from_project_state(loaded)
+    restored = model.representation(10, RepresentationType.FREQ_FFT)
+    before = copy.deepcopy(restored.fit_set(None).open_fit().result)
+    recomputed = restored.compute(run)[0]
+    magnitude = restored.__class__(
+        recipe={"fourier_config": {**config.to_dict(), "display": "Magnitude"}}
+    ).compute(run)[0]
+    np.testing.assert_allclose(recomputed.asymmetry, magnitude.asymmetry**2)
+    assert restored.recipe["grouping_digest"] == recorded_digest
+    assert restored.fit_set(None).open_fit().result == before
+    assert {key: before[key] for key in history} == history
