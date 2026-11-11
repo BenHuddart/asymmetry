@@ -73,6 +73,8 @@ For implicit full-period pairing, a permutation of the same complete, distinct
 NeXus data-slot captions requires explicit corresponding period selection or
 **Map periods…**. Dwell slot numbers alone are not condition conflicts. Missing
 or inconsistent optional declarations retain the data-order assumption.
+Nested implicit combinations retain the original declarations. Deliberately
+selected or mapped sets establish their authored pairing separately.
 Authored Red/Green mappings remain distinct from acquired period identities;
 ROOT histogram banks are not periods. These checks affect the combination,
 while individual files remain available for inspection.
@@ -157,7 +159,9 @@ measurement or zero. Constituent values, source identity, and effective signed
 coefficients remain in one ordered provenance record; ``temperature_spread``
 and ``field_spread`` give finite active-constituent (minimum, maximum) ranges,
 including singleton ranges. They are not uncertainty bars or evidence for one
-physical condition. Inactive terms remain provenance outside these ranges.
+physical condition. Inactive terms remain provenance outside these ranges. Nested and mapped
+ranges read the current retained acquisitions, with ignored/unselected periods
+excluded from the active range.
 
 Browser co-add uses selected table order; the reference picker places the
 sample first, and signed subtraction places the chosen minuend first. The API
@@ -203,7 +207,9 @@ arrays reconstructs through current arithmetic. A failed restoration retains a `
 and historical records, reports its ``Corrections incomplete`` diagnosis, and
 leaves source rows available. A failed
 source rebuild retains saved arrays with an explicit incomplete-correction
-marker. Condition labels alone do not authorise a numerical refit.
+marker. Condition labels alone do not invalidate count snapshots; wizard
+model/coordinate identities separately retain the conditions they consume. No
+label edit authorises an automatic numerical refit.
 
 Compared with other programs
 -----------------------------

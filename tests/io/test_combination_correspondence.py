@@ -29,6 +29,14 @@ def test_known_implicit_period_permutation_requires_explicit_selection():
     combine_runs([period_run(a, 0), period_run(b, 1)])
 
 
+def test_nested_implicit_pairing_retains_original_declarations():
+    a, b, c = periodic(1), periodic(2), periodic(3, "off;on")
+    nested = combine_runs([a, b])
+    with pytest.raises(CombineError, match="period"):
+        combine_runs([nested, c])
+    combine_runs([period_run(nested, 0), period_run(c, 1)])
+
+
 def test_dwell_slots_and_unavailable_declaration_are_not_condition_conflicts():
     a = periodic(1)
     b = periodic(2, "dwell;on;dwell;off", (2, 4))
@@ -60,3 +68,33 @@ def test_ignored_and_zero_mapped_originals_do_not_create_reuse():
     combine_runs([mapped, b])
     with pytest.raises(CombineError, match="independent"):
         combine_runs([mapped, c])
+
+
+def test_mapped_active_ranges_include_each_selected_original():
+    runs = [acquisition(i, temperature) for i, temperature in enumerate((10, 200, 1000, 40))]
+    datasets = [
+        MuonDataset(np.arange(12), np.zeros(12), np.ones(12), r.metadata, r) for r in runs[:3]
+    ]
+    mapped = combine_mapped_periods(datasets, {1: "red", 2: "red", 3: "ignore"})
+    result = combine_runs([period_run(mapped.run, 0), runs[3]])
+    assert result.metadata["temperature_spread"] == (10, 200)
+    ignored = next(
+        record
+        for record in result.metadata["combination"]["constituents"]
+        if record["temperature"] == 1000
+    )
+    assert ignored["coefficient"] == 0
+
+
+def test_selected_nested_ranges_exclude_unselected_green_conditions():
+    sources = [acquisition(i, temperature) for i, temperature in enumerate((10, 200, 40, 400, 50))]
+    mapped = []
+    for pair in (sources[:2], sources[2:4]):
+        datasets = [
+            MuonDataset(np.arange(12), np.zeros(12), np.ones(12), r.metadata, r) for r in pair
+        ]
+        mapped.append(combine_mapped_periods(datasets, {1: "red", 2: "green"}).run)
+    full = combine_runs(mapped)
+    red = period_run(full, 0)
+    result = combine_runs([red, sources[4]])
+    assert result.metadata["temperature_spread"] == (10, 50)

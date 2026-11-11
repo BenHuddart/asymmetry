@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from asymmetry.core.data.correspondence import correspondence_error
+from asymmetry.core.data.correspondence import combination_members, correspondence_error
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.periods import sum_period_histograms
 from asymmetry.core.transform.grouping import good_frames
@@ -184,6 +184,7 @@ def combine_runs(
             )
     metadata = _combined_metadata(
         runs,
+        grouping=grouping,
         scales=scales,
         sign=sign,
         subtract_method=subtract_method,
@@ -208,7 +209,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
     from asymmetry.core.io.periods import histogram_grouping_facts, select_period_grouping
     from asymmetry.core.transform.reference_scale import ReferenceExposure
 
-    originals, weights, mapping = [], [], {}
+    originals, weights, mapping, implicit = [], [], {}, []
     for run, coefficient in zip(runs, coefficients, strict=True):
         if cancel_check is not None:
             cancel_check()
@@ -223,6 +224,8 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
                 1,
             ):
                 originals.append(original)
+                if number in run.grouping.get("implicit_period_inputs", ()):
+                    implicit.append(len(originals))
                 weights.append(coefficient * weight)
                 mapping[str(len(originals))] = run.grouping["period_mapping"].get(
                     str(number), run.grouping["period_mapping"].get(number)
@@ -243,6 +246,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
                         metadata=dict(run.metadata, data_period_number=index + 1),
                     )
                 )
+                implicit.append(len(originals))
                 weights.append(coefficient)
                 mapping[str(len(originals))] = ("red", "green")[index]
         else:
@@ -253,6 +257,7 @@ def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
         period_inputs=tuple(originals),
         constituent_coefficients=tuple(weights),
         period_mapping=mapping,
+        implicit_period_inputs=tuple(implicit),
     )
     grouping.setdefault("period_mode", "red")
     # Only unit acquisition sums carry measured pooled exposure. The correction
@@ -581,6 +586,7 @@ def _mirror_grouping(
 def _combined_metadata(
     runs: list[Run],
     *,
+    grouping: dict,
     scales: list[float],
     sign: int,
     subtract_method: str = "reference",
@@ -606,33 +612,21 @@ def _combined_metadata(
         "field": _scalar(base, "field"),
         "combined_from": list(source_numbers),
     }
-    for key in ("instrument", "facility", "beamline", "sample", "field_direction", "field_state"):
+    for key in (
+        "instrument",
+        "facility",
+        "beamline",
+        "sample",
+        "field_direction",
+        "field_state",
+        "source_pulsed",
+        "source",
+        "area",
+        "muon_source",
+    ):
         if key in base.metadata:
             metadata[key] = base.metadata[key]
-    constituents = []
-    for i, (run, coefficient) in enumerate(zip(runs, coefficients, strict=True)):
-        leaves = run.metadata.get("combination", {}).get("constituents")
-        records = (
-            leaves
-            if leaves is not None
-            else [
-                {
-                    "run_number": int(run.run_number),
-                    "source_file": run.source_file,
-                    "temperature": _scalar(run, "temperature"),
-                    "field": _scalar(run, "field"),
-                    "instrument": run.metadata.get("instrument"),
-                    "facility": run.metadata.get("facility"),
-                    "beamline": run.metadata.get("beamline"),
-                    "data_period_number": run.metadata.get("data_period_number"),
-                    "coefficient": 1.0,
-                }
-            ]
-        )
-        constituents.extend(
-            dict(record, coefficient=coefficient * record["coefficient"], master=i == 0 and j == 0)
-            for j, record in enumerate(records)
-        )
+    constituents = _constituent_conditions(runs, coefficients, grouping)
     for key in ("temperature", "field"):
         values = [
             record[key]
@@ -669,6 +663,64 @@ def _combined_metadata(
     return metadata
 
 
+def _condition_record(run, coefficient, input_ordinal):
+    """Snapshot scalar labels against their actual retained acquired input ordinal."""
+    return {
+        "run_number": int(run.run_number),
+        "source_file": run.source_file,
+        "source_run_number": run.metadata.get("source_run_number", run.run_number),
+        "temperature": _scalar(run, "temperature"),
+        "field": _scalar(run, "field"),
+        "instrument": run.metadata.get("instrument"),
+        "facility": run.metadata.get("facility"),
+        "beamline": run.metadata.get("beamline"),
+        "data_period_number": run.metadata.get("data_period_number"),
+        "dae_period_number": run.metadata.get("dae_period_number"),
+        "coefficient": coefficient,
+        "input_ordinal": input_ordinal,
+    }
+
+
+def _constituent_conditions(runs, coefficients, grouping):
+    """Read current acquired facts; inactive authored terms retain provenance only."""
+    targets = (
+        {"red", "green"}
+        if grouping.get("period_histograms")
+        else {grouping.get("period_mode", "red")}
+    )
+    records, offset = [], 0
+    for i, (run, coefficient) in enumerate(zip(runs, coefficients, strict=True)):
+        originals = run.grouping.get("period_inputs")
+        members = originals if originals is not None else combination_members(run)
+        previous = run.metadata.get("combination", {}).get("constituents", [])
+        ordinals = (
+            [record["input_ordinal"] for record in previous]
+            if originals is not None and previous and all("input_ordinal" in r for r in previous)
+            else list(range(1, len(members) + 1))
+        )
+        source_records = []
+        for j, ordinal in enumerate(ordinals):
+            if ordinal is None:
+                source_records.append(dict(previous[j], coefficient=0.0, input_ordinal=None))
+                continue
+            if coefficient == 0:
+                source_records.append(_condition_record(members[ordinal - 1], 0.0, None))
+                continue
+            number = offset + ordinal
+            original = grouping["period_inputs"][number - 1]
+            weight = grouping["constituent_coefficients"][number - 1]
+            target = grouping["period_mapping"][str(number)]
+            source_records.append(
+                _condition_record(original, weight if target in targets else 0.0, number)
+            )
+        records.extend(
+            dict(record, master=i == 0 and j == 0) for j, record in enumerate(source_records)
+        )
+        if coefficient != 0:
+            offset += len(members)
+    return records
+
+
 def _scalar(run: Run, key: str) -> float | None:
     try:
         value = float(run.metadata.get(key))
@@ -690,6 +742,9 @@ def coadd_compatibility_error(runs):
         profile_from_payload(run.grouping, "coadd", profile_fingerprint_for_run(run))
         for run in runs
     ]
-    if any(profile != profiles[0] for profile in profiles[1:]):
+    if any(
+        replace(profile, fingerprint=profiles[0].fingerprint) != profiles[0]
+        for profile in profiles[1:]
+    ):
         return "Co-add requires identical grouping intent. Align groups, alpha/beta, binning, and authored timing/correction policies first."
     return None

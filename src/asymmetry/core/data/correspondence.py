@@ -83,11 +83,20 @@ def correspondence_error(runs):
                     "Select acquisitions with corresponding detector order; grouping cannot "
                     "remap physical counters for count addition."
                 )
-    implicit = [
-        declared_period_labels(run)
-        for run in runs
-        if run.grouping.get("period_histograms") and "period_inputs" not in run.grouping
-    ]
+    implicit = []
+    for run in runs:
+        if not run.grouping.get("period_histograms"):
+            continue
+        originals = run.grouping.get("period_inputs")
+        if originals is None:
+            implicit.append(declared_period_labels(run))
+        else:
+            weights = run.grouping.get("constituent_coefficients", (1.0,) * len(originals))
+            implicit.extend(
+                declared_period_labels(originals[number - 1])
+                for number in run.grouping.get("implicit_period_inputs", ())
+                if weights[number - 1] != 0
+            )
     for labels in implicit:
         if labels and any(
             other and set(labels) == set(other) and labels != other for other in implicit

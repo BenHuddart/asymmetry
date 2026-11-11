@@ -60,6 +60,7 @@ def test_matching_cosmetic_partial_or_unknown_labels_do_not_veto(labels):
     a, b = acquisition(1, labels=["Forw", "Back"]), acquisition(2, labels=labels)
     b.metadata["instrument"] = "different descriptive name"
     combine_runs([a, b])
+    assert coadd_compatibility_error([a, b]) is None
 
 
 def test_original_facts_cannot_be_hidden_by_composite_inspection_labels():
@@ -98,6 +99,48 @@ def test_nested_ranges_use_ordered_leaf_conditions_and_effective_coefficients():
     assert [r["coefficient"] for r in records] == [0.5, -1, 0]
     assert nested.metadata["temperature"] == 10
     assert nested.metadata["temperature_spread"] == (10, 20)
+
+
+def test_nested_conditions_read_current_retained_facts_and_keep_zero_master_order():
+    a, b, c = [acquisition(i, 10 * i) for i in range(1, 4)]
+    nested = combine_runs([a, b], scales=[0, 1])
+    b.metadata["temperature"] = 200
+    b.source_file = "edited-acquisition.nxs"
+    result = combine_runs([nested, c])
+    records = result.metadata["combination"]["constituents"]
+    assert result.metadata["temperature"] == 10
+    assert result.metadata["temperature_spread"] == (30, 200)
+    assert [record["coefficient"] for record in records] == [0, 1, 1]
+    assert [record["input_ordinal"] for record in records] == [None, 1, 2]
+    assert records[1]["source_file"] == "edited-acquisition.nxs"
+
+
+def test_legacy_summary_does_not_supply_missing_leaf_coefficients():
+    a, b, c = [acquisition(i, 10 * i) for i in range(1, 4)]
+    nested = combine_runs([a, b])
+    for record in nested.metadata["combination"]["constituents"]:
+        record.pop("coefficient")
+        record.pop("input_ordinal")
+    result = combine_runs([nested, c])
+    assert result.metadata["temperature_spread"] == (10, 30)
+    assert [record["coefficient"] for record in result.metadata["combination"]["constituents"]] == [
+        1,
+        1,
+        1,
+    ]
+
+
+def test_count_snapshot_ignores_condition_labels_but_tracks_original_facts():
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    a, b = acquisition(1), acquisition(2)
+    result = combine_runs([a, b])
+    before = histogram_observation(result).identity
+    result.metadata.update(temperature=15, temperature_spread=(10, 20), title="new title")
+    a.metadata.update(temperature=17, field=40, title="source display edit")
+    assert histogram_observation(result).identity == before
+    a.source_file = "changed-acquisition.nxs"
+    assert histogram_observation(result).identity != before
 
 
 def test_condition_labels_do_not_change_numerical_identity_but_roles_do():

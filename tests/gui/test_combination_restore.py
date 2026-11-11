@@ -64,6 +64,7 @@ def test_project_restores_target_override_or_unavailable_definition_with_history
         assert {401, 402, -1} <= set(restored._data_browser._datasets)
         assert result.run is None
         assert result.n_points == 0
+        assert restored._data_browser.displayed_coordinate(-1)["field"] == 42
     else:
         assert result.metadata["temperature"] is None
         assert result.metadata["field"] == 42

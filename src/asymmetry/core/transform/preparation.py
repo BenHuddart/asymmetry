@@ -139,6 +139,25 @@ def observation_histograms(run: Run) -> list[Histogram]:
     ]
 
 
+def count_metadata_identity(metadata):
+    """Condition labels do not change prepared histogram observations.
+
+    Facility/source/timing/correction facts remain in the count identity. Wizard
+    model/coordinate identity separately includes the displayed conditions.
+    """
+    labels = {
+        "temperature",
+        "field",
+        "title",
+        "run_label",
+        "temperature_spread",
+        "field_spread",
+        "condition_overrides",
+        "combination",
+    }
+    return {key: value for key, value in metadata.items() if key not in labels}
+
+
 def histogram_observation(
     run: Run,
     *,
@@ -186,13 +205,14 @@ def histogram_observation(
         k: v for k, v in source.grouping.items() if k not in {"period_histograms", "period_inputs"}
     }
     light_grouping["period_inputs"] = tuple(
-        replace(acquired, histograms=[]) for acquired in source.grouping.get("period_inputs", ())
+        replace(acquired, histograms=[], metadata=count_metadata_identity(acquired.metadata))
+        for acquired in source.grouping.get("period_inputs", ())
     )
     digest.update(
         pickle.dumps(
             (
                 light_grouping,
-                source.metadata,
+                count_metadata_identity(source.metadata),
                 facility,
                 [
                     [

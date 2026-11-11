@@ -5290,6 +5290,7 @@ class DataBrowserPanel(QWidget):
                     "title": "Combination unavailable",
                     "correction_error": reason,
                     "condition_overrides": dict(definition.get("metadata_overrides", {})),
+                    **definition.get("metadata_overrides", {}),
                 },
             )
         )

@@ -149,8 +149,7 @@ def test_coadd_master_uses_dataset_override_via_helper():
     ds_a = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 10.0}, run=run_a)
     ds_b = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 20.0}, run=run_b)
     combined = combine_runs(runs_with_dataset_metadata([ds_a, ds_b]), sign=1)
-    # Equal good frames -> mean of the overridden 10 and 20 = 15 (not the
-    # template's loader value of 5.0 on both).
+    # The first displayed override supplies the master condition.
     assert combined.metadata["temperature"] == pytest.approx(10.0)
 
 
