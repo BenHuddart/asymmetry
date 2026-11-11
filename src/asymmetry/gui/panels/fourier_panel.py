@@ -819,14 +819,13 @@ class FourierPanel(QWidget):
         self._conditioning_section = section
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-
         self._pulse_comp_check = QCheckBox("Pulse-response compensation")
         self._pulse_comp_check.setToolTip(
-            "Divide the spectrum by the ISIS pulse amplitude R(f) to undo the "
-            "high-frequency rolloff. Capped and cut off at the pulse node."
+            "Apply amplitude gain, squared for Power. Remove the first sampled positive "
+            "frequency below the amplitude-gain floor and all following bins. This grid/limit "
+            "safeguard is not an analytic pulse node or phase deconvolution."
         )
         form.addRow(self._pulse_comp_check)
-
         self._pulse_width_edit = QLineEdit("")
         self._pulse_width_edit.setPlaceholderText("required when active")
         self._pulse_width_edit.setToolTip(

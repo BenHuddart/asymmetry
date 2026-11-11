@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -406,7 +408,7 @@ def test_fb_fft_normalises_numeric_designated_group_ids():
 
 
 def test_fb_spectrum_identity_changes_with_binning_contract(monkeypatch):
-    import asymmetry.core.fourier.spectrum as module
+    import asymmetry.core.fourier.grouping_identity as module
     from asymmetry.core.data.dataset import Histogram, Run
 
     run = Run(histograms=[Histogram(np.ones(20), 0.1)], grouping={})
@@ -528,3 +530,14 @@ def test_fourier_json_retains_supported_integer_pulse_choices(pulses):
     config = GroupSpectrumConfig.from_dict({"pulse_n_pulses": pulses})
     assert isinstance(config.pulse_n_pulses, int)
     assert config.pulse_n_pulses == int(pulses)
+
+
+def test_compensated_single_group_power_matches_magnitude_squared():
+    config = GroupSpectrumConfig(
+        selected_group_ids=[1], pulse_compensation=True, pulse_half_width_us=0.05
+    )
+    run = _run()
+    magnitude = compute_average_group_spectrum(run, replace(config, display="Magnitude"))
+    power = compute_average_group_spectrum(run, replace(config, display="Power"))
+    assert magnitude is not None and power is not None
+    np.testing.assert_allclose(power.asymmetry, magnitude.asymmetry**2, rtol=1e-12)
