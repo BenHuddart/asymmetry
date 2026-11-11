@@ -103,7 +103,7 @@ def quick_asymmetry(
         file_grouping = {
             key: value
             for key, value in timing.items()
-            if key not in {"first_good_bin", "last_good_bin"}
+            if key not in {"first_good_bin", "last_good_bin", "good_window_policy"}
         }
         layout = resolve_forward_backward_layout(histograms, file_grouping)
         alignment = observation.acquired_alignment(layout.alignment)
