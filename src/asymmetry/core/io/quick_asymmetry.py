@@ -1,6 +1,6 @@
 """Raw loading retains editable requests whose independent quick-look is unavailable."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -119,6 +119,29 @@ def quick_asymmetry(
             n_bins=alignment.first_bin + alignment.length,
         )
         window = alignment.window({"first_good_bin": first, "last_good_bin": last})
+        if observation is not None:
+            from asymmetry.core.transform.fb_deadtime import fb_deadtime_domain
+
+            domain = fb_deadtime_domain(
+                replace(grouped.counts, window=window),
+                timing,
+                *observation.pair,
+                use_background=False,
+                facility=None,
+                metadata=metadata,
+            )
+            inputs, domains = observation.participants(domain)
+            forward, backward, _ = observation.corrected_pair(
+                inputs,
+                domains,
+                alignment,
+                use_deadtime=False,
+                mode="off",
+                cancel_check=cancel_check,
+            )
+            grouped = replace(
+                grouped, counts=replace(grouped.counts, forward=forward, backward=backward)
+            )
         edges = np.arange(grouped.forward.size + 1)
         vf = linear_combination_variance(grouped.counts.forward, edges)
         vb = linear_combination_variance(grouped.counts.backward, edges)

@@ -12,11 +12,16 @@ from asymmetry.core.fitting.count_corrections import (
     count_background_domain,
     require_count_background,
 )
-from asymmetry.core.fitting.likelihood import CountSource
+from asymmetry.core.fitting.likelihood import CountSource, FitInputError
+from asymmetry.core.transform.constituent_counts import (
+    PreparedConstituents,
+    resolve_group_observation,
+)
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     require_complete_dataset,
 )
+from asymmetry.core.transform.deadtime import _deadtime_number, deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import effective_group_indices, resolve_alignment
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
@@ -50,7 +55,7 @@ class _CountGroupContext:
     """Shared detector alignment, window, correction, and bunching settings."""
 
     run: Any
-    prepared: ScopedCounts
+    prepared: ScopedCounts | PreparedConstituents
     alignment: AlignmentCrop
     first_good: int
     last_good: int
@@ -107,6 +112,11 @@ def _count_group_context(
     exclude,
 ) -> _CountGroupContext | None:
     require_complete_dataset(dataset)
+    observation = None
+    if "period_inputs" in grouping:
+        observation, run, expanded = resolve_group_observation(run, group_specs)
+        group_specs[:] = expanded
+        grouping = run.grouping
     prepared_histograms = list(run.histograms)
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     alignment = resolve_alignment(
@@ -114,6 +124,16 @@ def _count_group_context(
         *(indices for _, indices in group_specs),
         detector_t0_bins=detector_t0_bins,
     )
+    if observation is not None and "good_window_policy" in grouping:
+        from asymmetry.core.project.profiles import GoodWindowPolicy, resolve_run_good_window
+
+        first, last = resolve_run_good_window(
+            GoodWindowPolicy.from_dict(grouping["good_window_policy"]),
+            run,
+            grouping,
+            alignment=alignment,
+        )
+        grouping = dict(grouping, first_good_bin=first, last_good_bin=last)
     window = alignment.window(grouping)
     first_good, last_good = window.first, window.last
     bunch_factor = binning_spec(grouping).factor
@@ -152,12 +172,23 @@ def _count_group_context(
             count_background_domain(prepared_histograms, grouping, group_specs, run.metadata)
         )
     domain = observation_domain(parts)
-    prepared = ScopedCounts.prepare(
-        prepared_histograms,
-        grouping,
-        domain,
-        use_deadtime=bool(grouping.get("deadtime_correction", False)),
-    )
+    if observation is None:
+        prepared = ScopedCounts.prepare(
+            prepared_histograms,
+            grouping,
+            domain,
+            use_deadtime=bool(grouping.get("deadtime_correction", False)),
+        )
+    else:
+        inputs, domains = observation.participants(domain)
+        use_deadtime = bool(grouping.get("deadtime_correction", False))
+        inputs = deadtime_operation_inputs(inputs, use_deadtime, domains=domains)
+        prepared = PreparedConstituents.prepare(
+            observation, inputs, domains, use_deadtime=use_deadtime
+        )
+        from asymmetry.core.transform.corrections import CorrectionOutcomes
+
+        CorrectionOutcomes(deadtime=prepared.outcome).require_complete()
     background = {}
     if correction_flags_from_grouping(grouping).use_background:
         background = require_count_background(prepared, grouping, group_specs, run.metadata)
@@ -224,7 +255,10 @@ def _build_one_count_group(
 
     scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
     out_counts = trimmed_counts * scale
-    retained_noise = any(run.histograms[i].count_variance is not None for i in indices)
+    retained_noise = any(run.histograms[i].count_variance is not None for i in indices) or (
+        isinstance(ctx.prepared, PreparedConstituents)
+        and any(member.coefficient != 1 for member in ctx.prepared.observation.members)
+    )
     errors = np.sqrt(variance if retained_noise else np.maximum(variance, 1.0)) * scale
 
     group_name = ctx.group_names.get(group_id, f"Group {group_id}")
@@ -261,3 +295,14 @@ def _build_one_count_group(
         source_run_number=int(run.run_number),
         metadata=metadata,
     )
+
+
+def count_model_frame_norm(dataset: MuonDataset, group) -> float:
+    """Resolve Δt·F only for a representable single-acquisition count-loss model."""
+    if "constituent_coefficients" in dataset.run.grouping:
+        raise FitInputError(
+            "A fitted count-loss model cannot represent multiple acquired run facts; fit the original acquisitions or use an asymmetry fit."
+        )
+    frames = _deadtime_number(dataset.run.grouping.get("good_frames"), "good frames", positive=True)
+    width = _deadtime_number(dataset.run.histograms[0].bin_width, "bin width (µs)", positive=True)
+    return width * group.metadata["grouped_time_domain_bunch_factor"] * frames

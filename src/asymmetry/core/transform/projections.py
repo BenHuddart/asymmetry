@@ -47,6 +47,7 @@ _SELECTION_KEYS = frozenset(
         "period_histograms",
         "period_reduced",
         "period_inputs",
+        "constituent_coefficients",
     }
 )
 

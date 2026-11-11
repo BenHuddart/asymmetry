@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.corrections import CorrectionStatus, reference_observation_metadata
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionStatus,
+    reference_observation_metadata,
+)
 from asymmetry.core.transform.deadtime import DeadtimeDomain
 from asymmetry.core.transform.fb_counts import GroupCounts
-from asymmetry.core.transform.fb_deadtime import deadtime_corrected_pair
 from asymmetry.core.transform.grouping import grouping_balances, resolve_forward_backward_layout
 from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
@@ -19,7 +23,11 @@ from asymmetry.core.transform.t0 import (
     selected_t0_reference,
 )
 
+if TYPE_CHECKING:
+    from asymmetry.core.transform.scoped_counts import ScopedCounts
+
 CONSTITUENT_PREPARATION_POLICY = "acquired_correct_align_v1"
+ACQUIRED_RUN_PREPARATION_POLICY = "own_acquisition_correct_align_weight_v1"
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,8 @@ class AcquiredCounts:
     grouping: dict
     metadata: dict | None
     period_number: int | None = None
+    coefficient: float = 1.0
+    arithmetic: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,54 +108,57 @@ class ConstituentCounts:
 
     def corrected_pair(self, inputs, domains, crop, *, use_deadtime, mode, cancel_check=None):
         """Correct each acquired detector once, then add independent aligned counts."""
-        forward, backward, outcomes = [], [], []
-        offset = 0
-        for member, (histograms, grouping), domain in zip(
-            self.members, inputs, domains, strict=True
-        ):
+        prepared = PreparedConstituents.prepare(
+            self, inputs, domains, use_deadtime=use_deadtime, mode=mode, cancel_check=cancel_check
+        )
+        return (
+            prepared.aligned(list(self.pair[0]), crop),
+            prepared.aligned(list(self.pair[1]), crop),
+            prepared.outcome,
+        )
+
+
+@dataclass(frozen=True)
+class PreparedConstituents:
+    """Scoped original preparations projected with signed coefficients only afterwards."""
+
+    observation: ConstituentCounts
+    sources: tuple[ScopedCounts, ...]
+    outcome: CorrectionOutcome
+
+    @property
+    def histograms(self):
+        return self.observation.histograms
+
+    def require_source(self):
+        for source in self.sources:
+            source.require_source()
+
+    @classmethod
+    def prepare(cls, observation, inputs, domains, *, use_deadtime, mode=None, cancel_check=None):
+        from asymmetry.core.transform.scoped_counts import ScopedCounts, require_independent_noise
+
+        for member, domain in zip(observation.members, domains, strict=True):
+            require_independent_noise(
+                member.histograms,
+                domain,
+                raw_sources=member.arithmetic or len(observation.members) > 1,
+            )
+        sources = []
+        for (histograms, grouping), domain in zip(inputs, domains, strict=True):
             if cancel_check is not None:
                 cancel_check()
-            size = len(histograms)
-            if len(self.members) > 1:
-                for index, windows in domain.observations:
-                    hist = histograms[index]
-                    if hist.count_variance is None and any(
-                        np.any(hist.counts[window.slice] < 0) for window in windows
-                    ):
-                        raise ValueError(
-                            "Pooling signed acquired counts requires supplied variance "
-                            f"(period {member.period_number}, detector {index + 1})."
-                        )
-
-            def local(values):
-                return tuple(
-                    (i - offset, value) for i, value in values if offset <= i < offset + size
+            sources.append(
+                ScopedCounts.prepare(
+                    histograms,
+                    grouping,
+                    domain,
+                    use_deadtime=use_deadtime,
+                    mode=mode,
+                    allow_incomplete=True,
                 )
-
-            alignment = replace(
-                crop,
-                detector_offsets=local(crop.detector_offsets),
-                timing_residuals_us=local(crop.timing_residuals_us),
-                timing_sources=local(crop.timing_sources),
             )
-            pair = tuple(
-                tuple(i - offset for i in indices if offset <= i < offset + size)
-                for indices in self.pair
-            )
-            f, b, outcome = deadtime_corrected_pair(
-                histograms,
-                grouping,
-                *pair,
-                alignment,
-                domain,
-                use_deadtime=use_deadtime,
-                mode=mode,
-                retain_variance=len(self.members) > 1,
-            )
-            forward.append(f)
-            backward.append(b)
-            outcomes.append(outcome)
-            offset += size
+        outcomes = [source.outcome for source in sources]
         outcome = next(
             (item for item in outcomes if not item.usable),
             next(
@@ -157,23 +170,74 @@ class ConstituentCounts:
                 outcome,
                 effective={
                     "constituents": [
-                        {"data_period_number": member.period_number, **item.to_dict()}
-                        for member, item in zip(self.members, outcomes, strict=True)
+                        {
+                            "source": member.metadata,
+                            "data_period_number": member.period_number,
+                            "coefficient": member.coefficient,
+                            **item.to_dict(),
+                        }
+                        for member, item in zip(observation.members, outcomes, strict=True)
                     ]
                 },
             )
+        return cls(observation, tuple(sources), outcome)
 
-        def pooled(groups):
-            if len(groups) == 1:
-                return groups[0]
-            return GroupCounts(
-                np.sum([g.counts for g in groups], axis=0),
-                np.sum([g.independent_variance for g in groups], axis=0)
-                if any(g.variance is not None for g in groups)
-                else None,
-            )
+    def aligned(self, indices, alignment, *, retain_variance=False):
+        groups, offset = [], 0
+        for member, source in zip(self.observation.members, self.sources, strict=True):
+            size = len(member.histograms)
+            selected = [i - offset for i in indices if offset <= i < offset + size]
+            if selected:
 
-        return pooled(forward), pooled(backward), outcome
+                def local(values):
+                    return tuple(
+                        (i - offset, value) for i, value in values if offset <= i < offset + size
+                    )
+
+                crop = replace(
+                    alignment,
+                    detector_offsets=local(alignment.detector_offsets),
+                    timing_residuals_us=local(alignment.timing_residuals_us),
+                    timing_sources=local(alignment.timing_sources),
+                )
+                group = source.aligned(
+                    selected, crop, retain_variance=retain_variance or len(self.sources) > 1
+                )
+                c = member.coefficient
+                groups.append(
+                    group
+                    if c == 1
+                    else GroupCounts(c * group.counts, c * c * group.independent_variance)
+                )
+            offset += size
+        return GroupCounts(
+            np.sum([g.counts for g in groups], axis=0),
+            np.sum([g.independent_variance for g in groups], axis=0)
+            if any(g.variance is not None for g in groups)
+            else None,
+        )
+
+
+def resolve_group_observation(run, group_specs, *, cancel_check=None):
+    """Expand arbitrary requested groups onto the same retained acquisition owner."""
+    selected = sorted({i for _, indices in group_specs for i in indices})
+    observation = resolve_constituent_counts(
+        run.histograms,
+        run.grouping,
+        (tuple(selected), ()),
+        reference_observation_metadata(run),
+        cancel_check=cancel_check,
+    )
+    offsets = np.cumsum([0, *(len(m.histograms) for m in observation.members[:-1])])
+    specs = [
+        (gid, [int(offset) + i for offset in offsets for i in indices])
+        for gid, indices in group_specs
+    ]
+    grouping = dict(observation.grouping)
+    grouping["groups"] = {gid: [i + 1 for i in indices] for gid, indices in specs}
+    for key in ("period_inputs", "constituent_coefficients", "period_histograms", "period_reduced"):
+        grouping.pop(key, None)
+    return observation, replace(run, histograms=observation.histograms, grouping=grouping), specs
 
 
 def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, cancel_check=None):
@@ -188,7 +252,10 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
     if target not in {"red", "green"}:
         raise ValueError("Constituent preparation requires one selected mapped set")
     members = []
-    for number, original in enumerate(originals, 1):
+    coefficients = grouping.get("constituent_coefficients", (1.0,) * len(originals))
+    for number, (original, coefficient) in enumerate(zip(originals, coefficients, strict=True), 1):
+        if coefficient == 0:
+            continue
         if (
             grouping["period_mapping"].get(str(number), grouping["period_mapping"].get(number))
             != target
@@ -206,7 +273,7 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
                 original.metadata,
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
-                resolved_indices=pair,
+                selected_indices=sorted(sum(pair, ())),
                 cancel_check=cancel_check,
             )
         members.append(
@@ -214,7 +281,14 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
                 original.histograms,
                 effective,
                 reference_observation_metadata(original),
-                original.metadata.get("data_period_number", number),
+                original.metadata.get(
+                    "data_period_number",
+                    original.metadata.get(
+                        "period_number", 1 if "constituent_coefficients" in grouping else number
+                    ),
+                ),
+                coefficient,
+                True,
             )
         )
     if not members:
@@ -257,7 +331,7 @@ def pool_constituents(members, grouping, pair):
             h.n_bins - 1 if h.good_bin_end < 0 else h.good_bin_end for h in flat
         ],
     )
-    if "period_inputs" in grouping or (
+    if ("period_inputs" in grouping and "constituent_coefficients" not in grouping) or (
         "first_good_bin" not in effective and "last_good_bin" not in effective
     ):
         effective.setdefault("good_window_policy", {"mode": "from_file"})
@@ -308,6 +382,14 @@ def constituent_metadata(grouping: dict) -> dict:
     return {
         "policy": CONSTITUENT_PREPARATION_POLICY,
         "mapping": grouping["period_mapping"],
+        **(
+            {
+                "coefficients": grouping["constituent_coefficients"],
+                "run_preparation_policy": ACQUIRED_RUN_PREPARATION_POLICY,
+            }
+            if "constituent_coefficients" in grouping
+            else {}
+        ),
         "selected_set": grouping.get("period_mode", "red"),
         "inputs": [
             {

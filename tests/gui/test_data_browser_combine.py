@@ -272,3 +272,24 @@ def test_subtract_reference_unknown_exposure_uses_visible_unity():
     assert result.metadata["combination"]["reference_scale"] == 1
     assert result.metadata["reference_scaling"]["source"] == "exposure_unknown"
     assert result.metadata["reference_scale_summary"] == "Exposure unknown; scale 1 assumed"
+
+
+def test_coadd_preflight_accepts_unequal_acquired_clocks_and_file_tables():
+    from asymmetry.core.simulate import reduce_run_to_dataset
+    from tests.core.test_acquired_run_preparation import acquired
+
+    a = acquired(901, (80000, 20000), correct=True)
+    b = acquired(902, (10000, 90000), anchor=3, correct=True, frames=200000, tau=0.1)
+    datasets = [reduce_run_to_dataset(run) for run in (a, b)]
+    panel = DataBrowserPanel()
+    assert panel._coadd_compatibility_error(datasets) is None
+    for dataset in datasets:
+        panel.add_dataset(dataset)
+    number = panel.add_combined_dataset([901, 902], combined_run_number=-1)
+    combined = panel.get_dataset(number)
+    np.testing.assert_allclose(combined.time, np.arange(9) * 0.1, atol=1e-14)
+    np.testing.assert_allclose(combined.asymmetry, -12.737826507578193)
+    panel.select_runs([number])
+    panel._separate_combined()
+    assert panel.get_dataset(901) is datasets[0]
+    panel.close()

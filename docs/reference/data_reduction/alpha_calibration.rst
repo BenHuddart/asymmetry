@@ -627,3 +627,12 @@ period's counts. TF sources must name an acquired period rather than a
 nontrivial mapped sum, so a saved ordinal does not misidentify its observations.
 Routing equivalence establishes the same calculation across entry points;
 it does not extend the reference comparisons or physical-accuracy claims above.
+
+Run arithmetic and TF calibration
+--------------------------------
+
+TF calibration requires an original acquisition with its own count model.
+A co-added or signed run cannot supply one surrogate deadtime/exposure model
+for its retained acquisitions. Calibrate a source run and apply the resulting
+shared alpha/beta to the combination. Quick corrected-count preparation and
+ordinary asymmetry reduction retain each source's own correction facts.

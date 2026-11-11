@@ -240,6 +240,11 @@ def grouped_correction_plan(
     reference_crop = None
     if reference is not None:
         sample = observation.reference_sample
+        # Reference subtraction consumes the good window; trailing inspection
+        # bins cannot require unobserved reference support beyond that window.
+        grouped = replace(
+            grouped, alignment=replace(grouped.alignment, length=grouped.window.last + 1)
+        )
         reference_crop = reference.alignment(
             sample.histograms, sample.grouping, grouped.alignment, *pair, cancel_check=cancel_check
         )

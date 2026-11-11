@@ -1314,6 +1314,7 @@ _PER_RUN_FACT_KEYS = (
     "period_reference_exposure",
     "period_histograms",
     "period_inputs",
+    "constituent_coefficients",
     "period_reduced",
     "period_good_frames",
     "period_dead_time_us",
@@ -1391,37 +1392,35 @@ def run_file_good_window(
     common_t0_bin: int,
     alignment: AlignmentCrop | None = None,
 ) -> tuple[int, int]:
-    """Map acquired file bounds through the current selected-channel alignment.
+    """Map file bounds through the selected-channel alignment.
 
-    Per-detector tables are acquisition facts. Scalar legacy bounds remain the
-    recorded common interval; they do not establish original detector facts.
+    Detector tables are acquisition facts; legacy scalars retain common coordinates.
     """
     if not _has_good_window_tables(grouping, len(run.histograms)):
         return grouping.get("first_good_bin", 0), grouping.get(
             "last_good_bin", len(run.histograms[0].counts) - 1
         )
-    indices = _analysis_group_indices(grouping, len(run.histograms))
+    indices = (
+        [i for i, _ in alignment.detector_offsets]
+        if alignment is not None
+        else _analysis_group_indices(grouping, len(run.histograms))
+    )
     bins = effective_detector_t0_bins(run.histograms, grouping)
     if alignment is None:
         alignment = resolve_alignment(
             run.histograms, indices, detector_t0_bins=bins, common_t0_bin=common_t0_bin
         )
     first, last = alignment.first_bin, alignment.first_bin + alignment.length - 1
-    if _has_good_window_tables(grouping, len(run.histograms)):
-        first = max(
-            first,
-            max(
-                int(grouping["detector_first_good_bins"][i]) + common_t0_bin - bins[i]
-                for i in indices
-            ),
-        )
-        last = min(
-            last,
-            min(
-                int(grouping["detector_last_good_bins"][i]) + common_t0_bin - bins[i]
-                for i in indices
-            ),
-        )
+    first = max(
+        first,
+        max(
+            int(grouping["detector_first_good_bins"][i]) + common_t0_bin - bins[i] for i in indices
+        ),
+    )
+    last = min(
+        last,
+        min(int(grouping["detector_last_good_bins"][i]) + common_t0_bin - bins[i] for i in indices),
+    )
     return first, last
 
 

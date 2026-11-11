@@ -221,7 +221,7 @@ def test_public_integrate_run_respects_the_requested_period_statistic(method):
 
 def test_signed_pooling_requires_supplied_variance_only_in_consumed_bins():
     run = two_periods(red=(-5, 10), green=(20, 10))
-    with pytest.raises(ValueError, match="signed acquired counts requires supplied variance"):
+    with pytest.raises(ValueError, match="supplied variance"):
         prepare(run)
     for period in run.grouping["period_histograms"]:
         period[:] = [replace(h, count_variance=np.full(8, 25.0)) for h in period]

@@ -54,7 +54,7 @@ Historical curve-only records remain readable, but a fresh RF pooled scan exclud
 them with an explicit reload reason. Count-backed RF scans use current settings;
 scan values/errors are fractions, whereas time curves are percentages.
 
-Mapped runs retain original acquired ``Run`` records in
+Mapped and arithmetically combined runs retain original acquired ``Run`` records in
 ``run.grouping["period_inputs"]``, ordered by stored data-period index.
 ``period_mapping`` records authored membership; held histograms are pooled
 inspection views. Normal reduction corrects each selected acquisition with its

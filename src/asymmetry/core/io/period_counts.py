@@ -11,7 +11,16 @@ RUN_ARITHMETIC_POLICY = "independent_signed_count_variance_v1"
 
 def run_arithmetic_policy(metadata):
     """Scope numerical identity to actual run arithmetic, including unchanged means."""
-    return {"run_arithmetic_policy": RUN_ARITHMETIC_POLICY} if metadata.get("combination") else {}
+    from asymmetry.core.transform.constituent_counts import ACQUIRED_RUN_PREPARATION_POLICY
+
+    return (
+        {
+            "run_arithmetic_policy": RUN_ARITHMETIC_POLICY,
+            "acquired_run_preparation_policy": ACQUIRED_RUN_PREPARATION_POLICY,
+        }
+        if metadata.get("combination")
+        else {}
+    )
 
 
 def sum_period_histograms(

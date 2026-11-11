@@ -209,3 +209,35 @@ def test_combine_error_surfaces_warning_and_clears_guard(monkeypatch):
     assert 401 in panel._datasets and 402 in panel._datasets
     assert panel._combine_worker is None
     panel.shutdown_workers()
+
+
+def test_interactive_coadd_cancels_during_original_snapshot_capture(monkeypatch):
+    import asymmetry.core.transform.preparation as preparation
+
+    panel = _coadd_panel()
+    started, release = threading.Event(), threading.Event()
+    real_capture = preparation.histogram_observation
+    captured = []
+
+    def held_capture(*args, **kwargs):
+        started.set()
+        assert release.wait(10)
+        kwargs["cancel_check"]()
+        captured.append(True)
+        return real_capture(*args, **kwargs)
+
+    def cancel_capture():
+        if not started.is_set():
+            QTimer.singleShot(1, cancel_capture)
+            return
+        panel._combine_worker.cancel()
+        release.set()
+
+    monkeypatch.setattr(preparation, "histogram_observation", held_capture)
+    QTimer.singleShot(0, cancel_capture)
+    panel._coadd_selected()
+    assert started.is_set()
+    assert not captured
+    assert not panel._combined_datasets
+    assert set(panel._datasets) == {401, 402}
+    panel.shutdown_workers()

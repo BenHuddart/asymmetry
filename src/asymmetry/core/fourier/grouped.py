@@ -70,6 +70,8 @@ def build_group_signal_dataset(
     layout = prepared.layouts[int(group_id)]
     alignment, window = layout.alignment, layout.window
     grouping = layout.grouping
+    histograms = prepared.sample.histograms
+    indices = effective_group_indices(grouping, group_id, n_histograms=len(histograms))
     correction = prepared.backgrounds[int(group_id)]
     group = correction.forward
     deadtime = prepared.sample.outcome
