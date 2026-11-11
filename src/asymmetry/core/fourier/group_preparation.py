@@ -39,6 +39,7 @@ from asymmetry.core.transform.grouping import (
     group_reference_t0,
     resolve_alignment,
 )
+from asymmetry.core.transform.preparation import count_metadata_identity
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.transform.reference_timing import ReferenceTiming
@@ -94,7 +95,7 @@ def preparation_identity(
         tuple((id(h.counts), id(h.count_variance)) for h in histograms),
         histogram_grid_identity(histograms),
         json.dumps(grouping, default=str),
-        json.dumps(run.metadata, default=str),
+        json.dumps(count_metadata_identity(run.metadata), default=str),
         run.source_file,
         scoped_source_digest(
             reference.histograms,

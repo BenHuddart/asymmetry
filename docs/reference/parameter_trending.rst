@@ -224,6 +224,12 @@ after the dataset leaves the browser or the project is saved and reopened. That
 coordinate is the value the **Data Browser displays** for the run — not, in
 general, the raw header scalar.
 
+For a co-added row the first ordered input supplies the condition labels,
+including its displayed log value. A missing master condition stays off that
+axis; other constituents do not supply a replacement or a weighted mean. The
+active constituent range is provenance rather than an x-error bar. Saved fit
+coordinates retain their recorded meaning when sources are rebuilt.
+
 This matters for *parked-setpoint* series. If a scan was run with the cryostat
 setpoint left at a single value (e.g. every run logged as 1 K) while the true
 sample temperature drifted, the header temperature is identical for every run

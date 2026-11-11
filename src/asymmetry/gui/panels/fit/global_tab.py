@@ -5709,8 +5709,7 @@ class GlobalFitTab(FitTabBase):
         failures = 0
         for indices in windows:
             window_datasets = [member_datasets[i] for i in indices]
-            # Carry each dataset's displayed scalar overrides onto the run copies
-            # so the combined member's event-weighted T/field match the browser.
+            # Ordered master labels include the displayed scalar overrides.
             runs = runs_with_dataset_metadata(window_datasets)
             if len(runs) != len(window_datasets):
                 # A member without source histograms can't be co-added; keep the

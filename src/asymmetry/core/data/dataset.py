@@ -127,8 +127,9 @@ class Run:
 
     @property
     def temperature(self) -> float:
-        """Sample temperature *setpoint* (``sample/temperature`` in NeXus)."""
-        return float(self.metadata.get("temperature", 0.0))
+        """Sample setpoint; explicit unknown values (None) are NaN."""
+        value = self.metadata.get("temperature", 0.0)
+        return float(value) if value is not None else float("nan")
 
     @property
     def sample_temperature_logged(self) -> float | None:
@@ -144,7 +145,9 @@ class Run:
 
     @property
     def field(self) -> float:
-        return float(self.metadata.get("field", 0.0))
+        """Applied field in gauss; explicit unknown values (None) are NaN."""
+        value = self.metadata.get("field", 0.0)
+        return float(value) if value is not None else float("nan")
 
     def summary(self) -> str:
         lines = [

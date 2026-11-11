@@ -20,21 +20,26 @@ class ArithmeticDemo(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Synthetic acquired-run co-add")
+        self.setWindowTitle("Synthetic master-condition co-add")
         layout = QVBoxLayout(self)
         layout.addWidget(
-            QLabel("Synthetic co-add · own file clocks and deadtime facts · common good support")
+            QLabel(
+                "Synthetic co-add · master labels and active ranges · missing conditions stay unknown"
+            )
         )
-        split = QSplitter(Qt.Orientation.Horizontal)
+        split = QSplitter(Qt.Orientation.Vertical)
         self.browser = DataBrowserPanel()
         self.plot = PlotPanel()
         split.addWidget(self.browser)
         split.addWidget(self.plot)
+        split.setSizes([180, 420])
         split.setStretchFactor(1, 2)
         layout.addWidget(split)
-        for number, pair, anchor, frames, tau in (
-            (101, (80000, 20000), 0, 100000, 0.05),
-            (102, (10000, 90000), 3, 200000, 0.1),
+        for number, pair, anchor, frames, tau, temperature, field in (
+            (101, (80000, 20000), 0, 100000, 0.05, 10, 100),
+            (102, (10000, 90000), 3, 200000, 0.1, 20, 200),
+            (103, (80000, 20000), 0, 100000, 0.05, None, None),
+            (104, (10000, 90000), 3, 200000, 0.1, 40, 400),
         ):
             elapsed = (np.arange(16) - anchor) * 0.1
             histograms = [
@@ -65,7 +70,13 @@ class ArithmeticDemo(QWidget):
                 number,
                 histograms=histograms,
                 grouping=grouping,
-                metadata={"title": "Synthetic acquired counts", "run_number": number},
+                metadata={
+                    "title": "Synthetic acquired counts",
+                    "run_number": number,
+                    "temperature": temperature,
+                    "field": field,
+                    "instrument": "Synthetic",
+                },
             )
             self.browser.add_dataset(reduce_run_to_dataset(run))
         self.browser.select_runs([101, 102])
@@ -73,6 +84,14 @@ class ArithmeticDemo(QWidget):
         combined = next(iter(self.browser._combined_datasets), None)
         if combined is None:
             raise ValueError("Synthetic unequal-fact co-add must pass the core preflight")
+        self.browser.select_runs([103, 104])
+        self.browser._coadd_selected()
+        conditions = self.browser.get_dataset(combined).metadata
+        layout.addWidget(
+            QLabel(
+                f"Master {conditions['temperature']:g} K · active range {conditions['temperature_spread']} K · second master unknown"
+            )
+        )
         self.browser.dataset_selected.connect(self.show_run)
         self.browser.select_runs([combined])
         self.show_run(combined)
@@ -86,8 +105,8 @@ class ArithmeticDemo(QWidget):
 
 class RunArithmeticScenario(Scenario):
     name = "run_arithmetic"
-    description = "Synthetic co-add retains different acquired clocks and correction facts."
-    size = (1250, 660)
+    description = "Synthetic co-add retains master labels, active ranges, and unknown conditions."
+    size = (1250, 850)
 
     def build(self):
         return ArithmeticDemo()

@@ -82,6 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve master condition labels and missing values in run arithmetic, with active constituent ranges; diagnose known correspondence/reuse conflicts without restricting file loading.
+
 - Correct and align original acquired runs before weighted pooling, retaining
   their own correction facts, common observed support, and count-first replay.
 

@@ -50,6 +50,7 @@ __all__ = [
     "get_instrument_layout",
     "generic_layout",
     "layout_detector_labels",
+    "detector_label_key",
     "preset_grouping_for_run",
     "recommend_grouping_preset",
     "recommend_grouping_preset_for_run",
@@ -1947,12 +1948,10 @@ _DETECTOR_LABEL_ALIASES: Final[dict[str, str]] = {
 }
 
 
-def _detector_label_key(label: object) -> str:
+def detector_label_key(label: object) -> str:
     """Return the comparison key for one detector label.
 
-    Lower-cased, stripped of non-alphanumerics, then mapped through
-    :data:`_DETECTOR_LABEL_ALIASES` so a layout's ``"Forward"`` and a file's
-    ``"Forw"`` compare equal.
+    Case/punctuation and documented aliases share one key (Forward / Forw).
     """
     compact = re.sub(r"[^a-z0-9]+", "", str(label).lower())
     return _DETECTOR_LABEL_ALIASES.get(compact, compact)
@@ -1996,7 +1995,7 @@ def preset_grouping_for_run(
     2. **Labels do not line up.**  The layout's expected label for a detector id
        (:func:`layout_detector_labels`) disagrees with the run's own label at that
        position.  Spelling differences between the manual and the export are
-       absorbed by :func:`_detector_label_key`, so a surviving disagreement means
+       absorbed by :func:`detector_label_key`, so a surviving disagreement means
        the ids address different counters.
 
     Membership is authored here. Reduction rejects absent required channels;
@@ -2054,7 +2053,7 @@ def preset_grouping_for_run(
             if want is None:
                 continue
             got = actual[det_id - 1]
-            if _detector_label_key(want) != _detector_label_key(got):
+            if detector_label_key(want) != detector_label_key(got):
                 conflicts.append(f"detector {det_id}: layout says {want!r}, run says {got!r}")
         if conflicts:
             raise PresetLayoutMismatchError(

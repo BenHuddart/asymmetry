@@ -4836,8 +4836,7 @@ class MainWindow(QMainWindow):
 
         for dataset in self._data_browser._datasets.values():
             _rewrite(dataset)
-        combined_sources = getattr(self._data_browser, "_combined_source_datasets", {})
-        for source_datasets in combined_sources.values():
+        for source_datasets in self._data_browser._combined_source_datasets.values():
             for dataset in source_datasets:
                 _rewrite(dataset)
 
@@ -15272,10 +15271,9 @@ class MainWindow(QMainWindow):
         from asymmetry.core.data.combine import (
             combine_runs,
             reduce_combined_run,
-            runs_with_dataset_metadata,
         )
 
-        runs = sorted({int(r) for r in (run_numbers or [])})
+        runs = list(dict.fromkeys(int(r) for r in (run_numbers or [])))
         if len(runs) < 2:
             return
         if self._refit_coadded_worker is not None:
@@ -15293,10 +15291,7 @@ class MainWindow(QMainWindow):
                 )
                 return
             source_datasets.append(dataset)
-        # Carry the browser's displayed scalar overrides onto the run copies so
-        # the combined member's event-weighted temperature/field — the trend
-        # row's x-coordinate — match what the user sees.
-        source_runs = runs_with_dataset_metadata(source_datasets)
+        source_runs = self._data_browser._runs_for_combine(source_datasets)
 
         rep_type = self._active_representation_type()
         if rep_type is None:
@@ -15320,8 +15315,9 @@ class MainWindow(QMainWindow):
         from asymmetry.core.fitting.engine import FitEngine
 
         def _work(_worker, src=source_runs, key=member_key, lbl=label, mdl=model, sd=seed):
-            combined_run = combine_runs(src, sign=1, run_number=key, label=lbl)
-            combined_dataset = reduce_combined_run(combined_run)
+            cancel = partial(check_task_cancelled, _worker)
+            combined_run = combine_runs(src, sign=1, run_number=key, label=lbl, cancel_check=cancel)
+            combined_dataset = reduce_combined_run(combined_run, cancel_check=cancel)
             result = FitEngine().fit(combined_dataset, mdl.function, sd)
             return combined_dataset, result
 
@@ -16570,7 +16566,6 @@ class MainWindow(QMainWindow):
                 for profile in self._grouping_profiles
             ),
         )
-        # Include held combination sources so saved acquisitions can be reconstructed.
         datasets = []
         seen_run_numbers: set[int] = set()
 
@@ -16586,18 +16581,13 @@ class MainWindow(QMainWindow):
                 source_file = str(dataset.metadata.get("source_file", ""))
 
             metadata_overrides = {
-                "field": float(dataset.metadata.get("field", 0.0)),
+                "field": dataset.metadata.get("field"),
             }
-            # Custom data-browser column values are per-run, editable text stored
-            # under dataset.metadata["custom_fields"] (keyed by column id). Persist
-            # them through the existing override mechanism so they round-trip with
-            # the run; the column *definitions* live in browser_state.
             custom_fields = dataset.metadata.get("custom_fields")
             if isinstance(custom_fields, dict) and custom_fields:
                 metadata_overrides["custom_fields"] = {
                     str(key): str(value) for key, value in custom_fields.items()
                 }
-            # A field direction the user answered for a run whose file records none.
             metadata_overrides.update(user_field_direction_overrides(dataset))
 
             datasets.append(
@@ -16615,14 +16605,13 @@ class MainWindow(QMainWindow):
                 continue  # Combined datasets are captured separately.
             _append_dataset_entry(dataset)
 
-        combined_sources = getattr(self._data_browser, "_combined_source_datasets", {})
+        combined_sources = self._data_browser._combined_source_datasets
         for source_datasets in combined_sources.values():
             for dataset in source_datasets:
                 _append_dataset_entry(dataset)
 
-        # Additive combinations omit the subtraction-only operation field.
-        combined_signs = getattr(self._data_browser, "_combined_signs", {})
-        combined_methods = getattr(self._data_browser, "_combined_methods", {})
+        combined_signs = self._data_browser._combined_signs
+        combined_methods = self._data_browser._combined_methods
         combined_datasets = []
         for crn, src_runs in self._data_browser._combined_datasets.items():
             entry = {
@@ -16633,6 +16622,9 @@ class MainWindow(QMainWindow):
                 entry["operation"] = "subtract_signed"
             elif combined_signs.get(crn, 1) == -1:
                 entry["operation"] = "subtract_reference"
+            overrides = self._data_browser._datasets[crn].metadata.get("condition_overrides")
+            if overrides:
+                entry["metadata_overrides"] = dict(overrides)
             combined_datasets.append(entry)
 
         plot_state = self._plot_panel.get_state()
@@ -17258,25 +17250,30 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     self._log_panel.log(f"ERROR loading {source_file}: {e}")
 
-            # ── recreate combined datasets ─────────────────────────────
-            # Runs after every source dataset's item so the membership
-            # checks below see the complete restored set.
             def _restore_one_combined(combined_info: dict) -> None:
                 src_runs = combined_info.get("source_run_numbers", [])
                 operation = combined_info.get("operation")
                 sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
                 if all(rn in loaded_run_numbers for rn in src_runs):
-                    restored_id = self._data_browser.add_combined_dataset(
-                        src_runs,
-                        sign=sign,
-                        operation=operation,
-                        combined_run_number=int(combined_info["combined_run_number"]),
-                    )
+                    from asymmetry.core.data.combine import CombineError
+
+                    try:
+                        restored_id = self._data_browser.add_combined_dataset(
+                            src_runs,
+                            sign=sign,
+                            operation=operation,
+                            combined_run_number=int(combined_info["combined_run_number"]),
+                            metadata_overrides=combined_info.get("metadata_overrides"),
+                        )
+                    except CombineError as exc:
+                        self._data_browser.restore_unavailable_combination(combined_info, str(exc))
+                        self._log_panel.log(
+                            f"WARNING: Could not recreate combined dataset {src_runs}: {exc}"
+                        )
+                        return
                     if restored_id is None:
                         self._log_panel.log(
-                            f"WARNING: Could not recreate combined dataset {src_runs}; "
-                            "the source runs are no longer compatible "
-                            "(e.g. missing histograms)."
+                            f"WARNING: Could not recreate combined dataset {src_runs}; missing source histograms."
                         )
                 else:
                     missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
@@ -17309,8 +17306,7 @@ class MainWindow(QMainWindow):
                     "missing runs."
                 )
 
-        # A combined run that was not rebuilt is gone for good: the next save
-        # drops its row, so its run-keyed records go with it.
+        # Unavailable definitions with loaded sources retain their history rows.
         lost_combined_runs = {
             int(ci["combined_run_number"]) for ci in combined_datasets_info
         } - set(self._data_browser._combined_datasets)

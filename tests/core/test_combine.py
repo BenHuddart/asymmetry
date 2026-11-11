@@ -142,16 +142,15 @@ def test_runs_with_dataset_metadata_skips_runless_datasets():
     assert runs_with_dataset_metadata([runless]) == []
 
 
-def test_coadd_event_weights_use_dataset_override_via_helper():
-    """Co-add through the helper event-weights on the overridden temperature."""
+def test_coadd_master_uses_dataset_override_via_helper():
+    """Co-add through the helper retains the master override."""
     run_a = simulate_run(_template(good_frames=1000.0), _cos, total_events=1e5, seed=1)
     run_b = simulate_run(_template(good_frames=1000.0), _cos, total_events=1e5, seed=2)
     ds_a = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 10.0}, run=run_a)
     ds_b = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 20.0}, run=run_b)
     combined = combine_runs(runs_with_dataset_metadata([ds_a, ds_b]), sign=1)
-    # Equal good frames -> mean of the overridden 10 and 20 = 15 (not the
-    # template's loader value of 5.0 on both).
-    assert combined.metadata["temperature"] == pytest.approx(15.0)
+    # The first displayed override supplies the master condition.
+    assert combined.metadata["temperature"] == pytest.approx(10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +257,7 @@ def test_coadd_distributionally_identical_to_one_long_run():
     assert 0.8 < float(np.std(pulls)) < 1.2
 
 
-def test_coadd_metadata_event_weighted_with_spread():
+def test_coadd_metadata_master_with_spread():
     a = _template(good_frames=1000.0)
     a.metadata["temperature"] = 10.0
     a.metadata["field"] = 100.0
@@ -268,8 +267,7 @@ def test_coadd_metadata_event_weighted_with_spread():
     ra = simulate_run(a, _cos, total_events=1e5, seed=1)
     rb = simulate_run(b, _cos, total_events=1e5, seed=2)
     c = combine_runs([ra, rb], sign=1)
-    # Event-weighted by good frames: (10*1000 + 20*3000) / 4000 = 17.5.
-    assert c.metadata["temperature"] == pytest.approx(17.5)
+    assert c.metadata["temperature"] == pytest.approx(10.0)
     assert c.metadata["temperature_spread"] == (10.0, 20.0)
     # Equal field -> no spread recorded only when values differ; equal here.
     assert c.metadata["field"] == pytest.approx(100.0)

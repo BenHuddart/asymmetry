@@ -350,12 +350,8 @@ class NexusLoader(BaseLoader):
         h_data = self._require_group(entry, "histogram_data_1")
 
         counts = np.asarray(self._require_dataset(h_data, "counts"), dtype=np.float64)
-        # Legacy v1 files store multi-period histograms as a single flat
-        # ``[n_periods * n_spectra, n_bins]`` block; ``switching_states`` gives
-        # the period count (e.g. HiFi RF/ALC runs: 64 = 2 x 32). Reshape
-        # period-major — identical to the v1->v2 converter — so periods split
-        # the same way the modern v2 ``[n_periods, n_spectra, n_bins]`` layout
-        # already does. Single-period files (absent or 1) are untouched.
+        # V1 stores [periods * spectra, bins]; switching_states gives the period count.
+        # Reshape period-major to preserve corresponding acquired arrays.
         n_switching = self._safe_int(self._read_optional(entry, "switching_states"), default=1) or 1
         if counts.ndim == 2 and n_switching > 1 and counts.shape[0] % n_switching == 0:
             n_spectra = counts.shape[0] // n_switching
@@ -758,6 +754,7 @@ class NexusLoader(BaseLoader):
             {1: "red", 2: "green"},
             source_run_number=int(source_run_number),
             source_file=source_file,
+            _implicit_pairing=True,
         )
         combined.run.grouping["period_reduced"] = [
             tuple(a.copy() for a in (ds.time, ds.asymmetry, ds.error)) for ds in period_datasets

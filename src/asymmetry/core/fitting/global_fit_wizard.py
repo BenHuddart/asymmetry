@@ -7760,13 +7760,9 @@ def _assignment_failure_message(results_by_run: dict[int, FitResult]) -> str:
 def _ordered_datasets_with_axis(
     datasets: list[MuonDataset],
 ) -> tuple[list[MuonDataset], str, str, str | None]:
-    field_values = np.array(
-        [_field_value(dataset) for dataset in datasets],
-        dtype=float,
-    )
+    field_values = np.array([_field_value(dataset) for dataset in datasets], dtype=float)
     temperature_values = np.array(
-        [_temperature_value(dataset) for dataset in datasets],
-        dtype=float,
+        [_temperature_value(dataset) for dataset in datasets], dtype=float
     )
 
     field_unique = len(np.unique(np.round(field_values, 9)))
@@ -11649,13 +11645,15 @@ def _axis_value(dataset: MuonDataset, axis_key: str) -> float:
 
 
 def _field_value(dataset: MuonDataset) -> float:
-    field = dataset.run.field if dataset.run is not None else 0.0
-    return float(dataset.metadata.get("field", field))
+    field = dataset.metadata.get("field", dataset.run.field if dataset.run is not None else 0.0)
+    return float(field) if field is not None else float("nan")
 
 
 def _temperature_value(dataset: MuonDataset) -> float:
-    temperature = dataset.run.temperature if dataset.run is not None else 0.0
-    return float(dataset.metadata.get("temperature", temperature))
+    value = dataset.metadata.get(
+        "temperature", dataset.run.temperature if dataset.run is not None else 0.0
+    )
+    return float(value) if value is not None else float("nan")
 
 
 def _progress_log(
