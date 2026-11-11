@@ -467,3 +467,40 @@ def test_applied_fft_pulse_facts_and_inactive_identity():
         _run(), replace(config, pulse_n_pulses=1, pulse_separation_us=float("nan"))
     )
     assert "separation_us" not in single.metadata["fourier_pulse_response"]
+
+
+@pytest.mark.parametrize("value", [None, "bad"])
+@pytest.mark.parametrize("active", [False, True])
+def test_fourier_restores_unresolved_width_for_compute_time_diagnosis(value, active):
+    from asymmetry.core.maxent import PulseRequestError
+
+    config = GroupSpectrumConfig.from_dict(
+        {"pulse_compensation": active, "pulse_half_width_us": value}
+    )
+    if active:
+        with pytest.raises(PulseRequestError, match="half.width"):
+            compute_average_group_spectrum(_run(), config)
+    else:
+        result = compute_average_group_spectrum(_run(), config)
+        assert "fourier_pulse_response" not in result.metadata
+
+
+@pytest.mark.parametrize("value", [None, "bad"])
+@pytest.mark.parametrize("pulses", [1, 2])
+def test_fourier_resolves_only_consumed_separation(value, pulses):
+    from asymmetry.core.maxent import PulseRequestError
+
+    config = GroupSpectrumConfig.from_dict(
+        {
+            "pulse_compensation": True,
+            "pulse_half_width_us": 0.05,
+            "pulse_separation_us": value,
+            "pulse_n_pulses": pulses,
+        }
+    )
+    if pulses == 2:
+        with pytest.raises(PulseRequestError, match="separation"):
+            compute_average_group_spectrum(_run(), config)
+    else:
+        result = compute_average_group_spectrum(_run(), config)
+        assert "separation_us" not in result.metadata["fourier_pulse_response"]

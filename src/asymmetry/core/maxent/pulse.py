@@ -55,6 +55,14 @@ class PulseRequestError(ValueError):
     """An authored pulse request lacks a supported physical input."""
 
 
+def pulse_input_float(value: object) -> float:
+    """Retain unavailable authored scalars for a compute-time request diagnosis."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def pulse_provenance(*, half_width_us: float, separation_us: float, n_pulses: int) -> dict:
     """Describe consumed response inputs on the resolved observation clock."""
     if n_pulses == 0:

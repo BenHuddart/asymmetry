@@ -141,7 +141,8 @@ Fixed count-pulse input
 
 ``fit_single_histogram`` and ``fit_fb_alpha`` accept ``Parameter("dpsep", value,
 fixed=True)`` in µs. The supplied separation must be finite and nonnegative;
-a free parameter raises ``PulseRequestError`` with fixed-input guidance.
+a free parameter or one with a following link/constraint raises
+``PulseRequestError`` with fixed-input guidance.
 The double-delta model consumes no finite-width input. See
 :doc:`/reference/count_domain_fitting` for its origin, survival weighting,
 conditional errors, and onset limitations.

@@ -42,7 +42,7 @@ from asymmetry.core.fourier.phase_fit import (
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.io.period_counts import run_arithmetic_policy
-from asymmetry.core.maxent.pulse import pulse_provenance
+from asymmetry.core.maxent.pulse import pulse_input_float, pulse_provenance
 from asymmetry.core.transform.background import (
     background_range_is_explicit,
     resolve_background_mode,
@@ -225,8 +225,8 @@ class GroupSpectrumConfig:
             selected_group_ids=[int(g) for g in selected] if isinstance(selected, list) else None,
             group_phase_degrees=group_phase_degrees,
             pulse_compensation=bool(data.get("pulse_compensation", False)),
-            pulse_half_width_us=float(data.get("pulse_half_width_us", 0.0)),
-            pulse_separation_us=float(data.get("pulse_separation_us", 0.0)),
+            pulse_half_width_us=pulse_input_float(data.get("pulse_half_width_us", 0.0)),
+            pulse_separation_us=pulse_input_float(data.get("pulse_separation_us", 0.0)),
             pulse_n_pulses=int(data.get("pulse_n_pulses", 1)),
             pulse_max_gain=float(data.get("pulse_max_gain", 25.0)),
             baseline_mode=str(data.get("baseline_mode", "none")),
@@ -549,10 +549,11 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
         recorded.display
     )
     if not both_auto_phase:
-        if current.pulse_compensation != recorded.pulse_compensation:
+        pulse_active = (current.pulse_compensation and current.pulse_n_pulses != 0) or (
+            recorded.pulse_compensation and recorded.pulse_n_pulses != 0
+        )
+        if pulse_active and current.pulse_compensation != recorded.pulse_compensation:
             emit("pulse compensation")
-
-        pulse_active = current.pulse_compensation or recorded.pulse_compensation
         if pulse_active and (
             not _floats_equal(current.pulse_half_width_us, recorded.pulse_half_width_us)
             or (

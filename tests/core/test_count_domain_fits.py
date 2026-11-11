@@ -1119,3 +1119,32 @@ def test_count_model_matches_independent_causal_birth_sum():
         polarization, time, 0.324, 1.0, {}
     )
     np.testing.assert_allclose(actual, expected, atol=2e-15, rtol=2e-15)
+
+
+@pytest.mark.parametrize("target", ["single", "fb"])
+@pytest.mark.parametrize("constraint", ["link", "expression"])
+def test_fixed_separation_cannot_follow_or_constrain_other_fit_parameters(target, constraint):
+    from asymmetry.core.maxent import PulseRequestError
+
+    ds = _fb_double_pulse_dataset()
+    params = _continuous_single() if target == "single" else _fb_double_pulse_params()
+    separation = Parameter("dpsep", 0.324, fixed=True)
+    if constraint == "link":
+        params["f"].link_group = 1
+        separation.link_group = 1
+    else:
+        separation.expr = "f"
+    params.add(separation)
+    with pytest.raises(PulseRequestError, match="dpsep.*fixed.*supplied"):
+        if target == "single":
+            fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+        else:
+            fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+
+
+def test_fixed_separation_singleton_link_is_unused():
+    params = _continuous_single()
+    params.add(Parameter("dpsep", 0.324, fixed=True, link_group=1))
+    result = fit_single_histogram(_double_pulse_dataset(), 1, _tf, params, cost="gaussian")
+    assert result.parameters["dpsep"].fixed
+    assert result.parameters["dpsep"].value == 0.324

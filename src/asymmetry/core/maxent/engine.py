@@ -34,7 +34,12 @@ from asymmetry.core.maxent.backend import (
     ProjectionBackend,
     resolve_backend,
 )
-from asymmetry.core.maxent.pulse import PulseRequestError, pulse_amplitude_phase, pulse_provenance
+from asymmetry.core.maxent.pulse import (
+    PulseRequestError,
+    pulse_amplitude_phase,
+    pulse_input_float,
+    pulse_provenance,
+)
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.maxent.state_identity import state_signature
 from asymmetry.core.transform.grouping import (
@@ -306,12 +311,8 @@ class MaxEntConfig:
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
             auto_steer=bool(data.get("auto_steer", True)),
             pulse_mode=str(data.get("pulse_mode", "ignore")),
-            pulse_half_width_us=_float_or_default(
-                data.get("pulse_half_width_us", 0.05), float("nan")
-            ),
-            pulse_separation_us=_float_or_default(
-                data.get("pulse_separation_us", 0.324), float("nan")
-            ),
+            pulse_half_width_us=pulse_input_float(data.get("pulse_half_width_us", 0.05)),
+            pulse_separation_us=pulse_input_float(data.get("pulse_separation_us", 0.324)),
             exclude_t_min_us=optional_float(data.get("exclude_t_min_us")),
             exclude_t_max_us=optional_float(data.get("exclude_t_max_us")),
             mode=_parse_choice(data.get("mode"), ("general", "zf_lf"), "general"),
@@ -1134,13 +1135,10 @@ def _maxent_input_from_group_signals(
     zf_lf_phase_map: dict[int, float],
     steered_fields: dict[str, Any],
 ) -> MaxEntInput:
-    """Normalise per-group count signals into a :class:`MaxEntInput`.
+    """Normalise counts on the resolved observation clock.
 
-    The one implementation behind :func:`build_maxent_input` and
-    :func:`build_maxent_input_from_counts`: masking, the 1/σ²-weighted baseline
-    normalisation, interior exclusion, the frequency window, the phase seeds and
-    the pulse response all live here, so a count-array caller and a
-    :class:`Run` caller cannot drift.
+    Run and array requests share masking, 1/σ² baseline normalisation,
+    frequency/phase preparation, exclusion weighting and pulse response here.
     """
     if resolved_config.pulse_mode not in _PULSE_N_PULSES:
         raise PulseRequestError(

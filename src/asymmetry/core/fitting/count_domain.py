@@ -375,9 +375,14 @@ def _validate_fixed_separation(params: ParameterSet) -> None:
     if "dpsep" not in params:
         return
     separation = params["dpsep"]
-    if not separation.fixed:
+    if (
+        not separation.fixed
+        or "dpsep" in params.link_followers()
+        or separation.expr is not None
+        or separation.tie is not None
+    ):
         raise PulseRequestError(
-            "dpsep must be fixed at a supplied separation in µs; separation estimation is unsupported."
+            "dpsep must be fixed at a supplied separation in µs, without a following link or constraint; separation estimation is unsupported."
         )
     if not np.isfinite(separation.value) or separation.value < 0.0:
         raise PulseRequestError(

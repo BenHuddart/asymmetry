@@ -11,8 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Require explicit valid finite-width pulse inputs and fixed supplied count-fit separation; remove separation estimation and ambiguous file-width inference.
 
-### Changed
-
 - Correct the project documentation to describe preserved combination history
   and authored conditions when reconstruction is unavailable.
 

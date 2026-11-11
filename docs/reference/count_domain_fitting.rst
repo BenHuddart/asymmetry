@@ -331,7 +331,7 @@ Count loss and double pulse
   finite-width onset-bin accuracy. Supply an independently established value.
   Errors are conditional on that fixed input.
 
-  Asymmetry also checks that API ``dpsep`` parameters are fixed, nonnegative,
+  Asymmetry also checks that API ``dpsep`` parameters are fixed without following links or constraints, nonnegative,
   and finite, returning actionable input guidance before minimisation. A free
   parameter is never silently fixed. Recorded results remain history.
 

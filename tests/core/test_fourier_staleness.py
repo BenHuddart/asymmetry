@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
@@ -524,3 +526,21 @@ def test_single_pulse_does_not_consume_dormant_separation():
         pulse_separation_us=0.324,
     )
     assert config_differences(current, recorded) == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pulse_half_width_us": float("nan")},
+        {"pulse_separation_us": -1.0},
+        {"pulse_max_gain": 100.0},
+        {"pulse_compensation": False},
+    ],
+)
+def test_explicit_ignore_consumes_no_dormant_pulse_settings(changes):
+    from dataclasses import replace
+
+    current = GroupSpectrumConfig(
+        pulse_compensation=True, pulse_n_pulses=0, pulse_half_width_us=0.05
+    )
+    assert config_differences(current, replace(current, **changes)) == []
