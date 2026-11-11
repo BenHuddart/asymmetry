@@ -822,8 +822,10 @@ class FourierPanel(QWidget):
 
         self._pulse_comp_check = QCheckBox("Pulse-response compensation")
         self._pulse_comp_check.setToolTip(
-            "Divide the spectrum by the ISIS pulse amplitude R(f) to undo the "
-            "high-frequency rolloff. Capped and cut off at the pulse node."
+            "Apply inverse pulse amplitude gain to amplitude displays and its square to Power. "
+            "Remove the first sampled positive frequency below the amplitude-gain floor "
+            "and all following bins. This numerical cutoff depends on the grid and gain limit; "
+            "it is not the analytic pulse node or a phase deconvolution."
         )
         form.addRow(self._pulse_comp_check)
 

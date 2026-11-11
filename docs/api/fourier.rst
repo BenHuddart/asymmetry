@@ -69,3 +69,27 @@ response. Applied result metadata retain the consumed settings and convention.
 
 .. automodule:: asymmetry.core.maxent.pulse
    :members: PulseRequestError
+
+Quantity and sampled support
+----------------------------
+
+``compute_average_group_spectrum`` resolves canonical display semantics before
+conditioning: amplitudes and existing standard errors receive ``g=1/R``;
+Power and its standard errors receive ``g**2``. Phase angles receive no gain.
+The amplitude limit ``pulse_max_gain`` defaults to 25, so Power can receive up
+to 625. This preserves mean-of-displayed-quantity group averaging.
+
+The first positive frequency with ``R < 1/pulse_max_gain`` and all following
+bins are omitted from the returned dataset, including its companion
+``fourier_imag`` channel. Baseline estimation and unit-area normalisation use
+retained support. The cutoff is a grid-dependent numerical safeguard.
+``fourier_pulse_response`` metadata record quantity, exponent, amplitude limit,
+model, consumed parameters, units, source, origin, sign, and cutoff policy;
+``fourier_compensation_cutoff_mhz`` records the sampled cutoff when reached.
+
+Direct ``apply_spectrum_conditioning`` calls accept ``quantity="amplitude"``
+(default), ``"power"``, or ``"angle"``. This lower-level result preserves array
+shape, marking pulse-removed values/errors as NaN and exposing the amplitude
+``gain`` (zero for removed support). The public spectrum operation selects the
+retained bins before returning a dataset. Errors remain conditional on the
+supplied response and existing estimator; no response uncertainty is added.

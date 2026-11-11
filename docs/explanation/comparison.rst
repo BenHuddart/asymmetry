@@ -1615,3 +1615,23 @@ Asymmetry also checks active finite-width input domains and rejects missing or
 ambiguous widths rather than silently reporting identity compensation. These
 checks concern an authored analysis request; they do not restrict file loading
 or infer accelerator response from facility names or detector timing fields.
+
+
+For Fourier compensation, Asymmetry retains the parabolic-plus-pion response
+shared with its MaxEnt forward model. WiMDA 1.326's **Apply Frequency Response
+Compensation** uses a Gaussian Fourier response; these are deliberately different
+models (see the `WiMDA paper <https://www.isis.stfc.ac.uk/Pages/wimda-paper.pdf>`_
+and :doc:`/reference/fourier_analysis`). The Mantid standalone MaxEnt kernel
+comparison establishes the shared response after an explicit origin conversion,
+not full native Fourier or MaxEnt reconstruction agreement. musrfit 1.12.1's
+authored post-arrival TF composition does not test Fourier Power or its errors;
+corresponding automatic Fourier compensation is unverified here.
+
+The Power multiplier follows squared-amplitude algebra: for amplitude gain g,
+amplitudes and their existing standard errors receive g, while Power and its
+standard errors receive g². Asymmetry also checks a sampled amplitude-gain limit,
+omitting the first positive frequency below the response floor and all following
+bins from numerical consumers. This grid-dependent safeguard is not a physical
+information-loss boundary or a recovery of response phase. Conditional errors
+do not include uncertainty in the fixed pulse response or full spectral
+covariance.

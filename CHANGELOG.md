@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Apply squared pulse-response gain to Fourier Power and its errors; omit
+  gain-limited bins from spectrum consumers and retain quantity provenance.
+
 - Require explicit valid finite-width pulse inputs and fixed supplied count-fit separation; remove separation estimation and ambiguous file-width inference.
 
 - Correct the project documentation to describe preserved combination history
