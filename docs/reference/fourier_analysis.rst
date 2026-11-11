@@ -1326,17 +1326,56 @@ The **Pulse shape** controls fold the instrument response into the forward
 model, where it belongs — MaxEnt then reconstructs the *true* spectral weight
 rather than the attenuated one. Choose:
 
-* **Ignore** — no pulse shaping (continuous-source data).
+* **Ignore** — the identity response; available for any source.
 * **Single pulse** — one proton pulse of the given **Half-width** (μs).
 * **Double pulse** — the ISIS double-pulse structure, with the **Separation**
   (μs) between the two pulses.
 
-The response is a parabolic proton-pulse transform rolled off by the pion
-lifetime; the half-width and separation default to the ISIS values (about 50 ns
-and 0.324 μs) because the loaders do not yet record them per run. The effect is
-dramatic: on synthetic pulsed data with equal-amplitude lines at 1 and 7 MHz,
-the recovered 7 MHz weight is suppressed by a factor of ~4 with the response off
-and restored to roughly the 1 MHz weight with it on.
+The response is a normalised parabolic proton pulse convolved with causal
+pion decay. **Half-width (µs):** names the support half-width w, with support
+[-w, w] and FWHM = √2 w. **Separation (µs):** is fixed and consumed only for
+**Double pulse**; incident strengths are equal and weights include muon
+survival. The editable initial values, 0.05 µs and 0.324 µs, are supplied model
+assumptions, not measurements from the loaded run.
+
+Asymmetry also checks that an active width is finite and strictly positive and
+that a consumed separation is finite and nonnegative. Invalid requests report
+input guidance; they do not become an applied identity response. **Ignore**
+leaves dormant width/separation fields unused. Raw loading, inspection, and
+uncorrected analysis remain available independently of these settings.
+
+The complex response is P_cos − i P_sin. A frequency contributes
+P_cos cos(ωt + φ) + P_sin sin(ωt + φ), where t is the already resolved observation
+clock. Its source origin is the single proton-pulse centre or double-pulse
+midpoint. The causal pion delay is included in the response, without a shift to
+file t₀ or good-bin bounds. The model describes the spectral response; it does
+not certify early-bin finite-width count predictions or an acquired source shape.
+
+For Fourier **Pulse-response compensation**, **Pulse half-width (µs):** requires
+an explicit positive finite support half-width. Ambiguous ``pulse_width_us`` and
+``pulse_fwhm_us`` file fields are not interpreted as parabolic widths; a bare
+``pulse_half_width_us`` metadata key alone does not establish shape or source.
+Disable compensation for the identity operation. MaxEnt and Fourier applied
+metadata record consumed width, shape, units, source, origin, and assumptions.
+Fourier amplitude conditioning does not provide a complex phase deconvolution;
+Power scaling and the gain-limited sampled cutoff need separate interpretation.
+
+Compared with other programs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In Mantid's standalone MaxEnt kernel (revision ``1967ccb4``), the phase origin
+includes the mean pion arrival delay. Multiplying that response by
+exp(−iωτ_π) converts it to Asymmetry's proton-centred origin. Kernel agreement
+is checked with this explicit conversion: relative tolerance 10⁻⁹ for a single
+pulse and 10⁻³ for double pulses (absolute 10⁻¹² and 10⁻⁶ respectively), the latter
+allowing for the different muon-lifetime constants. This executes the standalone
+kernel, not a full native MuonMaxent reconstruction. See
+`MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_.
+WiMDA 1.326 provides **Single Pulse** and **Double Pulse** choices for MaxEnt and
+**Apply Frequency Response Compensation** for Fourier analysis. Its Gaussian
+Fourier compensation differs from Asymmetry's parabolic-plus-pion response;
+no matched native Fourier agreement is claimed. See F. L. Pratt, Physica B
+**289–290**, 710 (2000), `WiMDA paper <https://www.isis.stfc.ac.uk/Pages/wimda-paper.pdf>`_.
 
 Excluding a time window
 ~~~~~~~~~~~~~~~~~~~~~~~~~

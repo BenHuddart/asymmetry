@@ -1594,3 +1594,24 @@ coefficient/payload requests to protect independent-noise calculations. Known
 nested repeated acquisitions or subtracted references are unavailable; a shared
 target reference applied once after sample pooling remains supported. This does
 not establish general covariance or reconstruct unknown processing history.
+
+Pulse inputs and response origins
+---------------------------------
+
+WiMDA 1.326's **Double Pulse** and Mantid's supplied ``PulseOffset`` configure
+separation. Asymmetry likewise requires fixed supplied separation for its
+instantaneous count model; single-line post-arrival TF data cannot generally
+identify it separately from amplitude, phase, and count scale. Source uncertainty
+is not included in conditional fitted errors. Ordinary asymmetry fitting and
+TF balance calibration do not gain a finite-width response from this setting.
+See :doc:`/reference/count_domain_fitting` for the supported count targets and
+:doc:`/reference/fourier_analysis` for the complex response and explicit origin
+conversion used in the standalone Mantid kernel comparison. No fresh native
+WiMDA or full Mantid pulse solve is claimed. An explicit musrfit 1.12.1
+post-arrival two-component TF composition is a model control, not a verified
+generic pulse feature.
+
+Asymmetry also checks active finite-width input domains and rejects missing or
+ambiguous widths rather than silently reporting identity compensation. These
+checks concern an authored analysis request; they do not restrict file loading
+or infer accelerator response from facility names or detector timing fields.

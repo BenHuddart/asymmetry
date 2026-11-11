@@ -31,6 +31,7 @@ from asymmetry.core.maxent.engine import (
 from asymmetry.core.maxent.export import run_log_text, spectrum_to_text
 from asymmetry.core.maxent.pulse import (
     PULSE_MODES,
+    PulseRequestError,
     pulse_amplitude_phase,
     pulse_response,
 )
@@ -38,6 +39,7 @@ from asymmetry.core.maxent.specbg import apply_maxent_specbg, subtract_zero_freq
 
 __all__ = [
     "PULSE_MODES",
+    "PulseRequestError",
     "MaxEntBackendError",
     "MaxEntConfig",
     "MaxEntDiagnostics",

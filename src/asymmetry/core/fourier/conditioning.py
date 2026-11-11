@@ -114,7 +114,8 @@ def pulse_compensation_gain(
     ``1/R`` up to ``max_gain``; at and above the first node — the first bin where
     ``R`` would demand more than ``max_gain`` — the gain is ``0`` (hard cutoff),
     because the pulse has suppressed that frequency below recovery.  A
-    non-positive ``half_width_us`` or ``n_pulses`` means no shaping → unit gain.
+    zero ``n_pulses`` is the identity. Active shaping requires a positive finite
+    support half-width; double pulses require a nonnegative finite separation.
     """
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
     amplitude, _phase = pulse_amplitude_phase(
@@ -287,7 +288,7 @@ def apply_spectrum_conditioning(
     )
     result = ConditioningResult(display=values, error=errors)
 
-    if pulse_compensation and float(pulse_half_width_us) > 0.0:
+    if pulse_compensation:
         gain = pulse_compensation_gain(
             freqs,
             half_width_us=pulse_half_width_us,

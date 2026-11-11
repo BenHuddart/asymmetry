@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QScrollArea, QWidget
 
 from ..data import make_ybco_vortex_lattice
 from ..data.required_observations import with_unused_saturated_detector
@@ -53,6 +53,7 @@ class MaxEntYbcoScenario(Scenario):
         # Run MaxEnt to convergence, then wait for the background worker to
         # store its result before the grab.
         run_number = int(dataset.run_number)
+        window._maxent_panel._pulse_section.setExpanded(True)
         window._on_compute_maxent(50)
         self._wait_for_maxent(window, run_number, timeout_s=120)
         _process_events_for(milliseconds=250)
@@ -87,6 +88,9 @@ class MaxEntYbcoScenario(Scenario):
         _process_events_for(milliseconds=100)
         _raise_inspector_tab(widget, widget._dock_fourier.windowTitle())
         super().settle(widget)
+        panel = widget._maxent_panel
+        panel.findChild(QScrollArea).ensureWidgetVisible(panel._pulse_separation_edit, 0, 120)
+        _process_events_for(milliseconds=80)
 
     def _wait_for_maxent(self, window, run_number: int, timeout_s: int = 120) -> None:
         deadline = time.monotonic() + timeout_s

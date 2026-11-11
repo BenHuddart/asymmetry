@@ -919,3 +919,15 @@ corrections, and error meaning. Vector policies identify the actual calibrated
 projection pair and keep beta fixed at one. Manual changes replace the applied
 policy while retained fit history stays available. Opening an existing project
 preserves its authored values and method identities and never starts a fit.
+
+Pulse requests and recorded history
+-----------------------------------
+
+Pulse-response settings remain part of their Fourier or MaxEnt recipe.
+An invalid active request remains editable and receives an input diagnosis when
+computed; it does not prevent opening the project or inspecting stored arrays.
+Historical fit parameters, errors, and curves retain their recorded meaning.
+A historical fitted separation is not a new request to estimate separation.
+Count fitting accepts only a fixed supplied ``dpsep`` for a new solve; a free
+API request receives guidance rather than an automatic conversion to fixed intent.
+Count-fit editor state does not author a separation-estimation recipe.

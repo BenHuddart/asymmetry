@@ -807,8 +807,6 @@ class FourierPanel(QWidget):
             count = 1
         self._fft_btn.setText("Compute FFT" if count <= 1 else f"Compute FFT ({count} runs)")
 
-    # ── conditioning + exclusions sections ─────────────────────────────
-
     def _build_conditioning_group(self) -> PanelSection:
         """Build the pulse-compensation + baseline conditioning section (collapsible)."""
         section = PanelSection(
@@ -820,8 +818,6 @@ class FourierPanel(QWidget):
         )
         self._conditioning_section = section
         form = QFormLayout()
-        # Stack label over field when the dock is narrow instead of
-        # forcing the panel into horizontal scrolling.
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self._pulse_comp_check = QCheckBox("Pulse-response compensation")
@@ -832,7 +828,10 @@ class FourierPanel(QWidget):
         form.addRow(self._pulse_comp_check)
 
         self._pulse_width_edit = QLineEdit("")
-        self._pulse_width_edit.setPlaceholderText("auto")
+        self._pulse_width_edit.setPlaceholderText("required when active")
+        self._pulse_width_edit.setToolTip(
+            "Explicit parabolic support half-width in µs (FWHM / √2); ambiguous file width fields are not inferred."
+        )
         self._pulse_width_edit.setFont(mono_font(SIZE_NUMERIC))
         self._pulse_width_edit.setMaximumWidth(self._numeric_field_width(9))
         self._pulse_width_edit.setValidator(QDoubleValidator(0.0, 10.0, 6, self))
@@ -1671,11 +1670,10 @@ class FourierPanel(QWidget):
                     self._auto_filled_group_ids = set(parsed_auto_filled)
                     self.set_group_definitions(group_names, parsed_phases, parsed_enabled)
             self._pulse_comp_check.setChecked(bool(state.get("pulse_compensation", False)))
-            pulse_width = state.get("pulse_half_width_us", 0.0)
             self._pulse_width_edit.setText(
-                self._format_float_text(self._parse_float_text(pulse_width, 0.0))
-                if self._parse_float_text(pulse_width, 0.0) > 0.0
-                else ""
+                self._format_float_text(
+                    self._parse_float_text(state.get("pulse_half_width_us", 0.0), 0.0)
+                )
             )
             self._pulse_max_gain_edit.setText(
                 self._format_float_text(

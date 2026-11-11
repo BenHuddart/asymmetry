@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from asymmetry.core.maxent import pulse_response
+from asymmetry.core.maxent import MaxEntConfig, build_maxent_input_from_counts, opus, pulse_response
 from asymmetry.core.utils.constants import PION_LIFETIME_US
 
 _MANTID_SOURCE = os.environ.get("ASYMMETRY_MANTID_SOURCE", "")
@@ -64,16 +64,10 @@ def test_pulse_kernel_matches_mantid_start(n_pulses: int) -> None:
     fperchan = 1.0 / (res * float(npts) * 2.0)
     frequencies = np.arange(n_spectrum) * fperchan
 
-    # TZERO_fine = −Tpion cancels START's internal exp(i(TZERO+Tpion)ω) time
-    # shift, leaving the raw convolution we want to compare against.
-    _detect, convol = _START(
-        npts,
-        n_pulses,
-        res,
-        n_spectrum,
-        -PION_LIFETIME_US,
-        _SilentLog(),
-    )
+    # START's zero fine-offset uses the pion mean-arrival origin. Convert
+    # explicitly to the proton-centred clock before comparing fixed phases.
+    _detect, mean_arrival_response = _START(npts, n_pulses, res, n_spectrum, 0.0, _SilentLog())
+    convol = mean_arrival_response * np.exp(-1j * 2 * np.pi * frequencies * PION_LIFETIME_US)
     # START hardcodes ISIS half-width 0.05 µs and separation 0.324 µs.
     p_cos, p_sin = pulse_response(
         frequencies, half_width_us=0.05, separation_us=0.324, n_pulses=n_pulses
@@ -87,3 +81,29 @@ def test_pulse_kernel_matches_mantid_start(n_pulses: int) -> None:
     assert p_cos[0] == pytest.approx(1.0)
     assert p_sin[0] == pytest.approx(0.0)
     assert math.isclose(float(np.real(convol)[0]), 1.0, abs_tol=1e-12)
+
+    config = MaxEntConfig(
+        n_spectrum_points=n_spectrum,
+        f_min_mhz=0,
+        f_max_mhz=float(frequencies[-1]),
+        auto_window=False,
+        auto_steer=False,
+        auto_phase_seed=False,
+        fit_phases=False,
+        group_phase_degrees={1: 23.0},
+        pulse_mode="single" if n_pulses == 1 else "double",
+    )
+    counts = 5000 * np.exp(-np.arange(npts) * res / 2.1969811)
+    prepared = build_maxent_input_from_counts({1: counts}, config, bin_width_us=res)
+    group = prepared.groups[0]
+    spectrum = np.linspace(0.01, 0.1, n_spectrum)
+    expected = (
+        np.real(
+            np.exp(1j * (2 * np.pi * np.outer(group.time_us, frequencies) + np.deg2rad(23)))
+            * convol
+        )
+        @ spectrum
+    )
+    np.testing.assert_allclose(
+        opus(spectrum, prepared)[1], expected, rtol=0, atol=2e-5 if n_pulses == 2 else 1e-9
+    )

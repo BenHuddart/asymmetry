@@ -47,8 +47,8 @@ def state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[An
         # forward model / the data weighting, so a resumed state with a changed
         # setting would iterate a stale spectrum against an incompatible model.
         str(config.pulse_mode),
-        round(float(config.pulse_half_width_us), 12),
-        round(float(config.pulse_separation_us), 12),
+        round(float(config.pulse_half_width_us), 12) if config.pulse_mode != "ignore" else None,
+        round(float(config.pulse_separation_us), 12) if config.pulse_mode == "double" else None,
         None if config.exclude_t_min_us is None else round(float(config.exclude_t_min_us), 12),
         None if config.exclude_t_max_us is None else round(float(config.exclude_t_max_us), 12),
         # ZF/LF mode ties group amplitudes/backgrounds and pins phases, so it

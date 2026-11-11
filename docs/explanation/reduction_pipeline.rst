@@ -217,3 +217,15 @@ for the bounded reuse checks, reference comparisons, and repair paths.
   `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 * `Mantid muon reduction tutorial
   <https://docs.mantidproject.org/v6.9.0/tutorials/muon_GUI_course/basics_of_data_reductions.html>`_.
+
+Pulse response belongs to prediction
+------------------------------------
+
+A supplied count-fit separation selects a double-delta forward model with equal
+incident strengths and muon-survival weighting; it consumes no finite width.
+MaxEnt folds the parabolic-plus-pion response into prediction on the resolved
+observation clock. Fourier compensation uses its amplitude. These operations
+preserve raw counts, file t₀, and good bounds. Explicit Ignore/off is the identity;
+active finite-width requests need a positive finite support half-width. Source
+labels and ambiguous file width fields do not establish that input. See
+:doc:`/reference/count_domain_fitting` and :doc:`/reference/fourier_analysis`.

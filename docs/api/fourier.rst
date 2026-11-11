@@ -54,3 +54,18 @@ Windowing
 .. automodule:: asymmetry.core.fourier.window
    :members:
    :undoc-members:
+
+Pulse request contract
+----------------------
+
+``GroupSpectrumConfig(pulse_compensation=False)`` leaves pulse settings unused.
+Active compensation requires an explicit finite positive ``pulse_half_width_us``
+(parabolic support half-width). ``pulse_n_pulses=0`` is the explicit identity;
+``1`` consumes width only, and ``2`` also consumes a finite nonnegative
+``pulse_separation_us``. No width is inferred from arbitrary run metadata.
+Invalid consumed inputs raise ``PulseRequestError``, a ``ValueError`` subclass.
+MaxEnt uses ``pulse_mode="ignore"``, ``"single"``, or ``"double"`` with the same
+response. Applied result metadata retain the consumed settings and convention.
+
+.. automodule:: asymmetry.core.maxent.pulse
+   :members: PulseRequestError

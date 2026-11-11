@@ -135,3 +135,14 @@ nondefault scalar values are explicit. A joint-beta record cannot be applied
 to a declared projection. A scalar pair outside the projections retains both
 coefficients, including the captured beta. Reduction cache identity includes
 the pair-balance policy so cached curves and reported coefficients agree.
+
+Fixed count-pulse input
+-----------------------
+
+``fit_single_histogram`` and ``fit_fb_alpha`` accept ``Parameter("dpsep", value,
+fixed=True)`` in µs. The supplied separation must be finite and nonnegative;
+a free parameter or one with a following link/constraint raises
+``PulseRequestError`` with fixed-input guidance.
+The double-delta model consumes no finite-width input. See
+:doc:`/reference/count_domain_fitting` for its origin, survival weighting,
+conditional errors, and onset limitations.
