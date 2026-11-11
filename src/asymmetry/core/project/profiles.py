@@ -1334,7 +1334,7 @@ def _analysis_group_indices(grouping: dict[str, Any], n_hist: int) -> list[int]:
             i
             for key, default in (("forward_group", 1), ("backward_group", 2))
             for i in effective_group_indices(
-                grouping, int(grouping.get(key, default)), n_histograms=n_hist
+                grouping, _as_int(grouping.get(key), default) or default, n_histograms=n_hist
             )
         }
     )

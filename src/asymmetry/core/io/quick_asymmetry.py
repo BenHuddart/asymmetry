@@ -9,7 +9,10 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
-from asymmetry.core.transform.grouping import group_forward_backward, independent_pair_indices
+from asymmetry.core.transform.grouping import (
+    independent_pair_indices,
+    resolve_forward_backward_layout,
+)
 from asymmetry.core.transform.t0 import (
     common_t0_time_us,
     effective_detector_t0_bins,
@@ -66,20 +69,21 @@ def quick_asymmetry(
 ) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     alignment = None
-    observation = None
     common_t0 = max((hist.t0_bin for hist in histograms), default=0)
     t0_time_us = None
     timing = dict(grouping)
     try:
-        if "period_inputs" in grouping:
-            from asymmetry.core.transform.constituent_counts import resolve_constituent_counts
+        from asymmetry.core.transform.constituent_counts import (
+            PreparedConstituents,
+            resolve_constituent_counts,
+        )
 
-            pair = independent_pair_indices(grouping, n_histograms=len(histograms))
-            observation = resolve_constituent_counts(
-                histograms, grouping, pair, metadata, cancel_check=cancel_check
-            )
-            histograms, timing = observation.histograms, dict(observation.grouping)
-            timing["good_window_policy"] = {"mode": "from_file"}
+        pair = independent_pair_indices(grouping, n_histograms=len(histograms))
+        observation = resolve_constituent_counts(
+            histograms, grouping, pair, metadata, cancel_check=cancel_check
+        )
+        histograms, timing = observation.histograms, dict(observation.grouping)
+        timing["good_window_policy"] = {"mode": "from_file"}
         if "effective_detector_t0_bins" not in timing:
             policy = timing.get("t0_policy", {"mode": "from_file"})
             resolve_selected_timing(
@@ -89,8 +93,7 @@ def quick_asymmetry(
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
             )
-        pair = independent_pair_indices(timing, n_histograms=len(histograms))
-        indices = sorted(sum(pair, ()))
+        indices = sorted(sum(observation.pair, ()))
         common_t0 = max(effective_detector_t0_bins(histograms, timing)[i] for i in indices)
         reference = selected_t0_reference(histograms, timing, selected_indices=indices)
         if histograms[reference].t0_time_us is not None:
@@ -102,11 +105,9 @@ def quick_asymmetry(
             for key, value in timing.items()
             if key not in {"first_good_bin", "last_good_bin"}
         }
-        grouped = group_forward_backward(histograms, file_grouping)
-        alignment = grouped.counts.alignment
-        if observation is not None:
-            alignment = observation.acquired_alignment(alignment)
-        common_t0 = grouped.common_t0 + alignment.first_bin
+        layout = resolve_forward_backward_layout(histograms, file_grouping)
+        alignment = observation.acquired_alignment(layout.alignment)
+        common_t0 = layout.common_t0_bin + alignment.first_bin
         first, last = good_window_for_groups(
             [i for i, _ in alignment.detector_offsets],
             effective_detector_t0_bins(histograms, timing),
@@ -115,36 +116,31 @@ def quick_asymmetry(
                 hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1
                 for hist in histograms
             ],
-            common_t0_bin=grouped.common_t0 + alignment.first_bin,
+            common_t0_bin=layout.common_t0_bin + alignment.first_bin,
             n_bins=alignment.first_bin + alignment.length,
         )
         window = alignment.window({"first_good_bin": first, "last_good_bin": last})
-        if observation is not None:
-            from asymmetry.core.transform.fb_deadtime import fb_deadtime_domain
+        from asymmetry.core.transform.fb_deadtime import fb_deadtime_domain
 
-            domain = fb_deadtime_domain(
-                replace(grouped.counts, window=window),
-                timing,
-                *observation.pair,
-                use_background=False,
-                facility=None,
-                metadata=metadata,
-            )
-            inputs, domains = observation.participants(domain)
-            forward, backward, _ = observation.corrected_pair(
-                inputs,
-                domains,
-                alignment,
-                use_deadtime=False,
-                mode="off",
-                cancel_check=cancel_check,
-            )
-            grouped = replace(
-                grouped, counts=replace(grouped.counts, forward=forward, backward=backward)
-            )
-        edges = np.arange(grouped.forward.size + 1)
-        vf = linear_combination_variance(grouped.counts.forward, edges)
-        vb = linear_combination_variance(grouped.counts.backward, edges)
+        domain = fb_deadtime_domain(
+            replace(layout, window=window),
+            timing,
+            *observation.pair,
+            use_background=False,
+            facility=None,
+            metadata=metadata,
+        )
+        inputs, domains = observation.participants(domain)
+        prepared = PreparedConstituents.prepare(
+            observation, inputs, domains, use_deadtime=False, mode="off", cancel_check=cancel_check
+        )
+        forward, backward = (
+            prepared.aligned(list(indices), alignment, retain_variance=True)
+            for indices in observation.pair
+        )
+        edges = np.arange(alignment.length + 1)
+        vf = linear_combination_variance(forward, edges)
+        vb = linear_combination_variance(backward, edges)
     except ValueError as exc:
         return QuickAsymmetry(
             np.array([], dtype=np.float64),
@@ -163,17 +159,16 @@ def quick_asymmetry(
             },
         )
     asymmetry, error, validity = ratio_with_count_errors(
-        grouped.forward,
-        grouped.backward,
+        forward.counts,
+        backward.counts,
         np.sqrt(vf),
         np.sqrt(vb),
-        alpha=grouped.alpha,
+        alpha=layout.alpha,
     )
     return QuickAsymmetry(
         asymmetry * PERCENT_PER_FRACTION,
         error * PERCENT_PER_FRACTION,
-        (np.arange(grouped.forward.size) + 0.5) * grouped.counts.bin_width_us
-        - grouped.counts.t0_time_us,
+        (np.arange(alignment.length) + 0.5) * layout.bin_width_us - layout.t0_time_us,
         common_t0,
         alignment,
         window,
