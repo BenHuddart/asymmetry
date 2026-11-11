@@ -7,9 +7,19 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram
 
+RUN_ARITHMETIC_POLICY = "independent_signed_count_variance_v1"
+
+
+def run_arithmetic_policy(metadata):
+    """Scope numerical identity to actual run arithmetic, including unchanged means."""
+    return {"run_arithmetic_policy": RUN_ARITHMETIC_POLICY} if metadata.get("combination") else {}
+
 
 def sum_period_histograms(
-    period_histograms: list[list[Histogram]], *, cancel_check: Callable[[], None] | None = None
+    period_histograms: list[list[Histogram]],
+    *,
+    coefficients: list[float] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[Histogram]:
     """Sum per-period histogram lists detector-wise (count level).
 
@@ -22,12 +32,13 @@ def sum_period_histograms(
         cancel_check()
     if not period_histograms:
         raise ValueError("No period histograms to sum")
+    coefficients = [1.0] * len(period_histograms) if coefficients is None else coefficients
     n_detectors = len(period_histograms[0])
     if any(len(period) != n_detectors for period in period_histograms):
         raise ValueError("Mapped periods require corresponding detector lists")
     if n_detectors == 0:
         raise ValueError("Period histogram lists are empty")
-    if len(period_histograms) == 1:
+    if len(period_histograms) == 1 and coefficients == [1.0]:
         copied = []
         for hist in period_histograms[0]:
             if cancel_check is not None:
@@ -48,17 +59,20 @@ def sum_period_histograms(
                 "Signed period counts require supplied variance for independent pooling"
             )
         counts = np.zeros(n_bins, dtype=np.float64)
-        for period in period_histograms:
-            counts += np.asarray(period[det].counts[:n_bins], dtype=np.float64)
+        for period, coefficient in zip(period_histograms, coefficients, strict=True):
+            counts += coefficient * np.asarray(period[det].counts[:n_bins], dtype=np.float64)
         variance = None
-        if any(period[det].count_variance is not None for period in period_histograms):
+        if any(c != 1 for c in coefficients) or any(
+            period[det].count_variance is not None for period in period_histograms
+        ):
             variance = sum(
-                (
+                coefficient**2
+                * (
                     period[det].count_variance
                     if period[det].count_variance is not None
                     else period[det].counts
                 )[:n_bins]
-                for period in period_histograms
+                for period, coefficient in zip(period_histograms, coefficients, strict=True)
             )
         summed.append(
             Histogram(

@@ -12,6 +12,7 @@ from asymmetry.core.fitting.count_corrections import (
     count_background_domain,
     require_count_background,
 )
+from asymmetry.core.fitting.likelihood import CountSource
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     require_complete_dataset,
@@ -223,12 +224,16 @@ def _build_one_count_group(
 
     scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
     out_counts = trimmed_counts * scale
-    errors = np.sqrt(np.clip(variance, 1.0, None)) * scale
+    retained_noise = any(run.histograms[i].count_variance is not None for i in indices)
+    errors = np.sqrt(variance if retained_noise else np.maximum(variance, 1.0)) * scale
 
     group_name = ctx.group_names.get(group_id, f"Group {group_id}")
     metadata = dict(run.metadata)
     metadata.update(
         {
+            "count_variance_source": CountSource.RETAINED_VARIANCE
+            if retained_noise
+            else CountSource.RAW,
             "group_id": int(group_id),
             "group_name": str(group_name),
             "grouped_time_domain": True,

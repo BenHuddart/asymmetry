@@ -136,7 +136,7 @@ class GroupedTimeDomainGroup:
             return CountSource.DEADTIME_CORRECTED
         if self.metadata.get("grouped_time_domain_lifetime_corrected", False):
             return CountSource.LIFETIME_CORRECTED
-        return CountSource.RAW
+        return CountSource(self.metadata.get("count_variance_source", CountSource.RAW))
 
 
 @dataclass

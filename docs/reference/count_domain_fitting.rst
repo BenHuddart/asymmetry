@@ -164,8 +164,9 @@ A **Cost** selector chooses how the counts are weighted:
   weighting.
 
 Poisson fits require finite, non-negative integer counts from the raw acquisition.
-Deadtime-corrected and lifetime-corrected counts are ineligible, even when a
-corrected value happens to be an integer. The error for corrected deadtime data
+Deadtime-corrected, lifetime-corrected, weighted, signed, and supplied-noise
+counts are ineligible, even when a final value happens to be an integer.
+Independent raw unit run sums retain the Poisson limit; see :doc:`run_arithmetic`. The error for corrected deadtime data
 is "Poisson likelihood needs raw counts; these counts were deadtime-corrected.
 Use the DT₀ count-domain model or the Gaussian cost." Disable the reduction's
 deadtime correction and fit DT₀ in the expected raw counts, or select
@@ -173,7 +174,10 @@ deadtime correction and fit DT₀ in the expected raw counts, or select
 :math:`\sigma=\sqrt{\max(v,1)}`, where :math:`v` is the grouped and binned
 counting variance. For deadtime-corrected histograms this retains measured
 count variance, or explicitly supplied independent variance, rather than
-inferring it from corrected counts. Lifetime correction scales σ and counts
+inferring it from corrected counts. For retained supplied/arithmetic variance,
+Gaussian fits use :math:`\sigma=\sqrt{v}` without a floor, including :math:`v<1`;
+nonpositive or nonfinite errors receive the typed fit-input diagnostic.
+Lifetime correction scales σ and counts
 by the same factor. Coefficient and exposure uncertainty are excluded.
 
 The Poisson statistic is the deviance

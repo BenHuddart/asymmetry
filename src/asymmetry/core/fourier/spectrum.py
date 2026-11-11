@@ -41,6 +41,7 @@ from asymmetry.core.fourier.phase_fit import (
     fit_fft_phase,
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.background import (
     background_range_is_explicit,
     resolve_background_mode,
@@ -311,6 +312,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
         "binning_policy": BINNING_POLICY,
         "histogram_grid": histogram_grid_identity(run.histograms),
+        **run_arithmetic_policy(run.metadata),
     }
 
     groups = _digest_groups(grouping.get("groups"))

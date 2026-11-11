@@ -61,6 +61,7 @@ import numpy as np
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
+from asymmetry.core.io.period_counts import RUN_ARITHMETIC_POLICY
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
@@ -263,6 +264,7 @@ def reduction_digest(
         ),
         "ratio_observation_policy": RATIO_OBSERVATION_POLICY,
         "mapped_count_preparation_policy": CONSTITUENT_PREPARATION_POLICY,
+        **({"run_arithmetic_policy": RUN_ARITHMETIC_POLICY} if len(source_files) > 1 else {}),
         "schema": SCHEMA,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",

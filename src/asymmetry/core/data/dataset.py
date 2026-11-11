@@ -304,16 +304,6 @@ class MuonDataset:
         a fit record.
         """
 
-        def fit_metadata(metadata):
-            combination = metadata.get("combination")
-            if not isinstance(combination, dict) or "detector_variance" not in combination:
-                return metadata
-            return metadata | {
-                "combination": {
-                    key: value for key, value in combination.items() if key != "detector_variance"
-                }
-            }
-
         run = self.run
         if run is None and self.histogram_observation is None:
             return self
@@ -321,16 +311,13 @@ class MuonDataset:
             run = replace(
                 run,
                 histograms=[],
-                metadata=fit_metadata(run.metadata),
                 grouping={
                     k: v
                     for k, v in run.grouping.items()
                     if k not in {"period_histograms", "period_reduced", "period_inputs"}
                 },
             )
-        return replace(
-            self, run=run, metadata=fit_metadata(self.metadata), histogram_observation=None
-        )
+        return replace(self, run=run, histogram_observation=None)
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
         r"""Merge independent curve bins by averaging values and adding variances.

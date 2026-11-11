@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Preserve signed run weights and supplied counting variance in ordinary and period
+  arithmetic; use retained Gaussian errors and reject weighted raw-Poisson fits.
+
+
 ### Changed
 
 - Form G+R from pooled prepared counts with background once and common native
