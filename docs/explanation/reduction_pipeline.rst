@@ -24,10 +24,12 @@ and the selected interval with the result.
    and accepts no background or a constant subtraction.
    On narrow screens the figure can be scrolled horizontally.
 
-Run co-add/subtraction first produces an aggregate raw-count observation with
-retained independent variance; it then enters this pipeline. It uses the
-aggregate correction context and the distinct ordinary/period support policies
-in :doc:`/reference/run_arithmetic`, not per-acquisition nonlinear correction.
+Run co-add/subtraction retains original acquisitions behind its raw inspection
+view. Each required original detector enters correction and whole-bin alignment
+with its own facts before signed weighting and pooling on common observed good
+support. Counts use the coefficient and independent variance its square.
+The requested group background or shared reference is applied once after
+pooling. See :doc:`/reference/run_arithmetic` for exposure and count-model limits.
 
 From acquired counts to a ratio
 -------------------------------

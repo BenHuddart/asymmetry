@@ -1,4 +1,4 @@
-"""Independent linear run arithmetic before ordinary aggregate reduction.
+"""Independent linear inspection views with retained acquired reduction inputs.
 
 Counts use signed coefficients and independent variances use their squares.
 Histogram.count_variance carries retained noise through every consumer. Raw
@@ -30,6 +30,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "CombineError",
     "coadd_member_windows",
+    "coadd_compatibility_error",
     "combine_runs",
     "reduce_combined_run",
     "runs_with_dataset_metadata",
@@ -67,6 +68,7 @@ def combine_runs(
     run_number: int | None = None,
     label: str | None = None,
     subtract_method: str = "reference",
+    cancel_check=None,
 ) -> Run:
     """Combine the raw histograms of ``runs`` at the count level.
 
@@ -100,6 +102,10 @@ def combine_runs(
         term contributing its retained independent variance — for photo-µSR laser-on/off
         and background-style differences over more than two runs.
 
+    cancel_check
+        Optional cooperative cancellation callback, checked between detectors
+        and original acquisition records. Raising aborts without changing sources.
+
     Returns
     -------
     Run
@@ -115,6 +121,8 @@ def combine_runs(
         Fewer than two runs, empty histograms, or mismatched detector
         count / bin width.
     """
+    if cancel_check is not None:
+        cancel_check()
     if sign not in (1, -1):
         raise CombineError("sign must be +1 (co-add) or -1 (co-subtract)")
     subtract_method = str(subtract_method)
@@ -146,7 +154,26 @@ def combine_runs(
     if not active:
         raise CombineError("combine_runs requires at least one nonzero coefficient")
     contributors, weights = map(list, zip(*active, strict=True))
-    _validate_compatible(contributors)
+    if any(run.metadata.get("combination") for run in contributors):
+        from asymmetry.core.transform.background import resolve_background_mode
+
+        references = [
+            {
+                key: run.grouping.get("background_run", {}).get(key)
+                for key in ("source_file", "run_number", "period_number", "scale_request", "timing")
+            }
+            if run.grouping.get("background_correction")
+            and resolve_background_mode(run.grouping) == "reference_run"
+            else None
+            for run in contributors
+        ]
+        if any(request != references[0] for request in references[1:]):
+            raise CombineError(
+                "Derived run combinations require one shared reference-background request; choose original acquisitions and a shared reference."
+            )
+    error = _compatibility_error(contributors)
+    if error is not None:
+        raise CombineError(error)
     observations = [combination_observations(run) for run in contributors]
     for i, members in enumerate(observations):
         for previous in observations[:i]:
@@ -164,22 +191,31 @@ def combine_runs(
         raise CombineError("Incompatible period payloads; select corresponding periods explicitly")
     period_payload = None
     if any(period_sizes):
-        histograms, period_payload = _combine_periodic(contributors, weights, sign=sign)
+        histograms, period_payload = _combine_periodic(
+            contributors, weights, sign=sign, cancel_check=cancel_check
+        )
     else:
-        histograms = _combine_histograms(contributors, weights)
+        histograms = _combine_histograms(contributors, weights, cancel_check=cancel_check)
     negative_bins = sum(int(np.count_nonzero(h.counts < 0)) for h in histograms)
 
     base = runs[0]
     number = base.run_number if run_number is None else int(run_number)
-    # Exposure for the combined run: co-add sums good frames (the summed counts
-    # correspond to the summed frames, so the deadtime normaliser rate =
-    # counts/(dt·frames) stays correct); a reference subtract keeps the sample's
-    # exposure (the reference is frame-scaled and consumed).
+    # Frame totals label the inspection view. Correction reads original
+    # denominators; measured reference exposure is resolved independently.
     if sign == 1:
         exposure = float(sum(max(good_frames(run.grouping, 0.0), 0.0) for run in contributors))
     else:
         exposure = max(good_frames(contributors[0].grouping, 0.0), 0.0)
     grouping = _mirror_grouping(contributors[0], period_payload, exposure)
+    _retain_acquisitions(grouping, contributors, weights, cancel_check=cancel_check)
+    if sign == -1 and subtract_method == "reference" and scales[0] == 1:
+        from asymmetry.core.transform.reference_scale import ReferenceExposure
+
+        grouping["reference_exposure"] = ReferenceExposure.from_grouping(runs[0].grouping).to_dict()
+        if "period_reference_exposure" in runs[0].grouping:
+            grouping["period_reference_exposure"] = copy.deepcopy(
+                runs[0].grouping["period_reference_exposure"]
+            )
     metadata = _combined_metadata(
         runs,
         scales=scales,
@@ -200,11 +236,109 @@ def combine_runs(
     )
 
 
-def reduce_combined_run(run: Run) -> MuonDataset:
-    """Reduce canonical counts and retained variance through the normal owner."""
-    from asymmetry.core.simulate import reduce_run_to_dataset
+def _retain_acquisitions(grouping, runs, coefficients, *, cancel_check=None):
+    """Retain borrowed originals and counterpart identities for acquired preparation."""
+    from asymmetry.core.io.frame_exposure import summed_period_exposures
+    from asymmetry.core.io.periods import histogram_grouping_facts, select_period_grouping
+    from asymmetry.core.transform.reference_scale import ReferenceExposure
 
-    return reduce_run_to_dataset(run)
+    originals, weights, mapping = [], [], {}
+    for run, coefficient in zip(runs, coefficients, strict=True):
+        if cancel_check is not None:
+            cancel_check()
+        retained = run.grouping.get("period_inputs")
+        if retained is not None:
+            for number, (original, weight) in enumerate(
+                zip(
+                    retained,
+                    run.grouping.get("constituent_coefficients", [1.0] * len(retained)),
+                    strict=True,
+                ),
+                1,
+            ):
+                originals.append(original)
+                weights.append(coefficient * weight)
+                mapping[str(len(originals))] = run.grouping["period_mapping"].get(
+                    str(number), run.grouping["period_mapping"].get(number)
+                )
+        elif run.grouping.get("period_histograms"):
+            for index in range(len(run.grouping["period_histograms"])):
+                histograms = run.grouping["period_histograms"][index]
+                facts = histogram_grouping_facts(
+                    histograms, select_period_grouping(run.grouping, index)
+                )
+                for key in ("period_histograms", "period_reduced"):
+                    facts.pop(key, None)
+                originals.append(
+                    replace(
+                        run,
+                        histograms=histograms,
+                        grouping=facts,
+                        metadata=dict(run.metadata, data_period_number=index + 1),
+                    )
+                )
+                weights.append(coefficient)
+                mapping[str(len(originals))] = ("red", "green")[index]
+        else:
+            originals.append(run)
+            weights.append(coefficient)
+            mapping[str(len(originals))] = grouping.get("period_mode", "red")
+    grouping.update(
+        period_inputs=tuple(originals),
+        constituent_coefficients=tuple(weights),
+        period_mapping=mapping,
+    )
+    grouping.setdefault("period_mode", "red")
+    # Only unit acquisition sums carry measured pooled exposure. The correction
+    # denominator remains attached to each original, independently of this fact.
+    exposures = []
+    for target in ("red", "green"):
+        selected = [i for i in range(1, len(originals) + 1) if mapping[str(i)] == target]
+        unit = all(weight == 1 for i, weight in enumerate(weights, 1) if mapping[str(i)] == target)
+        exposures.append(
+            summed_period_exposures(originals, [selected])[0]
+            if selected and unit
+            else ReferenceExposure().to_dict()
+        )
+    grouping["reference_exposure"] = exposures[int(grouping.get("period_mode") == "green")]
+    if grouping.get("period_histograms"):
+        grouping["period_reference_exposure"] = exposures
+
+
+def reduce_combined_run(run: Run, *, reference=None, cancel_check=None) -> MuonDataset:
+    """Reduce canonical counts and retained variance through the normal owner."""
+    from asymmetry.core.io import resolve_background_reference
+    from asymmetry.core.transform.background import resolve_background_mode
+    from asymmetry.core.transform.preparation import (
+        histogram_observation,
+        prepare_histogram_asymmetry,
+    )
+    from asymmetry.core.transform.reduce import correction_flags_from_grouping
+    from asymmetry.core.transform.reference_scale import ReferenceExposure
+
+    if (
+        reference is None
+        and correction_flags_from_grouping(run.grouping).use_background
+        and resolve_background_mode(run.grouping) == "reference_run"
+    ):
+        reference = resolve_background_reference(
+            run.grouping.get("background_run"),
+            sample_exposure=ReferenceExposure.from_grouping(run.grouping),
+        )
+    reduced = prepare_histogram_asymmetry(
+        run, merge=1, facility=None, reference=reference, cancel_check=cancel_check
+    )
+    if reduced.effective_alpha is not None:
+        run = replace(run, grouping=dict(run.grouping, alpha=reduced.effective_alpha))
+    return MuonDataset(
+        reduced.time,
+        reduced.asymmetry,
+        reduced.error,
+        reduced.metadata_with_alignment(run.metadata),
+        run,
+        histogram_observation(run, reference=reference, cancel_check=cancel_check),
+        reduced.ratio_validity,
+    )
 
 
 # --- in-batch co-add windowing ------------------------------------------------
@@ -315,16 +449,16 @@ def combination_observations(run: Run) -> list[tuple[list[Histogram], dict]]:
     return [(run.histograms, metadata)]
 
 
-def _validate_compatible(runs: list[Run]) -> None:
+def _compatibility_error(runs: list[Run]) -> str | None:
     """Enforce the count-level invariants: histograms, detector count, width."""
     for run in runs:
         if not run.histograms:
-            raise CombineError(f"run {run.run_number} has no histograms to combine")
+            return f"run {run.run_number} has no histograms to combine"
 
     n_detectors = len(runs[0].histograms)
     for run in runs[1:]:
         if len(run.histograms) != n_detectors:
-            raise CombineError(
+            return (
                 "runs have different detector counts "
                 f"({n_detectors} vs {len(run.histograms)}); cannot combine"
             )
@@ -334,9 +468,10 @@ def _validate_compatible(runs: list[Run]) -> None:
         for run in runs[1:]:
             width = float(run.histograms[det].bin_width)
             if not np.isclose(width, width0, rtol=_BIN_WIDTH_RTOL, atol=0.0):
-                raise CombineError(
+                return (
                     f"detector {det + 1} bin widths differ ({width0} vs {width} µs); cannot combine"
                 )
+    return None
 
 
 def _aligned_detector_arrays(
@@ -364,10 +499,14 @@ def _aligned_detector_arrays(
     return [a[:min_len] for a in shifted], common_t0
 
 
-def _combine_histograms(runs: list[Run], coefficients: list[float]) -> list[Histogram]:
+def _combine_histograms(
+    runs: list[Run], coefficients: list[float], *, cancel_check=None
+) -> list[Histogram]:
     """Keep the ordinary path's whole-bin padded alignment for counts and noise."""
     aligned = [[] for _ in runs]
     for det in range(len(runs[0].histograms)):
+        if cancel_check is not None:
+            cancel_check()
         histograms = [run.histograms[det] for run in runs]
         t0s = [h.t0_bin for h in histograms]
         counts, common_t0 = _aligned_detector_arrays([h.counts for h in histograms], t0s)
@@ -387,7 +526,7 @@ def _combine_histograms(runs: list[Run], coefficients: list[float]) -> list[Hist
                     count_variance=variance if hist.count_variance is not None else None,
                 )
             )
-    summed = sum_period_histograms(aligned, coefficients=coefficients)
+    summed = sum_period_histograms(aligned, coefficients=coefficients, cancel_check=cancel_check)
     return [
         replace(hist, good_bin_start=base.good_bin_start, good_bin_end=base.good_bin_end)
         for hist, base in zip(summed, aligned[0], strict=True)
@@ -399,6 +538,7 @@ def _combine_periodic(
     coefficients: list[float],
     *,
     sign: int,
+    cancel_check=None,
 ) -> tuple[list[Histogram], dict[str, Any]]:
     """Apply coefficients to every counterpart on existing common raw-index support."""
     n_periods = len(runs[0].grouping["period_histograms"])
@@ -406,13 +546,17 @@ def _combine_periodic(
     for p in range(n_periods):
         per_run = [run.grouping["period_histograms"][p] for run in runs]
         # Correspondence is required for each counterpart, not only the flat view.
-        _validate_compatible(
+        error = _compatibility_error(
             [replace(run, histograms=h) for run, h in zip(runs, per_run, strict=True)]
         )
-        summed_periods.append(sum_period_histograms(per_run, coefficients=coefficients))
+        if error is not None:
+            raise CombineError(error)
+        summed_periods.append(
+            sum_period_histograms(per_run, coefficients=coefficients, cancel_check=cancel_check)
+        )
 
-    # Per-period good frames accumulate across runs; deadtime tables come from
-    # the first run (co-add requires identical grouping at the GUI gate).
+    # These held arrays are inspection views. Original acquired records own
+    # the correction normalisers and coefficient tables used by reduction.
     good = _accumulate_period_good_frames(runs if sign == 1 else runs[:1], n_periods)
     base_grouping = runs[0].grouping
     payload: dict[str, Any] = {
@@ -457,8 +601,7 @@ def _mirror_grouping(
     Period payloads (which would otherwise carry the *base* run's per-period
     histograms) are stripped first and replaced with the freshly summed payload,
     for either sign.
-    The run-level ``good_frames`` is set to the accumulated ``exposure`` so the
-    deadtime normaliser sees the combined frame count.
+    Frame totals label the inspection view; correction reads original inputs.
     """
     # ``t0_time_us`` is a per-run fact of the *base* run; the combined run's is
     # the mean over its own aligned detectors, which the combined histograms
@@ -595,3 +738,19 @@ def _weighted_scalar(
         mean = float(np.mean(values))
     spread = (float(min(values)), float(max(values))) if len(values) > 1 else None
     return mean, spread
+
+
+def coadd_compatibility_error(runs):
+    """Compare shared authored intent without comparing acquired correction/clock facts."""
+    from asymmetry.core.project.profiles import profile_fingerprint_for_run, profile_from_payload
+
+    if any(run is None or not run.histograms or not run.grouping.get("groups") for run in runs):
+        return "Co-add requires identical grouping intent. Apply grouping to each source run before combining them."
+    error = _compatibility_error(runs)
+    if error is not None:
+        return error
+    fingerprint = profile_fingerprint_for_run(runs[0])
+    profiles = [profile_from_payload(run.grouping, "coadd", fingerprint) for run in runs]
+    if any(profile != profiles[0] for profile in profiles[1:]):
+        return "Co-add requires identical grouping intent. Align groups, alpha/beta, binning, and authored timing/correction policies first."
+    return None

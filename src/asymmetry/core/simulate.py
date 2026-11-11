@@ -15,11 +15,8 @@ of the forward and backward detector groups: forward-group detectors receive
 the weight 2α/(1+α) and backward-group detectors 2/(1+α), so the reduction
 (F − αB)/(F + αB) recovers a(t) with α restored.
 
-The functional behaviour follows WiMDA's simulate and degrade-statistics modes
-(study: ``docs/porting/simulate-mode/``), with the divergences documented in
-the study's comparison.md: an optional flat background, background-only bins
-before t0, deterministic seeding, and exact binomial thinning for degrade
-factors below one.
+Synthetic sources retain deterministic seeds, optional flat backgrounds, and
+background-only pre-t0 bins. Degradation below one uses binomial thinning.
 
 This module is Qt-free and must stay importable without the GUI.
 """
@@ -56,6 +53,7 @@ GroupSignal = Callable[[NDArray[np.float64]], NDArray[np.float64]] | NDArray[np.
 _DERIVED_ACQUISITION_KEYS = (
     "period_histograms",
     "period_inputs",
+    "constituent_coefficients",
     "period_reduced",
     "period_mode",
     "period_good_frames",

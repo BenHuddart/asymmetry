@@ -645,6 +645,26 @@ def grouping_balances(
     return tuple(balances)
 
 
+def shared_automatic_alpha(grouping, metadata):
+    """Use one authored automatic balance for arithmetic, preserving explicit projections."""
+    if (
+        not metadata
+        or not metadata.get("combination")
+        or grouping.get("alpha_policy", {}).get("mode") != "per_run_estimate"
+    ):
+        return False
+    from asymmetry.core.instrument import derive_projection_pairs
+    from asymmetry.core.transform.projections import projection_alphas
+
+    selected = (int(grouping.get("forward_group", 1)), int(grouping.get("backward_group", 2)))
+    pairs = derive_projection_pairs(
+        grouping.get("groups"), grouping.get("group_names"), grouping.get("projections")
+    )
+    return not any(
+        pairs[label] == selected for label in projection_alphas(grouping, explicit_only=True)
+    )
+
+
 def resolve_forward_backward_layout(
     histograms: list[Histogram],
     grouping: dict,

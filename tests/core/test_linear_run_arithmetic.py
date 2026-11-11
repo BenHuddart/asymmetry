@@ -396,7 +396,9 @@ def test_arithmetic_policy_changes_only_multisource_workdir_identity(tmp_path, m
     kwargs = {"grouping": source(1).grouping, "settings": ReductionSettings()}
     multiple = workdir.reduction_digest(source_files=paths, **kwargs)
     single = workdir.reduction_digest(source_files=paths[:1], **kwargs)
-    monkeypatch.setattr(workdir, "RUN_ARITHMETIC_POLICY", "test-revision")
+    import asymmetry.core.io.period_counts as policy
+
+    monkeypatch.setattr(policy, "RUN_ARITHMETIC_POLICY", "test-revision")
     assert workdir.reduction_digest(source_files=paths, **kwargs) != multiple
     assert workdir.reduction_digest(source_files=paths[:1], **kwargs) == single
 

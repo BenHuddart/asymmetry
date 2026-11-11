@@ -402,9 +402,17 @@ intent. Project loading performs the historical conversion once. At the core res
 ``sample_exposure=ReferenceExposure.from_grouping(sample.grouping)`` carries
 exposure evidence; a bare deadtime denominator does not. Acquired facts are
 reloaded from the selected source. Historical frame snapshots remain unverified
-provenance and are never combined with one live side. Derived combined or
-resampled count datasets do not inherit the first contributor's measured exposure;
-Automatic uses the visible unknown-exposure fallback for these datasets.
+provenance and are never combined with one live side. Combined counts do not
+inherit the first contributor's measured exposure: only compatible evidenced unit
+sums establish pooled exposure. Resampled or arbitrary signed/weighted datasets
+use the visible unknown-exposure fallback under Automatic.
+
+Run arithmetic prepares original sample acquisitions before pooling and applies
+one requested group background or shared reference afterwards. Manual background
+levels retain requested-observation count units. The reference's noise is included
+once, independently of the number of sample contributors. Unit sums pool only
+compatible evidenced exposure; signed/weighted counts do not create measured
+exposure. See :doc:`/reference/run_arithmetic`.
 
 File deadtime uses each acquisition's own coefficient table and deadtime
 normaliser. Manual deadtime uses the shared authored coefficients with each

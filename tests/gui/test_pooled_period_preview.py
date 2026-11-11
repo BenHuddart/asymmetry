@@ -30,7 +30,7 @@ def test_unequal_pooled_frame_explains_unavailability_and_lab_remains(mainwindow
     def polarisation(t):
         return np.array([np.cos(t), np.sin(t), np.ones_like(t)])
 
-    run = synthetic_vector_run([polarisation, polarisation], n_bins=64, seed=None)
+    run = synthetic_vector_run([polarisation, polarisation], n_bins=64, seed=7)
     run.grouping["period_mode"] = "green_plus_red"
     dataset = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), run=run)
     frame = RotatingFrame.typed_frequency(1, 2).with_baseline(1, Provenance.TYPED, 1, 2)

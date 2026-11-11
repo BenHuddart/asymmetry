@@ -157,7 +157,7 @@ def test_manual_negative_counts_retain_independent_supplied_variances():
     assert (result.forward.variance == 167).all()  # 20 + 7² × 3, independent fixed-scale counts.
 
 
-def test_combined_counts_cannot_inherit_first_contributor_exposure():
+def test_unit_combination_pools_evidenced_exposure_without_inheriting_period_table():
     from asymmetry.core.data.combine import combine_runs
 
     runs = [_run(number, good_frames=100, level=20) for number in (41, 42)]
@@ -165,7 +165,7 @@ def test_combined_counts_cannot_inherit_first_contributor_exposure():
         run.grouping.update(groups={1: [1], 2: [2]}, forward_group=1, backward_group=2)
         run.grouping["period_reference_exposure"] = [ReferenceExposure(100, "user").to_dict()]
     combined = combine_runs(runs, run_number=43)
-    assert ReferenceExposure.from_grouping(combined.grouping).value is None
+    assert ReferenceExposure.from_grouping(combined.grouping).value == 200
     assert "period_reference_exposure" not in combined.grouping
     assert ReferenceExposure.from_grouping(runs[0].grouping).value == 100
 

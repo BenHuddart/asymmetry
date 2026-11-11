@@ -513,12 +513,8 @@ def _run_with_exact_t0(seed: int, t0_time_us: float) -> Run:
 
 
 @pytest.mark.parametrize("sign", [1, -1])
-def test_combined_run_takes_the_mean_exact_t0_of_its_members(sign):
-    """Two runs on the same integer t0 but different exact t0 average (D4).
-
-    The combined histograms carry the mean, and the reduced axis is stamped
-    from it — not from the first run's value mirrored through the grouping.
-    """
+def test_combined_run_reduces_on_own_clocks_with_recorded_residuals(sign):
+    """Inspection views retain the mean; acquired preparation uses its reference clock."""
     early = (T0_BIN + 0.2) * BIN_WIDTH
     late = (T0_BIN + 0.6) * BIN_WIDTH
     a = _run_with_exact_t0(0, early)
@@ -530,7 +526,7 @@ def test_combined_run_takes_the_mean_exact_t0_of_its_members(sign):
     # The base run's own value must not survive the mirror.
     assert "t0_time_us" not in combined.grouping
 
-    # (T0_BIN + 0.5)·w − mean = +0.1 bin on every stamp against the bin centre.
+    # First selected acquisition defines the elapsed clock; others retain residuals.
     plain = combine_runs(
         [
             simulate_run(_template(), _cos, total_events=1e5, seed=0),
@@ -539,4 +535,4 @@ def test_combined_run_takes_the_mean_exact_t0_of_its_members(sign):
         sign=sign,
     )
     shift = reduce_combined_run(combined).time - reduce_combined_run(plain).time
-    np.testing.assert_allclose(shift, 0.1 * BIN_WIDTH, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(shift, 0.3 * BIN_WIDTH, rtol=0, atol=1e-15)

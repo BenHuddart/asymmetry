@@ -21,13 +21,18 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     tail_background_window,
 )
+from asymmetry.core.transform.constituent_counts import (
+    PreparedConstituents,
+    active_acquisitions,
+    resolve_group_observation,
+)
 from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     reference_observation_metadata,
     result_tail_skip,
 )
 from asymmetry.core.transform.deadtime import DeadtimeDomain, deadtime_operation_inputs
-from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
+from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, crop_to_good_support
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -58,14 +63,37 @@ def preparation_identity(
 
     if (reference is None) != (timing is None):
         raise ValueError("Prepared reference counts and timing request must be supplied together")
+    from asymmetry.core.transform.constituent_counts import constituent_metadata
+
+    retained = "period_inputs" in run.grouping
+    grouping = {
+        key: value
+        for key, value in run.grouping.items()
+        if not retained
+        or key
+        not in {
+            "period_inputs",
+            "period_histograms",
+            "period_reduced",
+            "period_mapping",
+            "constituent_coefficients",
+        }
+    }
+    histograms = (
+        [h for _, source, _ in active_acquisitions(run.grouping) for h in source.histograms]
+        if retained
+        else run.histograms
+    )
+    if retained:
+        grouping["constituents"] = constituent_metadata(run.grouping, active_only=True)
     return (
         reference_file_identity(run.grouping.get("background_run"))
         if correction_flags_from_grouping(run.grouping).use_background
         and resolve_background_mode(run.grouping) == "reference_run"
         else None,
-        tuple((id(h.counts), id(h.count_variance)) for h in run.histograms),
-        histogram_grid_identity(run.histograms),
-        json.dumps(run.grouping, default=str),
+        tuple((id(h.counts), id(h.count_variance)) for h in histograms),
+        histogram_grid_identity(histograms),
+        json.dumps(grouping, default=str),
         json.dumps(run.metadata, default=str),
         run.source_file,
         scoped_source_digest(
@@ -106,7 +134,7 @@ class GroupPreparation:
     use_deadtime: bool
     reference_t0_bin: int
     layouts: dict[int, GroupLayout]
-    sample: ScopedCounts
+    sample: ScopedCounts | PreparedConstituents
     reference: ScopedCounts | None
     reference_timing: ReferenceTiming | None
     reference_scale: float | None
@@ -155,6 +183,15 @@ def prepare_group_counts(
 
     if time_range == (None, None):
         time_range = None
+    identity_run = run
+    observation = None
+    group_ids = list(group_ids)
+    if "period_inputs" in run.grouping:
+        specs = [
+            (gid, effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms)))
+            for gid in group_ids
+        ]
+        observation, run, _ = resolve_group_observation(run, specs, cancel_check=cancel_check)
     grouping = run.grouping
     histograms = list(run.histograms)
     apply_deadtime = (
@@ -172,15 +209,31 @@ def prepare_group_counts(
     background = correction_flags_from_grouping(grouping).use_background
     background_t0 = 0
     if background:
-        background_t0 = common_t0_for_groups(
-            histograms,
-            effective_group_indices(
-                grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
-            ),
-            effective_group_indices(
-                grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
-            ),
-            detector_t0_bins=detector_t0,
+        background_t0 = (
+            common_t0_for_groups(
+                histograms,
+                sorted(
+                    {
+                        i
+                        for gid in group_ids
+                        for i in effective_group_indices(
+                            grouping, gid, n_histograms=len(histograms)
+                        )
+                    }
+                ),
+                detector_t0_bins=detector_t0,
+            )
+            if observation is not None
+            else common_t0_for_groups(
+                histograms,
+                effective_group_indices(
+                    grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
+                ),
+                effective_group_indices(
+                    grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
+                ),
+                detector_t0_bins=detector_t0,
+            )
         )
     reference = None
     if background and resolve_background_mode(grouping) == "reference_run":
@@ -198,7 +251,9 @@ def prepare_group_counts(
             {
                 i
                 for gid in group_ids
-                for i in effective_group_indices(grouping, gid, n_histograms=len(histograms))
+                for i in effective_group_indices(
+                    identity_run.grouping, gid, n_histograms=len(identity_run.histograms)
+                )
             }
         )
         ChannelMembership(tuple(i + 1 for i in selected)).indices(len(reference.histograms))
@@ -215,7 +270,21 @@ def prepare_group_counts(
         t0 = alignment.common_t0_bin
         declared = grouping.get("t0_bin")
         declared = t0 if declared is None else int(declared)
-        window = alignment.window(grouping, offset_bins=t0 + alignment.first_bin - declared)
+        if observation is not None and "good_window_policy" in grouping:
+            from asymmetry.core.project.profiles import GoodWindowPolicy, resolve_run_good_window
+
+            first, last = resolve_run_good_window(
+                GoodWindowPolicy.from_dict(grouping["good_window_policy"]),
+                run,
+                grouping,
+                alignment=alignment,
+            )
+            window = alignment.window(dict(first_good_bin=first, last_good_bin=last))
+        else:
+            window = alignment.window(grouping, offset_bins=t0 + alignment.first_bin - declared)
+        if reference is not None:
+            alignment, window = crop_to_good_support(alignment, window)
+            t0 = alignment.common_t0_bin
         local_grouping = dict(
             grouping, t0_bin=t0, first_good_bin=window.first, last_good_bin=window.last
         )
@@ -245,26 +314,72 @@ def prepare_group_counts(
         sample_parts.append((alignment, indices, windows))
         reference_alignment = None
         if reference is not None:
-            reference_alignment = reference.alignment(
-                histograms, grouping, alignment, indices, timing_grouping=reference_timing
+            sample = observation.reference_sample if observation is not None else None
+            if windows:
+                length = max(window.last for window in windows) + 1
+                alignment = replace(alignment, length=length)
+                window = BinWindow(window.first, min(window.last, length - 1))
+                local_grouping["last_good_bin"] = window.last
+            physical = effective_group_indices(
+                identity_run.grouping, group_id, n_histograms=len(identity_run.histograms)
             )
-            reference_parts.append((reference_alignment, indices, windows))
+            reference_alignment = reference.alignment(
+                sample.histograms if sample is not None else histograms,
+                sample.grouping if sample is not None else grouping,
+                alignment,
+                physical,
+                timing_grouping=reference_timing,
+            )
+            reference_parts.append((reference_alignment, physical, windows))
         layouts[int(group_id)] = GroupLayout(
             alignment, window, local_grouping, background_t0, reference_alignment
         )
     if reference is not None:
         indices = sorted({index for _, selected, _ in sample_parts for index in selected})
-        reference.require_independent(histograms, reference_observation_metadata(run), indices)
-    domains = [observation_domain(sample_parts)]
-    inputs = [(histograms, grouping)]
+        if observation is None:
+            reference.require_independent(histograms, reference_observation_metadata(run), indices)
+        else:
+            for member in observation.members:
+                reference.require_independent(
+                    member.histograms,
+                    member.metadata,
+                    sorted(
+                        {
+                            i
+                            for gid in group_ids
+                            for i in effective_group_indices(
+                                identity_run.grouping,
+                                gid,
+                                n_histograms=len(identity_run.histograms),
+                            )
+                        }
+                    ),
+                )
+    domain = observation_domain(sample_parts)
+    if observation is None:
+        inputs, domains = [(histograms, grouping)], [domain]
+    else:
+        inputs, domains = observation.participants(domain)
+    n_sources = len(inputs)
     if reference is not None:
         inputs.append((reference.histograms, reference.deadtime_grouping(grouping)))
         domains.append(observation_domain(reference_parts))
     inputs = deadtime_operation_inputs(inputs, apply_deadtime, domains=domains)
-    products = [
-        ScopedCounts.prepare(h, g, domain, use_deadtime=apply_deadtime)
-        for (h, g), domain in zip(inputs, domains, strict=True)
-    ]
+    sample = (
+        ScopedCounts.prepare(*inputs[0], domains[0], use_deadtime=apply_deadtime)
+        if observation is None
+        else PreparedConstituents.prepare(
+            observation,
+            inputs[:n_sources],
+            domains[:n_sources],
+            use_deadtime=apply_deadtime,
+            cancel_check=cancel_check,
+        )
+    )
+    CorrectionOutcomes(deadtime=sample.outcome).require_complete()
+    products = [sample]
+    if reference is not None:
+        products.append(ScopedCounts.prepare(*inputs[-1], domains[-1], use_deadtime=apply_deadtime))
     backgrounds, original = {}, {}
     for group_id, layout in layouts.items():
         indices = effective_group_indices(grouping, group_id, n_histograms=len(histograms))
@@ -278,7 +393,13 @@ def prepare_group_counts(
             bin_width=histograms[indices[0]].bin_width,
             metadata=run.metadata,
             source_file=run.source_file,
-            reference_counts=products[1].aligned(indices, layout.reference_alignment)
+            reference_counts=products[1].aligned(
+                effective_group_indices(
+                    identity_run.grouping, group_id, n_histograms=len(identity_run.histograms)
+                ),
+                layout.reference_alignment,
+                retain_variance=True,
+            )
             if reference is not None
             else None,
             reference_scale=reference.scale if reference is not None else None,
@@ -307,7 +428,7 @@ def prepare_group_counts(
         }
     return GroupPreparation(
         preparation_identity(
-            run,
+            identity_run,
             products[1] if reference is not None else None,
             reference.timing if reference is not None else None,
         ),

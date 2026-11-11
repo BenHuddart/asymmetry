@@ -46,6 +46,29 @@ def observation_domain(
     return DeadtimeDomain(tuple(observations))
 
 
+def require_independent_noise(histograms, domain, *, raw_sources=False):
+    """Reject unknown noise only where a declared calculation consumes it."""
+    for index, windows in domain.observations:
+        hist = histograms[index]
+        for window in windows:
+            variance = hist.count_variance
+            values = hist.counts[window.slice]
+            unknown = (
+                (
+                    raw_sources
+                    and not np.all(
+                        np.isfinite(values) & (values >= 0) & (values == np.floor(values))
+                    )
+                )
+                if variance is None
+                else np.any(np.isnan(variance[window.slice]))
+            )
+            if unknown:
+                raise ValueError(
+                    f"Detector {index + 1} requires supplied variance for consumed bins with unknown independent count noise"
+                )
+
+
 @dataclass(frozen=True)
 class ScopedCounts:
     """Raw source plus corrected samples, never a prepared acquisition.
@@ -65,13 +88,7 @@ class ScopedCounts:
         cls, histograms, grouping, domain, *, use_deadtime, mode=None, allow_incomplete=False
     ):
         """Resolve once, then invert each required detector/bin once."""
-        for index, windows in domain.observations:
-            variance = histograms[index].count_variance
-            if variance is not None and any(np.any(np.isnan(variance[w.slice])) for w in windows):
-                raise ValueError(
-                    f"Detector {index + 1} requires supplied variance for consumed bins "
-                    "with unknown independent count noise"
-                )
+        require_independent_noise(histograms, domain)
         outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode, domain=domain)
         if not allow_incomplete:
             CorrectionOutcomes(deadtime=outcome).require_complete()

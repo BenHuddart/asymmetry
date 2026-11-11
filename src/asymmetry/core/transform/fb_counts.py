@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import InitVar, asdict, dataclass
+from dataclasses import InitVar, asdict, dataclass, replace
 from numbers import Integral, Real
 from typing import Any
 
@@ -312,6 +312,27 @@ class AlignmentCrop:
         object.__setattr__(self, "length", length)
 
 
+def crop_to_good_support(alignment: AlignmentCrop, window: BinWindow):
+    """Remove unused context while retaining nonnegative local t0 coordinates.
+
+    Raw k maps to local r by the detector offset. Removing L leading bins
+    subtracts L from both that offset and t0, preserving elapsed time in µs.
+    """
+    first = min(window.first, alignment.common_t0_bin)
+    length = window.last + 1 - first
+    return (
+        replace(
+            alignment,
+            first_bin=alignment.first_bin + first,
+            common_t0_bin=alignment.common_t0_bin - first,
+            detector_offsets=tuple((i, value - first) for i, value in alignment.detector_offsets),
+            group_lengths=tuple(value - first for value in alignment.group_lengths),
+            length=length,
+        ),
+        BinWindow(window.first - first, window.last - first),
+    )
+
+
 @dataclass(frozen=True)
 class ForwardBackwardCounts:
     """Aligned forward/backward counts with one validated window and time grid.
@@ -328,6 +349,7 @@ class ForwardBackwardCounts:
     window: BinWindow
     alignment: AlignmentCrop
     corrections: CorrectionOutcomes = CorrectionOutcomes()
+    calibration_window: BinWindow | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.forward, GroupCounts) or not isinstance(self.backward, GroupCounts):
@@ -342,6 +364,8 @@ class ForwardBackwardCounts:
         if not isinstance(self.window, BinWindow) or not isinstance(self.alignment, AlignmentCrop):
             raise ValueError("counts require a BinWindow and AlignmentCrop.")
         self.window.validate_length(n)
+        if self.calibration_window is not None:
+            self.calibration_window.validate_length(n)
         if self.alignment.length != n:
             raise ValueError("alignment crop length must equal the count shape.")
         width, t0 = count_timing(self.bin_width_us, self.common_t0_bin, self.t0_time_us)

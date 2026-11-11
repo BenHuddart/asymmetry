@@ -140,6 +140,9 @@ Zero terms are
 recorded but excluded from operation domains; nonfinite/all-zero requests and
 known direct reuse raise ``CombineError``. Corresponding period payloads use
 the same coefficients; mixed/mismatched payloads require explicit selection.
-``reduce_combined_run`` uses the ordinary reduction owner and retained noise.
-See :doc:`/reference/run_arithmetic` for correction/support limits and likelihood
+``reduce_combined_run`` prepares each retained acquisition using its own correction
+facts and resolved clock, then weights and pools on common observed good support.
+The returned dataset records an immutable counts-first replay snapshot; the raw
+inspection sum alone does not authorise reconstruction. Shared group background
+is applied once. See :doc:`/reference/run_arithmetic` for exposure and likelihood
 eligibility. Ordinary GUI co-add remains unit weighted.

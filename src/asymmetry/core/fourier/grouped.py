@@ -70,6 +70,8 @@ def build_group_signal_dataset(
     layout = prepared.layouts[int(group_id)]
     alignment, window = layout.alignment, layout.window
     grouping = layout.grouping
+    histograms = prepared.sample.histograms
+    indices = effective_group_indices(grouping, group_id, n_histograms=len(histograms))
     correction = prepared.backgrounds[int(group_id)]
     group = correction.forward
     deadtime = prepared.sample.outcome
@@ -98,7 +100,7 @@ def build_group_signal_dataset(
     signal = trimmed_counts * scale
     if center_signal and signal.size > 0:
         signal -= float(np.mean(signal))
-    error = np.sqrt(np.clip(variance, 1.0, None)) * scale
+    error = np.sqrt(variance if group.variance is not None else np.maximum(variance, 1.0)) * scale
 
     group_names = grouping.get("group_names") if isinstance(grouping, dict) else None
     group_name = None
