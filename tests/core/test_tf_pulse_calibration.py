@@ -321,3 +321,52 @@ def test_zero_separation_matches_off_on_the_causal_domain():
     assert zero.alpha == pytest.approx(off.alpha, abs=1e-6)
     assert zero.beta == pytest.approx(off.beta, abs=1e-6)
     assert zero.fit.statistic == pytest.approx(off.fit.statistic, abs=1e-6)
+
+
+def test_wrong_supplied_separation_changes_early_count_fit_without_estimating_it():
+    from dataclasses import replace
+
+    data = _acquisition(0.8)
+    request = TFCalibrationRequest(
+        1, 2, fit_beta=True, frequency_mhz=1.3, pulse_separation_us=0.324
+    )
+    matched = fit_tf_calibration(data, request)
+    wrong = fit_tf_calibration(data, replace(request, pulse_separation_us=0.2))
+    assert matched.ok
+    assert wrong.fit.statistic > matched.fit.statistic + 100
+    assert next(p for p in wrong.fit.parameters if p.name == "dpsep").value == 0.2
+    assert "dpsep" not in wrong.fit.covariance_parameters
+
+
+def test_packed_onset_observations_remain_sums_with_centre_model_prediction():
+    """A retained packed bin straddles a birth; point and bin means differ.
+
+    This pins the current observation approximation, without a universal
+    onset cut or an assertion of integrated-rate calibration accuracy.
+    """
+    from asymmetry.core.fitting.count_response import double_pulse_fb_model
+    from asymmetry.core.fitting.grouped_time_domain import build_count_groups
+
+    ds = _acquisition(0.8)
+    ds.run.grouping["bunching_factor"] = 8
+    group = build_count_groups(ds, [1, 2], lifetime_corrected=False)[0]
+    first, last = group.metadata["count_fit_raw_windows"][0]
+    assert first * 0.016 < 0.162 < last * 0.016
+    assert group.counts[0] == sum(ds.run.histograms[0].counts[first : last + 1])
+
+    def polar(age):
+        return 0.2 * np.exp(-0.15 * age) * np.cos(2 * np.pi * 1.3 * age + 0.17)
+
+    model = double_pulse_fb_model(polar, with_beta=True)
+    predicted = model(
+        np.array([group.time[0]]),
+        N0=8 * np.sqrt(20000 * 16000),
+        alpha=1.25,
+        background=8 * 7,
+        sign=1,
+        beta=0.8,
+        dpsep=0.324,
+    )[0]
+    point = 8 * _point_counts(np.array([group.time[0]]), 0.8)[0, 0]
+    assert predicted == pytest.approx(point, rel=1e-14)
+    assert abs(predicted - group.counts[0]) / group.counts[0] > 0.1

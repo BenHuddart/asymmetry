@@ -3,6 +3,7 @@
 from dataclasses import replace
 from threading import Event
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QTimer
 
@@ -408,3 +409,124 @@ def test_fixed_pulse_gui_worker_matches_shared_selection_and_invalidates(qapp, f
     section._method_combo.setCurrentIndex(section._method_combo.findData("general"))
     assert not section._time_response.isEnabled()
     section.shutdown()
+
+
+def test_source_snapshot_freezes_histogram_noise_and_native_clock():
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(1)
+    h = data.run.histograms[0]
+    h.count_variance = h.counts.copy()
+    h.t0_time_us = 0.008
+    snapshot = module.source_snapshot(data)
+    captured = snapshot.run.histograms[0]
+    original_variance = h.count_variance
+    h.count_variance = 4 * h.counts
+    h.t0_time_us = 0.024
+    assert captured.count_variance is original_variance, "Noise input changed after capture"
+    assert captured.t0_time_us == 0.008, "Native clock changed after capture"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("changed", ["file_table", "variance", "native_t0"])
+def test_changed_source_consumed_fact_invalidates_actual_worker(qapp, monkeypatch, changed):
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(1)
+    from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
+    data.run.metadata["field"] = 1.3 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T / GAUSS_TO_TESLA
+    for h in data.run.histograms:
+        h.counts = np.rint(h.counts / (1 + 0.02 * h.counts / (h.bin_width * 100000)))
+    data.run.grouping.update(
+        deadtime_correction=True,
+        deadtime_mode="from_file",
+        deadtime_file_us=[0.02, 0.02],
+        good_frames=100000,
+    )
+    profile = profile_from_payload(
+        data.run.grouping, "source", profile_fingerprint_for_run(data.run)
+    )
+    section = module.AlphaSectionWidget()
+    section.configure(
+        datasets=[data],
+        selected_run_number=data.run_number,
+        context_provider=lambda: lambda slot, dataset: (profile, None),
+    )
+    section._time_response.mode.setCurrentIndex(1)
+    computed, release = Event(), Event()
+    original = module.run_calibration
+    captured = []
+
+    def held(worker, request):
+        reply = original(worker, request)
+        captured.append(reply)
+        computed.set()
+        assert release.wait(5)
+        return reply
+
+    monkeypatch.setattr(module, "run_calibration", held)
+    try:
+        section._on_estimate()
+        _wait_until(computed.is_set)
+        assert captured[0].outcome.alpha is not None
+        if changed == "file_table":
+            data.run.grouping["deadtime_file_us"][:] = [0.04, 0.04]
+        elif changed == "variance":
+            data.run.histograms[0].count_variance = 4 * data.run.histograms[0].counts
+        else:
+            data.run.histograms[0].t0_time_us = 0.024
+        release.set()
+        _wait_until(lambda: section._tasks.active_count == 0)
+        assert section.pending() == {}, (
+            "Accepted old calibration after consumed source " + changed + " changed"
+        )
+    finally:
+        release.set()
+        section.shutdown()
+
+
+def test_held_period_snapshot_and_identity_include_native_inputs():
+    from tests.io.test_tf_calibration_period import _calibration_periods
+
+    data, _ = _calibration_periods()
+    captured = module.source_snapshot(data)
+    identity = module.source_identity(data)
+    live = data.run.grouping["period_histograms"][1][0]
+    saved = captured.run.grouping["period_histograms"][1][0]
+    original_time = saved.t0_time_us
+    original_variance = saved.count_variance
+    live.t0_time_us = 0.024
+    live.count_variance = 4 * live.counts
+    assert module.source_identity(data) != identity
+    assert saved.t0_time_us == original_time
+    assert saved.count_variance is original_variance
+    assert saved.counts is live.counts
+
+
+@pytest.mark.parametrize("fact", ["deadtime_file_us", "period_dead_time_us", "period_good_frames"])
+def test_source_snapshot_freezes_nested_file_facts(fact):
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(1)
+    data.run.grouping[fact] = [[0.02, 0.02], [0.03, 0.03]]
+    captured = module.source_snapshot(data)
+    identity = module.source_identity(data)
+    data.run.grouping[fact][0][0] = 0.1
+    assert module.source_identity(data) != identity
+    assert captured.run.grouping[fact][0][0] == 0.02
+
+
+@pytest.mark.parametrize("fact", ["histogram_labels", "period_mapping"])
+def test_source_metadata_fallback_is_frozen_and_in_identity(fact):
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(1)
+    value = ["Forward", "Backward"] if fact == "histogram_labels" else {1: "red", 2: "green"}
+    data.run.metadata[fact] = value
+    expected = value.copy()
+    captured = module.source_snapshot(data)
+    identity = module.source_identity(data)
+    value[0 if fact == "histogram_labels" else 1] = "changed"
+    assert module.source_identity(data) != identity
+    assert captured.run.metadata[fact] == expected

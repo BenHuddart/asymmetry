@@ -475,3 +475,24 @@ def _frac(model_fn):
         return 0.01 * np.asarray(model_fn(t, **kwargs), dtype=float)
 
     return fraction
+
+
+def test_beta_api_fixed_pulse_delegation():
+    from asymmetry.core.fitting.beta_calibration import estimate_beta_detailed
+    from asymmetry.core.fitting.tf_calibration import TFCalibrationRequest, fit_tf_calibration
+    from asymmetry.core.utils.constants import MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(0.8)
+    beta = estimate_beta_detailed(
+        data, 1, 2, field_tesla=1.3 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, pulse_separation_us=0.324
+    )
+    direct = fit_tf_calibration(
+        data,
+        TFCalibrationRequest(1, 2, fit_beta=True, frequency_mhz=1.3, pulse_separation_us=0.324),
+    )
+    assert beta.ok
+    assert beta.beta == direct.beta
+    assert beta.alpha == direct.alpha
+    with pytest.raises(ValueError, match="count_fit"):
+        estimate_beta_detailed(data, 1, 2, method="single_histogram", pulse_separation_us=0)
