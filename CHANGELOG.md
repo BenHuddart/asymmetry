@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve signed run weights and supplied counting variance in ordinary and period
+  arithmetic; use retained Gaussian errors and reject weighted raw-Poisson fits.
+
 - Retain acquired inputs and supplied count variances in period mappings, and
   allow red-only mappings through ordinary reduction and period selection.
 

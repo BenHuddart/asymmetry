@@ -1553,3 +1553,27 @@ transverse baselines agree for pooled G+R rotation, removing the common pair
 once. Unequal baselines make that rotation unavailable; Lab G+R and rotating
 Red, Green, and G−R remain available. This is an Asymmetry safeguard. See
 :doc:`/reference/rotating_frame_projection`.
+
+Run addition and subtraction
+-----------------------------
+
+:doc:`/reference/run_arithmetic` compares the count operations and their limits.
+Asymmetry retains signed coefficients and independent squared-weight variance
+for ordinary and counterpart-period payloads. Raw independent unit sums retain
+the Poisson limit; weighted/subtracted or supplied-noise results use retained
+Gaussian variance and do not acquire a raw-Poisson origin from integer totals.
+Pooling raw counts still precedes the existing aggregate correction path;
+ordinary padded alignment and period raw-index support remain distinct.
+
+WiMDA 1.326 co-add/Co-sub and musrfit 1.12.1 addRun/ADDRUN provide the ordinary
+count-addition comparison. Matched correction-off fit-time ADDRUN controls
+agree on unit-addition and interior asymmetry values from whole-bin-aligned
+counts within 5e-6 fractional asymmetry;
+this establishes neither uncertainty nor endpoint equivalence. The tested
+unequal-fact ADDRUN applies the primary RUN correction context to added data.
+Mantid 6.16 development Scale/Plus/Minus document the explicit independent
+weighted-arithmetic analogue, without a native numerical check here. The owning
+page links the public manuals and algorithms and distinguishes each operation.
+Asymmetry also checks direct observation reuse and invalid coefficient/payload
+requests to prevent unsupported independent-noise calculations; this does not
+establish general nested/shared-reference covariance.

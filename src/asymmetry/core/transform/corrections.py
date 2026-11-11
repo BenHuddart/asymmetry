@@ -223,19 +223,17 @@ class BackgroundReference:
         self, histograms: list[Histogram], metadata: dict | None, indices: list[int]
     ) -> None:
         """Reject identical acquired observations before using independent variances."""
-        metadata = metadata or {}
-        source = metadata.get("source_file", "")
-        same_source = (
-            bool(source and self.source_file)
-            and Path(source).resolve() == Path(self.source_file).resolve()
-        )
-        same_period = metadata.get("period_number", 1) == self.period_number
-        same_run = metadata.get("source_run_number", metadata.get("run_number")) == self.run_number
-        shared = all(
-            np.shares_memory(histograms[index].counts, self.histograms[index].counts)
-            for index in indices
-        )
-        if shared or (same_source and same_run and same_period):
+        if not independent_observations(
+            histograms,
+            metadata or {},
+            self.histograms,
+            {
+                "source_file": self.source_file,
+                "source_run_number": self.run_number,
+                "period_number": self.period_number,
+            },
+            indices=indices,
+        ):
             raise ValueError(
                 "reference background cannot subtract identical observations as independent inputs"
             )
@@ -277,6 +275,31 @@ class BackgroundReference:
             good_frames=self.deadtime_normaliser,
             deadtime_file_us=self.file_dead_time_us,
         )
+
+
+def independent_observations(
+    histograms, metadata, other_histograms, other_metadata, *, indices=None
+):
+    """Known acquired identity or shared count buffers cannot supply independent noise.
+
+    Unknown file identity assumes independence; equal values/run numbers alone
+    do not establish reuse. Different acquired periods of one file are distinct.
+    """
+    source, other_source = metadata.get("source_file"), other_metadata.get("source_file")
+    same_source = (
+        bool(source and other_source) and Path(source).resolve() == Path(other_source).resolve()
+    )
+    same_period = metadata.get(
+        "data_period_number", metadata.get("period_number", 1)
+    ) == other_metadata.get("data_period_number", other_metadata.get("period_number", 1))
+    selected = range(len(histograms)) if indices is None else indices
+    other_selected = range(len(other_histograms)) if indices is None else indices
+    shared = any(
+        np.shares_memory(histograms[i].counts, other_histograms[j].counts)
+        for i in selected
+        for j in other_selected
+    )
+    return not (shared or (same_source and same_period))
 
 
 def reference_observation_metadata(run: Run) -> dict[str, Any]:

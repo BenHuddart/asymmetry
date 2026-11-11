@@ -341,9 +341,18 @@ def test_mapping_retains_ignored_inputs_and_snapshot_worker_ownership():
 
 
 def test_signed_unknown_variance_cannot_become_poisson_by_pooling():
+    from asymmetry.core.transform.deadtime import DeadtimeDomain
+    from asymmetry.core.transform.fb_counts import BinWindow
+    from asymmetry.core.transform.scoped_counts import ScopedCounts
+
+    histograms = sum_period_histograms(
+        [[Histogram(np.array([-10.0]), 0.1)], [Histogram(np.array([50.0]), 0.1)]]
+    )
+    np.testing.assert_array_equal(histograms[0].counts, [40.0])
+    assert np.isnan(histograms[0].count_variance[0])
     with pytest.raises(ValueError, match="supplied variance"):
-        sum_period_histograms(
-            [[Histogram(np.array([-10.0]), 0.1)], [Histogram(np.array([50.0]), 0.1)]]
+        ScopedCounts.prepare(
+            histograms, {}, DeadtimeDomain(((0, (BinWindow(0, 0),)),)), use_deadtime=False
         )
 
 

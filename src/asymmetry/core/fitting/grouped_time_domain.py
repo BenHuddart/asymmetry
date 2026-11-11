@@ -136,7 +136,7 @@ class GroupedTimeDomainGroup:
             return CountSource.DEADTIME_CORRECTED
         if self.metadata.get("grouped_time_domain_lifetime_corrected", False):
             return CountSource.LIFETIME_CORRECTED
-        return CountSource.RAW
+        return CountSource(self.metadata.get("count_variance_source", CountSource.RAW))
 
 
 @dataclass
@@ -428,9 +428,8 @@ def fit_grouped_time_domain(
                 f"Grouped time-domain parameters for {group_id!r} are missing: {missing_names}"
             )
 
-    # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
-    # objective sees true Poisson statistics; Gaussian keeps the historical
-    # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
+    # Poisson fits independent raw acquisitions. Gaussian uses prepared errors,
+    # including retained arithmetic noise on the lifetime-corrected axis.
     objective = Objective(cost)
     use_poisson = objective is Objective.POISSON
     cost_factory = COST_FACTORIES[objective] if use_poisson else None

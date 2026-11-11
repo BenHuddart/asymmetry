@@ -24,6 +24,11 @@ and the selected interval with the result.
    and accepts no background or a constant subtraction.
    On narrow screens the figure can be scrolled horizontally.
 
+Run co-add/subtraction first produces an aggregate raw-count observation with
+retained independent variance; it then enters this pipeline. It uses the
+aggregate correction context and the distinct ordinary/period support policies
+in :doc:`/reference/run_arithmetic`, not per-acquisition nonlinear correction.
+
 From acquired counts to a ratio
 -------------------------------
 
