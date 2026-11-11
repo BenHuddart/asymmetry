@@ -107,3 +107,43 @@ def test_historical_power_fit_survives_current_recomputation(tmp_path, monkeypat
     assert restored.recipe["grouping_digest"] == recorded_digest
     assert restored.fit_set(None).open_fit().result == before
     assert {key: before[key] for key in history} == history
+
+
+def test_saved_ordinary_response_keeps_history_and_restores_a_working_refit(tmp_path):
+    import numpy as np
+
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.fitting.engine import FitEngine
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.fitting.time_response import TimeResponse
+    from tests.core.test_time_response_consumers import causal_dataset
+
+    project = _v24_project()
+    original = project["datasets"][0]["representations"]["time_fb_asymmetry"]["fit"]
+    model = CompositeModel(
+        ["Exponential", "Constant"], time_response=TimeResponse("double_delta", 0.324)
+    )
+    original["model"] = model.to_dict()
+    history = {"success": True, "curve": [1.0, 2.0], "time": [0.0, 0.1], "errors": {"Lambda": 0.02}}
+    original["result"] = history
+    path = tmp_path / "ordinary.asymp"
+    save_project(project, path)
+    loaded = load_project(path)
+    slot = open_fit(loaded["datasets"][0]["representations"]["time_fb_asymmetry"])
+    assert {key: slot["result"][key] for key in history} == history
+    restored = CompositeModel.from_dict(slot["model"])
+    assert restored.time_response == model.time_response
+    result = FitEngine().fit(
+        causal_dataset(),
+        restored.function,
+        ParameterSet(
+            [
+                Parameter("A_1", 18),
+                Parameter("Lambda", 0.6, min=0),
+                Parameter("A_bg", 1),
+            ]
+        ),
+    )
+    assert result.success
+    assert result.parameters["Lambda"].value == pytest.approx(0.7, abs=1e-4)
+    assert np.max(np.abs(result.residuals)) < 1e-3

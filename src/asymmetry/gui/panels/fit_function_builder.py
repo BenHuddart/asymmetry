@@ -27,6 +27,7 @@ from asymmetry.core.fitting.domain_library import (
     default_model_for_domain,
 )
 from asymmetry.gui.widgets.function_builder.dialog import FunctionBuilderDialog
+from asymmetry.gui.widgets.time_response import TimeResponseEditor
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
 
 
@@ -46,6 +47,8 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
         model = (
             initial_model if initial_model is not None else default_model_for_domain(self._domain)
         )
+
+        self._response_editor = TimeResponseEditor(model.time_response)
 
         # A project model may reference a user function that is not registered in
         # this session. Materialise per-instance placeholder definitions for
@@ -81,6 +84,10 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             on_create_user_function=self._create_user_function,
             parent=parent,
         )
+
+        self._response_editor.setVisible(self._domain == "time")
+        self.layout().insertWidget(self.layout().count() - 1, self._response_editor)
+        self._response_editor.changed.connect(self._on_structure_changed)
 
     # ------------------------------------------------------------ authoring
     def _create_user_function(self) -> object | None:
@@ -182,6 +189,7 @@ class FitFunctionBuilderDialog(FunctionBuilderDialog):
             close_parentheses=closes,
             fraction_groups=fractions,
             allow_missing=True,
+            time_response=self._response_editor.value(),
         )
 
     # --------------------------------------------------------------- result

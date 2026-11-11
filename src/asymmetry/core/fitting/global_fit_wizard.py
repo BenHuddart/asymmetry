@@ -124,6 +124,16 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.series_axis import (
+    axis_value as _axis_value,
+)
+from asymmetry.core.fitting.series_axis import (
+    field_value as _field_value,
+)
+from asymmetry.core.fitting.series_axis import (
+    temperature_value as _temperature_value,
+)
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
     UNTIMED,
@@ -2068,7 +2078,14 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         for dataset in preview.ordered_datasets
         if int(dataset.run_number) in existing
         and existing[int(dataset.run_number)].build_signature
-        == single_fit_build_signature(scope, user_frequencies_mhz, dataset=dataset)
+        == single_fit_build_signature(
+            scope,
+            user_frequencies_mhz,
+            dataset=dataset,
+            time_response=current_model.time_response
+            if current_model is not None
+            else TimeResponse(),
+        )
     }
     missing_datasets = [
         dataset
@@ -3338,6 +3355,7 @@ def _build_global_fit_wizard_recommendation_staged(
             tuple(eval_template.model.operators),
             tuple(eval_template.model.open_parentheses),
             tuple(eval_template.model.close_parentheses),
+            eval_template.model.time_response,
         )
 
     def _single_run_prefit_cache_for(
@@ -11634,26 +11652,6 @@ def _persistent_lower_bound_penalty(assessment: GlobalCandidateAssessment) -> in
 
     threshold = max(3, len(assessment.run_diagnostics) // 4)
     return sum(count - threshold + 1 for count in repeated_hits.values() if count >= threshold)
-
-
-def _axis_value(dataset: MuonDataset, axis_key: str) -> float:
-    if axis_key == "field":
-        return _field_value(dataset)
-    if axis_key == "temperature":
-        return _temperature_value(dataset)
-    return float(dataset.run_number)
-
-
-def _field_value(dataset: MuonDataset) -> float:
-    field = dataset.metadata.get("field", dataset.run.field if dataset.run is not None else 0.0)
-    return float(field) if field is not None else float("nan")
-
-
-def _temperature_value(dataset: MuonDataset) -> float:
-    value = dataset.metadata.get(
-        "temperature", dataset.run.temperature if dataset.run is not None else 0.0
-    )
-    return float(value) if value is not None else float("nan")
 
 
 def _progress_log(

@@ -63,6 +63,12 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_peak_analysis,
 )
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.residual_statistics import (
+    max_abs_autocorrelation as _max_abs_autocorrelation,
+)
+from asymmetry.core.fitting.residual_statistics import (
+    runs_test_z_score as _runs_test_z_score,
+)
 from asymmetry.core.fitting.resolution import (
     DEFAULT_MIN_BINS_PER_E_FOLDING,
     ComponentResolutionAssessment,
@@ -87,6 +93,7 @@ from asymmetry.core.fitting.seeding import (
     record_scale_window_counts,
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     UNTIMED,
     FitTimeEstimates,
@@ -713,6 +720,8 @@ def build_candidate_templates(
         rationale: str,
         baseline: bool = False,
     ) -> None:
+        if current_model is not None:
+            model = model.with_time_response(current_model.time_response)
         if any(_model_identity(existing.model) == _model_identity(model) for existing in templates):
             return
         templates.append(
@@ -1425,6 +1434,25 @@ def build_wizard_families(
             order_index.get(family.key, len(_WIZARD_FAMILY_ORDER)),
         )
     )
+    if current_model is not None:
+        response = current_model.time_response
+        families = [
+            replace(
+                family,
+                stage1_rep=replace(
+                    family.stage1_rep, model=family.stage1_rep.model.with_time_response(response)
+                ),
+                stage1_extras=tuple(
+                    replace(t, model=t.model.with_time_response(response))
+                    for t in family.stage1_extras
+                ),
+                stage2_members=tuple(
+                    replace(t, model=t.model.with_time_response(response))
+                    for t in family.stage2_members
+                ),
+            )
+            for family in families
+        ]
     return tuple(families)
 
 
@@ -1888,7 +1916,9 @@ def _multiplet_templates_for_order(
     return templates
 
 
-def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
+def build_null_baseline_templates(
+    time_response: TimeResponse = TimeResponse(),
+) -> tuple[CandidateTemplate, ...]:
     """The two cheap null models fitted unconditionally as a significance floor.
 
     A flat constant (1 free parameter) and a plain exponential + constant
@@ -1904,14 +1934,16 @@ def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
             title="Null baseline: constant",
             category="Baseline",
             rationale="Flat null model — the no-structure reference.",
-            model=CompositeModel(["Constant"], operators=[]),
+            model=CompositeModel(["Constant"], operators=[], time_response=time_response),
         ),
         CandidateTemplate(
             key=_NULL_EXPONENTIAL_KEY,
             title="Null baseline: exponential + constant",
             category="Baseline",
             rationale="Plain relaxation null model — the no-oscillation reference.",
-            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+            model=CompositeModel(
+                ["Exponential", "Constant"], operators=["+"], time_response=time_response
+            ),
         ),
     )
 
@@ -2638,7 +2670,12 @@ def build_fit_wizard_recommendation(
     # (see ``wizard_scope.ScopeResolution.inference_note``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
     scope_note = resolution.inference_note if resolution is not None else ""
-    build_signature = single_fit_build_signature(scope, user_frequencies_mhz, dataset=dataset)
+    build_signature = single_fit_build_signature(
+        scope,
+        user_frequencies_mhz,
+        dataset=dataset,
+        time_response=current_model.time_response if current_model is not None else TimeResponse(),
+    )
     families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
 
     def _progress(message: str) -> None:
@@ -3026,7 +3063,9 @@ def build_fit_wizard_recommendation(
         # always has a reference. They are 1-2 free-parameter fits, so cheap —
         # never call-capped (screening_cap=False) even though they are tagged
         # stage=1 like the other cheap first-pass fits.
-        null_templates = build_null_baseline_templates()
+        null_templates = build_null_baseline_templates(
+            current_model.time_response if current_model is not None else TimeResponse()
+        )
         null_assessments = _run_template_assessments(
             [
                 _AssessmentTask(
@@ -3714,6 +3753,7 @@ def single_fit_build_signature(
     *,
     dataset: MuonDataset | None = None,
     table_role: str = "analysis",
+    time_response: TimeResponse = TimeResponse(),
 ) -> str:
     """Encode scope, declared frequencies, and the numerical binning contract.
 
@@ -3722,6 +3762,7 @@ def single_fit_build_signature(
     """
     return json.dumps(
         {
+            **({"time_response": time_response.to_dict()} if time_response.mode != "off" else {}),
             "binning_policy": BINNING_POLICY,
             "wizard_preparation": WIZARD_PREPARATION,
             "table_role": table_role,
@@ -4467,12 +4508,13 @@ def _assessment_sort_key(
 
 def _model_identity(
     model: CompositeModel,
-) -> tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
+) -> tuple[object, ...]:
     return (
         tuple(model.component_names),
         tuple(model.operators),
         tuple(model.open_parentheses),
         tuple(model.close_parentheses),
+        model.time_response,
     )
 
 
@@ -5790,59 +5832,6 @@ def _residual_diagnostics(
         )
     _peak_freq, residual_fft_peak_snr = _dominant_peak_metrics(frequencies, magnitude)
     return residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr
-
-
-def _runs_test_z_score(values: NDArray[np.float64]) -> float:
-    if values.size < 3:
-        return 0.0
-    threshold = max(1e-6, 1e-3 * float(np.max(np.abs(values))))
-    filtered = np.asarray(values, dtype=float).copy()
-    filtered[np.abs(filtered) <= threshold] = 0.0
-    if np.max(np.abs(filtered)) <= threshold:
-        return 0.0
-    signs = np.sign(filtered)
-    signs = signs[signs != 0]
-    if signs.size < 3:
-        return 0.0
-    positives = int(np.count_nonzero(signs > 0))
-    negatives = int(np.count_nonzero(signs < 0))
-    if positives == 0 or negatives == 0:
-        return 0.0
-    runs = 1 + int(np.count_nonzero(signs[1:] != signs[:-1]))
-    total = positives + negatives
-    mean = 1.0 + 2.0 * positives * negatives / total
-    variance = (
-        2.0
-        * positives
-        * negatives
-        * (2.0 * positives * negatives - positives - negatives)
-        / max(total * total * (total - 1), 1)
-    )
-    if variance <= 0.0:
-        return 0.0
-    return float((runs - mean) / math.sqrt(variance))
-
-
-def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
-    if values.size < 4:
-        return 0.0
-    threshold = max(1e-6, 1e-3 * float(np.max(np.abs(values))))
-    filtered = np.asarray(values, dtype=float).copy()
-    filtered[np.abs(filtered) <= threshold] = 0.0
-    if np.max(np.abs(filtered)) <= threshold:
-        return 0.0
-    centered = filtered - float(np.mean(filtered))
-    denom = float(np.dot(centered, centered))
-    if denom <= 0.0:
-        return 0.0
-    max_lag = min(4, centered.size // 2)
-    if max_lag <= 0:
-        return 0.0
-    correlations = []
-    for lag in range(1, max_lag + 1):
-        corr = float(np.dot(centered[:-lag], centered[lag:]) / denom)
-        correlations.append(abs(corr))
-    return float(max(correlations, default=0.0))
 
 
 def _peaks_within_analysis_band(

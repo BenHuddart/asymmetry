@@ -34,3 +34,13 @@ Muon-fluorine models
    :members:
    :undoc-members:
 
+
+Fixed time response
+-------------------
+
+.. autoclass:: asymmetry.core.fitting.time_response.TimeResponse
+   :members:
+
+The optional ``CompositeModel.time_response`` setting round-trips with the
+model. :meth:`CompositeModel.with_time_response` creates a new snapshot. See
+:ref:`ordinary-time-response` for normalisation, origin, and conditional errors.

@@ -1,6 +1,12 @@
 Project files
 =============
 
+Ordinary fit models persist their optional fixed time response with the model
+payload. An absent setting restores **Off**; stored parameters, errors, and
+curves retain their recorded meaning. A restored re-fit consumes the authored
+response. See :ref:`ordinary-time-response`.
+
+
 Good-window profiles retain their authored signed offsets and omitted endpoints.
 Recorded scalar bounds retain their effective-coordinate meaning; reopening does
 not relabel them as original detector file facts. The signed display offset is

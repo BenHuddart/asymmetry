@@ -106,6 +106,7 @@ class ModelStructure:
             tuple(self.model.operators),
             tuple(self.model.open_parentheses),
             tuple(self.model.close_parentheses),
+            self.model.time_response,
         )
 
     @property

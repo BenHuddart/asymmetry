@@ -5314,20 +5314,18 @@ class GlobalFitTab(FitTabBase):
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
 
-        # Migrate pre-rework parameter entries before restoring the table rows:
-        # legacy ``fraction_<k>`` names to the n-1 free-fraction scheme, and
-        # legacy per-factor amplitudes onto the one-scale-per-product policy.
+        # Parameter rows use the canonical fraction and product names.
         state = migrate_legacy_fraction_state(state)
         state = fold_legacy_product_amplitude_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                # As in the single-fit tab: unregistered (user) component names
-                # degrade to named placeholders rather than silently replacing
-                # the saved model.
+                # Missing user components retain their names and payload.
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
+                if "time_response" in composite_data:
+                    raise
                 self._set_composite_model(
                     CompositeModel(["Exponential", "Constant"], operators=["+"]),
                     seed_from_record=False,

@@ -1598,6 +1598,12 @@ not establish general covariance or reconstruct unknown processing history.
 Pulse inputs and response origins
 ---------------------------------
 
+Ordinary time-asymmetry models in Asymmetry offer an explicit fixed double-delta
+response with equal incident strengths, survival weighting, and midpoint origin.
+The complete source expression is evaluated only at live ages and normalised;
+point evaluation does not claim integrated-bin or finite-width onset accuracy.
+The setting follows models through wizard candidates and saved/replayed fits.
+
 WiMDA 1.326's **Double Pulse** and Mantid's supplied ``PulseOffset`` configure
 separation. Asymmetry likewise requires fixed supplied separation for its
 instantaneous count model; single-line post-arrival TF data cannot generally

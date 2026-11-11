@@ -1,6 +1,12 @@
 Fit wizard
 ==========
 
+The current ordinary model's :ref:`fixed time response <ordinary-time-response>`
+also applies to fresh candidates, null baselines, retries, and dense curves.
+Recommendations and **Apply** retain it; response changes invalidate cached
+analysis identity. Pulse settings are supplied context, not extra candidates.
+
+
 The fit wizard is a guided workflow for choosing a sensible single-spectrum
 time-domain fit function. Open it, click **Analyze**, and it fingerprints the
 active spectrum, screens candidate model families drawn from the component

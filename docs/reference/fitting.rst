@@ -25,6 +25,92 @@ fit the full-resolution data and only simplify the view afterwards, run
 the fit with ``Bunch = 1`` and then increase the bunch factor; the fit
 curve remains overlaid on the plot.
 
+.. _ordinary-time-response:
+
+Fixed double-pulse prediction
+-----------------------------
+
+For a two-pulse source, the populations have different muon ages at one
+observation time. In **Edit…** → **Build Fit Function**, set **Time response**
+to **Fixed double pulse** and supply **Pulse separation** in µs. **Off** is the
+default. The tooltip describes “Two instantaneous pulses with equal incident
+strengths and muon-survival weighting.” The supplied pulse midpoint is the
+origin on the resolved observation clock; acquired time zero and good bounds
+are unchanged. Separation is fixed, with no added fit parameter.
+
+For supplied separation :math:`d`, births are :math:`b_j=\pm d/2` and live
+ages are :math:`u_j=t-b_j\geq0`, including age zero. With equal incident
+strengths, the normalised prediction is
+
+.. math::
+
+   P_{\mathrm{eff}}(t)=
+   \frac{\sum_{j:u_j\geq0}\tfrac12 e^{-u_j/\tau_\mu}P(u_j)}
+        {\sum_{j:u_j\geq0}\tfrac12 e^{-u_j/\tau_\mu}}.
+
+The complete source expression is evaluated at each age. A product of an
+envelope and an oscillation is transformed together, and an additive constant
+remains once. After both arrivals the normalised weights are proportional to
+:math:`e^{b_j/\tau_\mu}`. There is no extra common lifetime decay in the
+asymmetry. For ideal calibrated counts
+:math:`F=C\sum w_j(1+P_j)` and
+:math:`B=C\sum w_j(1-\beta P_j)/\alpha`, the ratio
+:math:`(F-\alpha B)/(\beta F+\alpha B)` gives this prediction for general
+fixed :math:`\beta`. Ordinary fitting does not estimate calibration.
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import CompositeModel, TimeResponse
+
+   model = CompositeModel(
+       ["Exponential", "Oscillatory", "Constant"],
+       operators=["*", "+"],
+       time_response=TimeResponse("double_delta", separation_us=0.324),
+   )
+   # Pass model.function and the usual parameter set to FitEngine.
+   restored = CompositeModel.from_dict(model.to_dict())
+
+``TimeResponse.compose(source)`` also wraps an explicit fractional or percent
+callable without changing its scale. Composite models, previews, residuals,
+wizard candidates, batch/global/joint fits, and restored recipes use the same
+response. Bare component curves retain their component-display semantics;
+leaves of a product need not sum to the complete transformed product.
+
+Assumptions and limitations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This double-delta approximation has no finite source width or detector-resolution
+model. It retains ordinary point evaluation at the actual retained times,
+including merged-bin centres. A ratio of integrated counts across an arrival
+is a different observation and can differ substantially; a good late-time fit
+does not validate finite-pulse onset accuracy. Choose the fit window with this
+approximation in mind. Fixed separation zero gives the single-source prediction
+on nonnegative times; **Off** preserves the source model's existing domain.
+
+Asymmetry also checks that active separation is finite and nonnegative and that
+requested model points have a live source population. Points before the first
+arrival receive a model/window diagnosis; inactive negative ages are never
+evaluated. These checks concern the requested fit, with no file-format or
+facility restriction. Selected errors, masks, and objectives stay with the
+observations. Parameter errors remain conditional on supplied pulse settings
+and fixed calibration. This time response applies to time-asymmetry source
+models; it does not transform Fourier, field-scan, trend, or rotated display
+curves. Lab-frame fitting with frequency offsets retains its lab-frame source
+prediction.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA 1.326's **Double Pulse** asymmetry fit uses supplied separation and a
+normalised surviving-population mixture. In Mantid 6.16 development,
+`DoublePulseFit v1 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
+uses supplied shifted functions and weights. Matching the late normalised model
+requires the same origin and survival weights; arbitrary equal observed weights
+or onset extrapolation need not match. An authored shifted-TF composition in
+musrfit 1.12.1 provides a post-arrival model check, without establishing a generic
+pulse switch, onset agreement, or equal uncertainties. See
+:doc:`/explanation/comparison` for the qualified reference evidence.
+
 Basic workflow
 --------------
 
@@ -565,6 +651,13 @@ References
 ----------
 
 [1] F. James and M. Roos, Comput. Phys. Commun. **10**, 343 (1975).
+
+[2] F. L. Pratt, Physica B **289–290**, 710 (2000),
+`WiMDA <https://www.isis.stfc.ac.uk/Pages/wimda-paper.pdf>`_.
+
+[3] Mantid, `DoublePulseFit v1
+<https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_,
+6.16 development documentation.
 
 See also
 --------

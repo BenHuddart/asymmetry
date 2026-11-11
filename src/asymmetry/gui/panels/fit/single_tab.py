@@ -1644,12 +1644,11 @@ class SingleFitTab(FitTabBase):
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                # Unregistered names (a user function whose plugin is not
-                # installed) materialise as named zero-valued placeholders so
-                # the saved model is never silently replaced; only structurally
-                # malformed data falls back to the default model.
+                # Missing user components retain their names and payload.
                 restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
+                if "time_response" in composite_data:
+                    raise
                 fallback = (
                     default_frequency_model()
                     if self._domain == "frequency"

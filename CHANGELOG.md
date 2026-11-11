@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Explicit fixed double-pulse prediction for ordinary asymmetry fits, retained
+  through model authoring, wizards, shared fits, and saved re-fits.
+
 ### Changed
 
 - Apply squared pulse-response gain to Fourier Power and its errors; omit
