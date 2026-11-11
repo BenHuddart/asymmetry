@@ -37,6 +37,7 @@ def test_method_beta_layout(qapp, method, vector):
     section._fit_beta.setChecked(True)
     section.set_vector(vector, ["pair"])
     section._method_combo.setCurrentIndex(section._method_combo.findData(method))
+    assert section._time_response.isEnabled() == (method == "tf_calibration_fit")
     assert section._fit_beta.isEnabled() == (method == "tf_calibration_fit" and not vector)
     if not section._fit_beta.isEnabled():
         assert not section._fit_beta.isChecked()
@@ -70,7 +71,9 @@ def test_result_staged_with_model_and_conditional_errors(qapp, free_beta):
     section.shutdown()
 
 
-@pytest.mark.parametrize("change", ["invalidate", "method", "beta", "source", "stop", "shutdown"])
+@pytest.mark.parametrize(
+    "change", ["invalidate", "method", "beta", "pulse", "separation", "source", "stop", "shutdown"]
+)
 def test_held_worker_obsolete_results_never_publish_and_heartbeat(qapp, monkeypatch, change):
     section, _, _ = configured(qapp)
     entered, release = Event(), Event()
@@ -93,6 +96,10 @@ def test_held_worker_obsolete_results_never_publish_and_heartbeat(qapp, monkeypa
         section._method_combo.setCurrentIndex(1)
     elif change == "beta":
         section._fit_beta.setChecked(True)
+    elif change == "pulse":
+        section._time_response.mode.setCurrentIndex(1)
+    elif change == "separation":
+        section._time_response.separation.setText("0.4")
     elif change == "source":
         section.configure(datasets=[], selected_run_number=None, context_provider=lambda: None)
     elif change == "stop":
@@ -365,3 +372,39 @@ def test_vector_manual_edit_invalidates_held_calibration(qapp, monkeypatch):
     assert dialog._vector_alpha_spins["P_x"].value() == 1.7
     dialog._clear_dirty()
     dialog.close()
+
+
+@pytest.mark.parametrize("fit_beta", [False, True])
+def test_fixed_pulse_gui_worker_matches_shared_selection_and_invalidates(qapp, fit_beta):
+    from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    from tests.core.test_tf_pulse_calibration import _acquisition
+
+    data = _acquisition(0.8 if fit_beta else 1)
+    data.run.metadata["field"] = 1.3 / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T / GAUSS_TO_TESLA
+    profile = profile_from_payload(
+        data.run.grouping, "pulse", profile_fingerprint_for_run(data.run)
+    )
+    section = AlphaSectionWidget()
+    section.configure(
+        datasets=[data],
+        selected_run_number=data.run_number,
+        context_provider=lambda: lambda slot, dataset: (profile, None),
+    )
+    section._fit_beta.setChecked(fit_beta)
+    assert section._time_response.value().mode == "off"
+    section._time_response.mode.setCurrentIndex(1)
+    section._on_estimate()
+    _wait_until(lambda: section._tasks.active_count == 0)
+    outcome = section.pending()["single"]
+    direct = calibrate_run(
+        data,
+        ReductionSettings(),
+        CalibrationOptions("tf_calibration_fit", fit_beta, pulse_separation_us=0.324),
+    )
+    assert outcome.record.result == direct.record.result
+    assert len(outcome.record.result.candidates) == 4
+    section._time_response.separation.setText("0.4")
+    assert not section.pending()
+    section._method_combo.setCurrentIndex(section._method_combo.findData("general"))
+    assert not section._time_response.isEnabled()
+    section.shutdown()

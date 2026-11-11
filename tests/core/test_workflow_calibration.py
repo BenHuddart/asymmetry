@@ -330,3 +330,9 @@ def test_joint_beta_rejects_projection_layout_at_shared_boundary(entry):
             calibrate_source(data, options)
         else:
             calibrate_run(data, ReductionSettings(), options)
+
+
+@pytest.mark.parametrize("method", [None, "diamagnetic", "general", "ratio"])
+def test_active_tf_pulse_rejected_by_other_methods(method):
+    with pytest.raises(ValueError, match="pulse separation.*require tf_calibration_fit"):
+        CalibrationOptions(method, pulse_separation_us=0)

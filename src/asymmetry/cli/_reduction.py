@@ -128,6 +128,13 @@ def add_calibration_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="MHZ",
         help="TF frequency seed in MHz (omitted: source field)",
     )
+    parser.add_argument(
+        "--calibration-pulse-separation",
+        type=float,
+        default=None,
+        metavar="US",
+        help="Fixed equal-incident TF double-pulse separation in µs (omitted: off)",
+    )
 
 
 def calibration_options(args: argparse.Namespace):
@@ -147,6 +154,7 @@ def calibration_options(args: argparse.Namespace):
         envelope=args.calibration_envelope,
         period=args.calibration_period,
         frequency_mhz=args.calibration_frequency,
+        pulse_separation_us=args.calibration_pulse_separation,
     )
 
 
@@ -225,6 +233,7 @@ def reduction_settings(
                 or args.fit_beta
                 or args.calibration_envelope is not None
                 or args.calibration_frequency is not None
+                or args.calibration_pulse_separation is not None
             ):
                 raise ValueError("Explicit calibration options require --alpha-from")
             return settings

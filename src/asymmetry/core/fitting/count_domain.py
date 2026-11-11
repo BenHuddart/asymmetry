@@ -17,6 +17,11 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_calibration import record_count_deadtime_calibration
 from asymmetry.core.fitting.count_inputs import count_model_frame_norm as _deadtime_frame_norm
+from asymmetry.core.fitting.count_response import (
+    double_pulse_fb_model,
+    double_pulse_single_model,
+    pulse_population,
+)
 from asymmetry.core.fitting.count_results import (
     _result_from_minuit,
     count_bank_view,
@@ -245,78 +250,6 @@ def _apply_deadtime(counts, tau_us, *, frame_norm, detector_counts):
     return np.sum(true_counts / denominator, axis=0)
 
 
-# --- double pulse -----------------------------------------------------------
-
-
-def _double_pulse_factor(
-    fraction_fn: Callable[..., NDArray],
-    time: NDArray[np.float64],
-    dpsep: float,
-    sign: float,
-    physics: dict,
-) -> NDArray[np.float64]:
-    """The two-pulse ``(1 + sign·P)`` envelope shared by the single and F+B models.
-
-    Two muon pulses separated by ``dpsep`` (µs) each carry the polarization,
-    evaluated at ``t ± dpsep/2`` and weighted by ``exp(∓dpsep/2τ_μ)`` (WiMDA
-    ``ArrayMusrFunc``); the 0.5 normalization recovers the single-pulse limit as
-    ``dpsep → 0`` and the second pulse is gated to ``t > dpsep/2``. The gated-out
-    times are clamped to ``>= 0`` before evaluating the model, so a model
-    undefined for ``t < 0`` cannot poison the (zero-weighted) early bins.
-    ``sign`` is the per-histogram ±1 (single: the orientation; F+B: the forward/
-    backward sign).
-    """
-    tau = float(MUON_LIFETIME_US)
-    dpsep2 = float(dpsep) / 2.0
-    c1 = np.exp(-dpsep2 / tau)
-    c2 = np.exp(dpsep2 / tau)
-    gate = (time > dpsep2).astype(float)
-    a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
-    a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
-    return 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
-
-
-def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
-    """Raw single-histogram count model for an ISIS double-pulse source.
-
-    The decay envelope and ``N0``/background stay at ``t``; only the polarization
-    is shifted (see :func:`_double_pulse_factor`). The per-histogram ``amplitude``
-    (fixed ±1) carries the forward/backward orientation.
-    """
-    tau = float(MUON_LIFETIME_US)
-
-    def model(t, *, N0, background, amplitude, relative_phase, dpsep, **physics):  # noqa: N803
-        time = np.asarray(t, dtype=float)
-        factor = _double_pulse_factor(fraction_fn, time, dpsep, amplitude, physics)
-        return float(N0) * np.exp(-time / tau) * factor + float(background)
-
-    return model
-
-
-def _double_pulse_fb_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
-    """Raw forward/backward count model for an ISIS double-pulse source.
-
-    The ``fgFB`` double-pulse analogue of :func:`_double_pulse_single_model`: the
-    same two-pulse envelope (:func:`_double_pulse_factor`) is carried with the
-    forward/backward ``sign``, and the shared ``N0`` is split by the detector
-    balance as ``N0·√alpha`` (forward) / ``N0/√alpha`` (backward) exactly as in
-    :func:`build_fb_count_model`. Each side keeps its own background.
-    """
-    tau = float(MUON_LIFETIME_US)
-
-    def model(t, *, alpha, N0, background, sign, dpsep, **physics):  # noqa: N803
-        time = np.asarray(t, dtype=float)
-        ralp = np.sqrt(abs(float(alpha)))
-        if sign >= 0.0:
-            scale = ralp
-        else:
-            scale = 1.0 / ralp if ralp > 0.0 else 0.0
-        factor = _double_pulse_factor(fraction_fn, time, dpsep, sign, physics)
-        return float(N0) * scale * np.exp(-time / tau) * factor + float(background)
-
-    return model
-
-
 def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[..., NDArray]:
     """Turn a lifetime-corrected count model into a raw-count model.
 
@@ -451,7 +384,7 @@ def fit_single_histogram(
     fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
     double_pulse = "dpsep" in params
     free_lifetime = "tau" in params  # fit (or fix at a non-physical value) the lifetime
-    dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
+    dp_model = double_pulse_single_model(fraction_fn) if double_pulse else None
     corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
     frame_norm = _deadtime_frame_norm(dataset, group) if "DT0" in params else 1.0
 
@@ -580,8 +513,6 @@ def _fit_fb_count_groups(
     _guard_model_param_collisions(model_fn)
     if estimate_beta:
         _guard_beta_collision(model_fn)
-        if "dpsep" in params:
-            raise ValueError("β estimation is not supported with the double-pulse model")
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     for required in ("alpha", "background", "background_b"):
@@ -612,6 +543,14 @@ def _fit_fb_count_groups(
     # minimum that converges cleanly, so good seeding is the default here rather
     # than something only the beta-calibration wrapper knew to do.
     n0_seed = _count_level_at_zero(time_f, counts_f)
+    if "dpsep" in params:
+        population = pulse_population(
+            lambda age: np.zeros_like(age), time_f, params["dpsep"].value, 1.0, {}
+        )
+        live = np.flatnonzero((population > 0) & (counts_f > 0))
+        if live.size:
+            first = live[0]
+            n0_seed = float(counts_f[first] / population[first])
     if _needs_data_seed(params, "N0"):
         params = _with_seeded_value(params, "N0", n0_seed if n0_seed is not None else 1.0)
 
@@ -621,7 +560,9 @@ def _fit_fb_count_groups(
     fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
     double_pulse = "dpsep" in params
     free_lifetime = "tau" in params
-    fb_dp_model = _double_pulse_fb_model(fraction_fn) if double_pulse else None
+    fb_dp_model = (
+        double_pulse_fb_model(fraction_fn, with_beta=estimate_beta) if double_pulse else None
+    )
     fb_corrected = (
         None if double_pulse else build_fb_count_model(fraction_fn, with_beta=estimate_beta)
     )

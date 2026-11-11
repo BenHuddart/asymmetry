@@ -240,3 +240,18 @@ preserve raw counts, file t₀, and good bounds. Explicit Ignore/off is the iden
 active finite-width requests need a positive finite support half-width. Source
 labels and ambiguous file width fields do not establish that input. See
 :doc:`/reference/count_domain_fitting` and :doc:`/reference/fourier_analysis`.
+
+
+Fixed supplied TF calibration response
+-------------------------------------
+
+TF calibration's supplied fixed double-delta response belongs to the predicted
+F/B counts. Equal incident births at the supplied midpoint contribute only at
+live ages, with absolute muon survival and each complete age-local polarisation;
+flat count backgrounds are added once. This preserves the selected acquired
+observations, correction eligibility, and raw-Poisson/applied-deadtime Gaussian
+objective. Packed-bin means are evaluated at centres, without rate integration.
+Selection compares the same four envelopes at the same supplied response.
+Conditional fit errors exclude source/selection uncertainty. Apply transfers
+coefficients and a frozen source record while retaining target timing and its
+ordinary-fit/Fourier response; see :ref:`alpha-calibration`.

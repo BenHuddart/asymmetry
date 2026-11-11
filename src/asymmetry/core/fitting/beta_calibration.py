@@ -158,6 +158,7 @@ def _estimate_beta_count_fit(
     exclude: tuple[float, float] | None,
     freq_mhz: float,
     minos: bool,
+    pulse_separation_us: float | None,
     cancel_callback: Callable[[], bool] | None,
 ) -> BetaEstimate:
     """Keep the historical count_fit result vocabulary over the shared TF fit."""
@@ -172,6 +173,7 @@ def _estimate_beta_count_fit(
             exclude=exclude,
             frequency_mhz=freq_mhz,
             minos=minos,
+            pulse_separation_us=pulse_separation_us,
         ),
         cancel_callback=cancel_callback,
     )
@@ -317,6 +319,7 @@ def estimate_beta_detailed(
     exclude: tuple[float, float] | None = None,
     field_tesla: float | None = None,
     minos: bool = False,
+    pulse_separation_us: float | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> BetaEstimate:
     """Estimate the backward-amplitude balance β from a weak-TF calibration run.
@@ -338,6 +341,10 @@ def estimate_beta_detailed(
     field_tesla
         Applied transverse field (Tesla) used to seed the precession frequency
         (γ_μ·B). When ``None`` the dataset's recorded field is used.
+    pulse_separation_us
+        Fixed equal-incident double-pulse separation in µs for ``count_fit``;
+        omitted means off. The independent single-histogram protocol does not
+        consume this setting.
     minos
         Run MINOS for asymmetric intervals on the underlying fit(s) (symmetric
         HESSE errors are reported regardless).
@@ -358,6 +365,8 @@ def estimate_beta_detailed(
         raise ValueError(
             f"Unknown β-estimation method {method!r}; expected one of {BETA_ESTIMATION_METHODS}"
         )
+    if pulse_separation_us is not None and method != "count_fit":
+        raise ValueError("Pulse separation requires the count_fit TF calibration method")
     if dataset.run is None or not dataset.run.histograms:
         return _fail(method, "β estimation needs a run with detector histograms.")
     if int(forward_group) == int(backward_group):
@@ -373,5 +382,11 @@ def estimate_beta_detailed(
         cancel_callback=cancel_callback,
     )
     if method == "count_fit":
-        return _estimate_beta_count_fit(dataset, forward_group, backward_group, **kwargs)
+        return _estimate_beta_count_fit(
+            dataset,
+            forward_group,
+            backward_group,
+            pulse_separation_us=pulse_separation_us,
+            **kwargs,
+        )
     return _estimate_beta_single_histogram(dataset, forward_group, backward_group, **kwargs)

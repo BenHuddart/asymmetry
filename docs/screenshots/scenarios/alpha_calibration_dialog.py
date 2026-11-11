@@ -28,6 +28,7 @@ class AlphaCalibrationDialogScenario(Scenario):
             beta=0.8 if self.fit_beta else 1.0,
             vector=self.vector,
             relaxing=self.method == "general",
+            pulse_separation_us=0.324 if self.method == "tf_calibration_fit" else None,
         )
 
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
@@ -39,6 +40,9 @@ class AlphaCalibrationDialogScenario(Scenario):
         section = dialog._alpha_section
         section._method_combo.setCurrentIndex(section._method_combo.findData(self.method))
         section._fit_beta.setChecked(self.fit_beta)
+        if self.method == "tf_calibration_fit":
+            section._time_response.mode.setCurrentIndex(1)
+            section._time_response.separation.setText("0.324")
         dialog._alpha_card.set_expanded(True)
         section._on_estimate()
         _pump_until(lambda: section._tasks.active_count == 0)

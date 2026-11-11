@@ -937,3 +937,15 @@ A historical fitted separation is not a new request to estimate separation.
 Count fitting accepts only a fixed supplied ``dpsep`` for a new solve; a free
 API request receives guidance rather than an automatic conversion to fixed intent.
 Count-fit editor state does not author a separation-estimation recipe.
+
+
+Fixed supplied TF calibration response
+-------------------------------------
+
+TF calibration records retain the consumed optional ``pulse_separation_us``
+in each candidate request and its fixed effective ``dpsep``. Restoring a record
+checks agreement between request and fit. Old absent/``None`` requests remain
+Off. Loading never refits; an explicit replay uses the captured request and
+selected envelope on the source acquisition. Applying alpha/beta transfers the
+frozen record and coefficients, preserving the target's t0, good bounds, count
+arrays, ordinary-fit response, and Fourier settings.

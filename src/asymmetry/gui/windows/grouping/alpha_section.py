@@ -21,6 +21,7 @@ from asymmetry.core.data.calibration import best_calibration_run_index, classify
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.result_summary import reduced_statistic_label
+from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.project.profiles import AlphaPolicy, resolve_effective_grouping
 from asymmetry.core.transform.t0 import find_t0_for_run
@@ -36,6 +37,7 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskRunner, TaskWorker, check_task_cancelled
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
+from asymmetry.gui.widgets.time_response import TimeResponseEditor
 from asymmetry.gui.windows.grouping.format import ALPHA_METHOD_ITEMS, format_value_with_uncertainty
 
 
@@ -301,6 +303,8 @@ class AlphaSectionWidget(QWidget):
         root.addWidget(self._method_combo)
         self._fit_beta = QCheckBox("Calibrate β")
         root.addWidget(self._fit_beta)
+        self._time_response = TimeResponseEditor(TimeResponse(), self)
+        root.addWidget(self._time_response)
         row = QHBoxLayout()
         self._estimate_btn = QPushButton("Estimate calibration")
         self._stop_btn = QPushButton("Stop")
@@ -320,6 +324,7 @@ class AlphaSectionWidget(QWidget):
         self._run_combo.currentIndexChanged.connect(self.invalidate)
         self._method_combo.currentIndexChanged.connect(self._method_changed)
         self._fit_beta.toggled.connect(self.invalidate)
+        self._time_response.changed.connect(self.invalidate)
 
     def configure(self, *, datasets, selected_run_number, context_provider):
         self.invalidate()
@@ -342,6 +347,7 @@ class AlphaSectionWidget(QWidget):
         enabled = supports_joint_calibration(
             self._method_combo.currentData(), projection_layout=self._vector
         )
+        self._time_response.setEnabled(supports_joint_calibration(self._method_combo.currentData()))
         self._fit_beta.setEnabled(enabled)
         if not enabled:
             self._fit_beta.setChecked(False)
@@ -406,9 +412,20 @@ class AlphaSectionWidget(QWidget):
             self._stop_btn.setEnabled(False)
             return
         slot, dataset, profile, reference = self._queue.pop(0)
-        options = CalibrationOptions(
-            str(self._method_combo.currentData()), self._fit_beta.isChecked(), period=None
-        )
+        try:
+            response = (
+                self._time_response.value() if self._time_response.isEnabled() else TimeResponse()
+            )
+            options = CalibrationOptions(
+                str(self._method_combo.currentData()),
+                self._fit_beta.isChecked(),
+                period=None,
+                pulse_separation_us=response.separation_us if response.mode != "off" else None,
+            )
+        except ValueError as exc:
+            self._queue.clear()
+            self._result_label.setText(f"Calibration unavailable: {exc}")
+            return
         request = CalibrationRequest(self._generation, dataset, profile, options, reference, slot)
         self._estimate_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)

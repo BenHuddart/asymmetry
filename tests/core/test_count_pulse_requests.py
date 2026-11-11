@@ -30,7 +30,7 @@ def test_fixed_separation_requires_nonnegative_finite_value(value, target):
 
 
 def test_count_model_matches_independent_causal_birth_sum():
-    from asymmetry.core.fitting.count_domain import _double_pulse_factor
+    from asymmetry.core.fitting.count_response import pulse_population
     from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
     time = np.array([0.0, 0.1, 0.2, 0.5, 1.0])
@@ -45,9 +45,7 @@ def test_count_model_matches_independent_causal_birth_sum():
         expected[live] += (
             0.5 * np.exp(-age[live] / MUON_LIFETIME_US) * (1 + polarization(age[live]))
         )
-    actual = np.exp(-time / MUON_LIFETIME_US) * _double_pulse_factor(
-        polarization, time, 0.324, 1.0, {}
-    )
+    actual = pulse_population(polarization, time, 0.324, 1.0, {})
     np.testing.assert_allclose(actual, expected, atol=2e-15, rtol=2e-15)
 
 
