@@ -187,11 +187,14 @@ projections with them in mind:
   detector-pair axes are mutually orthogonal and aligned with the spectrometer
   frame. On a real instrument the octant groups approximate those axes; the
   reconstruction is exact only for an idealised orthogonal layout.
-- **Per-axis α decouples the three projections.** Each axis carries its own
-  calibration constant (``alpha_x`` / ``alpha_y`` / ``alpha_z``) and is reduced
-  independently, so a miscalibrated α on one axis biases that projection's
-  amplitude without contaminating the other two — but all three must be
-  calibrated for the vector to be quantitatively balanced.
+- **Calibration and counting independence are distinct.** Each axis retains its
+  own alpha, but projections can intentionally reuse detectors across disjoint
+  F/B pairs. Their counting covariance depends on the retained acquisition bins,
+  rates, corrections, and reference reuse. The rotating-frame operation
+  propagates that covariance while keeping calibration and frame errors
+  conditional; see :doc:`rotating_frame_projection`. Shared-background noise
+  also survives display packing. Corrected marginal errors do not certify an
+  independent joint-projection or overlapping-group MaxEnt objective.
 - **Powder samples do not need it.** An orientational average collapses the
   polarisation onto a single non-trivial component along :math:`\hat{z}`, so the
   ordinary F–B asymmetry workflow is sufficient; the vector projections add
@@ -201,6 +204,16 @@ projections with them in mind:
   convention (see `Detector Group Composition`_): it is verified internally
   consistent against the layout's own detector angles, but should be
   cross-checked against the facility detector numbering before quantitative use.
+
+Compared with other programs
+---------------------------
+
+Mantid RRFMuon v1 rotates two supplied transverse spectra after matching axis,
+phase, and unit conventions. WiMDA 1.326 and musrfit 1.12.1 scalar rotating-frame
+workflows use different inputs and smoothing or packing. The shared-counting
+propagation for Asymmetry's overlapping EMU ratios is justified by retained
+observation reuse, not verified reference-program error equivalence. See
+:doc:`rotating_frame_projection` for equations, sources, and evidence limits.
 
 References
 ----------

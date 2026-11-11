@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from numbers import Integral, Real
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.transform.counting_noise import CountingNoise, bin_matrix, combine_noise
 from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_combination_variance
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -214,14 +215,24 @@ def fb_binning_edges(
     return edges + window.first, t_start
 
 
-def binned_fb_observation(
+class BinnedRatio(NamedTuple):
+    """Fractional curve and its retained acquisition response."""
+
+    time: NDArray[np.float64]
+    asymmetry: NDArray[np.float64]
+    error: NDArray[np.float64]
+    validity: RatioValidity
+    noise: CountingNoise | None
+
+
+def binned_ratio_observation(
     counts: ForwardBackwardCounts,
     *,
     binning: BinningSpec,
     alpha: float,
     beta: float = 1.0,
     time_range: tuple[float | None, float | None] | None = None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], RatioValidity]:
+) -> BinnedRatio:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
     ``time_range`` optionally selects complete output bins by their centres;
@@ -255,7 +266,9 @@ def binned_fb_observation(
     edges = absolute_edges - window.first
     if edges.size < 2:
         empty = np.array([], dtype=np.float64)
-        return empty, empty.copy(), empty.copy(), RatioValidity(np.array([], dtype=np.uint8))
+        return BinnedRatio(
+            empty, empty.copy(), empty.copy(), RatioValidity(np.array([], dtype=np.uint8)), None
+        )
     # reduceat runs its last segment to the array end; exclude dropped raw bins.
     f = f[: edges[-1]]
     b = b[: edges[-1]]
@@ -273,7 +286,30 @@ def binned_fb_observation(
     # t_start + ((e0 + e1 − 1)/2)·w — matching the fixed-mode path, where
     # merge_curve_bins() averages the same per-bin stamps.
     time = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * float(bin_width_us)
-    return np.asarray(time, dtype=np.float64), asymmetry, error, validity
+    noise = None
+    if counts.forward.noise is not None:
+        matrix = bin_matrix(absolute_edges, counts.forward.counts.size)
+        denominator = beta * f_out + alpha * b_out
+        valid = denominator != 0
+        forward_derivative = np.divide(
+            alpha * (1 + beta) * b_out, denominator**2, out=np.zeros_like(f_out), where=valid
+        )
+        backward_derivative = np.divide(
+            -alpha * (1 + beta) * f_out, denominator**2, out=np.zeros_like(b_out), where=valid
+        )
+        noise = combine_noise(
+            counts.forward.noise.transform(matrix).scale(forward_derivative),
+            counts.backward.noise.transform(matrix).scale(backward_derivative),
+        )
+    return BinnedRatio(np.asarray(time, dtype=np.float64), asymmetry, error, validity, noise)
+
+
+def binned_fb_observation(counts, *, binning, alpha, beta=1.0, time_range=None):
+    """Return the fractional ratio grid, errors and mathematical validity."""
+    result = binned_ratio_observation(
+        counts, binning=binning, alpha=alpha, beta=beta, time_range=time_range
+    )
+    return result.time, result.asymmetry, result.error, result.validity
 
 
 def binned_fb_asymmetry(

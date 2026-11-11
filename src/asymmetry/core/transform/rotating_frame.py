@@ -315,11 +315,17 @@ def rotate_transverse(
     ``weights`` say how the curves combine the run's periods
     (:func:`period_weights`), so the same combination of the period baselines
     is removed. The rotated components share each bin's noise (their
-    covariance is (σ_y² − σ_x²)·sinθ·cosθ, zero at unit gain and equal errors);
+    covariance includes retained counting-observation reuse, gain and sense);
     each dataset carries its own per-bin error.
     """
     if px.time.shape != py.time.shape or not np.array_equal(px.time, py.time):
         raise ValueError("P_x and P_y must share one time axis to be rotated together.")
+    from asymmetry.core.transform.counting_noise import combine_noise
+
+    if (px.counting_noise is None) != (py.counting_noise is None):
+        raise ValueError(
+            "A transverse pair must retain both counting observations or declare independent curves"
+        )
     t = px.time
     bx, by = frame.combined_baseline(weights)
     x = px.asymmetry - bx
@@ -333,15 +339,37 @@ def rotate_transverse(
         "P′_x": (x * cos + s * y * sin, np.sqrt(var_x * cos**2 + var_y * sin**2)),
         "P′_y": (x * sin - s * y * cos, np.sqrt(var_x * sin**2 + var_y * cos**2)),
     }
+    noises = (None, None)
+    if px.counting_noise is not None:
+        noises = (
+            combine_noise(
+                px.counting_noise.scale(cos), py.counting_noise.scale(s * sin / frame.gain)
+            ),
+            combine_noise(
+                px.counting_noise.scale(sin), py.counting_noise.scale(-s * cos / frame.gain)
+            ),
+        )
     pair = tuple(
         MuonDataset(
+            counting_noise=noise,
+            ratio_validity=px.ratio_validity.combine(py.ratio_validity, noise.error)
+            if noise is not None
+            else None,
             time=t.copy(),
             asymmetry=values,
-            error=errors,
+            error=np.where(
+                (px.ratio_validity.reasons == 0) & (py.ratio_validity.reasons == 0),
+                noise.error,
+                errors,
+            )
+            if noise is not None
+            else errors,
             metadata={**source.metadata, "projection": label},
             run=source.run,
         )
-        for (label, (values, errors)), source in zip(rotated.items(), (px, py), strict=True)
+        for (label, (values, errors)), source, noise in zip(
+            rotated.items(), (px, py), noises, strict=True
+        )
     )
     return pair[0], pair[1]
 

@@ -7,7 +7,7 @@ Rotating-frame projection
          subplots of a synthetic RF nutation run
    :width: 100%
 
-*A synthetic two-period RF run on an idealised six-detector vector polarimeter,*
+*A synthetic two-period RF run on an idealised eight-detector octant polarimeter,*
 *shown in the rotating frame after* **Auto-detect…** *(see* `Worked example`_\ *).*
 *The spin leaves* :math:`+z` *and nutates about* :math:`B_1 \parallel x'`\ *:*
 :math:`P'_y` *carries the nutation,* :math:`P'_x` *stays at zero, and* :math:`P_z`
@@ -32,7 +32,7 @@ rotated about :math:`z` by the angle the frame has turned through, giving
 :math:`P'_x` and :math:`P'_y`, while :math:`P_z`, which a rotation about
 :math:`z` leaves alone, is shown unchanged. No filter is involved: every bin is
 transformed on its own, its error bar is propagated through the rotation, and
-the bins stay independent. Display bunching is applied *after* the rotation,
+retained counting noise is propagated with the pair. Display bunching is applied *after* the rotation,
 which is valid for that reason, and the rotated curves can be fitted like any
 other projection (`Fitting P′_x and P′_y`_).
 
@@ -274,14 +274,79 @@ information about the field at the muon, not an error in the frame.
       P'_x = x\cos\theta + s\,y\sin\theta, \qquad
       P'_y = x\sin\theta - s\,y\cos\theta,
 
-   and each rotated bin carries
-   :math:`\sigma'^2_x = \sigma_x^2\cos^2\theta + (\sigma_y/g)^2\sin^2\theta`
-   and
-   :math:`\sigma'^2_y = \sigma_x^2\sin^2\theta + (\sigma_y/g)^2\cos^2\theta`.
-   Bins remain independent of one another. Within one bin, :math:`P'_x` and
-   :math:`P'_y` share noise, with covariance
-   :math:`\bigl((\sigma_y/g)^2 - \sigma_x^2\bigr)\sin\theta\cos\theta`, which
-   vanishes when the two transverse projections have equal errors.
+   The transverse counting covariance is propagated as :math:`C'=MCM^T`,
+   where :math:`M` is the matrix of the two equations above. With
+   :math:`c=\cos\theta`, :math:`q=\sin\theta`, and
+   :math:`k=\operatorname{Cov}(P_x,P_y)/g`, the marginal variances are
+
+   .. math::
+
+      \sigma'^2_x &= c^2\sigma_x^2 + q^2(\sigma_y/g)^2 + 2scqk,\\
+      \sigma'^2_y &= q^2\sigma_x^2 + c^2(\sigma_y/g)^2 - 2scqk.
+
+   The rotated cross-component covariance is
+   :math:`cq[\sigma_x^2-(\sigma_y/g)^2]+s(q^2-c^2)k`.
+   Overlapping projections can have positive, negative, or cancelling counting
+   covariance even though each individual F/B pair is disjoint. Equal marginal
+   errors alone do not imply independent rotated components.
+
+Counting observations and conditional errors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For fixed :math:`\alpha` and :math:`\beta`, each projection uses
+:math:`A=(F-\alpha B)/(\beta F+\alpha B)`. Writing
+:math:`D=\beta F+\alpha B`, its fractional count derivatives are
+
+.. math::
+
+   \frac{\partial A}{\partial F}=\frac{\alpha B(1+\beta)}{D^2},\qquad
+   \frac{\partial A}{\partial B}=-\frac{\alpha F(1+\beta)}{D^2}.
+
+Asymmetry applies the percentage conversion once and contracts these derivatives
+against the actual retained acquisition and reference-bin variances. A detector
+used at a different aligned raw bin is a different observation. Signed constituent
+coefficients and reference scales enter before covariance propagation. G−R
+combines the reduced period responses, including any reused reference; G+R forms
+the ratio after corrected-count pooling. Existing projection calibration rules
+are retained; the general derivative does not enable a new beta setting.
+
+Range-background and tail-background estimates retain their count influence,
+including overlap with the displayed bins. Within a projection cohort, tail-fit
+uncertainty uses acquisition counting variance (or supplied variance), rather
+than a separate fitted Poisson expectation for each overlapping group. Fitted
+background levels and point values are unchanged. Display packing averages the
+rotated responses and retains this shared estimation noise; it is not always
+an independent-bin quadrature sum.
+
+This is first-order uncertainty propagation for correlated inputs, following
+`JCGM 100:2008, section 5.2
+<https://www.bipm.org/documents/20126/2071204/JCGM_100_2008_E.pdf>`_. Errors remain
+conditional on alpha, beta, baseline, gain, and the selected correction values.
+They do not include calibration or geometry uncertainty, certify a full cross-bin
+likelihood, or turn several correlated projections into independent fit data.
+Undefined ratios retain their Gaussian-fit omission classification. Asymmetry
+also checks that retained transverse projections belong to the same preparation
+cohort; reduce them together rather than mixing independently prepared snapshots.
+Caller-supplied curves without a retained histogram observation use the declared
+independent-curve error convention.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In Mantid, `RRFMuon v1
+<https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_ rotates two
+supplied transverse spectra. Signs, phase, and units must be matched before
+comparing that coordinate operation. The comparison uses the v1 documentation
+associated with the 6.16 development snapshot; no native Mantid RRFMuon execution
+or shared-detector uncertainty agreement is established here.
+
+WiMDA 1.326 and musrfit 1.12.1 use scalar rotating-frame workflows with different
+observations and smoothing or packing. Those operations do not supply a verified
+drop-in covariance contract for overlapping EMU ratios. Asymmetry's additional
+counting-noise accounting follows the retained observations and the derivatives
+above. Independent analytic and seeded-count checks establish the propagation;
+acquired-file execution establishes operation support, not physical vector
+geometry or numerical agreement with another program.
 
 Fitting P′_x and P′_y
 ---------------------
@@ -397,8 +462,10 @@ Assumptions and limitations
   baseline pair for each period. A file of three or more periods loads as one
   run per period, and each gets its own one-period frame.
 - **The rotated components share noise within a bin** (see the error
-  propagation above), so fit them one at a time; this is one reason rotated
-  series are not yet offered to joint fits.
+  propagation above). Single-component fits use the corrected marginal errors.
+  Shared background estimates can also correlate neighbouring bins. These
+  errors do not establish an independent joint likelihood; rotated series are
+  not offered to joint fits.
 - **No dedicated models yet.** Nutation, spin-locking and echo models are not
   in the fit-function library; the effective-frequency caveat under
   `Fitting P′_x and P′_y`_ applies to the general-purpose ones.

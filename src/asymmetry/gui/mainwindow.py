@@ -2816,33 +2816,15 @@ class MainWindow(QMainWindow):
         datasets: list[MuonDataset],
         labels: list[str] | None = None,
     ) -> dict[str, list[MuonDataset]]:
-        """Return per-projection datasets for stacked-subplot rendering.
+        """Return one core counting-observation cohort per vector run."""
+        from asymmetry.gui.utils.vector_projections import vector_axis_datasets
 
-        ``labels`` selects which projections to build (defaults to every one the
-        datasets share). A multi-projection run contributes a clone reduced with
-        each projection's pair; a single-pair run is already that projection's
-        asymmetry and joins its one subplot as-is.
-        """
-        memberships = self._projection_memberships(datasets)
-        axis_labels = list(labels) if labels else list(memberships)
-        axis_map: dict[str, list[MuonDataset]] = {label: [] for label in axis_labels}
-        for axis in axis_labels:
-            for index in memberships.get(axis, []):
-                dataset = datasets[index]
-                payload = self._extract_grouping_overrides(dataset)
-                pairs = self._vector_axis_pairs_for_grouping(
-                    payload["groups"], payload.get("group_names"), payload.get("projections")
-                )
-                if len(pairs) < 2:
-                    axis_map[axis].append(dataset)
-                    continue
-
-                payload["vector_axis"] = axis
-                clone_dataset = copy.deepcopy(dataset)
-                applied, _ = self._apply_grouping_settings_to_dataset(clone_dataset, payload)
-                if applied:
-                    axis_map[axis].append(clone_dataset)
-        return axis_map
+        return vector_axis_datasets(
+            datasets,
+            labels,
+            self._projection_memberships(datasets),
+            self._resolve_background_reference,
+        )
 
     def _synchronize_targets_to_axis(
         self,

@@ -97,3 +97,25 @@ def test_applied_exact_timing_uses_selected_reference_after_spectator_and_manual
     payload["t0_bin"] = 1
     assert mainwindow._apply_grouping_settings_to_dataset(dataset, payload)[0]
     assert "t0_time_us" not in dataset.run.grouping
+
+
+def test_shared_detector_rotation_reaches_display_and_single_fit_input(mainwindow):
+    from asymmetry.core.transform.rotating_frame import Provenance, rotate_transverse
+    from tests.core.test_projection_noise import small_run
+    from tests.gui.test_rotating_frame_projection import _rotate, _show
+
+    run = small_run()
+    dataset = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), run=run)
+    frame = RotatingFrame.typed_frequency(0.61, 1).with_values(
+        Provenance.TYPED, sense=1, rf_phase_deg=23.0, gain=1.7
+    )
+    mainwindow._project_model.rotating_frames[run.run_number] = frame
+    panel = _show(mainwindow, dataset)
+    _rotate(panel)
+    panel.set_fit_target_projection("P′_y")
+    expected = rotate_transverse(*reduce_run_projections(run, 0).values(), frame, weights=(1.0,))[1]
+    shown = panel._vector_subplot_datasets["P′_y"][0]
+    np.testing.assert_allclose(shown.error, expected.error)
+    np.testing.assert_allclose(mainwindow._fit_panel.single_dataset().error, expected.error)
+    assert shown.counting_noise is not None
+    assert shown.fit_record().counting_noise is None

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Rotated vector errors include reused detector/reference counting noise and
+  shared-background effects through display packing and single-component fit inputs.
+
 ### Changed
 
 - Apply squared pulse-response gain to Fourier Power and its errors; omit
