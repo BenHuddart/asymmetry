@@ -504,3 +504,27 @@ def test_fourier_resolves_only_consumed_separation(value, pulses):
     else:
         result = compute_average_group_spectrum(_run(), config)
         assert "separation_us" not in result.metadata["fourier_pulse_response"]
+
+
+@pytest.mark.parametrize("pulses", [0.5, 1.5, 2.5, None, "bad"])
+@pytest.mark.parametrize("active", [False, True])
+def test_fourier_json_does_not_truncate_invalid_pulse_choice(pulses, active):
+    from asymmetry.core.maxent import PulseRequestError
+
+    config = GroupSpectrumConfig.from_dict(
+        {"pulse_compensation": active, "pulse_half_width_us": 0.05, "pulse_n_pulses": pulses}
+    )
+    if active:
+        with pytest.raises(PulseRequestError, match="Choose Ignore"):
+            compute_average_group_spectrum(_run(), config)
+    else:
+        assert (
+            "fourier_pulse_response" not in compute_average_group_spectrum(_run(), config).metadata
+        )
+
+
+@pytest.mark.parametrize("pulses", [0, 1, 2, "2"])
+def test_fourier_json_retains_supported_integer_pulse_choices(pulses):
+    config = GroupSpectrumConfig.from_dict({"pulse_n_pulses": pulses})
+    assert isinstance(config.pulse_n_pulses, int)
+    assert config.pulse_n_pulses == int(pulses)

@@ -131,7 +131,7 @@ class GroupSpectrumConfig:
     #: Pulse half-width in µs; ``0`` resolves from instrument metadata.
     pulse_half_width_us: float = 0.0
     pulse_separation_us: float = 0.0
-    pulse_n_pulses: int = 1
+    pulse_n_pulses: int | float = 1
     pulse_max_gain: float = 25.0
     #: Robust baseline offset mode: ``"none" | "sigma_clip" | "wimda"``.
     baseline_mode: str = "none"
@@ -205,6 +205,7 @@ class GroupSpectrumConfig:
             if isinstance(phases_raw, dict)
             else {}
         )
+        pulses = pulse_input_float(data.get("pulse_n_pulses", 1))
         return cls(
             display=str(data.get("display", "(Power)^1/2")),
             signal_source=str(data.get("signal_source", "grouped_average")),
@@ -227,7 +228,7 @@ class GroupSpectrumConfig:
             pulse_compensation=bool(data.get("pulse_compensation", False)),
             pulse_half_width_us=pulse_input_float(data.get("pulse_half_width_us", 0.0)),
             pulse_separation_us=pulse_input_float(data.get("pulse_separation_us", 0.0)),
-            pulse_n_pulses=int(data.get("pulse_n_pulses", 1)),
+            pulse_n_pulses=int(pulses) if pulses in (0, 1, 2) else pulses,
             pulse_max_gain=float(data.get("pulse_max_gain", 25.0)),
             baseline_mode=str(data.get("baseline_mode", "none")),
             baseline_kappa=float(data.get("baseline_kappa", 2.0)),
