@@ -1,9 +1,6 @@
-"""Load MusrRoot/LEM ROOT raw histogram data.
+"""Read documented MusrRoot RunHeader/hDecay%03d and LEM folder/hDecay%02d objects.
 
-The supported layout follows the public MusrRoot format:
-MusrRoot files store a ``RunHeader`` plus ``hDecay%03d`` histograms;
-LEM files use ROOT folders and ``hDecay%02d`` histograms. ``uproot`` reads
-these documented objects into the raw ``Run`` model.
+The uproot reader retains their raw histograms in the Run model.
 """
 
 from __future__ import annotations
@@ -641,6 +638,7 @@ class RootLoader(BaseLoader):
         from asymmetry.core.transform.preparation import histogram_observation
 
         return MuonDataset(
+            effective_recipe=quick.effective_recipe,
             histogram_observation=histogram_observation(run),
             ratio_validity=quick.ratio_validity.select(window)
             if quick.ratio_validity is not None

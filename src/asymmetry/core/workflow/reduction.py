@@ -436,6 +436,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         binning=replace(spec, time_range=(settings.t_min, settings.t_max)),
     )
     return MuonDataset(
+        effective_recipe=result.effective_recipe,
         histogram_observation=observation,
         ratio_validity=result.ratio_validity,
         time=result.time,

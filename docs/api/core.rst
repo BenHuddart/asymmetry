@@ -36,6 +36,18 @@ Dataset
    :undoc-members:
    :show-inheritance:
 
+Effective reduction recipe
+--------------------------
+
+``MuonDataset.effective_recipe`` is independent of its transient
+``histogram_observation``. Historical or unsupported curves have no captured raw
+provenance. JSON conversion does not grant replay or covariance reconstruction.
+Source locators are retained in the view and excluded from numerical identity;
+callers publishing the view must choose which locators to disclose.
+
+.. autoclass:: asymmetry.core.data.reduction_recipe.EffectiveReductionRecipe
+   :members: canonical_json, identity, to_dict, from_dict
+
 Logbook
 -------
 

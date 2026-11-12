@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, preparation_recipe
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
 from asymmetry.core.transform.grouping import (
@@ -37,6 +38,7 @@ class QuickAsymmetry:
     t0_time_us: float | None = None
     timing: dict = field(default_factory=dict)
     ratio_validity: RatioValidity | None = None
+    effective_recipe: EffectiveReductionRecipe | None = None
 
     @property
     def file_grouping(self) -> dict:
@@ -172,6 +174,20 @@ def quick_asymmetry(
         common_t0,
         alignment,
         window,
+        effective_recipe=preparation_recipe(
+            observation, grouping, replace(layout, alignment=alignment, window=window), metadata
+        ).with_facts(
+            operation="quick_fb_asymmetry",
+            observable="asymmetry",
+            units="percent",
+            time_units="microsecond",
+            alpha=layout.alpha,
+            beta=1.0,
+            binning={"mode": "fixed", "factor": 1},
+            corrections={"deadtime": "off", "background": "off"},
+            n_points=window.last - window.first + 1,
+            uncertainty={"calibration": "conditional", "counting_noise": "marginal"},
+        ),
         ratio_validity=validity,
         t0_time_us=t0_time_us,
         timing={

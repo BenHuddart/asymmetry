@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.reduction_recipe import field_scan_recipe
 from asymmetry.core.io.frame_exposure import summed_period_exposures
 from asymmetry.core.io.period_counts import sum_period_histograms
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
@@ -90,7 +91,6 @@ _RG_LABEL_INDEX: dict[str, int] = {
     "g": GREEN_INDEX,
     str(PeriodMode.GREEN): GREEN_INDEX,
 }
-
 
 # --- introspection ------------------------------------------------------------
 
@@ -213,6 +213,12 @@ def select_period(
         time, asymmetry, error = reduced[index]
         run = period_run(data.run, index)
         return MuonDataset(
+            effective_recipe=(
+                data.histogram_observation.cached_recipes[index]
+                if data.histogram_observation is not None
+                and data.histogram_observation.cached_recipes
+                else None
+            ),
             ratio_validity=(
                 data.histogram_observation.cached_validities[index]
                 if data.histogram_observation is not None
@@ -797,6 +803,7 @@ def _quick_period_dataset(
     )
     source.grouping.pop("good_window_policy", None)
     return MuonDataset(
+        effective_recipe=quick.effective_recipe,
         histogram_observation=histogram_observation(source, cancel_check=cancel_check),
         ratio_validity=quick.ratio_validity.select(window)
         if quick.ratio_validity is not None
@@ -936,6 +943,13 @@ def build_rf_difference_scan(
     label = "Green − Red" if mode_key == str(PeriodMode.GREEN_MINUS_RED) else "Green + Red"
     return replace(
         scan,
+        effective_recipe=field_scan_recipe(points, order_key, method).with_facts(
+            correlated_pairs=[
+                (positions[id(count_points[a])], positions[id(count_points[b])])
+                for a, b in scan.correlated_pairs
+            ],
+            source_assumption=scan.source_assumption,
+        ),
         x=np.array([p.x for p in points]),
         value=np.array([p.value for p in points]),
         error=np.array([p.error for p in points]),

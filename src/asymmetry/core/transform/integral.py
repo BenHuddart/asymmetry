@@ -54,6 +54,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RatioReason
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, field_scan_recipe
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
@@ -217,6 +218,7 @@ class IntegralReduction:
     error: float
     corrections: CorrectionOutcomes | None
     observation: ScalarObservation
+    effective_recipe: EffectiveReductionRecipe | None = None
 
 
 def integrate_run(
@@ -315,7 +317,11 @@ def reduce_integral_run(
         reference=reference,
     )
     return IntegralReduction(
-        result.value, result.error, result.corrections.get(str(mode)), result.observation
+        result.value,
+        result.error,
+        result.corrections.get(str(mode)),
+        result.observation,
+        result.effective_recipe,
     )
 
 
@@ -328,6 +334,7 @@ class PeriodIntegralReduction:
     corrections: dict[str, CorrectionOutcomes]
     observation: ScalarObservation
     noise: CountingNoise | None = None
+    effective_recipe: EffectiveReductionRecipe | None = None
 
 
 def reduce_period_integral(
@@ -364,7 +371,20 @@ def reduce_period_integral(
                     else None,
                 ).mean(mask)
                 return PeriodIntegralReduction(
-                    result.value, result.error, {}, result.observation, result.noise
+                    result.value,
+                    result.error,
+                    {},
+                    result.observation,
+                    result.noise,
+                    data.effective_recipe.curve_operation(
+                        "time_bin_mean",
+                        t_min=t_min,
+                        t_max=t_max,
+                        units="fraction",
+                        observation=result.observation.to_dict(),
+                    )
+                    if data.effective_recipe is not None
+                    else None,
                 )
             raise ValueError(
                 "Count integral unavailable: reload raw data with verified count preparation; "
@@ -448,6 +468,30 @@ def reduce_period_integral(
         {k: v.corrections for k, v in counts.items()},
         result.observation,
         result.noise,
+        EffectiveReductionRecipe.from_dict(
+            {
+                "version": 1,
+                "operation": "native_count_" + method,
+                "period_mode": str(mode),
+                "observable": "asymmetry",
+                "units": "fraction",
+                "alpha": alpha_used if alpha is None else alpha,
+                "beta": beta_used,
+                "time_range": [t_min, t_max],
+                "periods": {
+                    label: pair.effective_recipe.with_facts(
+                        corrections=pair.corrections.to_dict(),
+                        selected_native_bins=np.flatnonzero(masks[label]).tolist(),
+                    ).to_dict()
+                    for label, pair in counts.items()
+                },
+                "observation": result.observation.to_dict(),
+                "uncertainty": {
+                    "calibration": "conditional",
+                    "counting_noise": "retained" if result.noise is not None else "marginal",
+                },
+            }
+        ),
     )
 
 
@@ -471,6 +515,7 @@ class FieldScanPoint:
     corrections: dict[str, CorrectionOutcomes] = field(default_factory=dict)
     observation: ScalarObservation | None = None
     noise: CountingNoise | None = field(default=None, repr=False)
+    effective_recipe: EffectiveReductionRecipe | None = None
 
 
 @dataclass
@@ -509,6 +554,7 @@ class FieldScan:
     observations: tuple[ScalarObservation | None, ...] = ()
     correlated_pairs: tuple[tuple[int, int], ...] = ()
     source_assumption: str = "Unknown acquisition identity is assumed distinct."
+    effective_recipe: EffectiveReductionRecipe | None = None
 
     def select(self, selection):
         """Crop/reorder parallel observations without losing fit-support facts."""
@@ -517,6 +563,11 @@ class FieldScan:
         positions = {old: new for new, old in enumerate(indices)}
         return replace(
             self,
+            effective_recipe=self.effective_recipe.scan_selection(
+                indices.tolist(), derivative=self.derivative
+            )
+            if self.effective_recipe is not None
+            else None,
             x=self.x[selection],
             value=self.value[selection],
             error=self.error[selection],
@@ -535,6 +586,11 @@ class FieldScan:
 
     @property
     def points(self) -> list[FieldScanPoint]:
+        recipes = (
+            self.effective_recipe.to_dict().get("point_recipes", [])
+            if self.effective_recipe is not None and not self.derivative
+            else []
+        )
         return [
             FieldScanPoint(
                 run_number=self.run_numbers[i],
@@ -542,6 +598,9 @@ class FieldScan:
                 value=float(self.value[i]),
                 error=float(self.error[i]),
                 corrections=self.correction_outcomes.get(self.run_numbers[i], {}),
+                effective_recipe=EffectiveReductionRecipe.from_dict(recipes[i])
+                if recipes and recipes[i] is not None
+                else None,
                 observation=self.observations[i] if self.observations else None,
             )
             for i in range(self.n_points)
@@ -670,11 +729,12 @@ def build_field_scan(
                 corrections=reduced.corrections,
                 observation=reduced.observation,
                 noise=reduced.noise,
+                effective_recipe=reduced.effective_recipe,
             )
         )
 
     points.sort(key=lambda p: (p.x, p.run_number))
-    return FieldScan(
+    scan = FieldScan(
         x=np.array([p.x for p in points], dtype=np.float64),
         value=np.array([p.value for p in points], dtype=np.float64),
         error=np.array([p.error for p in points], dtype=np.float64),
@@ -697,6 +757,12 @@ def build_field_scan(
             > 128 * np.finfo(float).eps * left.error * right.error
         ),
     )
+
+    scan.effective_recipe = field_scan_recipe(points, order_key, method).with_facts(
+        correlated_pairs=scan.correlated_pairs,
+        source_assumption=scan.source_assumption,
+    )
+    return scan
 
 
 def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> FieldScan:
@@ -749,6 +815,14 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
         run_pairs.append(scan.run_numbers[i + 1])
 
     return FieldScan(
+        effective_recipe=scan.effective_recipe.curve_operation(
+            "forward_difference",
+            max_gap=max_gap,
+            output_points=len(mid_x),
+            fit_eligibility="display_export_only",
+        )
+        if scan.effective_recipe is not None
+        else None,
         x=np.array(mid_x, dtype=np.float64),
         value=np.array(deriv, dtype=np.float64),
         error=np.array(deriv_err, dtype=np.float64),

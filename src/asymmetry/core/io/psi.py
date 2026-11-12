@@ -1,8 +1,6 @@
-"""Load PSI BIN/MDU histograms, detector labels, timing markers and monitor logs.
+"""Load PSI BIN/MDU counts, labels, timing, and logs; tests cover native MDU fields.
 
-PSI's public BIN description is at
-https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt.
-Native MDU record fields are covered by synthetic byte-format tests.
+BIN format: https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt.
 """
 
 from __future__ import annotations
@@ -1151,6 +1149,7 @@ class PsiLoader(BaseLoader):
         from asymmetry.core.transform.preparation import histogram_observation
 
         return MuonDataset(
+            effective_recipe=quick.effective_recipe,
             histogram_observation=histogram_observation(run),
             ratio_validity=quick.ratio_validity.select(window)
             if quick.ratio_validity is not None

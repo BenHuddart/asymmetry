@@ -614,7 +614,6 @@ def grouping_balances(
     grouping: dict, *, pair: tuple[int, int] | None = None
 ) -> tuple[float, float]:
     """Resolve the actual pair's balances, retaining the authored base fallback."""
-    from asymmetry.core.instrument import derive_projection_pairs
     from asymmetry.core.transform.projections import projection_alphas
 
     balances = []
@@ -624,25 +623,34 @@ def grouping_balances(
         except (TypeError, ValueError):
             value = 1.0
         balances.append(value if np.isfinite(value) and value > 0.0 else 1.0)
+    labels = selected_projection_labels(grouping, pair=pair)
+    if labels:
+        values = projection_alphas(dict(grouping, alpha=balances[0]))
+        alphas = {values[label] for label in labels}
+        if len(alphas) > 1:
+            raise ValueError("Selected F/B pair requires an unambiguous projection alpha")
+        alpha = alphas.pop()
+        balances[0] = alpha if np.isfinite(alpha) and alpha > 0 else 1.0
+        balances[1] = 1.0
+    return tuple(balances)
+
+
+def selected_projection_labels(
+    grouping: dict, *, pair: tuple[int, int] | None = None
+) -> tuple[str, ...]:
+    """Identify projection authorities by the actual pair, using a matching axis preference."""
+    from asymmetry.core.instrument import derive_projection_pairs
+
     pairs = derive_projection_pairs(
         grouping.get("groups"), grouping.get("group_names"), grouping.get("projections")
     )
-    if pairs:
-        selected = pair or (
-            int(grouping.get("forward_group", 1)),
-            int(grouping.get("backward_group", 2)),
-        )
-        matching = [label for label, candidate in pairs.items() if candidate == selected]
-        values = projection_alphas(dict(grouping, alpha=balances[0]))
-        axis = grouping.get("vector_axis")
-        alphas = {values[axis]} if axis in matching else {values[label] for label in matching}
-        if len(alphas) > 1:
-            raise ValueError("Selected F/B pair requires an unambiguous projection alpha")
-        if alphas:
-            alpha = alphas.pop()
-            balances[0] = alpha if np.isfinite(alpha) and alpha > 0 else 1.0
-            balances[1] = 1.0
-    return tuple(balances)
+    selected = pair or (
+        int(grouping.get("forward_group", 1)),
+        int(grouping.get("backward_group", 2)),
+    )
+    matching = tuple(label for label, candidate in pairs.items() if candidate == selected)
+    axis = grouping.get("vector_axis")
+    return (axis,) if axis in matching else matching
 
 
 def shared_automatic_alpha(grouping, metadata):
@@ -748,6 +756,7 @@ def group_forward_backward(
     grouping: dict,
     *,
     resolved_indices: tuple[list[int], list[int]] | None = None,
+    metadata: dict | None = None,
 ) -> GroupedForwardBackward:
     """Resolve the selected pair's layout, then sum its observed counts."""
     pair = independent_pair_indices(
@@ -760,9 +769,28 @@ def group_forward_backward(
     ]
     if any(group.variance is not None for group in groups):
         groups = [GroupCounts(group.counts, group.independent_variance) for group in groups]
+    from asymmetry.core.data.reduction_recipe import preparation_recipe
+    from asymmetry.core.transform.constituent_counts import AcquiredCounts, ConstituentCounts
+
+    observation = ConstituentCounts(
+        (AcquiredCounts(histograms, grouping, metadata),), histograms, grouping, pair
+    )
+    plain_acquisition = not (
+        grouping.get("period_inputs")
+        or grouping.get("period_histograms")
+        or (metadata or {}).get("combination")
+        or (metadata or {}).get("raw_period_histograms_available") is False
+    )
     return GroupedForwardBackward(
         counts=ForwardBackwardCounts(
-            *groups, layout.t0_time_us, layout.bin_width_us, layout.window, layout.alignment
+            *groups,
+            layout.t0_time_us,
+            layout.bin_width_us,
+            layout.window,
+            layout.alignment,
+            effective_recipe=preparation_recipe(observation, grouping, layout, metadata)
+            if plain_acquisition
+            else None,
         ),
         alpha=layout.alpha,
         beta=layout.beta,
