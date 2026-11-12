@@ -333,16 +333,20 @@ class MuonDataset:
         return replace(self, run=run, histogram_observation=None, counting_noise=None)
 
     def merge_curve_bins(self, factor: int) -> MuonDataset:
-        r"""Merge independent curve bins by averaging values and adding variances.
+        r"""Merge curve bins by averaging values and propagating counting noise.
 
-        This operation reads only the curve arrays. Use counts-first reduction
+        This operation does not re-reduce raw histograms. Use counts-first reduction
         with a BinningSpec when raw histograms are available. The returned
         dataset shares this dataset's Run for provenance; it leaves the source
         arrays untouched. Use :meth:`fit_record` for worker-process transfers.
 
-        The error on the mean is sqrt(sum(error²))/factor, on the input scale.
-        A factor of one copies the arrays, and a trailing partial group is
-        dropped. The factor must be an integer >= 1.
+        Retained counting influences are propagated through the mean, preserving
+        known shared acquisition and background-estimator noise. For independent
+        inputs without retained noise, the error is sqrt(sum(error²))/factor.
+        Unknown correlations cannot be recovered from marginal errors alone.
+        Values and errors keep the input fraction or percent scale; timestamps
+        are averaged. A factor of one copies the arrays, and a trailing partial
+        group is dropped. The factor must be an integer >= 1.
         """
         from asymmetry.core.transform.rebin import merge_curve_bins
 
