@@ -79,6 +79,21 @@ class CountingNoise:
 
     def covariance(self, other: CountingNoise) -> np.ndarray:
         """Same-output-bin covariance from retained source responses."""
+        if self.terms[0].direct.shape[0] == other.terms[0].direct.shape[0] == 1:
+            common = {t.observation for t in self.terms} & {t.observation for t in other.terms}
+            left = self._scalar_responses(common)
+            right = left if other is self else other._scalar_responses(common)
+            covariance = 0.0
+            for source, coefficients in left.items():
+                partner = right[source]
+                if isinstance(coefficients, csr_matrix):
+                    product = coefficients.multiply(partner)
+                    covariance += float((product @ source.variance)[0])
+                elif isinstance(partner, csr_matrix):
+                    covariance += float((partner.multiply(coefficients) @ source.variance)[0])
+                else:
+                    covariance += float(np.dot(coefficients * source.variance, partner))
+            return np.array([covariance])
         return self._contract(other)[0]
 
     def _contract(self, other: CountingNoise) -> tuple[np.ndarray, np.ndarray]:
@@ -108,24 +123,26 @@ class CountingNoise:
                         magnitude += np.abs(contribution)
         return result, magnitude
 
+    def _scalar_responses(self, observations):
+        """Keep direct rows sparse; collapse only a scalar's low-rank estimator terms."""
+        if any(term.direct.shape[0] != 1 for term in self.terms):
+            raise ValueError("Scalar counting contraction requires exactly one output row.")
+        result = {}
+        for term in _sum_influences(t for t in self.terms if t.observation in observations):
+            coefficients = term.direct
+            if term.estimators:
+                coefficients = coefficients.toarray().ravel()
+                for sensitivity, influence in term.estimators:
+                    coefficients += sensitivity[0] * influence
+            result[term.observation] = coefficients
+        return result
+
     @property
     def scalar_error(self) -> float:
         """Contract one output after combining each source's direct/estimated response."""
-        if any(term.direct.shape[0] != 1 for term in self.terms):
+        if self.terms[0].direct.shape[0] != 1:
             raise ValueError("Scalar counting contraction requires exactly one output row.")
-        responses = {}
-        for term in self.terms:
-            coefficients = term.direct.toarray().ravel()
-            for sensitivity, influence in term.estimators:
-                coefficients += sensitivity[0] * influence
-            source = term.observation
-            if source in responses:
-                responses[source] += coefficients
-            else:
-                responses[source] = coefficients
-        variance = sum(
-            np.dot(coefficients**2, source.variance) for source, coefficients in responses.items()
-        )
+        variance = self.covariance(self)[0]
         if not np.isfinite(variance) or variance < 0:
             raise ValueError("Scalar counting responses require finite nonnegative variance.")
         return float(np.sqrt(variance))
@@ -145,20 +162,24 @@ class CountingNoise:
 
 def combine_noise(*items: CountingNoise) -> CountingNoise:
     """Combine coefficients before contracting repeated acquisition observations."""
-    terms = {}
     cohort = items[0].terms[0].observation.cohort
     if any(item.terms[0].observation.cohort is not cohort for item in items):
         raise ValueError("Reduce the transverse projections together as one counting cohort")
-    for item in items:
-        for term in item.terms:
-            source = term.observation
-            if source in terms:
-                previous = terms[source]
-                term = Influence(
-                    source, previous.direct + term.direct, (*previous.estimators, *term.estimators)
-                )
-            terms[source] = term
-    return CountingNoise(tuple(terms.values()))
+    return CountingNoise(_sum_influences(t for item in items for t in item.terms))
+
+
+def _sum_influences(influences):
+    """Add coefficients for each acquired source before evaluating its noise."""
+    terms = {}
+    for term in influences:
+        source = term.observation
+        if source in terms:
+            previous = terms[source]
+            term = Influence(
+                source, previous.direct + term.direct, (*previous.estimators, *term.estimators)
+            )
+        terms[source] = term
+    return tuple(terms.values())
 
 
 def bin_matrix(edges, length, *, mean=False):

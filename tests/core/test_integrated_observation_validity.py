@@ -465,3 +465,36 @@ def test_low_rank_counting_responses_combine_before_scalar_classification(size):
     assert result.value == pytest.approx(float(values.mean()) / 100)
     assert result.error == pytest.approx(np.linalg.norm(response) / 100, rel=1e-7, abs=1e-17)
     assert result.observation.report.used == size
+
+
+def test_near_canceled_shared_scalar_response_keeps_independent_fit_guard():
+    from scipy.sparse import csr_matrix
+
+    from asymmetry.core.fitting.scan_observations import scan_fit_input
+    from asymmetry.core.transform.counting_noise import (
+        CountingNoise,
+        CountingObservation,
+        Influence,
+    )
+    from asymmetry.core.transform.integral import build_field_scan
+
+    source = CountingObservation(np.ones(1), object())
+    noise = CountingNoise(
+        (Influence(source, csr_matrix([[1.0]]), ((np.ones(1), np.array([-1.0 + 1e-10])),)),)
+    )
+    datasets = [
+        MuonDataset(
+            np.array([0.0]),
+            np.array([20.0]),
+            np.array([10.0]),
+            counting_noise=noise,
+            run=Run(i, [], metadata={"field": float(i)}),
+        )
+        for i in (1, 2)
+    ]
+    scan = build_field_scan(datasets, method="differential")
+    assert np.all(scan.error > 0)
+    assert scan.correlated_pairs == ((0, 1),)
+    with pytest.raises(ValueError, match="reuse counting observations"):
+        scan_fit_input(scan)
+    assert scan_fit_input(scan, x_max=1.0).n_points == 1
