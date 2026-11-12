@@ -64,14 +64,13 @@ class RRFCurve:
 
     ``real``/``imag`` are the in-phase and quadrature components with
     per-point standard deviations conditional on independent scalar input
-    errors, propagated through the demodulation and the filter. Neighbouring
-    bins are **correlated** over roughly
-    ``filter_taps`` bins; ``effective_independent_fraction`` (Σh²ₖ of the
-    DC-normalised kernel) is the approximate fraction of output points that
+    errors, propagated through the FIR demodulation and filter (the WiMDA
+    comparison mode retains its linear-error convention). Neighbouring bins
+    are **correlated** over roughly ``filter_taps`` bins;
+    ``effective_independent_fraction`` (Σh²ₖ of the DC-normalised kernel) is the approximate fraction of output points that
     carry independent information. ``real_imag_covariance`` retains their
-    signed same-bin covariance from
-    shared input errors, in squared input-scale units. Unknown input temporal
-    correlations cannot be recovered from marginal errors alone.
+    signed same-bin covariance from shared input errors, in squared input-scale
+    units. Unknown input temporal correlations cannot be recovered from marginal errors alone.
 
     Scale: every value here — ``real``, ``imag``, their errors,
     :attr:`magnitude` and :attr:`magnitude_error` — is **on the same asymmetry
@@ -102,7 +101,7 @@ class RRFCurve:
 
     @property
     def magnitude(self) -> NDArray[np.float64]:
-        """The phase-free envelope |z|; Rician-biased where |z| ≲ σ."""
+        """The phase-free envelope |z|; noise-biased where |z| ≲ σ."""
         return np.hypot(self.real, self.imag)
 
     def _magnitude_error_for(self, mag: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -132,7 +131,7 @@ class RRFCurve:
 
     @property
     def magnitude_error(self) -> NDArray[np.float64]:
-        """First-order error on |z|; unreliable where |z| ≲ σ (Rician bias)."""
+        """First-order error on |z|; unreliable where |z| ≲ σ (magnitude bias)."""
         return self._magnitude_error_for(self.magnitude)
 
     def component(self, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -289,8 +288,8 @@ def rrf_demodulate(
     -------
     RRFCurve
         Complex curve **on the input's asymmetry scale**, with conditional per-point
-        error propagation for independent scalar observations and a validity mask covering filter edges and
-        non-finite holes.  See the class notes on inter-bin correlation and
+        FIR error propagation for independent scalar observations and a validity
+        mask covering filter edges and non-finite holes.  See the class notes on inter-bin correlation and
         scale.
     """
     t = np.asarray(time, dtype=np.float64)

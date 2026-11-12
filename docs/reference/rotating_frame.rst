@@ -46,7 +46,7 @@ windowed-sinc FIR, stopband below −74 dB) removes. What remains is complex:
   between the two components at :math:`\delta\nu`).
 - **Magnitude** — the phase-free envelope :math:`|a(t)|`. Convenient, but
   noise-biased upward where the signal is comparable to its error bars
-  (a Rician distribution), so treat near-zero magnitude qualitatively.
+  (a non-Gaussian magnitude distribution), so treat near-zero magnitude qualitatively.
 
 .. figure:: /_generated/screenshots/scalar_rrf_magnitude.png
    :width: 100%
@@ -115,12 +115,11 @@ the RRF transform is a visualisation tool rather than a fit preprocessor
 [1]_. Quantitative results come from fitting the **raw** data — which the
 fit panel always does, whatever the display shows. For working in
 rotating-frame numbers there, the core provides a frequency-offset fit
-using the raw data with
-the model's precession frequencies offset by :math:`\nu_0`, so the fitted
-frequency reads as the small offset :math:`\delta\nu` while the statistics
-remain those of the laboratory observations. The fitted curve drawn over an RRF display is demodulated
-through the same pipeline as the data, so the overlay always remains
-comparable.
+using the raw data with the model's precession frequencies offset by
+:math:`\nu_0`, so the fitted frequency reads as the small offset :math:`\delta\nu` while the statistics
+remain those of the laboratory observations. The fitted curve drawn over an
+RRF display is demodulated through the same pipeline as the data, so the overlay
+always remains comparable.
 
 A high-field caveat: at fields of several tesla, the geometric phases of
 the individual detectors span the full circle, and an asymmetry built by
