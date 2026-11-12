@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Include shared real/imaginary noise in scalar FIR rotating-frame Magnitude
+  errors, retaining the display filter and laboratory-frame fit inputs.
+
 - Apply squared pulse-response gain to Fourier Power and its errors; omit
   gain-limited bins from spectrum consumers and retain quantity provenance.
 

@@ -171,6 +171,41 @@ class TestTransform:
         ok = np.isfinite(shown.asymmetry)
         np.testing.assert_allclose(shown.asymmetry[ok], envelope[ok], rtol=5e-3, atol=0.05)
 
+    @pytest.mark.parametrize("bandwidth", [None, 100.0])
+    def test_magnitude_dataset_receives_shared_noise_errors(self, panel, bandwidth):
+        from asymmetry.core.transform.rrf import rrf_demodulate_values
+
+        t = np.arange(121) * 0.01
+        a = 12 * np.cos(2 * np.pi * 8.3 * t + 0.6)
+        e = 1 + np.exp(-(((t - 0.6) / 0.025) ** 2))
+        a[60] = np.nan
+        dataset = MuonDataset(time=t, asymmetry=a, error=e)
+        controls = _enable_rrf(panel, frequency_mhz=8.0, component="magnitude")
+        controls._phase_spin.setValue(37.0)
+        controls._bandwidth_spin.setValue(bandwidth or 0.0)
+        shown = rrf_display_dataset(panel, dataset)
+        start, stop, size = shown.metadata["rrf_trim"]
+        assert size == t.size
+        options = controls.demodulation_kwargs()
+        values = rrf_demodulate_values(t, a, **options)
+        direction = (values.real - 1j * values.imag) / np.where(
+            values.magnitude > 0, values.magnitude, 1.0
+        )
+        variance = np.zeros(t.size)
+        for j in range(t.size):
+            impulse = np.zeros(t.size)
+            impulse[j] = 1.0
+            impulse[60] = np.nan
+            response = rrf_demodulate_values(t, impulse, **options)
+            variance += ((direction * (response.real + 1j * response.imag)).real * e[j]) ** 2
+        expected = np.where(values.valid, np.sqrt(variance), np.nan)[start:stop]
+        np.testing.assert_allclose(shown.error, expected, atol=2e-13)
+        np.testing.assert_allclose(shown.time, t[start:stop])
+        overlay = rrf_display_fit_curve(panel, (t, a, "model"), shown)
+        np.testing.assert_allclose(overlay[1][start:stop], shown.asymmetry, equal_nan=True)
+        np.testing.assert_array_equal(dataset.asymmetry, a)
+        np.testing.assert_array_equal(dataset.error, e)
+
     def test_fit_curve_overlay_demodulated_in_step(self, panel):
         dataset = _dataset()
         _enable_rrf(panel)
