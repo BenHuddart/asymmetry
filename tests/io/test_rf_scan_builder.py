@@ -1,18 +1,4 @@
-"""RF-µSR (Green − Red) field-scan builder + resonance fit.
-
-Covers :func:`asymmetry.core.io.periods.build_rf_difference_scan` (the scan
-acquisition that closes the GUI side of parity gap PC1) and
-:func:`asymmetry.core.fitting.field_scan.fit_rf_resonance` (the A_µ/A_p read-out).
-
-Two layers:
-
-* **Synthetic, always-on** — two-period runs whose (Green − Red) curve is a known
-  two-Lorentzian resonance (from the verified ``RFResonanceMuP`` model); the
-  builder must reproduce it and the fit must invert it back to the input
-  couplings. Also exercises ordering, windowing, and exclusion rules.
-* **Corpus-conditional** — the benzene DEVA RF scan (runs 56426–56462), skipped
-  when the WiMDA muon-school corpus is absent. Recovers A_µ ≈ 514.78 MHz.
-"""
+"""RF scan estimators, explicit historical means, and synthetic fit inversion."""
 
 from __future__ import annotations
 
@@ -99,7 +85,7 @@ def _synthetic_runs(fields: np.ndarray) -> list[Run]:
 def test_builder_forms_green_minus_red_value_per_run() -> None:
     """Each scan point is the run's (Green − Red) integral, fractional (÷100)."""
     runs = _synthetic_runs(np.array([700.0, 800.0]))
-    scan = build_rf_difference_scan(runs)
+    scan = build_rf_difference_scan(runs, method="differential")
     assert scan.n_points == 2
     # Fractional convention (build_field_scan-style): value == model% / 100.
     assert scan.value[0] == pytest.approx(_green_red_value(700.0) / 100.0, rel=1e-6)
@@ -110,7 +96,7 @@ def test_builder_orders_by_field_and_excludes_single_period() -> None:
     """Points sort by field ascending; non-two-period runs land in `excluded`."""
     runs = _synthetic_runs(np.array([900.0, 600.0, 750.0]))
     runs.insert(0, _single_period_run(57000, 650.0))
-    scan = build_rf_difference_scan(runs, order_key="field")
+    scan = build_rf_difference_scan(runs, method="differential", order_key="field")
     assert scan.n_points == 3
     assert list(scan.x) == sorted(scan.x)
     assert list(scan.x) == [600.0, 750.0, 900.0]
@@ -120,7 +106,7 @@ def test_builder_orders_by_field_and_excludes_single_period() -> None:
 def test_builder_window_restricts_integration() -> None:
     """A t_min/t_max window outside the curve excludes the run with a reason."""
     runs = _synthetic_runs(np.array([770.0, 860.0]))
-    scan = build_rf_difference_scan(runs, t_min=100.0, t_max=200.0)
+    scan = build_rf_difference_scan(runs, method="differential", t_min=100.0, t_max=200.0)
     assert scan.n_points == 0
     assert len(scan.excluded) == 2
 
@@ -159,7 +145,7 @@ def test_fit_recovers_input_couplings_on_synthetic_scan() -> None:
     benzene *default* seeds on real data is covered by the corpus test below.
     """
     fields = np.arange(560.0, 1081.0, 10.0)
-    scan = build_rf_difference_scan(_synthetic_runs(fields))
+    scan = build_rf_difference_scan(_synthetic_runs(fields), method="differential")
     assert scan.n_points == fields.size
 
     result = fit_rf_resonance(scan, nu_rf=_NU_RF, a_mu=_A_MU_TRUE - 2.0, a_p=_A_P_TRUE - 3.0)
@@ -176,40 +162,34 @@ def test_fit_recovers_input_couplings_on_synthetic_scan() -> None:
 _RF_DIR = corpus_path("Chemistry/Muon spectroscopy of benzene/data/RF resonance")
 
 
-# Loads 37 real HDF4 files + a Migrad fit (~5s alone) — a genuine standard-tier
-# outlier among otherwise-fast unit tests. Flaky under -n auto standard-tier
-# runs (observed 2026-07-13, recurred 2026-07-17): xdist schedules it onto a
-# worker alongside dozens of other tests with no wall-clock margin, and under
-# full-suite contention it has intermittently run past the tier's tight
-# per-test budget. `slow` moves it to the full tier (2 workers, 600s timeout —
-# see tools/harness.py _FULL_TIER_WORKERS/_FULL_TIER_TIMEOUT_S).
-@pytest.mark.slow
 @requires_corpus(_RF_DIR)
-def test_benzene_rf_scan_recovers_paper_couplings() -> None:
-    """End-to-end: load benzene RF runs → Green − Red scan → fit → A_µ ≈ 514.78."""
+def test_benzene_rf_count_integrals_match_workflow() -> None:
+    """Matched raw observations test the changed operation, without fitted truth."""
+    from dataclasses import replace
+
     from asymmetry.core.io import load
+    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.reduction import ReductionSettings
 
     assert _RF_DIR is not None
-    datasets = []
-    for path in sorted(_RF_DIR.glob("*.nxs")):
-        try:
-            loaded = load(str(path))
-        except Exception:  # noqa: BLE001 - a single unreadable file must not abort
-            continue
-        datasets.append(loaded[0] if isinstance(loaded, list) else loaded)
-
-    assert len(datasets) >= 20, "expected the benzene RF field series to load"
-
-    # Early-time window where the resonance contrast is strongest (WiMDA's
-    # time-integral of the period difference).
-    scan = build_rf_difference_scan(datasets, t_min=0.0, t_max=1.0, order_key="field")
-    assert scan.n_points >= 20
-    assert 560.0 <= scan.x.min() and scan.x.max() <= 1100.0
-
-    result = fit_rf_resonance(scan, nu_rf=218.5)
-    assert result.success
-    # Paper (McKenzie 2013, Table 1): A_µ = 514.78(4), A_p = 124.6(14) MHz; the
-    # core model recovers 516.0 / 125.4. Tolerances bracket both.
-    assert result.parameters["A_mu"].value == pytest.approx(514.78, abs=3.0)
-    assert result.parameters["A_p"].value == pytest.approx(124.6, abs=6.0)
-    assert result.reduced_chi_squared < 5.0
+    runs = []
+    for number in (56426, 56435, 56450, 56462):
+        dataset = load(str(_RF_DIR / f"{number}.nxs"))
+        grouping = dict(
+            dataset.run.grouping,
+            alpha=1.0,
+            beta=1.0,
+            deadtime_correction=False,
+            background_correction=False,
+        )
+        grouping.pop("alpha_policy", None)
+        runs.append(replace(dataset.run, grouping=grouping))
+    scan = build_rf_difference_scan(runs, t_min=0, t_max=1)
+    workflow = build_integral_scan(
+        runs, ReductionSettings(period="green_minus_red"), t_min=0, t_max=1
+    )
+    assert scan.n_points == workflow.n_points == 4
+    np.testing.assert_allclose(scan.value, workflow.value, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(scan.error, workflow.error, rtol=1e-12, atol=1e-14)
+    mean = build_rf_difference_scan(runs, method="differential", t_min=0, t_max=1)
+    assert np.any(np.abs(mean.value - scan.value) > 1e-8)

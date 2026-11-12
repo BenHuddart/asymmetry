@@ -212,6 +212,9 @@ def test_integrate_run_reduces_groups():
 def test_integrate_run_accepts_dataset():
     run = _run(np.full(5, 100.0), np.full(5, 50.0))
     dataset = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]), run=run)
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    dataset.histogram_observation = histogram_observation(run)
     value, _ = integrate_run(dataset)
     assert value == pytest.approx(1.0 / 3.0)
 
@@ -275,7 +278,7 @@ def test_integrate_run_requires_groups():
 
 def test_integrate_run_dataset_without_run():
     dataset = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]))
-    with pytest.raises(ValueError, match="no source run"):
+    with pytest.raises(ValueError, match="verified count preparation"):
         integrate_run(dataset)
 
 

@@ -23,11 +23,12 @@ from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
-    _X_LABELS,
     FieldScan,
     FieldScanPoint,
     _excluded_run_number,
     _order_value,
+    _validate_method,
+    build_field_scan,
     integrate_curve,
 )
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
@@ -815,21 +816,6 @@ def _quick_period_dataset(
 _RF_DIFFERENCE_MODES = (str(PeriodMode.GREEN_MINUS_RED), str(PeriodMode.GREEN_PLUS_RED))
 
 
-def _resolve_run_for_rf(item: MuonDataset | Run) -> Run:
-    """Return the :class:`Run` backing a loaded dataset or run.
-
-    Count-backed requests use current preparation; historical differences may
-    still use the stored per-period curves.
-    """
-    if isinstance(item, Run):
-        return item
-    if isinstance(item, MuonDataset):
-        if item.run is None:
-            raise ValueError("MuonDataset has no source run; RF scan needs per-period data.")
-        return item.run
-    raise TypeError(f"Expected a MuonDataset or Run, got {type(item).__name__}")
-
-
 def _red_green_reduced(run: Run) -> tuple[_Curve, _Curve] | None:
     """Return the red and green reduced ``(time, asym, err)`` curves, or ``None``.
 
@@ -852,145 +838,106 @@ def _red_green_reduced(run: Run) -> tuple[_Curve, _Curve] | None:
 
 
 def build_rf_difference_scan(
-    runs: object,
+    runs,
     *,
     t_min: float | None = None,
     t_max: float | None = None,
     mode: PeriodMode | str = PeriodMode.GREEN_MINUS_RED,
     order_key: str = "field",
+    method: str = "integral",
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> FieldScan:
-    """Assemble an RF-µSR period-difference integral-asymmetry field scan.
+    """Build a fractional RF scan using the shared native-count scalar reducer.
 
-    This is the RF-resonance analogue of
-    :func:`asymmetry.core.transform.build_field_scan`. For each run it forms the
-    selected time-domain observation from two acquisition periods, then integrates
-    it over ``[t_min, t_max]``
-    with :func:`asymmetry.core.transform.integrate_curve`, and collects one value
-    per run ordered by *order_key* (the swept static field). The result is the
-    W-shaped double dip that :class:`RFResonanceMuP` fits for ``A_µ`` and ``A_p``
-    when the acquisition conditions identify that RF contrast. Colour labels
-    alone do not identify RF-on/off. G+R pools prepared counts. Curve-only
-    historical differences remain available; pooled reconstruction requires
-    verified count preparation and otherwise records an explicit reload reason.
-
-    Parameters
-    ----------
-    runs
-        Iterable of loaded :class:`MuonDataset` or :class:`Run` objects. Each must
-        be a two-period (red/green) run; single-period runs are skipped and listed
-        in :attr:`FieldScan.excluded`.
-    t_min, t_max
-        Inclusive integration window in µs. ``None`` integrates the whole curve.
-    mode
-        ``GREEN_MINUS_RED`` (default, the RF-µSR observable) or ``GREEN_PLUS_RED``.
-    order_key
-        ``"field"`` (default), ``"temperature"`` or ``"run"`` — the x-axis the
-        points are ordered by.
-
-    Returns
-    -------
-    FieldScan
-        Sorted parallel arrays plus the list of excluded runs. ``value``/``error``
-        are **fractional** (the percent ``period_reduced`` curves divided by 100),
-        matching :func:`build_field_scan`'s convention so the same display/fit
-        path applies.
+    ``integral`` sums corrected native counts before the ratio; G−R subtracts
+    the period ratios and G+R pools prepared counts. ``differential`` explicitly
+    requests the time-bin mean. Historical per-period curves support only that
+    mean for G−R; they cannot reconstruct a count integral or pooled G+R.
+    Dataset inputs require their verified histogram observation for count replay.
+    Bounds are inclusive native sample centres in µs; omitted bounds use good bins.
     """
     mode_key = str(mode)
     if mode_key not in _RF_DIFFERENCE_MODES:
         raise ValueError(f"mode must be PeriodMode.GREEN_MINUS_RED or GREEN_PLUS_RED, got {mode!r}")
+    _validate_method(method)
     if order_key not in ORDER_KEYS:
         raise ValueError(f"order_key must be one of {ORDER_KEYS}, got {order_key!r}")
-
-    points: list[FieldScanPoint] = []
-    excluded: list[tuple[int, str]] = []
-
+    count_inputs = []
+    points = []
+    excluded = []
     for item in runs:
-        try:
-            run = _resolve_run_for_rf(item)
-        except (TypeError, ValueError) as exc:
-            excluded.append((_excluded_run_number(item), str(exc)))
-            continue
-        run_number = int(run.run_number)
-
-        # A retained observation establishes count replay; an attached Run alone
-        # does not establish the provenance of an arbitrary dataset's curve.
-        raw = isinstance(item, Run) or item.histogram_observation is not None
-        if (
-            raw
-            and run.histograms
-            and all(acquired_period_histograms(run.grouping, i) is not None for i in (0, 1))
-        ):
-            from asymmetry.core.io import resolve_background_reference
-            from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
-
-            effective = dict(run.grouping, period_mode=mode_key)
-            reference = (
-                resolve_background_reference(effective.get("background_run"))
-                if effective.get("background_correction")
-                and effective.get("background_mode") == "reference_run"
-                else None
+        if cancel_check is not None:
+            cancel_check()
+        if isinstance(item, Run):
+            run = item
+            raw = bool(item.histograms) and all(
+                acquired_period_histograms(item.grouping, i) is not None for i in (0, 1)
             )
-            result = prepare_histogram_asymmetry(
-                replace(run, grouping=effective),
-                merge=1,
-                facility=None,
-                reference=reference,
-            )
-            time, diff = result.time, result.asymmetry
-            err = result.ratio_validity.mathematical_error(result.error)
+        elif isinstance(item, MuonDataset):
+            observation = item.histogram_observation
+            run = observation.source if observation is not None else item.run
+            raw = observation is not None
         else:
-            if mode_key == str(PeriodMode.GREEN_PLUS_RED):
-                excluded.append(
-                    (
-                        run_number,
-                        "pooled G+R unavailable: reload raw period data with verified count preparation",
-                    )
+            raise TypeError(f"Expected a MuonDataset or Run, got {type(item).__name__}")
+        if run is None:
+            excluded.append((_excluded_run_number(item), "RF scan needs per-period data."))
+            continue
+        number = int(run.run_number)
+        if raw:
+            count_inputs.append(item)
+            continue
+        curves = _red_green_reduced(run)
+        if curves is None:
+            excluded.append((number, "not a two-period (red/green) run"))
+            continue
+        if method != "differential" or mode_key == str(PeriodMode.GREEN_PLUS_RED):
+            excluded.append(
+                (
+                    number,
+                    "Count replay unavailable: reload raw period data with verified "
+                    "count preparation; historical G−R curves support only "
+                    "method='differential' (time-bin mean).",
                 )
-                continue
-            rg = _red_green_reduced(run)
-            if rg is None:
-                excluded.append((run_number, "not a two-period (red/green) run"))
-                continue
-            (red_t, red_a, red_e), (green_t, green_a, green_e) = rg
-            time, diff, err = combine_period_asymmetry(
-                red_t, red_a, red_e, green_t, green_a, green_e, mode_key
             )
-        if time.size == 0:
-            excluded.append((run_number, "red/green spectra do not overlap"))
             continue
-
-        x_value = _order_value(run, order_key)
-        if x_value is None:
-            excluded.append((run_number, f"no {order_key} value"))
+        x = _order_value(run, order_key)
+        if x is None:
+            excluded.append((number, f"no {order_key} value"))
             continue
-
+        time, value, error = combine_period_asymmetry(*curves[0], *curves[1], mode_key)
         try:
-            value, error = integrate_curve(time, diff, err, t_min=t_min, t_max=t_max)
+            value, error = integrate_curve(time, value, error, t_min=t_min, t_max=t_max)
         except ValueError as exc:
-            excluded.append((run_number, str(exc)))
+            excluded.append((number, str(exc)))
             continue
-
-        # period_reduced is percent-scale; divide by 100 to return the fractional
-        # FieldScan convention build_field_scan uses (the ALC display path ×100s).
-        points.append(
-            FieldScanPoint(
-                run_number=run_number,
-                x=x_value,
-                value=float(value) / 100.0,
-                error=float(error) / 100.0,
-            )
-        )
-
+        points.append(FieldScanPoint(number, x, value / 100.0, error / 100.0))
+    scan = build_field_scan(
+        count_inputs,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        order_key=order_key,
+        grouping_ref={"period_mode": mode_key},
+        cancel_check=cancel_check,
+        progress_callback=progress_callback,
+        filter=lambda run: all(
+            acquired_period_histograms(run.grouping, i) is not None for i in (0, 1)
+        ),
+    )
+    points.extend(scan.points)
     points.sort(key=lambda p: (p.x, p.run_number))
     label = "Green − Red" if mode_key == str(PeriodMode.GREEN_MINUS_RED) else "Green + Red"
-    return FieldScan(
-        x=np.array([p.x for p in points], dtype=np.float64),
-        value=np.array([p.value for p in points], dtype=np.float64),
-        error=np.array([p.error for p in points], dtype=np.float64),
+    return replace(
+        scan,
+        x=np.array([p.x for p in points]),
+        value=np.array([p.value for p in points]),
+        error=np.array([p.error for p in points]),
         run_numbers=[p.run_number for p in points],
-        order_key=order_key,
-        method="integral",
-        x_label=_X_LABELS[order_key],
-        y_label=f"Integral asymmetry ({label})",
-        excluded=excluded,
+        excluded=excluded
+        + [
+            (n, "not a two-period (red/green) run" if reason == "excluded by filter" else reason)
+            for n, reason in scan.excluded
+        ],
+        y_label=f"{'Integral asymmetry' if method == 'integral' else 'Time-bin mean'} ({label})",
     )

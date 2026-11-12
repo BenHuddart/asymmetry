@@ -1,0 +1,1 @@
+"""Integral-scan GUI orchestration."""
