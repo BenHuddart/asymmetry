@@ -104,8 +104,8 @@ arrays. G+R is one pooled prepared-count observation with group background once;
 G−R differences separately reduced sets on common native support. Both use
 one explicitly selected α/β. Final ratio usability follows the requested statistic.
 
-``integrate_run`` honours Red, Green, pooled G+R, and independent G−R for both
-existing native-bin estimators. Extracted sets and mapped originals use the same
+``integrate_run`` honours Red, Green, pooled G+R, and G−R with retained
+counting responses for both existing native-bin estimators. Extracted sets and mapped originals use the same
 count preparation; held inspection clocks do not override acquired timing.
 
 This synchronous operation consumes complete selected good-bin support. It does
@@ -137,3 +137,28 @@ period policies, including an implicit acquired-window policy when used.
 
 .. autofunction:: asymmetry.core.transform.rebin.merge_curve_bins
    :no-index:
+
+Integrated observation status
+-----------------------------
+
+:func:`~asymmetry.core.transform.integral.reduce_period_integral` carries a
+``ScalarObservation`` alongside value, mathematical error, and correction
+outcomes. Its ``reason`` uses ``RatioReason``; ``report`` is an
+``ObservationReport`` of the requested scalar or native mean support.
+``reduce_integral_run`` retains the same status. Curve-only means have
+``corrections=None`` (an empty correction map for the period coordinator).
+
+The tuple convenience APIs ``integrate_asymmetry``, ``integrate_curve``, and
+``integrate_run`` return mathematical errors: undefined count ratios give
+``(nan, nan)``, and defined zero-variance ratios retain their value with zero
+error. A mean with no usable observations raises ``ValueError``. Use the typed
+coordinator for omission reports; never assign Gaussian weight to a defined
+value solely because it can be displayed.
+
+``FieldScan.observations`` retains per-point status. ``correlated_pairs`` records
+pairs of point indices with known unsupported nonzero cross-point counting covariance, without serialising
+large sparse response operators. ``FieldScan.select`` preserves these facts
+through crops/reordering. The scan fit adapters apply one usable-observation
+policy before seeding and weighting; legacy inputs retain their recorded
+independent-source assumption. See :doc:`/reference/alc_mode` for the mathematics
+and :doc:`/explanation/comparison` for reference-program qualifications.

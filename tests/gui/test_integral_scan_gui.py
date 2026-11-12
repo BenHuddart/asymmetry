@@ -1259,3 +1259,37 @@ def test_workspace_routes_integral_scan_to_scan_panel(mainwindow: MainWindow):
     assert ws.active_domain() == "time"  # the scan is a time-domain view
     ws.set_active_view("fb_asymmetry")
     assert ws.current_panel() is mw._plot_panel
+
+
+def test_scan_mathematical_status_survives_real_build_and_restore(mainwindow, monkeypatch):
+    from asymmetry.core.data.ratio_validity import RatioReason
+    from asymmetry.core.fitting.field_scan import fit_scan_model
+
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    datasets = [_ds(1, 0.0, 10.0, 100.0), _ds(2, 60.0, 40.0, 200.0), _ds(3, 60.0, 40.0, 300.0)]
+    mw._fit_panel.set_datasets(datasets)
+    mw._on_scan_requested()
+    scan = mw._alc_display_scan("field")
+    assert scan.observations[0].reason == RatioReason.ZERO_VARIANCE
+    assert "1 without Gaussian uncertainty" in mw._alc_scan_view._provenance_label.text()
+    with pytest.warns(UserWarning, match="used 2, omitted 1"):
+        assert fit_scan_model(scan, "Constant").n_points == 2
+    series = mw._project_model.batch(mw._alc_scan_series_id)
+    series.extra["correlated_pairs"] = [[1, 2]]
+    mw._sync_alc_series_extra()
+    saved = series.to_dict()
+    restored = MainWindow()
+    for dataset in datasets:
+        restored._data_browser.add_dataset(dataset)
+    restored._project_model.add_batch(FitSeries.from_dict(saved))
+    restored._restore_alc_scan()
+    scan = restored._alc_display_scan("run")
+    assert scan.observations[0].reason == RatioReason.ZERO_VARIANCE
+    assert scan.correlated_pairs == ((1, 2),)
+    with pytest.warns(UserWarning), pytest.raises(ValueError, match="reuse counting observations"):
+        fit_scan_model(scan, "Constant")
+    restored._alc_excluded_runs.add(3)
+    subset = restored._alc_display_scan("field")
+    with pytest.warns(UserWarning):
+        assert fit_scan_model(subset, "Constant").n_points == 1

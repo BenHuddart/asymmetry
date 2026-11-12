@@ -4459,3 +4459,14 @@ def test_fit_prints_the_spacing_of_separate_lines(
     capsys.readouterr()
     _cli(workflow_folder, fitting_workdir, "fit", "--run", str(SCAN_RUNS[0]), "--recipe", "lines")
     assert "Line spacings: 2.5 − 1 = 1.5 MHz" in capsys.readouterr().out
+
+
+def test_scan_repeats_retain_unavailable_observations_without_significance_claim():
+    from asymmetry.cli.commands.integral_scan import _repeated_points
+
+    undefined = {"run": 1, "x": 100.0, "value": None, "error": None, "observation": {"reason": 1}}
+    usable = {"run": 2, "x": 100.0, "value": 0.2, "error": 0.1, "observation": {"reason": 0}}
+    assert _repeated_points([undefined, usable]) == [(100.0, [undefined, usable], None)]
+    zero = dict(undefined, value=0.2, error=0.0, observation={"reason": 2})
+    assert _repeated_points([zero, usable])[0][2] is None
+    assert _repeated_points([usable, dict(usable, run=3)], [(0, 1)])[0][2] is None

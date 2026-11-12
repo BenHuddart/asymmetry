@@ -69,6 +69,62 @@ and green counts F=[6000, 90], B=[4000, 10], with α=β=1, give a count-integral
 G−R of 0.015841584158415828 fraction, while the explicit time-bin mean is 0.8.
 Native-bin counts determine the integral independently of display bunching.
 
+Counting uncertainty and usable observations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Count integration includes every selected corrected count before classifying
+its aggregate ratio. For example, F=[0, 10] and B=[10, 0] give A=0 with
+standard error 0.223606797749979, although neither native ratio has usable
+first-order variance. A zero aggregate denominator is undefined. A defined
+ratio with zero first-order variance remains inspectable, but carries no
+Gaussian fit weight; no finite placeholder uncertainty is assigned.
+Signed corrected counts with supplied variance remain supported.
+
+The explicit time-bin mean uses only defined ratios with positive retained
+variance. For G−R, the pointwise contrast is classified on the common time
+support before averaging: both ratios must be defined, but a defined
+zero-variance constituent can contribute to a usable contrast. Omissions have
+exclusive undefined-ratio and zero-variance counts. No surviving observations
+makes that requested mean unavailable. Curve-only means use supplied validity
+and counting responses when retained; otherwise they honour the supplied
+finite-error contract and omit explicit zero errors. They do not infer unknown
+correlations or count-correction provenance.
+
+At fixed α and β, the gradients of a count ratio are
+
+.. math::
+
+   \frac{\partial A}{\partial F} =
+   \frac{\alpha(1+\beta)B}{(\beta F+\alpha B)^2},\qquad
+   \frac{\partial A}{\partial B} =
+   -\frac{\alpha(1+\beta)F}{(\beta F+\alpha B)^2}.
+
+These responses act after count summation for an integral and before averaging
+for a mean. Retained responses to the same acquired bins are combined before
+variance contraction, including shared reference subtraction and background
+estimation-window overlap. Equal common-reference responses cancel in G−R;
+unequal responses retain their remaining uncertainty. Errors remain conditional
+on calibration and the selected correction settings. This does not supply a
+general joint covariance or calibration-uncertainty model.
+
+Asymmetry also checks the actual Gaussian fit selection before seeding or
+weighting. It omits unusable scalar observations and reports
+``Gaussian observations: used N, omitted M (undefined ratio U, zero variance Z).``
+Known nonzero covariance between selected scan points prevents only the
+requested independent-error fit. The explanation is
+``Independent-error scan fit unavailable: selected points reuse counting observations with nonzero covariance. Inspect/export the scan or select an independent subset.``
+The scan, export, individual reductions, and independent subsets remain
+available. Unknown source identity retains the recorded assumption
+``Unknown acquisition identity is assumed distinct.`` Distinct acquired periods,
+equal counts, and matching run numbers alone do not establish reuse.
+
+The scan provenance shows ``N without Gaussian uncertainty`` and
+``N omitted observations`` when applicable, with exclusive counts in its tooltip.
+It shows ``Shared counting observations: independent-error fit unavailable``
+for a dependent selection. These facts survive axis changes, exclusions, and
+project reload. Stored historical results keep their values and estimator
+identity without inferred mathematical status or source sharing.
+
 Each value is plotted against the run's swept variable to form the scan. A
 resonance shifts the time-averaged asymmetry, so it shows up directly as a
 feature in :math:`A` versus field. The **dA/dB** view (see below) plots the
@@ -545,9 +601,10 @@ when that is the measured RF observable.
 
 The lower-level route — reducing each period separately with
 :func:`~asymmetry.core.io.periods.select_period` and subtracting two
-``build_field_scan`` results — is still available when you need the individual
-red and green scans; ``build_rf_difference_scan`` is the one-call equivalent for
-the difference observable.
+``build_field_scan`` results — provides the individual red and green values.
+Use ``build_rf_difference_scan`` for the combined observable with supported
+shared-reference propagation; marginal errors of separately stored scans cannot
+recover unknown covariance.
 
 When the periods appear as *separate runs or datasets* in the series (rather
 than periods of one file), ``filter`` selects one directly — for example

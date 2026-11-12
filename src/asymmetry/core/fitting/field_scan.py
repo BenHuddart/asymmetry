@@ -46,6 +46,7 @@ from asymmetry.core.fitting.parameter_models import (
     suggest_model_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.scan_observations import scan_fit_input, scan_fit_selection
 from asymmetry.core.transform import FieldScan
 
 __all__ = [
@@ -136,6 +137,7 @@ def fit_scan_model(
     :func:`~asymmetry.core.fitting.parameter_models.fit_parameter_model`'s
     multi-start, which also tries the scan's own data seed.
     """
+    scan = scan_fit_input(scan, x_min=x_min, x_max=x_max)
     composite = as_composite_model(model)
     if parameters is not None and initial is not None:
         raise ValueError("Pass either `parameters` or `initial`, not both.")
@@ -170,6 +172,7 @@ def rf_resonance_seeds(
     in :func:`~asymmetry.core.fitting.parameter_models.suggest_model_seeds`, so
     the GUI's RF fit and a scripted one start from the same place.
     """
+    scan = scan_fit_input(scan)
     composite = as_composite_model(RF_RESONANCE_COMPONENT)
     known = {"A_mu": float(a_mu), "A_p": float(a_p), "nu_RF": float(nu_rf)}
     return {
@@ -199,6 +202,7 @@ def fit_rf_resonance(
     position) and ``A_p`` (dip splitting) are the couplings read off the result —
     **check ``result.success`` first**. Seeds come from :func:`rf_resonance_seeds`.
     """
+    scan = scan_fit_input(scan, x_min=x_min, x_max=x_max)
     composite = as_composite_model(RF_RESONANCE_COMPONENT)
     seeds = rf_resonance_seeds(scan, nu_rf=nu_rf, a_mu=a_mu, a_p=a_p)
     parameters = ParameterSet()
@@ -238,12 +242,7 @@ class ScanBaselineResult:
         mask = np.zeros(self.scan.x.size, dtype=bool)
         for lo, hi in self.regions:
             mask |= (self.scan.x >= lo) & (self.scan.x <= hi)
-        return (
-            mask
-            & np.isfinite(self.scan.value)
-            & np.isfinite(self.scan.error)
-            & (self.scan.error > 0)
-        )
+        return scan_fit_selection(self.scan, mask, report=False)
 
     @property
     def n_points(self) -> int:
@@ -265,7 +264,8 @@ class ScanBaselineResult:
 
     @property
     def corrected_covariance(self) -> NDArray[np.float64]:
-        residual = self.correction_operator * self.scan.error
+        errors = np.where(np.isfinite(self.scan.error), self.scan.error, 0.0)
+        residual = self.correction_operator * errors
         return residual @ residual.T
 
     @property
@@ -317,18 +317,10 @@ def fit_scan_peaks(
     1985), the covariance adds the baseline correction to the conditional
     Minuit covariance. The fixed-baseline limit preserves that covariance.
     """
-    scan = baseline.scan
-    if not (
-        np.all(np.isfinite(scan.x))
-        and np.all(np.isfinite(scan.value))
-        and np.all(np.isfinite(scan.error))
-        and np.all(scan.error > 0)
-    ):
-        raise ValueError(
-            "Peak propagation requires finite observations and positive source errors."
-        )
+    selected = scan_fit_selection(baseline.scan)
+    scan = baseline.scan.select(selected)
     composite = as_composite_model(model)
-    corrected = replace(scan, value=scan.value - baseline.baseline)
+    corrected = replace(scan, value=scan.value - baseline.baseline[selected])
     fit = fit_scan_model(
         corrected, composite, parameters=parameters, initial=initial, extra_starts=extra_starts
     )
@@ -346,7 +338,7 @@ def fit_scan_peaks(
         raise ValueError("Peak Jacobian must have full column rank.")
     influence = np.linalg.solve(normalised.T @ normalised, normalised.T)
     influence = influence / scales[:, None] / errors
-    corrected_covariance = baseline.corrected_covariance
+    corrected_covariance = baseline.corrected_covariance[np.ix_(selected, selected)]
     covariance = (
         conditional + influence @ (corrected_covariance - np.diag(scan.error**2)) @ influence.T
     )
@@ -407,11 +399,7 @@ def fit_scan_baseline(
     in_region = np.zeros(x.size, dtype=bool)
     for lo, hi in clean_regions:
         in_region |= (x >= lo) & (x <= hi)
-    # Count only the points the fitter will actually use — in a region AND
-    # usable (finite value, positive error). fit_parameter_model re-masks on the
-    # same criteria, so counting here keeps the underdetermined guard sound and
-    # keeps the fit off its empty-input failure path.
-    mask = in_region & np.isfinite(value) & np.isfinite(error) & (error > 0.0)
+    mask = scan_fit_selection(scan, in_region)
 
     n_sel = int(np.count_nonzero(mask))
     if n_sel == 0:

@@ -193,3 +193,43 @@ def test_benzene_rf_count_integrals_match_workflow() -> None:
     np.testing.assert_allclose(scan.error, workflow.error, rtol=1e-12, atol=1e-14)
     mean = build_rf_difference_scan(runs, method="differential", t_min=0, t_max=1)
     assert np.any(np.abs(mean.value - scan.value) > 1e-8)
+
+
+def test_mixed_historical_and_count_rf_points_keep_reports_and_pair_positions():
+    from dataclasses import replace
+
+    from asymmetry.core.fitting.scan_observations import scan_fit_input
+    from asymmetry.core.transform.preparation import histogram_observation
+    from tests.core.test_integrated_observation_validity import shared_reference_run
+
+    historical = _two_period_run(10, 100.0, green_minus_red=0.0)
+    time = np.array([0.0, 1.0])
+    historical.grouping["period_reduced"] = [
+        (time, np.zeros(2), np.zeros(2)),
+        (time, np.array([20.0, 80.0]), np.array([10.0, 0.0])),
+    ]
+    run, reference = shared_reference_run(green=(700.0, 350.0))
+    datasets = []
+    for number, field in ((20, 200.0), (30, 300.0)):
+        source = replace(
+            run, run_number=number, source_file=f"sample-{number}.nxs", metadata={"field": field}
+        )
+        datasets.append(
+            MuonDataset(
+                np.array([]),
+                np.array([]),
+                np.array([]),
+                run=source,
+                histogram_observation=histogram_observation(source, reference=reference),
+            )
+        )
+    scan = build_rf_difference_scan([datasets[1], historical, datasets[0]], method="differential")
+    assert scan.run_numbers == [10, 20, 30]
+    assert scan.value[0] == pytest.approx(0.2)
+    assert scan.error[0] == pytest.approx(0.1)
+    assert len(scan.observations) == 3
+    assert scan.observations[0].report.zero_variance == 1
+    assert scan.correlated_pairs == ((1, 2),)
+    with pytest.raises(ValueError, match="reuse counting observations"):
+        scan_fit_input(scan)
+    assert scan_fit_input(scan, x_max=200.0).n_points == 2

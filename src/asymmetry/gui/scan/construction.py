@@ -207,8 +207,12 @@ class ScanController(QObject):
                     label: record.to_dict()
                     for label, record in scan.correction_outcomes.get(run_number, {}).items()
                 },
+                scan.observations[index].to_dict() if scan.observations else None,
+                index,
             )
-            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+            for index, (run_number, value, error) in enumerate(
+                zip(scan.run_numbers, scan.value, scan.error)
+            )
         ]
 
         # FitSeries stores scan values in percent; native integrals are fractions.
@@ -216,6 +220,8 @@ class ScanController(QObject):
         results_by_run = {
             int(run_number): {
                 "success": True,
+                "scan_index": index,
+                "observation": scan.observations[index].to_dict() if scan.observations else None,
                 "correction_outcomes": {
                     label: record.to_dict()
                     for label, record in scan.correction_outcomes.get(run_number, {}).items()
@@ -225,7 +231,9 @@ class ScanController(QObject):
                 "chi_squared": 0.0,
                 "reduced_chi_squared": 0.0,
             }
-            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+            for index, (run_number, value, error) in enumerate(
+                zip(scan.run_numbers, scan.value, scan.error)
+            )
         }
         scan_kind = "RF scan" if rf_mode else "Integral scan"
         series = FitSeries(
@@ -236,7 +244,11 @@ class ScanController(QObject):
             order_key="run",  # built/sorted by run; the view picks the display axis
             canonical_model=None,
             param_roles={},
-            extra={"estimator": scan.method, "time_window_us": [t_min, t_max]},
+            extra={
+                "estimator": scan.method,
+                "time_window_us": [t_min, t_max],
+                "correlated_pairs": [list(pair) for pair in scan.correlated_pairs],
+            },
             results_by_run=results_by_run,
         )
         window._next_scan_index += 1

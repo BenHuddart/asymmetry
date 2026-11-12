@@ -16,7 +16,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 37
+CURRENT_SCHEMA_VERSION: int = 38
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -169,6 +169,11 @@ def migrate_to_current(data: dict) -> dict:
         from asymmetry.core.project.scan_migration import migrate_scan_identity
 
         migrated = migrate_scan_identity(migrated) | {"schema_version": 37}
+        version = 37
+    if version == 37:
+        from asymmetry.core.project.scan_migration import migrate_scan_observations
+
+        migrated = migrate_scan_observations(migrated) | {"schema_version": 38}
     return migrated
 
 

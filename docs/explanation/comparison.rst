@@ -1430,8 +1430,8 @@ and native bins at the same tolerance. ADDRUN's edge and normaliser conventions
 are not adopted. Asymmetry records fractional residuals without interpolation
 and also checks common observed support and compatible native widths. One
 shared explicit α/β belongs to the comparison; there is no implicit separate
-calibration for each condition. Full cross-period/reference covariance remains
-outside the marginal, conditional error contract.
+calibration for each condition. General cross-period/reference likelihoods remain outside the conditional
+error contract; integrated scalars retain supported shared counting responses.
 
 For G+R, group-background subtraction acts once on the pooled observation;
 Manual levels retain their requested-observation count units. Automatic reference
@@ -1448,6 +1448,38 @@ transverse baselines agree for pooled G+R rotation, removing the common pair
 once. Unequal baselines make that rotation unavailable; Lab G+R and rotating
 Red, Green, and G−R remain available. This is an Asymmetry safeguard. See
 :doc:`/reference/rotating_frame_projection`.
+
+Integrated counting responses and fit support
+---------------------------------------------
+
+Asymmetry's count integral sums all selected native counts before classifying
+the ratio. Its explicit time-bin mean adopts the ordinary usable-ratio policy,
+with exclusive omission counts. Undefined ratios and defined zero-variance
+results have no Gaussian weight. Supported signed observations are retained.
+The first-order gradients and conditional calibration convention are described
+in :doc:`/reference/alc_mode` and :ref:`asymmetry-counting-errors`.
+
+A reused reference contributes one set of counting observations. Its signed
+responses are combined before contraction, including within a scalar G−R.
+For independent equal sample periods, each four bins F=600/B=400, subtracting
+one reference of four bins F=60/B=40 at unity scale gives G−R=0 and standard
+error 0.024343224778007384. This independently derived linear-propagation
+control follows from cancellation of the identical reference responses; it is
+not a native-program comparison. Unequal responses do not cancel in general.
+
+Asymmetry also checks whether the requested independent-error fit reuses known
+counting observations with nonzero cross-point covariance. That fit is
+unavailable, while inspection, export, and independent subsets remain available.
+Unknown identity retains an explicit distinct-observation assumption. This is
+a bounded safeguard, not a general joint likelihood or calibration covariance.
+
+WiMDA 1.326's dedicated ALC-column route and Mantid's ``AsymmetryCalc`` have
+different error and sparse-count conventions. The checked musrfit 1.12.1
+(708f777b, ROOT 6.40.04) positive-count packing comparison concerns 22 interior
+points per case within 5×10⁻⁷ export tolerance; first/endpoints remain qualified.
+These workflows do not establish a common reused-observation covariance
+contract. No fresh native WiMDA ALC/RF replay or full Mantid execution is claimed,
+and the analytic shared-reference control does not extend their agreement.
 
 Shared counting noise in vector rotation
 ----------------------------------------
