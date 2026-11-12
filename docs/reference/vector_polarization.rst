@@ -174,6 +174,8 @@ internally consistent (each octant selection matches the geometric
 half-plane of the layout's own detector angles) but is not itself a
 published EMU convention.
 
+.. _vector-geometry-assumptions:
+
 Assumptions and limitations
 ---------------------------
 

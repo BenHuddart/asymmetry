@@ -1,10 +1,9 @@
 """Calibrated FFT amplitude scale + unit-area field-distribution view.
 
-The calibrated scale puts the grouped FFT on a fractional-asymmetry footing in
-percent: a pure cosine of amplitude ``A`` peaks at ``100·A``, invariant to
-counting statistics, window length, apodisation, and zero padding.  Each
-invariant is pinned here.  The unit-area display normalisation presents a
-magnitude spectrum as a field distribution ``p(ν)`` with ``∫ p dν = 1``.
+The isolated on-grid mid-band controls recover a fractional cosine amplitude
+in percent when the level is known. Finite-record controls retain leakage and
+sampling effects: the window-sum correction does not calibrate arbitrary peaks.
+Unit-area display normalisation enforces its numerical integral by construction.
 """
 
 from __future__ import annotations
@@ -101,6 +100,41 @@ def test_invariant_to_apodisation_filter(window: str) -> None:
     # gain correction recovers the amplitude for an unrelaxed line.
     peak = _calibrated_peak(_cosine_dataset(), window=window, filter_time_constant_us=1000.0)
     assert peak == pytest.approx(_EXPECT, abs=0.1)
+
+
+@pytest.mark.parametrize("phase", [0.0, 0.6457718232379019])
+def test_off_grid_sampled_peak_changes_with_padding(phase: float) -> None:
+    """A half-bin tone has a larger sampled maximum when its grid is refined."""
+    n = 128
+    time = np.arange(n) * 0.01
+    frequency = 13.5 / (n * 0.01)
+    signal = _A * np.cos(2 * np.pi * frequency * time + phase)
+    dataset = MuonDataset(time=time, asymmetry=signal, error=np.ones(n))
+    peaks = []
+    for padding in (1, 4):
+        frequencies, spectrum = fft_complex_asymmetry(
+            dataset,
+            padding_factor=padding,
+            subtract_average_signal=False,
+            amplitude_calibration=True,
+        )
+        # Direct finite-record Fourier projection is independent of the FFT.
+        expected = np.array([sum(signal * np.exp(-2j * np.pi * f * time)) for f in frequencies]) * (
+            200 / n
+        )
+        np.testing.assert_allclose(spectrum, expected, atol=2e-13, rtol=2e-13)
+        peaks.append(np.max(np.abs(spectrum)))
+    assert peaks[1] > 1.4 * peaks[0]
+
+
+def test_nyquist_cosine_is_outside_isolated_line_amplitude_convention() -> None:
+    """The unchanged factor of two also multiplies a self-conjugate endpoint."""
+    time = np.arange(64) * 0.01
+    dataset = MuonDataset(time=time, asymmetry=_A * (-1.0) ** np.arange(64), error=np.ones(64))
+    _, spectrum = fft_complex_asymmetry(
+        dataset, amplitude_calibration=True, subtract_average_signal=False
+    )
+    assert spectrum[-1].real == pytest.approx(200 * _A, abs=1e-12)
 
 
 def _cosine_run(*, n0_fwd: float, n0_bwd: float, amplitude: float = _A) -> Run:

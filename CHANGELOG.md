@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify finite-window Fourier amplitude limits, operation-specific normalisation
+  and phase conventions, and the distinct spectral and rotating-frame workflows.
+
 - Include shared real/imaginary noise in scalar FIR rotating-frame Magnitude
   errors, retaining the display filter and laboratory-frame fit inputs.
 
