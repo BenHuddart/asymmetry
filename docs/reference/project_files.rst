@@ -61,7 +61,9 @@ refuses to silently accept a file written by a future schema it does
 not understand. The format is therefore directly diffable in version
 control, which is the main practical difference from musrfit's
 hand-editable ``.msr`` text format
-and from Mantid's binary HDF5 ``.mantid`` files.
+whereas Mantid Workbench uses a ``.mantidproj`` project description referencing
+saved NeXus workspaces (`Mantid Project documentation
+<https://docs.mantidproject.org/v5.1.1/concepts/Project.html>`_).
 
 Reference-background requests persist their declared source acquisition and
 acquired period through grouping overrides and profiles. Released declarations
@@ -339,8 +341,9 @@ run has recorded onto it: ``joint_fit_id`` (the owning record's id, or
 parameter name: shared name}``, empty when unstamped). Both are display
 state read by the Parameters panel and the joint-fit window, never part of
 what the series *is* — ``FitSeries.recipe_identity()`` ignores them, so
-re-running a series' recipe unchanged still replaces the same entry in
-place. A solo Batch-tab run of a stamped series always clears both fields,
+automatic replacement also requires known matching member observations. Changed
+or unknown inputs retain separate histories. A solo Batch-tab run of a stamped
+series clears both fields,
 which is what makes staleness (see :ref:`joint-fit-staleness-and-detaching`
 in :doc:`joint_fit`) computable from live project state rather than stored.
 
@@ -380,11 +383,8 @@ file) opens the newest. Each fit is a *FitSlot* holding a Single-tab fit alone:
     ``{"min", "max"}`` in the domain's unit, with ``null`` for an open side
     (a frequency fit over the whole spectrum).
 
-Up to schema v24 a representation held one slot, ``fit``, plus one per
-projection in ``projection_fits``, and each Fit overwrote it.
-``_migrate_v24_to_v25`` makes each non-empty slot the only, open fit of its
-projection's set. A migrated fit has ``fit_range: null`` — its window was not
-recorded — so the Compare window lists it without ranking it.
+A saved fit without captured observation attribution remains inspectable but
+does not enter a verified same-data ranking. A missing window remains unknown.
 
 A slot no longer carries ``batch_id``, ``diverged`` or ``include_in_trend``:
 per-run state cannot diverge when it only ever holds one fit, and trend
@@ -949,3 +949,32 @@ Off. Loading never refits; an explicit replay uses the captured request and
 selected envelope on the source acquisition. Applying alpha/beta transfers the
 frozen record and coefficients, preserving the target's t0, good bounds, count
 arrays, ordinary-fit response, and Fourier settings.
+
+
+Effective result history
+------------------------
+
+Projects retain captured effective recipes with representation results and each
+fitted-input summary, including separate projection and series-member histories.
+A recipe describes resolved grouping, timing, calibration, corrections, binning,
+and units; it does not contain raw observations or covariance operators. Ordinary
+and combined time results are recomputed from their saved source/settings requests
+on open. Their fresh recipe is kept separate from the saved historical account;
+saved fit parameters and recipes are never relabelled as a verified replay.
+
+Scan-series percent values carry percent recipes with their native fractional
+recipe as the captured input. Restoring the internal fractional view uses that
+recorded input; it does not infer a recipe from current controls.
+
+Absent historical recipes and observation digests remain unknown. Frozen
+calibration references remain frozen, including the distinction between a saved
+pending preview and committed calibration history. Ordinary point errors stay
+conditional on calibration and fixed correction assumptions. Derivative scans
+remain for display/export, and known dependent scans retain their fit restrictions.
+
+Asymmetry also checks actual sampled coordinates, values, errors, usable support,
+and recorded interpretation before pooling saved-fit rankings or drawing current
+residuals. Matching run labels, point counts, or recipe identities are insufficient.
+Unknown or different histories remain inspectable without a verified same-data
+ranking. An observation digest does not verify external acquisition files or
+scientific-computation compatibility.

@@ -64,8 +64,10 @@ The small recipe is separate from the transient histogram replay snapshot. A
 historical curve without captured provenance keeps an unknown recipe; a transform
 of unknown inputs records those inputs as unknown. A recipe alone cannot recreate
 raw counts, prove the identity of an acquisition file, or establish that a saved
-result is compatible with current computation. Work-directory, project, and export
-round-trips do not retain this complete in-memory record. The uncorrected
+result is compatible with current computation. Work-directory and scan codecs
+retain captured recipes; projects retain result and fitted-input history without
+restoring raw replay from that history. Publishable recipe fields omit nested local
+locators and diagnostic prose. The uncorrected
 ``TimeFBAsymmetry`` representation records its actual fractional ratio without
 applying grouping correction switches. Its held-period or combined inspection
 inputs remain unsupported recipe cases because that raw operation does not

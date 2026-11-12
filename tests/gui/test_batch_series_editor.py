@@ -77,9 +77,15 @@ def _dataset(run_number: int, field: float = 100.0) -> MuonDataset:
     )
 
 
-def _result(value: float = 0.2) -> FitResult:
+def _result(value: float = 0.2, dataset=None) -> FitResult:
+    from asymmetry.core.fitting.input_attribution import fit_input_attribution
+    from asymmetry.core.fitting.likelihood import dataset_observations
+
     return FitResult(
         objective=Objective.GAUSSIAN,
+        input_attribution=fit_input_attribution(dataset_observations(dataset), dataset)
+        if dataset is not None
+        else None,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=0.5,
@@ -112,7 +118,10 @@ def _set_range(mw: MainWindow, low: float, high: float) -> None:
 def _run(mw: MainWindow, runs: list[int], value: float = 0.2) -> str:
     mw._fit_panel.replace_member_datasets([mw._data_browser.get_dataset(run) for run in runs], {})
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
-    mw._on_global_fit_completed({run: (_result(value), _CURVE, []) for run in runs}, ParameterSet())
+    mw._on_global_fit_completed(
+        {run: (_result(value, mw._data_browser.get_dataset(run)), _CURVE, []) for run in runs},
+        ParameterSet(),
+    )
     return mw._fit_panel.open_series_id()
 
 

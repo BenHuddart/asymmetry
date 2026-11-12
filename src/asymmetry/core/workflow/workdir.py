@@ -61,6 +61,7 @@ import numpy as np
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
@@ -308,6 +309,7 @@ class ReducedEntry:
     forward_group: int
     backward_group: int
     members: list[int]
+    effective_recipe: EffectiveReductionRecipe | None = None
 
     @property
     def source_runs(self) -> list[int]:
@@ -330,12 +332,18 @@ class ReducedEntry:
             "forward_group": self.forward_group,
             "backward_group": self.backward_group,
             "members": list(self.members),
+            "effective_recipe": self.effective_recipe.to_dict()
+            if self.effective_recipe is not None
+            else None,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ReducedEntry:
         """Reconstruct an entry from :meth:`to_dict` output."""
         return cls(
+            effective_recipe=EffectiveReductionRecipe.from_dict(data["effective_recipe"])
+            if data.get("effective_recipe") is not None
+            else None,
             run_number=int(data["run_number"]),
             digest=str(data["digest"]),
             source_file=str(data["source_file"]),
@@ -544,6 +552,9 @@ class WorkDir:
             error=np.asarray(dataset.error, dtype=np.float64),
         )
         record = entry.to_dict()
+        record["effective_recipe"] = (
+            dataset.effective_recipe.to_dict() if dataset.effective_recipe is not None else None
+        )
         if "correction_outcomes" in dataset.metadata:
             record["run"] = dict(
                 record["run"], correction_outcomes=dataset.metadata["correction_outcomes"]
@@ -586,6 +597,7 @@ class WorkDir:
                 asymmetry=arrays["asymmetry"],
                 error=arrays["error"],
                 metadata=dict(stored.run),
+                effective_recipe=stored.effective_recipe,
             )
 
     def is_current(self, run_number: int, digest: str) -> bool:

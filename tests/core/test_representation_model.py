@@ -383,6 +383,7 @@ def _fitted(
             "uncertainties": {"A": 0.01},
             "npar": npar,
             "ndof": ndof,
+            "input_attribution": {"identity": str(window), "n": npar + ndof},
         },
         provenance="single",
         fit_range={"min": window[0], "max": window[1]},
@@ -516,10 +517,10 @@ def test_a_saved_set_naming_no_open_fit_opens_the_newest():
     assert SingleFitSet.from_dict(data).open_id == "fit-2"
 
 
-def test_data_key_is_the_window_and_the_point_count():
-    assert _fitted(npar=3, ndof=97).data_key() == (0.1, 8.0, 100)
+def test_data_key_requires_captured_observations_and_retains_effective_sample_count():
+    assert _fitted(npar=3, ndof=97).data_key() == (str((0.1, 8.0)), 100)
     pre_v25 = _fitted()
-    pre_v25.fit_range = None
+    pre_v25.result.pop("input_attribution")
     assert pre_v25.data_key() is None
 
 

@@ -13,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import (
     FitInputError,
     GaussianObservations,
@@ -1304,10 +1305,7 @@ def _pack_coupled_block(
     """Turn one block's columns of a solved coupled problem into per-run results.
 
     Returns ``(results by run number, that block's fitted globals, their 1σ)``.
-    Every index goes through :attr:`_CoupledGlobalProblem.block_global_columns`
-    rather than through a name lookup, because a joint problem qualifies its
-    column names per block while a global fit leaves them bare — the indices are
-    the one spelling both agree on.
+    Column indices use the block-qualified mapping for both joint and global fits.
     """
 
     minimum_expected_count = None
@@ -1326,9 +1324,6 @@ def _pack_coupled_block(
             return None
         return minos_raw.get(problem.param_names[column])
 
-    # Extract this block's fitted globals. A name with no column is fixed on
-    # every dataset of the block; its value can only come from the block's own
-    # first set.
     fitted_global = ParameterSet()
     global_uncertainties: dict[str, float] = {}
     for pname in block.global_params:
@@ -1357,8 +1352,6 @@ def _pack_coupled_block(
 
         result_params = ParameterSet()
         uncertainties: dict[str, float] = {}
-        # MINOS intervals are keyed in the coupled problem by column name; map
-        # them back to the plain per-dataset parameter name.
         minos_errors: dict[str, tuple[float, float]] = {}
 
         # Add global parameters. This dataset's own copy wins when it pins
@@ -1476,6 +1469,9 @@ def _pack_coupled_block(
             else None
         )
         results[ds.run_number] = FitResult(
+            input_attribution=fit_input_attribution(
+                record, ds, window=(block.t_min, block.t_max), error_oversampling=error_oversampling
+            ),
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=solution.success and invalid_model is None,
             minimum_expected_count=minimum_expected_count,
@@ -1654,6 +1650,7 @@ class FitEngine:
             migrad_kwargs=migrad_kwargs,
             error_oversampling=error_oversampling,
             field_source=dataset,
+            input_window=(t_min, t_max),
         )
 
     def fit_arrays(
@@ -1744,10 +1741,14 @@ class FitEngine:
         migrad_kwargs: dict | None,
         error_oversampling: float,
         field_source: MuonDataset | None,
+        input_window=None,
     ) -> FitResult:
-        """Minimize checked observations, retaining field advisories and correction provenance."""
+        """Minimize checked observations and retain their attribution."""
         cost_factory = (
             GAUSSIAN_COST if isinstance(observations, GaussianObservations) else POISSON_COST
+        )
+        attribution = fit_input_attribution(
+            observations, field_source, window=input_window, error_oversampling=error_oversampling
         )
         time = observations.time
         if isinstance(observations, GaussianObservations):
@@ -1783,7 +1784,6 @@ class FitEngine:
                 message=f"iminuit import error: {error_msg}\nInstall it with: pip install iminuit",
             )
 
-        # Prepare parameter names, values, and constraints
         free = parameters.free_parameters
         if (
             isinstance(observations, GaussianObservations)
@@ -1799,20 +1799,11 @@ class FitEngine:
                 + observations.report.summary(),
             )
         fixed_kw = {p.name: p.value for p in parameters if p.fixed}
-        # Equality link groups: each follower takes its group main's value, so
-        # it drops out of the free-fit set (WiMDA "Ties").
         followers = parameters.link_followers()
-        # Affine ties: each follower is a linear map of other parameters
-        # (offset / equal-spacing constraints; a deliberate capability beyond
-        # WiMDA's equality links). Evaluated after link followers so a tie may
-        # reference a link-resolved value; tie references must themselves be
-        # free/fixed/link parameters (no tie-to-tie chaining).
+        # Equality links resolve before affine ties; tie references cannot chain.
         ties = parameters.tie_followers()
         _validate_tie_references(parameters, ties)
-        # A tie may add a free *auxiliary* parameter (e.g. the half-splitting
-        # ``delta``) that the model never consumes; strip such extras before
-        # calling an explicit-signature model. Only computed when ties exist, so
-        # the common no-tie path stays byte-identical (no filtering).
+        # Auxiliary tie parameters are not model arguments.
         accepted_kwargs = _model_kwarg_names(model_fn) if ties else None
 
         def _call_model(t, kw):
@@ -1820,7 +1811,6 @@ class FitEngine:
                 return model_fn(t, **kw)
             return model_fn(t, **{k: v for k, v in kw.items() if k in accepted_kwargs})
 
-        # Create model wrapper that accepts free parameters
         param_names = [p.name for p in free]
         cancel_guard = _make_cancel_guard(cancel_callback)
 
@@ -2066,6 +2056,7 @@ class FitEngine:
             else None
         )
         return FitResult(
+            input_attribution=attribution,
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=m.valid and invalid_model is None,
             minimum_expected_count=float(np.min(fitted_values))
@@ -2365,6 +2356,7 @@ class FitEngine:
                     frequency_offsets=None,
                     migrad_kwargs=None,
                     field_source=ds,
+                    input_window=(t_min, t_max),
                     method=method,
                     minos=minos,
                     cancel_callback=cancel_callback,
@@ -2769,8 +2761,7 @@ class FitEngine:
                             fixed=False,
                         )
                     )
-            # Any model parameter that is neither global nor local (a fixed
-            # nuisance the model consumes) must still be supplied.
+            # Fixed nuisance parameters remain required model arguments.
             for p in base:
                 if p.name not in inner:
                     inner.add(
@@ -2784,6 +2775,7 @@ class FitEngine:
                 minos=False,
                 error_oversampling=1.0,
                 field_source=ds,
+                input_window=(t_min, t_max),
                 method=method,
                 cancel_callback=cancel_callback,
                 migrad_kwargs=inner_migrad_kwargs,
@@ -2963,6 +2955,12 @@ class FitEngine:
                 if oversampling_message:
                     dataset_warnings.append(oversampling_message)
             results[ds.run_number] = FitResult(
+                input_attribution=fit_input_attribution(
+                    observations[ds.run_number],
+                    ds,
+                    window=(t_min, t_max),
+                    error_oversampling=error_oversampling,
+                ),
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=bool(inner.success) and outer_valid,
                 minimum_expected_count=minimum_expected_count,

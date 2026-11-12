@@ -83,6 +83,12 @@ the data — no GLE script, no compile — for loading into any other program. C
 Tick **Limit to current x-range** to export only the window you are looking at. Every
 file carries the same commented provenance header as the GLE sidecars — run number,
 grouping, :math:`\alpha`, deadtime — so an exported spectrum stays self-describing.
+Data sidecars also retain the displayed result's effective recipe when known,
+with the actual written units, row selection, and any baked waterfall offset.
+GLE script offsets remain distinct from offsets applied to written values.
+Nested local source locators and diagnostic prose are omitted from these new
+recipe fields; existing user titles and comments are not anonymised. Unsupported
+outputs retain their operation-specific metadata with an unknown complete recipe.
 Exporting one curve prompts for a filename; exporting several prompts for a folder.
 
 A measuring cursor

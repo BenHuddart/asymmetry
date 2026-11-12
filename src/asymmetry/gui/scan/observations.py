@@ -2,8 +2,9 @@
 
 import numpy as np
 
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, field_scan_recipe
 from asymmetry.core.transform.corrections import CorrectionOutcomes
-from asymmetry.core.transform.integral import FieldScan
+from asymmetry.core.transform.integral import FieldScan, FieldScanPoint
 from asymmetry.core.transform.scalar_observation import ScalarObservation
 from asymmetry.core.transform.units import ASYMMETRY_PERCENT
 
@@ -21,7 +22,21 @@ def display_scan(window, x_key, *, include_excluded=False):
         return None
     series = window._project_model.batch(window._alc_scan_series_id)
     positions = {p.get("scan_index"): i for i, p in enumerate(selected)}
-    return FieldScan(
+    points = [
+        FieldScanPoint(
+            p["run"],
+            p["run"] if x_key == "run" else p[x_key],
+            p["value"] * 100.0,
+            p["error"] * 100.0,
+            effective_recipe=EffectiveReductionRecipe.from_dict(p["effective_recipe"]).scalar_units(
+                units="percent", factor=100.0
+            )
+            if p.get("effective_recipe") is not None
+            else None,
+        )
+        for p in selected
+    ]
+    scan = FieldScan(
         x=np.array([p["run"] if x_key == "run" else p[x_key] for p in selected], dtype=float),
         value=np.array([p["value"] * 100.0 for p in selected]),
         error=np.array([p["error"] * 100.0 for p in selected]),
@@ -51,6 +66,18 @@ def display_scan(window, x_key, *, include_excluded=False):
         if series is not None
         else (),
     )
+    scan.effective_recipe = (
+        field_scan_recipe(points, x_key, scan.method)
+        .with_facts(
+            units="percent",
+            correlated_pairs=[list(pair) for pair in scan.correlated_pairs],
+            source_assumption=scan.source_assumption,
+        )
+        .curve_operation(
+            "convert_scalar_units", factor=100.0, input_units="fraction", output_units="percent"
+        )
+    )
+    return scan
 
 
 def observation_status(scan):

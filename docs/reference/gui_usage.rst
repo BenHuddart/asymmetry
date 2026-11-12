@@ -1043,13 +1043,13 @@ them.
 it fitted, for the view and projection it was taken in. What happens to the
 fits already there depends on what the form describes:
 
-* Fitting again with the same function, fit range, fixed values, links and
-  ties replaces the open fit in place, keeping its name. Seed values and bounds
+* Fitting again on verified matching observations with the same function, fit
+  range, fixed values, links, and ties replaces the open fit, keeping its name. Seed values and bounds
   do not count, so iterating on starting guesses or tightening a bound refines
   one fit instead of growing the list.
 * Anything else saves a new fit beside the others, and it becomes the open
-  one. Returning to a setup you have already fitted replaces that fit rather
-  than adding a copy.
+  one. Returning to a setup replaces its fit only when captured observations
+  also match; changed or unknown input histories stay separate.
 
 **The Saved fits row.** The **Saved fits** section above **Model** names the
 open fit after its function and window (for example
@@ -1093,14 +1093,17 @@ B** on another to set it beside A: the run's data are drawn with A solid and B
 dashed above their normalised residuals, and a table sets A's parameter values
 beside B's. **Open A in the Single tab** opens A as the run's open fit.
 
-An information criterion compares descriptions of *the same data*: χ² summed
-over a different window, or over a run rebinned since, is a sum over different
-points. The window therefore ranks fits only against others with the same fit
-range and the same number of fitted points, taking Δ and the weights within
-each such group, with the open fit's group first. A fit with no partner over
-its data — and a fit saved before this release, which recorded no window — is
-listed with Δ "—" and no weight. Compare fits over different windows by their
-residuals and parameter values instead.
+An information criterion compares descriptions of *the same data*. Asymmetry
+also checks captured sampled coordinates, values, retained errors, usable
+support, interpretation, and objective before pooling rankings. Equal dimensions,
+run labels, or recipe identities alone do not establish that match. Δ and weights
+are calculated within each verified group, with the open fit's group first.
+Unknown historical inputs and fits without a matching partner remain listed
+with Δ "—" and no weight. Historical parameter values and model curves remain
+available; residuals are drawn only against verified matching current data.
+The caption explains: "Fits with verified matching observations and objectives
+are ranked together." A changed or unverified input also receives a historical-fit
+hint in the **Saved fits** row; re-fitting keeps the historical result separately.
 
 Saved fits are written into the project file, and **Analysis ▸ Export fit report…**
 lists every saved fit by name. A fit of a rotated projection (``P′_x``,

@@ -429,6 +429,17 @@ class FitSeries:
 
     # ── identity (D3) ──────────────────────────────────────────────────────
 
+    def same_observations(self, other: FitSeries) -> bool:
+        """Allow automatic result replacement only for known matching member inputs."""
+        if self.results_by_run.keys() != other.results_by_run.keys():
+            return False
+        return bool(self.results_by_run) and all(
+            result.get("input_attribution") is not None
+            and result["input_attribution"]["identity"]
+            == (other.results_by_run[run].get("input_attribution") or {}).get("identity")
+            for run, result in self.results_by_run.items()
+        )
+
     def recipe_identity(self) -> str:
         """Return this series' canonical identity string.
 

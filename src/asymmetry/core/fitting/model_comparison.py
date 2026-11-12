@@ -27,6 +27,7 @@ from asymmetry.core.fitting.information_criteria import (
     information_weights,
     score_deltas,
 )
+from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.parameters import Parameter
 
@@ -390,13 +391,15 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
         curve,
         normalised_residuals(
             dataset, curve, observation_report=(slot.result or {}).get("observation_report")
-        ),
+        )
+        if saved_fit_matches(slot, dataset)
+        else (np.array([]), np.array([])),
     )
 
 
 def _saved_fit_comparison_key(
     slot: FitSlot,
-) -> tuple[tuple[float | None, float | None, int], Objective] | None:
+) -> tuple[tuple[str, int], Objective] | None:
     """Only known likelihoods on the same sampled data share a ranking pool."""
     data_key = slot.data_key()
     objective = None if slot.result is None else slot.result.get("objective")
@@ -409,7 +412,7 @@ def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
     if comparison_key is None:
         return math.nan
     score = InformationCriteria(
-        float(slot.result["chi_squared"]), int(slot.result["npar"]), comparison_key[0][2]
+        float(slot.result["chi_squared"]), int(slot.result["npar"]), comparison_key[0][1]
     ).value(metric)
     return math.nan if score is None else score
 
@@ -504,7 +507,9 @@ def _saved_fit_summary(
         delta=delta,
         weight=weight,
         gate_passed=None,
-        gate_summary="",
+        gate_summary=""
+        if saved_fit_matches(slot, dataset)
+        else "Historical fit: current observations are different or unverified.",
         series_warnings=(),
         runs=(run,),
         parameters=tuple(sorted(rows, key=lambda row: role_order.index(row.role))),

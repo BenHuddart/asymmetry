@@ -102,6 +102,7 @@ from asymmetry.core.fitting import (
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
+from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
@@ -11553,9 +11554,7 @@ class MainWindow(QMainWindow):
             run_number = int(dataset.run_number)
         except (TypeError, ValueError):
             return None
-        # A run a batch fitted may have no representation object at all — a
-        # batch records on its series, never on its members (D4) — so the
-        # active-series fallback is reached before the slot is looked up.
+        # Batch results belong to their series rather than member slots.
         representation = self._project_model.representation(run_number, rep_type)
         projection = self._current_single_fit_projection()
         slot = None if representation is None else representation.fit_for(projection)
@@ -11693,12 +11692,6 @@ class MainWindow(QMainWindow):
         No member ``FitSlot`` is written: per-run state is the Single tab's fit
         alone (D4), and the results already live on the series.
 
-        Every path through here is a *solo* run of the series — a joint fit
-        writes its members' results in place and never comes this way — so the
-        recorded series' joint stamp is cleared: its new results were obtained
-        without the shared constraint, which detaches it and makes the owning
-        joint fit stale (joint-fit D9). The Batch tab is never blocked by this.
-
         Returns the recorded series' ``batch_id``.
         """
         series.sort_members(self._runs_by_number_for(source_runs))
@@ -11717,23 +11710,25 @@ class MainWindow(QMainWindow):
     def _open_series_for(self, candidate: FitSeries) -> FitSeries | None:
         """The recorded series *candidate* is a re-run of, or ``None`` for a new one.
 
-        Three steps, in order. The series the Batch tab is *editing* comes
-        first: re-running it unchanged is the gesture the whole design is built
-        around (D3). Then the representation's active series, then the newest
-        series of that representation describing the same analysis — which is
-        what keeps a surface that re-applies several analyses in turn (the
-        Global Fit Wizard's per-phase apply) replacing each one rather than
-        stacking them. A truly identical re-run therefore replaces its series
-        wherever it lives, and anything else records a new one.
+        Matching model structure and known member observations are both required.
+        Unknown historical results remain separate when a new fit completes.
         """
         identity = candidate.recipe_identity()
         open_id = self._fit_panel.open_series_id()
         open_series = self._project_model.batch(open_id) if open_id else None
-        if open_series is not None and open_series.recipe_identity() == identity:
+        if (
+            open_series is not None
+            and open_series.recipe_identity() == identity
+            and open_series.same_observations(candidate)
+        ):
             return open_series
         active_id = self._project_model.active_series_id(candidate.rep_type)
         active = self._project_model.batch(active_id) if active_id else None
-        if active is not None and active.recipe_identity() == identity:
+        if (
+            active is not None
+            and active.recipe_identity() == identity
+            and active.same_observations(candidate)
+        ):
             return active
         matches = [
             series
@@ -11741,6 +11736,7 @@ class MainWindow(QMainWindow):
             if series.rep_type == candidate.rep_type
             and series.batch_id != candidate.batch_id
             and series.recipe_identity() == identity
+            and series.same_observations(candidate)
         ]
         # ``batches`` preserves recording order, so the last match is the newest.
         return matches[-1] if matches else None
@@ -11749,10 +11745,7 @@ class MainWindow(QMainWindow):
     def _replace_series_results(open_series: FitSeries, candidate: FitSeries) -> FitSeries:
         """Fold an identical re-run's outcome into *open_series* and return it.
 
-        Identity already guarantees the model, classification, recipe and member
-        set agree, so only the run's outcome moves across. ``batch_id``,
-        ``label``, ``extra`` and the user's ``trend_excluded_runs`` stay: the
-        chip, its name and its trend gating survive a re-run.
+        Verified inputs retain labels, decorations, and trend exclusions.
         """
         open_series.member_run_numbers = list(candidate.member_run_numbers)
         open_series.member_source_run = dict(candidate.member_source_run)
@@ -11781,26 +11774,18 @@ class MainWindow(QMainWindow):
         return None if distinct == default else distinct
 
     def _record_single_fit_slot(self, fit_result) -> None:
-        """Write the active representation's single FitSlot into the project model."""
+        """Record the completed fit on its representation and projection."""
         rep_type = self._active_representation_type()
         run_number = self._single_fit_run_number()
         if rep_type is None or run_number is None:
             return
         if not hasattr(self._fit_panel, "get_single_form_state"):
             return
-        # One serialise of the single-fit form feeds both the structured slot
-        # fields and its ``ui_state`` restore payload. ``ui_state`` is written
-        # to the project file, so the payload must be JSON-safe: the panel's
-        # ``get_single_form_state`` is the boundary that converts a cached
-        # wizard analysis from its session handle to the compact stored form
-        # (``persisted_single_fit_form_state`` re-applies it defensively for a
-        # stubbed/legacy panel that hands back a session-shaped dict).
         form_state = persisted_single_fit_form_state(self._fit_panel.get_single_form_state())
         if not isinstance(form_state, dict):
             return
         projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        # Saved beside the run's other fits, or over the one it re-runs (D1).
         representation.record_single_fit(
             projection,
             FitSlot(
@@ -11863,7 +11848,11 @@ class MainWindow(QMainWindow):
                         _FRAME_STALE
                         if slot.frame_snapshot is not None
                         and self._fitted_in_old_frame(run_number, slot.frame_snapshot)
-                        else ""
+                        else (
+                            ""
+                            if saved_fit_matches(slot, self._bound_record())
+                            else "Historical fit: current observations are different or unverified; the next fit is saved separately."
+                        )
                     ),
                 )
                 for slot in fit_set.fits
@@ -11874,13 +11863,7 @@ class MainWindow(QMainWindow):
     def _saved_fit_curve_payload(
         self, slot: FitSlot, name: str, axis_key: str | None
     ) -> tuple | None:
-        """A ``set_global_fits`` payload drawing *slot* over its window.
-
-        ``None`` for a legacy fit with no model or values to draw
-        (:func:`saved_fit_model`). An open window side (a full-spectrum
-        frequency fit, or a pre-v25 fit with no window) reaches the edge of the
-        bound record.
-        """
+        """Draw a historical model over its recorded window."""
         drawable = saved_fit_model(slot)
         if drawable is None:
             return None
@@ -11961,8 +11944,7 @@ class MainWindow(QMainWindow):
     def _refresh_saved_fit_compare(self) -> None:
         """Point an open Compare window at the bound run's saved fits as they now stand.
 
-        A binding with no saved fits to show (another view, no run) closes it:
-        its A would name a fit the Single tab can no longer open.
+        An unbound view closes the comparison; its selected fit is unavailable.
         """
         window = self._saved_fit_compare_window
         if window is None:
@@ -12677,10 +12659,7 @@ class MainWindow(QMainWindow):
             param_roles=physics_roles,
             nuisance_params=nuisance_params,
             results_by_run=results_by_run,
-            # Detector-group series are NOT group-bound (D8): they keep the legacy
-            # provenance-only ``source_group_id`` (the single group shared by their
-            # *source* runs, not the synthetic per-group member keys) and leave
-            # ``group_id`` None, so they never auto-create a group or go stale.
+            # Synthetic group members retain source-run provenance.
             source_group_id=self._common_group_id_for_runs(unique_source_runs),
             last_fitted_members=list(member_keys),
             # The grouped surface has no Batch-tab recipe to read: its series
@@ -16592,6 +16571,15 @@ class MainWindow(QMainWindow):
         # Fit-series decorations remain attached to their owning fit.
         self._sync_global_fit_decorations_to_series()
         # The project model owns representation recipes, batches, and data groups.
+        for dataset in [
+            *self._data_browser.get_all_datasets(),
+            *(ds for group in self._plot_panel._vector_subplot_datasets.values() for ds in group),
+        ]:
+            if dataset.effective_recipe is None:
+                continue
+            self._project_model.ensure_dataset(dataset.run_number).ensure(
+                RepresentationType.TIME_FB_ASYMMETRY
+            ).record_result_recipes([dataset])
         self._project_model.write_to_project_state(project_state)
         return project_state
 
@@ -16649,6 +16637,7 @@ class MainWindow(QMainWindow):
             return
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
+        extra["effective_recipe"] = batch.extra.get("effective_recipe")
         extra["correlated_pairs"] = batch.extra.get("correlated_pairs", [])
         extra["estimator"] = batch.extra["estimator"]
         extra["time_window_us"] = batch.extra["time_window_us"]
@@ -16722,7 +16711,7 @@ class MainWindow(QMainWindow):
             self._show_panel("fit_parameters")
 
     def _alc_points_from_series(self, series) -> list[dict]:
-        """Reconstruct per-run scan points from the series + loaded run metadata."""
+        """Restore captured scan points; legacy coordinates use available run metadata."""
         points: list[dict] = []
         for run, summary in series.results_by_run.items():
             pct = summary.get("parameters", {}).get(self._SCAN_QUANTITY)
@@ -16736,8 +16725,6 @@ class MainWindow(QMainWindow):
             run_obj = None
             if hasattr(self._data_browser, "get_dataset"):
                 dataset = self._data_browser.get_dataset(int(run))
-                # Mirror the build path, which reads the Run's metadata (the
-                # field/temperature log may live there, not on the dataset).
                 run_obj = getattr(dataset, "run", None) or dataset
             points.append(
                 self._alc_scan_point(
@@ -16748,6 +16735,10 @@ class MainWindow(QMainWindow):
                     summary.get("correction_outcomes", {}),
                     summary.get("observation"),
                     summary.get("scan_index"),
+                    summary["effective_recipe"]["input"]
+                    if summary.get("effective_recipe") is not None
+                    else None,
+                    summary.get("coordinates"),
                 )
             )
         return points
@@ -16761,14 +16752,21 @@ class MainWindow(QMainWindow):
         corrections=None,
         observation=None,
         scan_index=None,
+        effective_recipe=None,
+        coordinates=None,
     ) -> dict:
         """Build one ALC scan point (fractional value + the run's field/temperature)."""
-        meta = run_obj.metadata if run_obj is not None else {}
+        meta = (
+            coordinates
+            if coordinates is not None
+            else (run_obj.metadata if run_obj is not None else {})
+        )
         return {
             "run": int(run_number),
             "correction_outcomes": {} if corrections is None else corrections,
             "observation": observation,
             "scan_index": scan_index,
+            "effective_recipe": effective_recipe,
             "value": float(value),
             "error": float(error),
             "field": _safe_float(meta.get("field")),

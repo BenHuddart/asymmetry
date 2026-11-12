@@ -60,9 +60,10 @@ def emit_json(data: dict[str, Any]) -> None:
     # Imported here, not at module scope: this module is loaded while the
     # parser is built, on every invocation, and reaching into the workflow
     # package pulls the whole analysis engine in with it.
+    from asymmetry.core.data.recipe_export import disclose_result_recipes
     from asymmetry.core.workflow.jsonio import dumps
 
-    print(dumps(data))
+    print(dumps(disclose_result_recipes(data)))
 
 
 def format_number(value: float | None, digits: int = 3) -> str:

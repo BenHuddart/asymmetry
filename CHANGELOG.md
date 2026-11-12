@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Compare saved fits only on verified matching observations and preserve changed-data
+  histories; suppress historical residuals against different or unknown current data.
+
 - Keep scan derivatives for display/export, preserve saved identity, and fit original
   observations. Report period contrasts without inferred RF, geometry or field calibration.
 
@@ -16,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unusable observations, and guard independent-error fits of dependent selections.
 
 ### Changed
+
+- Retain effective reduction recipes through saved results, projects, scans, and
+  exports, with nested local locators omitted from publishable recipe fields.
 
 - Capture immutable effective reduction recipes on core results, retaining resolved
   grouping, timing, calibration, corrections, binning, and supported transform context.

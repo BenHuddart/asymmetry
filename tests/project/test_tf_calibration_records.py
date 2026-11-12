@@ -535,3 +535,42 @@ def test_pending_calibration_capture_does_not_require_committed_profile_history(
     assert facts["calibration"]["records"][0]["calibration_id"] == "preview"
     assert profile.calibration_records == ()
     assert facts["alpha"] == result.alpha and facts["beta"] == result.beta
+
+
+def test_real_calibration_domain_recipe_discloses_no_positional_source_locator():
+    import json
+
+    from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+    from asymmetry.core.fitting.count_results import count_fit_domain
+    from asymmetry.core.fitting.grouped_time_domain import build_count_groups
+    from asymmetry.core.project.calibration import calibration_payload
+    from asymmetry.core.project.json_values import encode_non_finite
+    from tests.core.test_tf_calibration_fit import _raw_tf
+
+    dataset = _raw_tf()
+    dataset.run.source_file = "/private/calibrant.nxs"
+    original = replace(dataset.run, grouping=dict(dataset.run.grouping))
+    dataset.run.grouping.update(
+        period_inputs=[original], period_mapping={"1": "red"}, period_mode="red"
+    )
+    domains = tuple(
+        count_fit_domain(group, dataset) for group in build_count_groups(dataset, [1, 2])
+    )
+    result = candidate()
+    result = replace(
+        result, source_file="/private/calibrant.nxs", fit=replace(result.fit, domains=domains)
+    )
+    payload = encode_non_finite(calibration_payload(CalibrationRecord("cal-owned", result)))
+    recipe = EffectiveReductionRecipe.from_dict(
+        {"version": 1, "calibration": {"records": [payload]}}
+    )
+    public = recipe.publishable()
+    assert "/private/" in recipe.canonical_json
+    assert "/private/" not in json.dumps(public)
+    assert EffectiveReductionRecipe.from_dict(public).identity == recipe.identity
+    sources = public["calibration"]["records"][0]["domains"][0]["acquired_sources"]
+    assert sources and sources[0][2] is None
+    relocated = recipe.to_dict()
+    domain = relocated["calibration"]["records"][0]["domains"][0]
+    domain["acquired_sources"][0][2] = "/relocated/calibrant.nxs"
+    assert EffectiveReductionRecipe.from_dict(relocated).identity == recipe.identity

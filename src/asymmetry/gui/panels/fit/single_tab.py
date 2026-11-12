@@ -474,9 +474,7 @@ class SingleFitTab(FitTabBase):
     def _refresh_saved_fits_row(self, *_args) -> None:
         """Re-render the selector, its header suffix and the buttons.
 
-        Wired to every per-event signal that changes what the form describes
-        (a cell edit, a Fix/Link/Tie, the window), so it only reads widgets and
-        compares strings. A table rebuild is skipped; its caller refreshes once.
+        Model and window edits refresh the selector without rebuilding its table.
         """
         if self._param_table.is_updating:
             return
@@ -504,11 +502,7 @@ class SingleFitTab(FitTabBase):
         self._compare_fits_btn.setEnabled(len(catalogue.entries) > 1)
 
     def _next_fit_hint(self, open_entry: SavedFitEntry | None) -> str:
-        """What the next Fit does with the form, when that is not "re-fit the open fit" (D1).
-
-        Re-fitting a stale open fit is what refreshes it, so its staleness is
-        the hint while the form still describes it.
-        """
+        """Describe replacement only for matching structure and verified observations."""
         if open_entry is None:
             return ""
         if self._records_new_fit:
@@ -516,7 +510,11 @@ class SingleFitTab(FitTabBase):
         identity = self._form_identity()
         if identity == open_entry.identity:
             return open_entry.stale_reason
-        matches = [entry for entry in self._saved_fits.entries if entry.identity == identity]
+        matches = [
+            entry
+            for entry in self._saved_fits.entries
+            if entry.identity == identity and not entry.stale_reason
+        ]
         if matches:
             return f"Edited: the next Fit replaces “{matches[-1].name}”."
         return "Edited: the next Fit is saved as a new fit."

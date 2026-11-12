@@ -1895,10 +1895,15 @@ available source references. It includes actual correction outcomes rather than
 only requested settings. The record survives ``fit_record()``; raw histogram
 replay and retained counting operators do not cross that worker boundary.
 
-This in-memory contract does not extend the saved work-directory sidecar or
-project/export format. Reloaded historical curves can therefore have
-``effective_recipe=None``. Do not infer their effective settings from current
-controls or treat the recipe identity as a verified acquisition-content hash.
+Work-directory sidecars and scalar-scan payloads retain the captured recipe.
+A cache hit retains the recorded correction outcomes and numerical arrays, but
+does not restore raw histograms or counting operators. Older records without
+a recipe remain unknown (``effective_recipe=None``). Public JSON recipe fields
+omit nested local locators and diagnostic prose; private work records retain
+them. This disclosure does not anonymise other metadata such as titles.
+Recipe identity alone does not identify the sampled observations or verify
+acquisition contents. Saved fits also record an observation digest of the actual
+coordinates, values, retained errors, usable support, and interpretation.
 See :doc:`/explanation/reduction_pipeline` for captured facts and transformations.
 
 The fit recipe

@@ -4,7 +4,7 @@ The ZF Ag polycrystal (static Gaussian Kubo–Toyabe, Δ ≈ 0.39 μs⁻¹; Kubo
 Toyabe 1966, Blundell et al. Ch 5.2) is fitted three times on the Single tab
 with the real engine: ``StaticGKT_ZF + Constant`` and ``Gaussian + Constant``
 over 0.05–8 μs, then the Kubo–Toyabe again over 0.5–6 μs. The two full-window
-fits saw the same points, so the Compare window ranks them; the narrow one saw
+fits have verified matching observations and objectives, so Compare ranks them; the narrow one saw
 different data and is listed without a Δ (docs/plans/single-fit-compare.md
 D7). A Gaussian cannot recover to 1/3 after the Kubo–Toyabe dip near
 t = √3/Δ ≈ 4.4 μs, so its residuals against the data carry that structure.
@@ -65,6 +65,8 @@ class SingleFitSavedFitsScenario(Scenario):
         fits = representation.fit_set(None).fits
         assert len(fits) == 3, f"expected three saved fits, found {len(fits)}"
         gaussian_fit = fits[0]
+        assert fits[0].data_key() == fits[2].data_key()
+        assert fits[1].data_key() != fits[2].data_key()
 
         single_tab._compare_fits_btn.click()
         compare = window._saved_fit_compare_window

@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.fitting.field_scan import (
     as_composite_model,
     fit_scan_baseline,
@@ -116,6 +117,9 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     """Serialize a :class:`FieldScan` to JSON-safe values."""
     return {
+        "effective_recipe": scan.effective_recipe.to_dict()
+        if scan.effective_recipe is not None
+        else None,
         "order_key": scan.order_key,
         "method": scan.method,
         "derivative": scan.derivative,
@@ -151,6 +155,9 @@ def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
 
     points = data["points"]
     return FieldScan(
+        effective_recipe=EffectiveReductionRecipe.from_dict(data["effective_recipe"])
+        if data.get("effective_recipe") is not None
+        else None,
         x=np.asarray([point["x"] for point in points], dtype=float),
         value=np.asarray([point["value"] for point in points], dtype=float),
         error=np.asarray([point["error"] for point in points], dtype=float),
