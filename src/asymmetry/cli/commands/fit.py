@@ -56,7 +56,12 @@ def run(args: argparse.Namespace) -> None:
     workdir.write_fit(
         args.run,
         Path(args.recipe).stem,
-        {"expression": recipe.expression, "recipe": recipe.to_dict(), "fit": result},
+        {
+            "expression": recipe.expression,
+            "recipe": recipe.to_dict(),
+            "fit": result,
+            "computation_revision": result["computation_revision"],
+        },
     )
 
     plot_path = None

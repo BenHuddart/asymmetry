@@ -102,14 +102,12 @@ _SUSPECT_TEMPERATURE_MARKER = " ⚠"
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
-#: Auto-group (kind == "auto", D4) header/member tints — the red-grey analogue of
-#: the blue ramp above. Header/member painting switches on the group's ``kind``.
+#: Auto-group header/member tints follow the group kind.
 _AUTO_GROUP_HEADER_BACKGROUND = QColor(tokens.AUTO_GROUP_HEADER_BG)
 _AUTO_GROUP_MEMBER_BACKGROUND = QColor(tokens.AUTO_GROUP_MEMBER_BG)
 #: Item-data role carrying the run comment shown as the Title cell's second line.
 _COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
-#: Item-data role carrying a custom column's id on its editable cells, so an edit
-#: routes back to the right per-run value regardless of column position.
+#: Custom-column cell edits route by id rather than presentation position.
 _CUSTOM_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 2
 #: Item-data role carrying a multi-period cue (e.g. "2 periods · Red active")
 #: shown as the Title cell's second line, so a buried 2nd period is visible.
@@ -5102,6 +5100,7 @@ class DataBrowserPanel(QWidget):
         existing_dataset.asymmetry = reduced.asymmetry
         existing_dataset.metadata, existing_dataset.run = reduced.metadata, reduced.run
         existing_dataset.effective_recipe = reduced.effective_recipe
+        existing_dataset.computation_revision = reduced.computation_revision
         existing_dataset.histogram_observation = reduced.histogram_observation
         existing_dataset.ratio_validity = reduced.ratio_validity
         if hasattr(existing_dataset, "_grouping_source_arrays_cache"):

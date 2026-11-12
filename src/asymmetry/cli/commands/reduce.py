@@ -174,6 +174,7 @@ def run(args: argparse.Namespace) -> None:
                 n_periods=period_count(dataset_in),
             )
             entry = ReducedEntry(
+                computation_revision=dataset.computation_revision,
                 run_number=run_number,
                 digest=digest,
                 source_file=str(paths[0]),

@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.cross_group_roles import (
     cross_group_criteria_unavailable_reason,
     cross_group_information_criteria,
@@ -204,7 +205,17 @@ class GlobalFitCompareDialog(QDialog):
         mode_a, mode_b = study_a.result.error_mode, study_b.result.error_mode
         n_a, n_b = study_a.result.n_points, study_b.result.n_points
         same_mode_and_n = (mode_a == mode_b) and (n_a == n_b)
-        same_snapshot = str(study_a.input_digest) == str(study_b.input_digest)
+        same_snapshot = (
+            str(study_a.input_digest) == str(study_b.input_digest)
+            and computation.is_current(study_a.result.computation_revision)
+            and computation.is_current(study_b.result.computation_revision)
+            and all(
+                computation.is_current(revision)
+                for study in (study_a, study_b)
+                for group in study.groups
+                for revision in group.input_computation_revisions
+            )
+        )
         # Likelihood differences require the same data snapshot and error model.
         self._criteria_comparable = same_mode_and_n and same_snapshot
 

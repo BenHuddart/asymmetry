@@ -30,6 +30,7 @@ class QuickCalibrationResult:
     t0_time_us: float
     period_mapping: tuple[tuple[int, str], ...] = ()
     mapped_period_number: int | None = None
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict:
         """Export shared result fields and source context without histogram arrays."""
@@ -62,10 +63,12 @@ class QuickCalibrationResult:
                     "window",
                     "period_mapping",
                     "mapped_period_number",
+                    "computation_revision",
                 }
             },
             period_mapping=tuple((int(n), target) for n, target in data["period_mapping"]),
             mapped_period_number=data.get("mapped_period_number"),
+            computation_revision=data.get("computation_revision"),
             corrections=CorrectionOutcomes.from_dict(data["corrections"]),
             alignment=AlignmentCrop(
                 **{

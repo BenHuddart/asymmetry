@@ -1,76 +1,9 @@
-"""Fit one recipe across a scan, and reduce the result to a trend table.
+"""Fit a recipe across a scan and tabulate its parameter trends.
 
-:func:`fit_series` is the scripted form of the desktop Batch Fit tab's
-block-separable path: it wraps
-:func:`~asymmetry.core.fitting.series.fit_asymmetry_series` with
-``seeding="auto"``, so a scan with a usable order key is *chained* — each run
-warm-starts from the previous good run, and a run that lands on the spurious
-near-transition branch (amplitude collapsed, frequency off the trend) is
-reseeded from the trend and refitted.
-
-Where the chain starts
-----------------------
-
-A chain is only as good as the run it starts from, and the coldest run of a
-scan is rarely the best one: a recipe screened at 300 K, walked down to 100 K
-one run at a time, arrives at each run from a neighbour that was itself fitted
-from a poor start. ``start_run`` names the run to chain *outward* from, so the
-recipe's own values seed the run they were measured on and every other run
-warm-starts from a neighbour nearer to it.
-
-That is the recommended way to use this: screen the run with the clearest
-structure, then start the series there.
-
-The split is done here rather than in
-:func:`~asymmetry.core.fitting.series.fit_asymmetry_series`, which needs no
-change: the batch is block-separable, so two chains over disjoint halves of a
-scan are as valid as one over the whole of it. The scan is cut at the start run
-into a descending branch (the start run, then every run below it) and an
-ascending branch (the start run, then every run above it); each is chained in
-its own direction and the per-run results are merged back into scan order. A
-branch holding only the start run is not fitted, so starting at the first run
-of a scan is one chain over the whole scan — exactly what omitting
-``start_run`` does.
-
-What ``global_params`` means here
---------------------------------
-
-``fit_asymmetry_series`` fits a **block-separable** batch: one independent
-minimisation per run. It therefore cannot fit a parameter jointly across runs —
-it echoes the named parameters back unchanged as the "fitted globals", which is
-only meaningful if they are held. So a parameter named global here is **pinned
-at its recipe value in every run and not fitted**; everything else is local and
-free per run. (The desktop application routes a batch with a *free* global to
-``FitEngine.global_fit`` instead; a scripted simultaneous fit is not part of
-this façade.) :func:`fit_series` enforces the pinning itself, so a global
-parameter cannot silently end up fitted per run.
-
-Run-bound values are re-seeded per run
---------------------------------------
-
-A recipe carries one set of starting values, but some of those values describe
-*the run they were seeded from* rather than the physics being fitted: an
-applied field (``field``, ``B_L``) and a frequency-domain spectral peak.
-:func:`~asymmetry.core.fitting.seeding.seed_parameters` marks exactly those
-with :attr:`~asymmetry.core.fitting.seeding.Seed.run_bound`, and this function
-re-seeds each of them from *each run's own record* before fitting it — so a
-scan whose field changes run to run starts every fit at that run's field
-instead of at the field of whichever run the recipe came from.
-
-Two things are left alone. A parameter in :attr:`~asymmetry.core.workflow.recipe.FitRecipe.pinned`
-— pinned by ``--fix``, by ``--global``, or by a hand edit — keeps the value a
-person chose, since that value was not measured off a run. And a parameter the
-*model or the wizard* holds fixed is still re-seeded and still held: a pinned
-``B_L`` stays pinned, at each run's own field, which is the only reading of
-"held" that means anything across a scan.
-
-Nothing is dropped
-------------------
-
-A run whose fit failed, pinned a bound, was reseeded or carries a poor χ²
-verdict keeps its row in the trend table and is flagged. Excluding a point is
-the analyst's call, never this function's.
-"""
+A block-separable batch chains seeds from neighbouring successful fits and
+reseeds spurious branches from the trend. ``start_run`` anchors two outward
+chains whose per-run results merge in scan order. Shared parameters in this
+workflow are held at their recipe values; coupled estimation has its own owner."""
 
 from __future__ import annotations
 
@@ -80,6 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Generic, TypeVar
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
@@ -499,10 +433,12 @@ class SeriesOutcome:
     #: ``run``, ``x``, ``reseeded`` and the series' own ``member_quality``.
     results: list[dict[str, Any]]
     trend: TrendTable
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
+            "computation_revision": self.computation_revision,
             "name": self.name,
             "order_key": self.order_key,
             "expression": self.expression,
@@ -922,6 +858,7 @@ def fit_series(
                 else None
             ),
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

@@ -1,23 +1,6 @@
-"""Main window shell — WiMDA-inspired layout.
+"""Main window shell with a data browser, central plot, analysis docks, and log.
 
-Layout overview (mirroring WiMDA):
-
-    ┌──────────────────────────────────────────────────┐
-    │  Menu bar  ·  Toolbar                            │
-    ├────────────┬─────────────────────┬───────────────┤
-    │            │                     │               │
-    │  Data      │    Plot canvas      │  Fit /        │
-    │  browser   │    (central)        │  Fourier /    │
-    │  / logbook │                     │  Analysis     │
-    │  (left     │                     │  panels       │
-    │   dock)    │                     │  (right dock) │
-    │            │                     │               │
-    ├────────────┴─────────────────────┴───────────────┤
-    │  Log / message panel  (bottom dock)              │
-    └──────────────────────────────────────────────────┘
-
-The shell routes analysis through the pure core and owns GUI task lifetimes.
-"""
+The shell routes analysis through the pure core and owns GUI task lifetimes."""
 
 from __future__ import annotations
 
@@ -86,6 +69,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
@@ -2810,6 +2794,15 @@ class MainWindow(QMainWindow):
 
         return targets[-1]
 
+    def _capture_time_results(self, datasets: list[MuonDataset]) -> None:
+        """Publish successful time reductions without replacing saved history during restore."""
+        if self._restoring_project:
+            return
+        for dataset in datasets:
+            self._project_model.ensure_dataset(dataset.run_number).ensure(
+                RepresentationType.TIME_FB_ASYMMETRY
+            ).record_result_recipes([dataset], replace_history=True)
+
     def _build_vector_axis_datasets(
         self,
         datasets: list[MuonDataset],
@@ -2818,13 +2811,15 @@ class MainWindow(QMainWindow):
         """Return one core counting-observation cohort per vector run."""
         from asymmetry.gui.utils.vector_projections import vector_axis_datasets
 
-        return vector_axis_datasets(
+        result = vector_axis_datasets(
             datasets,
             labels,
             self._projection_memberships(datasets),
             self._resolve_background_reference,
             self,
         )
+        self._capture_time_results([ds for cohort in result.values() for ds in cohort])
+        return result
 
     def _synchronize_targets_to_axis(
         self,
@@ -3228,7 +3223,11 @@ class MainWindow(QMainWindow):
         """*dataset*'s unbunched P′_x and P′_y in *snapshot*'s frame, each carrying it."""
         from asymmetry.gui.utils.vector_projections import rotated_vector_datasets
 
-        return rotated_vector_datasets(dataset, snapshot, self._resolve_background_reference, self)
+        result = rotated_vector_datasets(
+            dataset, snapshot, self._resolve_background_reference, self
+        )
+        self._capture_time_results(list(result.values()))
+        return result
 
     def _fitted_in_old_frame(self, run_number: int, snapshot: FrameSnapshot) -> bool:
         """Compare a saved rotation with its currently available loaded observation."""
@@ -3855,24 +3854,10 @@ class MainWindow(QMainWindow):
         title: str,
         items: list[tuple[str, Callable[[], None]]],
     ) -> bool:
-        """Run short GUI-thread work items one per event-loop turn, with progress.
+        """Apply bounded GUI work in order, one item per event-loop turn.
 
-        The GUI-thread sibling of :meth:`_load_paths_with_progress`, for loops
-        whose items must touch widgets and window state — project restore's
-        per-dataset grouping re-application — so a worker thread cannot run
-        them, but whose individual items are bounded (milliseconds to about a
-        second). Items run strictly in order, one per event-loop turn via
-        ``QTimer.singleShot(0, …)`` chaining, so the window repaints and the
-        (window-modal, so re-entry is blocked) dialog's Cancel button responds
-        between items rather than freezing for the whole loop.
-
-        Cancel stops cleanly at an item boundary — completed items are kept —
-        and returns ``False``; the caller decides what a partial application
-        means. An exception from an item aborts the run and propagates
-        unchanged, preserving the synchronous loop's contract. Items handle
-        their own expected per-item failures internally (as the restore loop
-        always has).
-        """
+        Window-modal progress permits cancellation between items, retaining
+        completed work and returning False; item exceptions propagate unchanged."""
         global _bulk_load_owner
 
         if not items:
@@ -5663,6 +5648,7 @@ class MainWindow(QMainWindow):
         )
         dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
         dataset.effective_recipe = reduced.effective_recipe
+        dataset.computation_revision = reduced.computation_revision
         dataset.histogram_observation = observation
         dataset.ratio_validity = reduced.ratio_validity
         dataset.time, dataset.asymmetry, dataset.error = map(np.copy, (time_axis, asymmetry, error))
@@ -5712,6 +5698,7 @@ class MainWindow(QMainWindow):
             grouping.pop("instrument", None)
         run.grouping = grouping
         dataset.metadata.pop("correction_error", None)
+        self._capture_time_results([dataset])
         return True, outcomes
 
     def _counts_first_rebunched_dataset(
@@ -7104,7 +7091,7 @@ class MainWindow(QMainWindow):
         representation, run = target
         started_at = time.perf_counter()
         try:
-            representation.ensure_computed(run)
+            representation.ensure_computed(run, replace_history=False)
         except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
             return self._frequency_recompute_failed(run_number, rep_type, representation, exc)
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
@@ -7411,9 +7398,9 @@ class MainWindow(QMainWindow):
             self._finish_frequency_recompute_ui()
             self._release_superseded_frequency_recompute(run_number, rep_type)
             return
-        representation.cache_datasets(list(spectra) if spectra else [])
-        if result_metadata is not None:
+        if result_metadata is not None and not representation.result_metadata:
             representation.result_metadata = result_metadata
+        representation.cache_datasets(list(spectra) if spectra else [], replace_history=False)
         resolved = self._frequency_spectra_from_cache(run_number, rep_type)
         self._lazy_recompute_failures.discard(key)
         if rep_type == RepresentationType.FREQ_FFT and spectra:
@@ -7587,7 +7574,6 @@ class MainWindow(QMainWindow):
         def _record_failure(number, rep):
             self._lazy_recompute_failures.add((number, rep_type))
             rep.invalidate()
-            rep.result_metadata = {}
             self._frequency_cache(rep_type).pop(number, None)
 
         def _finished(results):
@@ -7604,8 +7590,9 @@ class MainWindow(QMainWindow):
                     _record_failure(number, rep)
                     refusals.append(f"run {number}: {refusal}")
                     continue
-                rep.cache_datasets(list(spectra) if spectra else [])
-                rep.result_metadata = metadata
+                if explicit or not rep.result_metadata:
+                    rep.result_metadata = metadata
+                rep.cache_datasets(list(spectra) if spectra else [], replace_history=explicit)
                 self._frequency_spectra_from_cache(number, rep_type)
                 self._lazy_recompute_failures.discard((number, rep_type))
             self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
@@ -9035,6 +9022,7 @@ class MainWindow(QMainWindow):
             config_dict["outer_cycles"] = max(1, int(total_cycles))
         representation.recipe = {"maxent_config": config_dict}
         representation.result_metadata = {
+            "computation_revision": spectrum.computation_revision,
             "cycles": int(diagnostics.get("cycles", [0])[-1]) if diagnostics.get("cycles") else 0,
             "diagnostics": dict(diagnostics),
         }
@@ -9050,17 +9038,11 @@ class MainWindow(QMainWindow):
         config: MaxEntConfig,
         result,
     ) -> None:
-        """Compute and cache the per-group time-domain reconstruction overlay.
+        """Cache a freshly evaluated reconstruction with its input execution attribution.
 
-        The worker threads the exact prepared input it iterated through on the
-        result, so the overlay reuses those grouped signals/kernel directly
-        (deadtime prep, per-group dataset build, t0 search and normalisation are
-        not redone on the GUI thread).  Its summed χ² then equals the engine's
-        by identity.  Only if that input is unavailable (e.g. a result restored
-        without it) do we rebuild from the same run+config — still deterministic,
-        so the χ²-equals-engine invariant holds either way.  Failures here never
-        block the run — the overlay is a diagnostic, not the result.
-        """
+        The worker's prepared signals/kernel make reconstruction χ² equal the
+        engine's by identity. Without that input, rebuild from run/config;
+        diagnostic reconstruction failure leaves the primary result available."""
         run = self._maxent_active_run
         if run is None:
             return
@@ -9071,7 +9053,12 @@ class MainWindow(QMainWindow):
             reconstructions = reconstruct_group_signals(
                 maxent_input, result.state, backend=resolve_backend(config.backend)
             )
-            datasets = build_maxent_reconstruction_datasets(reconstructions, run)
+            datasets = build_maxent_reconstruction_datasets(
+                reconstructions,
+                run,
+                computation_revision=computation.COMPUTATION_REVISION,
+                input_computation_revision=result.computation_revision,
+            )
         except Exception:  # noqa: BLE001 — overlay is best-effort, never fatal
             return
         representation = self._project_model.ensure_dataset(int(run_number)).ensure(
@@ -9080,6 +9067,8 @@ class MainWindow(QMainWindow):
         representation.recipe = {"maxent_config": config.to_dict()}
         total_chi2 = result.metadata.get("maxent_chi2")
         representation.result_metadata = {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "input_computation_revision": result.computation_revision,
             "cycles": int(result.state.cycle),
             "maxent_chi2": float(total_chi2) if total_chi2 is not None else None,
         }
@@ -10509,18 +10498,11 @@ class MainWindow(QMainWindow):
         return stable
 
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
-        """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
+        """Build successful member rows for the trend panel, retaining execution stamps.
 
-        Each entry is a plain dict with keys ``run_number``, ``run_label``,
-        ``field``, ``temperature``, ``values``, ``errors``.  Only successful
-        members are included.
-
-        For frequency-domain series, dataset metadata is read from the cached
-        frequency spectra (``_frequency_spectra_by_run``) rather than the data
-        browser, mirroring the old ``set_fit_results`` path's ``is_frequency_fit``
-        branch.  The time-domain data browser is used as a fallback when the
-        spectrum is not cached in memory.
-        """
+        Frequency members use cached spectrum coordinates with browser fallback.
+        Grouped physics parameters collapse to one point per source run; group
+        nuisances are excluded from the trend."""
         rows: list[dict] = []
         is_frequency = series.rep_type in (
             RepresentationType.FREQ_FFT,
@@ -10654,6 +10636,7 @@ class MainWindow(QMainWindow):
                     "field": float(field),
                     "temperature": float(temperature),
                     "values": values,
+                    "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
                     "custom_values": custom_values,
                     # Originating fit provenance so the trend panel's exports can
@@ -11297,7 +11280,12 @@ class MainWindow(QMainWindow):
         separate facts, each read from its own record.
         """
         reasons = []
-        if series.is_stale(group):
+        if series.results_by_run and any(
+            not computation.is_current(result.get("computation_revision"))
+            for result in series.results_by_run.values()
+        ):
+            reasons.append("Historical computation revision; refit to obtain current results.")
+        elif series.is_stale(group):
             reasons.append(_MEMBERSHIP_STALE)
         if any(
             self._fitted_in_old_frame(run, snapshot)
@@ -11851,7 +11839,7 @@ class MainWindow(QMainWindow):
                         else (
                             ""
                             if saved_fit_matches(slot, self._bound_record())
-                            else "Historical fit: current observations are different or unverified; the next fit is saved separately."
+                            else "Historical fit: observations or computation are different or unverified; the next fit is saved separately."
                         )
                     ),
                 )
@@ -14002,27 +13990,31 @@ class MainWindow(QMainWindow):
         return (overrides, order)
 
     def _study_staleness(self, study: GlobalFitStudy) -> tuple[bool, str]:
-        """Return ``(stale, reason)`` for *study* against the live trend data.
+        """Return runtime execution and input-dependency status for a saved study.
 
-        A study is stale when the groups it would be assembled from *now* (same
-        parameter/x-key/source groups, ``include_in_trend``-filtered) differ from
-        the snapshot it was fit against — a data change. A source series that has
-        been deleted (or no longer carries the parameter) is a harder staleness:
-        it cannot be refitted, so the reason is surfaced and Refit disabled.
-
-        Phase 4: any explicit group-variable overrides the study stores are
-        applied to the reassembly so the digest matches the one recorded at fit
-        time (an unchanged override does not spuriously read as stale).
-
-        The full result (which reassembles the study's groups and digests them)
-        is cached per study, keyed by ``(study.updated, panel.data_revision)``,
-        so a menu + sidebar rebuild computes each study's verdict once rather than
-        reassembling its groups on every action. A study whose ``input_digest`` is
-        the ``"duplicated"`` sentinel is stale by construction and short-circuits
-        without any reassembly at all.
-        """
+        Own and source execution revisions precede the cached numerical-data
+        comparison. Reassembly honours inclusion, coordinate overrides, and
+        source relationships; deleted sources cannot be refitted. Compatible
+        data checks cache by study update and panel data revision."""
         panel = self._fit_parameters_panel
         # A freshly duplicated study is stale until refit — never reassembled.
+        if study.result is not None and not computation.is_current(
+            study.result.computation_revision
+        ):
+            return (True, "historical computation revision")
+        if any(
+            not computation.is_current(revision)
+            for group in study.groups
+            for revision in group.input_computation_revisions
+        ):
+            return (True, "input snapshot has a historical computation revision")
+        for source_id in study.source_group_ids:
+            source = self._project_model.batch(source_id)
+            if source is not None and any(
+                not computation.is_current(summary.get("computation_revision"))
+                for summary in source.results_by_run.values()
+            ):
+                return (True, "source series has a historical computation revision")
         if study.input_digest == "duplicated":
             return (True, "duplicated — refit to solve")
 
@@ -14616,6 +14608,7 @@ class MainWindow(QMainWindow):
             joint.member_batch_ids = list(launch.member_batch_ids)
             joint.shared = [dict(row) for row in launch.shared_rows]
         joint.result = {
+            "computation_revision": result.computation_revision,
             "shared_values": {
                 name: float(result.shared_parameters[name].value)
                 for name in result.shared_parameters.names
@@ -14895,6 +14888,7 @@ class MainWindow(QMainWindow):
             member_run_numbers.append(member_key)
             summary = {
                 "success": True,
+                "computation_revision": fit_result.computation_revision,
                 "parameters": {**global_vals, **local_vals},
                 "uncertainties": {**global_unc, **local_unc},
                 "chi_squared": float(fit_result.chi_squared),
@@ -14909,6 +14903,7 @@ class MainWindow(QMainWindow):
         member_run_numbers.append(global_member)
         results_by_run[global_member] = {
             "success": True,
+            "computation_revision": fit_result.computation_revision,
             "parameters": {**global_vals, "chi2_r": float(fit_result.reduced_chi_squared)},
             "uncertainties": dict(global_unc),
             "chi_squared": float(fit_result.chi_squared),
@@ -15007,6 +15002,7 @@ class MainWindow(QMainWindow):
 
         results_by_run[member_key] = {
             "success": True,
+            "computation_revision": fit_result.computation_revision,
             "parameters": {
                 **global_vals,
                 "chi2_r": float(fit_result.reduced_chi_squared),
@@ -15259,6 +15255,7 @@ class MainWindow(QMainWindow):
             summary = {
                 "success": True,
                 "parameters": values,
+                "computation_revision": result.computation_revision,
                 "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
                 "chi_squared": float(result.chi_squared),
                 "reduced_chi_squared": float(result.reduced_chi_squared),
@@ -16579,7 +16576,7 @@ class MainWindow(QMainWindow):
                 continue
             self._project_model.ensure_dataset(dataset.run_number).ensure(
                 RepresentationType.TIME_FB_ASYMMETRY
-            ).record_result_recipes([dataset])
+            ).record_result_recipes([dataset], replace_history=False)
         self._project_model.write_to_project_state(project_state)
         return project_state
 
@@ -16638,6 +16635,7 @@ class MainWindow(QMainWindow):
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
         extra["effective_recipe"] = batch.extra.get("effective_recipe")
+        extra["computation_revision"] = batch.extra.get("computation_revision")
         extra["correlated_pairs"] = batch.extra.get("correlated_pairs", [])
         extra["estimator"] = batch.extra["estimator"]
         extra["time_window_us"] = batch.extra["time_window_us"]

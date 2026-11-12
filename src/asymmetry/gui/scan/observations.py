@@ -37,6 +37,9 @@ def display_scan(window, x_key, *, include_excluded=False):
         for p in selected
     ]
     scan = FieldScan(
+        computation_revision=series.extra.get("computation_revision")
+        if series is not None
+        else None,
         x=np.array([p["run"] if x_key == "run" else p[x_key] for p in selected], dtype=float),
         value=np.array([p["value"] * 100.0 for p in selected]),
         error=np.array([p["error"] * 100.0 for p in selected]),

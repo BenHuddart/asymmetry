@@ -444,6 +444,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
         error=result.error,
         metadata=result.metadata_with_alignment(run.metadata),
         run=run,
+        computation_revision=result.computation_revision,
     )
 
 
@@ -479,7 +480,12 @@ def estimate_alpha_for_run(run: Run, settings: ReductionSettings):
 
     counts = _grouping_run(run, settings)
     return calibrate_run(
-        MuonDataset(np.array([]), np.array([]), np.array([]), run=counts),
+        MuonDataset(
+            np.array([]),
+            np.array([]),
+            np.array([]),
+            run=counts,
+        ),
         replace(settings, period=None),
         CalibrationOptions(),
     )

@@ -23,6 +23,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.likelihood import Objective
@@ -52,6 +53,7 @@ def _sigma_fit_result(dataset) -> FitResult:
         uncertainties={"sigma": 0.01},
         chi_squared=1.0,
         reduced_chi_squared=1.0,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

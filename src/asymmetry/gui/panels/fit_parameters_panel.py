@@ -1,67 +1,8 @@
-"""Panel for inspecting fitted parameters across multiple datasets.
+"""Inspect fitted parameters across datasets, series, and data groups.
 
-Navigation map
---------------
-~6.3k lines; a known decomposition target
-(see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in this pass.
-
-Small helper types precede the main class: ``_FitRow`` (one dataset's fitted
-parameter values/errors/provenance for a single trend point), free functions
-for abscissa/float coercion (``_coerce_abscissa``, ``_optional_float``),
-``_YParamControls`` (a card's Fit button + log checkbox, so the fit-label and
-log-guard code can reach them by parameter name), and ``_GroupFitData`` (per
-data-group cross-run model-fit state). The bulk of the module is
-``FitParametersPanel(QWidget)``, whose methods cluster thematically (no
-section-comment markers in source):
-
-- **Construction / state I/O** — ``__init__``, ``clear``, ``get_state``/
-  ``restore_state`` (``_restore_state_locked`` does the heavy lifting),
-  ``_migrate_legacy_state`` for older ``.asymp`` schemas.
-- **Data ingestion** — ``set_fit_results`` and ``load_representation_series``
-  are the two entry points by which the panel receives new per-run parameter
-  data (pull-based from ``ProjectModel``/``FitSeries`` rather than push).
-- **Data-group selection** — ``_rebuild_group_buttons`` (sectioned by owning
-  data group via ``_resolved_sections``/``_build_section_header``/
-  ``_build_group_chip``), ``_apply_group_selection_to_view``,
-  ``_selected_group_ids_from_buttons``.
-- **Composite / Knight-shift derived parameters** — the
-  ``_apply_composite_parameters_to_rows``, ``_apply_knight_shift_to_rows``, and
-  ``_detect_component_crossings`` helpers derive extra Y-series from the raw
-  fitted parameters. Joint K(θ) fitting lives in the Knight shift analysis
-  window (``gui/windows/knight_shift_window.py``).
-- **Cross-group / parameter-vs-x model fitting** — ``_run_cross_group_model_fit``,
-  ``_build_cross_group_group_model_fit``, ``_open_model_fit_dialog``, plus the
-  serialize/deserialize pairs for persisting these secondary fits
-  (``_serialize_group_fit_results``, ``_serialize_cross_group_fit_configs``,
-  ``_serialize_last_cross_group_fit``).
-- **Chips and cards** — ``_rebuild_y_controls`` builds one chip per trendable
-  parameter and ``_rebuild_cards`` one ``ParameterCard`` per *checked* chip;
-  the checked chips are the y selection (``_selected_y_parameters``) and
-  ``_card_order`` their top-to-bottom order.
-- **Table + plot refresh** — ``_refresh_views`` fans out to ``_refresh_table``
-  (the live table, hosted by the ``Table`` pop-out) and
-  ``_refresh_plot``/``_draw_plot``. ``_draw_plot`` dispatches on
-  ``_plot_mode()``: *Subplots* draws one figure per card via ``_draw_cards`` /
-  ``_draw_param_axes`` (``_draw_card`` redraws just one), *Overlay* draws the
-  shared ``_figure`` via ``_draw_single_series`` / ``_draw_multi_series``.
-  Model overlays come from ``_draw_model_overlay_mpl`` and member markers from
-  ``_overlay_member_markers``. ``_x_value``/``_x_error`` resolve the selected
-  abscissa (run number, field, temperature, angle, or a custom column) per row.
-  Hovering a table row rings that run on every axes: ``_add_hover_ring`` gives
-  each drawn axes one animated ring, ``_apply_hover_ring`` places them, and
-  ``_blit_hover_rings`` paints them over each canvas' cached background, so a
-  hover never costs a redraw.
-- **Async trend-curve sampling** — ``_compute_trend_curves``/
-  ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
-  ``_on_trend_curves_ready``/``_on_trend_curves_error`` marshal results back.
-- **Export** — TSV (``_export_tsv``) and GLE (``_export_gle`` thinly wraps the
-  shared ``gle_export.run_gle_export`` orchestrator; ``_build_gle_export`` is
-  its ``build`` callback, ``_write_gle_data_file`` writes the sidecar data).
-
-Entry points GUI callers use most: ``set_fit_results``/``load_representation_series``
-to feed data in, ``get_state``/``restore_state`` for project persistence,
-``shutdown_workers``/``closeEvent`` for teardown.
-"""
+The panel restores recorded summaries, controls trend inclusion and decorations,
+and delegates model fitting to the pure core. Cross-group studies retain their
+own input snapshots, results, and execution attribution."""
 
 from __future__ import annotations
 
@@ -406,6 +347,7 @@ class _FitRow:
     trend_member_key: int | None = None
     include_in_trend: bool = True
     quality_flags: list[str] = field(default_factory=list)
+    computation_revision: str | None = None
 
 
 def _x_custom_id(x_key: str) -> str | None:
@@ -1160,6 +1102,7 @@ class FitParametersPanel(QWidget):
         rows = [
             {
                 "run_number": int(row.run_number),
+                "computation_revision": row.computation_revision,
                 "run_label": str(row.run_label),
                 "field": float(row.field),
                 "temperature": float(row.temperature),
@@ -1358,6 +1301,7 @@ class FitParametersPanel(QWidget):
                     restored_rows.append(
                         _FitRow(
                             run_number=int(entry.get("run_number", 0)),
+                            computation_revision=entry.get("computation_revision"),
                             run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
                             temperature=float(entry.get("temperature", 0.0)),
@@ -1555,6 +1499,7 @@ class FitParametersPanel(QWidget):
             rows.append(
                 _FitRow(
                     run_number=run_number,
+                    computation_revision=fit_result.computation_revision,
                     run_label=str(dataset.metadata.get("run_label") or run_number),
                     field=float(meta.get("field", 0.0)),
                     temperature=float(meta.get("temperature", 0.0)),
@@ -1728,6 +1673,7 @@ class FitParametersPanel(QWidget):
                     rows.append(
                         _FitRow(
                             run_number=int(rd["run_number"]),
+                            computation_revision=rd.get("computation_revision"),
                             run_label=str(rd.get("run_label") or rd["run_number"]),
                             field=float(rd.get("field", 0.0)),
                             temperature=float(rd.get("temperature", 0.0)),
@@ -2396,6 +2342,7 @@ class FitParametersPanel(QWidget):
 
         result = ParameterModelFitResult(
             success=fit_result.success,
+            computation_revision=fit_result.computation_revision,
             chi_squared=float(fit_result.chi_squared),
             reduced_chi_squared=float(fit_result.reduced_chi_squared),
             parameters=param_result,
@@ -2497,6 +2444,7 @@ class FitParametersPanel(QWidget):
                 "rows": [
                     {
                         "run_number": int(row.run_number),
+                        "computation_revision": row.computation_revision,
                         "run_label": str(row.run_label),
                         "field": float(row.field),
                         "temperature": float(row.temperature),
@@ -2554,6 +2502,7 @@ class FitParametersPanel(QWidget):
                     rows.append(
                         _FitRow(
                             run_number=int(row_entry.get("run_number", 0)),
+                            computation_revision=row_entry.get("computation_revision"),
                             run_label=str(
                                 row_entry.get("run_label", row_entry.get("run_number", ""))
                             ),
@@ -4675,6 +4624,7 @@ class FitParametersPanel(QWidget):
                 ParameterGroupData(
                     group_id=group.group_id,
                     group_name=group.group_name,
+                    input_computation_revisions=tuple(row.computation_revision for row in rows),
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
@@ -5229,6 +5179,7 @@ class FitParametersPanel(QWidget):
             "groups": [
                 {
                     "group_id": g.group_id,
+                    "input_computation_revisions": list(g.input_computation_revisions),
                     "group_name": g.group_name,
                     "x": np.asarray(g.x, dtype=float).tolist(),
                     "y": np.asarray(g.y, dtype=float).tolist(),
@@ -5240,6 +5191,7 @@ class FitParametersPanel(QWidget):
             ],
             "model": model.to_dict(),
             "fit_result": {
+                "computation_revision": fit_result.computation_revision,
                 "success": bool(fit_result.success),
                 "chi_squared": float(fit_result.chi_squared),
                 "reduced_chi_squared": float(fit_result.reduced_chi_squared),
@@ -5309,6 +5261,7 @@ class FitParametersPanel(QWidget):
             groups.append(
                 ParameterGroupData(
                     group_id=str(entry.get("group_id", "")),
+                    input_computation_revisions=tuple(entry.get("input_computation_revisions", ())),
                     group_name=str(entry.get("group_name", "")),
                     x=np.asarray(entry.get("x", []), dtype=float),
                     y=np.asarray(entry.get("y", []), dtype=float),
@@ -5361,6 +5314,7 @@ class FitParametersPanel(QWidget):
 
         fit_result = CrossGroupFitResult(
             success=bool(fit_state.get("success", False)),
+            computation_revision=fit_state.get("computation_revision"),
             chi_squared=float(fit_state.get("chi_squared", 0.0)),
             reduced_chi_squared=float(fit_state.get("reduced_chi_squared", 0.0)),
             global_parameters=global_params,
@@ -6869,6 +6823,7 @@ class FitParametersPanel(QWidget):
                 if fit_range.result is not None:
                     range_item["result"] = {
                         "success": fit_range.result.success,
+                        "computation_revision": fit_range.result.computation_revision,
                         "chi_squared": fit_range.result.chi_squared,
                         "reduced_chi_squared": fit_range.result.reduced_chi_squared,
                         "message": fit_range.result.message,
@@ -7000,6 +6955,7 @@ class FitParametersPanel(QWidget):
 
                     result_obj = ParameterModelFitResult(
                         success=bool(result_state.get("success", False)),
+                        computation_revision=result_state.get("computation_revision"),
                         chi_squared=float(result_state.get("chi_squared", 0.0)),
                         reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
                         parameters=result_params,

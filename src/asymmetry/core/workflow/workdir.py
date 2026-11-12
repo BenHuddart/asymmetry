@@ -59,6 +59,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry import __version__
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
@@ -92,7 +93,22 @@ DERIVED_SERIES_KINDS = frozenset({"global-batch", "fit-trend"})
 
 #: Keys of a stored series that are not its fit: the stamps, and the trend fits
 #: added to it afterwards.
-_NOT_THE_FIT = frozenset({"schema", "asymmetry_version", "trend_fits"})
+_NOT_THE_FIT = frozenset(
+    {
+        "schema",
+        "asymmetry_version",
+        "trend_fits",
+        "name",
+        "label",
+        "created",
+        "updated",
+        "timestamp",
+        "fitted_at",
+        "series_path",
+        "plot",
+        "plots",
+    }
+)
 
 #: Visible work-directory name, resolved against the current directory.
 WORKDIR_NAME = "asymmetry-work"
@@ -249,6 +265,18 @@ def file_fingerprint(path: str | Path) -> dict[str, Any]:
     }
 
 
+def current_results(folder: Path) -> dict[Path, dict[str, Any]]:
+    """Collect compatible persisted executions without removing historical files."""
+    records = {
+        path: json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.json"))
+    }
+    return {
+        path: data
+        for path, data in records.items()
+        if computation.is_current(data.get("computation_revision"))
+    }
+
+
 def reduction_digest(
     *,
     source_files: Sequence[str | Path],
@@ -264,6 +292,7 @@ def reduction_digest(
         "mapped_count_preparation_policy": CONSTITUENT_PREPARATION_POLICY,
         **run_arithmetic_policy({"combination": len(source_files) > 1}),
         "schema": SCHEMA,
+        "computation_revision": computation.COMPUTATION_REVISION,
         "deadtime_scope": "required_fb_observations",
         "pair_balance_policy": "selected_pair_explicit_override",
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
@@ -285,7 +314,12 @@ def series_digest(series: dict[str, Any], fit_key: str | None) -> str:
     """
     payload = {key: value for key, value in series.items() if key not in _NOT_THE_FIT}
     if fit_key is not None:
-        payload["trend_fit"] = series["trend_fits"].get(fit_key)
+        selected = series["trend_fits"].get(fit_key)
+        payload["trend_fit"] = (
+            {key: value for key, value in selected.items() if key not in _NOT_THE_FIT}
+            if selected is not None
+            else None
+        )
     blob = json.dumps(_canonical(payload), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -310,6 +344,7 @@ class ReducedEntry:
     backward_group: int
     members: list[int]
     effective_recipe: EffectiveReductionRecipe | None = None
+    computation_revision: str | None = None
 
     @property
     def source_runs(self) -> list[int]:
@@ -322,6 +357,7 @@ class ReducedEntry:
             "schema": SCHEMA,
             "asymmetry_version": __version__,
             "run_number": self.run_number,
+            "computation_revision": self.computation_revision,
             "digest": self.digest,
             "source_file": self.source_file,
             "n_points": self.n_points,
@@ -344,6 +380,7 @@ class ReducedEntry:
             effective_recipe=EffectiveReductionRecipe.from_dict(data["effective_recipe"])
             if data.get("effective_recipe") is not None
             else None,
+            computation_revision=data.get("computation_revision"),
             run_number=int(data["run_number"]),
             digest=str(data["digest"]),
             source_file=str(data["source_file"]),
@@ -477,17 +514,22 @@ class WorkDir:
         )
         return self.survey_path
 
-    def read_survey(self) -> dict[str, Any]:
+    def read_survey(self, *, require_current: bool = True) -> dict[str, Any]:
         """The stored survey payload.
 
         :class:`FileNotFoundError` when none was written, and
         :class:`StaleWorkDirError` when an older schema wrote it.
         """
         data = json.loads(self.survey_path.read_text(encoding="utf-8"))
+
         if data["schema"] != SCHEMA:
             raise StaleWorkDirError(
                 f"The survey in {self.root} was written by an older asymmetry "
                 f"(work-directory schema {data['schema']}, now {SCHEMA}); survey it again."
+            )
+        if require_current and not computation.is_current(data.get("computation_revision")):
+            raise StaleWorkDirError(
+                "The stored survey has a historical computation revision; recompute it."
             )
         return data
 
@@ -552,6 +594,7 @@ class WorkDir:
             error=np.asarray(dataset.error, dtype=np.float64),
         )
         record = entry.to_dict()
+        record["computation_revision"] = dataset.computation_revision
         record["effective_recipe"] = (
             dataset.effective_recipe.to_dict() if dataset.effective_recipe is not None else None
         )
@@ -579,7 +622,7 @@ class WorkDir:
             )
         return ReducedEntry.from_dict(data)
 
-    def reduced(self, run_number: int) -> MuonDataset:
+    def reduced(self, run_number: int, *, require_current: bool = False) -> MuonDataset:
         """The stored reduced dataset; :class:`KeyError` when it is not stored.
 
         The returned dataset carries the recorded run metadata but no
@@ -587,6 +630,10 @@ class WorkDir:
         cached, so anything that needs histograms must reload the file.
         """
         stored = self.entry(run_number)
+        if require_current and not computation.is_current(stored.computation_revision):
+            raise StaleWorkDirError(
+                f"Run {run_number} has a historical computation revision; reduce it again."
+            )
         array_path, _ = self._reduced_paths(run_number)
         with np.load(array_path) as arrays:
             return MuonDataset(
@@ -598,6 +645,7 @@ class WorkDir:
                 error=arrays["error"],
                 metadata=dict(stored.run),
                 effective_recipe=stored.effective_recipe,
+                computation_revision=stored.computation_revision,
             )
 
     def is_current(self, run_number: int, digest: str) -> bool:
@@ -609,7 +657,8 @@ class WorkDir:
         _, json_path = self._reduced_paths(run_number)
         if not json_path.exists():
             return False
-        return json.loads(json_path.read_text(encoding="utf-8"))["digest"] == digest
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        return data["digest"] == digest and computation.is_current(data.get("computation_revision"))
 
     def reduced_runs(self) -> list[int]:
         """Run numbers with a stored reduction, ascending (empty before any write)."""
@@ -628,16 +677,27 @@ class WorkDir:
         _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
         return path
 
-    def read_wizard(self, run_number: int) -> dict[str, Any]:
+    def read_wizard(self, run_number: int, *, require_current: bool = True) -> dict[str, Any]:
         """The stored screening payload; :class:`KeyError` when there is none."""
         path = self.wizard_path(run_number)
         if not path.exists():
             raise KeyError(f"Run {run_number} has not been screened into {self.root}")
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if require_current and not computation.is_current(data.get("computation_revision")):
+            raise StaleWorkDirError(
+                "The stored result has a historical computation revision; recompute it."
+            )
+        return data
 
     def screened_runs(self) -> list[int]:
         """Run numbers with a stored screening, ascending."""
-        return sorted(int(path.stem) for path in self.wizard_dir.glob("*.json"))
+        return sorted(
+            int(path.stem)
+            for path in self.wizard_dir.glob("*.json")
+            if computation.is_current(
+                json.loads(path.read_text(encoding="utf-8")).get("computation_revision")
+            )
+        )
 
     # -- recipes ------------------------------------------------------------
 
@@ -703,7 +763,7 @@ class WorkDir:
         _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
         return path
 
-    def read_series(self, name: str) -> dict[str, Any]:
+    def read_series(self, name: str, *, require_current: bool = True) -> dict[str, Any]:
         """The stored series payload.
 
         :class:`KeyError` when there is none, when it was written under an older
@@ -714,20 +774,32 @@ class WorkDir:
         if not path.exists():
             raise KeyError(f"No series {name!r} in {self.series_dir}")
         data = json.loads(path.read_text(encoding="utf-8"))
+
         if data["schema"] != SCHEMA:
             raise StaleWorkDirError(
                 f"Series {name!r} was written by an older asymmetry (work-directory schema "
                 f"{data['schema']}, now {SCHEMA}); fit it again."
             )
-        if data["kind"] in DERIVED_SERIES_KINDS:
+        if require_current and not computation.is_current(data.get("computation_revision")):
+            raise StaleWorkDirError(
+                "The stored result has a historical computation revision; recompute it."
+            )
+        if require_current and data["kind"] in DERIVED_SERIES_KINDS:
             stored = set(self.series_names())
-            changed = [
-                member["series"]
-                for member in data["members"]
-                if member["series"] not in stored
-                or series_digest(self.read_series(member["series"]), member["fit"])
-                != member["digest"]
-            ]
+            changed = []
+            for member in data["members"]:
+                if member["series"] not in stored:
+                    changed.append(member["series"])
+                    continue
+                source = self.read_series(member["series"])
+                selected_fit = (
+                    source["trend_fits"].get(member["fit"]) if member["fit"] is not None else None
+                )
+                if (
+                    member["fit"] is not None
+                    and not computation.is_current((selected_fit or {}).get("computation_revision"))
+                ) or series_digest(source, member["fit"]) != member["digest"]:
+                    changed.append(member["series"])
             if changed:
                 raise KeyError(
                     f"Series {name!r} is stale: its member(s) {', '.join(changed)} were "
@@ -749,7 +821,9 @@ class WorkDir:
         return {
             name: data
             for name, data in payloads.items()
-            if data["kind"] == "series" and data["schema"] == SCHEMA
+            if data["kind"] == "series"
+            and data["schema"] == SCHEMA
+            and computation.is_current(data.get("computation_revision"))
         }
 
     def write_fit(self, run_number: int, recipe_name: str, payload: dict[str, Any]) -> Path:
@@ -782,12 +856,16 @@ class WorkDir:
                 if run["precession"] == "none"
             }
             if self.survey_path.is_file()
+            and computation.is_current(
+                json.loads(self.survey_path.read_text(encoding="utf-8")).get("computation_revision")
+            )
             else set()
         )
         runs = {
             int(row["key"])
             for series in stored
             if series["kind"] not in DERIVED_SERIES_KINDS
+            and computation.is_current(series.get("computation_revision"))
             for row in series["trend"]["rows"]
             if not (
                 int(row["key"]) in lineless
@@ -799,10 +877,15 @@ class WorkDir:
             )
         }
         for path in self.scans_dir.glob("*.json"):
-            runs.update(int(run) for run in json.loads(path.read_text(encoding="utf-8"))["runs"])
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if computation.is_current(data.get("computation_revision")):
+                runs.update(int(run) for run in data["runs"])
         runs.update(
-            int(json.loads(path.read_text(encoding="utf-8"))["run"])
+            int(data["run"])
             for path in self.fits_dir.glob("*.json")
+            if computation.is_current(
+                (data := json.loads(path.read_text(encoding="utf-8"))).get("computation_revision")
+            )
         )
         runs.update(
             member
@@ -838,12 +921,17 @@ class WorkDir:
         _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
         return path
 
-    def read_scan(self, name: str) -> dict[str, Any]:
+    def read_scan(self, name: str, *, require_current: bool = True) -> dict[str, Any]:
         """Read a stored integral scan; raise :class:`KeyError` when absent."""
         path = self.scan_path(name)
         if not path.exists():
             raise KeyError(f"No scan {name!r} in {self.scans_dir}")
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if require_current and not computation.is_current(data.get("computation_revision")):
+            raise StaleWorkDirError(
+                "The stored result has a historical computation revision; recompute it."
+            )
+        return data
 
     def spectrum_paths(self, name: str) -> tuple[Path, Path]:
         """The ``(.npz, .json)`` paths for a named frequency spectrum."""

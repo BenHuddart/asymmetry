@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RatioReason
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, field_scan_recipe
@@ -555,6 +556,7 @@ class FieldScan:
     correlated_pairs: tuple[tuple[int, int], ...] = ()
     source_assumption: str = "Unknown acquisition identity is assumed distinct."
     effective_recipe: EffectiveReductionRecipe | None = None
+    computation_revision: str | None = None
 
     def select(self, selection):
         """Crop/reorder parallel observations without losing fit-support facts."""
@@ -756,6 +758,7 @@ def build_field_scan(
             and abs(float(left.noise.covariance(right.noise)[0]))
             > 128 * np.finfo(float).eps * left.error * right.error
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     scan.effective_recipe = field_scan_recipe(points, order_key, method).with_facts(
@@ -841,6 +844,7 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
             "known dependent pairs have unavailable uncertainty (NaN). "
             "Source ratio classifications remain on the original scan."
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

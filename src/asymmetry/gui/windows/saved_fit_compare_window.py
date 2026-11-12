@@ -36,7 +36,7 @@ from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
 OPEN_A_TEXT = "Open A in the Single tab"
 #: Under the ranking: why fits over another window carry no Δ.
 CAPTION = (
-    "Fits with verified matching observations and objectives are ranked together. "
+    "Fits with verified matching observations, objectives, and computation revisions are ranked together. "
     "Unknown or different inputs remain listed without a shared Δ; "
     "residuals require a match to the current data."
 )

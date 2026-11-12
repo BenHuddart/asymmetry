@@ -509,7 +509,7 @@ def _saved_fit_summary(
         gate_passed=None,
         gate_summary=""
         if saved_fit_matches(slot, dataset)
-        else "Historical fit: current observations are different or unverified.",
+        else "Historical fit: observations or computation are different or unverified.",
         series_warnings=(),
         runs=(run,),
         parameters=tuple(sorted(rows, key=lambda row: role_order.index(row.role))),

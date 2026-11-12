@@ -23,6 +23,7 @@ from typing import Protocol, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import (
@@ -484,39 +485,17 @@ class GlobalParameterRecommendation:
 
 @dataclass(frozen=True)
 class GlobalCandidateAssessment:
-    """Fit and comparison data for one global-fit candidate.
+    """Global-fit assessment with complete diagnostics and optional display curves.
 
-    **Dense-curve contract.** ``fitted_curves_by_run`` and
-    ``component_curves_by_run`` exist for the GUI, which draws them; nothing in
-    the role search reads them. They are also by far the largest thing an
-    assessment carries — a dozen runs of a native-resolution record come to tens
-    of megabytes per assessment, against kilobytes for everything else — and the
-    separable search visits hundreds of nodes and caches every one. So they are
-    built exactly once, at the search's exit, and the two states are explicit:
+    Search-internal assessments have empty curve dicts and no residual buffers;
+    diagnostics, criteria, gates, and warnings are computed before buffers drop.
+    Every exposed leaderboard, phase, and pre-screen assessment has curves and
+    matching residuals for each fitted run. ``_with_dense_curves`` materialises
+    them; ``_assemble_assignment_assessment(dense_curves=...)`` selects the state.
 
-    * An assessment **inside a search** (anything in a
-      :class:`_HeuristicTemplateState`'s ``exact_cache`` /
-      ``converged_assessments`` under the separable engine) has *no* curves —
-      both dicts empty — and its per-run :class:`FitResult`\\ s carry no
-      ``residuals`` either. Its diagnostics, information criteria, gates and
-      series warnings are complete: they were computed during assembly, from
-      the residuals, before they were dropped.
-    * Every assessment a :class:`GlobalFitWizardRecommendation` exposes — the
-      series-wide leaderboard rows, the per-phase answers, the pre-screen rows —
-      has curves for every run it was fitted on, and residuals to match.
-
-    :func:`_with_dense_curves` is the one crossing between the two, and
-    :func:`_assemble_assignment_assessment`'s ``dense_curves`` flag is what
-    decides which one an assembly produces.
-
-    **A rung of a sharing ladder** (the trend objective) carries ``rung``.
-    ``template`` is then the template *in the form the rung was fitted in*: the
-    same key and title, and a model with its signal terms under one total when
-    the rung shares that total. Every parameter name on the assessment is that
-    model's, so curves, apply and serialisation read one model. A shared
-    amplitude is in ``global_param_names`` even when some runs are exempt from
-    it; ``exemptions`` says which runs keep a value of their own.
-    """
+    A sharing-ladder rung carries its fitted model in ``template``. All parameter
+    names, curves, apply, and serialisation use that model. Shared amplitudes
+    appear in ``global_param_names``; ``exemptions`` retains runs with local values."""
 
     template: CandidateTemplate
     fit_results_by_run: dict[int, FitResult]
@@ -666,6 +645,7 @@ class GlobalFitWizardRecommendation:
     )
     recommended_partition_k: int | None = None
     objective: SelectionObjective = SelectionObjective.TREND
+    computation_revision: str | None = None
 
     def ranking_key(
         self, metric: SelectionMetric
@@ -967,21 +947,10 @@ def _wavefront_worker_count(task_count: int) -> int:
 
 
 def _phase_one_concurrency(task_count: int) -> int:
-    """How many per-run single-run analyses phase 1 runs at once.
+    """Bound concurrent per-run serial stages and live result objects.
 
-    A single ``build_fit_wizard_recommendation`` never keeps a machine busy:
-    peak detection, the damped-line scan, the fingerprint, the residual pass and
-    the tier gating are serial, and its own pool sits idle through all of them.
-    Measured on a 29-run series of 90 000-point records, the serial stage cost
-    ~15 s per run with most cores idle for much of it. Running a few analyses
-    side by side fills those gaps with another run's fan-out.
-
-    The count is halved from the core count and capped at
-    ``_MAX_PHASE_ONE_ANALYSES``. The analyses now share phase 1's single spawn
-    pool rather than each opening one, so this no longer has to keep a *product*
-    of widths off the host; what it still bounds is how many runs' serial stages
-    and result objects are alive in the parent at once.
-    """
+    Analyses share one spawn pool. Concurrency is half the core count, capped
+    at ``_MAX_PHASE_ONE_ANALYSES``; it does not multiply independent pools."""
     if task_count <= 0:
         return 1
     cpu_count = os.cpu_count() or 1
@@ -1277,6 +1246,7 @@ def _assemble_completed_run(
     assessments_by_key: dict[str, CandidateAssessment] = {**plan.kept, **fitted}
     ranked = rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
+            computation_revision=plan.source.computation_revision,
             fingerprint=plan.source.fingerprint,
             templates=tuple(templates),
             assessments=tuple(assessments_by_key[template.key] for template in templates),
@@ -2069,6 +2039,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         int(dataset.run_number): existing[int(dataset.run_number)]
         for dataset in preview.ordered_datasets
         if int(dataset.run_number) in existing
+        and computation.is_current(existing[int(dataset.run_number)].computation_revision)
         and existing[int(dataset.run_number)].build_signature
         == single_fit_build_signature(
             scope,
@@ -2422,6 +2393,7 @@ def build_global_fit_wizard_screening_recommendation(
                 recommended_key=None,
                 comparable_keys=(),
                 summary=portfolio.mixed_axes_warning,
+                computation_revision=computation.COMPUTATION_REVISION,
             ),
             metric,
         )
@@ -2524,6 +2496,7 @@ def build_global_fit_wizard_screening_recommendation(
             comparable_keys=(),
             summary="",
             partition_path=partition_path,
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         metric,
     )
@@ -3320,6 +3293,7 @@ def _build_global_fit_wizard_recommendation_staged(
                 recommended_key=None,
                 comparable_keys=(),
                 summary=mixed_axes_warning,
+                computation_revision=computation.COMPUTATION_REVISION,
             ),
             metric=metric,
         )
@@ -3501,6 +3475,7 @@ def _build_global_fit_wizard_recommendation_staged(
                 phase_assessments=phase_assessments,
                 recommended_partition_k=recommended_partition_k,
                 objective=objective,
+                computation_revision=computation.COMPUTATION_REVISION,
             ),
             metric,
         )
@@ -3668,6 +3643,7 @@ def _build_global_fit_wizard_recommendation_staged(
             comparable_keys=(),
             summary="",
             objective=objective,
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         metric,
     )
@@ -4031,6 +4007,7 @@ def serialize_global_fit_wizard_recommendation(
     :func:`deserialize_global_fit_wizard_recommendation`.
     """
     return {
+        "computation_revision": recommendation.computation_revision,
         "series_axis_key": recommendation.series_axis_key,
         "series_axis_label": recommendation.series_axis_label,
         "mixed_axes_warning": recommendation.mixed_axes_warning,
@@ -4140,6 +4117,7 @@ def deserialize_global_fit_wizard_recommendation(
             int(recommended_partition_k) if recommended_partition_k is not None else None
         ),
         objective=SelectionObjective(payload["objective"]),
+        computation_revision=payload.get("computation_revision"),
     )
 
     published = {recommendation.recommended_key, *recommendation.comparable_keys}
@@ -5737,7 +5715,10 @@ def _assemble_assignment_assessment(
         result = results_by_run.get(
             run_number,
             FitResult(
-                objective=Objective.GAUSSIAN, success=False, message="Missing global fit result"
+                computation_revision=computation.COMPUTATION_REVISION,
+                objective=Objective.GAUSSIAN,
+                success=False,
+                message="Missing global fit result",
             ),
         )
         (
@@ -5829,7 +5810,10 @@ def _with_dense_curves(
         result = results_by_run.get(
             run_number,
             FitResult(
-                objective=Objective.GAUSSIAN, success=False, message="Missing global fit result"
+                computation_revision=computation.COMPUTATION_REVISION,
+                objective=Objective.GAUSSIAN,
+                success=False,
+                message="Missing global fit result",
             ),
         )
         fallback_parameters = base_by_run.get(run_number)
@@ -6216,6 +6200,7 @@ def _fit_exact_assignment(
     if best_results is None:
         best_results = {
             int(dataset.run_number): FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN,
                 success=False,
                 message="No fit attempts were created.",
@@ -6730,7 +6715,10 @@ def _assess_single_fit_candidate_from_attempts(
 
     if best_result is None:
         best_result = FitResult(
-            objective=Objective.GAUSSIAN, success=False, message="No fit attempt was created."
+            computation_revision=computation.COMPUTATION_REVISION,
+            objective=Objective.GAUSSIAN,
+            success=False,
+            message="No fit attempt was created.",
         )
         best_parameters = ParameterSet()
 
@@ -6874,7 +6862,10 @@ def _best_single_run_fit_result(
                 )
             except Exception:
                 simplex_result = FitResult(
-                    objective=Objective.GAUSSIAN, success=False, message="Single-run simplex failed"
+                    computation_revision=computation.COMPUTATION_REVISION,
+                    objective=Objective.GAUSSIAN,
+                    success=False,
+                    message="Single-run simplex failed",
                 )
             if simplex_result.success and (
                 best_result is None or simplex_result.chi_squared < best_result.chi_squared
@@ -9325,6 +9316,7 @@ def _all_local_run_fit_results(
         )
         if best_result is None:
             results[run_number] = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN,
                 success=False,
                 message="No single-run fit attempt produced a result.",

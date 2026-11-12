@@ -1,14 +1,8 @@
 """Grouped-count maximum-entropy spectral estimation.
 
-This module owns the scriptable MaxEnt API.  It follows the MULTIMAX data
-shape: one non-negative frequency spectrum is reconstructed jointly from many
-detector-group count signals with group phases, amplitudes, and backgrounds.
-
-The numerical kernel is deliberately compact and isolated.  It uses the same
-forward/adjoint contract and resumable state shape a full Skilling-Bryan
-solver would need, while providing a deterministic entropy-regularized
-projected-gradient implementation for Asymmetry's GUI and tests.
-"""
+One non-negative spectrum fits group-count signals with phases, amplitudes,
+and backgrounds. A deterministic entropy-regularised projected-gradient kernel
+implements the forward/adjoint contract and resumable state shape."""
 
 from __future__ import annotations
 
@@ -21,6 +15,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
@@ -508,6 +503,7 @@ class MaxEntResult:
     # equals the engine's by identity, not just by deterministic rebuild.  Not
     # serialised (the project persists recipes, not prepared arrays).
     maxent_input: MaxEntInput | None = None
+    computation_revision: str | None = None
 
     @property
     def early_stopped(self) -> bool:
@@ -524,6 +520,7 @@ class MaxEntResult:
         """
         error = np.zeros_like(self.spectrum, dtype=float)
         dataset = MuonDataset(
+            computation_revision=self.computation_revision,
             time=np.asarray(self.frequencies_mhz, dtype=float),
             asymmetry=np.asarray(self.spectrum, dtype=float),
             error=error,
@@ -2039,6 +2036,7 @@ def run_cycles(
         converged=converged,
         diverged=diverged,
         maxent_input=maxent_input,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

@@ -22,6 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -124,6 +125,7 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
             ),
             uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
             message="ok",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
         for run in runs
     }
@@ -222,6 +224,7 @@ def _recommendation() -> GlobalFitWizardRecommendation:
         },
         recommended_partition_k=2,
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

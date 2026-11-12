@@ -41,6 +41,7 @@ class CalibrationRecord:
 
     calibration_id: str
     result: TFCalibrationResult | TFCalibrationSelection
+    computation_revision: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.calibration_id, str) or not self.calibration_id:
@@ -322,6 +323,7 @@ def calibration_payload(record: CalibrationRecord) -> dict:
         )
     return {
         "calibration_id": record.calibration_id,
+        "computation_revision": record.computation_revision,
         "selection": selection,
         "criterion": "minimum_total_cost" if selection else None,
         "source_run_number": source[0],
@@ -431,7 +433,7 @@ def restore_calibration(data: dict) -> CalibrationRecord:
     ):
         raise ValueError("Calibration candidate scope must match the captured operation")
     result = TFCalibrationSelection(tuple(candidates)) if data["selection"] else candidates[0]
-    return CalibrationRecord(data["calibration_id"], result)
+    return CalibrationRecord(data["calibration_id"], result, data.get("computation_revision"))
 
 
 def resolved_calibration_payload(profile) -> dict:

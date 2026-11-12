@@ -1,7 +1,4 @@
-"""Read documented MusrRoot RunHeader/hDecay%03d and LEM folder/hDecay%02d objects.
-
-The uproot reader retains their raw histograms in the Run model.
-"""
+"""Read documented MusrRoot and LEM RunHeader/hDecay objects using uproot."""
 
 from __future__ import annotations
 
@@ -12,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.physical_units import (
@@ -648,6 +646,7 @@ class RootLoader(BaseLoader):
             error=error,
             metadata=metadata,
             run=run,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     def _select_histograms(

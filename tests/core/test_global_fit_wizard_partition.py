@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
@@ -53,9 +54,7 @@ from asymmetry.core.fitting.global_search.partition import (
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.likelihood import Objective
 
-# --------------------------------------------------------------------------- #
 # The planted two-phase series
-# --------------------------------------------------------------------------- #
 
 EXPONENTIAL = CompositeModel(["Exponential", "Constant"], operators=["+"])
 GAUSSIAN = CompositeModel(["Gaussian", "Constant"], operators=["+"])
@@ -177,9 +176,7 @@ def planted_series():
     return datasets, table, screening, optimised
 
 
-# --------------------------------------------------------------------------- #
 # The dense-curve contract
-# --------------------------------------------------------------------------- #
 
 
 def _fully_curved(assessment) -> bool:
@@ -232,7 +229,6 @@ def test_a_partitioned_recommendation_exposes_only_curved_assessments(planted_se
     assert all(_fully_curved(assessment) for assessment in optimised.assessments)
 
 
-# --------------------------------------------------------------------------- #
 # Screening computes the path
 # --------------------------------------------------------------------------- #
 
@@ -611,7 +607,9 @@ def _bare_recommendation(**overrides) -> GlobalFitWizardRecommendation:
         "comparable_keys": (),
         "summary": "",
     }
-    return GlobalFitWizardRecommendation(**{**defaults, **overrides})
+    return GlobalFitWizardRecommendation(
+        **{**defaults, **overrides}, computation_revision=computation.COMPUTATION_REVISION
+    )
 
 
 def test_merge_adds_phase_assessments_and_takes_the_newer_path(planted_series=None):
@@ -1025,6 +1023,7 @@ def test_the_powder_overhauser_templates_are_series_oscillatory_templates():
                 stage2_template_keys=tuple(m.key for m in oscillatory.stage2_members),
             ),
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     families = series_template_families({1: recommendation})

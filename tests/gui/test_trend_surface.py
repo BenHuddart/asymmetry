@@ -21,6 +21,7 @@ pytest.importorskip("PySide6")
 import numpy as np
 from PySide6.QtCore import QSettings
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.likelihood import Objective
@@ -80,6 +81,7 @@ def _result(rchi: float = 0.5, **param_kw) -> FitResult:
         reduced_chi_squared=rchi,
         parameters=ParameterSet([Parameter(name, val) for name, val in params.items()]),
         uncertainties={name: 0.01 for name in params},
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -626,7 +628,12 @@ class TestReviewFindings:
             member_run_numbers=[10],
             canonical_model={"component_names": ["Exponential"], "operators": []},
             results_by_run={
-                10: {"success": True, "parameters": {"A": 0.2}, "uncertainties": {"A": 0.01}}
+                10: {
+                    "computation_revision": computation.COMPUTATION_REVISION,
+                    "success": True,
+                    "parameters": {"A": 0.2},
+                    "uncertainties": {"A": 0.01},
+                }
             },
         )
 

@@ -48,6 +48,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from asymmetry.core import computation
+
 #: Minimum points required for the five-point parabolic peak refinement.
 _PARABOLA_POINTS = 5
 
@@ -89,6 +91,7 @@ class SpectrumMoments:
     window_peak_amplitude: float = float("nan")
     #: Extraction provenance: range, cutoff, unit, mode, uncertainty seed/method.
     recipe: dict[str, Any] = field(default_factory=dict)
+    computation_revision: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -325,6 +328,7 @@ def _empty(recipe: dict[str, Any]) -> SpectrumMoments:
         n_sample=0,
         peak_refined=False,
         recipe=recipe,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -477,6 +481,7 @@ def spectrum_moments(
         beta_err=errs["beta"],
         window_peak_amplitude=base["window_peak"],
         recipe=recipe,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -506,6 +511,7 @@ def moments_trend_row(
     errors = {col: float(getattr(moments, _ERR_ATTR[attr])) for col, attr in MOMENT_COLUMNS}
     return {
         "success": bool(moments.ok),
+        "computation_revision": moments.computation_revision,
         "parameters": values,
         "uncertainties": errors,
         "run_number": int(run_number),

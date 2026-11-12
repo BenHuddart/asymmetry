@@ -117,6 +117,7 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     """Serialize a :class:`FieldScan` to JSON-safe values."""
     return {
+        "computation_revision": scan.computation_revision,
         "effective_recipe": scan.effective_recipe.to_dict()
         if scan.effective_recipe is not None
         else None,
@@ -155,6 +156,7 @@ def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
 
     points = data["points"]
     return FieldScan(
+        computation_revision=data.get("computation_revision"),
         effective_recipe=EffectiveReductionRecipe.from_dict(data["effective_recipe"])
         if data.get("effective_recipe") is not None
         else None,
@@ -320,6 +322,7 @@ def fit_integral_scan(
         effective_dof = peaks.effective_dof
     fit_payload = {
         "success": bool(result.success),
+        "computation_revision": result.computation_revision,
         "message": str(result.message),
         "expression": expression,
         "parameters": _parameter_values(result.parameters),

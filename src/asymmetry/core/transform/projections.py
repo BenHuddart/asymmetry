@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
@@ -75,7 +76,7 @@ def reduction_identity(grouping: dict[str, Any]) -> str:
         {
             "binning_policy": BINNING_POLICY,
             "counting_noise_policy": COUNTING_NOISE_POLICY,
-            "grouping": shaping,
+            "grouping": computation.without_revision(shaping),
         },
         sort_keys=True,
         default=lambda value: np.asarray(value).tolist(),
@@ -207,6 +208,7 @@ def reduce_selected_projections(
                 {**source.metadata, "projection": label, "period_index": period_index}
             ),
             run=selected,
+            computation_revision=result.computation_revision,
         )
     return datasets
 

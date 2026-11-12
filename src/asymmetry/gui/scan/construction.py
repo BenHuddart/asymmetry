@@ -224,6 +224,7 @@ class ScanController(QObject):
         results_by_run = {
             int(run_number): {
                 "success": True,
+                "computation_revision": scan.computation_revision,
                 "scan_index": index,
                 "effective_recipe": captured_points[index]
                 .effective_recipe.scalar_units(units="percent", factor=100.0)
@@ -257,6 +258,7 @@ class ScanController(QObject):
             canonical_model=None,
             param_roles={},
             extra={
+                "computation_revision": scan.computation_revision,
                 "effective_recipe": scan.effective_recipe.to_dict()
                 if scan.effective_recipe is not None
                 else None,

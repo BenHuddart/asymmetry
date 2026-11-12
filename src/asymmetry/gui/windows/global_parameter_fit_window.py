@@ -680,6 +680,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 }
                 if fit_range.result is not None:
                     range_item["result"] = {
+                        "computation_revision": fit_range.result.computation_revision,
                         "success": fit_range.result.success,
                         "chi_squared": fit_range.result.chi_squared,
                         "reduced_chi_squared": fit_range.result.reduced_chi_squared,
@@ -799,6 +800,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
                     result_obj = ParameterModelFitResult(
                         success=bool(result_state.get("success", False)),
+                        computation_revision=result_state.get("computation_revision"),
                         chi_squared=float(result_state.get("chi_squared", 0.0)),
                         reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
                         parameters=result_params,
@@ -907,10 +909,7 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_selected_y_names = []
             self._restored_local_selected_y = []
 
-        # Decorations may travel inline in a legacy window-state dict (older
-        # projects) or be applied separately from the owning series' ``extra``
-        # (current projects, via :meth:`restore_decorations`). Applying any keys
-        # present here keeps legacy projects loading unchanged.
+        # Inline decorations remain loadable alongside series-owned decorations.
         self._apply_decoration_state(state)
 
         self._sync_fit_scale_controls()

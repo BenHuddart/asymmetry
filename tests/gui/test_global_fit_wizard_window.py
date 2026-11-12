@@ -20,6 +20,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
@@ -216,6 +217,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -350,6 +352,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -556,13 +559,7 @@ def test_global_fit_wizard_window_emits_generated_single_fit_analyses(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fit tabs get the runs' own analyses; the screen gets the derived table.
-
-    Phase 1 produces both, and they are not interchangeable: the per-run
-    single-run Fit Wizard analysis is what a fit tab shows and what a later
-    series analysis can reuse, while the completed score table is one resolution
-    and one alphabet, derived. Only the former is written back.
-    """
+    """Write back per-run analyses rather than the resolution-specific completed table."""
     sources = {
         int(dataset.run_number): _fake_single_fit_recommendation(dataset) for dataset in datasets
     }

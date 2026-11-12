@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
+from asymmetry.core import computation
+
 if TYPE_CHECKING:
     from asymmetry.core.transform.constituent_counts import ConstituentCounts
     from asymmetry.core.transform.corrections import BackgroundReference
@@ -34,7 +36,7 @@ _PRESENTATION = frozenset(
 )
 
 
-def numerical_recipe(value: Any) -> Any:
+def numerical_recipe(value: Any, *, include_execution: bool = False) -> Any:
     """Separate locators and prose from numerical facts, retaining source references."""
     if isinstance(value, dict):
         # CountFitDomain descriptors put the locator at position 2; ordinals stay numerical.
@@ -42,13 +44,15 @@ def numerical_recipe(value: Any) -> Any:
             k: (
                 [list(source[:2]) + [None] + list(source[3:]) for source in v]
                 if k == "acquired_sources"
-                else numerical_recipe(v)
+                else numerical_recipe(v, include_execution=include_execution)
             )
-            for k, v in value.items()
+            for k, v in (
+                value if include_execution else computation.without_revision(value)
+            ).items()
             if k not in _PRESENTATION and not (k == "reason" and isinstance(v, str))
         }
     if isinstance(value, list):
-        return [numerical_recipe(v) for v in value]
+        return [numerical_recipe(v, include_execution=include_execution) for v in value]
     return value
 
 
@@ -90,7 +94,7 @@ class EffectiveReductionRecipe:
         private calibration, reference, or constituent history. Existing export
         titles and comments have their own disclosure policy.
         """
-        return numerical_recipe(self.to_dict())
+        return numerical_recipe(self.to_dict(), include_execution=True)
 
     @property
     def identity(self) -> str:

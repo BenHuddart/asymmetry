@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.reduction_recipe import field_scan_recipe
 from asymmetry.core.io.frame_exposure import summed_period_exposures
@@ -236,6 +237,12 @@ def select_period(
             error=np.asarray(error, dtype=np.float64).copy(),
             metadata=run.metadata,
             run=run,
+            computation_revision=(
+                data.histogram_observation.cached_computation_revisions[index]
+                if data.histogram_observation is not None
+                and data.histogram_observation.cached_computation_revisions
+                else None
+            ),
         )
 
     if data.run is not None and grouping.get("period_histograms"):
@@ -813,6 +820,7 @@ def _quick_period_dataset(
         error=quick.error[window],
         metadata=metadata,
         run=run,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -915,7 +923,12 @@ def build_rf_difference_scan(
         time, value, error = combine_period_asymmetry(*curves[0], *curves[1], mode_key)
         try:
             result = reduce_period_integral(
-                MuonDataset(time, value, error), method="differential", t_min=t_min, t_max=t_max
+                MuonDataset(
+                    time, value, error, computation_revision=computation.COMPUTATION_REVISION
+                ),
+                method="differential",
+                t_min=t_min,
+                t_max=t_max,
             )
         except ValueError as exc:
             excluded.append((number, str(exc)))

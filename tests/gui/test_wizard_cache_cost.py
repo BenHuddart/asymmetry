@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module  # noqa: E402
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
 import asymmetry.gui.panels.fit.wizard_cache as wizard_cache_module  # noqa: E402
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
@@ -184,6 +185,7 @@ def _recommendation_for(dataset: MuonDataset, *, candidates: int = 1) -> FitWiza
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

@@ -45,6 +45,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass, geometry_from_field_direction
 from asymmetry.core.fitting.composite import COMPONENTS
@@ -237,10 +238,12 @@ class ScreenResult:
     lines: list[dict[str, Any]]
     #: First and last bin centres of the record the wizard fitted (after its own rebinning).
     time_window: tuple[float, float]
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
+            "computation_revision": self.computation_revision,
             "run_number": self.run_number,
             "geometry": self.geometry,
             "geometry_source": self.geometry_source,
@@ -384,6 +387,7 @@ def screen_run(
         recipe=recipe,
         runner_up=runner_up,
         time_window=retained_window(scoped, recommendation.rebin_factor),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

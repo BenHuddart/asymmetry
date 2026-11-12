@@ -33,6 +33,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import BSpline
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RatioReason
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
@@ -390,6 +391,7 @@ def rotate_transverse(
                 error=errors,
                 metadata={**source.metadata, "projection": label},
                 run=source.run,
+                computation_revision=computation.COMPUTATION_REVISION,
             )
         )
     return pair[0], pair[1]

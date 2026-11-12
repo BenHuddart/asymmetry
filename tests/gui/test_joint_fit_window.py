@@ -23,6 +23,7 @@ pytest.importorskip("PySide6")
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
@@ -123,7 +124,12 @@ def _series(
         canonical_model=dict(model),
         param_roles=dict(roles),
         results_by_run={
-            run: {"success": True, "parameters": {"A_bg": 0.0}, "reduced_chi_squared": 9.0}
+            run: {
+                "success": True,
+                "computation_revision": computation.COMPUTATION_REVISION,
+                "parameters": {"A_bg": 0.0},
+                "reduced_chi_squared": 9.0,
+            }
             for run in runs
         },
         last_fitted_members=list(runs),

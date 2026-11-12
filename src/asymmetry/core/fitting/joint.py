@@ -34,6 +34,7 @@ from typing import Literal
 
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import (
@@ -138,6 +139,7 @@ class JointFitResult:
     dof: int = 0
     reduced_chi_squared: float = 0.0
     message: str = ""
+    computation_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +270,7 @@ def fit_joint(
         dof=solution.dof,
         reduced_chi_squared=solution.chi_squared / max(solution.dof, 1),
         message=solution.message,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

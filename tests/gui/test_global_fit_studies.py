@@ -19,6 +19,7 @@ from PySide6.QtCore import QSettings  # type: ignore  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
+from asymmetry.core import computation  # noqa: E402
 from asymmetry.core.fitting.parameter_models import (  # noqa: E402
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -72,6 +73,7 @@ def _result() -> CrossGroupFitResult:
         global_parameters=ParameterSet([Parameter("m", value=-0.0005), Parameter("b", value=0.25)]),
         local_parameters={"g0": ParameterSet(), "g1": ParameterSet()},
         fixed_parameters=ParameterSet(),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

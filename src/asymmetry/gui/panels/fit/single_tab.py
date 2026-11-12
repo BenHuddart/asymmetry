@@ -1,16 +1,4 @@
-"""Single-dataset fit tab (``SingleFitTab``).
-
-Split out of ``fit_panel.py`` (Phase 2 mechanical split).
-
-What lives here: ``SingleFitTab(FitTabBase)``, the tab used to fit one
-dataset (or one grouped selection in time domain) against a single composite
-model. Entry points: ``set_dataset`` feeds the active dataset in;
-``current_seed_values`` reads the parameter table's current seeds; the
-``_run_fit``/``_on_stop_fit`` pair is the fit-lifecycle boundary (started via
-``tab_base._start_fit_call``, results routed back through the panel's
-``_on_single_fit_completed``); ``get_state``/``restore_state`` serialize the
-tab for project persistence.
-"""
+"""Fit a dataset or grouped selection through workers bound to launch-time inputs."""
 
 import copy
 import functools
@@ -33,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import (
     CompositeModel,
@@ -824,6 +813,7 @@ class SingleFitTab(FitTabBase):
         number = dataset.run_number if dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
+            "computation_revision": computation.COMPUTATION_REVISION,
             "observation": wizard_observation_identity(dataset) if dataset is not None else None,
             "run_number": int(number) if number is not None else None,
             "model": self._composite_model.to_dict(),
@@ -836,6 +826,7 @@ class SingleFitTab(FitTabBase):
     ) -> bool:
         return (
             isinstance(cached_signature, dict)
+            and computation.is_current(cached_signature.get("computation_revision"))
             and cached_signature.get("binning_policy") == BINNING_POLICY
             and cached_signature.get("observation") == current_signature["observation"]
             and cached_signature.get("run_number") == current_signature["run_number"]
@@ -1073,6 +1064,13 @@ class SingleFitTab(FitTabBase):
         if self._current_dataset is None:
             return
         if not isinstance(assessment, CandidateAssessment):
+            return
+        if not computation.is_current(recommendation.computation_revision):
+            self._results_card.set_message(
+                "Historical computation revision; reanalyse before applying.",
+                tag="Stale",
+                tone="warn",
+            )
             return
         error = _wizard_response_error(self._composite_model, (assessment.template.model,))
         if error is not None:

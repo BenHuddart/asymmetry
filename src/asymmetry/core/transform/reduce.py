@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioReason, RatioValidity
 from asymmetry.core.data.reduction_recipe import (
@@ -91,6 +92,7 @@ class GroupedAsymmetryReduction:
     effective_alpha: float | None = None
     counting_noise: CountingNoise | None = None
     effective_recipe: EffectiveReductionRecipe | None = None
+    computation_revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -565,6 +567,7 @@ def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
         counting_noise=noise.scale(np.full(time.size, PERCENT_PER_FRACTION))
         if noise is not None
         else None,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -582,6 +585,7 @@ class PeriodAsymmetryReduction:
     effective_alpha: float | None = None
     counting_noise: CountingNoise | None = None
     effective_recipe: EffectiveReductionRecipe | None = None
+    computation_revision: str | None = None
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
@@ -716,6 +720,7 @@ def reduce_period_asymmetry(
                 "n_points": int(time.size),
             }
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

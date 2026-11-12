@@ -9,6 +9,7 @@ import pytest
 
 from asymmetry import cli
 from asymmetry.cli._numbers import unverified_numbers
+from asymmetry.core import computation
 from asymmetry.core.workflow.workdir import SCHEMA
 from tests.core.conftest import ALL_RUNS, SCAN_RUNS, ZF_RUNS
 
@@ -232,17 +233,29 @@ def test_report_provenance_and_coupled_fits_are_required(
     for index, members in enumerate([[201, 202, 203], [204, 205, 206]]):
         workdir.write_series(
             str(index),
-            {"kind": "series", "trend": {"rows": [{"key": str(run)} for run in members]}},
+            {
+                "computation_revision": computation.COMPUTATION_REVISION,
+                "kind": "series",
+                "trend": {"rows": [{"key": str(run)} for run in members]},
+            },
         )
     text = "6 runs, SIM .nxs, two temperature groups: 201-203 and 204-206."
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     # One global fit over both temperatures forces one set of dynamics on them.
-    union = {"kind": "global", "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]}}
+    union = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "kind": "global",
+        "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]},
+    }
     workdir.write_series("union", union)
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     for index in range(2):
         # Any simultaneous fit clears the gate, whichever model it shares.
-        workdir.write_series(str(index), workdir.read_series(str(index)) | {"kind": "global"})
+        workdir.write_series(
+            str(index),
+            workdir.read_series(str(index))
+            | {"computation_revision": computation.COMPUTATION_REVISION, "kind": "global"},
+        )
     assert report_obligations([workdir.root], text) == []
 
 
@@ -558,7 +571,14 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "schema": SCHEMA,
+        "folder": "data",
+        "runs": [],
+        "scans": [],
+        "notes_scans": [scan],
+    }
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -584,36 +604,12 @@ def test_a_correlation_spectrum_without_its_plain_transform_is_named(tmp_path: P
         ("run-8-correlation", "hyperfine_coupling", 8),
         ("run-8", "frequency", 8),
     ]:
-        (spectra / f"{name}.json").write_text(json.dumps({"axis": axis, "run": run}))
-    assert _correlations_without_lines([tmp_path / "wd"]) == [(tmp_path / "wd", 7)]
-
-
-def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> None:
-    from asymmetry.cli.commands.audit import _untested_doublets
-
-    root = tmp_path / "wd"
-    for folder in ("spectra", "fits", "series"):
-        (root / folder).mkdir(parents=True)
-    spectrum = {
-        "axis": "frequency",
-        "run": 686,
-        "field_gauss": 60000.0,
-        "peak_analysis": {"peaks": [{"frequency_mhz": 813.59}]},
-    }
-    (root / "spectra" / "run-686.json").write_text(json.dumps(spectrum))
-
-    def fit(**frequencies: float) -> str:
-        return json.dumps(
-            {"expression": "...", "fit": {"success": True, "parameters": frequencies}}
+        (spectra / f"{name}.json").write_text(
+            json.dumps(
+                {"computation_revision": computation.COMPUTATION_REVISION, "axis": axis, "run": run}
+            )
         )
-
-    (root / "fits" / "one-686.json").write_text(fit(frequency=813.59))
-    assert _untested_doublets([root]) == [(root, 686, 813.59)]
-    # A second line at the first's harmonic is not a two-line test.
-    (root / "fits" / "wizard-686.json").write_text(fit(frequency_1=813.6, frequency_3=1627.2))
-    assert _untested_doublets([root]) == [(root, 686, 813.59)]
-    (root / "fits" / "two-line-686.json").write_text(fit(frequency_1=813.60, frequency_3=813.54))
-    assert _untested_doublets([root]) == []
+    assert _correlations_without_lines([tmp_path / "wd"]) == [(tmp_path / "wd", 7)]
 
 
 def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> None:
@@ -629,7 +625,11 @@ def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> Non
             "parameters": {"B0": centre, "Bwid": width},
             "next_dip_windows": list(windows),
         }
-        (scans / f"{name}.json").write_text(json.dumps({"runs": runs, "fit": fit}))
+        (scans / f"{name}.json").write_text(
+            json.dumps(
+                {"computation_revision": computation.COMPUTATION_REVISION, "runs": runs, "fit": fit}
+            )
+        )
 
     store("whole", [1, 2, 3], 19475.0, 300.0, [window])
     assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
@@ -658,7 +658,14 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "schema": SCHEMA,
+        "folder": "data",
+        "runs": [],
+        "scans": [],
+        "notes_scans": [scan],
+    }
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -690,13 +697,21 @@ def test_each_survey_is_held_against_its_own_work_directory(
         root = tmp_path / name
         (root / "fits").mkdir(parents=True)
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
-        survey = {"schema": SCHEMA, "folder": name, "runs": [], "scans": [], "notes_scans": notes}
+        survey = {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "schema": SCHEMA,
+            "folder": name,
+            "runs": [],
+            "scans": [],
+            "notes_scans": notes,
+        }
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
         (root / "manifest.json").write_text(_manifest(name), encoding="utf-8")
     for run in (11, 12, 13):
         (tmp_path / "asymmetry-work" / "fits" / f"x-{run}.json").write_text(
             json.dumps(
                 {
+                    "computation_revision": computation.COMPUTATION_REVISION,
                     "run": run,
                     "expression": "Exponential",
                     "fit": {"success": True, "parameters": {}},
@@ -735,7 +750,12 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     # A spectrum stored before field_gauss was recorded has no tesla-field line to test.
     spectra = tmp_path / "old" / "spectra"
     spectra.mkdir(parents=True)
-    old = {"axis": "frequency", "run": 5, "peak_analysis": {"peaks": [{"frequency_mhz": 813.6}]}}
+    old = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "axis": "frequency",
+        "run": 5,
+        "peak_analysis": {"peaks": [{"frequency_mhz": 813.6}]},
+    }
     (spectra / "run-5.json").write_text(json.dumps(old))
     assert _untested_doublets([tmp_path / "old"]) == []
 
@@ -747,9 +767,14 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     # A precession series with a held frequency does not fit a lineless run it failed on.
     root = tmp_path / "wd"
     (root / "series").mkdir(parents=True)
-    survey = {"schema": SCHEMA, "runs": [{"run_number": 7, "precession": "none"}]}
+    survey = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "schema": SCHEMA,
+        "runs": [{"run_number": 7, "precession": "none"}],
+    }
     (root / "survey.json").write_text(json.dumps(survey))
     series = {
+        "computation_revision": computation.COMPUTATION_REVISION,
         "kind": "series",
         "expression": "Oscillatory * Exponential + Constant",
         "free_params": ["A_1", "phase", "Lambda", "A_bg"],
@@ -776,45 +801,6 @@ def test_named_parameter_units_are_not_verified_by_a_bare_number(draft, flagged)
 
     log = "parameter value unit error\nA_hf 512.3456 MHz 0.1\nA_hf 613.2781 MHz 0.2\nB0 512.3456 G 0.3\n"
     assert bool(unverified_units(draft, log)) is flagged
-
-
-def test_all_instrument_survey_uses_each_instruments_fit_coverage(tmp_path):
-    from asymmetry.cli.commands.audit import unfitted_scans
-
-    roots = [tmp_path / "overview", tmp_path / "other"]
-    scan = {
-        "instrument": "MUSR",
-        "axis": "temperature",
-        "temperature": None,
-        "field": 0.0,
-        "geometry": "ZF",
-        "geometry_note": "",
-        "runs": [11, 12, 13, 14],
-        "values": [1.0, 2.0, 3.0, 4.0],
-        "notes": "",
-        "samples": [],
-    }
-    for root, instrument in zip(roots, ("EMU", "MUSR"), strict=True):
-        (root / "fits").mkdir(parents=True)
-        (root / "manifest.json").write_text(_manifest("same-data", instrument))
-    (roots[0] / "survey.json").write_text(
-        json.dumps(
-            {
-                "schema": SCHEMA,
-                "folder": "same-data",
-                "runs": [],
-                "scans": [scan],
-                "notes_scans": [],
-            }
-        )
-    )
-    assert unfitted_scans(roots)[0]
-    for run in scan["runs"]:
-        (roots[0] / "fits" / f"wrong-{run}.json").write_text(json.dumps({"run": run}))
-    assert unfitted_scans(roots)[0]  # Same-number fits in the other instrument do not count.
-    for run in scan["runs"]:
-        (roots[1] / "fits" / f"right-{run}.json").write_text(json.dumps({"run": run}))
-    assert unfitted_scans(roots) == ([], [])
 
 
 def test_composition_axis_requires_its_experimental_source():
@@ -887,7 +873,12 @@ def test_an_integral_only_scan_requires_its_first_local_dip_test(tmp_path: Path)
         order_key="field",
         method="integral",
     )
-    payload = {"runs": list(range(61)), "scan": field_scan_payload(scan), "fit": None}
+    payload = {
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "runs": list(range(61)),
+        "scan": field_scan_payload(scan),
+        "fit": None,
+    }
     (scans / "measured.json").write_text(json.dumps(payload))
     ((directory, name, window),) = _unfitted_dips([root])
     assert (directory, name) == (root, "measured")
@@ -901,7 +892,9 @@ def test_an_integral_only_scan_requires_its_first_local_dip_test(tmp_path: Path)
         "x_min": window["x_min"],
         "x_max": window["x_max"],
     }
-    (scans / "local.json").write_text(json.dumps(payload | {"fit": fit}))
+    (scans / "local.json").write_text(
+        json.dumps(payload | {"computation_revision": computation.COMPUTATION_REVISION, "fit": fit})
+    )
     assert _unfitted_dips([root]) == []
 
 

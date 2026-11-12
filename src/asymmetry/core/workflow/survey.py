@@ -1,21 +1,9 @@
-"""Survey a folder of run files: one row per run, plus the experiment's shape.
+"""Survey run metadata and measured precession evidence in one folder.
 
-This is the first step of the scriptable session façade (see
-``docs/plans/agent-cli-skill.md``). It answers the question an analyst asks
-before touching any data: *what is in this directory?* — which instrument,
-which runs, at which temperatures and fields, is there an alpha-calibration
-run, and do the runs form a temperature scan or a field scan.
-
-Most of it is metadata: the loaders are used for their parsing, never for
-their numerics. The one exception is :func:`precession_evidence`, which
-*measures* whether a run at a recorded non-zero field precesses at that
-field's Larmor frequency — because the metadata cannot be trusted to say so.
-ISIS EMU files from 2024 record no field state at all, and other ISIS files
-stamp ``TF`` on longitudinal decoupling runs, so a folder holding a perfectly
-good transverse-field run would otherwise report no calibration candidate and
-an agent would be left guessing. The result is JSON-serialisable via
-:meth:`FolderSurvey.to_dict` so a CLI or an agent can consume it verbatim.
-"""
+Metadata describes instruments, logged conditions, and scan membership.
+``precession_evidence`` independently measures whether a non-zero logged field
+matches a Larmor line; metadata geometry alone cannot establish precession.
+``FolderSurvey.to_dict`` retains the executed survey's diagnostics."""
 
 from __future__ import annotations
 
@@ -28,6 +16,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.calibration import (
     WEAK_TF_FIELD_RANGE_GAUSS,
     best_calibration_run_index,
@@ -906,10 +895,12 @@ class FolderSurvey:
     #: When no run precesses on the files' own pair, the pair that does on the
     #: first run in a field showing no line; ``None`` otherwise.
     other_pair: PrecessingPair | None
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
+            "computation_revision": self.computation_revision,
             "folder": self.folder,
             "truncated": self.truncated,
             "pair": None if self.pair is None else list(self.pair),
@@ -1590,6 +1581,7 @@ def survey_folder(
         pair=pair,
         cross_sections=cross_sections,
         other_pair=other_pair,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

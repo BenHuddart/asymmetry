@@ -157,9 +157,9 @@ def test_explicit_compute_snapshots_and_publishes_metadata(window, qapp, monkeyp
     publication_threads = []
     cache = original.cache_datasets
 
-    def publish(spectra):
+    def publish(spectra, *, replace_history=True):
         publication_threads.append(threading.get_ident())
-        cache(spectra)
+        cache(spectra, replace_history=replace_history)
 
     def compute(rep, run, *, context=None):
         assert rep is not original

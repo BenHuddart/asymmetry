@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import asymmetry.gui.windows.fit_wizard_window as wizard_window_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
@@ -233,6 +234,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -445,6 +447,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     assert payload.get("log_text") == ""
     assert payload.get("signature") == {
         "binning_policy": wizard_window_module.BINNING_POLICY,
+        "computation_revision": computation.COMPUTATION_REVISION,
         "observation": wizard_window_module.wizard_observation_identity(dataset),
         "run_number": int(dataset.run_number),
         "model": None,
@@ -539,14 +542,7 @@ def test_fit_wizard_window_opens_on_welcome_with_the_picker_open(
 
 
 def test_fit_wizard_window_fingerprint_plot_bounds_point_count(qapp: QApplication) -> None:
-    """A huge dataset's errorbar draw stays bounded, not O(points).
-
-    Regression guard for the diagnosed stall: opening the wizard on a long
-    high-resolution run drew a matplotlib ``errorbar`` over every raw point
-    synchronously on the GUI thread, freezing it for seconds (same disease
-    PR #229 fixed for the grouping preview pane). ``set_analysis_context`` ->
-    ``_populate_fingerprint_plot`` must decimate before drawing.
-    """
+    """Decimate high-resolution observations before synchronous errorbar drawing."""
     n = 50_000
     t = np.linspace(0.0, 8.0, n)
     y = 0.2 * np.exp(-0.4 * t) + 0.01

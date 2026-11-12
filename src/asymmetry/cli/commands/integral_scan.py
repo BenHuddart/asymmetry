@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import shlex
 from collections.abc import Iterable, Sequence
@@ -28,6 +27,7 @@ from asymmetry.cli._reduction import (
 from asymmetry.cli._runs import range_text, resolve_runs, run_spec
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.cli.commands.scan_observations import repeated_points as _repeated_points
+from asymmetry.core.workflow.workdir import current_results
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -203,6 +203,7 @@ def run(args: argparse.Namespace) -> None:
         model = as_composite_model(args.model)
 
     result_payload = {
+        "computation_revision": scan.computation_revision,
         "name": name,
         "folder": str(folder),
         "runs": [run for run, _prefix, _path in targets],
@@ -257,8 +258,8 @@ def run(args: argparse.Namespace) -> None:
         ]
     )
     payloads = {
-        path.stem: json.loads(path.read_text(encoding="utf-8"))
-        for path in sorted(workdir.scans_dir.glob("*.json"))
+        path.stem: data
+        for path, data in current_results(workdir.scans_dir).items()
         if path.stem != name
     }
     stored = {stem: entry["fit"] for stem, entry in payloads.items() if entry["fit"] is not None}

@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.fft import fourier_mode_uses_phase_fit
 from asymmetry.core.fourier.spectrum import (
@@ -101,6 +102,8 @@ class FrequencyFFT(Representation):
             self.result_metadata = {"fourier_phase_fit": spectrum.metadata["fourier_phase_fit"]}
         else:
             self.result_metadata = {}
+        spectrum.computation_revision = computation.COMPUTATION_REVISION
+        self.result_metadata["computation_revision"] = spectrum.computation_revision
         return [spectrum]
 
 
@@ -135,6 +138,7 @@ class FrequencyMaxEnt(Representation):
             config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
         result = maxent(run, config)
         self.result_metadata = {
+            "computation_revision": computation.COMPUTATION_REVISION,
             "cycles": int(result.state.cycle),
             "diagnostics": result.diagnostics.to_dict(),
             "f_min_mhz": float(result.frequencies_mhz[0]) if result.frequencies_mhz.size else None,

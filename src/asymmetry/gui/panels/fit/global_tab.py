@@ -1,8 +1,4 @@
-"""Global and grouped-count fit controls, workers, and result presentation.
-
-Batch seeding labels are shared with the analysis menu. Fits run through
-TaskRunner; result slots bind the launch-time dataset and objective context.
-"""
+"""Control global/grouped fits through workers bound to launch-time data and objectives."""
 
 import copy
 import dataclasses
@@ -36,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.combine import (
     CombineError,
     coadd_member_windows,
@@ -309,16 +306,9 @@ def _joined_bounds_text(table: QTableWidget, row: int, *, min_column: int = _COL
 def _fit_table_restore_entries(
     state: Mapping[str, Mapping[str, object]],
 ) -> dict[str, dict[str, object]]:
-    """Translate ``{value, type, bounds}`` row state into restore entries.
+    """Translate shared value/role/bounds rows into FitParameterTable restore entries.
 
-    The two-tier parameter tables describe a row as a value, a role text and a
-    combined ``"min, max"`` bounds string;
-    :meth:`FitParameterTable.restore_parameters` wants a value, a ``fixed``
-    flag and separate ``min``/``max``. The single grouped physics table is a
-    :class:`FitParameterTable` fed from that shared shape by both the
-    project-restore path and the model-edit rebuild, so both go through this
-    one translation.
-    """
+    Both project restore and model edits use the same grouped-physics row shape."""
     entries: dict[str, dict[str, object]] = {}
     for name, entry in state.items():
         minimum, _, maximum = str(entry.get("bounds", "-inf, inf")).partition(",")
@@ -2132,6 +2122,7 @@ class GlobalFitTab(FitTabBase):
     def _wizard_context_signature(self, parsed: dict[str, object]) -> dict[str, object]:
         return {
             "binning_policy": BINNING_POLICY,
+            "computation_revision": computation.COMPUTATION_REVISION,
             "observation": [wizard_observation_identity(ds) for ds in self._datasets],
             "run_numbers": list(self._normalized_wizard_run_set()),
             "model": self._composite_model.to_dict(),
@@ -2263,6 +2254,7 @@ class GlobalFitTab(FitTabBase):
                     "run_number": run_key,
                     "model": None,
                     "binning_policy": BINNING_POLICY,
+                    "computation_revision": computation.COMPUTATION_REVISION,
                     "observation": json.loads(recommendation.build_signature).get("observation")
                     if recommendation.build_signature
                     else None,
@@ -2445,19 +2437,10 @@ class GlobalFitTab(FitTabBase):
         dict[str, dict[str, str]],
         dict[int, dict[str, float]],
     ]:
-        """Translate what the parameter tables hold onto ``model``'s names.
+        """Carry shared table state and per-run seeds onto surviving model components.
 
-        Returns the run-batch table's carried ``{value, type, bounds}`` map, the
-        grouped physics table's, and the per-run initial values re-keyed for the
-        new model. Each is empty of anything belonging to a component the edit
-        did not keep, and empty altogether when there is no ``origins`` map —
-        with no record of which component became which, nothing can be carried
-        and every row is reseeded.
-
-        The per-(run, group) nuisance values are *not* re-keyed: their names
-        (``GROUP_NUISANCE_PARAMS``) belong to the grouped fit's nuisance block,
-        not to the fit function, so a model edit leaves them untouched.
-        """
+        Without an origins map every row is reseeded. Per-group nuisance names
+        belong to the grouped-count objective and are unchanged by model edits."""
         if origins is None:
             return {}, {}, {}
         old_identities = self._composite_model.parameter_identities()
@@ -2963,6 +2946,7 @@ class GlobalFitTab(FitTabBase):
         if not isinstance(cached_signature, dict):
             return False
         for key in (
+            "computation_revision",
             "binning_policy",
             "observation",
             "run_numbers",
@@ -4572,6 +4556,13 @@ class GlobalFitTab(FitTabBase):
         """Apply a global-fit wizard assessment back into the global tab."""
         if not isinstance(assessment, GlobalCandidateAssessment):
             return
+        if not computation.is_current(recommendation.computation_revision):
+            self._results_card.set_message(
+                "Historical computation revision; reanalyse before applying.",
+                tag="Stale",
+                tone="warn",
+            )
+            return
         error = _wizard_response_error(self._composite_model, (assessment.template.model,))
         if error is not None:
             self._results_card.set_message(error, tag="Stale", tone="warn")
@@ -4693,6 +4684,13 @@ class GlobalFitTab(FitTabBase):
         partition_k: int,
     ) -> None:
         """Forward phase creation only while its fixed response is current."""
+        if not computation.is_current(recommendation.computation_revision):
+            self._results_card.set_message(
+                "Historical computation revision; reanalyse before applying.",
+                tag="Stale",
+                tone="warn",
+            )
+            return
         error = _wizard_response_error(
             self._composite_model,
             chain(

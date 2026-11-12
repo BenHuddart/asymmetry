@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
@@ -152,7 +153,10 @@ class FitSlot:
         result = self.result or {}
         return (
             None
-            if recorded is None or result.get("ndof") is None or result.get("npar") is None
+            if recorded is None
+            or not computation.is_current(result.get("computation_revision"))
+            or result.get("ndof") is None
+            or result.get("npar") is None
             else (recorded["identity"], int(result["ndof"]) + int(result["npar"]))
         )
 
@@ -482,10 +486,16 @@ class Representation(ABC):
         """
         raise NotImplementedError
 
-    def ensure_computed(self, run: Run, *, context: Any = None) -> list[MuonDataset]:
+    def ensure_computed(
+        self, run: Run, *, context: Any = None, replace_history: bool = True
+    ) -> list[MuonDataset]:
         """Return the cached curves, computing them once if needed."""
         if self._datasets is None:
-            self._datasets = self.compute(run, context=context)
+            recorded = dict(self.result_metadata)
+            datasets = self.compute(run, context=context)
+            if recorded and not replace_history:
+                self.result_metadata = recorded
+            self.cache_datasets(datasets, replace_history=replace_history)
         return self._datasets
 
     def invalidate(self) -> None:
@@ -498,7 +508,9 @@ class Representation(ABC):
         """
         self._datasets = None
 
-    def record_result_recipes(self, datasets: list[MuonDataset]) -> None:
+    def record_result_recipes(
+        self, datasets: list[MuonDataset], *, replace_history: bool = True
+    ) -> None:
         """Retain known result history; absent or unavailable results cannot overwrite it."""
         datasets = [ds for ds in datasets if ds.n_points and ds.effective_recipe is not None]
         if not datasets:
@@ -511,23 +523,25 @@ class Representation(ABC):
             {
                 ds.metadata.get("projection"): {
                     "projection": ds.metadata.get("projection"),
+                    "computation_revision": ds.computation_revision,
                     "effective_recipe": ds.effective_recipe.to_dict()
                     if ds.effective_recipe is not None
                     else None,
                 }
                 for ds in datasets
+                if replace_history or ds.metadata.get("projection") not in recorded
             }
         )
         self.result_metadata["effective_recipes"] = list(recorded.values())
 
-    def cache_datasets(self, datasets: list[MuonDataset]) -> None:
+    def cache_datasets(self, datasets: list[MuonDataset], *, replace_history: bool = True) -> None:
         """Store externally-computed curves as the transient cache.
 
         Used when a freshly generated result is already in hand (e.g. the GUI
         just computed it) to avoid recomputing immediately.
         """
         self._datasets = list(datasets)
-        self.record_result_recipes(datasets)
+        self.record_result_recipes(datasets, replace_history=replace_history)
 
     def datasets(self) -> list[MuonDataset]:
         """Return the currently cached curves (empty if not yet computed)."""
@@ -542,8 +556,6 @@ class Representation(ABC):
 
     def to_dict(self) -> dict:
         """Return the serialisable recipe/fit/trend state (no arrays)."""
-        if self._datasets is not None:
-            self.record_result_recipes(self._datasets)
         return {
             "rep_type": self.rep_type.value,
             "recipe": dict(self.recipe),

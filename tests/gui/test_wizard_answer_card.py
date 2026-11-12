@@ -14,6 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QPushButton
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -122,6 +123,7 @@ def _recommendation(
         confidence=confidence,
         verdict=verdict,
         caveat=caveat,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

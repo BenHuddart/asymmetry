@@ -1850,7 +1850,7 @@ reloading or recomputing it, and an agent (or a shell script run in several
 steps) has state between invocations without a long-lived process — the same
 role a future MCP server would hold in memory instead. A reduced entry is
 keyed on a digest of the source file's identity (size, mtime, and the SHA-256
-of the whole file), the resolved grouping payload, the reduction settings and
+of the whole file), the resolved grouping payload, the reduction settings, scientific-computation revision, and
 the work-directory schema; an entry whose digest no longer matches its inputs
 is recomputed, never trusted stale, and a reduced run or series written by an
 older asymmetry is refused with a message to reduce or fit it again. The whole directory is safe to delete — every command
@@ -1884,6 +1884,26 @@ instrument is preserved when present. Reduced runs and series under an older
 schema must be regenerated rather than trusted. The same folder named
 relatively, absolutely, or through a symlink is one
 folder — both paths are resolved before they are compared.
+
+Scientific computation revision
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Asymmetry also checks a scientific-computation revision before reusing persistent
+reductions, wizard assessments, fits, scans, spectra, and dependent series.
+``computation_revision`` identifies the numerical implementation that executed
+the calculation. It is separate from the package version, storage schema,
+effective recipe, and actual-observation digest. A package or documentation-only
+release does not invalidate calculations.
+
+An old or missing revision cannot qualify as current work or suppress a needed
+calculation. ``reduce`` recomputes incompatible cached reductions. Consumers of
+historical work-directory products report that they must be recomputed; run the
+command that produced them again. This adds no approval dialog. Historical files
+remain available for inspection; core work-directory readers offer
+``require_current=False`` for historical records. Writing those records again
+preserves their old or unknown revision. A new fit over explicitly supplied
+historical observations records its own execution and the input's revision
+separately. Applied historical calibration coefficients remain usable.
 
 Effective reduction provenance
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

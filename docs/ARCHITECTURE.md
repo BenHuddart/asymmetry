@@ -19,6 +19,29 @@ The name reflects the fundamental observable in μSR: the time-dependent asymmet
 
 ---
 
+### Scientific execution compatibility
+
+`core/computation.py` owns `COMPUTATION_REVISION`, independently of package
+versions, project/work-directory storage schemas, and detailed numerical policy
+identifiers. Bump it when algorithms or numerical interpretation can change a
+scientific result: reduction, loader timing/count interpretation, calibration,
+uncertainty propagation, fitting objectives, or fitted semantics. Documentation,
+labels, package-only releases, and storage-only migrations do not require a bump.
+The revision is an explicit compatibility promise, not a correctness proof.
+
+Capture the revision at execution, alongside the existing recipe and observation
+attribution. Codecs preserve the captured value; absent legacy values remain
+`None`. Saving, reopening, relocating, and exporting never certify old results.
+Known matching revisions qualify for automatic reuse only with all existing
+input, policy, likelihood, and member-dependency checks. Historical values and
+models remain inspectable; explicit new calculations record their own execution
+without upgrading the history of their inputs or applied coefficients.
+
+Representation snapshots are replaced when successful computations are published.
+Serialization only fills missing projections. Project restoration and lazy view
+regeneration preserve existing historical snapshots while transient curves carry
+the execution that actually regenerated them.
+
 ## 3. Architecture
 
 ```

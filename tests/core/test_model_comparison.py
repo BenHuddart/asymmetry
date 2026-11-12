@@ -8,6 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -600,6 +601,7 @@ def _single_recommendation(*assessments: CandidateAssessment) -> FitWizardRecomm
         recommended_key=assessments[0].template.key,
         comparable_keys=(),
         summary="synthetic",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -729,6 +731,7 @@ def _saved(
             {"name": "A_bg", "value": 1.0, "min": "-inf", "max": "inf", "fixed": fixed_bg},
         ],
         result={
+            "computation_revision": computation.COMPUTATION_REVISION,
             "objective": "gaussian",
             "chi_squared": chi_squared,
             "reduced_chi_squared": chi_squared / (81 - npar),

@@ -22,6 +22,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings, QThread  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from asymmetry.core import computation  # noqa: E402
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
@@ -100,6 +101,7 @@ def _fit(mw, model: CompositeModel | None = None, chi_squared: float = 60.0) -> 
                 [Parameter(name=name, value=float(i + 1)) for i, name in enumerate(names)]
             ),
             uncertainties=dict.fromkeys(names, 0.01),
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     tab._fit_engine = SimpleNamespace(fit=_engine_fit)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
@@ -68,7 +69,10 @@ def _batch(batch_id: str, *, model=None, runs=(1, 2), roles=None, fit_range="0.1
         member_run_numbers=list(runs),
         canonical_model=model if model is not None else _model_dict(),
         param_roles=roles or {"A": "local"},
-        results_by_run={r: {"fit_range": fit_range} for r in runs},
+        results_by_run={
+            r: {"fit_range": fit_range, "computation_revision": computation.COMPUTATION_REVISION}
+            for r in runs
+        },
     )
 
 
@@ -850,7 +854,10 @@ def _model_over_lost_run() -> ProjectModel:
             "runs",
             _FB,
             member_run_numbers=[5, -1, -2],
-            results_by_run={run: {"run": run} for run in (5, -1, -2)},
+            results_by_run={
+                run: {"run": run, "computation_revision": computation.COMPUTATION_REVISION}
+                for run in (5, -1, -2)
+            },
             group_id=group.group_id,
             excluded_run_numbers=[-1],
             last_fitted_members=[5, -2],
@@ -884,7 +891,10 @@ def test_forget_runs_drops_every_run_keyed_fact_of_a_lost_run():
     assert model.data_group("g").member_run_numbers == [5, -2]
     series = model.batch("runs")
     assert series.member_run_numbers == [5, -2]
-    assert series.results_by_run == {5: {"run": 5}, -2: {"run": -2}}
+    assert series.results_by_run == {
+        run: {"run": run, "computation_revision": computation.COMPUTATION_REVISION}
+        for run in (5, -2)
+    }
     assert series.excluded_run_numbers == []
     assert series.last_fitted_members == [5, -2]
     assert series.trend_excluded_runs == [-2]

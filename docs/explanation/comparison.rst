@@ -1745,3 +1745,12 @@ and interpretation when comparing saved single fits. Unknown or different input
 histories remain available without a shared ranking or current residuals. This
 safeguard is separate from model structure and recipe identity; it does not change
 the fitting objective, information-criterion definitions, or TF calibration selection.
+
+Asymmetry also checks an explicit scientific-computation revision before automatic
+persistent reuse and current saved-result comparisons. This is an additional
+compatibility safeguard, separate from recipe, observation, and source identity.
+Historical results retain their old or unknown revision; ordinary documentation
+and package-version changes do not invalidate calculations. The operation-history
+and request/result-file behaviours described above do not establish an identical
+automatic computation-revision contract in WiMDA, Mantid, or musrfit. This check
+adds no muon-spin estimator and makes no new native numerical-equivalence claim.

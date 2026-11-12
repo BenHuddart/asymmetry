@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
@@ -787,11 +788,14 @@ class FitWizardWindow(WizardWindowBase):
         self._status_label.setText(recommendation.summary)
         self._set_busy(False)
         self._show_result()
+        if not computation.is_current(recommendation.computation_revision):
+            self._mark_analysis_stale("Historical computation revision")
 
     def _analysis_signature(self) -> dict[str, object]:
         number = self._dataset.run_number if self._dataset is not None else None
         return {
             "binning_policy": BINNING_POLICY,
+            "computation_revision": computation.COMPUTATION_REVISION,
             "observation": wizard_observation_identity(self._dataset)
             if self._dataset is not None
             else None,
@@ -1531,29 +1535,11 @@ class FitWizardWindow(WizardWindowBase):
         self._requested_curve_keys.clear()
 
     def _build_curves(self, key: str) -> None:
-        """Build one candidate's dense curves on a worker, for the card and the panel.
+        """Materialise candidate display curves on a worker, merging on the GUI thread.
 
-        A build materialises curves only for the rows it exposes as its answer
-        (the dense-curve contract on
-        :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`), while
-        this window lets the user pick any of the two-to-three dozen candidates
-        it assessed as A or B — in the Compare panel or the Details table.
-        Rebuilding one is a model evaluation plus one per additive component
-        over a 10⁴–10⁵-sample grid: tens of milliseconds, far past what a
-        selection click may spend on the GUI thread, so it goes through
-        the window's :class:`~asymmetry.gui.tasks.TaskRunner` exactly as the
-        analysis itself does. The closure captures the recommendation, the
-        record and the key — plain data, no widgets — and the result is merged
-        on the GUI thread by :meth:`_on_curves_materialised`.
-
-        The card and the panel emit this from their draws, so it is reached only
-        with a recommendation populated on both and the record
-        ``set_analysis_context`` supplied. One build per row per recommendation:
-        both re-ask on every draw they cannot draw a fit line for (a new A or B,
-        the residuals toggle, a re-rank, a row whose rebuilt curve is itself
-        empty because the record is), and a key already in
-        ``_requested_curve_keys`` adds nothing.
-        """
+        The closure captures plain recommendation/data/key values. Only one build
+        per row and recommendation is requested, including empty rebuilt curves;
+        comparison redraws and residual toggles cannot enqueue duplicates."""
         if key in self._requested_curve_keys:
             return
         recommendation = self._recommendation
@@ -1601,6 +1587,12 @@ class FitWizardWindow(WizardWindowBase):
 
     def _apply_candidate(self, key: str) -> None:
         """Hand candidate ``key`` (A, from the card or the panel) to the fit panel."""
+        if (
+            self._recommendation is None
+            or self._analysis_stale
+            or not computation.is_current(self._recommendation.computation_revision)
+        ):
+            return
         assessment = self._recommendation.assessment_for_key(key)
         self.apply_assessment_requested.emit(assessment, self._recommendation)
         self.statusBar().showMessage(f"Applied fit: {assessment.template.title}")

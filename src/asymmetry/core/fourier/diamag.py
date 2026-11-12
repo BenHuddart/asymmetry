@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.units import gauss_to_mhz, mhz_to_gauss
 
@@ -166,5 +167,6 @@ def fit_and_subtract_diamagnetic(
         error=dataset.error,
         metadata=dict(dataset.metadata) if isinstance(dataset.metadata, dict) else {},
         run=getattr(dataset, "run", None),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     return cleaned, fit

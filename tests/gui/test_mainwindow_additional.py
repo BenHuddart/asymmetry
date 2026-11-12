@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # ty
 
 import asymmetry.core.fourier.spectrum as spectrum_module
 import asymmetry.gui.mainwindow as mw_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -40,14 +41,7 @@ from tests._qt_helpers import wait_for
 
 
 def _compute_fourier_sync(window: MainWindow, timeout_s: float = 15.0) -> None:
-    """Run the async, selection-scoped Compute FFT and block until it lands.
-
-    ``_on_compute_fourier`` launches its targets (Data-Browser selection ∪
-    active run) on the shared TaskRunner via
-    ``_ensure_frequency_spectra_for_runs_async``; spin the event loop until
-    the completion clears the busy flag (or return immediately if validation
-    short-circuited).
-    """
+    """Wait for selection-scoped asynchronous FFT completion or early validation return."""
     window._on_compute_fourier()
     wait_for(
         lambda: not window._fourier_compute_active, QApplication.instance(), timeout_s=timeout_s
@@ -5004,6 +4998,7 @@ class TestMainWindowBasic:
             objective=Objective.GAUSSIAN,
             chi_squared=10.0,
             reduced_chi_squared=0.5,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     def test_single_fit_slot_recorded_under_active_projection(
@@ -5606,6 +5601,7 @@ class TestMainWindowBasic:
             chi_squared=1.0,
             reduced_chi_squared=1.0,
             message="Fit successful",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
         groups = [
             ParameterGroupData(
@@ -6428,7 +6424,10 @@ class TestMainWindowBasic:
         assert series.results_by_run == {8431: {"A": 1}, -2: {"A": 2}}
         assert series.trend_excluded_runs == [-2]
         assert model.data_group(group.group_id).member_run_numbers == [8431, -2]
-        assert not series.is_stale(model.data_group(group.group_id))
+        assert set(series.effective_members(model.data_group(group.group_id))) == set(
+            series.last_fitted_members
+        )
+        assert series.is_stale(model.data_group(group.group_id))
         restored_fit = model.representation(-2, RepresentationType.TIME_FB_ASYMMETRY).fit
         assert (restored_fit.fit_id, restored_fit.result) == (saved_fit_id, {"A": 2})
         assert restored._maxent_panel_state_by_run[-2] == json.loads(json.dumps(maxent_state))

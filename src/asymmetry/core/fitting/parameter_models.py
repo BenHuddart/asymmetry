@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 from scipy.optimize import least_squares
 from scipy.special import expit
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
 from asymmetry.core.fitting.composite import (
     QUADRATURE_OPERATOR,
@@ -2908,6 +2909,7 @@ class ParameterModelFitResult:
     #: excluded). ``None`` when unavailable: the fit failed/invalid or Minuit
     #: produced no covariance (e.g. HESSE did not run/converge).
     covariance: tuple[list[str], list[list[float]]] | None = None
+    computation_revision: str | None = None
 
 
 @dataclass
@@ -3016,42 +3018,14 @@ def carve_window_gap(
     lo: float,
     hi: float,
 ) -> list[tuple[float, float]]:
-    """Subtract a user-dragged exclude interval ``[lo, hi]`` from a window union.
+    """Subtract a normalised exclude interval from the included window union.
 
-    Used by the drag-to-exclude trend-fit interaction: dragging across a
-    plot region carves a gap into the (min, max) window union stored on a
-    :class:`ModelFitRange`.
-
-    Semantics:
-
-    1. **Seed then carve**: if ``windows`` is ``None``/empty, the input is
-       treated as a single implicit window ``[(x_min, x_max)]`` before
-       carving.
-    2. **Interval subtraction** of ``[lo, hi]`` from each existing window
-       ``(a, b)``: disjoint intervals are kept as-is, an interval that
-       covers a window drops it, an interval strictly interior to a window
-       splits it in two, and an interval overlapping just one edge trims
-       that edge. Cut points are clamped into ``[a, b]`` before forming
-       sub-windows.
-    3. ``lo``/``hi`` are normalised (swapped if ``lo > hi``). If the
-       normalised carve is disjoint from every window, the (seeded)
-       windows are returned unchanged — a no-op.
-    4. Sub-windows with width ``<= eps`` are dropped, where
-       ``eps = max(1e-9, 1e-9 * (x_max - x_min))`` (or just ``1e-9`` when
-       ``x_max <= x_min``), to avoid leaving degenerate slivers behind.
-    5. **Empty-result edge = no-op (load-bearing safety property)**: if the
-       carve would remove all coverage (nothing survives step 4), the
-       PRE-CARVE windows are returned unchanged instead. This function
-       must NEVER return ``None`` or ``[]`` — :func:`windows_mask` treats
-       an empty/``None`` window list as "no restriction", so an empty
-       result here would silently invert "exclude everything" into
-       "include everything".
-
-    Returns a non-empty list of sorted, non-overlapping ``(lo, hi)`` tuples.
-    Never raises for finite inputs; a degenerate ``x_max <= x_min`` range
-    falls back to returning a single-point-like seeded window (or the
-    input windows unchanged) rather than raising.
-    """
+    Absent windows seed ``[(x_min, x_max)]``. Disjoint intervals survive; an
+    interior cut splits, an edge cut trims, and full coverage removes a window.
+    Slivers at most ``max(1e-9, 1e-9 * (x_max - x_min))`` are dropped.
+    Removing all coverage returns the pre-carve windows: an empty union means
+    unrestricted inclusion to ``windows_mask`` and would invert the request.
+    Return sorted, non-overlapping windows; a degenerate range keeps its seed."""
     seeded = validate_fit_windows(windows)
     if seeded is None:
         seeded = [(float(x_min), float(x_max))]
@@ -3140,21 +3114,10 @@ def included_intervals(fit_range: ModelFitRange) -> list[tuple[float, float]]:
 def set_included_intervals(
     fit_range: ModelFitRange, intervals: Sequence[tuple[float, float]]
 ) -> None:
-    """Write an included-interval list back to a :class:`ModelFitRange`.
+    """Store finite, sorted included intervals; reject an empty fit region.
 
-    Applies the collapse rule:
-
-    * Exactly 1 interval -> ``windows`` is set to ``None`` and
-      ``x_min``/``x_max`` become that interval (a plain range).
-    * 2+ intervals -> ``windows`` is set to the sorted interval list and
-      ``x_min``/``x_max`` are set to the union envelope (``min`` of the
-      lows, ``max`` of the highs) so :func:`effective_range_bounds` or a
-      legacy reader still sees a sane envelope.
-
-    Intervals are validated like :func:`validate_fit_windows` (finite
-    bounds, ``lo < hi``) and stored sorted by ``lo``. An empty ``intervals``
-    is rejected with ``ValueError`` -- a fit region can never be emptied.
-    """
+    One interval becomes plain bounds with ``windows=None``. Multiple intervals
+    retain their union and expose its envelope as ``x_min``/``x_max``."""
     normalised = validate_fit_windows(list(intervals))
     if not normalised:
         raise ValueError("included intervals cannot be empty")
@@ -3207,11 +3170,13 @@ class ParameterGroupData:
     #: Optional per-point x-uncertainty (aligned to ``x``), used only for an
     #: effective-variance fit when the abscissa is itself a fitted parameter.
     xerr: NDArray[np.float64] | None = None
+    input_computation_revisions: tuple[str | None, ...] = ()
 
     def to_dict(self) -> dict:
         """Canonical, JSON-safe serialization (numpy arrays -> lists)."""
         return {
             "group_id": self.group_id,
+            "input_computation_revisions": list(self.input_computation_revisions),
             "group_name": self.group_name,
             "x": np.asarray(self.x, dtype=float).tolist(),
             "y": np.asarray(self.y, dtype=float).tolist(),
@@ -3227,6 +3192,7 @@ class ParameterGroupData:
         xerr = None if raw_xerr is None else np.asarray(raw_xerr, dtype=float)
         return cls(
             group_id=str(data.get("group_id", "")),
+            input_computation_revisions=tuple(data.get("input_computation_revisions", ())),
             group_name=str(data.get("group_name", "")),
             x=np.asarray(data.get("x", []), dtype=float),
             y=np.asarray(data.get("y", []), dtype=float),
@@ -3319,6 +3285,7 @@ class CrossGroupFitResult:
     #: ``None`` when unavailable: fewer than two free global parameters, a
     #: failed fit, or no covariance from Minuit.
     global_correlations: tuple[list[str], list[list[float]]] | None = None
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict:
         """Canonical, JSON-safe serialization.
@@ -3329,6 +3296,7 @@ class CrossGroupFitResult:
         """
         return {
             "success": bool(self.success),
+            "computation_revision": self.computation_revision,
             "chi_squared": float(self.chi_squared),
             "reduced_chi_squared": float(self.reduced_chi_squared),
             "global_parameters": _parameter_set_to_dicts(self.global_parameters),
@@ -3443,6 +3411,7 @@ class CrossGroupFitResult:
 
         return cls(
             success=success,
+            computation_revision=data.get("computation_revision"),
             chi_squared=chi_squared,
             reduced_chi_squared=reduced_chi_squared,
             global_parameters=_parameter_set_from_dicts(data.get("global_parameters", [])),
@@ -3703,7 +3672,11 @@ def _run_parameter_model_minuit(
         from iminuit.cost import LeastSquares
     except ImportError as exc:
         return (
-            ParameterModelFitResult(success=False, message=f"iminuit import error: {exc}"),
+            ParameterModelFitResult(
+                success=False,
+                message=f"iminuit import error: {exc}",
+                computation_revision=computation.COMPUTATION_REVISION,
+            ),
             float("inf"),
         )
 
@@ -3799,6 +3772,7 @@ def _run_parameter_model_minuit(
                 m, success_message="Fit successful", failure_prefix="Fit failed"
             ),
             covariance=covariance,
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         float(m.fval),
     )
@@ -3910,7 +3884,12 @@ def fit_parameter_model(
     except ValueError as exc:
         # Keep the documented failure contract: bad range inputs yield a
         # failed result, never an exception.
-        return ParameterModelFitResult(success=False, message=str(exc), error_mode=error_mode.value)
+        return ParameterModelFitResult(
+            success=False,
+            message=str(exc),
+            error_mode=error_mode.value,
+            computation_revision=computation.COMPUTATION_REVISION,
+        )
 
     mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
     mask &= window_selection
@@ -3920,6 +3899,7 @@ def fit_parameter_model(
             success=False,
             message="No valid points in selected range",
             error_mode=error_mode.value,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     x_fit = xx[mask]
@@ -4009,7 +3989,10 @@ def fit_parameter_model(
 
     if best_result is None:
         return ParameterModelFitResult(
-            success=False, message="Fit failed", error_mode=error_mode.value
+            success=False,
+            message="Fit failed",
+            error_mode=error_mode.value,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     best_result.error_mode = error_mode.value
@@ -4099,6 +4082,7 @@ def global_fit_parameter_model(
             chi_squared=0.0,
             reduced_chi_squared=0.0,
             message="Need at least two groups for cross-group fitting",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     if initial_params is None:
@@ -4118,6 +4102,7 @@ def global_fit_parameter_model(
             chi_squared=0.0,
             reduced_chi_squared=0.0,
             message=f"Unknown parameter classification: {unknown}",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     unknown_bounds = set(parameter_bounds.keys()) - all_param_names
@@ -4127,6 +4112,7 @@ def global_fit_parameter_model(
             chi_squared=0.0,
             reduced_chi_squared=0.0,
             message=f"Unknown parameter bounds: {sorted(unknown_bounds)}",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     unclassified = all_param_names - fixed_names - global_names - local_names
@@ -4164,6 +4150,7 @@ def global_fit_parameter_model(
             chi_squared=0.0,
             reduced_chi_squared=0.0,
             message=f"iminuit import error: {exc}",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     # Build Minuit parameter vector with deterministic names.
@@ -4226,6 +4213,7 @@ def global_fit_parameter_model(
                 reduced_chi_squared=0.0,
                 message=str(exc),
                 error_mode=error_mode.value,
+                computation_revision=computation.COMPUTATION_REVISION,
             )
         mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
         x_masked = x[mask]
@@ -4397,6 +4385,7 @@ def global_fit_parameter_model(
         per_group_chi_squared=per_group_chi_squared,
         per_group_n_points=per_group_n_points,
         global_correlations=global_correlations,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

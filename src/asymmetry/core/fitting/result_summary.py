@@ -167,6 +167,7 @@ def fit_result_summary(
     }
     return {
         "success": bool(fit_result.success),
+        "computation_revision": fit_result.computation_revision,
         "input_attribution": fit_result.input_attribution,
         "observation_report": fit_result.observation_report.to_dict()
         if fit_result.observation_report is not None

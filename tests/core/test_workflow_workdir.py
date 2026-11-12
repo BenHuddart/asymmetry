@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from asymmetry import __version__
+from asymmetry.core import computation
 from asymmetry.core.io import load
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import (
@@ -65,6 +66,7 @@ def reduced(workflow_folder: Path, tmp_path: Path):
         forward_group=int(grouping["forward_group"]),
         backward_group=int(grouping["backward_group"]),
         members=[],
+        computation_revision=dataset.computation_revision,
     )
     return WorkDir(tmp_path / "wd"), dataset, entry, path, grouping, settings
 
@@ -310,7 +312,9 @@ def test_no_work_directory_path_can_be_built_from_an_unsafe_name(reduced, name: 
         lambda: workdir.trend_plot_path(name, "lambda"),
         lambda: workdir.write_recipe(name, recipe),
         lambda: workdir.read_recipe(name),
-        lambda: workdir.write_series(name, {"name": name}),
+        lambda: workdir.write_series(
+            name, {"computation_revision": computation.COMPUTATION_REVISION, "name": name}
+        ),
         lambda: workdir.read_series(name),
     ):
         with pytest.raises(ValueError):
@@ -351,7 +355,13 @@ def test_a_manifest_written_without_settings_keeps_what_the_reduction_recorded(
 
 def test_survey_payload_round_trips(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
-    workdir.write_survey({"folder": "somewhere", "runs": []})
+    workdir.write_survey(
+        {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "folder": "somewhere",
+            "runs": [],
+        }
+    )
 
     stored = workdir.read_survey()
     assert stored["schema"] == SCHEMA
@@ -373,7 +383,13 @@ def test_a_wizard_payload_is_stamped_and_read_back(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
     assert workdir.screened_runs() == []
 
-    workdir.write_wizard(102, {"recommended_key": "exp_constant"})
+    workdir.write_wizard(
+        102,
+        {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "recommended_key": "exp_constant",
+        },
+    )
 
     stored = workdir.read_wizard(102)
     assert stored["schema"] == SCHEMA
@@ -401,7 +417,15 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
     assert workdir.series_names() == []
 
-    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
+    workdir.write_series(
+        "scan",
+        {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "name": "scan",
+            "kind": "series",
+            "results": [],
+        },
+    )
 
     stored = workdir.read_series("scan")
     assert stored["schema"] == SCHEMA
@@ -415,11 +439,22 @@ def _derived(workdir: WorkDir, fit: str | None) -> None:
     """Store member ``m`` and the series ``d`` built from it (reading trend fit *fit*)."""
     workdir.write_series(
         "m",
-        {"kind": "global", "shared": {"Lambda": 0.3}, "trend_fits": {"Lambda:Linear": {"m": 1.0}}},
+        {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "kind": "global",
+            "shared": {"Lambda": 0.3},
+            "trend_fits": {
+                "Lambda:Linear": {
+                    "m": 1.0,
+                    "computation_revision": computation.COMPUTATION_REVISION,
+                }
+            },
+        },
     )
     workdir.write_series(
         "d",
         {
+            "computation_revision": computation.COMPUTATION_REVISION,
             "kind": "fit-trend" if fit else "global-batch",
             "members": [
                 {"series": "m", "fit": fit, "digest": series_digest(workdir.read_series("m"), fit)}
@@ -485,7 +520,9 @@ def test_a_reduced_run_from_an_older_schema_is_refused_until_reduced_again(reduc
 
 def test_a_survey_from_an_older_schema_is_refused(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
-    workdir.write_survey({"runs": [], "scans": []})
+    workdir.write_survey(
+        {"computation_revision": computation.COMPUTATION_REVISION, "runs": [], "scans": []}
+    )
     _restamp(workdir.survey_path, SCHEMA - 1)
 
     with pytest.raises(StaleWorkDirError, match="survey it again"):
@@ -503,7 +540,15 @@ def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
 
 def test_a_series_from_an_older_schema_is_refused(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
-    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
+    workdir.write_series(
+        "scan",
+        {
+            "computation_revision": computation.COMPUTATION_REVISION,
+            "name": "scan",
+            "kind": "series",
+            "results": [],
+        },
+    )
     _restamp(workdir.series_path("scan"), SCHEMA - 1)
 
     with pytest.raises(StaleWorkDirError, match="Series 'scan' was written by an older asymmetry"):
@@ -547,7 +592,11 @@ def test_fitted_coadd_covers_its_members_but_reduction_alone_does_not(reduced) -
     members = [entry.run_number, entry.run_number + 1]
     workdir.write_reduced(dataset, dataclasses.replace(entry, members=members))
     assert workdir.fitted_runs() == set()
-    workdir.write_fit(entry.run_number, "coadd", {"fit": {"success": False}})
+    workdir.write_fit(
+        entry.run_number,
+        "coadd",
+        {"computation_revision": computation.COMPUTATION_REVISION, "fit": {"success": False}},
+    )
     assert workdir.fitted_runs() == set(members)
 
 
