@@ -81,7 +81,7 @@ ratio. G+R pools prepared counts and variances before background, binning, and
 one ratio. G−R bins each separately prepared set on common native support, then
 subtracts their asymmetries with independent marginal variances added. The Groups and Raw counts views sum the corresponding
 count bins. A merge larger than the record leaves no complete output point.
-Curves without a resolved histogram observation and rotated projections use the independent
+Curves without a resolved histogram observation and rotated projections use the
 curve-bin mean described below.
 
 Direct reduction, the workflow, CLI, and histogram toolbar honour the same
@@ -251,11 +251,13 @@ Curves without raw counts
 
 :meth:`MuonDataset.merge_curve_bins <asymmetry.core.data.dataset.MuonDataset.merge_curve_bins>`
 and :func:`~asymmetry.core.transform.rebin.merge_curve_bins` compute the mean
-of consecutive curve points and add their independent variances. This is exact
-for the mean of independent Gaussian measurements; it gives different values
-and uncertainties from counts-first reduction for sparse or
-background-subtracted counts. Workdir-stored curves, rotated-frame projections
-and unresolved custom/historical curves use this explicitly named curve operation.
+of consecutive curve points. The dataset method propagates retained counting
+influences through the mean, preserving known shared acquisition and
+background-estimator noise. The array helper assumes independent inputs.
+Curve merging gives different values and uncertainties from counts-first
+reduction for sparse or background-subtracted counts. Workdir-stored curves,
+rotated-frame projections and unresolved custom/historical curves use this
+explicitly named curve operation.
 Single/global wizard merging instead uses counts-first preparation when the
 actual histogram observation is recorded. Attached raw counts alone do not
 establish that context. Cropping retains the selected output-bin membership
@@ -266,8 +268,11 @@ before a subsequent merge; base, toolbar, and wizard factors compose once.
    coarse = dataset.merge_curve_bins(8)
 
 A factor of one returns a copy. A trailing partial group is dropped. The
-per-point uncertainty is :math:`\sqrt{\sum\sigma^2}/factor`, on the input's
-fraction or percent scale. The raw acquisition record remains unchanged.
+per-point uncertainty for independent inputs without retained noise is
+:math:`\sqrt{\sum\sigma^2}/factor`. Unknown correlations cannot be recovered
+from marginal errors alone. Values and uncertainties retain the input's fraction
+or percent scale, and timestamps are averaged. The raw acquisition record remains
+unchanged.
 
 Notes
 -----

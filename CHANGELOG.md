@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify retained shared counting noise and independent-error assumptions in
+  curve-merging documentation.
+
 - Clarify finite-window Fourier amplitude limits, operation-specific normalisation
   and phase conventions, and the distinct spectral and rotating-frame workflows.
 
