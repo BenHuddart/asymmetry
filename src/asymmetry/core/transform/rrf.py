@@ -19,18 +19,18 @@ Two methods are provided:
     the display method.
 
 ``"wimda"``
-    WiMDA's scheme, reproduced bin-for-bin for comparison: multiply by
+    WiMDA-style real demodulation for comparison: multiply by
     2·cos(2πν₀t + φ) and box-average over a time window (default one image
     period), zeroing the output within half a window of either edge and
-    *linearly* averaging the scaled errors — including WiMDA's statistically
-    loose error treatment (its ``plotdata``).
+    *linearly* averaging the scaled errors, preserving its distinct
+    error convention.
 
 The demodulated curve is a **visualization**, not fit input: the low-pass
 correlates neighbouring bins over the filter support (and the textbook warns
 the filtering distorts lineshapes), so χ² against these points with their
 per-point errors would be wrong.  Quantitative work fits the raw data — see
 :mod:`asymmetry.core.fitting.rrf_offset` for fitting in the rotating frame
-with exact statistics.
+on the laboratory observations.
 
 This module is Qt-free and operates on plain arrays; datasets are never
 mutated.
@@ -63,12 +63,15 @@ class RRFCurve:
     """A demodulated rotating-frame curve with per-point errors.
 
     ``real``/``imag`` are the in-phase and quadrature components with
-    per-point standard deviations propagated exactly through the demodulation
-    and the filter.  Neighbouring bins are **correlated** over roughly
+    per-point standard deviations conditional on independent scalar input
+    errors, propagated through the demodulation and the filter. Neighbouring
+    bins are **correlated** over roughly
     ``filter_taps`` bins; ``effective_independent_fraction`` (Σh²ₖ of the
     DC-normalised kernel) is the approximate fraction of output points that
-    carry independent information.  Real/imaginary covariance from the shared
-    input error is not reported.
+    carry independent information. ``real_imag_covariance`` retains their
+    signed same-bin covariance from
+    shared input errors, in squared input-scale units. Unknown input temporal
+    correlations cannot be recovered from marginal errors alone.
 
     Scale: every value here — ``real``, ``imag``, their errors,
     :attr:`magnitude` and :attr:`magnitude_error` — is **on the same asymmetry
@@ -84,6 +87,7 @@ class RRFCurve:
     real_error: NDArray[np.float64]
     imag: NDArray[np.float64]
     imag_error: NDArray[np.float64]
+    real_imag_covariance: NDArray[np.float64]
     #: False inside the filter edge region or where the kernel saw mostly
     #: non-finite input.
     valid: NDArray[np.bool_]
@@ -104,10 +108,23 @@ class RRFCurve:
     def _magnitude_error_for(self, mag: NDArray[np.float64]) -> NDArray[np.float64]:
         floor = np.finfo(float).tiny
         safe = np.where(mag > floor, mag, 1.0)
-        err = (
-            np.sqrt(np.square(self.real * self.real_error) + np.square(self.imag * self.imag_error))
-            / safe
+        direction_re = self.real / safe
+        direction_im = self.imag / safe
+        marginal = np.square(direction_re * self.real_error) + np.square(
+            direction_im * self.imag_error
         )
+        cross = 2.0 * direction_re * direction_im * self.real_imag_covariance
+        variance = marginal + cross
+        # FFT convolution can leave absolute roundoff at the largest marginal
+        # variance scale, including bins with negligible local noise. Only
+        # cancellation at that accumulation scale may be clipped to zero.
+        scale = np.maximum(
+            marginal + np.abs(cross),
+            np.max(np.square(self.real_error) + np.square(self.imag_error)),
+        )
+        if np.any(variance < -64.0 * np.finfo(float).eps * scale):
+            raise RuntimeError("RRF magnitude variance violates the covariance invariant.")
+        err = np.sqrt(np.maximum(variance, 0.0))
         # Where the magnitude vanishes the first-order expansion collapses;
         # fall back to the quadrature mean so the bar is not spuriously zero.
         fallback = np.sqrt(0.5 * (np.square(self.real_error) + np.square(self.imag_error)))
@@ -271,8 +288,8 @@ def rrf_demodulate(
     Returns
     -------
     RRFCurve
-        Complex curve **on the input's asymmetry scale**, with exact per-point
-        error propagation and a validity mask covering filter edges and
+        Complex curve **on the input's asymmetry scale**, with conditional per-point
+        error propagation for independent scalar observations and a validity mask covering filter edges and
         non-finite holes.  See the class notes on inter-bin correlation and
         scale.
     """
@@ -308,8 +325,7 @@ def rrf_demodulate_values(
     """Demodulate an error-free curve (e.g. a stored fit-curve overlay).
 
     The model curve drawn over RRF-displayed data must pass through the same
-    pipeline as the data so the two stay in step — the structural fix for
-    WiMDA's display-only frame shift (see the study's comparison ledger).
+    pipeline as the data so their values and resolved bandwidth stay in step.
 
     ``values`` may be on **either** asymmetry scale and the returned
     :class:`RRFCurve` keeps it — so pass the curve on the *same* scale as the
@@ -349,14 +365,13 @@ def _demodulate_fir(
     finite = np.isfinite(a) & np.isfinite(e) & np.isfinite(t)
     carrier = np.exp(-1j * theta)
     z = 2.0 * a * carrier
-    # Per-quadrature input variances: Re scales with 2cosθ, Im with 2sinθ —
-    # both already held in the carrier (cosθ = Re, −sinθ = Im; sign squares
-    # away). An all-zero error array (model overlays) skips the variance
-    # convolutions entirely.
+    # The two quadratures share each scalar observation. Their signed
+    # coefficient product carries covariance in squared input-scale units.
     has_errors = bool(np.any(e[finite] != 0.0)) if np.any(finite) else False
     if has_errors:
         var_re = np.square(2.0 * e * carrier.real)
         var_im = np.square(2.0 * e * carrier.imag)
+        cov_re_im = 4.0 * np.square(e) * carrier.real * carrier.imag
 
     kernel = _fir_kernel(dt, bandwidth, t.size)
     if kernel.size == 1:
@@ -364,6 +379,7 @@ def _demodulate_fir(
         z_f = np.where(finite, z, 0.0)
         var_re_f = np.where(finite, var_re, 0.0) if has_errors else np.zeros_like(t)
         var_im_f = np.where(finite, var_im, 0.0) if has_errors else np.zeros_like(t)
+        cov_re_im_f = np.where(finite, cov_re_im, 0.0) if has_errors else np.zeros_like(t)
     else:
         from scipy.signal import fftconvolve
 
@@ -375,9 +391,11 @@ def _demodulate_fir(
             safe_sq = np.square(safe)
             var_re_f = np.clip(_filtered(var_re, finite, kernel_sq, safe_sq), 0.0, None)
             var_im_f = np.clip(_filtered(var_im, finite, kernel_sq, safe_sq), 0.0, None)
+            cov_re_im_f = _filtered(cov_re_im, finite, kernel_sq, safe_sq)
         else:
             var_re_f = np.zeros_like(t)
             var_im_f = np.zeros_like(t)
+            cov_re_im_f = np.zeros_like(t)
 
     half = kernel.size // 2
     valid = coverage >= _MIN_KERNEL_COVERAGE
@@ -391,6 +409,7 @@ def _demodulate_fir(
         real_error=np.sqrt(var_re_f),
         imag=np.asarray(z_f.imag, dtype=np.float64),
         imag_error=np.sqrt(var_im_f),
+        real_imag_covariance=cov_re_im_f,
         valid=valid,
         frequency_mhz=freq,
         phase_deg=phase_deg,
@@ -410,13 +429,10 @@ def _demodulate_wimda(
     phase_deg: float,
     box_width_us: float | None,
 ) -> RRFCurve:
-    """WiMDA's 2·cos demodulation + box smooth, bin-for-bin.
+    """Real-cosine demodulation with the WiMDA comparison convention.
 
-    Mirrors WiMDA's ``plotdata``: values scaled by
-    2·cos(2πν₀t + φ), errors by |2·cos|, box half-width ``(box/dt) div 2``,
-    box values *and errors* divided by the in-range count (the linear error
-    average of comparison-ledger item 1), and output zeroed within half a box
-    of either edge while edge errors keep their averages (ledger item 3).
+    Values and absolute scaled errors are box-averaged over in-range bins;
+    edge values are zeroed while their averaged errors are retained.
     """
     box = 1.0 / (2.0 * freq) if box_width_us is None else float(box_width_us)
     if not np.isfinite(box) or box <= 0.0:
@@ -457,6 +473,7 @@ def _demodulate_wimda(
         real_error=smoothed_err,
         imag=np.zeros_like(smoothed),
         imag_error=np.zeros_like(smoothed),
+        real_imag_covariance=np.zeros_like(smoothed),
         valid=valid,
         frequency_mhz=freq,
         phase_deg=phase_deg,

@@ -67,3 +67,32 @@ def test_open_project_with_active_rrf_auto_enables(window):
     window._auto_enable_rrf_for_active_project()
     assert window._rrf_advanced_action.isChecked()
     assert controls.feature_enabled()
+
+
+def test_magnitude_display_keeps_lab_observations_in_actual_fit_panel(window):
+    import numpy as np
+
+    from tests.gui.test_rrf_controls import _dataset
+
+    dataset = _dataset()
+    window._data_browser.add_dataset(dataset)
+    window._data_browser.select_runs([dataset.run_number])
+    tab = window._fit_panel._single_tab
+    original = tab._current_dataset
+    assert original is not None
+    before = (original.time.copy(), original.asymmetry.copy(), original.error.copy())
+    window._rrf_advanced_action.setChecked(True)
+    controls = window._plot_panel._rrf_controls
+    controls._freq_spin.setValue(30.0)
+    controls._component_combo.setCurrentIndex(controls._component_combo.findData("magnitude"))
+    controls._phase_spin.setValue(37.0)
+    controls._enable_check.setChecked(True)
+    plotted = window._plot_panel._last_plot_asymmetry
+    assert np.nanmin(plotted) > 0
+    current = tab._current_dataset
+    for actual, expected in zip(
+        (current.time, current.asymmetry, current.error), before, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    assert np.min(current.asymmetry) < 0
+    window._dirty = False
