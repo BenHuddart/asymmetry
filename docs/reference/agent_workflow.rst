@@ -1625,10 +1625,8 @@ different run sets carry the cross-condition interpretation guidance.
 A resolved line that
 another analysed scan covers, with no fitted line within five widths of it
 there, gets a NOTE with the command that fits that scan on the same window: a
-line one scan shows and another lacks is a finding to report either way. A run stamped TF at a kilogauss or more whose integral
-asymmetry stays at least 0.02 and five errors from zero is named as
-longitudinal: a transverse field that strong precesses the polarisation
-through many periods within the window and integrates to near zero. An LCR fit notes
+line one scan shows and another lacks is a finding to report either way. Retained integral asymmetry does not measure geometry or invalidate the declared
+label; keep the metadata and experimental interpretation distinct. An LCR fit notes
 that no radical ALC or hyperfine model is available, so its fields are not
 converted into couplings. Without ``--period``, a scan of two-period runs
 notes that it summed the periods. With ``--json`` every NOTE and Next line is
@@ -1664,12 +1662,12 @@ without confusing the two operations.
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
-supported shared counting responses combined before evaluating variance. With no
-field step logged between the periods the
-contrast is the RF switched on and off, and ``integral-scan`` names
-``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
-``Next`` line holds the pair's ``dB`` at the step (and points a single
-Lorentzian on such a scan at ``LorentzianLCRPair``). After an ``RFResonanceMuP``
+supported shared counting responses combined before evaluating variance. The period labels alone do not identify the switched quantity. Missing
+field-step metadata does not prove RF switching. For a justified physical field
+step use ``--model LorentzianLCRPair --fix dB=<B_green-B_red in G>``;
+for a known RF contrast use ``--model RFResonanceMuP --fix nu_RF=<MHz>``.
+A documented red-minus-green step changes sign once. No model is chosen from
+log presence or absence. After an ``RFResonanceMuP``
 fit the report prints the two resonance fields its couplings imply, or says the
 couplings are not a result when those fields fall outside the scan. ``RFResonanceMuP`` fits the muon and proton
 couplings of an RF scan with the RF frequency held at its acquisition value.
@@ -1688,26 +1686,19 @@ minimum from ``--initial A_mu=470 --initial A_p=90``: the fit also tries the
 scan's own seed beside a start given by hand, so another radical needs no
 ``--initial`` near its couplings.
 
-The green and red periods of a HiFi run are not sampled at quite the same
-field — the RG coil is stepped between them, and the field the file records
-is one period's — so the differential (green − red) line shape is
-``LorentzianLCRPair`` (:math:`f`, :math:`B_0`, :math:`B_\mathrm{wid}`,
-:math:`\Delta B`, see :doc:`alc_mode`), and ``--period green-red`` also
-reports the scan's own measured field step, and a ready-made fix for it:
+Raw Hall-probe logs retain their declared units. They do not establish a
+physical step in gauss through cross-run regression. Historical stored inferred
+offsets remain part of that saved analysis and are not reused as fresh physical
+calibration or model advice. The existing ``--fix`` input accepts an independently
+justified step; no new calibration control is required.
 
-.. code-block:: text
-
-   period field offset (red - green): -28.60 G, mean of 8 run(s)
-   Next: the red period sat 28.60 G below the green; with the pair offset
-   free the fit is degenerate, so refit with --fix dB_1=28.60 --fix dB_2=28.60.
-
-The offset is read from the run files' own logged Hall-probe reading per
-period, converted from probe units to gauss by the field/Hall-probe slope
-regressed over the scan's own runs (one run's ratio of means would carry the
-probe's own zero offset) — never assumed or looked up. With :math:`\Delta B`
-free the fit is degenerate at typical ALC field steps against typical line
-widths (a closer pair with a larger amplitude describes the same sparsely
-sampled lobes), so fix it at the printed value.
+The scan fit boundary accepts original observables. Derivatives remain available
+for display/export through the API at adjacent-pair midpoints, with positive
+spacing and explicit optional ``max_gap``. Units are the recorded asymmetry
+scale per selected axis unit. Adjacent differences share observations, so their
+marginal errors do not establish an independent-error likelihood. Known dependent
+input pairs retain derivative values with unavailable uncertainty. See
+:doc:`alc_mode` for the formula, units and persistence contract.
 
 Report the resonance field, width, amplitude and uncertainties the command
 prints. Do not use shell arithmetic or a literature formula to turn them into

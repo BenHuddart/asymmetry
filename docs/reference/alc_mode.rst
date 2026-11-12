@@ -227,8 +227,8 @@ Above the scan plot:
   (field, the usual ALC axis), **T (K)** (temperature), or **Run**;
 * the **dA/dB** checkbox switches the plot to the field-derivative of the scan
   (relabelled **dA/dT** or **dA/d(run)** to match the chosen axis). This is the
-  *differential ALC* view and has one fewer point than the raw scan (each point
-  is the midpoint slope between adjacent runs);
+  *differential ALC* view. Each point is a midpoint slope between adjacent
+  included observations; duplicate or decreasing coordinates are skipped;
 * the **Data table…** button opens the per-point values (run, x, asymmetry,
   error) in a separate window, keeping the plot itself uncluttered;
 * the **X** / **Y** range fields with **Auto X** / **Auto Y** toggles set the
@@ -238,8 +238,43 @@ Above the scan plot:
   turns its Auto off). Building a scan or changing the x-axis / derivative view
   reframes both axes.
 
-Changing the x-axis clears any baseline and peaks, because regions and peak
-positions are expressed in the units of the current axis.
+For adjacent observations the derivative is
+:math:`d_i=(A_{i+1}-A_i)/(x_{i+1}-x_i)` at
+:math:`(x_i+x_{i+1})/2`. Only positive spacing is used. The API's optional
+``max_gap`` skips larger steps; there is no automatic gap threshold,
+interpolation, or padding. Values and errors retain the input asymmetry scale
+per axis unit: fractional/G, fractional/K, or fractional/run in an ordinary
+core scan, and **%/G**, **%/K**, or **%/run** in the GUI.
+Independent input errors give marginal error
+:math:`\sqrt{\sigma_i^2+\sigma_{i+1}^2}/\Delta x`.
+A known dependent input pair retains its derivative value with unavailable
+uncertainty (NaN in the API, null in JSON); its covariance cannot be replaced
+by independent quadrature. Undefined source ratios remain undefined. A
+derivative is a transformed observation, with no new histogram-ratio status.
+The original scan retains the scalar reports and positional source-sharing facts.
+
+Adjacent differences share their middle observation, even for independent
+original points. For equally spaced inputs with error 0.01 and unit spacing,
+neighbour covariance is −0.0001. The mean of four such differences has error
+0.003535533906, whereas diagonal quadrature gives 0.007071067812.
+Asymmetry also checks derivative identity at its shared fit-input boundary:
+**fit the original scan**. Derivatives support display/export; marginal errors
+do not specify an independent likelihood. This support limit applies to API
+and restored workflow scans, not only GUI controls, and is not a restriction
+attributed to other programs. Derivative identity survives selection and workflow
+serialization. Legacy payloads without the flag retain original-observable identity.
+
+Changing the axis or derivative view clears baseline, peaks, and RF overlays.
+Baseline and RF fitting require the original view; peak fitting requires its
+baseline. The GUI explains ``Turn off dA/dB to fit a baseline on the scan.``
+and ``Turn off dA/dB to fit the RF resonance.``
+
+.. figure:: /_generated/screenshots/alc_derivative.png
+   :alt: Synthetic count-integral field scan shown as midpoint derivatives in
+      percent per gauss, with the derivative view enabled and fit overlays cleared.
+   :width: 100%
+
+   Derivative display of the synthetic scan; fit original observations.
 
 .. _alc-scan-membership:
 
@@ -475,33 +510,28 @@ line shape for this observable is ``LorentzianLCRPair``:
      - \frac{1}{1 + \left((B - B_0 - \Delta B)/B_\mathrm{wid}\right)^2}
    \right],
 
-a Lorentzian at :math:`B_0` (the red period's field) less the same
-Lorentzian shifted by the field step :math:`\Delta B` (the green period's
-field, which the run files record). The two lobes are seeded together,
-exactly as two ``LorentzianLCR`` terms are: the stronger lobe found first
-locates :math:`B_0`, and its opposite-signed partner :math:`\Delta B` away
-is recognised as the same resonance's copy rather than a second one.
+The model uses ``dB = B_green − B_red`` in gauss for the G−R convention.
+Its two algebraic terms are centred at ``B0`` and ``B0+dB``; interpreting those
+centres requires the experiment's definition of the scan coordinate.
+The fitted amplitude carries the sign of the contrast. A small step and a
+large amplitude can trade off in a sparsely sampled pair, so an independently
+known physical step can be held with the existing CLI input::
 
-:math:`\Delta B` is not a free parameter to fit for in practice. At the
-field steps a typical ALC scan uses, a pair *closer* together with a larger
-amplitude :math:`f` describes the same sparsely sampled lobes about as
-well, so the fit is degenerate with :math:`\Delta B` free. Hold it instead
-at the step the run files themselves record: the CLI's
-``integral-scan --period green-red`` (:doc:`agent_workflow`) reads each
-run's own red/green field-coil evidence, reports the scan's mean step, and
-prints the ``--fix dB=…`` (or ``dB_1``, ``dB_2``, … for several resonances)
-that fixes it before you fit — never assume or look up the step; different
-instruments and configurations step the field by different amounts.
+   asymmetry integral-scan data --runs 1-20 --period green-red \
+       --model 'LorentzianLCRPair + Linear' --fix dB=45
 
-.. code-block:: python
+Here 45 G is an illustrative supplied experimental value, not a value inferred
+from the files. A documented red-minus-green step changes sign once before
+being supplied as ``dB``. Raw Hall logs and their declared units remain metadata;
+a cross-run Hall/main-field regression is not a physical calibration.
 
-   from asymmetry.core.fitting import fit_scan_model
-
-   result = fit_scan_model(
-       scan,  # a green - red differential scan
-       "LorentzianLCRPair",
-       initial={"dB": 45.0},
-   )
+A period contrast does not itself identify the switched quantity. Missing
+field-step metadata does not establish RF-on/off acquisition, and retained
+integral asymmetry does not determine geometry or invalidate a declared TF
+label. Choose a physical model from the experimental context. For a justified
+RF contrast with known frequency the existing choice is ``--model RFResonanceMuP
+--fix nu_RF=<MHz>``. Loading, inspection and explicit model choices remain
+available without automatic geometry relabelling or a facility restriction.
 
 References
 ~~~~~~~~~~
@@ -693,8 +723,8 @@ Compared with other programs
 
 Pair validation follows Asymmetry's independent-count uncertainty assumption.
 Native Mantid 6.16.1 rejects tested identical pair lists but accepts partial
-overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA manual/source
-evidence does not establish disjointness, and no WiMDA binary was executed.
+overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA documentation
+does not establish the same disjointness contract for this operation.
 These input checks do not establish agreement of integral endpoints or timing
 conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
 for the versioned grouping observations and sources.
@@ -707,6 +737,9 @@ whereas Asymmetry selects whole native bins by their centres.
 
 WiMDA 1.326's dedicated ALC route starts from acquisition-integrated columns;
 it does not establish exact arbitrary histogram-window or error agreement.
+Its **Differential ALC** differences adjacent table entries with its own gap
+cutoff and per-kG scale. Asymmetry uses positive steps, explicit optional
+``max_gap``, and the selected axis unit. Neither is Mantid's time reduction.
 musrfit 1.12.1 packs counts before its fitting ratio. Checked packed controls
 agree only on 22 interior points per case at export precision; first/endpoint
 differences remain unresolved. No complete packed-output, fresh native WiMDA

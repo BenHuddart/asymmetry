@@ -620,3 +620,98 @@ def test_background_that_cannot_be_subtracted_excludes_the_run():
     scan = build_field_scan([run], order_key="field")
     assert scan.n_points == 0
     assert "reference run is not loaded" in scan.excluded[0][1]
+
+
+@pytest.mark.parametrize("axis", ["field", "temperature", "run"])
+@pytest.mark.parametrize("scale", [1.0, 100.0])
+def test_derivative_midpoints_units_and_shared_middle_observation(axis, scale):
+    from asymmetry.core.fitting.scan_observations import scan_fit_input
+    from asymmetry.core.transform.units import ASYMMETRY_FRACTION, ASYMMETRY_PERCENT
+
+    source = FieldScan(
+        x=np.arange(5.0),
+        value=scale * (0.2 + 0.1 * np.arange(5.0)),
+        error=np.full(5, scale * 0.01),
+        run_numbers=[7] * 5,
+        order_key=axis,
+        method="integral",
+        units=ASYMMETRY_PERCENT if scale == 100 else ASYMMETRY_FRACTION,
+    )
+    derivative = differentiate_scan(source)
+    np.testing.assert_allclose(derivative.x, [0.5, 1.5, 2.5, 3.5])
+    np.testing.assert_allclose(derivative.value, scale * 0.1)
+    np.testing.assert_allclose(derivative.error, scale * np.sqrt(2) * 0.01)
+    assert derivative.units == source.units
+    assert derivative.order_key == axis
+    # The difference matrix supplies an independent covariance target.
+    difference = np.diff(np.eye(5), axis=0)
+    covariance = (scale * 0.01) ** 2 * difference @ difference.T
+    assert covariance[0, 1] == pytest.approx(-(scale**2) * 0.0001)
+    assert np.sqrt(covariance.sum() / 16) == pytest.approx(scale * 0.003535533906)
+    assert np.sqrt(np.trace(covariance) / 16) == pytest.approx(scale * 0.007071067812)
+    with pytest.raises(ValueError, match="Fit the original scan"):
+        scan_fit_input(derivative)
+    assert scan_fit_input(source).n_points == 5
+
+
+def test_derivative_known_input_covariance_retains_value_with_unavailable_error():
+    from asymmetry.core.workflow.integral_scan import field_scan_from_payload, field_scan_payload
+
+    scan = FieldScan(
+        x=np.arange(4.0),
+        value=np.array([0.2, 0.3, 0.4, 0.5]),
+        error=np.full(4, 0.01),
+        run_numbers=[1] * 4,
+        order_key="run",
+        method="integral",
+        correlated_pairs=((1, 0), (0, 3)),
+    )
+    derivative = differentiate_scan(scan)
+    np.testing.assert_allclose(derivative.value, 0.1)
+    assert np.isnan(derivative.error[0])
+    np.testing.assert_allclose(derivative.error[1:], np.sqrt(2) * 0.01)
+    assert derivative.observations == ()
+    restored = field_scan_from_payload(field_scan_payload(derivative))
+    assert np.isnan(restored.error[0])
+    assert "known dependent pairs have unavailable uncertainty" in restored.source_assumption
+
+
+def test_derivative_does_not_reclassify_undefined_source_or_zero_variance():
+    from asymmetry.core.data.ratio_validity import ObservationReport, RatioReason
+    from asymmetry.core.transform.scalar_observation import ScalarObservation
+
+    scan = FieldScan(
+        x=np.arange(4.0),
+        value=np.array([0.2, 0.3, 0.4, 0.5]),
+        error=np.zeros(4),
+        run_numbers=[1] * 4,
+        order_key="run",
+        method="integral",
+        observations=(
+            ScalarObservation(RatioReason.UNDEFINED, ObservationReport(0, 1, 0)),
+            None,
+            None,
+            None,
+        ),
+    )
+    derivative = differentiate_scan(scan)
+    assert np.isnan(derivative.value[0]) and np.isnan(derivative.error[0])
+    np.testing.assert_array_equal(derivative.error[1:], 0)
+    assert derivative.observations == ()
+
+
+@pytest.mark.parametrize(
+    "max_gap, midpoints", [(None, [0.5, 2.0]), (1.0, [0.5]), (2.0, [0.5, 2.0])]
+)
+def test_derivative_skips_duplicate_and_decreasing_steps_with_inclusive_gap(max_gap, midpoints):
+    scan = FieldScan(
+        x=np.array([0.0, 0.0, 1.0, 3.0, 2.0]),
+        value=np.array([0.0, 0.0, 1.0, 3.0, 2.0]),
+        error=np.full(5, 0.1),
+        run_numbers=[8] * 5,
+        order_key="field",
+        method="integral",
+    )
+    derivative = differentiate_scan(scan, max_gap=max_gap)
+    np.testing.assert_allclose(derivative.x, midpoints)
+    np.testing.assert_allclose(derivative.value, 1.0)

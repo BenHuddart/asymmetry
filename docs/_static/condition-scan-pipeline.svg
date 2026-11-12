@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="770" viewBox="0 0 900 770" role="img" aria-labelledby="title description">
+<title id="title">Native-window condition scans</title>
+<desc id="description">Prepared native counts include G+R pooling before estimation. Count integrals contrast period ratios after summation; explicit means classify native period contrasts before averaging. Scalar results form condition scans. Original observations feed fits; adjacent derivatives feed display and export only.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#35566c"/></marker></defs><rect width="900" height="770" fill="white"/>
+<rect x="100" y="10" width="700" height="120" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="450" y="35" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Native F/B preparation; chosen α / β; enabled corrections</text>
+<text x="450" y="65" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Per-period timing; whole native bins on common support</text>
+<text x="450" y="95" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">G+R: pool counts, then background, before either estimator</text>
+<path d="M450 130 V145 H230 V170" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M450 145 H670 V170" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="170" width="380" height="120" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="230.0" y="195.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Count integral (default)</text>
+<text x="230.0" y="225.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Sum F/B, then form ratio</text>
+<text x="230" y="255" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">G−R: subtract period ratios</text>
+<rect x="480" y="170" width="380" height="120" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="670.0" y="195.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Explicit time-bin mean</text>
+<text x="670.0" y="225.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Native ratios; G−R contrast</text>
+<text x="670" y="255" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Classify, then mean usable bins</text>
+<path d="M230 290 V305 H450 V330" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M670 290 V305 H450" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="100" y="320" width="700" height="110" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="450.0" y="345.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Scalar value and conditional uncertainty</text>
+<text x="450.0" y="375.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Combine retained responses, then contract variance</text>
+<text x="450.0" y="405.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Keep scalar status, omissions and correction outcomes</text>
+<path d="M450 430 V470" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="150" y="470" width="600" height="90" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="450.0" y="500.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Condition scan: field / temperature / run</text>
+<text x="450.0" y="530.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Value, status, conditional error and provenance</text>
+<path d="M450 560 V595 H230 V630" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<path d="M450 595 H670 V630" fill="none" stroke="#35566c" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="40" y="630" width="380" height="110" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="230.0" y="655.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Fit original observations</text>
+<text x="230.0" y="685.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Selected independent inputs</text>
+<text x="230.0" y="715.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Baseline / peaks / physical model</text>
+<rect x="480" y="630" width="380" height="110" rx="9" fill="#edf4fa" stroke="#35566c" stroke-width="1.5"/>
+<text x="670.0" y="655.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Derivative display / export</text>
+<text x="670.0" y="685.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Positive steps; pair midpoints</text>
+<text x="670.0" y="715.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="22" fill="#163449">Shared inputs; per-axis units</text>
+</svg>

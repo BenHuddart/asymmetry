@@ -471,23 +471,6 @@ def test_a_wide_minimum_reaching_a_deeper_dip_is_not_named_twice(monkeypatch) ->
     assert integral_scan._further_dips(scan, []) == [deep]
 
 
-def test_a_tf_stamp_on_a_kilogauss_run_that_keeps_its_integral_is_contradicted() -> None:
-    from types import SimpleNamespace
-
-    from asymmetry.core.workflow.integral_scan import contradicted_tf_stamps
-
-    def point(run: int, value: float) -> SimpleNamespace:
-        return SimpleNamespace(run_number=run, value=value, error=0.0004)
-
-    scan = SimpleNamespace(
-        points=[point(1, 0.002), point(2, 0.19), point(3, 0.20), point(4, 0.21), point(5, 0.18)]
-    )
-    # A kilogauss TF run keeping a large integral is longitudinal; a 100 G
-    # calibration run (too few periods to average) and an unstamped run are not judged.
-    stamped = {1: 3000.0, 2: 3000.0, 3: 4000.0, 4: 100.0}
-    assert contradicted_tf_stamps(scan, stamped) == [2, 3]
-
-
 def test_stored_scan_restores_units_errors_and_exclusions() -> None:
     from dataclasses import replace
 
@@ -551,3 +534,29 @@ def test_independent_fit_crop_survives_dependent_optional_dip_checks():
         result["next_dip_limit"]
         == "Known shared counting observations restrict independent-error dip checks."
     )
+
+
+@pytest.mark.parametrize("roundtrip", [False, True])
+def test_derivative_actual_fit_entry_rejects_even_after_payload_roundtrip(roundtrip):
+    from asymmetry.core.fitting.field_scan import fit_scan_model
+    from asymmetry.core.transform.integral import differentiate_scan
+    from asymmetry.core.workflow.integral_scan import field_scan_from_payload
+
+    derivative = differentiate_scan(_scan()).select(np.array([3, 1, 2, 0]))
+    if roundtrip:
+        derivative = field_scan_from_payload(field_scan_payload(derivative))
+    assert derivative.derivative
+    for fit in (
+        lambda: fit_scan_model(derivative, "Constant"),
+        lambda: fit_integral_scan(derivative, "Constant"),
+    ):
+        with pytest.raises(ValueError, match="Fit the original scan"):
+            fit()
+
+
+def test_legacy_scan_payload_defaults_to_original_observable():
+    from asymmetry.core.workflow.integral_scan import field_scan_from_payload
+
+    payload = field_scan_payload(_scan())
+    payload.pop("derivative", None)
+    assert not field_scan_from_payload(payload).derivative

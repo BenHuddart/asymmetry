@@ -162,3 +162,17 @@ through crops/reordering. The scan fit adapters apply one usable-observation
 policy before seeding and weighting; legacy inputs retain their recorded
 independent-source assumption. See :doc:`/reference/alc_mode` for the mathematics
 and :doc:`/explanation/comparison` for reference-program qualifications.
+
+
+Condition-scan derivatives
+--------------------------
+
+.. autofunction:: asymmetry.core.transform.integral.differentiate_scan
+
+Derivatives retain ``FieldScan.units`` as their asymmetry scale per selected
+axis unit. They carry no new scalar-ratio classification. Independent source
+pairs supply marginal errors; known dependent adjacent pairs have NaN error,
+serialized as null. The original scan retains source classifications and
+positional ``correlated_pairs``. Derivative identity survives ``select`` and
+workflow payload restoration. The shared fit-input boundary rejects derivative
+scans: fit original observations, since adjacent differences share inputs.

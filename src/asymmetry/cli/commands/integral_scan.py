@@ -34,6 +34,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "integral-scan",
         help="Build an integral-asymmetry scan and optionally fit a field-scan model",
+        description="Build a condition scan and fit original scalar observations. Green − Red "
+        "is a period contrast: missing logs do not establish RF switching or geometry. "
+        "Choose physical models and fixed dB/RF frequency from experimental context.",
     )
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--runs", required=True, help="Run numbers in the scan")
@@ -66,7 +69,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         action="append",
         default=[],
         metavar="NAME=VALUE",
-        help="Fixed fit value (repeatable)",
+        help="Fixed fit value (repeatable); pair dB is B_green-B_red in G; RF nu_RF is in MHz",
     )
     parser.add_argument(
         "--xmin", type=float, default=None, help="Fit only points at or above this x"
@@ -123,12 +126,10 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.integral_scan import (
         build_integral_scan,
-        contradicted_tf_stamps,
         field_scan_payload,
         fit_integral_scan,
-        period_field_offset_gauss,
     )
-    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, reduction_source
+    from asymmetry.core.workflow.reduction import reduction_source
 
     if args.baseline is not None and args.baseline_regions is None:
         raise UserError("--baseline requires --baseline-regions LO:HI,...")
@@ -178,13 +179,6 @@ def run(args: argparse.Namespace) -> None:
         reasons = "; ".join(f"{run}: {reason}" for run, reason in scan.excluded)
         raise UserError(f"No runs contributed to the integral scan. {reasons}")
 
-    # The red period's field less the green's, from the Hall probe each run logged.
-    offset = (
-        period_field_offset_gauss([dataset.run for dataset in datasets])
-        if settings.period == GREEN_MINUS_RED
-        else None
-    )
-
     fit_scan = scan
     fit_payload = None
     model = None
@@ -218,9 +212,6 @@ def run(args: argparse.Namespace) -> None:
         "scan": field_scan_payload(scan),
         "fit_scan": field_scan_payload(fit_scan) if fit_payload is not None else None,
         "fit": fit_payload,
-        "period_field_offset": (
-            None if offset is None else {"gauss": offset[0], "runs": offset[1]}
-        ),
     }
     # The stored scan carries its own path and its plot's, so an agent reading
     # scans/<name>.json back finds the same artefacts the CLI reports. Both are
@@ -265,13 +256,6 @@ def run(args: argparse.Namespace) -> None:
             if period_count(dataset) == 2
         ]
     )
-    from asymmetry.core.workflow.survey import run_geometry
-
-    stamped_tf = {
-        run_number: abs(float(dataset.metadata["field"]))
-        for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
-        if run_geometry(dataset.metadata) == "TF"
-    }
     payloads = {
         path.stem: json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(workdir.scans_dir.glob("*.json"))
@@ -286,9 +270,7 @@ def run(args: argparse.Namespace) -> None:
     ]
     from asymmetry.core.workflow.integral_scan import candidate_dip_windows
 
-    notes = _notes(
-        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), same_scan
-    )
+    notes = _notes(result_payload, free_offsets, summed, same_scan)
     if model is None or not any(
         "B0" in component.param_names or component.name == "RFResonanceMuP"
         for component in model.components
@@ -353,12 +335,6 @@ def _render(result: dict, settings, notes: list[str]) -> str:
     from asymmetry.cli.commands.scan_observations import observation_lines
 
     lines.extend(observation_lines(result["scan"]))
-    offset = result["period_field_offset"]
-    if offset is not None:
-        lines.append(
-            f"period field offset (red - green): {format_number(offset['gauss'], 2)} G, "
-            f"mean of {offset['runs']} run(s)"
-        )
     if result["fit"] is not None:
         fit = result["fit"]
         # A failed fit is reported, not raised: the scan is worth keeping, and
@@ -451,7 +427,6 @@ def _notes(
     result: dict,
     free_offsets: list[str],
     summed: list[int],
-    longitudinal: list[int],
     same_scan: list[dict],
 ) -> list[str]:
     """Every NOTE and Next line the scan calls for — printed, and kept in --json.
@@ -459,7 +434,6 @@ def _notes(
     *same_scan* holds the other stored fits of this scan.
     """
     fit = result["fit"]
-    offset = result["period_field_offset"]
     lines: list[str] = []
     repeats = _repeated_points(result["scan"]["points"], result["scan"].get("correlated_pairs", ()))
     if repeats:
@@ -480,30 +454,12 @@ def _notes(
             + ". Say so: a return pass or repeated points, and whether the curve came back to "
             "itself."
         )
-    if longitudinal:
+    if free_offsets:
         lines.append(
-            f"NOTE: the files stamp {range_text(longitudinal)} TF, but at fields of a kilogauss "
-            f"and more a transverse field precesses the polarisation through many periods "
-            f"within the window, so its integral asymmetry would sit near zero; these keep a "
-            f"large one. They are longitudinal and the stamp is wrong: keep them in the scan, "
-            f"and say so — with this reason — in the summary."
-        )
-    if offset is not None and free_offsets:
-        # A differential pair's dB is the green field less the red: the offset, negated.
-        fixes = " ".join(
-            f"--fix {name}={format_number(-offset['gauss'], 2)}" for name in free_offsets
-        )
-        lines.append(
-            f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
-            f"with the pair offset free the fit is degenerate, so refit with {fixes}."
-        )
-    if offset is not None and fit is not None and "LorentzianLCRPair" not in fit["expression"]:
-        lines.append(
-            f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green, "
-            f"so each line appears in the green - red difference as a pair of opposite dips "
-            f"that step apart (a differential ALC scan), which one Lorentzian cannot describe: "
-            f"refit with --model 'LorentzianLCRPair + Linear' --fix "
-            f"dB={format_number(-offset['gauss'], 2)}."
+            "NOTE: a free pair offset can be poorly determined. If the experimental "
+            "field step is known, supply --fix dB=<B_green-B_red in G> "
+            "(use the indexed parameter for multiple pairs). A documented red-minus-green "
+            "step changes sign once; raw Hall logs do not establish a gauss calibration."
         )
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
@@ -525,28 +481,22 @@ def _notes(
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
-            f"this scan summed both periods, blurring the red/green contrast they were taken "
-            f"for. Measure their difference: rerun with --period green-red; with a field step "
-            f"between the periods (differential ALC) fit --model LorentzianLCRPair with its dB "
-            f"held at the value that command's Next line gives (the printed red - green "
-            f"offset, negated)."
+            "this scan summed both periods. Use --period green-red if the intended "
+            "observable is Green − Red; the acquisition context determines its interpretation."
         )
     from asymmetry.core.workflow.reduction import GREEN_MINUS_RED
 
     if fit is not None and fit["success"] and "RFResonanceMuP" in fit["expression"]:
         lines.append(_rf_fields(fit, result["scan"]["points"]))
-    # A green - red contrast with no field step between the periods is the RF
-    # switched on and off; a logged step is a differential ALC scan.
-    if result["settings"]["period"] == GREEN_MINUS_RED and offset is None:
+    if result["settings"]["period"] == GREEN_MINUS_RED:
         lines.append(
-            "NOTE: a green-red resonance scan with no field step logged between the periods: "
-            "the contrast is the RF, so interpret this as a longitudinal-field RF resonance "
-            "scan from its experimental context, even when precession cannot determine "
-            "geometry. It is not a differential ALC "
-            "one (a LorentzianLCRPair's dB has no step to hold). RFResonanceMuP converts its "
-            "lines into the muon and proton couplings — --model RFResonanceMuP --fix "
-            "nu_RF=<the RF frequency in MHz, from the run notes or title> — rather than a "
-            "pair of Lorentzians."
+            "NOTE: Green − Red is a period contrast. Missing field-step metadata does not "
+            "establish RF switching, and retained integral asymmetry does not determine "
+            "geometry or invalidate declared labels. Check the experimental context. "
+            "For a justified field-step analysis use --model LorentzianLCRPair with "
+            "--fix dB=<B_green-B_red in G>; for an RF contrast with a known frequency use "
+            "--model RFResonanceMuP --fix nu_RF=<MHz>. Neither model is selected from "
+            "the presence or absence of a log."
         )
     elif fit is not None and any(
         term.strip() in ("LorentzianLCR", "GaussianLCR", "LorentzianLCRPair")

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="1710" viewBox="0 0 900 1710" role="img" aria-labelledby="title description">
 <title id="title">Count reduction and alternative transformed observations</title>
-<desc id="description">Selected acquired counts branch into grouped lifetime signals for FFT and MaxEnt, and F/B ratios for laboratory fitting, vector rotation, or scalar FIR display. Full-count fits and integral observables use separate preparations. No filtered scalar curve feeds fitting.</desc>
+<desc id="description">Selected acquired counts branch into grouped lifetime signals for FFT and MaxEnt, and F/B ratios for laboratory fitting, vector rotation, or scalar FIR display. Native-window preparation branches into count-integral or explicit time-mean scans, original-observable fits and derivative display. Full-count fits use separate preparation. No filtered scalar curve feeds fitting.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#35566c"/></marker></defs>
 <rect width="900" height="1710" fill="white"/>
 <rect x="150" y="20" width="600" height="90" rx="9" fill="#fbf1df" stroke="#35566c" stroke-width="1.5"/>
@@ -68,14 +68,14 @@
 <text x="240.0" y="1269.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Finite-window level ≠</text>
 <text x="240.0" y="1301.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">absolute polarisation</text>
 <text x="240.0" y="1333.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Conditional noise model</text>
-<path d="M150 200 H20 V1460 H70" fill="none" stroke="#35566c" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
+<path d="M150 460 H20 V1460 H70" fill="none" stroke="#35566c" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
 <path d="M750 200 H880 V1460 H830" fill="none" stroke="#35566c" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
 <rect x="70" y="1400" width="340" height="180" rx="9" fill="#f3eef9" stroke="#35566c" stroke-width="1.5"/>
-<text x="240.0" y="1426.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Integral observables</text>
-<text x="240.0" y="1458.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Own count preparation</text>
-<text x="240.0" y="1490.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">No / constant background</text>
-<text x="240.0" y="1522.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Own window and estimator</text>
-<text x="240.0" y="1554.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">α / β balances</text>
+<text x="240.0" y="1426.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Native-window scans</text>
+<text x="240.0" y="1458.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Count integral / time mean</text>
+<text x="240.0" y="1490.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Period operation; scan</text>
+<text x="240.0" y="1522.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Original fit / derivative view</text>
+<text x="240.0" y="1554.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Scan detail below</text>
 <rect x="490" y="1400" width="340" height="180" rx="9" fill="#f3eef9" stroke="#35566c" stroke-width="1.5"/>
 <text x="660.0" y="1426.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Separate full-count fits</text>
 <text x="660.0" y="1458.0" text-anchor="middle" dominant-baseline="middle" font-family="DejaVu Sans, sans-serif" font-size="23" fill="#163449">Own input preparation</text>

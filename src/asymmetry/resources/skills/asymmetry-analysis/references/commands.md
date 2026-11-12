@@ -247,6 +247,10 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--workdir WORKDIR] [--instrument NAME]
                                folder
 
+Build a condition scan and fit original scalar observations. Green − Red is a period
+contrast: missing logs do not establish RF switching or geometry. Choose physical
+models and fixed dB/RF frequency from experimental context.
+
 positional arguments:
   folder                Directory holding the run files
 
@@ -300,7 +304,8 @@ options:
   --order {field,temperature,run}
   --model MODEL         Optional field-scan expression, e.g. 'LorentzianLCR + Cubic'
   --initial NAME=VALUE  Fit start (repeatable)
-  --fix NAME=VALUE      Fixed fit value (repeatable)
+  --fix NAME=VALUE      Fixed fit value (repeatable); pair dB is B_green-B_red in G;
+                        RF nu_RF is in MHz
   --xmin XMIN           Fit only points at or above this x
   --bound NAME=LO:HI    Override a fit parameter's search interval (repeatable)
   --xmax XMAX           Fit only points at or below this x

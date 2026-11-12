@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep scan derivatives for display/export, preserve saved identity, and fit original
+  observations. Report period contrasts without inferred RF, geometry or field calibration.
+
 - Retain validity and shared counting uncertainty in integrated scans, report
   unusable observations, and guard independent-error fits of dependent selections.
 

@@ -30,6 +30,12 @@ def usable_scan_observations(scan, selection=None):
 
 def scan_fit_selection(scan, selection=None, *, report=True):
     """Check the actual independent-error fit selection after mathematical omissions."""
+    if scan.derivative:
+        raise ValueError(
+            "Derivative scans support display/export only. Fit the original scan: "
+            "adjacent differences share observations; marginal errors do not supply "
+            "an independent-error likelihood."
+        )
     selected, omitted = usable_scan_observations(scan, selection)
     if report and omitted.omitted:
         warnings.warn(omitted.summary(), UserWarning, stacklevel=2)
