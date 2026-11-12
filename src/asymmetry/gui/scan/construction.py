@@ -197,6 +197,7 @@ class ScanController(QObject):
 
         # Native integral values are fractions; display conversion happens later.
         runs_by_number = {int(d.run.run_number): d.run for d in datasets if d.run is not None}
+        captured_points = scan.points
         window._alc_scan_points = [
             window._alc_scan_point(
                 run_number,
@@ -209,6 +210,9 @@ class ScanController(QObject):
                 },
                 scan.observations[index].to_dict() if scan.observations else None,
                 index,
+                captured_points[index].effective_recipe.to_dict()
+                if captured_points[index].effective_recipe is not None
+                else None,
             )
             for index, (run_number, value, error) in enumerate(
                 zip(scan.run_numbers, scan.value, scan.error)
@@ -221,6 +225,14 @@ class ScanController(QObject):
             int(run_number): {
                 "success": True,
                 "scan_index": index,
+                "effective_recipe": captured_points[index]
+                .effective_recipe.scalar_units(units="percent", factor=100.0)
+                .to_dict()
+                if captured_points[index].effective_recipe is not None
+                else None,
+                "coordinates": {
+                    key: window._alc_scan_points[index][key] for key in ("field", "temperature")
+                },
                 "observation": scan.observations[index].to_dict() if scan.observations else None,
                 "correction_outcomes": {
                     label: record.to_dict()
@@ -245,6 +257,9 @@ class ScanController(QObject):
             canonical_model=None,
             param_roles={},
             extra={
+                "effective_recipe": scan.effective_recipe.to_dict()
+                if scan.effective_recipe is not None
+                else None,
                 "estimator": scan.method,
                 "time_window_us": [t_min, t_max],
                 "correlated_pairs": [list(pair) for pair in scan.correlated_pairs],

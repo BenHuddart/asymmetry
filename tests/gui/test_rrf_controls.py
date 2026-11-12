@@ -354,3 +354,26 @@ class TestPersistence:
 
         _enable_rrf(panel)
         json.dumps(panel.get_state()["rrf"])
+
+
+def test_export_retains_resolved_display_context_without_inventing_complete_recipe(panel, tmp_path):
+    import json
+
+    dataset = _dataset()
+    _enable_rrf(panel, component="magnitude")
+    panel._current_datasets = [dataset]
+    payload = panel.get_current_plot_export_data()[0]
+    assert payload["effective_recipe"] is None
+    path = tmp_path / "rrf.dat"
+    panel._write_data_file(path, payload)
+    display = json.loads(
+        next(
+            line.split(": ", 1)[1]
+            for line in path.read_text().splitlines()
+            if line.startswith("! display_transform:")
+        )
+    )
+    assert display["rrf_frequency_mhz"] == NU
+    assert display["rrf_bandwidth_mhz"] > 0
+    assert display["rrf_trim"][2] == dataset.n_points
+    assert "magnitude" in display["rrf_frame"]

@@ -428,3 +428,26 @@ def test_the_rotating_frame_never_widens_the_plot_panel(mainwindow):
     assert panel.frame_bar.minimumSizeHint().width() <= lab
     panel.set_frame_status("✓ Applied 4 estimates · contrast 18")
     assert panel.minimumSizeHint().width() == lab
+
+
+def test_project_collection_retains_actual_unfitted_rotated_projection_recipes(mainwindow):
+    from asymmetry.core.representation import RepresentationType
+    from asymmetry.core.representation.project_model import ProjectModel
+
+    panel = _show(mainwindow, _vector(903), _vector(904))
+    _rotate(panel)
+    _type(panel, "frequency_mhz", "1.355")
+    actual = {
+        label: datasets[0].effective_recipe.to_dict()
+        for label, datasets in panel._vector_subplot_datasets.items()
+    }
+    state = mainwindow.collect_project_state()
+    restored = ProjectModel.from_project_state(state)
+    representation = restored.representation(903, RepresentationType.TIME_FB_ASYMMETRY)
+    records = {
+        entry["projection"]: entry["effective_recipe"]
+        for entry in representation.result_metadata["effective_recipes"]
+    }
+    for label, recipe in actual.items():
+        assert records[label] == recipe
+    assert representation.datasets() == []

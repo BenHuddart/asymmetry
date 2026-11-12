@@ -37,8 +37,13 @@ _PRESENTATION = frozenset(
 def numerical_recipe(value: Any) -> Any:
     """Separate locators and prose from numerical facts, retaining source references."""
     if isinstance(value, dict):
+        # CountFitDomain descriptors put the locator at position 2; ordinals stay numerical.
         return {
-            k: numerical_recipe(v)
+            k: (
+                [list(source[:2]) + [None] + list(source[3:]) for source in v]
+                if k == "acquired_sources"
+                else numerical_recipe(v)
+            )
             for k, v in value.items()
             if k not in _PRESENTATION and not (k == "reason" and isinstance(v, str))
         }
@@ -78,6 +83,15 @@ class EffectiveReductionRecipe:
         """Return an independent serializable view of the captured authority."""
         return json.loads(self.canonical_json)
 
+    def publishable(self) -> dict[str, Any]:
+        """Disclose numerical facts without nested source locators or diagnostic prose.
+
+        The detached projection retains numerical identity and never mutates the
+        private calibration, reference, or constituent history. Existing export
+        titles and comments have their own disclosure policy.
+        """
+        return numerical_recipe(self.to_dict())
+
     @property
     def identity(self) -> str:
         """SHA-256 of canonical numerical facts, excluding locators and prose."""
@@ -89,6 +103,18 @@ class EffectiveReductionRecipe:
     def with_facts(self, **facts: Any) -> EffectiveReductionRecipe:
         """Complete a captured operation with its actual output facts."""
         return self.from_dict(self.to_dict() | facts)
+
+    def scalar_units(self, *, units: str, factor: float) -> EffectiveReductionRecipe:
+        """Describe a scalar conversion with its captured native recipe as the input."""
+        return self.from_dict(
+            {
+                "version": 1,
+                "operation": "convert_scalar_units",
+                "units": units,
+                "factor": factor,
+                "input": self.to_dict(),
+            }
+        )
 
     def scan_selection(self, indices: list[int], *, derivative: bool) -> EffectiveReductionRecipe:
         """Keep selected point recipes with scalar scans and source context with derivatives."""

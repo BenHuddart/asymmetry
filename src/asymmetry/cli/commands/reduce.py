@@ -235,6 +235,9 @@ def _entry_payload(entry, dataset, *, recomputed: bool) -> dict[str, Any]:
     asymmetry = np.asarray(dataset.asymmetry, dtype=np.float64)
     error = np.asarray(dataset.error, dtype=np.float64)
     data = entry.to_dict()
+    data["effective_recipe"] = (
+        dataset.effective_recipe.publishable() if dataset.effective_recipe is not None else None
+    )
     data["recomputed"] = recomputed
     data["a0_percent"] = float(np.mean(asymmetry[:_A0_POINTS])) if asymmetry.size else None
     data["mean_error_percent"] = float(np.mean(error)) if error.size else None

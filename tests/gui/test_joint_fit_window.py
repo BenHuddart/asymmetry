@@ -623,6 +623,8 @@ def test_solo_rerun_of_a_member_detaches_it_and_marks_the_joint_fit_stale(mw, ap
     # The Batch tab re-running series A alone comes through _record_fit_series
     # with an identical recipe, so it replaces A's results in place.
     rerun = _series("batch-rerun", [1001, 1002], _MODEL_A, _ROWS_A, _ROLES_A, label="Ordered")
+    for run, summary in rerun.results_by_run.items():
+        summary["input_attribution"] = series_a.results_by_run[run]["input_attribution"]
     recorded = mw._record_fit_series(rerun, source_runs=[1001, 1002])
 
     assert recorded == "batch-a"

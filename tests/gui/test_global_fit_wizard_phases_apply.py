@@ -101,10 +101,17 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
     )
     time_axis = np.array([0.0, 0.1, 0.2, 0.3])
     curve = np.array([0.1, 0.09, 0.08, 0.07])
+    from asymmetry.core.fitting.input_attribution import fit_input_attribution
+    from asymmetry.core.fitting.likelihood import dataset_observations
+
     fit_results = {
         run: FitResult(
             objective=Objective.GAUSSIAN,
             success=True,
+            input_attribution=fit_input_attribution(
+                dataset_observations(_dataset(run, _TEMPERATURES[_RUNS.index(run)])),
+                _dataset(run, _TEMPERATURES[_RUNS.index(run)]),
+            ),
             chi_squared=51.5,
             reduced_chi_squared=1.03,
             dof=50,
