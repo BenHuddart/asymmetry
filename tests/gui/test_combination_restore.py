@@ -70,5 +70,22 @@ def test_project_restores_target_override_or_unavailable_definition_with_history
         assert result.metadata["field"] == 42
         assert restored._data_browser.displayed_coordinate(-1)["temperature"] is None
         assert np.isfinite(result.asymmetry).all()
+    historical = restored._project_model.representation(-1, RepresentationType.TIME_FB_ASYMMETRY)
+    original = state["combined_datasets"][0]["representations"]["time_fb_asymmetry"][
+        "result_metadata"
+    ]
+    assert historical.result_metadata == original
     saved = restored.collect_project_state()
-    assert saved["combined_datasets"] == state["combined_datasets"]
+    if conflict:
+        assert saved["combined_datasets"] == state["combined_datasets"]
+    else:
+        current = saved["combined_datasets"][0]
+        assert {key: value for key, value in current.items() if key != "representations"} == {
+            key: value
+            for key, value in state["combined_datasets"][0].items()
+            if key != "representations"
+        }
+        records = current["representations"]["time_fb_asymmetry"]["result_metadata"][
+            "effective_recipes"
+        ]
+        assert records[0]["effective_recipe"] == result.effective_recipe.to_dict()

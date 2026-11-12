@@ -23,7 +23,8 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     RunResidualDiagnostic,
 )
-from asymmetry.core.fitting.likelihood import Objective
+from asymmetry.core.fitting.input_attribution import fit_input_attribution
+from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.model_comparison import (
     AT_BOUND_RELATIVE_TOLERANCE,
     SHORTLIST_MAX_DELTA,
@@ -735,6 +736,11 @@ def _saved(
             "uncertainties": errors,
             "npar": npar,
             "ndof": 81 - npar,
+            "input_attribution": fit_input_attribution(
+                dataset_observations(_dataset(701), *(window or (None, None))),
+                _dataset(701),
+                window=window,
+            ),
         },
         provenance="single",
         fit_id=fit_id,
@@ -774,6 +780,7 @@ def test_saved_fits_rank_within_their_own_window_and_leave_lone_fits_unranked() 
     b = _saved("b", chi_squared=80.0)
     other = _saved("w", chi_squared=10.0, window=(0.5, 8.0))
     legacy = _saved("l", chi_squared=5.0, window=None)
+    legacy.result.pop("input_attribution")
     summaries = _summarise_saved(other, a, legacy, b, first="a")
     # a's data group leads; a fit alone in its window, or with no key, is not ranked.
     assert [summary.key for summary in summaries] == ["b", "a", "w", "l"]

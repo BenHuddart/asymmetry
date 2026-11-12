@@ -25,7 +25,8 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
-from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
+from asymmetry.core.fitting.input_attribution import fit_input_attribution  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective, dataset_observations  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
@@ -91,6 +92,7 @@ def _fit(mw, model: CompositeModel | None = None, chi_squared: float = 60.0) -> 
         return FitResult(
             objective=Objective.GAUSSIAN,
             success=True,
+            input_attribution=fit_input_attribution(dataset_observations(ds), ds),
             chi_squared=chi_squared,
             reduced_chi_squared=chi_squared / 60.0,
             dof=60,
@@ -314,3 +316,60 @@ def test_losing_the_binding_closes_the_compare_window(mw) -> None:
     mw._sync_saved_fit_overlays()
     QApplication.instance().processEvents()
     assert mw._saved_fit_compare_window is None or not mw._saved_fit_compare_window.isVisible()
+
+
+def test_changed_observations_retain_history_through_project_codec_and_compare(mw):
+    """Real recorder and compare consumer must not identify data by shape or recipe."""
+    from asymmetry.core.fitting.fit_wizard import SelectionMetric
+    from asymmetry.core.fitting.input_attribution import saved_fit_matches
+    from asymmetry.core.fitting.model_comparison import saved_fit_curves, summarise_saved_fits
+    from asymmetry.core.representation.project_model import ProjectModel
+
+    _fit(mw, _EXP)
+    rep, fits = _fit_set(mw)
+    original = fits.fits[0]
+    current = mw._data_browser.get_dataset(_RUN)
+    current.asymmetry = current.asymmetry + 0.5
+    mw._on_dataset_selected(_RUN)
+    _fit(mw, _EXP)
+    assert len(fits.fits) == 2
+    state = mw.collect_project_state()
+    restored = ProjectModel.from_project_state(state)
+    stored = restored.representation(_RUN, RepresentationType.TIME_FB_ASYMMETRY).fit_set(None)
+    assert len(stored.fits) == 2
+    assert stored.fits[0].result["input_attribution"] == original.result["input_attribution"]
+    record = mw._bound_record()
+    assert not saved_fit_matches(stored.fits[0], record)
+    assert saved_fit_matches(stored.fits[1], record)
+    assert saved_fit_curves(stored.fits[0], record).residuals[0].size == 0
+    rows = summarise_saved_fits(
+        [(s, str(i)) for i, s in enumerate(stored.fits)],
+        record,
+        SelectionMetric.AIC,
+        {},
+        first=stored.open_id,
+    )
+    assert all(math.isinf(row.delta) for row in rows)
+    _fit(mw, _EXP)
+    assert len(fits.fits) == 2
+
+
+def test_open_compare_drops_cached_residuals_when_same_dataset_changes(mw, qapp):
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    mw._on_saved_fit_compare_requested()
+    compare = mw._saved_fit_compare_window
+    rep, fit_set = _fit_set(mw)
+    from asymmetry.core.fitting.model_comparison import saved_fit_curves
+
+    old_snapshot = compare._dataset
+    compare._curves = {s.fit_id: (s, saved_fit_curves(s, old_snapshot)) for s in fit_set.fits}
+    assert all(curves.residuals[0].size for _, curves in compare._curves.values())
+    dataset = mw._data_browser.get_dataset(_RUN)
+    dataset.asymmetry[:] += 0.5
+    mw._refresh_saved_fit_compare()
+    assert compare._dataset is not old_snapshot
+    assert not compare._curves
+    np.testing.assert_array_equal(old_snapshot.asymmetry, np.full(4, 0.1))
+    for slot in fit_set.fits:
+        assert saved_fit_curves(slot, compare._dataset).residuals[0].size == 0

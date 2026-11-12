@@ -150,6 +150,7 @@ class _StubPlotPanel(QWidget):
         super().__init__()
         self._fit_curve = None
         self._fit_curves = {}
+        self._vector_subplot_datasets = {}
         self.bunch_factor_changed = _DummySignal()
         self.fit_range_changed = _DummySignal()
         # D8: a drag on the range guides while they show the Batch tab's own

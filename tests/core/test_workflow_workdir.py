@@ -211,7 +211,7 @@ def test_entry_round_trips_through_its_dict(reduced) -> None:
     workdir.write_reduced(dataset, entry)
 
     stored = workdir.entry(entry.run_number)
-    assert stored == entry
+    assert stored == dataclasses.replace(entry, effective_recipe=dataset.effective_recipe)
     assert stored.settings == entry.settings
 
 

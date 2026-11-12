@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import replace
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QCloseEvent
@@ -35,8 +36,9 @@ from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
 OPEN_A_TEXT = "Open A in the Single tab"
 #: Under the ranking: why fits over another window carry no Δ.
 CAPTION = (
-    "Fits over the same window and points are ranked against each other; "
-    "a fit alone in its window is listed without a Δ."
+    "Fits with verified matching observations and objectives are ranked together. "
+    "Unknown or different inputs remain listed without a shared Δ; "
+    "residuals require a match to the current data."
 )
 
 
@@ -93,13 +95,19 @@ class SavedFitCompareWindow(QDialog):
         open_id: str | None,
     ) -> None:
         """Show *fits* (slot, name) of *dataset*'s run, *open_id* leading as A."""
-        if dataset is not self._dataset:
-            self._curves.clear()
-            self._building.clear()
-            self._panel.set_series([dataset], [dataset.run_label], [math.nan], "")
+        # Workers and cached residuals belong to one detached binding snapshot.
+        dataset = replace(
+            dataset.fit_record(),
+            time=dataset.time.copy(),
+            asymmetry=dataset.asymmetry.copy(),
+            error=dataset.error.copy(),
+        )
         self._dataset = dataset
         self._fits = tuple(fits)
         self._open_id = open_id
+        self._curves.clear()
+        self._building.clear()
+        self._panel.set_series([dataset], [dataset.run_label], [math.nan], "")
         self.setWindowTitle(f"Compare saved fits — run {dataset.run_label}")
         self._rank()
 

@@ -39,9 +39,13 @@ def win(qapp: QApplication) -> MainWindow:
     return w
 
 
-def _sigma_fit_result() -> FitResult:
+def _sigma_fit_result(dataset) -> FitResult:
     """A converged Gaussian width fit for coordinate/provenance recording tests."""
+    from asymmetry.core.fitting.input_attribution import fit_input_attribution
+    from asymmetry.core.fitting.likelihood import dataset_observations
+
     return FitResult(
+        input_attribution=fit_input_attribution(dataset_observations(dataset), dataset),
         success=True,
         objective=Objective.GAUSSIAN,
         parameters=ParameterSet([Parameter("sigma", 1.0)]),
@@ -76,7 +80,10 @@ def _run_batch(win: MainWindow, coords: dict[int, tuple[float, float]]) -> str:
         lambda: RepresentationType.TIME_FB_ASYMMETRY
     )
 
-    payloads = {run: (_sigma_fit_result(), (np.zeros(2), np.zeros(2)), []) for run in coords}
+    payloads = {
+        run: (_sigma_fit_result(win._data_browser.get_dataset(run)), (np.zeros(2), np.zeros(2)), [])
+        for run in coords
+    }
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
     win._fit_panel.replace_member_datasets(
@@ -430,7 +437,10 @@ def _stub_fit_panel(win: MainWindow) -> None:
 
 def _record_over(win: MainWindow, runs: list[int]) -> str:
     """Record a batch over *runs* (which must already be loaded), returning its id."""
-    payloads = {run: (_sigma_fit_result(), (np.zeros(2), np.zeros(2)), []) for run in runs}
+    payloads = {
+        run: (_sigma_fit_result(win._data_browser.get_dataset(run)), (np.zeros(2), np.zeros(2)), [])
+        for run in runs
+    }
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
     win._fit_panel.replace_member_datasets([win._data_browser.get_dataset(run) for run in runs], {})

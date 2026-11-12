@@ -209,14 +209,16 @@ def test_a_rotated_series_records_each_members_frame_and_goes_stale_with_one(mai
     pills = mainwindow._fit_parameters_panel._stale_series_reasons
     assert pills[series.batch_id] == mw_module._FRAME_STALE
 
-    # The open series' members were re-rotated, so re-running it refreshes it.
+    # Re-rotated observations keep the old series as history.
     assert mainwindow._fit_panel.open_series_id() == series.batch_id
     tab = mainwindow._fit_panel._global_tab
     tab._run_global_fit()
     assert tab.wait_for_fit()
-    assert mainwindow._project_model.active_series_id(_FB) == series.batch_id
-    assert series.member_frames[925].frame.gain == 0.9
-    assert mainwindow._series_stale_reason(series, None) == ""
+    active = mainwindow._project_model.batch(mainwindow._project_model.active_series_id(_FB))
+    assert active.batch_id != series.batch_id
+    assert series.member_frames[925].frame.gain == 1.0
+    assert active.member_frames[925].frame.gain == 0.9
+    assert mainwindow._series_stale_reason(active, None) == ""
 
 
 def test_a_lab_frame_series_records_its_projection(mainwindow):

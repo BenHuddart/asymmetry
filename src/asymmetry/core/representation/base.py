@@ -146,19 +146,14 @@ class FitSlot:
         value = (self.result or {}).get("reduced_chi_squared")
         return math.nan if value is None else float(value)
 
-    def data_key(self) -> tuple[float | None, float | None, int] | None:
-        """``(min, max, n)`` of the data this fit saw, or ``None`` when unknown (plan D7).
-
-        Two fits with equal keys were fitted to the same points, so an
-        information criterion ranks them; ``n`` is ``ndof + npar``.
-        """
+    def data_key(self) -> tuple[str, int] | None:
+        """Actual fitted observation identity and sample count, unknown for legacy fits."""
+        recorded = (self.result or {}).get("input_attribution")
         result = self.result or {}
-        if self.fit_range is None or result.get("npar") is None or result.get("ndof") is None:
-            return None
         return (
-            self.fit_range["min"],
-            self.fit_range["max"],
-            int(result["ndof"]) + int(result["npar"]),
+            None
+            if recorded is None or result.get("ndof") is None or result.get("npar") is None
+            else (recorded["identity"], int(result["ndof"]) + int(result["npar"]))
         )
 
     def to_dict(self) -> dict:
@@ -283,12 +278,23 @@ class SingleFitSet:
         """Save a completed fit by the matching rule of plan D1, open it and return it.
 
         Not *detached*: a fit with the same :meth:`FitSlot.identity` as the open
-        fit replaces it in place, else the newest fit sharing it is replaced.
+        fit and known matching observations replaces it in place, else the
+        newest fit sharing both is replaced.
         Otherwise (or when *detached*) the fit is added under a fresh id, with a
         label only when its default name would read like another fit's.
         """
         identity = slot.identity()
-        matches = [] if detached else [s for s in self.fits if s.identity() == identity]
+        matches = (
+            []
+            if detached
+            else [
+                s
+                for s in self.fits
+                if s.identity() == identity
+                and slot.data_key() is not None
+                and s.data_key() == slot.data_key()
+            ]
+        )
         target = next((s for s in matches if s.fit_id == self.open_id), None)
         if target is None and matches:
             target = matches[-1]
@@ -492,6 +498,28 @@ class Representation(ABC):
         """
         self._datasets = None
 
+    def record_result_recipes(self, datasets: list[MuonDataset]) -> None:
+        """Retain known result history; absent or unavailable results cannot overwrite it."""
+        datasets = [ds for ds in datasets if ds.n_points and ds.effective_recipe is not None]
+        if not datasets:
+            return
+        recorded = {
+            value["projection"]: value
+            for value in self.result_metadata.get("effective_recipes", [])
+        }
+        recorded.update(
+            {
+                ds.metadata.get("projection"): {
+                    "projection": ds.metadata.get("projection"),
+                    "effective_recipe": ds.effective_recipe.to_dict()
+                    if ds.effective_recipe is not None
+                    else None,
+                }
+                for ds in datasets
+            }
+        )
+        self.result_metadata["effective_recipes"] = list(recorded.values())
+
     def cache_datasets(self, datasets: list[MuonDataset]) -> None:
         """Store externally-computed curves as the transient cache.
 
@@ -499,6 +527,7 @@ class Representation(ABC):
         just computed it) to avoid recomputing immediately.
         """
         self._datasets = list(datasets)
+        self.record_result_recipes(datasets)
 
     def datasets(self) -> list[MuonDataset]:
         """Return the currently cached curves (empty if not yet computed)."""
@@ -513,6 +542,8 @@ class Representation(ABC):
 
     def to_dict(self) -> dict:
         """Return the serialisable recipe/fit/trend state (no arrays)."""
+        if self._datasets is not None:
+            self.record_result_recipes(self._datasets)
         return {
             "rep_type": self.rep_type.value,
             "recipe": dict(self.recipe),

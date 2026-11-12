@@ -43,10 +43,15 @@ Effective reduction recipe
 ``histogram_observation``. Historical or unsupported curves have no captured raw
 provenance. JSON conversion does not grant replay or covariance reconstruction.
 Source locators are retained in the view and excluded from numerical identity;
-callers publishing the view must choose which locators to disclose.
+``publishable()`` returns a detached numerical disclosure without nested local
+locators or diagnostic prose and preserves numerical identity. Workdir and scan
+codecs retain the local view. Project result metadata and fitted-input summaries
+retain captured history separately from recomputed curves. A fit-input digest
+records sampled values, errors, and support; recipe identity alone cannot verify
+those observations.
 
 .. autoclass:: asymmetry.core.data.reduction_recipe.EffectiveReductionRecipe
-   :members: canonical_json, identity, to_dict, from_dict
+   :members: canonical_json, identity, to_dict, from_dict, publishable, scalar_units
 
 Logbook
 -------

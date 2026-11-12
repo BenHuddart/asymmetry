@@ -1716,9 +1716,11 @@ Effective reduction records
 ---------------------------
 
 Asymmetry captures an immutable effective recipe with core reductions and supported
-transforms; see :doc:`/explanation/reduction_pipeline`. This in-memory account
-is distinct from a raw replay snapshot, durable processed data, and cache validity.
-Work-directory/project/export adapters do not retain the complete recipe.
+transforms; see :doc:`/explanation/reduction_pipeline`. Work-directory, scan,
+project-result, and supported export records retain the captured account. It
+is distinct from raw replay, acquisition-content verification, and cache validity.
+Private records retain locators; publishable recipe fields omit nested locators
+and diagnostic prose without changing numerical identity.
 
 musrfit 1.12.1 uses an explicit analysis configuration and writes fitted parameters
 to its ``.msr`` result while ``.mlog`` retains the preceding parameter input
@@ -1736,3 +1738,10 @@ execution or a claim of identical canonical identity safeguards.
 Asymmetry also checks canonical recipe identity independently of dictionary order,
 local paths, and display labels. The identity retains available source references;
 it does not verify file contents or recover unknown historical settings.
+
+
+Asymmetry also checks actual sampled observations, retained errors, usable support,
+and interpretation when comparing saved single fits. Unknown or different input
+histories remain available without a shared ranking or current residuals. This
+safeguard is separate from model structure and recipe identity; it does not change
+the fitting objective, information-criterion definitions, or TF calibration selection.

@@ -98,6 +98,7 @@ from asymmetry.gui.utils.gle_export import (
     safe_file_token,
     show_export_result_dialog,
 )
+from asymmetry.gui.utils.recipe_export import write_recipe_header
 from asymmetry.gui.utils.waterfall import auto_waterfall_delta
 from asymmetry.gui.widgets.axis_limits import (
     AxisLimitControls,
@@ -7747,11 +7748,7 @@ class PlotPanel(QWidget):
     def get_current_plot_export_data(
         self, datasets: list[MuonDataset] | None = None
     ) -> list[dict] | None:
-        """Return export payloads for all displayed datasets.
-
-        Returns a list of dicts (one per displayed dataset), or *None* when
-        nothing is available to export.
-        """
+        """Capture displayed results and resolved display metadata for export."""
         target_datasets = list(datasets) if datasets is not None else list(self._current_datasets)
         if not target_datasets:
             return None
@@ -7775,7 +7772,13 @@ class PlotPanel(QWidget):
             if isinstance(dataset.metadata, dict):
                 run_metadata.update(dataset.metadata)
             if isinstance(analysis.metadata, dict) and analysis.metadata.get("rrf_frame"):
-                run_metadata["rrf_frame"] = analysis.metadata["rrf_frame"]
+                run_metadata.update(
+                    {
+                        key: value
+                        for key, value in analysis.metadata.items()
+                        if key.startswith("rrf_")
+                    }
+                )
 
             histogram_info: dict[str, object] | None = None
             if run is not None and getattr(run, "histograms", None):
@@ -7826,6 +7829,9 @@ class PlotPanel(QWidget):
 
             payload = {
                 "run_number": rn,
+                "effective_recipe": analysis.effective_recipe.publishable()
+                if analysis.effective_recipe is not None
+                else None,
                 "label": label_text,
                 "domain": "frequency" if is_frequency else "time",
                 "data": {
@@ -8215,17 +8221,8 @@ class PlotPanel(QWidget):
     ) -> None:
         """Write a .dat file with spectra data and metadata header.
 
-        ``x_range`` optionally restricts the written rows to ``[lo, hi]``
-        (inclusive); ``None`` (the default, used by the GLE export) writes every
-        point. ``axis_key`` identifies the projection (``P_x``/``P_y``/``P_z``)
-        for vector exports so the file records which polarization component it
-        holds rather than a generic asymmetry label.
-
-        ``bake_waterfall_offset`` adds the payload's waterfall offset to the
-        written asymmetry. The plain-text export leaves it ``True`` (the text is
-        the final artifact); the GLE export passes ``False`` when the installed
-        gleplot applies the offset in the script (``let``) instead, keeping the
-        written values raw. The header records the offset either way.
+        Row selection and baked display offsets are recorded with the captured
+        effective recipe; GLE script offsets leave the written values unchanged.
         """
         data = payload.get("data") or {}
         t_data = data.get("t")
@@ -8234,10 +8231,7 @@ class PlotPanel(QWidget):
         if t_data is None or y_data is None:
             return
 
-        # Mirror the on-screen waterfall stack: the written asymmetry carries the
-        # per-trace offset (unless GLE applies it in-script), recorded in a
-        # header line so the raw values remain recoverable. 0.0 (absent) leaves
-        # the data untouched.
+        # Only baked offsets change the written values.
         waterfall_offset = float(payload.get("waterfall_offset", 0.0))
         if waterfall_offset and bake_waterfall_offset:
             y_data = np.asarray(y_data, dtype=float) + waterfall_offset
@@ -8340,6 +8334,9 @@ class PlotPanel(QWidget):
 
         with open(dat_path, "w", encoding="utf-8") as f:
             f.write("! START OF RUN INFORMATION\n")
+            write_recipe_header(
+                f, payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset
+            )
             f.write(f"!  Run number  : {payload.get('run_number', '')}\n")
             if title:
                 f.write(f"!  Title       : {title}\n")
