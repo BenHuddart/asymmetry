@@ -156,7 +156,7 @@ def test_differential_excludes_zero_denominator_bins():
 
 
 def test_differential_all_zero_counts_rejected():
-    with pytest.raises(ValueError, match="non-zero counts"):
+    with pytest.raises(ValueError, match="no usable ratio observations"):
         integrate_asymmetry(
             GroupCounts(np.zeros(3)), GroupCounts(np.zeros(3)), method="differential"
         )
@@ -609,7 +609,7 @@ def test_integral_without_background_is_unchanged(method):
     else:
         asym, err = compute_asymmetry(forward, backward)
         expected = (float(np.mean(asym)), float(np.sqrt(np.sum(err**2)) / err.size))
-    assert integrate_run(run, method=method) == expected
+    assert integrate_run(run, method=method) == pytest.approx(expected, rel=1e-13)
 
 
 def test_background_that_cannot_be_subtracted_excludes_the_run():

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Retain validity and shared counting uncertainty in integrated scans, report
+  unusable observations, and guard independent-error fits of dependent selections.
+
 ### Changed
 
 - Use count-integral ordinary and RF scans across GUI/API/CLI, retaining the

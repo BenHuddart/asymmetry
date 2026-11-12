@@ -6,7 +6,7 @@ retained so a later curve mean includes reused estimation observations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -109,6 +109,28 @@ class CountingNoise:
         return result, magnitude
 
     @property
+    def scalar_error(self) -> float:
+        """Contract one output after combining each source's direct/estimated response."""
+        if any(term.direct.shape[0] != 1 for term in self.terms):
+            raise ValueError("Scalar counting contraction requires exactly one output row.")
+        responses = {}
+        for term in self.terms:
+            coefficients = term.direct.toarray().ravel()
+            for sensitivity, influence in term.estimators:
+                coefficients += sensitivity[0] * influence
+            source = term.observation
+            if source in responses:
+                responses[source] += coefficients
+            else:
+                responses[source] = coefficients
+        variance = sum(
+            np.dot(coefficients**2, source.variance) for source, coefficients in responses.items()
+        )
+        if not np.isfinite(variance) or variance < 0:
+            raise ValueError("Scalar counting responses require finite nonnegative variance.")
+        return float(np.sqrt(variance))
+
+    @property
     def error(self) -> np.ndarray:
         variance, magnitude = self._contract(self)
         tolerance = 128 * np.finfo(float).eps * magnitude
@@ -148,16 +170,24 @@ def bin_matrix(edges, length, *, mean=False):
     return csr_matrix((values, (rows, columns)), shape=(len(lengths), length))
 
 
+@dataclass
+class CountingCapture:
+    """One request's acquisition identities, shared by all its scalar reductions."""
+
+    observations: dict[tuple, CountingObservation] = field(default_factory=dict)
+    cohort: object = field(default_factory=object)
+
+
 def capture_counting_observations(
-    run: Run, reference: BackgroundReference | None, *, cancel_check=None
+    run: Run, reference: BackgroundReference | None, *, cancel_check=None, capture=None
 ) -> tuple[Run, BackgroundReference | None]:
     """Name borrowed detector acquisitions once before projection snapshots diverge.
 
     Declared source/period identity joins copied constituents. Unnamed synthetic
     acquisitions share only when the boundary explicitly supplies the same record.
     """
-    registry: dict[tuple, CountingObservation] = {}
-    cohort = object()
+    capture = CountingCapture() if capture is None else capture
+    registry, cohort = capture.observations, capture.cohort
 
     def capture(histograms: list[Histogram], identity: tuple) -> list[Histogram]:
         result = []

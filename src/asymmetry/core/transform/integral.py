@@ -29,8 +29,8 @@ integrating native bins is the more faithful observable.
 
 Native period selection and correction preparation share
 :func:`~asymmetry.core.transform.reduce.corrected_period_counts`. G+R uses one
-pooled observation before the selected estimator; G−R differences independently
-reduced set estimates. Red, Green, and extracted sets use their actual
+pooled observation before the selected estimator; G−R combines retained
+responses before evaluating its variance. Red, Green, and extracted sets use their actual
 acquired clocks and support.
 
 Scale: every integral asymmetry this module produces is the dimensionless
@@ -53,18 +53,18 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.transform.asymmetry import (
-    compute_asymmetry,
-    compute_asymmetry_with_count_errors,
-)
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
     reference_observation_metadata,
 )
+from asymmetry.core.transform.counting_noise import (
+    CountingCapture,
+    CountingNoise,
+    capture_counting_observations,
+)
 from asymmetry.core.transform.fb_counts import (
     GroupCounts,
-    linear_combination_variance,
     native_count_time,
     validated_count_arrays,
 )
@@ -77,6 +77,11 @@ from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.reduce import (
     corrected_period_counts,
     correction_flags_from_grouping,
+)
+from asymmetry.core.transform.scalar_observation import (
+    ScalarObservation,
+    count_ratio_observations,
+    curve_observations,
 )
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
@@ -126,7 +131,7 @@ def integrate_asymmetry(
     r"""Reduce grouped counts to one fractional asymmetry and marginal error.
 
     ``integral`` sums native counts before forming the ratio. ``differential``
-    averages per-bin asymmetries over the selected non-zero denominators.
+    averages usable native ratio observations and reports omissions in typed results.
     Both propagate the independent count variances and shared components with
     :func:`~asymmetry.core.transform.fb_counts.linear_combination_variance`.
     Its weights are 1 for an integral and the asymmetry derivatives divided by
@@ -134,8 +139,9 @@ def integrate_asymmetry(
 
     ``time`` is an optional aligned axis in μs, required with inclusive bounds
     ``t_min`` or ``t_max``. Without bounds the full record is selected. α and β
-    must be positive. Degenerate first-order asymmetry errors use the unit
-    no-information sentinel at the observable level.
+    must be positive. An undefined scalar returns ``(nan, nan)``; a defined
+    zero-variance ratio retains its value with error zero. Neither has Gaussian
+    fit weight. A mean with no usable observations raises ``ValueError``.
     """
     _validate_method(method)
     _validate_alpha(alpha)
@@ -151,36 +157,11 @@ def integrate_asymmetry(
     mask = _window_mask(time, t_min, t_max, n)
     if not np.any(mask):
         raise ValueError("Integration window selects no bins.")
-    edges = np.array([0, n], dtype=np.intp)
-    if method == "integral":
-        variances = [
-            linear_combination_variance(group, edges, mask)[0] for group in (forward, backward)
-        ]
-        asym, error = compute_asymmetry_with_count_errors(
-            np.array([np.sum(f[mask])]),
-            np.array([np.sum(b[mask])]),
-            np.array([np.sqrt(variances[0])]),
-            np.array([np.sqrt(variances[1])]),
-            alpha,
-            beta,
-        )
-        return float(asym[0]), float(error[0])
-
-    denominator = beta * f + alpha * b
-    valid = mask & (denominator != 0.0)
-    if not np.any(valid):
-        raise ValueError("Integration window selects no bins with non-zero counts.")
-    asym, _ = compute_asymmetry(f, b, alpha, beta)
-    scale = alpha * (1.0 + beta) / denominator[valid] ** 2 / np.count_nonzero(valid)
-    f_weights, b_weights = np.zeros(n), np.zeros(n)
-    f_weights[valid] = scale * b[valid]
-    b_weights[valid] = -scale * f[valid]
-    variance = (
-        linear_combination_variance(forward, edges, f_weights)[0]
-        + linear_combination_variance(backward, edges, b_weights)[0]
+    ratios = count_ratio_observations(
+        forward, backward, alpha, beta, mask if method == "integral" else None
     )
-    error = float(np.sqrt(variance)) if variance > 0 else 1.0
-    return float(np.mean(asym[valid])), error
+    result = ratios.scalar() if method == "integral" else ratios.mean(mask)
+    return result.value, result.error
 
 
 def integrate_curve(
@@ -193,6 +174,7 @@ def integrate_curve(
 ) -> tuple[float, float]:
     """Mean of an already-formed asymmetry curve over ``[t_min, t_max]``.
 
+    Explicit zero errors are omitted; no surviving observations raises ``ValueError``.
     Useful when only the reduced curve is available (for example a combined
     green∓red spectrum) rather than the forward/backward counts.  The error is
     the error on the mean, ``sqrt(Σ eᵢ²) / N``.
@@ -222,7 +204,8 @@ def integrate_curve(
     mask = _window_mask(t[:n], t_min, t_max, n)
     if not np.any(mask):
         raise ValueError("Integration window selects no bins.")
-    return _mean_over_window(a[:n], e[:n], mask)
+    result = curve_observations(a, e).mean(mask)
+    return result.value, result.error
 
 
 @dataclass(frozen=True)
@@ -232,6 +215,7 @@ class IntegralReduction:
     value: float
     error: float
     corrections: CorrectionOutcomes | None
+    observation: ScalarObservation
 
 
 def integrate_run(
@@ -329,7 +313,9 @@ def reduce_integral_run(
         grouping_ref=grouping_ref,
         reference=reference,
     )
-    return IntegralReduction(result.value, result.error, result.corrections.get(str(mode)))
+    return IntegralReduction(
+        result.value, result.error, result.corrections.get(str(mode)), result.observation
+    )
 
 
 @dataclass(frozen=True)
@@ -339,6 +325,8 @@ class PeriodIntegralReduction:
     value: float
     error: float
     corrections: dict[str, CorrectionOutcomes]
+    observation: ScalarObservation
+    noise: CountingNoise | None = None
 
 
 def reduce_period_integral(
@@ -351,6 +339,7 @@ def reduce_period_integral(
     grouping_ref=None,
     reference=None,
     cancel_check=None,
+    counting_capture=None,
 ):
     """Coordinate background before integrating held-period sums or differences."""
     _validate_method(method)
@@ -364,14 +353,18 @@ def reduce_period_integral(
                         "A curve-only time-bin mean cannot apply count calibration, grouping, "
                         "or reference overrides; reload verified raw data for those settings."
                     )
-                value, error = integrate_curve(
-                    data.time,
+                mask = _window_mask(data.time, t_min, t_max, data.time.size)
+                result = curve_observations(
                     data.asymmetry_fraction,
                     data.error_fraction,
-                    t_min=t_min,
-                    t_max=t_max,
+                    data.ratio_validity,
+                    data.counting_noise.scale(np.full(data.time.size, 0.01))
+                    if data.counting_noise is not None
+                    else None,
+                ).mean(mask)
+                return PeriodIntegralReduction(
+                    result.value, result.error, {}, result.observation, result.noise
                 )
-                return PeriodIntegralReduction(value, error, {})
             raise ValueError(
                 "Count integral unavailable: reload raw data with verified count preparation; "
                 "an attached Run does not establish count replay for this curve. "
@@ -384,11 +377,16 @@ def reduce_period_integral(
         run = _resolve_run(data)
     if cancel_check is not None:
         cancel_check()
+    run, reference = capture_counting_observations(
+        run, reference, cancel_check=cancel_check, capture=counting_capture
+    )
     grouping = effective_grouping(run, grouping_ref)
     if alpha is not None:
         grouping.pop("alpha_policy", None)
     mode = PeriodMode(grouping.get("period_mode", "red"))
     alpha_used, beta_used = grouping_balances(grouping)
+    _validate_alpha(alpha_used if alpha is None else alpha)
+    _validate_beta(beta_used)
     flags = correction_flags_from_grouping(grouping)
     from asymmetry.core.io import background_reference_for_grouping
 
@@ -418,29 +416,37 @@ def reduce_period_integral(
     if alpha is None and shared_automatic_alpha(grouping, reference_observation_metadata(run)):
         target = str(PeriodMode.RED) if mode == PeriodMode.GREEN_MINUS_RED else str(mode)
         alpha_used = estimate_prepared_alpha(counts[target])
-    values = {}
+    ratios, masks = {}, {}
     for label, pair in counts.items():
         time = native_count_time(
             pair.forward.counts.size, pair.bin_width_us, pair.common_t0_bin, pair.t0_time_us
         )
-        values[label] = integrate_asymmetry(
+        mask = _window_mask(
+            time,
+            time[pair.window.first] if t_min is None else t_min,
+            time[pair.window.last] if t_max is None else t_max,
+            time.size,
+        )
+        masks[label] = mask
+        ratios[label] = count_ratio_observations(
             pair.forward,
             pair.backward,
-            alpha=alpha_used if alpha is None else alpha,
-            beta=beta_used,
-            time=time,
-            t_min=time[pair.window.first] if t_min is None else t_min,
-            t_max=time[pair.window.last] if t_max is None else t_max,
-            method=method,
+            alpha_used if alpha is None else alpha,
+            beta_used,
+            mask if method == "integral" else None,
         )
-    if mode != PeriodMode.GREEN_MINUS_RED:
-        value, error = values[str(mode)]
-        return PeriodIntegralReduction(value, error, {k: v.corrections for k, v in counts.items()})
-    red, green = values["red"], values["green"]
+    if mode == PeriodMode.GREEN_MINUS_RED:
+        ratio = ratios["green"].difference(ratios["red"])
+        mask = masks["green"] & masks["red"]
+    else:
+        ratio, mask = ratios[str(mode)], masks[str(mode)]
+    result = ratio.scalar() if method == "integral" else ratio.mean(mask)
     return PeriodIntegralReduction(
-        green[0] - red[0],
-        float(np.hypot(red[1], green[1])),
-        {label: pair.corrections for label, pair in counts.items()},
+        result.value,
+        result.error,
+        {k: v.corrections for k, v in counts.items()},
+        result.observation,
+        result.noise,
     )
 
 
@@ -462,6 +468,8 @@ class FieldScanPoint:
     error: float
     label: str = ""
     corrections: dict[str, CorrectionOutcomes] = field(default_factory=dict)
+    observation: ScalarObservation | None = None
+    noise: CountingNoise | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -501,6 +509,28 @@ class FieldScan:
     #: leaves the asymmetry scale untouched).
     units: AsymmetryUnit = ASYMMETRY_FRACTION
     correction_outcomes: dict[int, dict[str, CorrectionOutcomes]] = field(default_factory=dict)
+    observations: tuple[ScalarObservation | None, ...] = ()
+    correlated_pairs: tuple[tuple[int, int], ...] = ()
+    source_assumption: str = "Unknown acquisition identity is assumed distinct."
+
+    def select(self, selection):
+        """Crop/reorder parallel observations without losing fit-support facts."""
+        indices = np.arange(self.n_points)[selection]
+        runs = [self.run_numbers[i] for i in indices]
+        positions = {old: new for new, old in enumerate(indices)}
+        return replace(
+            self,
+            x=self.x[selection],
+            value=self.value[selection],
+            error=self.error[selection],
+            run_numbers=runs,
+            observations=tuple(self.observations[i] for i in indices) if self.observations else (),
+            correlated_pairs=tuple(
+                (positions[a], positions[b])
+                for a, b in self.correlated_pairs
+                if a in positions and b in positions
+            ),
+        )
 
     @property
     def n_points(self) -> int:
@@ -515,6 +545,7 @@ class FieldScan:
                 value=float(self.value[i]),
                 error=float(self.error[i]),
                 corrections=self.correction_outcomes.get(self.run_numbers[i], {}),
+                observation=self.observations[i] if self.observations else None,
             )
             for i in range(self.n_points)
         ]
@@ -591,6 +622,7 @@ def build_field_scan(
     excluded: list[tuple[int, str]] = []
 
     runs = tuple(runs)
+    capture = CountingCapture()
     for index, item in enumerate(runs):
         if progress_callback is not None:
             progress_callback(index, len(runs), "Reducing native counts")
@@ -627,13 +659,20 @@ def build_field_scan(
                 grouping_ref=grouping_ref,
                 reference=reference,
                 cancel_check=cancel_check,
+                counting_capture=capture,
             )
         except ValueError as exc:
             excluded.append((run_number, str(exc)))
             continue
         points.append(
             FieldScanPoint(
-                run_number, x_value, reduced.value, reduced.error, corrections=reduced.corrections
+                run_number,
+                x_value,
+                reduced.value,
+                reduced.error,
+                corrections=reduced.corrections,
+                observation=reduced.observation,
+                noise=reduced.noise,
             )
         )
 
@@ -650,6 +689,16 @@ def build_field_scan(
         excluded=excluded,
         units=ASYMMETRY_FRACTION,
         correction_outcomes={p.run_number: p.corrections for p in points},
+        observations=tuple(p.observation for p in points),
+        correlated_pairs=tuple(
+            (i, j)
+            for i, left in enumerate(points)
+            for j, right in enumerate(points[i + 1 :], i + 1)
+            if left.noise is not None
+            and right.noise is not None
+            and abs(float(left.noise.covariance(right.noise)[0]))
+            > 128 * np.finfo(float).eps * left.error * right.error
+        ),
     )
 
 
@@ -746,19 +795,6 @@ def _window_mask(
     if t_max is not None:
         mask &= t <= t_max
     return mask
-
-
-def _mean_over_window(
-    asym: NDArray[np.float64],
-    err: NDArray[np.float64],
-    mask: NDArray[np.bool_],
-) -> tuple[float, float]:
-    selected = asym[mask]
-    selected_err = err[mask]
-    count = selected.size
-    value = float(np.mean(selected))
-    error = float(np.sqrt(np.sum(np.square(selected_err))) / count)
-    return value, error
 
 
 def _resolve_run(data: MuonDataset | Run) -> Run:

@@ -532,3 +532,22 @@ def test_joint_fit_payload_names_its_uncertainty_basis():
     _, payload = fit_integral_scan(_scan(), "LorentzianLCR + Linear")
     assert payload["uncertainty_basis"] == "joint_fit"
     assert payload["conditional_uncertainties"] is None
+
+
+def test_independent_fit_crop_survives_dependent_optional_dip_checks():
+    from dataclasses import replace
+
+    scan = _scan()
+    value = (
+        0.18
+        + 1e-6 * scan.x
+        - 0.02 / (1 + ((scan.x - 2800) / 100) ** 2)
+        - 0.03 / (1 + ((scan.x - 4200) / 150) ** 2)
+    )
+    scan = replace(scan, value=value, correlated_pairs=((12, 13),))
+    _, result = fit_integral_scan(scan, "LorentzianLCR + Linear", x_min=3800, x_max=4700)
+    assert result["success"]
+    assert (
+        result["next_dip_limit"]
+        == "Known shared counting observations restrict independent-error dip checks."
+    )

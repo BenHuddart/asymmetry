@@ -214,7 +214,6 @@ from asymmetry.core.representation.global_fit_study import (
 from asymmetry.core.representation.group import PhaseSpec, phase_group_name
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
-    ASYMMETRY_PERCENT,
     EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
     available_background_modes,
@@ -12185,22 +12184,7 @@ class MainWindow(QMainWindow):
         if self._alc_scan_view.derivative_enabled():
             # Derivative of the included points only, sliced from the one scan
             # build so the drop/sort rules cannot diverge from the render.
-            base = (
-                FieldScan(
-                    x=scan.x[~excluded_mask],
-                    value=scan.value[~excluded_mask],
-                    error=scan.error[~excluded_mask],
-                    run_numbers=[
-                        run for run, dropped in zip(scan.run_numbers, excluded_mask) if not dropped
-                    ],
-                    order_key=scan.order_key,
-                    method=scan.method,
-                    x_label=scan.x_label,
-                    units=scan.units,
-                )
-                if excluded_mask.any()
-                else scan
-            )
+            base = scan.select(~excluded_mask) if excluded_mask.any() else scan
             deriv = differentiate_scan(base) if base.n_points >= 2 else None
             if deriv is None or deriv.n_points < 1:
                 self._alc_scan_view.clear(
@@ -12272,6 +12256,13 @@ class MainWindow(QMainWindow):
         if messages:
             parts.append("Correction warning")
             tooltip_lines.extend(messages)
+        from asymmetry.gui.scan.observations import observation_status
+
+        scan = self._alc_display_scan(self._alc_scan_view.x_key())
+        if scan is not None:
+            status, details = observation_status(scan)
+            parts.extend(status)
+            tooltip_lines.extend(details)
         self._alc_scan_view.set_provenance(" · ".join(parts), "\n".join(tooltip_lines))
 
     def _on_alc_point_toggled(self, run_number: int) -> None:
@@ -12320,40 +12311,9 @@ class MainWindow(QMainWindow):
 
     def _alc_display_scan(self, x_key: str, *, include_excluded: bool = False) -> FieldScan | None:
         """Build the displayed percent scan, retaining selected points' provenance."""
-        selected = []
-        for point in self._alc_scan_points:
-            if not include_excluded and point["run"] in self._alc_excluded_runs:
-                continue
-            x = point["run"] if x_key == "run" else point[x_key]
-            if x is None:
-                continue
-            selected.append(
-                (float(x), point["value"] * 100.0, point["error"] * 100.0, point["run"])
-            )
-        selected.sort(key=lambda item: (item[0], item[3]))
-        if len(selected) < 2:
-            return None
-        return FieldScan(
-            x=np.array([s[0] for s in selected], dtype=float),
-            value=np.array([s[1] for s in selected], dtype=float),
-            error=np.array([s[2] for s in selected], dtype=float),
-            run_numbers=[s[3] for s in selected],
-            order_key=x_key,
-            method=self._scan_controller.estimator(),
-            correction_outcomes={
-                point["run"]: {
-                    label: CorrectionOutcomes.from_dict(record)
-                    for label, record in point.get("correction_outcomes", {}).items()
-                }
-                for point in self._alc_scan_points
-                if point["run"] in {s[3] for s in selected}
-            },
-            x_label=self._ALC_X_LABELS[x_key],
-            # This scan is displayed in percent (the ×100 above), unlike the
-            # fraction-scale scans build_field_scan returns — state it rather than
-            # letting the field's fraction default misreport it.
-            units=ASYMMETRY_PERCENT,
-        )
+        from asymmetry.gui.scan.observations import display_scan
+
+        return display_scan(self, x_key, include_excluded=include_excluded)
 
     @staticmethod
     def _is_headless() -> bool:
@@ -16690,6 +16650,7 @@ class MainWindow(QMainWindow):
             return
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
+        extra["correlated_pairs"] = batch.extra.get("correlated_pairs", [])
         extra["estimator"] = batch.extra["estimator"]
         extra["time_window_us"] = batch.extra["time_window_us"]
         extra["mode_active"] = self._alc_mode
@@ -16781,18 +16742,34 @@ class MainWindow(QMainWindow):
                 run_obj = getattr(dataset, "run", None) or dataset
             points.append(
                 self._alc_scan_point(
-                    run, value, error, run_obj, summary.get("correction_outcomes", {})
+                    run,
+                    value,
+                    error,
+                    run_obj,
+                    summary.get("correction_outcomes", {}),
+                    summary.get("observation"),
+                    summary.get("scan_index"),
                 )
             )
         return points
 
     @staticmethod
-    def _alc_scan_point(run_number, value: float, error: float, run_obj, corrections=None) -> dict:
+    def _alc_scan_point(
+        run_number,
+        value: float,
+        error: float,
+        run_obj,
+        corrections=None,
+        observation=None,
+        scan_index=None,
+    ) -> dict:
         """Build one ALC scan point (fractional value + the run's field/temperature)."""
         meta = run_obj.metadata if run_obj is not None else {}
         return {
             "run": int(run_number),
             "correction_outcomes": {} if corrections is None else corrections,
+            "observation": observation,
+            "scan_index": scan_index,
             "value": float(value),
             "error": float(error),
             "field": _safe_float(meta.get("field")),

@@ -9,6 +9,10 @@ non-resonant edges, then fit a Gaussian peak to the resonance.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import numpy as np
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidgetItem, QWidget
 
@@ -30,7 +34,14 @@ class AlcFieldScanScenario(Scenario):
 
         from asymmetry.core.simulate import reduce_run_to_dataset
 
-        datasets = [reduce_run_to_dataset(ds.run) for ds in make_alc_field_scan()]
+        runs = [ds.run for ds in make_alc_field_scan()]
+        # An explicitly supplied zero variance preserves the defined ratio but
+        # removes its Gaussian weight; the remaining edge points fit the baseline.
+        runs[0] = replace(
+            runs[0],
+            histograms=[replace(h, count_variance=np.zeros(h.n_bins)) for h in runs[0].histograms],
+        )
+        datasets = [reduce_run_to_dataset(run) for run in runs]
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
         window._data_browser.create_data_group(
@@ -49,6 +60,7 @@ class AlcFieldScanScenario(Scenario):
         _process_events_for(milliseconds=300)
 
         assert "Count integral" in window._alc_scan_view._provenance_label.text()
+        assert "1 without Gaussian uncertainty" in window._alc_scan_view._provenance_label.text()
         view = window._alc_scan_view
 
         # Baseline: a linear fit over the two non-resonant edges (the dip is

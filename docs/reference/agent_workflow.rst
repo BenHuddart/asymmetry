@@ -1496,6 +1496,18 @@ mean of pointwise asymmetries; it is distinct from dA/dB and can give a differen
 value on the same counts. Bounds include whole native bins by centre, and
 omitted bounds use the good window. Stored scan values/errors are fractions,
 conditional on calibration. See :doc:`alc_mode` for period and history semantics.
+The scan JSON records each point's mathematical ``observation`` status and
+exclusive used/omitted counts, plus point-index ``correlated_pairs`` and
+``source_assumption``.
+Undefined numeric values and unavailable errors are JSON ``null``. A defined
+zero-variance point retains its value and error zero. Text output reports
+omissions and known shared counting observations. Fits select usable points
+before seeds and weights; known dependent selections require an independent
+subset. Scan inspection and export remain available without a fit. These
+errors include supported reused counting responses, conditional on calibration;
+they do not include calibration uncertainty. See :doc:`alc_mode` for the
+operation-specific messages and shared-reference limits.
+
 This is the ALC/QLCR path:
 
 .. code-block:: text
@@ -1643,7 +1655,8 @@ without confusing the two operations.
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
-errors added in quadrature. With no field step logged between the periods the
+supported shared counting responses combined before evaluating variance. With no
+field step logged between the periods the
 contrast is the RF switched on and off, and ``integral-scan`` names
 ``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
 ``Next`` line holds the pair's ``dB`` at the step (and points a single
