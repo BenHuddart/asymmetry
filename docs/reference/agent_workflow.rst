@@ -1559,15 +1559,22 @@ that failed; a failed fit names the minimiser's reasons and any parameter at a
 bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
 around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
 is told why that may be — a background no polynomial can follow across a long
-scan, or a dip the model leaves out. After any resonance fit, converged or
-failed, every dip the fitted lines leave out is named with its own window and
-the command that fits it ("the scan holds another dip", or "N more dips"): the
+scan, or a dip the model leaves out. After a resonance fit, converged or
+failed, supported independent windows are investigated for dips the fitted lines
+leave out. A supported dip is named with its own window and the command that
+fits it ("the scan holds another dip", or "N more dips"): the
 seeder's window for one more resonance, and the window of each other significant
 interior minimum (the ``LOCAL DIP CANDIDATES`` screen below), taken deepest
 first. A window is named when a single line fitted inside it falls below its
 background by five errors and lands outside every window already named, so a
 wide shallow minimum whose window reaches a deeper neighbour's line is not named
-twice. A line fitted
+twice. Known dependent subwindows are omitted from these independent-error
+exploratory fits. The fit JSON's ``next_dip_limit`` records
+``Known shared counting observations restrict independent-error dip checks.``
+when the full scan has such restrictions. A completed independent fit within
+``--xmin``/``--xmax`` remains available, and other independent subwindows can
+still be investigated. An omitted exploratory fit does not establish absence
+of a dip. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
@@ -1597,8 +1604,10 @@ fitted estimate or the remaining limitation. A failed whole-scan recovery
 model does not establish that local resonances are absent. Monotonic recovery
 curves do not generate interior-dip candidates.
 A scan that measures one field (or other x) more than once is noted with the
-runs and whether each repeat came back within three errors — a return pass to
-report — and a dip another stored fit of the same scan holds (a line whose
+runs and whether each repeat came back within three errors, provided the
+observations have usable independent Gaussian errors. Otherwise the repeat
+note says ``uncertainty unavailable``; it retains the repeated coordinate and
+runs without an agreement claim. A dip another stored fit of the same scan holds (a line whose
 centre ± width lies inside the dip's window) is not announced again. When a windowed line (both flanks in range, five errors deep) matches one
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
