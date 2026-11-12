@@ -235,7 +235,7 @@ class PreparedFFTSignal:
 
     @property
     def percent_scale(self) -> float:
-        """Return ``100·2/Σw``: a cosine of fractional amplitude A peaks at 100·A."""
+        """Return ``100·2/Σw``, targeting an isolated fractional cosine line in percent."""
         return 100.0 * 2.0 / self.window_sum
 
 
@@ -471,11 +471,11 @@ def prepare_fft_time_signal(
     :func:`prepare_fft_arrays`, which shares this function's entire
     implementation.
 
-    When ``fractional`` is set the signal (a lifetime-corrected count scale) and
-    its error are divided by the error-weighted baseline ``N₀`` so a
-    ``N₀·(1 + A·cos)`` signal becomes ``1 + A·cos``; the subsequent average
-    subtraction then removes the residual DC, leaving ``A·cos``.  This puts the
-    spectrum on a fractional-asymmetry footing invariant to counting statistics.
+    With ``fractional``, signal and errors are divided by a finite-window
+    1/σ-weighted level (an arithmetic mean without usable error weights).
+    A finite positive level defines fractional footing; otherwise raw footing
+    is retained. An oscillation's nonzero window mean can bias this estimate;
+    neither lifetime correction nor this level calibrates absolute polarisation.
 
     Baseline removal
     ----------------
@@ -690,9 +690,10 @@ def fft_complex_asymmetry(
     amplitude_calibration
         When true, multiply the complex spectrum by the coherent-gain / percent
         factor ``100 · 2 / Σw`` (``Σw`` the apodisation coherent gain over the
-        unpadded samples), so a pure cosine of fractional amplitude ``A`` peaks
-        at ``100·A`` in the magnitude spectrum — invariant to counting
-        statistics, window length, apodisation, and zero padding.
+        unpadded samples). This targets ``100·A`` for a resolved isolated
+        undamped fractional cosine away from DC/Nyquist, with negligible
+        opposite-frequency leakage and a known level. Off-grid peaks, damping,
+        finite-window level estimates, and padding can change sampled maxima.
     diagnostics
         Optional mutable dict; when supplied it is populated with the
         ``window_sum``, ``fractional_baseline``, ``fractional_applied`` and
@@ -761,13 +762,9 @@ def fft_complex_prepared(
     spectrum = np.fft.rfft(signal, n=n_padded)
     freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in µs)
 
-    # Coherent-gain / length / percent calibration is a single positive real
-    # scalar, so it commutes with the phase rotation and leaves every phase and
-    # angle-derived display mode correct.  Σw is taken over the unpadded samples
-    # (zero-padding contributes nothing), so the calibrated peak height is
-    # independent of the padding factor and the time-window length.  The DC and
-    # Nyquist bins strictly carry a 1/Σw one-sided gain rather than 2/Σw, but DC
-    # is removed by the average subtraction and test tones avoid Nyquist.
+    # The positive scalar commutes with phase rotation; Σw uses only populated
+    # samples. Padding refines the frequency grid and can move its sampled peak.
+    # The factor of two targets isolated positive-frequency lines, not DC/Nyquist.
     if amplitude_calibration and prepared.window_sum > 0.0:
         spectrum = spectrum * prepared.percent_scale
 

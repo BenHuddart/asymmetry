@@ -204,10 +204,10 @@ def line_node_3d(
 
 @dataclass(frozen=True)
 class GapForm:
-    """Angular integration contract for |g| on a cylinder or sphere.
+    """Angular integration contract for :math:`|g|` on a cylinder or sphere.
 
     A missing azimuthal period declares azimuth independence. Equator mirror
-    symmetry means |g(theta, phi)| = |g(pi-theta, phi)|. These mathematical
+    symmetry means ``|g(theta, phi)| = |g(pi-theta, phi)|``. These mathematical
     symmetries determine the integration coordinates, not the physical label.
     """
 

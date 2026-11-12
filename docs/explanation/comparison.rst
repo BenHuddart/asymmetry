@@ -13,37 +13,12 @@ WiMDA, musrfit, or Mantid and wants to know where Asymmetry fits.
 For end-to-end analyses analogous to the typical workflows in
 those tools, see :doc:`/workflows/index`.
 
-The reference programs
-----------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 22 35 25
-
-   * - Tool
-     - Authors / facility
-     - Language / stack
-     - Strength
-   * - **WiMDA**
-     - Francis Pratt (ISIS)
-     - Object Pascal (Delphi)
-     - Legacy ISIS standard; rich frequency-domain tools (MaxEnt,
-       moments, eigenvalue spectral estimator)
-   * - **musrfit**
-     - A. Suter, B. Wojek (PSI)
-     - C++ / ROOT / Minuit2
-     - Hand-editable ``.msr`` workflow files; largest built-in theory
-       library (~34 functions); robust Minuit2 fitting
-   * - **Mantid**
-     - ISIS + ORNL community
-     - C++ core / Python GUI / matplotlib
-     - Workspace-based pipeline; unique ALC interface; broadest set
-       of specialist muonium fit functions
-   * - **Asymmetry**
-     - Asymmetry contributors
-     - Python / PySide6 / matplotlib
-     - Modern Python stack; Fit Wizard (AICc-ranked); composite-model
-       expression syntax; interactive parameter trending
+The reference programs provide different ways to organise an analysis.
+WiMDA offers grouped time and frequency workflows; musrfit uses authored
+``.msr`` model and run descriptions; Mantid composes algorithms on workspaces.
+Asymmetry exposes a Python analysis core with a desktop front end. The
+comparison below concerns particular operations rather than a ranking of
+programs or a collective file-format guarantee.
 
 .. _reviewed-count-reduction:
 
@@ -1066,216 +1041,157 @@ a new native fit, a holder-fraction calibration, or a comparison of fit covarian
 See :doc:`/reference/data_reduction/backgrounds` and
 :doc:`/reference/asymmetry_units` for modelling advice and units.
 
-At a glance: feature coverage
------------------------------
+.. _comparison-spectral-conventions:
 
-Symbols: ✅ present  ◐ partial / stub  ❌ absent  ★ distinctive
-strength.
+Normalisation and transformed observations
+------------------------------------------
 
-.. list-table::
+A group count trace and an F/B ratio are different observations. Dividing out
+the muon lifetime creates a lifetime-corrected count signal, not a calibrated
+polarisation. A finite-window level then defines a fractional residual for
+Fourier analysis or a starting scale for a reconstruction. The
+:doc:`reduction_pipeline` diagram shows these branches, and
+:doc:`/reference/fourier_analysis` specifies the actual weights and scale limits.
+
+The spectral descriptions below refer to WiMDA 1.326, musrfit 1.12.1
+(revision ``708f777b``, ROOT 6.40.04), and Mantid algorithm-v1 documentation
+with the 6.16 development snapshot (revision ``1967ccb4``). Formula and
+manual behaviour are distinct from executed numerical agreement. Full native
+Mantid FFT, PhaseQuad, and MaxEnt comparisons are unverified here; the separate
+standalone pulse-kernel comparison does not establish them.
+
+.. list-table:: Operations and conventions
+   :class: reduction-conventions
    :header-rows: 1
-   :widths: 30 14 14 14 14
+   :widths: 25 38 37
 
-   * - Category
-     - WiMDA
-     - musrfit
-     - Mantid
+   * - Observation / operation
      - Asymmetry
-   * - Multi-format data ingestion (NeXus, PSI BIN, MUD, ROOT)
-     - ✅
-     - ✅
-     - ✅
-     - ✅
-   * - Asymmetry calculation (F/B grouping, α)
-     - ✅
-     - ✅
-     - ✅
-     - ✅
-   * - Automatic phase calibration
-     - ❌
-     - ❌
-     - ★
-     - ◐
-   * - Rotating Reference Frame
-     - ✅
-     - ◐
-     - ★
-     - ✅
-   * - Theory function library
-     - ◐ ~12
-     - ★ ~34
-     - ★ ~15 specialist
-     - ◐ growing
-   * - Static Kubo–Toyabe (ZF / LF)
-     - ✅
-     - ✅
-     - ✅
-     - ✅
-   * - Dynamic Kubo–Toyabe
-     - ✅
-     - ✅
-     - ★
-     - ✅
-   * - Composite-model expression syntax
-     - ❌
-     - ◐
-     - ◐
-     - ★
-   * - MIGRAD / MINOS / HESSE
-     - ◐ Hessian only
-     - ★ full set
-     - ✅ via Mantid Fit
-     - ✅ full set
-   * - Multi-spectrum / global fit
-     - ◐ sequential
-     - ✅ shared params
-     - ✅
-     - ✅
-   * - Multi-group time-domain fit
-     - ◐
-     - ✅
-     - ✅
-     - ✅
-   * - Fourier (FFT + apodisation)
-     - ✅
-     - ✅
-     - ✅
-     - ✅
-   * - MaxEnt frequency reconstruction
-     - ★ Burg pole-scan
-     - ◐
-     - ★ iterative
-     - ✅
-   * - Spectral moments analysis
-     - ★
-     - ❌
-     - ❌
-     - ✅
-   * - Interactive parameter trending
-     - ◐ table
-     - ◐ ``msr2data`` CLI
-     - ◐ table
-     - ★ panel
-   * - Avoided Level Crossing (ALC) workflow
-     - ❌
-     - ❌
-     - ★
-     - ✅
-   * - Period arithmetic (pulsed data)
-     - ◐
-     - ❌
-     - ★
-     - ✅
-   * - Logbook / multi-run manager
-     - ✅
-     - ◐
-     - ✅
-     - ★
-   * - Synthetic data simulation
-     - ★
-     - ❌
-     - ❌
-     - ✅
-   * - User-defined functions
-     - ◐ DLL
-     - ◐ C++ plugin
-     - ◐ Mantid plugin
-     - ✅ Python plugins
-   * - Project files (hand-editable)
-     - ❌
-     - ★ ``.msr``
-     - ◐ ``.mantid``
-     - ✅ ``.asymp`` (JSON)
-   * - Model-recommendation wizard
-     - ❌
-     - ❌
-     - ❌
-     - ★ Fit Wizard
+     - Reference convention and scope
+   * - Grouped Fourier counts
+     - Lifetime correction, fractional level estimated with :math:`1/\sigma`,
+       optional :math:`1/\sigma` mean removal, and coherent-gain amplitude scale
+     - WiMDA lifetime-corrects grouped counts, optionally removes a
+       :math:`1/\sigma` mean, and scales the grouped spectrum by total events.
+       Its F/B transform is a separate input.
+   * - Theory-free single-histogram Fourier preparation
+     - The grouped FFT uses the weighted level above
+     - musrfit uses a lifetime-corrected arithmetic-mean level and supplied scale
+       factor. This does not describe all musrfit fits or Fourier options.
+   * - Lifetime removal and fitted constant
+     - MaxEnt starts from an inverse-variance level and fits its own grouped
+       phase/amplitude reconstruction model
+     - In Mantid, RemoveExpDecay divides by a fitted constant after lifetime
+       correction and subtracts one. With supplied errors the constant fit uses
+       inverse-variance least squares; this is not a universal FFT convention
+       or equivalence of MaxEnt reconstruction algorithms.
+   * - Two measured transverse projections
+     - Pointwise baseline/gain/sense rotation with retained shared counting noise
+     - Mantid RRFMuon rotates two supplied components after explicit coordinate,
+       phase, and unit conversion. PhaseQuad can prepare quadratures from a
+       detector phase/amplitude table; it is a separate operation.
+   * - One scalar F/B ratio
+     - Complex carrier plus FIR low-pass display; fits retain original laboratory
+       observations
+     - WiMDA uses real demodulation and box smoothing; musrfit scalar RRF paths
+       have their own packing, theory, and error conventions. Neither establishes
+       four-program vector covariance agreement.
 
-Where Asymmetry leads
----------------------
+The level estimators can differ even for noiseless oscillations when the window
+contains a nonzero oscillatory mean. Coherent-gain correction alone does not
+remove that difference or calibrate detector efficiency. Padding refines the
+sampled transform grid; it supplies no new observations. Neither peak height nor
+magnitude area is universally invariant to window, damping, phase, or apodisation.
 
-These are the parts of the workflow where Asymmetry's
-implementation is materially richer or more ergonomic than the
-alternatives.
+The `WiMDA homepage/manual <https://shadow.nd.rl.ac.uk/wimda/>`_ and
+F. L. Pratt, Physica B **289–290**, 710 (2000), describe the grouped Fourier
+and MaxEnt workflows. The `musrfit manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_ distinguishes
+single-histogram, asymmetry, and RRF analysis. In Mantid, see
+`RemoveExpDecay v1 <https://docs.mantidproject.org/nightly/algorithms/RemoveExpDecay-v1.html>`_,
+`MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_,
+and `RRFMuon v1 <https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_.
 
-**Fit Wizard (AICc-ranked model recommendation).**
-  No equivalent in WiMDA, musrfit, or Mantid. The wizard runs a
-  curated portfolio of candidate models on the active dataset and
-  ranks them by an information-theoretic metric (AICc by default).
-  Especially valuable for new users encountering an unfamiliar
-  spectrum. See :doc:`/reference/fit_wizard`.
+Phase, clock, and geometry
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Composite-model expression syntax.**
-  Free-form arithmetic over registered components — ``Exponential *
-  Oscillatory + Constant``, with fraction-group syntax ``(...){frac}``
-  for shared-amplitude bundles. musrfit's ``FUNCTIONS`` block is the
-  closest analogue but is more limited; WiMDA and Mantid require
-  building composite functions procedurally. See
-  :doc:`/reference/composite_models`.
+An oscillatory model phase belongs to a chosen clock and sign convention.
+Asymmetry uses :math:`\cos(2\pi\nu t+\phi)` with μs, MHz, and model radians;
+FFT manual tables and MaxEnt group controls use degrees. A positive manual FFT
+phase rotates the complex spectrum by :math:`e^{-i\phi}`. The first retained
+sample contributes a separate origin phase. Changing t0, source-response
+origin, correction recipe, or observation window can change a phase estimate;
+matching group IDs alone is insufficient to transfer it.
 
-**Interactive parameter trending.**
-  Per-run fit parameters appear as a sortable trend table that
-  drives an integrated parametric-model fit panel (e.g.
-  ``SC_TwoGap_SS`` for σ(T) → λ(T) in superconductors). musrfit's
-  ``msr2data`` is a CLI-only batch tool; Mantid's results table
-  does not perform secondary parametric fits in the same window.
-  See :doc:`/reference/parameter_trending`.
+The manual FFT table and sampled **Auto Phase** estimates are distinct
+from the fitted MaxEnt group-phase store. MaxEnt's **Use fitted phases** and
+**Send phases to fit** exchange group phases with the grouped time-domain fit
+using degree/radian conversion. They do not synchronise the FFT table. See
+:ref:`fourier-phase-estimation` and
+:doc:`/reference/grouped_time_domain_fitting` for the supported models and inputs.
 
-**Modern PySide6 + matplotlib single-process GUI.**
-  musrfit fragments across separate ``musrview``, ``musredit``,
-  ``musrWiz``, ``mupp`` processes. Mantid is a heavy install
-  (~1 GB). Asymmetry runs in one process with a single ``pip
-  install``.
+WiMDA 1.326 provides manual degree-valued Fourier group phases and fitted
+MaxEnt group phases. Their use belongs to those respective workflows; native
+numerical transfer to Asymmetry's FFT phase is unverified here. musrfit's
+``TFieldCos`` model uses :math:`\cos(2\pi\nu t+\pi\phi/180)`, with phase
+in degrees, according to the `musrfit model manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_. This names one model
+convention, not every component or a verified manual Fourier-display exchange.
 
-**Schema-versioned JSON project files (``.asymp``).**
-  Forward-compatible state serialisation with documented schema
-  migrations. ``.mantid`` files are HDF5 binary; ``.msr`` files lack
-  a versioned schema. See :doc:`/reference/project_files`.
+In Mantid, `CalMuonDetectorPhases v1
+<https://docs.mantidproject.org/nightly/algorithms/CalMuonDetectorPhases-v1.html>`_
+first determines a common frequency and then detector amplitudes and phases.
+`PhaseQuad v1 <https://docs.mantidproject.org/nightly/algorithms/PhaseQuad-v1.html>`_
+uses a detector phase/amplitude table to form two quadratures. Its detector
+model is :math:`\cos(\omega t-\phi_i)`, with table phases in radians.
+At the same origin this corresponds to :math:`\phi=-\phi_i` in Asymmetry's
+plus-phase model, followed by conversion to degrees for its group controls.
+A shifted origin requires the additional frequency-dependent clock conversion.
+These are distinct
+from a sampled common-phase FFT fit per group. A group label or phase table does
+not establish orthogonal physical axes. Authored vector geometry and measured
+timing remain explicit assumptions; see :ref:`vector-geometry-assumptions`.
 
-Where the other tools lead
---------------------------
+The two-projection rotation uses :math:`x=P_x-b_x`,
+:math:`y=(P_y-b_y)/g`, and :math:`\theta=2\pi\nu_{\rm RF}t+\varphi_{\rm RF}`:
+:math:`x'=x\cos\theta+s y\sin\theta`,
+:math:`y'=x\sin\theta-s y\cos\theta`.
+The sense :math:`s` and second-axis sign must be mapped explicitly to Mantid's
+real/imaginary convention, including nonzero phase. With Mantid inputs
+:math:`R=x,I=s y` at the same :math:`\theta`, Asymmetry's outputs are
+:math:`x'=R'` and :math:`y'=-I'`. Mantid RRFMuon uses radians for its
+phase input; Asymmetry's frame phase controls use degrees. The authoritative
+:doc:`/reference/rotating_frame_projection` describes the mapping, shared
+acquisition/reference/background counting covariance, conditional errors, and
+unequal-baseline pooled G+R safeguard. Lab G+R and rotating Red, Green, and G−R
+retain their supported behaviour.
 
-Areas where Asymmetry currently lags. Each item is tracked as a
-candidate in the roadmap (see below).
+A single real ratio cannot supply two measured projections pointwise. Its
+:doc:`/reference/rotating_frame` display instead mixes with a complex carrier
+and filters. Same-bin quadrature covariance enters first-order magnitude errors;
+filtered bins remain correlated and low-signal magnitude remains biased.
+Correlated or anisotropic quadratures do not imply an exact Rician law. Corrected
+marginal bars establish neither full cross-bin covariance nor an independent
+joint likelihood; see :ref:`scalar-rrf-magnitude-errors` and
+:ref:`vector-rotation-counting-errors`. The laboratory observations remain the scalar fit inputs;
+grouped count fits retain the separate :ref:`grouped-count-model`.
 
-**Theory function breadth (musrfit / Mantid).**
-  musrfit ships ~34 built-in theory functions; Mantid adds ~15
-  specialist muon-only functions (``Keren``, ``Meier``,
-  ``MuonFInteraction``, four ``*Muonium*`` variants,
-  ``MuoniumDecouplingCurve``). Asymmetry's component library is
-  smaller and still filling in specialist forms (``Keren``,
-  ``Abragam``, ``Bessel``, ``SpinGlass``, ``Meier``). Tracked as
-  ``theory-library-expansion``.
+Other analysis entry points
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Automatic phase calibration (Mantid).**
-  Mantid's ``CalMuonDetectorPhases`` fits *every* detector phase
-  automatically from early-time data in one step. Asymmetry
-  estimates per-group FFT phases and can fit per-group phases inside
-  the MaxEnt reconstruction, but has no equivalent one-click
-  full-detector auto-calibration. Tracked as
-  ``phase-auto-calibration``.
-
-**musrfit ``.msr`` project import.**
-  Asymmetry reads its own ``.asymp`` projects but cannot yet import
-  a musrfit ``.msr`` file. Cross-tool interoperability is tracked as
-  ``msr-import``.
-
-Shipped since the first landscape survey
-----------------------------------------
-
-Much of the original gap list has since landed and is documented in
-the reference manual: MINOS asymmetric errors
-(:ref:`minos-asymmetric-errors`), dynamic Kubo–Toyabe
-(:doc:`/reference/fit_functions/kubo_toyabe`), the MaxEnt
-reconstruction and Burg pole-scan (:doc:`/reference/fourier_analysis`,
-:doc:`/reference/frequency_finishers`), the rotating-reference-frame
-transform (:doc:`/reference/rotating_frame`), spectral moments
-(:doc:`/reference/spectral_moments`), synthetic-data simulation
-(:doc:`/reference/simulation`), period arithmetic and RF-μSR
-resonance (:doc:`/reference/alc_mode`), Python user-function plugins
-(:doc:`/reference/user_functions`), and negative-muon analysis
-(:doc:`/reference/negative_muon_analysis`).
+Asymmetry provides :doc:`/reference/composite_models` for model expressions,
+:doc:`/reference/fitting` for minimisers and conditional parameter errors,
+:doc:`/reference/fit_wizard` for candidate-model comparison, and
+:doc:`/reference/parameter_trending` for secondary fits to run parameters.
+The model reference covers :doc:`/reference/fit_functions/index`;
+:doc:`/reference/frequency_finishers` and :doc:`/reference/spectral_moments`
+describe spectral estimators and derived quantities with their own assumptions.
+:doc:`/reference/alc_mode`, :doc:`/reference/simulation`,
+:doc:`/reference/user_functions`, and :doc:`/reference/negative_muon_analysis`
+cover the separate scan, synthetic-data, plugin, and negative-muon workflows.
+:doc:`/reference/project_files` describes saved analysis state and compatibility.
+These are method pointers, without a claim that another program lacks an
+analogous or extensible workflow.
 
 Automatic FFT phase estimation
 ------------------------------
@@ -1294,27 +1210,6 @@ full-detector timing calibration. Numerical agreement with another program's
 automatic phase estimate depends on its objective, sampling conventions, band,
 and preprocessing. A comparison of mathematical formulations alone does not
 establish release-specific numerical agreement.
-
-Roadmap — the remaining gaps
-----------------------------
-
-The team works through a prioritised list of the gaps that remain.
-Priority is set by an explicit ``impact × ease`` score (see
-``docs/porting/ROADMAP.md`` in the repository for the full
-methodology). The near-term candidates are:
-
-* **Theory library expansion** — continue porting specialist forms
-  (Keren, Abragam, Bessel, SpinGlass, Meier, MuoniumDecouplingCurve,
-  and the time-domain superconductor vortex-lattice function) from
-  musrfit / Mantid.
-* **Automatic phase calibration** — a one-step full-detector
-  auto-phase for TF datasets, analogous to Mantid's
-  ``CalMuonDetectorPhases``.
-* **musrfit ``.msr`` import** — read a musrfit project file for
-  cross-tool interoperability.
-
-The roadmap is refreshed quarterly. The latest ranked candidate
-list lives in ``docs/porting/ROADMAP.md`` in the repository.
 
 References
 ----------
@@ -1487,7 +1382,7 @@ forward group cannot be used as a detector calibration; the workflow reports
 that diagnostic without changing the ratio formula or its error calculation.
 
 Acquired periods and mapped sets
-================================
+--------------------------------
 
 Asymmetry retains the original acquisitions behind a red/green mapping,
 including ignored periods. Independent supplied count variances add when
@@ -1696,7 +1591,7 @@ do not include uncertainty in the fixed pulse response or full spectral
 covariance.
 
 Fixed supplied TF count response
--------------------------------
+--------------------------------
 
 Asymmetry's TF alpha/beta calibration uses equal incident instantaneous births,
 absolute muon survival, and complete age-local polarisation, with each flat

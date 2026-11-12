@@ -290,6 +290,8 @@ information about the field at the muon, not an error in the frame.
    covariance even though each individual F/B pair is disjoint. Equal marginal
    errors alone do not imply independent rotated components.
 
+.. _vector-rotation-counting-errors:
+
 Counting observations and conditional errors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

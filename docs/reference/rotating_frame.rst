@@ -63,6 +63,8 @@ envelope but slower response; anything genuinely oscillating faster than
 the cutoff — including a large deliberate detuning beat — is filtered away
 with the image, so keep the bandwidth comfortably above :math:`|\delta\nu|`.
 
+.. _scalar-rrf-magnitude-errors:
+
 Magnitude errors
 ----------------
 
