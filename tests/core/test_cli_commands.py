@@ -725,8 +725,7 @@ def test_reduce_with_deadtime_from_file(workflow_folder: Path, tmp_path: Path, c
         ]
     )
     entry = _json_output(capsys)["entries"][0]
-    assert entry["deadtime_mode"] == "file"
-    assert entry["settings"]["deadtime"] == "from_file"
+    assert entry["deadtime_mode"] == entry["settings"]["deadtime"] == "from_file"
 
 
 def test_reduce_selects_and_records_a_multi_period_run(

@@ -46,6 +46,7 @@ def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> No
         "dead_time_us": [0.01],
         "good_frames": 1000.0,
         "deadtime_method": "estimate",
+        "deadtime_mode": "estimate",
     }
 
     corrected, applied = prepare_histograms_with_deadtime(

@@ -1014,17 +1014,7 @@ class FitPanel(QWidget):
         template_parameters: list[dict],
         result: dict,
     ) -> dict:
-        """Reconstruct single-tab state from a persisted ``FitSlot`` (no ``ui_state``).
-
-        Bounds/fixed classification come from the batch's shared template row
-        (``template_parameters`` — every member of a batch/global series
-        shares one model configuration, the ``GlobalFitTab.get_state()``
-        snapshot taken at fit-completion time); the fitted *value* for each
-        parameter comes from this run's own persisted ``result`` (the
-        ``MainWindow._fit_result_summary`` shape). Mirrors
-        ``_single_state_from_fit_result``'s shape but is built from serialised
-        dicts rather than a live ``FitResult`` object.
-        """
+        """Restore fitted values with the complete saved constraints and auxiliaries."""
         template_by_name: dict[str, dict] = {
             str(entry.get("name")): entry
             for entry in template_parameters
@@ -1034,7 +1024,9 @@ class FitPanel(QWidget):
         fitted_values = fitted_values if isinstance(fitted_values, dict) else {}
 
         params: list[dict[str, object]] = []
-        for pname in model.param_names:
+        for pname in list(model.param_names) + [
+            name for name in template_by_name if name not in model.param_names
+        ]:
             template = template_by_name.get(pname, {})
             try:
                 raw_value = fitted_values.get(
@@ -1043,17 +1035,18 @@ class FitPanel(QWidget):
                 value = float(raw_value)
             except (TypeError, ValueError):
                 value = float(model.param_defaults.get(pname, 0.0))
-            role = str(template.get("type") or "Local").strip().lower()
+            role = str(template.get("type") or template.get("role") or "Local").strip().lower()
             if role not in ("global", "local", "fixed", "file"):
                 role = None
             min_text, max_text = _parse_bounds_text(template.get("bounds"))
             params.append(
                 {
+                    **template,
                     "name": pname,
                     "value": value,
-                    "fixed": role == "fixed",
-                    "min": min_text,
-                    "max": max_text,
+                    "fixed": bool(template["fixed"]) if "fixed" in template else role == "fixed",
+                    "min": template.get("min", min_text),
+                    "max": template.get("max", max_text),
                     "role": role,
                 }
             )

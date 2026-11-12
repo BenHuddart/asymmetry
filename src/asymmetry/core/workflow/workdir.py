@@ -687,6 +687,10 @@ class WorkDir:
             raise StaleWorkDirError(
                 "The stored result has a historical computation revision; recompute it."
             )
+        if isinstance(data.get("recommendation"), dict):
+            from asymmetry.core.project.analysis_migration import migrate_wizard_payload
+
+            data["recommendation"] = migrate_wizard_payload(data["recommendation"])
         return data
 
     def screened_runs(self) -> list[int]:

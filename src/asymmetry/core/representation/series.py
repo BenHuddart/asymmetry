@@ -126,6 +126,7 @@ class FitSeries:
         member_source_run: dict[int, int] | None = None,
         order_key: str = "run",
         canonical_model: dict | None = None,
+        analysis_history: dict | None = None,
         param_roles: dict[str, str] | None = None,
         nuisance_params: list[str] | None = None,
         results_by_run: dict[int, dict] | None = None,
@@ -154,6 +155,7 @@ class FitSeries:
             int(key): int(src) for key, src in (member_source_run or {}).items()
         }
         self.order_key = order_key if order_key in ORDER_KEYS else "run"
+        self.analysis_history = analysis_history
         self.canonical_model: dict | None = (
             dict(canonical_model) if isinstance(canonical_model, dict) else None
         )
@@ -344,6 +346,12 @@ class FitSeries:
         excluded = set(self.excluded_run_numbers)
         return [int(r) for r in group_members if int(r) not in excluded]
 
+    def refit_block_reason(self) -> str | None:
+        """A recorded recipe must be explicitly authored before reuse as a fit input."""
+        from asymmetry.core.fitting.analysis_history import analysis_block_reason
+
+        return analysis_block_reason(self.analysis_history, self.recipe["parameters"])
+
     def is_stale(self, group: object) -> bool:
         """Whether saved execution or group membership no longer qualifies as current.
 
@@ -352,6 +360,8 @@ class FitSeries:
         the last fitted member set; frozen and detector-group series skip that
         membership comparison.
         """
+        if self.analysis_history is not None and self.analysis_history["reason"] != "authored":
+            return True
         if self.results_by_run and any(
             not computation.is_current(result.get("computation_revision"))
             for result in self.results_by_run.values()
@@ -514,6 +524,7 @@ class FitSeries:
                 str(key): int(src) for key, src in self.member_source_run.items()
             },
             "order_key": self.order_key,
+            "analysis_history": self.analysis_history,
             "canonical_model": None if self.canonical_model is None else dict(self.canonical_model),
             "param_roles": dict(self.param_roles),
             "nuisance_params": list(self.nuisance_params),
@@ -556,6 +567,7 @@ class FitSeries:
             member_source_run=member_source_run,
             order_key=str(data.get("order_key", "run")),
             canonical_model=data.get("canonical_model"),
+            analysis_history=data.get("analysis_history"),
             param_roles=data.get("param_roles"),
             nuisance_params=data.get("nuisance_params"),
             results_by_run=results,

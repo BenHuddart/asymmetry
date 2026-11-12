@@ -70,10 +70,10 @@ def test_single_fit_blocks_fitting_with_missing_user_component(qapp):
     assert "UserGoneDecay" in text
 
 
-def test_single_fit_restore_still_defaults_on_malformed_model(qapp):
+def test_single_fit_restore_rejects_malformed_model(qapp):
     tab = SingleFitTab()
-    tab.restore_state({"composite_model": {"component_names": "not-a-list"}, "parameters": []})
-    assert tab._composite_model.component_names == ["Exponential", "Constant"]
+    with pytest.raises(ValueError, match="component_names"):
+        tab.restore_state({"composite_model": {"component_names": "not-a-list"}, "parameters": []})
 
 
 def test_global_fit_restore_and_fit_block_with_missing_user_component(qapp):

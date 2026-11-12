@@ -276,8 +276,6 @@ class BackgroundSectionWidget(QWidget):
                 "background_forward_range",
                 "background_backward_range",
                 "background_fixed_values",
-                "background_fix",
-                "bkg_fix",
             )
         }
         self._available_modes = set(available_modes) | {"none"}

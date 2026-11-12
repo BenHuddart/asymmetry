@@ -3055,13 +3055,9 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _default_deadtime_mode(self, grouping: dict[str, Any]) -> str:
         """Return preferred deadtime mode for the current grouping state."""
-        mode = (
-            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
-        )
-        if mode in {"file", "manual", "estimate"}:
+        mode = str(grouping.get("deadtime_mode", "from_file"))
+        if mode in {"manual", "estimate"}:
             return mode
-        if mode == "load":
-            return "manual"
         return "file"
 
     def _set_deadtime_mode(self, mode: str) -> None:
@@ -3115,11 +3111,9 @@ class GroupingDialog(TimingControls, QDialog):
     def _initial_manual_deadtime_values(self, grouping: dict[str, Any]) -> list[float]:
         """Return initial explicit deadtime values for manual editing."""
         values = self._normalize_deadtime_values(grouping.get("dead_time_us"))
-        mode = (
-            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
-        )
+        mode = str(grouping.get("deadtime_mode", "from_file")).strip().lower()
         method = str(grouping.get("deadtime_method", "")).strip().lower()
-        if values and (mode in {"manual", "load"} or method in {"manual", "calibrate", "load"}):
+        if values and (mode == "manual" or method in {"manual", "calibrate"}):
             return values
         file_values = self._reference_file_deadtime_values(grouping)
         if file_values:
@@ -3136,7 +3130,10 @@ class GroupingDialog(TimingControls, QDialog):
             return {"deadtime_correction": False, "deadtime_mode": "off"}
 
         n_histograms = len(self._run.histograms) if self._run is not None else 0
-        payload: dict[str, Any] = {"deadtime_correction": True, "deadtime_mode": mode}
+        payload: dict[str, Any] = {
+            "deadtime_correction": True,
+            "deadtime_mode": "from_file" if mode == "file" else mode,
+        }
 
         if mode == "file":
             payload["deadtime_method"] = "file"
@@ -3302,8 +3299,7 @@ class GroupingDialog(TimingControls, QDialog):
             else {}
         )
         return any(
-            isinstance(grouping.get(key), (list, tuple))
-            for key in ("background_fixed_values", "background_fix", "bkg_fix")
+            isinstance(grouping.get(key), (list, tuple)) for key in ("background_fixed_values",)
         )
 
     def _on_background_changed(self) -> None:

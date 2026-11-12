@@ -99,3 +99,14 @@ Code of Conduct
 ---------------
 
 Be respectful and inclusive. We follow the Python Community Code of Conduct.
+
+Released project compatibility
+------------------------------
+
+Keep versioned project and standalone wizard converters, with synthetic fixtures
+matching emitted released shapes, permanently. This includes alpha releases.
+Remove runtime repair after conversion is owned by persistence and current
+producers emit canonical state. Check parameter curves independently of JSON
+round trips; preserve draft forms, unavailable user models, and captured execution
+attribution. A storage version never proves that a historical calculation is
+current.
