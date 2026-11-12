@@ -46,7 +46,14 @@ windowed-sinc FIR, stopband below −74 dB) removes. What remains is complex:
   between the two components at :math:`\delta\nu`).
 - **Magnitude** — the phase-free envelope :math:`|a(t)|`. Convenient, but
   noise-biased upward where the signal is comparable to its error bars
-  (a Rician distribution), so treat near-zero magnitude qualitatively.
+  (a non-Gaussian magnitude distribution), so treat near-zero magnitude qualitatively.
+
+.. figure:: /_generated/screenshots/scalar_rrf_magnitude.png
+   :width: 100%
+   :alt: Synthetic transverse-field magnitude display with conditional error bars.
+
+   **Magnitude** of a synthetic EuO signal at 30 K, with a detuned
+   frame and shared real/imaginary noise included in each error bar.
 
 The **bandwidth** is the single-sided filter cutoff. *Auto* picks
 :math:`\nu_0/2`, reduced automatically when coarse binning folds the image
@@ -56,6 +63,43 @@ envelope but slower response; anything genuinely oscillating faster than
 the cutoff — including a large deliberate detuning beat — is filtered away
 with the image, so keep the bandwidth comfortably above :math:`|\delta\nu|`.
 
+Magnitude errors
+----------------
+
+Both quadratures use the same scalar observations. For supplied independent
+input errors :math:`e_j`, carrier phase :math:`\theta_j=2\pi\nu_0t_j+\phi`,
+and actual normalised filter weights :math:`w_{ij}`, the same-bin covariance is
+
+.. math::
+
+   C_{RI,i}=\sum_j w_{ij}^2[-4\cos\theta_j\sin\theta_j]e_j^2.
+
+The weights include the finite-input mask and coverage normalisation used for
+the values and marginal variances. The covariance is signed. For
+:math:`r=\sqrt{R^2+I^2}>0`, first-order propagation [3]_ gives
+
+.. math::
+
+   \operatorname{var}(r)=\frac{R^2\operatorname{var}(R)
+   +I^2\operatorname{var}(I)+2RI C_{RI}}{r^2}.
+
+An identity filter therefore takes a scalar input :math:`10\pm1` to magnitude
+:math:`20\pm2`, independently of carrier phase. Percent inputs retain percent
+values and standard errors; covariance has squared percent units. Fractional
+inputs retain the corresponding fractional units.
+
+These errors are conditional on the supplied scalar input-noise model.
+Correlations already present through estimated backgrounds or other reduction
+steps cannot be reconstructed from marginal input errors alone. Filtering also
+correlates output bins; same-bin covariance does not define a joint likelihood.
+At low signal-to-noise, magnitude remains biased and first-order errors are
+unreliable. At vanishing magnitude the display uses
+:math:`\sqrt{[\operatorname{var}(R)+\operatorname{var}(I)]/2}` as a finite
+error-bar fallback, not a confidence interval. Asymmetry also checks for a
+materially negative propagated magnitude variance and raises an invariant error;
+only cancellation within floating-point accumulation roundoff is clipped to zero.
+Zero-noise model overlays retain exactly zero errors.
+
 *When to use it — and when not to.* Use the RRF view to **look**: to see whether a high-field signal relaxes
 exponentially or Gaussian-like, to spot beats from closely-spaced lines
 (two frequencies :math:`\delta` apart show up as an envelope oscillating at
@@ -64,19 +108,18 @@ the carrier.
 
 Do **not** fit the demodulated curve. The low-pass filter correlates
 neighbouring points over the filter support (the drawn error bars are
-per-point honest, but the points are far from independent) and distorts
+conditional per-point errors, but the points are far from independent) and distorts
 lineshapes at the bandwidth scale; a χ² fit of the displayed curve gives
 wrong parameters *and* wrong uncertainties. The textbook is explicit that
 the RRF transform is a visualisation tool rather than a fit preprocessor
 [1]_. Quantitative results come from fitting the **raw** data — which the
 fit panel always does, whatever the display shows. For working in
 rotating-frame numbers there, the core provides a frequency-offset fit
-(:mod:`asymmetry.core.fitting.rrf_offset`): the raw data are fitted with
-the model's precession frequencies offset by :math:`\nu_0`, so the fitted
-frequency reads as the small offset :math:`\delta\nu` while the statistics
-stay exact. The fitted curve drawn over an RRF display is demodulated
-through the same pipeline as the data, so the overlay always remains
-comparable.
+using the raw data with the model's precession frequencies offset by
+:math:`\nu_0`, so the fitted frequency reads as the small offset :math:`\delta\nu` while the statistics
+remain those of the laboratory observations. The fitted curve drawn over an
+RRF display is demodulated through the same pipeline as the data, so the overlay
+always remains comparable.
 
 A high-field caveat: at fields of several tesla, the geometric phases of
 the individual detectors span the full circle, and an asymmetry built by
@@ -86,16 +129,26 @@ shows nothing, inspect a single near-opposite detector pair first — the
 proper multi-detector treatment (mapping all detectors onto one quadrature
 pair before the frame rotation [2]_) is not yet implemented.
 
-History
--------
+Compared with other programs
+----------------------------
 
-WiMDA's RRF display demodulates with :math:`2\cos(\omega t + \phi)` and
-smooths with a running box average — the real part of the same operation,
-with a filter whose image rejection depends delicately on the box width
-landing on the image period. Complex demodulation with a designed filter
-suppresses the image unconditionally and keeps the quadrature and magnitude
-views. The WiMDA-equivalent mode survives in the core API
-(``method="wimda"``) for comparison.
+WiMDA 1.326 uses real-cosine demodulation and running box smoothing, with
+linearly averaged scaled standard errors. The core comparison API
+(``method="wimda"``) retains this distinct convention. The FIR display instead
+retains both quadratures and their shared-noise covariance. Independent identity
+and measured linear-response checks establish its uncertainty propagation;
+they do not establish numerical agreement with another program's estimator.
+
+musrfit 1.12.1 offers scalar asymmetry RRF preparation and packing through its
+`RRF fit types <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_.
+In Mantid, `RRFMuon v1
+<https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_
+(documentation associated with the 6.16 development snapshot) rotates two supplied
+components rather than constructing FIR quadratures from a scalar observation.
+Neither operation supplies a verified numerical covariance oracle for this FIR.
+No new native-program error agreement is asserted. WiMDA's published description
+is given by F. L. Pratt, Physica B **289–290**, 710 (2000),
+`doi:10.1016/S0921-4526(00)00328-8 <https://doi.org/10.1016/S0921-4526(00)00328-8>`_.
 
 References
 ----------
@@ -107,3 +160,7 @@ References
 
 .. [2] B. D. Rainford, in *Muon Science*, edited by S. L. Lee, S. H. Kilcoyne,
    and R. Cywinski (Institute of Physics Publishing, Bristol, 1999), p. 463.
+
+.. [3] JCGM 100:2008, *Evaluation of measurement data — Guide to the expression
+   of uncertainty in measurement*, Sec. 5.2 (correlated input quantities),
+   `BIPM <https://www.bipm.org/documents/20126/2071204/JCGM_100_2008_E.pdf>`_.

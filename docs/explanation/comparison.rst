@@ -1097,7 +1097,7 @@ strength.
      - ★
      - ◐
    * - Rotating Reference Frame
-     - ❌
+     - ✅
      - ◐
      - ★
      - ✅
@@ -1578,6 +1578,27 @@ Asymmetry's propagation. Acquired ISIS and PSI file execution, including musrfit
 example ROOT files, checks the changed operation with authored groupings; it does
 not establish acquired vector geometry or reference-program numerical agreement.
 See :doc:`/reference/rotating_frame_projection` for the equations and limitations.
+
+Scalar rotating-frame magnitude
+--------------------------------
+
+Asymmetry's scalar FIR display forms both quadratures from one asymmetry.
+It propagates their signed same-bin covariance through squared filter weights
+and includes the cross term in first-order **Magnitude** errors. Independent
+identity-filter and measured linear-response controls check this accounting,
+including phase invariance, heteroscedastic input errors, and finite masks.
+The errors assume independent supplied scalar input noise; unknown input temporal
+correlations, low-signal magnitude bias, and filtered-bin correlations remain.
+Fits continue to use laboratory observations.
+
+WiMDA 1.326 uses real demodulation, box smoothing, and a linear-error convention;
+Asymmetry retains a separate core comparison mode for that convention.
+musrfit 1.12.1 scalar RRF preparation and packing differ from this FIR, while
+Mantid RRFMuon v1 rotates two supplied components. No new native-program magnitude
+error agreement is established. Execution on unchanged ISIS HDF4/HDF5, PSI
+BIN/MDU, and musrfit 1.12.1 example ROOT inputs checks the scalar operation with
+authored pair/frame settings, not acquired physical truth or reference agreement.
+See :doc:`/reference/rotating_frame` for equations, sources, and limitations.
 
 Run addition and subtraction
 -----------------------------
