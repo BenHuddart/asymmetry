@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.ratio_validity import RatioReason
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
     CorrectionOutcomes,
@@ -500,13 +501,9 @@ class FieldScan:
     x_label: str = ""
     y_label: str = "Integral asymmetry"
     excluded: list[tuple[int, str]] = field(default_factory=list)
-    #: Scale of :attr:`value` and :attr:`error`. Always
-    #: :data:`~asymmetry.core.transform.units.ASYMMETRY_FRACTION` — the
-    #: counterpart of
-    #: :attr:`~asymmetry.core.transform.reduce.GroupedAsymmetryReduction.units`
-    #: on the other side of the divide. For a ``derivative`` scan the values are
-    #: fraction *per x-unit* (:func:`differentiate_scan` divides by Δx, which
-    #: leaves the asymmetry scale untouched).
+    #: Numerator scale of values/errors: builders return fractions; explicitly
+    #: supplied percent scans retain percent. A derivative divides that scale by
+    #: the selected x-unit without changing this recorded numerator unit.
     units: AsymmetryUnit = ASYMMETRY_FRACTION
     correction_outcomes: dict[int, dict[str, CorrectionOutcomes]] = field(default_factory=dict)
     observations: tuple[ScalarObservation | None, ...] = ()
@@ -706,16 +703,22 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
     """Forward-difference derivative ``dA/dx`` of a scan (WiMDA ``dA/dB``).
 
     Each output point sits at the midpoint of an adjacent pair, with
-    ``dA/dx = (A₂ - A₁) / (x₂ - x₁)`` and error ``sqrt(e₁² + e₂²) / |Δx|``.
-    Pairs with non-positive spacing, or spacing greater than ``max_gap`` (when
-    given), are skipped — mirroring WiMDA's adjacent-field threshold.
+    ``dA/dx = (A₂ - A₁) / (x₂ - x₁)``. Independent input errors give the marginal
+    ``hypot(e₁, e₂) / |Δx|``. For a known dependent input pair its covariance is
+    unsupported here: retain the value and report error NaN, not zero variance.
+    Undefined source ratios remain undefined. Derived points have no new ratio
+    classification; the original scan retains its scalar observation reports.
+    Pairs with non-positive spacing, or spacing greater than explicit ``max_gap``,
+    are skipped without interpolation or an automatic gap threshold.
+    Adjacent differences share observations. These scans support display/export;
+    fit the original scan rather than assigning independent derivative weights.
 
     Returns
     -------
     FieldScan
         With ``derivative=True``. Dividing by Δx leaves the asymmetry scale
-        untouched, so the values stay **on the input scan's scale** — a fraction
-        per x-unit, and ``units`` is carried through unchanged.
+        untouched, so values stay on the input fraction or percent scale per
+        x-unit. ``units`` records that numerator scale and is carried unchanged.
     """
     if scan.derivative:
         raise ValueError("differentiate_scan expects an integral scan, not a derivative.")
@@ -726,13 +729,23 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
     deriv_err: list[float] = []
     run_pairs: list[int] = []
 
+    dependent = {tuple(sorted(pair)) for pair in scan.correlated_pairs}
     for i in range(scan.n_points - 1):
         dx = float(xs[i + 1] - xs[i])
         if dx <= 0.0 or (max_gap is not None and dx > max_gap):
             continue
         mid_x.append(0.5 * (float(xs[i]) + float(xs[i + 1])))
-        deriv.append((float(ys[i + 1]) - float(ys[i])) / dx)
-        deriv_err.append(float(np.hypot(es[i], es[i + 1])) / dx)
+        undefined = bool(scan.observations) and any(
+            scan.observations[j] is not None
+            and scan.observations[j].reason == RatioReason.UNDEFINED
+            for j in (i, i + 1)
+        )
+        deriv.append(float("nan") if undefined else (float(ys[i + 1]) - float(ys[i])) / dx)
+        deriv_err.append(
+            float("nan")
+            if undefined or (i, i + 1) in dependent
+            else float(np.hypot(es[i], es[i + 1])) / dx
+        )
         run_pairs.append(scan.run_numbers[i + 1])
 
     return FieldScan(
@@ -748,6 +761,12 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
         excluded=list(scan.excluded),
         correction_outcomes=dict(scan.correction_outcomes),
         units=scan.units,
+        source_assumption=(
+            scan.source_assumption + " Derivative display/export only; fit the original scan. "
+            "Adjacent differences share observations. Errors assume independent input pairs; "
+            "known dependent pairs have unavailable uncertainty (NaN). "
+            "Source ratio classifications remain on the original scan."
+        ),
     )
 
 

@@ -143,27 +143,14 @@ resolved.
 Per-period Hall-probe offset (red/green ALC)
 """"""""""""""""""""""""""""""""""""""""""""
 
-A red/green (differential) ALC scan steps the small RG coil between the
-two periods of each run, so the two periods sit at slightly different
-fields — but HiFi logs no channel for the RG coil current itself. The
-loader instead reads it off the Hall probe, ``Field_Hall_Z``, which tracks
-whichever period is in force: each logged Hall sample is assigned to the
-DAE period active at its time (from ``Beamlog_Period_Num``, a
-sample-and-hold log, matched against the data periods NeXus itself records
-via ``period_type``), and the median Hall reading of each period is taken
-so a field ramp spilling across the boundary does not bias it. The
-difference — red period's reading less green's — is recorded per run as
-``period_hall_offset``, in the Hall probe's own units.
-
-That is not yet gauss: the Hall probe reads the main field through a
-roughly linear response with a zero offset of order a kilogauss, so one
-run's *ratio* of period means would understate the true field difference
-by a few percent. Converting a *difference* correctly needs the probe's
-*slope*, ``d(Field_Main)/d(Field_Hall_Z)``, which
-``integral-scan --period green-red`` (:doc:`agent_workflow`) regresses over
-every run in the scan (not from one run alone) to report the step in gauss
-and a ready-made ``--fix dB=…`` for ``LorentzianLCRPair``
-(:doc:`alc_mode`).
+When compatible logs are present, the loader assigns each ``Field_Hall_Z``
+sample to the DAE period active at its time using ``Beamlog_Period_Num``
+(sample-and-hold), matched to the data periods recorded via ``period_type``.
+It records the red median minus the green median as ``period_hall_offset``,
+in the Hall probe's own units, alongside the original logs and declared units.
+This is a log summary, not evidence of a calibrated gauss step, RF switching,
+or experimental geometry. Physical model choices need the acquisition context;
+see :doc:`alc_mode` and :doc:`agent_workflow` for explicit field-step/RF inputs.
 
 For NeXus good-data windows, a supported integer ``counts`` attribute
 (``first_good_bin`` or ``last_good_bin``) takes precedence independently for

@@ -1668,15 +1668,25 @@ errors remain conditional on calibration. See :doc:`/reference/alc_mode`.
 
 In Mantid's `PlotAsymmetryByLogValue
 <https://docs.mantidproject.org/v6.11.0/algorithms/PlotAsymmetryByLogValue-v1.html>`_,
-single-period Integral uses count-first ordering. Its dual-period detector-wise
-contrast and Differential operation are different observables; Integration's
+single-period Integral uses count-first ordering (algorithm v1, 6.11.0
+documentation). Its dual-period detector-wise
+contrast and Differential operation are different observables. For dual periods,
+define :math:`c_F=(F_G-F_R)/(F_G+F_R)` and
+:math:`c_B=(B_G-B_R)/(B_G+B_R)`; its Integral contrast is :math:`c_B-c_F`,
+not :math:`A_G-A_R`. Its single-period Differential integrates pointwise
+asymmetry along time rather than taking Asymmetry's equal-time-bin mean.
+Integration's
 histogram-edge bounds also differ from Asymmetry's centre selection. Full Mantid
 execution is unavailable for this comparison.
 
 WiMDA 1.326's dedicated ALC route starts from integrated acquisition columns;
 arbitrary histogram-window and uncertainty equivalence is not established. Its
 `public overview <https://shadow.nd.rl.ac.uk/wimda/>`_ describes the program;
-no fresh native ALC/RF numeric replay supports this comparison.
+no fresh native ALC/RF numeric replay supports this comparison. WiMDA's
+**Differential ALC** differences adjacent table entries with its own gap cutoff
+and per-kG scale. Asymmetry uses pair midpoints, positive spacing, an explicit
+optional ``max_gap``, and fractional or percent units per selected G/K/run unit.
+These field-table operations differ from Mantid's time Differential.
 
 musrfit 1.12.1 (revision 708f777b, ROOT 6.40.04) packs counts before forming its
 fitting ratio, as described in its `user manual
@@ -1685,4 +1695,19 @@ and alternating-count controls with α=β=1, fixed zero background, and packing 
 agree on 22 interior values/errors per case within 5 × 10⁻⁷ (ASCII precision).
 The first packed value differs and the final nominal group is absent. Those
 unresolved boundaries are excluded from agreement; no whole-output or
-four-program numerical equivalence is claimed.
+four-program numerical equivalence is claimed. Non-unit balance comparisons
+must also match musrfit's reciprocal-alpha convention and fitting-coordinate
+transformation.
+
+Asymmetry propagates retained shared counting responses into each scalar, with
+errors conditional on the chosen calibration and corrections. Its two-stage
+baseline/peak inference propagates the fitted baseline's uncertainty with fixed
+model and regions; this does not establish an identical covariance contract in
+the other programs. Asymmetry also checks actual fit selections for unusable
+Gaussian observations and known nonzero source covariance. An independent
+selected window remains usable. It also restricts its scan fit adapters to
+original observations: adjacent derivatives share their middle observation,
+and marginal errors alone do not establish an independent likelihood.
+Derivative display/export remains available, with unavailable errors for known
+dependent input pairs. These are operation-specific Asymmetry support limits,
+not universal prohibitions on derivative or correlated-data analysis.

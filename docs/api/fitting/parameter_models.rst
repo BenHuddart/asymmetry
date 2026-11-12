@@ -65,6 +65,12 @@ Parameter trend models
 Field-scan baseline and peak inference
 --------------------------------------
 
+These adapters fit original scan observations. Derivative scans support
+inspection/export only: their marginal errors do not supply an independent
+likelihood. The common fit-input boundary also checks the actual selected
+window's scalar validity and positional source sharing before seeding.
+See :doc:`/reference/alc_mode` for baseline propagation and scan units.
+
 .. autofunction:: asymmetry.core.fitting.fit_scan_baseline
 
 .. autoclass:: asymmetry.core.fitting.ScanBaselineResult

@@ -24,7 +24,6 @@ from asymmetry.core.fitting.field_scan import (
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.scan_observations import scan_fit_input, usable_scan_observations
-from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
     period_count,
     source_run_of,
@@ -96,26 +95,6 @@ def build_integral_scan(
     )
 
 
-def period_field_offset_gauss(runs: Iterable[Run]) -> tuple[float, int] | None:
-    """The scan's mean red − green field offset in gauss, and how many runs it averages.
-
-    Each run logs the step in Hall-probe units (``period_hall_offset``). The
-    probe reads the main field through a linear response with a zero offset of
-    order a kilogauss, so a *difference* converts by the slope
-    ``dField_Main/dField_Hall_Z`` — regressed over the runs' active means, not
-    one run's ratio of means, which carries the zero offset. ``None`` when fewer
-    than two runs log the step at distinct fields, where no slope is measured.
-    """
-    logged = [run.metadata for run in runs if "period_hall_offset" in run.metadata]
-    hall = np.array([active_series_mean(m["nexus_time_series"]["Field_Hall_Z"]) for m in logged])
-    main = np.array([active_series_mean(m["nexus_time_series"]["Field_Main"]) for m in logged])
-    if np.unique(hall).size < 2:
-        return None
-    slope = float(np.polyfit(hall, main, 1)[0])
-    step = float(np.mean([m["period_hall_offset"] for m in logged]))
-    return slope * step, len(logged)
-
-
 def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
     """*scan* with every run number — points, exclusions and a run-ordered x — at its source run.
 
@@ -134,32 +113,12 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
     )
 
 
-#: Above this field (G) a transverse field turns the muon spin through more than
-#: thirteen periods per microsecond (γ_μ/2π = 13.55 kHz/G), so over any
-#: integration window a TF run's integral asymmetry averages to within a few
-#: thousandths of zero; one this far from zero, and this many errors, precessed
-#: in no transverse field.
-_AVERAGING_FIELD_GAUSS = 1000.0
-_LONGITUDINAL_INTEGRAL = 0.02
-_LONGITUDINAL_SIGNIFICANCE = 5.0
-
-
-def contradicted_tf_stamps(scan: FieldScan, stamped_tf: Mapping[int, float]) -> list[int]:
-    """TF-stamped runs (run → field in G) whose integral a transverse field could not leave."""
-    return sorted(
-        point.run_number
-        for point in scan.points
-        if stamped_tf.get(point.run_number, 0.0) >= _AVERAGING_FIELD_GAUSS
-        and abs(point.value) >= _LONGITUDINAL_INTEGRAL
-        and abs(point.value) >= _LONGITUDINAL_SIGNIFICANCE * point.error
-    )
-
-
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     """Serialize a :class:`FieldScan` to JSON-safe values."""
     return {
         "order_key": scan.order_key,
         "method": scan.method,
+        "derivative": scan.derivative,
         "units": scan.units.value,
         "x_label": scan.x_label,
         "y_label": scan.y_label,
@@ -198,6 +157,7 @@ def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
         run_numbers=[int(point["run"]) for point in points],
         order_key=data["order_key"],
         method=data["method"],
+        derivative=data.get("derivative", False),
         x_label=data["x_label"],
         y_label=data["y_label"],
         units=AsymmetryUnit(data["units"]),
@@ -551,10 +511,8 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
-    "contradicted_tf_stamps",
     "candidate_dip_windows",
     "DIP_FLANK_WIDTHS",
-    "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
     "field_scan_from_payload",

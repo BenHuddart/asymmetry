@@ -62,6 +62,11 @@ class AlcFieldScanScenario(Scenario):
         assert "Count integral" in window._alc_scan_view._provenance_label.text()
         assert "1 without Gaussian uncertainty" in window._alc_scan_view._provenance_label.text()
         view = window._alc_scan_view
+        view._derivative_check.setChecked(True)
+        assert "fit the original scan" in view._derivative_check.toolTip()
+        assert window._alc_baseline is None
+        assert not window._alc_rf_fitted
+        view._derivative_check.setChecked(False)
 
         # Baseline: a linear fit over the two non-resonant edges (the dip is
         # near 3100 G). Both ALC fits are synchronous.
@@ -91,3 +96,18 @@ class AlcFieldScanScenario(Scenario):
 
 
 register(AlcFieldScanScenario())
+
+
+class AlcDerivativeScenario(AlcFieldScanScenario):
+    name = "alc_derivative"
+    description = "Adjacent midpoint derivatives in %/G, for display and export."
+
+    def build(self) -> QWidget:
+        window = super().build()
+        window._alc_scan_view._derivative_check.setChecked(True)
+        assert window._alc_baseline is None
+        assert not window._alc_rf_fitted
+        return window
+
+
+register(AlcDerivativeScenario())

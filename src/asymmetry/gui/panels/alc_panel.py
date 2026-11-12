@@ -242,7 +242,8 @@ class ALCScanView(QWidget):
         controls.addWidget(self._x_combo)
         self._derivative_check = QCheckBox("dA/dB")
         self._derivative_check.setToolTip(
-            "Show the derivative of the scan (WiMDA 'differential ALC')."
+            "Midpoint slopes of adjacent increasing coordinates, in % per axis unit. "
+            "Display/export only: adjacent differences share observations; fit the original scan."
         )
         self._derivative_check.toggled.connect(self._emit_options_changed)
         controls.addWidget(self._derivative_check)
@@ -799,11 +800,9 @@ class ALCScanView(QWidget):
         self._derivative_check.setText(self._DERIV_LABELS[self.x_key()])
 
     def x_key(self) -> str:
-        """Return the selected ordering key: ``"field"``/``"temperature"``/``"run"``."""
         return self._X_KEYS[self._x_combo.currentIndex()]
 
     def derivative_enabled(self) -> bool:
-        """Return True when the derivative toggle is on."""
         return self._derivative_check.isChecked()
 
     # --- plot drag (region edges + peak centres) -----------------------------
