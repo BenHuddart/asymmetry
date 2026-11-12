@@ -1,7 +1,4 @@
-"""Load PSI BIN/MDU counts, labels, timing, and logs; tests cover native MDU fields.
-
-BIN format: https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt.
-"""
+"""Read PSI BIN/MDU (format: https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt)."""
 
 from __future__ import annotations
 
@@ -16,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.instrument import (
     detect_instrument,
@@ -1159,6 +1157,7 @@ class PsiLoader(BaseLoader):
             error=error,
             metadata=metadata,
             run=run,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     def _detect_canonical_instrument(self, raw: _PsiRawRun, n_hist: int) -> str | None:

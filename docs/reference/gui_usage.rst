@@ -1101,7 +1101,7 @@ are calculated within each verified group, with the open fit's group first.
 Unknown historical inputs and fits without a matching partner remain listed
 with Δ "—" and no weight. Historical parameter values and model curves remain
 available; residuals are drawn only against verified matching current data.
-The caption explains: "Fits with verified matching observations and objectives
+The caption explains: "Fits with verified matching observations, objectives, and computation revisions
 are ranked together." A changed or unverified input also receives a historical-fit
 hint in the **Saved fits** row; re-fitting keeps the historical result separately.
 

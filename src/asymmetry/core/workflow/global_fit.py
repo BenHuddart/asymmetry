@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -28,9 +29,11 @@ class GlobalFitOutcome:
     #: One entry per run, ordered along the axis, each carrying its ``x``.
     results: list[dict[str, Any]]
     trend: TrendTable
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "computation_revision": self.computation_revision,
             "expression": self.expression,
             "order_key": self.trend.order_key,
             "shared_params": list(self.shared_params),
@@ -145,6 +148,7 @@ def fit_global(
         trend=build_trend_table(
             {str(result["run"]): result for result in results}, free_params, axis.name
         ),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -158,10 +162,12 @@ class BatchOutcome:
     #: Each group's fit, keyed by its member name, in batch-axis order.
     groups: dict[str, GlobalFitOutcome]
     trend: TrendTable
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the batch's own trend; each group serializes as its own fit."""
         return {
+            "computation_revision": self.computation_revision,
             "expression": self.expression,
             "order_key": self.trend.order_key,
             "free_params": list(self.free_params),
@@ -224,6 +230,7 @@ def fit_global_batch(
         free_params=free_params,
         groups=outcomes,
         trend=build_trend_table(entries, free_params, batch_axis.name),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

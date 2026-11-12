@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recompute incompatible scientific caches using an explicit computation revision,
+  while preserving historical fits and their old or unknown execution attribution.
+
 - Compare saved fits only on verified matching observations and preserve changed-data
   histories; suppress historical residuals against different or unknown current data.
 

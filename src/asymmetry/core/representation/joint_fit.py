@@ -23,6 +23,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from asymmetry.core import computation
 from asymmetry.core.representation.base import RepresentationType
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids a runtime import cycle
@@ -147,6 +148,10 @@ class JointFit:
         (:meth:`FitSeries.is_stale`). ``is_stale`` is exactly ``bool`` of this,
         so the two can never disagree on whether a record is fresh.
         """
+        if self.result is not None and not computation.is_current(
+            self.result.get("computation_revision")
+        ):
+            return "historical computation revision"
         for batch_id in self.member_batch_ids:
             series = model.batch(batch_id)
             if series is None:
@@ -157,7 +162,7 @@ class JointFit:
             if series.is_stale(group):
                 return (
                     f"member series {series.display_name(batch_id)!r} is stale "
-                    "(its membership changed)"
+                    "(its membership changed or its computation revision is historical)"
                 )
         return ""
 

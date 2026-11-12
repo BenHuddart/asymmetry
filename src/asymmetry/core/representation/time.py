@@ -16,6 +16,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.data.reduction_recipe import ratio_recipe
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
@@ -98,6 +99,7 @@ class TimeFBAsymmetry(Representation):
                 error=np.asarray(error, dtype=float),
                 metadata=metadata,
                 run=run,
+                computation_revision=computation.COMPUTATION_REVISION,
             )
         ]
 
@@ -128,6 +130,7 @@ class TimeGroups(Representation):
             error=np.asarray([], dtype=float),
             metadata={},
             run=run,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
         t_min = self.recipe.get("t_min")
         t_max = self.recipe.get("t_max")
@@ -146,6 +149,9 @@ class TimeGroups(Representation):
 def build_maxent_reconstruction_datasets(
     reconstructions: dict[int, ReconstructedGroup],
     run: Run,
+    *,
+    computation_revision: str | None = None,
+    input_computation_revision: str | None = None,
 ) -> list[MuonDataset]:
     """Package per-group MaxEnt reconstructions as plottable overlay datasets.
 
@@ -167,6 +173,7 @@ def build_maxent_reconstruction_datasets(
             "group_id": int(recon.group_id),
             "group_name": str(recon.group_name),
             "maxent_reconstruction": True,
+            "input_computation_revision": input_computation_revision,
             "maxent_model": np.asarray(recon.model, dtype=float),
             "maxent_residual": np.asarray(recon.residual, dtype=float),
             "maxent_group_chi2": float(recon.chi2),
@@ -174,6 +181,7 @@ def build_maxent_reconstruction_datasets(
         }
         datasets.append(
             MuonDataset(
+                computation_revision=computation_revision,
                 time=np.asarray(recon.time_us, dtype=float),
                 asymmetry=np.asarray(recon.data, dtype=float),
                 error=np.asarray(recon.sigma, dtype=float),
@@ -224,7 +232,13 @@ class TimeMaxEntReconstruction(Representation):
             maxent_input, result.state, backend=resolve_backend(config.backend)
         )
         self.result_metadata = {
+            "computation_revision": computation.COMPUTATION_REVISION,
             "cycles": int(result.state.cycle),
             "maxent_chi2": result.metadata.get("maxent_chi2"),
         }
-        return build_maxent_reconstruction_datasets(reconstructions, run)
+        return build_maxent_reconstruction_datasets(
+            reconstructions,
+            run,
+            computation_revision=computation.COMPUTATION_REVISION,
+            input_computation_revision=result.computation_revision,
+        )

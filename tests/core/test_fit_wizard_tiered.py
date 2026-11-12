@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.component_tags import ComputationalCost, PhysicsClass
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
@@ -120,9 +121,7 @@ _EXPECTED_REPS = {
 _CANONICAL_ORDER = ("relaxation", "multi_rate", "kt", "oscillatory", "muonium", "fmuf")
 
 
-# --------------------------------------------------------------------------- #
 # build_wizard_families
-# --------------------------------------------------------------------------- #
 
 
 def test_plain_fingerprint_yields_all_six_families_in_canonical_order() -> None:
@@ -173,9 +172,7 @@ def test_kt_and_oscillatory_hints_raise_their_priority() -> None:
     assert prioritised == ["kt", "oscillatory"]
 
 
-# --------------------------------------------------------------------------- #
 # Scope filtering
-# --------------------------------------------------------------------------- #
 
 
 def test_fluoride_fmuf_scope_reduces_families() -> None:
@@ -231,9 +228,7 @@ def test_baseline_family_is_last_and_never_scope_filtered() -> None:
     assert baseline.must_run_stage1 is True
 
 
-# --------------------------------------------------------------------------- #
 # FamilyScreeningReport serialization
-# --------------------------------------------------------------------------- #
 
 
 def test_family_screening_report_round_trip_with_inf_metric() -> None:
@@ -285,9 +280,7 @@ def test_family_screening_report_legacy_payload_tolerance() -> None:
     assert deserialize_family_screening_report("not-a-dict") is None
 
 
-# --------------------------------------------------------------------------- #
 # Recommendation / assessment serializer additions
-# --------------------------------------------------------------------------- #
 
 
 def _dummy_assessment(key: str, *, stage: int = 2) -> CandidateAssessment:
@@ -369,6 +362,7 @@ def _recommendation_with_extras() -> FitWizardRecommendation:
         multiplet_matches=(match,),
         family_reports=(report,),
         scope_note="run geometry: zero field — screening ZF families",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -500,6 +494,7 @@ def test_candidate_assessment_stage_default_on_legacy_payload() -> None:
         recommended_key=None,
         comparable_keys=(),
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     payload = serialize_fit_wizard_recommendation(recommendation)
     assert payload["assessments"][0]["stage"] == 1
@@ -881,6 +876,7 @@ def test_fit_timing_is_never_persisted() -> None:
         recommended_key=None,
         comparable_keys=(),
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     payload = serialize_fit_wizard_recommendation(recommendation, compact=True)
     assert "timing" not in payload["assessments"][0]
@@ -2028,6 +2024,7 @@ def _policy_recommendation(*assessments: CandidateAssessment) -> FitWizardRecomm
         recommended_key=None,
         comparable_keys=(),
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -2863,6 +2860,7 @@ def test_recommendation_serialization_round_trips_the_rebin_metadata() -> None:
         summary="",
         rebin_factor=5,
         analysed_points=18_000,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     payload = serialize_fit_wizard_recommendation(recommendation)
@@ -3062,6 +3060,7 @@ def test_recommendation_payloads_predating_rebinned_fitting_still_load() -> None
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            computation_revision=computation.COMPUTATION_REVISION,
         )
     )
     payload.pop("rebin_factor")

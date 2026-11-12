@@ -978,3 +978,21 @@ residuals. Matching run labels, point counts, or recipe identities are insuffici
 Unknown or different histories remain inspectable without a verified same-data
 ranking. An observation digest does not verify external acquisition files or
 scientific-computation compatibility.
+
+Scientific result history
+-------------------------
+
+Saved fit summaries, wizard assessments, scalar scans, and representation result
+snapshots retain their captured scientific-computation revision. Missing legacy
+revisions remain unknown when the project is opened and saved. Storage schema
+compatibility and numerical execution compatibility are separate checks.
+
+Asymmetry also checks execution compatibility before treating a saved analysis as
+current: incompatible single fits retain their values and models without a shared
+verified ranking or current residuals; series and joint/global studies retain
+history and report staleness. A series reports
+``Historical computation revision; refit to obtain current results.``
+Reanalyse or refit to obtain a new result. Opening a project does not refit
+historical analyses or certify their original inputs; regenerated curves have
+their own execution. Manual and explicitly applied historical coefficients
+remain available, with their original attribution.

@@ -1,15 +1,7 @@
-"""Central plot panel using Matplotlib embedded in Qt.
+"""Plot percent-valued time asymmetry or MHz-valued frequency spectra in Qt.
 
-Displays time-domain asymmetry with error bars and optional fit overlay,
-similar to WiMDA's main plot area.
-
-The bunch-factor control rebins the displayed data and also defines the
-dataset passed to fitting in the GUI. The original MuonDataset is preserved,
-so changing the bunch factor after fitting only changes the plotted data while
-the existing fit curve remains overlaid.
-
-Time-domain asymmetry is in percent; stored frequency coordinates are in MHz.
-"""
+The bunch factor selects displayed and fitted observations while preserving the
+source dataset. Existing fit curves retain their recorded model and window."""
 
 from __future__ import annotations
 
@@ -7829,6 +7821,7 @@ class PlotPanel(QWidget):
 
             payload = {
                 "run_number": rn,
+                "computation_revision": analysis.computation_revision,
                 "effective_recipe": analysis.effective_recipe.publishable()
                 if analysis.effective_recipe is not None
                 else None,

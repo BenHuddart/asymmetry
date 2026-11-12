@@ -5,10 +5,8 @@ Detector *d* has Poisson counts with lifetime and asymmetry modulation:
     N_d(t) = N0_d · exp(−t/τ_μ) · [1 + a_d(t)] + b_d        (t ≥ 0)
     N_d(t) = b_d                                            (t < 0)
 
-Simulation draws Poisson variates of these *expected counts* — never Gaussian
-noise added to an asymmetry curve — so per-bin errors propagate correctly
-through the real reduction chain (grouping → α-balanced asymmetry → error
-formula) by construction. The α calibration enters as the relative efficiency
+Simulation draws Poisson expected counts; errors propagate through reduction.
+The α calibration enters as the relative efficiency
 of the forward and backward detector groups: forward-group detectors receive
 the weight 2α/(1+α) and backward-group detectors 2/(1+α), so the reduction
 (F − αB)/(F + αB) recovers a(t) with α restored.
@@ -1882,6 +1880,7 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         histogram_observation(source),
         reduced.ratio_validity,
         effective_recipe=reduced.effective_recipe,
+        computation_revision=reduced.computation_revision,
     )
 
 

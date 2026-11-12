@@ -175,7 +175,7 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
             f"{workdir.root}; run 'asymmetry reduce' on them first."
         )
     try:
-        datasets = {run: workdir.reduced(run) for run in runs}
+        datasets = {run: workdir.reduced(run, require_current=True) for run in runs}
         members = {run: workdir.entry(run).members for run in runs}
     except KeyError as exc:
         raise UserError(exc.args[0]) from None

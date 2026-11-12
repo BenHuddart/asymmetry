@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.engine import FitResult, _minuit_status_message
 from asymmetry.core.fitting.likelihood import GaussianObservations, Objective, PoissonCounts
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
@@ -255,6 +256,7 @@ def _result_from_minuit(
     residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
     chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
     return FitResult(
+        computation_revision=computation.COMPUTATION_REVISION,
         objective=objective,
         success=bool(m.valid) and invalid_model is None,
         minimum_expected_count=float(np.min(model_values))

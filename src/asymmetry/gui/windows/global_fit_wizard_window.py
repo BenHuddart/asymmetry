@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import FieldGeometry, ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
@@ -318,28 +319,13 @@ def _run_global_fit_wizard_analysis(
     partition_path: PartitionPath | None = None,
     partition_k: int | None = None,
 ) -> _GlobalAnalysisResult:
-    """Run the global-fit wizard analysis off the GUI thread.
+    """Run screening or coupled optimisation through the shared task worker.
 
-    Moved from the former ``GlobalFitWizardWorker.run`` body; exceptions now
-    propagate to ``TaskWorker.run`` (→ the base error slot) instead of being
-    caught and re-emitted, and progress goes through ``worker.progress.emit``.
-    Cooperative cancel is honoured between builder phases: the base passes a
-    ``FitCancelledError`` in ``_cancel_exceptions()`` so ``TaskWorker`` reports
-    it as a cancellation rather than a failure. ``scope`` is the picker's
-    frozen :class:`WizardScope`, forwarded to every builder with the
-    ``fit_times`` judgement the picker described it by.
-    ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
-    coupled-optimisation builder (``mode == "optimize"``) — the independent
-    per-run screening pass has no tier concept. ``objective`` is what that
-    builder searches and ranks for; screening is the same under either.
-
-    ``partition_path``/``partition_k`` carry the *Transitions* pick of the
-    ``"optimize_phases"`` mode: the same coupled-optimisation builder then runs
-    the separable role search **per phase** of that path solution (and of the
-    neighbours it verifies) instead of once across the whole series. They travel
-    together — the core refuses one without the other — and both stay ``None``
-    for every other mode.
-    """
+    Frozen scope and fit-time guidance reach every builder. Effort and objective
+    affect coupled optimisation; per-run screening has neither effort tiers nor
+    objective-dependent searches. Phase optimisation carries both partition path
+    and selected k; other modes carry neither. FitCancelledError is cooperative
+    cancellation, while other errors propagate to the worker's error slot."""
 
     def _raise_if_cancelled() -> None:
         if worker.is_cancelled():
@@ -1551,6 +1537,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
             _shortlist_keys(recommendation), _recommended_optimised_key(recommendation)
         )
         self._show_step(landing)
+        if not computation.is_current(recommendation.computation_revision):
+            self._mark_analysis_stale("Historical computation revision")
 
     def current_objective(self) -> SelectionObjective:
         """What the next optimisation will search and rank for (the Scope step's switch)."""
@@ -1605,6 +1593,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _analysis_signature(self) -> dict[str, object]:
         return {
             "binning_policy": BINNING_POLICY,
+            "computation_revision": computation.COMPUTATION_REVISION,
             "observation": [wizard_observation_identity(ds) for ds in self._datasets],
             "run_numbers": [int(dataset.run_number) for dataset in self._datasets],
             "model": self._current_model.to_dict() if self._current_model is not None else None,
@@ -2070,6 +2059,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _apply_chosen(self) -> None:
         """Hand the chosen target to the global fit tab (the unchanged signals)."""
         recommendation = self._recommendation
+        if (
+            recommendation is None
+            or self._analysis_stale
+            or not computation.is_current(recommendation.computation_revision)
+        ):
+            return
         target = self._apply_target
         match target:
             case _ModelTarget(key=key):

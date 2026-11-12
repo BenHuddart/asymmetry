@@ -21,6 +21,7 @@ import numpy as np
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QMessageBox
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -91,6 +92,7 @@ def _result(value: float = 0.2, dataset=None) -> FitResult:
         reduced_chi_squared=0.5,
         parameters=ParameterSet([Parameter("A", value), Parameter("Lambda", 0.5)]),
         uncertainties={"A": 0.01, "Lambda": 0.02},
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

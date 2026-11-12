@@ -51,4 +51,5 @@ def build_fb_signal_dataset(run, *, cancel_check=None):
         error=result.error,
         metadata=result.metadata_with_alignment(run.metadata),
         run=run,
+        computation_revision=result.computation_revision,
     )

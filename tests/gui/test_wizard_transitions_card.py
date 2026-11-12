@@ -27,6 +27,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
@@ -276,6 +277,7 @@ def _partitioned_recommendation(
         phase_assessments=phase_assessments,
         recommended_partition_k=optimised_k,
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

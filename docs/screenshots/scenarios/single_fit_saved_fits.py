@@ -1,4 +1,4 @@
-"""Three saved single fits of one ZF Ag run: the Saved fits row and the Compare window.
+"""Saved single fits and historical execution of one ZF Ag run: the Saved fits row and the Compare window.
 
 The ZF Ag polycrystal (static Gaussian Kubo–Toyabe, Δ ≈ 0.39 μs⁻¹; Kubo &
 Toyabe 1966, Blundell et al. Ch 5.2) is fitted three times on the Single tab
@@ -26,12 +26,13 @@ from ._base import Scenario, _process_events_for, register
 
 class SingleFitSavedFitsScenario(Scenario):
     name = "single_fit_saved_fits"
-    description = "Three saved single fits of one Ag run, ranked in the Compare saved fits window."
+    description = "Current and historical saved fits of one Ag run in Compare saved fits."
     size = (1500, 760)
     requires_fit = True
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.representation.base import FitSlot
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
@@ -67,6 +68,14 @@ class SingleFitSavedFitsScenario(Scenario):
         gaussian_fit = fits[0]
         assert fits[0].data_key() == fits[2].data_key()
         assert fits[1].data_key() != fits[2].data_key()
+
+        historical = FitSlot.from_dict(fits[2].to_dict())
+        historical.fit_id = "historical-execution"
+        historical.label = "Historical execution"
+        historical.result["computation_revision"] = None
+        fits.append(historical)
+        assert historical.data_key() is None
+        single_tab.refresh_saved_fits()
 
         single_tab._compare_fits_btn.click()
         compare = window._saved_fit_compare_window

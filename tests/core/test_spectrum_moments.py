@@ -362,6 +362,7 @@ def test_trend_row_has_fit_summary_shape():
     m = spectrum_moments(x, amp, x_range=None, cutoff_fraction=0.0, uncertainty="none")
     row = moments_trend_row(m, run_number=1234, run_label="R1234", field=3000.0, temperature=5.0)
     assert set(row) == {
+        "computation_revision",
         "success",
         "parameters",
         "uncertainties",

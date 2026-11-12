@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
@@ -153,6 +154,7 @@ def _recommendation(scores: dict[str, float]) -> FitWizardRecommendation:
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         SelectionMetric.AICC,
     )

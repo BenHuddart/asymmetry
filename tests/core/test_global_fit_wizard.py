@@ -22,6 +22,7 @@ import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
+from asymmetry.core import computation
 from asymmetry.core import fitting as fitting_api
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.component_tags import PhysicsClass
@@ -1314,6 +1315,7 @@ def _scored_recommendation(
         recommended_key=recommended_key,
         comparable_keys=comparable_keys,
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -1562,6 +1564,7 @@ def test_rerank_recommends_with_a_caveat_when_only_a_series_warning_stands() -> 
             comparable_keys=(),
             summary="",
             objective=SelectionObjective.STATISTICAL,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     reranked = rerank_global_fit_wizard_recommendation(
@@ -1641,6 +1644,7 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         recommended_key=None,
         comparable_keys=(),
         summary="screening",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     optimized = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1655,6 +1659,7 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -1728,6 +1733,7 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         recommended_key=None,
         comparable_keys=(),
         summary="screening",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     optimized = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1742,6 +1748,7 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -2910,9 +2917,7 @@ def test_warm_certificate_failure_escalates_to_full_battery() -> None:
     assert esc_chi2 == pytest.approx(ref_chi2, rel=0.05)
 
 
-# --------------------------------------------------------------------------- #
 # Non-exhaustive search engines (PR 4, techniques E/F/G/H)
-# --------------------------------------------------------------------------- #
 
 
 def _uniform_series(model: CompositeModel) -> list[MuonDataset]:
@@ -3123,11 +3128,9 @@ def test_unknown_search_engine_raises_value_error(
         build_statistical_recommendation(datasets, search_engine="turbo")
 
 
-# --------------------------------------------------------------------------- #
 # Effort tiers (PR 5, revised): every EffortTier collapses to the exact engine.
 # The heuristic engines + I/J/K knobs are retained ONLY behind the low-level
 # ``search_engine`` string (the PR 4 seam), never via ``effort_tier``.
-# --------------------------------------------------------------------------- #
 
 
 def _restrict_to_templates(
@@ -3498,10 +3501,8 @@ def test_thorough_and_exhaustive_engines_stay_byte_identical() -> None:
     assert SEARCH_ENGINE_EXHAUSTIVE in _EXACT_SEARCH_ENGINES
 
 
-# --------------------------------------------------------------------------- #
 # Cooperative cancel (PR 5 rework): a cancel_callback aborts the exact search
 # promptly with FitCancelledError, before the full role search runs.
-# --------------------------------------------------------------------------- #
 
 
 def test_cancel_callback_aborts_before_running_full_search(
@@ -3585,14 +3586,12 @@ def test_cancel_callback_false_completes_normally(
     assert recommendation.recommended_key is not None
 
 
-# --------------------------------------------------------------------------- #
 # Phase-1 single-fit table fan-out. Reported from a downstream continuous-source
 # ZF/TF analysis as "screening never returns": the fits themselves are minutes
 # long, and the drain used to block in ``as_completed`` with no cancel poll and
 # then tear the pool down with a *blocking* shutdown, so neither a Cancel nor a
 # KeyboardInterrupt could get the call back — indistinguishable from a deadlock,
 # and a killed parent left the spawn workers orphaned.
-# --------------------------------------------------------------------------- #
 
 
 def _exponential_decay_datasets(count: int = 4) -> list[MuonDataset]:

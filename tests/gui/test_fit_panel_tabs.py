@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
@@ -93,6 +94,7 @@ def _wizard_payload_for_dataset(
     )
     curve = model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01)
     result = FitResult(
+        computation_revision=computation.COMPUTATION_REVISION,
         objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
@@ -151,6 +153,7 @@ def _wizard_payload_for_dataset(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     return assessment, recommendation
 
@@ -184,6 +187,7 @@ def _global_wizard_recommendation_for_dataset(
     fit_results = {}
     for run_number, lambda_value in ((int(dataset.run_number), 0.4), (102, 0.6)):
         fit_results[run_number] = FitResult(
+            computation_revision=computation.COMPUTATION_REVISION,
             objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=5.0,
@@ -280,6 +284,7 @@ def _global_wizard_recommendation_for_dataset(
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -3016,11 +3021,7 @@ def test_fit_panel_batch_tab_auto_inherits_completed_single_fits(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
-    """F11: the Batch tab picks up seeds from just-completed single fits with no
-    manual "Send to Batch" click, once every batch member has a matching one
-    (mirrors the automatic per-run inheritance already exercised at the
-    GlobalFitTab level in test_global_tab_inherits_model_and_average_values_from_single_fits,
-    but through FitPanel's real fit_completed wiring)."""
+    """Inherit seeds automatically when every batch member has a matching single fit."""
     panel = FitPanel()
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     panel._global_tab.set_datasets([dataset, d2])
@@ -3047,12 +3048,7 @@ def test_fit_panel_refresh_carries_fitted_source_and_clears_result(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
-    """D5: an unprotected run refreshes onto the session's last *fitted* state.
-
-    Supersedes the retired ``share_single_function_state`` — the source run's
-    model/parameters now propagate automatically via refresh-unless-fitted
-    carry-forward instead of an explicit "Share with Group" action.
-    """
+    """Refresh an unprotected run from the last fitted session state."""
     panel = FitPanel()
     panel.set_single_fit_restore_provider(lambda ds: None)
     d1 = dataset
@@ -3278,6 +3274,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
     emitted: dict[str, object] = {}

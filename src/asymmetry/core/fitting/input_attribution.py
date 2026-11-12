@@ -5,6 +5,7 @@ from hashlib import sha256
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.reduction_recipe import numerical_recipe
 from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
 
@@ -68,6 +69,7 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
         digest.update(dataset.ratio_validity.reasons[inside].tobytes())
     return {
         "identity": digest.hexdigest(),
+        "computation_revision": dataset.computation_revision if dataset is not None else None,
         "error_oversampling": error_oversampling,
         "n": int(observations.time.size),
         "min": float(support.min()),
@@ -79,7 +81,11 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
 def saved_fit_matches(slot, dataset):
     """Verify current observations before drawing historical residuals."""
     recorded = (slot.result or {}).get("input_attribution")
-    if recorded is None or (slot.result or {}).get("objective") != "gaussian":
+    if (
+        recorded is None
+        or not computation.is_current((slot.result or {}).get("computation_revision"))
+        or (slot.result or {}).get("objective") != "gaussian"
+    ):
         return False
     from asymmetry.core.fitting.likelihood import gaussian_selection
 

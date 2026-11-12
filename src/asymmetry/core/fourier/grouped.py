@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
 from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
@@ -138,4 +139,5 @@ def build_group_signal_dataset(
         error=error,
         metadata=metadata,
         run=run,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
