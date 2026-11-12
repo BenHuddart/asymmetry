@@ -231,11 +231,10 @@ and each is printed on the line under the command's table:
   combined into the integral asymmetry, and its correlated error (one level
   estimated once, so it enters the window sum linearly in the bin count
   rather than as its square root) is propagated into the point's error
-  alongside the Poisson term. A background that leaves no constant level — a
-  failed estimate, or a reference-run background, which needs a loader the
-  integral transform does not carry — excludes the run from the scan with
-  the reason, rather than integrating unsubtracted counts; the GUI's
-  Integral scan mode picks up the same grouping background.
+  alongside the prepared count variance. An unavailable requested correction
+  excludes that operation with its reason. The GUI retains its verified
+  observation's effective correction settings and resolved reference; CLI
+  settings are resolved explicitly before invoking the same scalar reducer.
 - ``--t0-offset BINS`` shifts every detector's file t0 by a signed number of
   bins. ``--t-good-offset BINS`` is a signed first-bin offset from effective
   t0; an omitted option retains the mapped file first limit. Negative offsets
@@ -1488,8 +1487,16 @@ its ``--runs`` spelling or its first-to-last range (``201-206``, ``201 – 206``
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
 
-Build time-integral asymmetry versus field (or temperature/run order) and
-optionally fit a field-scan expression. This is the ALC/QLCR path:
+Build count-integral asymmetry versus field (or temperature/run order) and
+optionally fit a field-scan expression. The default ``--method integral`` sums
+corrected native counts before forming :math:`(F-\alpha B)/(\beta F+\alpha B)`.
+``--period green-red`` subtracts the two period ratios with shared chosen
+calibration. ``--method differential`` explicitly requests the equal-time-bin
+mean of pointwise asymmetries; it is distinct from dA/dB and can give a different
+value on the same counts. Bounds include whole native bins by centre, and
+omitted bounds use the good window. Stored scan values/errors are fractions,
+conditional on calibration. See :doc:`alc_mode` for period and history semantics.
+This is the ALC/QLCR path:
 
 .. code-block:: text
 

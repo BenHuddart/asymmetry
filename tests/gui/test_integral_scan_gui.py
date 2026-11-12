@@ -1,12 +1,4 @@
-"""GUI tests for the integral-scan representation (ALC field scan).
-
-Selecting "Integral scan" routes the central workspace to the dedicated scan
-panel (scan plot + integration-window time strip) and swaps the Fit and
-Parameters docks to the build panel and the Baseline/Peaks/RF analysis
-section. Building integrates each selected run's asymmetry over the fit-range
-window (percent units) and records a model-less ``FitSeries`` rendered on the
-central scan canvas; clicking a scan point excludes/restores that run.
-"""
+"""GUI scan construction, display, persistence, and analysis controls."""
 
 from __future__ import annotations
 
@@ -25,6 +17,7 @@ import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.representation import RepresentationType
 from asymmetry.core.representation.series import FitSeries
+from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 
@@ -67,6 +60,7 @@ def _ds(
         error=np.full(n, 0.01),
         metadata=dict(meta),
         run=run,
+        histogram_observation=histogram_observation(run),
     )
 
 
@@ -1189,7 +1183,7 @@ def test_alc_build_drops_surface_in_provenance(mainwindow: MainWindow, monkeypat
     good1 = _ds(11, 110.0, 90.0, 100.0)
     good2 = _ds(12, 120.0, 80.0, 200.0)
     bad = _ds(13, 130.0, 70.0, 300.0)
-    bad.run.grouping = None
+    bad.histogram_observation = None
     mw._fit_panel.set_datasets([good1, good2, bad])
     mw._on_scan_requested()
     text = mw._alc_scan_view._provenance_label.text()

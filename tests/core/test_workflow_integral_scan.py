@@ -190,7 +190,6 @@ def test_an_integral_scan_takes_the_settings_pair_and_deadtime(workflow_folder) 
 
 
 def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
-    from asymmetry.core.data.dataset import MuonDataset
     from asymmetry.core.io.periods import period_run
     from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
     from asymmetry.core.workflow.integral_scan import build_integral_scan
@@ -213,11 +212,7 @@ def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
             seed=20 + index,
             run_number=40 + index,
         )
-        datasets.append(
-            MuonDataset(
-                time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
-            )
-        )
+        datasets.append(run)
     settings = ReductionSettings(period=GREEN_MINUS_RED)
     scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
     assert list(scan.x) == [700.0, 800.0]
@@ -228,16 +223,7 @@ def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
     # Each point is green's integral less red's, with their errors in quadrature.
     red_only, green_only = (
         build_integral_scan(
-            [
-                MuonDataset(
-                    time=np.zeros(1),
-                    asymmetry=np.zeros(1),
-                    error=np.ones(1),
-                    metadata={},
-                    run=period_run(dataset.run, index),
-                )
-                for dataset in datasets
-            ],
+            [period_run(dataset, index) for dataset in datasets],
             ReductionSettings(),
             t_min=0.0,
             t_max=1.0,
@@ -255,8 +241,7 @@ def test_a_single_period_scan_reports_the_source_run_number() -> None:
 
     the scan must report the run it was cut from, not that internal key.
     """
-    from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.io.periods import period_run
     from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
     from asymmetry.core.workflow.integral_scan import build_integral_scan
     from asymmetry.core.workflow.reduction import ReductionSettings
@@ -278,10 +263,7 @@ def test_a_single_period_scan_reports_the_source_run_number() -> None:
             seed=50 + index,
             run_number=500 + index,
         )
-        loaded = MuonDataset(
-            time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
-        )
-        datasets.append(select_period(loaded, "red"))
+        datasets.append(period_run(run, 0))
 
     settings = ReductionSettings(period="red")
     scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)

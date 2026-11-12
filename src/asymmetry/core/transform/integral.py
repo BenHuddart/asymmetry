@@ -6,25 +6,12 @@ collects that number across a series of runs ordered by a run variable (field,
 temperature, or run number).  This is the model-free observable behind ALC
 (avoided level crossing), LF repolarisation, and QLCR analysis.
 
-This module is the porting target documented in
-``docs/porting/time-integral-asymmetry/``.  The behavioural contract follows
-Mantid's ``PlotAsymmetryByLogValue`` (alpha-aware, two reduction *methods*,
-single time window, ordering by a run log) with WiMDA's count-integral as the
-default ``"integral"`` formula (``alpha = 1.0`` reproduces WiMDA exactly).
-musrfit has no native integral observable, so nothing is ported from it.
-
-Two reduction methods are provided:
-
-* ``"integral"`` (default) — **sum the counts** over ``[t_min, t_max]`` and then
-  form ``(F_int - α B_int) / (F_int + α B_int)``.  This is the WiMDA ALC method
-  and Mantid's ``Type=Integral``.
-* ``"differential"`` — form the per-bin asymmetry first and then take its
-  **mean** over the window.  This is Mantid's ``Type=Differential`` normalised by
-  the window so the result is independent of window width and bin size (Mantid's
-  single-period path returns an un-normalised time-integral; the normalised mean
-  is the more useful observable and matches Mantid's dual-period normalisation).
-
-The two methods agree only when the asymmetry is flat across the window.
+Two distinct reduction methods are provided. ``integral`` sums selected
+corrected native F/B counts before forming ``(F-alpha*B)/(beta*F+alpha*B)``.
+``differential`` is the explicit equal-time-bin mean of pointwise ratios,
+not a field derivative. They need not agree for a changing count ratio.
+Mantid's single-period Integral uses the same count-first ordering; its
+Differential and dual-period operations are distinct observables.
 
 Consistency with the time-domain asymmetry: per-run reduction shares the
 grouping path with :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
@@ -59,7 +46,7 @@ This module must stay free of Qt / matplotlib / ``asymmetry.gui`` imports.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -240,11 +227,11 @@ def integrate_curve(
 
 @dataclass(frozen=True)
 class IntegralReduction:
-    """Integral value and error with the correction decisions that produced them."""
+    """Scalar value/error and known count corrections, absent for a curve-only mean."""
 
     value: float
     error: float
-    corrections: CorrectionOutcomes
+    corrections: CorrectionOutcomes | None
 
 
 def integrate_run(
@@ -288,12 +275,14 @@ def reduce_integral_run(
     :func:`~asymmetry.core.transform.group_forward_backward`), so the integral
     observable agrees with the time-domain asymmetry on grouping and ``alpha``.
     When the window is unspecified it defaults to the run's good-bin range
-    (matching the WiMDA ALC / Mantid full-range behaviour).
+    with whole native bins selected by inclusive sample centres.
 
     Parameters
     ----------
     data
-        A :class:`MuonDataset` (its ``.run`` is used) or a :class:`Run`.  For
+        A :class:`MuonDataset` with a verified histogram observation, or an
+        explicitly supplied raw :class:`Run`. Curve-only datasets support the
+        explicit ``differential`` mean without count-setting overrides. For
         multi-period runs, select the period first with
         :func:`asymmetry.core.io.periods.select_period`.
     t_min, t_max
@@ -319,13 +308,18 @@ def reduce_integral_run(
         **As a fraction**, from :func:`integrate_asymmetry` —
         *not* the percent scale of ``data.asymmetry`` when ``data`` is a
         :class:`MuonDataset`. This function reduces the run's **counts**, so the
-        dataset's own percent-scale curve is never involved.
+        dataset's own percent-scale curve is not used for count-backed reductions.
+        A curve-only ``differential`` mean uses that stored curve, converted to
+        fractions, and returns ``corrections=None`` because count preparation
+        is not evidenced.
     """
-    run = _resolve_run(data)
-    grouping = effective_grouping(run, grouping_ref)
-    mode = PeriodMode(grouping.get("period_mode", "red"))
-    if mode in {PeriodMode.GREEN_PLUS_RED, PeriodMode.GREEN_MINUS_RED}:
-        raise ValueError("Use reduce_period_integral for combined period correction outcomes.")
+    mode = None
+    if not isinstance(data, MuonDataset) or data.histogram_observation is not None:
+        run = _resolve_run(data)
+        grouping = effective_grouping(run, grouping_ref)
+        mode = PeriodMode(grouping.get("period_mode", "red"))
+        if mode in {PeriodMode.GREEN_PLUS_RED, PeriodMode.GREEN_MINUS_RED}:
+            raise ValueError("Use reduce_period_integral for combined period correction outcomes.")
     result = reduce_period_integral(
         data,
         t_min=t_min,
@@ -335,7 +329,7 @@ def reduce_integral_run(
         grouping_ref=grouping_ref,
         reference=reference,
     )
-    return IntegralReduction(result.value, result.error, result.corrections[str(mode)])
+    return IntegralReduction(result.value, result.error, result.corrections.get(str(mode)))
 
 
 @dataclass(frozen=True)
@@ -356,14 +350,44 @@ def reduce_period_integral(
     alpha=None,
     grouping_ref=None,
     reference=None,
+    cancel_check=None,
 ):
     """Coordinate background before integrating held-period sums or differences."""
-    run = _resolve_run(data)
+    _validate_method(method)
+    facility = None
+    if isinstance(data, MuonDataset):
+        observation = data.histogram_observation
+        if observation is None:
+            if method == "differential":
+                if alpha is not None or grouping_ref is not None or reference is not None:
+                    raise ValueError(
+                        "A curve-only time-bin mean cannot apply count calibration, grouping, "
+                        "or reference overrides; reload verified raw data for those settings."
+                    )
+                value, error = integrate_curve(
+                    data.time,
+                    data.asymmetry_fraction,
+                    data.error_fraction,
+                    t_min=t_min,
+                    t_max=t_max,
+                )
+                return PeriodIntegralReduction(value, error, {})
+            raise ValueError(
+                "Count integral unavailable: reload raw data with verified count preparation; "
+                "an attached Run does not establish count replay for this curve. "
+                "Use method='differential' for an explicit time-bin mean."
+            )
+        run = observation.source
+        reference = observation.reference if reference is None else reference
+        facility = observation.facility
+    else:
+        run = _resolve_run(data)
+    if cancel_check is not None:
+        cancel_check()
     grouping = effective_grouping(run, grouping_ref)
     if alpha is not None:
         grouping.pop("alpha_policy", None)
     mode = PeriodMode(grouping.get("period_mode", "red"))
-    _validate_method(method)
     alpha_used, beta_used = grouping_balances(grouping)
     flags = correction_flags_from_grouping(grouping)
     from asymmetry.core.io import background_reference_for_grouping
@@ -384,6 +408,8 @@ def reduce_period_integral(
         use_background=flags.use_background,
         metadata=reference_observation_metadata(run),
         native_time_range=(t_min, t_max),
+        facility=facility,
+        cancel_check=cancel_check,
         reference_resolver=partial(background_reference_for_grouping, reference),
     )
     from asymmetry.core.transform.grouping import shared_automatic_alpha
@@ -511,6 +537,8 @@ def build_field_scan(
     order_key: str = "field",
     grouping_ref: dict | None = None,
     reference: BackgroundReference | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
     filter: Callable[[Run], bool] | None = None,
 ) -> FieldScan:
     """Assemble a field scan from a series of loaded runs.
@@ -562,7 +590,12 @@ def build_field_scan(
     points: list[FieldScanPoint] = []
     excluded: list[tuple[int, str]] = []
 
-    for item in runs:
+    runs = tuple(runs)
+    for index, item in enumerate(runs):
+        if progress_callback is not None:
+            progress_callback(index, len(runs), "Reducing native counts")
+        if cancel_check is not None:
+            cancel_check()
         try:
             run = _resolve_run(item)
         except (TypeError, ValueError) as exc:
@@ -586,13 +619,14 @@ def build_field_scan(
             continue
         try:
             reduced = reduce_period_integral(
-                run,
+                item,
                 t_min=t_min,
                 t_max=t_max,
                 method=method,
                 alpha=alpha,
                 grouping_ref=grouping_ref,
                 reference=reference,
+                cancel_check=cancel_check,
             )
         except ValueError as exc:
             excluded.append((run_number, str(exc)))
@@ -611,6 +645,7 @@ def build_field_scan(
         run_numbers=[p.run_number for p in points],
         order_key=order_key,
         method=method,
+        y_label="Integral asymmetry" if method == "integral" else "Time-bin mean",
         x_label=_X_LABELS[order_key],
         excluded=excluded,
         units=ASYMMETRY_FRACTION,
@@ -730,6 +765,13 @@ def _resolve_run(data: MuonDataset | Run) -> Run:
     if isinstance(data, Run):
         return data
     if isinstance(data, MuonDataset):
+        if data.histogram_observation is not None:
+            source = data.histogram_observation.source
+            current = data.run.metadata if data.run is not None else source.metadata
+            conditions = {
+                key: current.get(key, data.metadata.get(key)) for key in ("field", "temperature")
+            }
+            return replace(source, metadata=source.metadata | conditions)
         if data.run is None:
             raise ValueError(
                 "This MuonDataset has no source run; integral reduction needs the "

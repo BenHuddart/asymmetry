@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use count-integral ordinary and RF scans across GUI/API/CLI, retaining the
+  explicit time-bin mean, saved scan identity, and cancellable GUI construction.
+
 - Clarify retained shared counting noise and independent-error assumptions in
   curve-merging documentation.
 

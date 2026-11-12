@@ -44,7 +44,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--method",
         choices=["integral", "differential"],
         default="integral",
-        help="integral: sum counts before forming A (default); differential: mean per-bin A. "
+        help="integral: sum counts before forming A (default); differential: explicit time-bin mean of A (not dA/dB). "
         "Independent of the --period green-red contrast",
     )
     parser.add_argument("--order", choices=["field", "temperature", "run"], default="field")
