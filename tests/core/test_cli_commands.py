@@ -914,15 +914,15 @@ def test_integral_scan_green_red_needs_two_periods(
     assert data["settings"]["period"] == "green_minus_red"
 
 
-def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_offset(
-    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("optional_logs", ["arbitrary", "missing", "malformed"])
+def test_integral_scan_preserves_explicit_step_without_calibrating_hall_logs(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, optional_logs
 ) -> None:
     from asymmetry.core import io
 
     _two_identical_periods(monkeypatch)
     two_period_load = io.load
-    # A probe reading -1.25 per gauss about a 950-unit zero offset, at two fields:
-    # the step converts by that slope, which one run's ratio of means would miss.
+    # Arbitrary probe units must not be regressed into a physical gauss step.
     logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
 
     def _with_offset(path):
@@ -933,6 +933,11 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
             "Field_Hall_Z": {"values": [950.0 - 1.25 * main]},
         }
         dataset.run.metadata["period_hall_offset"] = step * 1.25
+        dataset.run.metadata["geometry"] = "TF"
+        if optional_logs == "missing":
+            dataset.run.metadata.pop("nexus_time_series")
+        elif optional_logs == "malformed":
+            dataset.run.metadata["nexus_time_series"] = {"Field_Hall_Z": {"values": ["unknown"]}}
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _with_offset)
@@ -948,7 +953,7 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
         "--model",
         "LorentzianLCRPair",
         "--fix",
-        "f=0",
+        "dB=12",
         "--fix",
         "Bwid=1",
         "--fix",
@@ -958,11 +963,11 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     ]
     cli.main(base)
     out = capsys.readouterr().out
-    assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
-    assert "--fix dB=44.00" in out
-    # A logged field step makes this a differential ALC scan, not an RF one.
-    assert "RFResonanceMuP converts its lines" not in out
-    assert "no radical ALC or hyperfine model is available" in out
+    assert "period field offset" not in out
+    assert "--fix dB=44.00" not in out
+    assert "Missing field-step metadata does not establish RF switching" in out
+    assert "geometry or invalidate declared labels" in out
+    assert "stamp is wrong" not in out
     # Each fitted parameter is printed with its unit and error; a held one says so.
     bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
     assert bwid[1:] == ["1.000000", "G", "fixed"]
@@ -970,10 +975,12 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
     cli.main([*base, "--json"])
     data = _json_output(capsys)
-    assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
-    # The Next line survives --json.
-    assert any("--fix dB=44.00" in note for note in data["notes"])
-    assert not any("refit with --model 'LorentzianLCRPair" in note for note in data["notes"])
+    assert "period_field_offset" not in data
+    assert data["fit"]["parameters"]["dB"] == 12
+    assert "dB" in data["fit"]["fixed"]
+    assert not any("--fix dB=44.00" in note for note in data["notes"])
+    stored = json.loads((tmp_path / "wd" / "scans" / "integral-scan.json").read_text())
+    assert "period_field_offset" not in stored
 
 
 def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
@@ -998,8 +1005,8 @@ def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
     cli.main([*base, "--period", "green-red"])
     out = capsys.readouterr().out
     assert "summed both periods" not in out
-    # No field step between the periods: the green - red contrast is the RF.
-    assert "longitudinal-field RF resonance" in out and "RFResonanceMuP converts its lines" in out
+    assert "Missing field-step metadata does not establish RF switching" in out
+    assert "--model RFResonanceMuP --fix nu_RF=<MHz>" in out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -3143,7 +3150,7 @@ def _failed_resonance_fit(**changes) -> dict:
     } | changes
 
 
-def test_one_lorentzian_on_a_stepped_green_red_scan_is_pointed_at_the_pair() -> None:
+def test_historical_inferred_offset_is_not_reused_as_physical_calibration() -> None:
     from asymmetry.cli.commands.integral_scan import _notes
     from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
 
@@ -3153,8 +3160,9 @@ def test_one_lorentzian_on_a_stepped_green_red_scan_is_pointed_at_the_pair() -> 
         "settings": ReductionSettings(period=GREEN_MINUS_RED).to_dict(),
         "fit": _failed_resonance_fit(expression="LorentzianLCR + Linear"),
     }
-    notes = _notes(result, [], [], [], [])
-    assert any("--model 'LorentzianLCRPair + Linear' --fix dB=44.00" in note for note in notes)
+    notes = _notes(result, [], [], [])
+    assert not any("dB=44.00" in note for note in notes)
+    assert any("experimental context" in note for note in notes)
 
 
 def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:
@@ -3170,7 +3178,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,
     }
-    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
     assert "Estimator: sum counts before forming A" in text
     differential = result | {"scan": result["scan"] | {"method": "differential"}}
     assert "not a period difference" in _render(differential, ReductionSettings(), [])
@@ -3188,10 +3196,10 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     # A start inside its dip's window is where the fit already began ...
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
-    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], [], []))
     # ... and one away from it is pointed back at the dips.
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
-    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
     assert (
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
         "B0_2=1800, or fit one resonance per window on its own local background"
@@ -3199,14 +3207,14 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
     # Smaller dips beyond the model's lines get a window each, unless a stored fit holds one.
     smaller = [{"x_min": 400.0, "x_max": 700.0}, {"x_min": 2300.0, "x_max": 2600.0}]
     result["fit"] = _failed_resonance_fit(next_dip_windows=smaller)
-    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
     assert (
         "NOTE: the scan holds 2 more dips this fit does not include, in 400–700; 2300–2600: "
         "fit each on its own local background — --model 'LorentzianLCR + Linear' --xmin 400 "
         "--xmax 700; --model 'LorentzianLCR + Linear' --xmin 2300 --xmax 2600"
     ) in text
     held = {"success": True, "parameters": {"B0": 550.0, "Bwid": 30.0}}
-    text = _render(result, ReductionSettings(), _notes(result, [], [], [], [held]))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], [held]))
     assert "holds another dip this fit does not include, in 2300–2600: fit it" in text
 
 

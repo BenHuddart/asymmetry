@@ -20,15 +20,18 @@ over an arrival-straddling bin.
    :alt: Acquired counts are selected, detector-corrected, aligned, grouped,
       and background-treated. Separate branches form lifetime-corrected group
       signals for FFT or MaxEnt, and F/B ratios for laboratory fitting,
-      two-projection rotation, or scalar filtered display. Integral observables
-      and full-count fits have their own preparation and assumptions.
+      two-projection rotation, or scalar filtered display. Native-window scan
+      preparation branches into count integrals or explicit time means, period
+      operations, condition scans, original-observable fits and derivative display.
+      Full-count fits retain their own preparation.
 
    The observation determines the analysis branch. Solid arrows carry selected
    observations and retained uncertainty information; dashed lines identify
    alternative requests with their own preparation. Corrections act only when
    enabled. Grouped fits and integral observables retain their separate input
    contracts. A filtered scalar display does not feed a fit.
-   On narrow screens the figure can be scrolled horizontally.
+   The :ref:`condition-scan detail <condition-scan-observables>` expands the
+   native-window scan branch. On narrow screens the figure can be scrolled horizontally.
 
 Run co-add/subtraction retains original acquisitions behind its raw inspection
 view. Each required original detector enters correction and whole-bin alignment
@@ -201,20 +204,48 @@ policies, without an automatic integral-ratio policy. The owning contracts are
 Other observables and observation models
 ----------------------------------------
 
-The corrected grouped-count stage also supplies :doc:`/reference/alc_mode`
-for supported run-level preparation with no background or a constant subtraction.
-Reference-run subtraction is unavailable on that branch; its preparation does
-not resolve a reference spectrum.
-Its count-integral estimator sums a chosen interval before taking a ratio;
-its differential estimator averages valid per-bin asymmetries. This branch
-therefore precedes the time-curve binning box and still depends on the applicable
-balances. It does not imply that every scan is made from a binned asymmetry curve.
+.. _condition-scan-observables:
 
-For two-period G+R, acquired detector corrections and own-t0 whole-bin
-alignment precede count/variance pooling on common observed support. Group
-background acts once on that pooled observation, followed by count binning and
-one ratio. G−R prepares both sets on that common native support, then subtracts
-their independently reduced asymmetries with marginal variances added.
+Condition-scan observables
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The native-count preparation supplies :doc:`/reference/alc_mode`, including
+enabled constant or reference-run background and retained shared counting
+responses. Select whole native bins by inclusive time centres, using the good
+window when bounds are omitted. Display bunching does not change this support.
+The scan detail below separates count integrals from explicit time means.
+
+.. figure:: /_static/condition-scan-pipeline.svg
+   :figclass: reduction-pipeline
+   :alt: Native prepared counts pool G+R before estimation. Count integrals
+      sum counts then form period ratios and G−R; explicit means classify
+      native ratios or G−R contrasts before averaging. Scalar results form
+      a condition scan. Fits use original observations; a separate derivative
+      branch supports display and export only.
+
+   Native-window scan reduction. The two estimator paths share chosen α/β,
+   period correction, selected support and conditional uncertainty assumptions.
+   On narrow screens the diagram can be scrolled horizontally.
+
+For two-period G+R, each acquired detector's correction and own-t0 whole-bin
+alignment precede pooling on common observed support. Group background acts
+once on the pooled counts, followed by the selected estimator. G−R prepares
+both periods on common native support, then subtracts their ratios. For an
+explicit mean, the pointwise contrast is classified before averaging. Retained
+shared responses combine before variance contraction, rather than assuming
+independent period errors. See :doc:`/reference/data_reduction/period_mapping`.
+
+Original scalar values, mathematical status, conditional errors, correction
+outcomes and positional source-sharing facts travel into the condition scan.
+Fit selection omits unusable Gaussian observations and checks known covariance
+in the actual selected window. Baseline/peak fits propagate the fitted baseline
+with fixed regions/model. The derivative branch is display/export only: positive
+adjacent steps give midpoint slopes, with no automatic gap rule. Its units are
+the original fraction or percent per selected G/K/run unit. Known dependent
+input pairs retain values with unavailable errors; marginal derivative errors
+do not supply an independent likelihood. Original-observable fitting remains
+available under its own selected-input contract.
+
 Run arithmetic has its own compatibility and uncertainty requirements; selecting
 runs at the start of the diagram does not authorise adding raw acquisitions
 before nonlinear detector corrections. Raw-count likelihood fits and specialised

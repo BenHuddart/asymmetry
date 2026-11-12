@@ -190,18 +190,42 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     mw._fit_panel.set_datasets(
         [
             _ds(11, 110.0, 90.0, 100.0),
-            _ds(12, 120.0, 80.0, 200.0),
-            _ds(13, 130.0, 70.0, 300.0),
+            _ds(12, 120.0, 80.0, 200.0, 20.0),
+            _ds(13, 130.0, 70.0, 300.0, 30.0),
         ]
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
     assert view.point_count() == 3
 
-    # dA/dB derivative has one fewer point (midpoints between adjacent runs).
+    # Changing observable invalidates any fit tied to the original scan.
+    mw._alc_baseline = object()
+    mw._alc_rf_fitted = True
     view._derivative_check.setChecked(True)
     assert view.derivative_enabled() is True
     assert view.point_count() == 2
+    assert mw._alc_baseline is None
+    assert not mw._alc_rf_fitted
+    notices = []
+    monkeypatch.setattr(mw, "_alc_notify", lambda title, text, **kwargs: notices.append(text))
+    mw._on_fit_baseline()
+    mw._alc_rf_mode = True
+    mw._on_fit_rf()
+    mw._on_fit_peaks()
+    assert notices == [
+        "Turn off dA/dB to fit a baseline on the scan.",
+        "Turn off dA/dB to fit the RF resonance.",
+        "Fit a baseline first; peaks are fitted on the corrected curve.",
+    ]
+    for index, unit in enumerate(("%/G", "%/K", "%/run")):
+        view._x_combo.setCurrentIndex(index)
+        assert unit in view._last_plot["y_label"]
+        state = view.analysis_state()
+        assert state["derivative"]
+        view.restore_analysis_state(state)
+        assert view.derivative_enabled()
+    view._derivative_check.setChecked(False)
+    assert mw._alc_display_scan("run").derivative is False
 
 
 def test_alc_rebuild_replaces_scan_series(mainwindow: MainWindow, monkeypatch):

@@ -210,14 +210,11 @@ def _add_period_hall_offset(
 ) -> None:
     """Record ``period_hall_offset``, the red period's Hall reading less the green's.
 
-    HiFi logs no red/green coil current, but its Hall probe (``Field_Hall_Z``)
-    sees the coil: each Hall sample belongs to the DAE period in force at its
-    time (``Beamlog_Period_Num``, sample-and-hold), and the red and green data
-    periods (*data_periods*, their DAE period numbers) differ by the offset.
-    Medians, so a field ramp spilling into a period does not drag it. The step
-    stays in probe units: one run cannot convert a difference to gauss (see
-    :func:`asymmetry.core.workflow.integral_scan.period_field_offset_gauss`), so
-    it is recorded only beside the ``Field_Main`` log that conversion reads.
+    Assign each ``Field_Hall_Z`` sample to the DAE period in force at its time
+    (``Beamlog_Period_Num``, sample-and-hold), matched to *data_periods*.
+    Subtract the green median from the red median, retaining the probe's
+    declared units. This summary does not establish a calibrated physical
+    field step or identify the acquisition's switched quantity.
     """
     periods = time_series.get("Beamlog_Period_Num")
     hall = time_series.get("Field_Hall_Z")
