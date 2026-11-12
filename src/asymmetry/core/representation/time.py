@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.reduction_recipe import ratio_recipe
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.maxent import (
     MaxEntConfig,
@@ -27,8 +28,9 @@ from asymmetry.core.maxent import (
     run_cycles,
 )
 from asymmetry.core.representation.base import Representation, RepresentationType
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
-from asymmetry.core.transform.rebin import binned_fb_observation, binning_spec
+from asymmetry.core.transform.rebin import binned_ratio_observation, binning_spec
 
 
 class TimeFBAsymmetry(Representation):
@@ -46,18 +48,21 @@ class TimeFBAsymmetry(Representation):
         if not histograms:
             raise ValueError("F-B asymmetry requires detector histograms.")
         grouping = effective_grouping(run, self.recipe.get("grouping_ref"))
-        fb = group_forward_backward(histograms, grouping)
+        fb = group_forward_backward(
+            histograms, grouping, metadata=reference_observation_metadata(run)
+        )
         forward_gid = fb.forward_gid
         backward_gid = fb.backward_gid
         alpha = fb.alpha
 
-        time, asymmetry, error, validity = binned_fb_observation(
+        binned = binned_ratio_observation(
             fb.counts,
             binning=binning_spec(grouping),
             alpha=fb.alpha,
             beta=fb.beta,
         )
 
+        time, asymmetry, error, validity, _, _ = binned
         metadata = dict(run.metadata)
         metadata.update(
             {
@@ -78,6 +83,15 @@ class TimeFBAsymmetry(Representation):
             metadata["beta"] = fb.beta
         return [
             MuonDataset(
+                effective_recipe=ratio_recipe(
+                    fb.counts,
+                    binning_spec(grouping),
+                    fb.alpha,
+                    fb.beta,
+                    None,
+                    binned,
+                    units="fraction",
+                ),
                 ratio_validity=validity,
                 time=np.asarray(time, dtype=float),
                 asymmetry=np.asarray(asymmetry, dtype=float),

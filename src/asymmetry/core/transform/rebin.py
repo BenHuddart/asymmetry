@@ -223,6 +223,7 @@ class BinnedRatio(NamedTuple):
     error: NDArray[np.float64]
     validity: RatioValidity
     noise: CountingNoise | None
+    edges: NDArray[np.intp]
 
 
 def binned_ratio_observation(
@@ -267,7 +268,12 @@ def binned_ratio_observation(
     if edges.size < 2:
         empty = np.array([], dtype=np.float64)
         return BinnedRatio(
-            empty, empty.copy(), empty.copy(), RatioValidity(np.array([], dtype=np.uint8)), None
+            empty,
+            empty.copy(),
+            empty.copy(),
+            RatioValidity(np.array([], dtype=np.uint8)),
+            None,
+            absolute_edges,
         )
     # reduceat runs its last segment to the array end; exclude dropped raw bins.
     f = f[: edges[-1]]
@@ -301,7 +307,9 @@ def binned_ratio_observation(
             counts.forward.noise.transform(matrix).scale(forward_derivative),
             counts.backward.noise.transform(matrix).scale(backward_derivative),
         )
-    return BinnedRatio(np.asarray(time, dtype=np.float64), asymmetry, error, validity, noise)
+    return BinnedRatio(
+        np.asarray(time, dtype=np.float64), asymmetry, error, validity, noise, absolute_edges
+    )
 
 
 def binned_fb_observation(counts, *, binning, alpha, beta=1.0, time_range=None):

@@ -1,9 +1,6 @@
 """Named grouping profiles combine shareable choices with each run's acquired facts.
 
-Runs follow their assigned profile until released into a per-run override.
-One active profile per instrument/detector fingerprint supplies fresh-run defaults.
-Resolution retains acquired facts; policies own choices and captured calibrations.
-
+Policies own choices and captured calibrations; runs retain acquired facts.
 Shareable keys live on the profile; per-run keys come from the selected run:
 
 ================================  ==========  ===============================================
@@ -94,6 +91,7 @@ from asymmetry.core.project.calibration import (
     QuickCalibratedCoefficient,
     profile_calibration_payload,
     resolve_projection_calibrations,
+    resolved_calibration_payload,
     restore_profile_calibrations,
 )
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
@@ -1273,6 +1271,7 @@ def resolve_effective_grouping(
             raise InvalidGroupingError(str(exc), grouping) from exc
         _apply_beta_policy(grouping, profile.beta_policy)
 
+        grouping.update(resolved_calibration_payload(profile))
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping
 

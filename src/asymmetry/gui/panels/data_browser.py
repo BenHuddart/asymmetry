@@ -5098,11 +5098,10 @@ class DataBrowserPanel(QWidget):
         if overrides:
             reduced.metadata.update(overrides, condition_overrides=dict(overrides))
             reduced.run.metadata.update(overrides, condition_overrides=dict(overrides))
-        existing_dataset.time = reduced.time
+        existing_dataset.time, existing_dataset.error = reduced.time, reduced.error
         existing_dataset.asymmetry = reduced.asymmetry
-        existing_dataset.error = reduced.error
-        existing_dataset.metadata = reduced.metadata
-        existing_dataset.run = reduced.run
+        existing_dataset.metadata, existing_dataset.run = reduced.metadata, reduced.run
+        existing_dataset.effective_recipe = reduced.effective_recipe
         existing_dataset.histogram_observation = reduced.histogram_observation
         existing_dataset.ratio_validity = reduced.ratio_validity
         if hasattr(existing_dataset, "_grouping_source_arrays_cache"):

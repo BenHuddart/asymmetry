@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.counting_noise import CountingNoise
 
@@ -352,6 +353,7 @@ class ForwardBackwardCounts:
     alignment: AlignmentCrop
     corrections: CorrectionOutcomes = CorrectionOutcomes()
     calibration_window: BinWindow | None = None
+    effective_recipe: EffectiveReductionRecipe | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.forward, GroupCounts) or not isinstance(self.backward, GroupCounts):

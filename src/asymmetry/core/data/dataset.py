@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.ratio_validity import RatioValidity
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 
 if TYPE_CHECKING:
     from asymmetry.core.transform.counting_noise import CountingNoise, CountingObservation
@@ -212,6 +213,8 @@ class MuonDataset:
 
     counting_noise: CountingNoise | None = field(default=None, repr=False, compare=False)
 
+    effective_recipe: EffectiveReductionRecipe | None = field(default=None, repr=False)
+
     # Convenience -------------------------------------------------------
 
     @property
@@ -371,6 +374,14 @@ class MuonDataset:
                 ~np.any(reasons == RatioReason.UNDEFINED, axis=1), error
             )
         return MuonDataset(
+            effective_recipe=self.effective_recipe.curve_operation(
+                "mean_curve_bins",
+                factor=int(factor),
+                input_points=self.n_points,
+                output_points=len(time),
+            )
+            if self.effective_recipe is not None
+            else None,
             ratio_validity=validity,
             counting_noise=noise,
             time=time,
@@ -396,6 +407,15 @@ class MuonDataset:
         if t_max is not None:
             mask &= self.time <= t_max
         return MuonDataset(
+            effective_recipe=self.effective_recipe.curve_operation(
+                "select_time_centres",
+                t_min=t_min,
+                t_max=t_max,
+                first=int(np.flatnonzero(mask)[0]) if np.any(mask) else 0,
+                stop=int(np.flatnonzero(mask)[-1]) + 1 if np.any(mask) else 0,
+            )
+            if self.effective_recipe is not None
+            else None,
             counting_noise=self.counting_noise.transform(eye(self.n_points, format="csr")[mask])
             if self.counting_noise is not None
             else None,

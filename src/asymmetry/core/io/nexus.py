@@ -1,17 +1,7 @@
-"""Loader for ISIS muon NeXus files (legacy V1 and modern V2).
+"""Read legacy V1 (/run) and modern V2 (/raw_data_1) ISIS muon NeXus files.
 
-This module implements a pure-Python NeXus reader using ``h5py``. The
-implementation is intentionally independent of Mantid code so that Asymmetry
-can stay MIT-licensed while still supporting ISIS muon NeXus layouts.
-
-Supported families
-------------------
-* Legacy V1 layout (``/run/...``)
-* Modern V2 layout (typically ``/raw_data_1/...``)
-
-Both single-period and multi-period files are supported. Two-period files are
-loaded as a single dataset and retain both period histograms for red/green
-mode selection in the grouping workflow.
+The pure-Python h5py reader supports histogram counts, metadata, detector timing,
+and period records independently of Mantid implementation code.
 """
 
 from __future__ import annotations
@@ -716,6 +706,7 @@ class NexusLoader(BaseLoader):
 
             datasets.append(
                 MuonDataset(
+                    effective_recipe=quick.effective_recipe,
                     histogram_observation=histogram_observation(run),
                     ratio_validity=quick.ratio_validity.select(window)
                     if quick.ratio_validity is not None
@@ -760,6 +751,7 @@ class NexusLoader(BaseLoader):
             combined.histogram_observation,
             cached_periods=tuple(ds.histogram_observation for ds in period_datasets),
             cached_validities=tuple(ds.ratio_validity for ds in period_datasets),
+            cached_recipes=tuple(ds.effective_recipe for ds in period_datasets),
         )
         return combined
 

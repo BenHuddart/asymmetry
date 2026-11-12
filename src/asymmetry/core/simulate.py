@@ -1,8 +1,6 @@
 """Synthetic μSR run generation and statistics degradation.
 
-Counts in each detector time bin are Poisson distributed; the expected counts
-for detector *d* follow the muon lifetime envelope modulated by the asymmetry
-signal seen by that detector:
+Detector *d* has Poisson counts with lifetime and asymmetry modulation:
 
     N_d(t) = N0_d · exp(−t/τ_μ) · [1 + a_d(t)] + b_d        (t ≥ 0)
     N_d(t) = b_d                                            (t < 0)
@@ -1883,6 +1881,7 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         run,
         histogram_observation(source),
         reduced.ratio_validity,
+        effective_recipe=reduced.effective_recipe,
     )
 
 

@@ -431,3 +431,107 @@ def test_restored_pulse_must_match_the_actual_fit():
     payload["candidates"][0]["request"]["pulse_separation_us"] = 0.324
     with pytest.raises(ValueError, match="pulse settings.*captured request"):
         restore_calibration(payload)
+
+
+def test_effective_recipe_uses_the_captured_calibration_authority():
+    from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+    from tests.core.test_workflow_reduction import _continuous_run
+
+    run = _continuous_run(0)
+    record = CalibrationRecord("recipe-calibration", candidate())
+    one = reduce_run(run, ReductionSettings(alpha=record))
+    other = reduce_run(run, ReductionSettings(alpha=replace(record, calibration_id="other")))
+    facts = one.effective_recipe.to_dict()["periods"]["red"]
+    assert facts["alpha"] == record.selected.alpha
+    assert facts["beta"] == record.selected.beta
+    assert facts["calibration"]["policies"]["alpha"]["calibration_id"] == record.calibration_id
+    assert len(facts["calibration"]["records"]) == 1
+    assert facts["calibration"]["records"][0]["candidates"][0]["fit"]["covariance"] == [
+        [0.04, 0.01],
+        [0.01, 0.09],
+    ]
+    assert one.effective_recipe.identity != other.effective_recipe.identity
+    assert facts["uncertainty"]["calibration"] == "conditional"
+
+
+def test_pair_calibration_is_selected_by_actual_pair_without_axis_text():
+    from asymmetry.core.project.calibration import CalibratedCoefficient, CalibrationRecord
+    from asymmetry.core.project.profiles import (
+        GroupingProfile,
+        ProfileFingerprint,
+        resolve_effective_grouping,
+    )
+    from tests.core.test_binning_entry_points import _run
+
+    run = _run([90, 80], [60, 40])
+    result = candidate(fit_beta=False)
+    record = CalibrationRecord("pair-calibration", result)
+    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
+    profile.calibration_records = (record,)
+    profile.projection_alpha_policies = {
+        "pair": CalibratedCoefficient(record, result.envelope, "alpha")
+    }
+    run.grouping = resolve_effective_grouping(profile, run)
+    assert "vector_axis" not in run.grouping
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+
+    reduced = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    facts = reduced.effective_recipe.to_dict()["periods"]["red"]
+    assert facts["alpha"] == result.alpha
+    assert facts["calibration"]["records"][0]["calibration_id"] == record.calibration_id
+
+
+def test_projection_recipe_ignores_display_aliases_and_unused_scalar_calibration():
+    from asymmetry.core.project.calibration import CalibratedCoefficient
+    from asymmetry.core.project.profiles import resolve_effective_grouping
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+    from tests.core.test_binning_entry_points import _run
+
+    run = _run([90, 80], [60, 40])
+    result = candidate(fit_beta=False)
+    record = CalibrationRecord("active-projection", result)
+    policy = CalibratedCoefficient(record, result.envelope, "alpha")
+    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
+    profile.calibration_records = (record,)
+    profile.projection_alpha_policies = {"pair": policy}
+    run.grouping = resolve_effective_grouping(profile, run)
+    before = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    run.grouping["projections"][0]["label"] = "renamed"
+    run.grouping["projection_alpha_policies"] = {
+        "renamed": run.grouping["projection_alpha_policies"]["pair"]
+    }
+    run.grouping.update(
+        vector_axis="stale",
+        alpha_error=123,
+        alpha_method="unused",
+        beta_error=456,
+        beta_reference_run=789,
+    )
+    after = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    assert before.effective_recipe.identity == after.effective_recipe.identity
+    facts = after.effective_recipe.to_dict()["periods"]["red"]["calibration"]
+    assert "alpha_error" not in facts and "beta_error" not in facts
+    assert facts["projection_policies"][0]["projection_label"] == "renamed"
+
+
+def test_pending_calibration_capture_does_not_require_committed_profile_history():
+    from asymmetry.core.project.calibration import CalibratedCoefficient
+    from asymmetry.core.project.profiles import resolve_effective_grouping
+    from asymmetry.core.transform.preparation import prepare_histogram_asymmetry
+    from tests.core.test_binning_entry_points import _run
+
+    run = _run([90, 80], [60, 40])
+    result = candidate()
+    record = CalibrationRecord("preview", result)
+    profile = GroupingProfile("pending", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile.alpha_policy = CalibratedCoefficient(record, result.envelope, "alpha")
+    profile.beta_policy = CalibratedCoefficient(record, result.envelope, "beta")
+    assert profile.calibration_records == ()
+    run.grouping = resolve_effective_grouping(profile, run)
+    reduced = prepare_histogram_asymmetry(run, merge=1, facility=None, reference=None)
+    facts = reduced.effective_recipe.to_dict()["periods"]["red"]
+    assert facts["calibration"]["records"][0]["calibration_id"] == "preview"
+    assert profile.calibration_records == ()
+    assert facts["alpha"] == result.alpha and facts["beta"] == result.beta

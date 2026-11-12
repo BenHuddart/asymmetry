@@ -434,6 +434,39 @@ def restore_calibration(data: dict) -> CalibrationRecord:
     return CalibrationRecord(data["calibration_id"], result)
 
 
+def resolved_calibration_payload(profile) -> dict:
+    """Capture active coefficient authorities, including an unapplied preview result.
+
+    A preview's frozen coefficient can be authoritative before Apply commits it
+    to profile history. The project codec separately requires that committed history.
+    """
+    coefficients = {"alpha": profile.alpha_policy, "beta": profile.beta_policy}
+    applied = (*coefficients.values(), *profile.projection_alpha_policies.values())
+    records = {}
+    for policy in applied:
+        if isinstance(policy, CalibratedCoefficient):
+            identity = policy.record.calibration_id
+            if identity in records and records[identity] != policy.record:
+                raise ValueError(
+                    "Effective coefficients require one record per calibration identity"
+                )
+            records[identity] = policy.record
+    payload = {
+        f"{name}_policy": policy.to_dict()
+        for name, policy in coefficients.items()
+        if isinstance(policy, (CalibratedCoefficient, QuickCalibratedCoefficient))
+    }
+    if records:
+        payload["calibration_records"] = [
+            calibration_payload(records[key]) for key in sorted(records)
+        ]
+    if profile.projection_alpha_policies:
+        payload["projection_alpha_policies"] = {
+            label: policy.to_dict() for label, policy in profile.projection_alpha_policies.items()
+        }
+    return payload
+
+
 def profile_calibration_payload(profile, data: dict) -> dict:
     """Capture history and references without storing a second scalar authority."""
     if profile.calibration_records:

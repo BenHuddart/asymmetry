@@ -14,6 +14,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
@@ -112,6 +113,7 @@ class HistogramObservation:
     #: Context belonging to loader-cached period curves, independent of current grouping.
     cached_periods: tuple[HistogramObservation, ...] = ()
     cached_validities: tuple[RatioValidity | None, ...] = ()
+    cached_recipes: tuple[EffectiveReductionRecipe | None, ...] = ()
 
     def select(self, mask: np.ndarray) -> HistogramObservation:
         """Retain a contiguous centre-selected crop before any subsequent merge."""
@@ -319,6 +321,7 @@ def prepare_wizard_dataset(
         merged,
         reduced.ratio_validity,
         reduced.counting_noise,
+        effective_recipe=reduced.effective_recipe,
     )
 
 

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Capture immutable effective reduction recipes on core results, retaining resolved
+  grouping, timing, calibration, corrections, binning, and supported transform context.
+
 - Use count-integral ordinary and RF scans across GUI/API/CLI, retaining the
   explicit time-bin mean, saved scan identity, and cancellable GUI construction.
 

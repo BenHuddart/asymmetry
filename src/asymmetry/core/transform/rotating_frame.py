@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Hashable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -35,6 +35,7 @@ from scipy.interpolate import BSpline
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.data.ratio_validity import RatioReason
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 
 __all__ = [
     "FRAME_FIELDS",
@@ -365,6 +366,23 @@ def rotate_transverse(
             errors = np.where(validity.reasons != RatioReason.UNDEFINED, actual_error, errors)
         pair.append(
             MuonDataset(
+                effective_recipe=EffectiveReductionRecipe.from_dict(
+                    {
+                        "version": 1,
+                        "operation": "rotate_transverse",
+                        "projection": label,
+                        "observable": "asymmetry",
+                        "units": "percent",
+                        "time_units": "microsecond",
+                        "inputs": [
+                            r.to_dict() if r is not None else None
+                            for r in (px.effective_recipe, py.effective_recipe)
+                        ],
+                        "frame": asdict(frame),
+                        "weights": list(weights),
+                        "assume_independent": assume_independent,
+                    }
+                ),
                 counting_noise=noise,
                 ratio_validity=validity,
                 time=t.copy(),

@@ -5661,11 +5661,10 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dataset.metadata = reduced.metadata_with_alignment(dataset.metadata)
+        dataset.effective_recipe = reduced.effective_recipe
         dataset.histogram_observation = observation
         dataset.ratio_validity = reduced.ratio_validity
-        dataset.time = time_axis.copy()
-        dataset.asymmetry = asymmetry.copy()
-        dataset.error = error.copy()
+        dataset.time, dataset.asymmetry, dataset.error = map(np.copy, (time_axis, asymmetry, error))
 
         grouping.update(
             {

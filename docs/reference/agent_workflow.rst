@@ -1885,6 +1885,22 @@ schema must be regenerated rather than trusted. The same folder named
 relatively, absolutely, or through a symlink is one
 folder — both paths are resolved before they are compared.
 
+Effective reduction provenance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fresh core reductions expose ``dataset.effective_recipe`` independently of the
+live ``Run``. Its ``to_dict()`` method returns a detached JSON view, and its
+``identity`` identifies the recorded effective numerical interpretation and
+available source references. It includes actual correction outcomes rather than
+only requested settings. The record survives ``fit_record()``; raw histogram
+replay and retained counting operators do not cross that worker boundary.
+
+This in-memory contract does not extend the saved work-directory sidecar or
+project/export format. Reloaded historical curves can therefore have
+``effective_recipe=None``. Do not infer their effective settings from current
+controls or treat the recipe identity as a verified acquisition-content hash.
+See :doc:`/explanation/reduction_pipeline` for captured facts and transformations.
+
 The fit recipe
 ---------------
 

@@ -45,6 +45,7 @@ def build_fb_signal_dataset(run, *, cancel_check=None):
         cancel_check=cancel_check,
     )
     return MuonDataset(
+        effective_recipe=result.effective_recipe,
         time=result.time,
         asymmetry=result.asymmetry,
         error=result.error,
