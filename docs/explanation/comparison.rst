@@ -1711,3 +1711,28 @@ and marginal errors alone do not establish an independent likelihood.
 Derivative display/export remains available, with unavailable errors for known
 dependent input pairs. These are operation-specific Asymmetry support limits,
 not universal prohibitions on derivative or correlated-data analysis.
+
+Effective reduction records
+---------------------------
+
+Asymmetry captures an immutable effective recipe with core reductions and supported
+transforms; see :doc:`/explanation/reduction_pipeline`. This in-memory account
+is distinct from a raw replay snapshot, durable processed data, and cache validity.
+Work-directory/project/export adapters do not retain the complete recipe.
+
+musrfit 1.12.1 uses an explicit analysis configuration and writes fitted parameters
+to its ``.msr`` result while ``.mlog`` retains the preceding parameter input
+(`manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_). A bounded
+native 1.12.1/ROOT 6.40.04 request/result-file check confirms that behaviour; it
+does not establish acquisition hashing or general reduction equivalence. Mantid's
+public `workspace-history script generation
+<https://docs.mantidproject.org/nightly/algorithms/GeneratePythonScript-v1.html>`_
+describes applied operations separately from saved data and external replay inputs.
+This comparison has no matched native Mantid run. WiMDA 1.326 provides grouping and
+correction annotations in reduced exports; its `overview/manual
+<https://shadow.nd.rl.ac.uk/wimda/>`_ supplies workflow context, without a new native
+execution or a claim of identical canonical identity safeguards.
+
+Asymmetry also checks canonical recipe identity independently of dictionary order,
+local paths, and display labels. The identity retains available source references;
+it does not verify file contents or recover unknown historical settings.

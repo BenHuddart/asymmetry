@@ -40,6 +40,60 @@ support. Counts use the coefficient and independent variance its square.
 The requested group background or shared reference is applied once after
 pooling. See :doc:`/reference/run_arithmetic` for exposure and count-model limits.
 
+Effective reduction recipes
+---------------------------
+
+Count-backed asymmetry, native count-integral/time-bin-mean results, and condition
+scans carry a captured effective recipe. It records the actual detector membership
+and exclusions, acquired constituents and signed coefficients, resolved timing and
+good support, whole-bin alignment and residuals, applied alpha/beta and available
+calibration records, correction outcomes, reference source/timing/scale, binning,
+observable, units, and conditional uncertainty assumptions. Counting uncertainty
+from estimated range/tail backgrounds remains propagated; applied calibration,
+fixed correction coefficients, and reference scale remain conditional. The record is independent
+of later edits to the source run or grouping.
+
+Time crops retain their selected bin membership. Counts-first merges retain staged
+selections and their actual aligned-bin edges; curve means record averaging instead.
+Two-projection rotation records both inputs and the supplied frame. Native scalar
+reductions distinguish a ratio of summed counts from a mean of native ratios; scan
+selection and forward differences retain their operation and display-only derivative
+restriction. These records do not add covariance or likelihood capabilities.
+
+The small recipe is separate from the transient histogram replay snapshot. A
+historical curve without captured provenance keeps an unknown recipe; a transform
+of unknown inputs records those inputs as unknown. A recipe alone cannot recreate
+raw counts, prove the identity of an acquisition file, or establish that a saved
+result is compatible with current computation. Work-directory, project, and export
+round-trips do not retain this complete in-memory record. The uncorrected
+``TimeFBAsymmetry`` representation records its actual fractional ratio without
+applying grouping correction switches. Its held-period or combined inspection
+inputs remain unsupported recipe cases because that raw operation does not
+consume original constituent preparations. Group-only signals, Fourier spectra, MaxEnt
+reconstructions, and unsupported transformed curves have no complete effective
+reduction recipe; their operation-specific provenance retains its own contract.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+musrfit 1.12.1 declares sources, grouping, timing, packing, and calibration in its
+explicit analysis configuration; see its `user manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_. Mantid records applied
+algorithms and properties in workspace history and can `generate a Python script
+<https://docs.mantidproject.org/nightly/algorithms/GeneratePythonScript-v1.html>`_.
+That operation record is distinct from saved processed data and from the availability
+of external inputs needed for replay. WiMDA 1.326 annotates reduced exports with
+grouping and correction settings; its `overview and manual
+<https://shadow.nd.rl.ac.uk/wimda/>`_ describe the broader workflow. These are
+configuration and annotation comparisons, without a claim of numerical equivalence
+or identical identity guarantees. The Mantid comparison uses its public history
+documentation, without a matched native execution.
+
+Asymmetry also checks that its captured recipe has a stable canonical numerical
+identity. Dictionary order, local source paths, and display labels do not affect
+that identity; recorded acquisition references and effective numerical facts do.
+Unknown acquisition content identity remains unknown.
+
 Branches after count preparation
 --------------------------------
 

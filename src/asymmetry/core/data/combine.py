@@ -309,6 +309,7 @@ def reduce_combined_run(run: Run, *, reference=None, cancel_check=None) -> MuonD
         run,
         histogram_observation(run, reference=reference, cancel_check=cancel_check),
         reduced.ratio_validity,
+        effective_recipe=reduced.effective_recipe,
     )
 
 

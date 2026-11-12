@@ -17,6 +17,11 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioReason, RatioValidity
+from asymmetry.core.data.reduction_recipe import (
+    EffectiveReductionRecipe,
+    preparation_recipe,
+    ratio_recipe,
+)
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
@@ -50,7 +55,10 @@ from asymmetry.core.transform.grouping import (
     independent_pair_indices,
     shared_automatic_alpha,
 )
-from asymmetry.core.transform.period_reduction import corrected_period_counts
+from asymmetry.core.transform.period_reduction import (
+    corrected_period_counts,
+    period_statistic_policy,
+)
 from asymmetry.core.transform.rebin import BinningSpec, binned_ratio_observation
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
@@ -82,6 +90,7 @@ class GroupedAsymmetryReduction:
     units: AsymmetryUnit = ASYMMETRY_PERCENT
     effective_alpha: float | None = None
     counting_noise: CountingNoise | None = None
+    effective_recipe: EffectiveReductionRecipe | None = None
 
 
 @dataclass(frozen=True)
@@ -431,6 +440,7 @@ def prepare_grouped_corrections(
             deadtime_applied=deadtime_outcome.status == CorrectionStatus.APPLIED,
             background_applied=background_outcome.status == CorrectionStatus.APPLIED,
         )
+        recipe = preparation_recipe(plan.observation, grouping, grouped, metadata, resolved)
         corrected = ForwardBackwardCounts(
             forward=forward_counts,
             backward=backward_counts,
@@ -440,6 +450,7 @@ def prepare_grouped_corrections(
             bin_width_us=bin_width,
             t0_time_us=t0_time_us,
             corrections=corrections,
+            effective_recipe=recipe,
         )
         return GroupedCorrectionPreparation(corrected, forward, backward)
 
@@ -536,9 +547,10 @@ def estimate_prepared_alpha(counts):
 
 def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
     """Form the ratio once, converting fraction to public percent units."""
-    time, asymmetry, error, validity, noise = binned_ratio_observation(
+    result = binned_ratio_observation(
         counts, binning=binning, alpha=alpha, beta=beta, time_range=time_range
     )
+    time, asymmetry, error, validity, noise, _ = result
     return GroupedAsymmetryReduction(
         time,
         asymmetry * PERCENT_PER_FRACTION,
@@ -547,6 +559,9 @@ def grouped_asymmetry_from_counts(counts, binning, alpha, beta, time_range):
         binning,
         counts.alignment,
         validity,
+        effective_recipe=ratio_recipe(
+            counts, binning, alpha, beta, time_range, result, units="percent"
+        ),
         counting_noise=noise.scale(np.full(time.size, PERCENT_PER_FRACTION))
         if noise is not None
         else None,
@@ -566,6 +581,7 @@ class PeriodAsymmetryReduction:
     ratio_validity: RatioValidity
     effective_alpha: float | None = None
     counting_noise: CountingNoise | None = None
+    effective_recipe: EffectiveReductionRecipe | None = None
 
     def metadata_with_alignment(self, metadata: dict) -> dict:
         """Replace inherited alignment with the actual selected period resolutions."""
@@ -684,6 +700,22 @@ def reduce_period_asymmetry(
         validity,
         alpha if automatic else None,
         noise,
+        EffectiveReductionRecipe.from_dict(
+            {
+                "version": 1,
+                "operation": str(mode),
+                **period_statistic_policy(grouping),
+                "observable": "asymmetry",
+                "units": "percent",
+                "time_units": "microsecond",
+                "periods": {
+                    str(label): result.effective_recipe.to_dict()
+                    for label, result in reduced.items()
+                },
+                "period_coefficients": {"red": -1, "green": 1} if combined else {str(mode): 1},
+                "n_points": int(time.size),
+            }
+        ),
     )
 
 

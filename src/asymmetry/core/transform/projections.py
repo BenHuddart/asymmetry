@@ -197,6 +197,7 @@ def reduce_selected_projections(
                 binning=binning,
                 cancel_check=cancel_check,
             ),
+            effective_recipe=result.effective_recipe,
             ratio_validity=result.ratio_validity,
             counting_noise=result.counting_noise,
             time=result.time,
