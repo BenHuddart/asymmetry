@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -200,6 +201,7 @@ def _high_structured_recommendation() -> FitWizardRecommendation:
         verdict=RecommendationVerdict.STRUCTURED,
         caveat="",
         scope_note="run geometry: transverse field — screening TF families",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     return recommendation
 
@@ -237,6 +239,7 @@ def _medium_with_caveat_recommendation() -> FitWizardRecommendation:
         verdict=RecommendationVerdict.STRUCTURED,
         caveat=caveat,
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -282,6 +285,7 @@ def _no_significant_structure_recommendation() -> FitWizardRecommendation:
         verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
         caveat=caveat,
         scope_note="field geometry not recorded — screening all component families",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -304,6 +308,7 @@ def _none_verdict_recommendation() -> FitWizardRecommendation:
         verdict=RecommendationVerdict.NONE,
         caveat="",
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -388,6 +393,7 @@ def test_families_step_never_echoes_raw_failure_reasons() -> None:
         verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
         caveat="",
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     families_step = trail[1]
@@ -446,6 +452,7 @@ def test_verdict_step_claims_decisive_win_when_margin_is_computable_and_large() 
         verdict=RecommendationVerdict.STRUCTURED,
         caveat="",
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     verdict = trail[4]
@@ -471,6 +478,7 @@ def test_verdict_step_does_not_claim_decisiveness_without_null_assessments() -> 
         verdict=RecommendationVerdict.STRUCTURED,
         caveat="",
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     verdict = trail[4]
@@ -603,6 +611,7 @@ def test_multiple_disqualification_reasons_are_deduplicated_and_condensed() -> N
         verdict=RecommendationVerdict.STRUCTURED,
         caveat="",
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     candidates = trail[3]
@@ -645,6 +654,7 @@ def test_fmuf_envelope_match_is_phrased_plainly() -> None:
         multiplet_matches=(match,),
         family_reports=(),
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     spectrum = trail[2]
@@ -681,6 +691,7 @@ def test_kt_envelope_match_is_phrased_plainly() -> None:
         multiplet_matches=(match,),
         family_reports=(),
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     spectrum = trail[2]
@@ -708,6 +719,7 @@ def test_zero_peaks_and_no_matches_says_so_plainly() -> None:
         multiplet_matches=(),
         family_reports=(),
         scope_note="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     trail = build_wizard_trail(recommendation)
     spectrum = trail[2]

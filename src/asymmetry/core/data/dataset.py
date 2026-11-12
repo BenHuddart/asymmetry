@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 
@@ -214,6 +215,7 @@ class MuonDataset:
     counting_noise: CountingNoise | None = field(default=None, repr=False, compare=False)
 
     effective_recipe: EffectiveReductionRecipe | None = field(default=None, repr=False)
+    computation_revision: str | None = None
 
     # Convenience -------------------------------------------------------
 
@@ -374,6 +376,7 @@ class MuonDataset:
                 ~np.any(reasons == RatioReason.UNDEFINED, axis=1), error
             )
         return MuonDataset(
+            computation_revision=computation.COMPUTATION_REVISION,
             effective_recipe=self.effective_recipe.curve_operation(
                 "mean_curve_bins",
                 factor=int(factor),
@@ -407,6 +410,7 @@ class MuonDataset:
         if t_max is not None:
             mask &= self.time <= t_max
         return MuonDataset(
+            computation_revision=self.computation_revision,
             effective_recipe=self.effective_recipe.curve_operation(
                 "select_time_centres",
                 t_min=t_min,

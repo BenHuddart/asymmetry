@@ -88,4 +88,4 @@ def test_project_restores_target_override_or_unavailable_definition_with_history
         records = current["representations"]["time_fb_asymmetry"]["result_metadata"][
             "effective_recipes"
         ]
-        assert records[0]["effective_recipe"] == result.effective_recipe.to_dict()
+        assert records == original["effective_recipes"]

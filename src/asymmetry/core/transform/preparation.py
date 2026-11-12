@@ -12,6 +12,7 @@ from hashlib import sha256
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
@@ -114,6 +115,7 @@ class HistogramObservation:
     cached_periods: tuple[HistogramObservation, ...] = ()
     cached_validities: tuple[RatioValidity | None, ...] = ()
     cached_recipes: tuple[EffectiveReductionRecipe | None, ...] = ()
+    cached_computation_revisions: tuple[str | None, ...] = ()
 
     def select(self, mask: np.ndarray) -> HistogramObservation:
         """Retain a contiguous centre-selected crop before any subsequent merge."""
@@ -213,7 +215,7 @@ def histogram_observation(
     digest.update(
         pickle.dumps(
             (
-                light_grouping,
+                computation.without_revision(light_grouping),
                 count_metadata_identity(source.metadata),
                 facility,
                 [
@@ -282,9 +284,11 @@ def wizard_observation_matches(dataset: MuonDataset, signature: str) -> bool:
     if WIZARD_PREPARATION not in signature:
         return False
     recorded = json.loads(signature)
-    return recorded.get("wizard_preparation") == WIZARD_PREPARATION and recorded.get(
-        "observation"
-    ) == wizard_observation_identity(dataset)
+    return (
+        computation.is_current(recorded.get("computation_revision"))
+        and recorded.get("wizard_preparation") == WIZARD_PREPARATION
+        and recorded.get("observation") == wizard_observation_identity(dataset)
+    )
 
 
 def prepare_wizard_dataset(
@@ -322,6 +326,7 @@ def prepare_wizard_dataset(
         reduced.ratio_validity,
         reduced.counting_noise,
         effective_recipe=reduced.effective_recipe,
+        computation_revision=reduced.computation_revision,
     )
 
 

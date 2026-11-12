@@ -1,8 +1,4 @@
-"""Read legacy V1 (/run) and modern V2 (/raw_data_1) ISIS muon NeXus files.
-
-The pure-Python h5py reader supports histogram counts, metadata, detector timing,
-and period records independently of Mantid implementation code.
-"""
+"""Read ISIS NeXus V1/V2 counts, metadata, timing, and periods with h5py."""
 
 from __future__ import annotations
 
@@ -13,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
@@ -716,6 +713,7 @@ class NexusLoader(BaseLoader):
                     error=np.asarray(error, dtype=np.float64),
                     metadata=run_meta,
                     run=run,
+                    computation_revision=computation.COMPUTATION_REVISION,
                 )
             )
 
@@ -752,6 +750,7 @@ class NexusLoader(BaseLoader):
             cached_periods=tuple(ds.histogram_observation for ds in period_datasets),
             cached_validities=tuple(ds.ratio_validity for ds in period_datasets),
             cached_recipes=tuple(ds.effective_recipe for ds in period_datasets),
+            cached_computation_revisions=tuple(ds.computation_revision for ds in period_datasets),
         )
         return combined
 

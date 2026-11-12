@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
@@ -376,6 +377,7 @@ def _fitted(
         model=dict(model),
         parameters=parameters if parameters is not None else [{"name": "A", "value": 0.2}],
         result={
+            "computation_revision": computation.COMPUTATION_REVISION,
             "success": True,
             "chi_squared": chi_squared,
             "reduced_chi_squared": chi_squared / ndof,

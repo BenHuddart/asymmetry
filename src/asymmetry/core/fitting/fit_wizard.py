@@ -17,6 +17,7 @@ from enum import Enum
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ComputationalCost, FieldGeometry
 from asymmetry.core.fitting.composite import (
@@ -312,27 +313,12 @@ class FitTiming:
 
 @dataclass(frozen=True)
 class CandidateAssessment:
-    """Fit and comparison data for one candidate model.
+    """Fit, comparison data, and optional dense display curves for one candidate.
 
-    **Dense-curve contract.** ``fitted_time`` / ``fitted_curve`` /
-    ``component_curves`` exist to be *drawn* — the wizard answer card's fit line
-    — and are far the largest thing an assessment carries. An assessment fitted
-    only to fill a cell of a score table (see ``_AssessmentTask.dense_curves``)
-    carries them empty; every assessment a :class:`FitWizardRecommendation`
-    points at as its recommendation or a comparable alternative carries them.
-    :func:`_with_dense_curves` is the crossing between the two.
-
-    A recommendation from :func:`build_fit_wizard_recommendation` states that
-    contract exactly: the rows it exposes as its answer — ``recommended_key``
-    and ``comparable_keys`` — carry curves, and **no other row does**. A build
-    assesses two to three dozen candidates and each dense curve is on the order
-    of a megabyte on a full-resolution record, so materialising all of them made
-    one run's recommendation, and a series screening table of them, hundreds of
-    times larger than the answer needed. A caller that wants to draw any other
-    row asks for them by name with :func:`assessment_with_curves`, which rebuilds
-    them from the row's own fitted parameters and is identical to what an eager
-    build would have produced.
-    """
+    Only recommended and comparable rows carry dense curves. Score-only rows
+    carry empty arrays, avoiding megabyte-scale buffers per assessed model.
+    ``assessment_with_curves`` reconstructs any other row from its fitted
+    parameters; ``_with_dense_curves`` owns that transition."""
 
     template: CandidateTemplate
     fit_result: FitResult
@@ -517,6 +503,7 @@ class FitWizardRecommendation:
     #: Scope and declared frequencies encoded by single_fit_build_signature.
     #: Table role distinguishes full analyses from explicit/completed score tables.
     build_signature: str = ""
+    computation_revision: str | None = None
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -2700,6 +2687,7 @@ def build_fit_wizard_recommendation(
             ),
             scope_note=scope_note,
             build_signature=build_signature,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
 
     field_gauss = dataset.field
@@ -3181,6 +3169,7 @@ def build_fit_wizard_recommendation(
             rebin_factor=rebin_factor,
             analysed_points=gaussian_selection(analysis_dataset).used,
             build_signature=build_signature,
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         metric,
     )
@@ -3259,6 +3248,7 @@ def build_fit_wizard_recommendation_for_templates(
             build_signature=single_fit_build_signature(
                 None, dataset=dataset, table_role="templates"
             ),
+            computation_revision=computation.COMPUTATION_REVISION,
         ),
         metric,
     )
@@ -3629,6 +3619,7 @@ def serialize_fit_wizard_recommendation(
     :func:`deserialize_fit_wizard_recommendation`.
     """
     return {
+        "computation_revision": recommendation.computation_revision,
         "fingerprint": _serialize_spectrum_fingerprint(recommendation.fingerprint),
         "templates": [
             _serialize_candidate_template(template) for template in recommendation.templates
@@ -3727,6 +3718,7 @@ def deserialize_fit_wizard_recommendation(
         # Additive: old payloads carry no signature, which is exactly what an
         # empty one means — "not known to come from the full single-run path".
         build_signature=str(payload.get("build_signature", "")),
+        computation_revision=payload.get("computation_revision"),
     )
 
     published = {recommendation.recommended_key, *recommendation.comparable_keys}
@@ -3769,6 +3761,7 @@ def single_fit_build_signature(
             **({"time_response": time_response.to_dict()} if time_response.mode != "off" else {}),
             "binning_policy": BINNING_POLICY,
             "wizard_preparation": WIZARD_PREPARATION,
+            "computation_revision": computation.COMPUTATION_REVISION,
             "table_role": table_role,
             "observation": wizard_observation_identity(dataset) if dataset is not None else None,
             "scope": scope.to_payload() if scope is not None else None,
@@ -4377,7 +4370,10 @@ def _assess_candidate_template(
 
     if best_result is None:
         best_result = FitResult(
-            objective=Objective.GAUSSIAN, success=False, message="No fit attempt was created."
+            computation_revision=computation.COMPUTATION_REVISION,
+            objective=Objective.GAUSSIAN,
+            success=False,
+            message="No fit attempt was created.",
         )
         best_parameters = ParameterSet()
 
@@ -5704,6 +5700,7 @@ def _scipy_fit_fallback(
         from scipy.optimize import least_squares
     except ImportError:
         return FitResult(
+            computation_revision=computation.COMPUTATION_REVISION,
             objective=Objective.GAUSSIAN,
             success=False,
             message="SciPy fallback unavailable and iminuit fit backend could not be imported.",
@@ -5781,6 +5778,7 @@ def _scipy_fit_fallback(
     chi_squared = float(np.sum(np.square(residuals / safe_errors)))
     reduced_chi_squared = chi_squared / max(len(observations.time) - len(free), 1)
     return FitResult(
+        computation_revision=computation.COMPUTATION_REVISION,
         objective=Objective.GAUSSIAN,
         success=bool(result.success),
         chi_squared=chi_squared,

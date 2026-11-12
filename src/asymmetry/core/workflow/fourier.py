@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.peak_detection import detect_peaks_in_spectrum, serialize_peak_analysis
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
@@ -117,9 +118,11 @@ class FourierOutcome:
     #: Set for a correlation spectrum, whose ``frequency`` axis — and every
     #: peak's ``frequency_mhz`` — is the hyperfine coupling A_µ.
     correlation: CorrelationSettings | None = None
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "computation_revision": self.computation_revision,
             "axis": "frequency" if self.correlation is None else "hyperfine_coupling",
             "correlation": None if self.correlation is None else self.correlation.to_dict(),
             "settings": self.settings.to_dict(),
@@ -255,6 +258,7 @@ def _quantified(
         outside_band=[
             {"frequency_mhz": float(peak.frequency_mhz), "snr": float(peak.snr)} for peak in outside
         ],
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

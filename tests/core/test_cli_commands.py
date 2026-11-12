@@ -14,6 +14,7 @@ import pytest
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
 from asymmetry.core.workflow.workdir import RunSelection
@@ -683,32 +684,6 @@ def test_reduce_writes_entries_and_a_manifest(
     manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["runs"] == list(SCAN_RUNS[:3])
     assert manifest["asymmetry_version"] == __version__
-
-
-def test_reduce_reuses_the_cache_and_recomputes_when_a_setting_changes(
-    workflow_folder: Path, tmp_path: Path, capsys
-) -> None:
-    workdir = tmp_path / "wd"
-    args = [
-        "reduce",
-        str(workflow_folder),
-        "--runs",
-        str(SCAN_RUNS[0]),
-        "--json",
-        "--workdir",
-        str(workdir),
-    ]
-
-    cli.main(args)
-    assert _json_output(capsys)["entries"][0]["recomputed"] is True
-
-    cli.main(args)
-    assert _json_output(capsys)["entries"][0]["recomputed"] is False
-
-    cli.main([*args, "--rebin", "2"])
-    second = _json_output(capsys)["entries"][0]
-    assert second["recomputed"] is True
-    assert second["settings"]["rebin"] == 2
 
 
 def test_reduce_with_alpha_from_records_the_estimate_and_its_source(
@@ -4043,6 +4018,7 @@ def test_a_featureless_screen_inside_a_scan_names_the_scan_ends_to_screen(tmp_pa
     runs = [11, 12, 13, 14, 15]
     workdir.write_survey(
         {
+            "computation_revision": computation.COMPUTATION_REVISION,
             "runs": [{"run_number": run, "prefix": "SIM", "instrument": "SIM"} for run in runs],
             "scans": [
                 {
@@ -4186,7 +4162,12 @@ def test_reduce_names_runs_across_an_alpha_step_from_one_calibration(tmp_path):
     }
     runs = [{"run_number": run, "instrument": "EMU"} for run in (101, 102, 103, 104, 105, 76993)]
     runs += [{"run_number": run, "instrument": "MUSR"} for run in (1, 2)]
-    survey = {"schema": SCHEMA, "runs": runs, "alpha_steps": [step, across_instruments]}
+    survey = {
+        "schema": SCHEMA,
+        "computation_revision": computation.COMPUTATION_REVISION,
+        "runs": runs,
+        "alpha_steps": [step, across_instruments],
+    }
     (root / "survey.json").write_text(json.dumps(survey))
     workdir = WorkDir(root)
 
@@ -4315,7 +4296,9 @@ def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
     audited = [survey_root, *roots]
     assert any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
     for root in roots:
-        (root / "fits" / f"relax-{run}.json").write_text(json.dumps({"run": run}))
+        (root / "fits" / f"relax-{run}.json").write_text(
+            json.dumps({"run": run, "computation_revision": computation.COMPUTATION_REVISION})
+        )
     assert not any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
 
 

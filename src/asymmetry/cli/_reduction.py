@@ -267,7 +267,13 @@ def alpha_step_note(workdir: WorkDir, alpha_from: int | None, runs: list[int]) -
     """The NOTE for one ``--alpha-from`` applied across an ALPHA STEP the survey printed."""
     if alpha_from is None or not workdir.survey_path.is_file():
         return []
-    survey = workdir.read_survey()
+    survey = workdir.read_survey(require_current=False)
+    from asymmetry.core import computation
+
+    if not computation.is_current(survey.get("computation_revision")):
+        return [
+            "NOTE: Stored survey diagnostics have a historical computation revision; run survey again."
+        ]
     # Run numbers order runs only within one instrument; a step between two
     # instruments separates campaigns, which their own calibrations cover.
     instruments: dict[int, set[str]] = {}

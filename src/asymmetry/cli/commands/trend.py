@@ -1,8 +1,4 @@
-"""``asymmetry trend`` — the parameter trend of a stored series, optionally fitted.
-
-With ``--from-fits`` it first builds that series: one stored law's parameter
-from each of several series, against their temperature or supplied values.
-"""
+"""Trend a stored series or a law parameter across series, with optional fitting."""
 
 from __future__ import annotations
 
@@ -26,6 +22,7 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import LINE_SEEDS, parse_fix
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.core import computation
 from asymmetry.core.workflow.series import parameter_quality_flags
 
 
@@ -247,6 +244,13 @@ def _series_from_fits(args: argparse.Namespace, workdir, name: str) -> dict[str,
         raise UserError(f"--series {name} is the trend being built; it cannot be a member too.")
     members = {member: _stored_series(workdir, member) for member in names}
     fit_keys = {member: _chosen_fit(member, members[member], args.fit) for member in names}
+    if any(
+        not computation.is_current(
+            members[member]["trend_fits"][fit_keys[member]].get("computation_revision")
+        )
+        for member in names
+    ):
+        raise UserError("A selected trend fit has a historical computation revision; fit it again.")
     if args.x is None:
         runless = [member for member in names if members[member]["kind"] in DERIVED_SERIES_KINDS]
         if runless:
@@ -275,6 +279,7 @@ def _series_from_fits(args: argparse.Namespace, workdir, name: str) -> dict[str,
     return {
         "name": name,
         "kind": "fit-trend",
+        "computation_revision": computation.COMPUTATION_REVISION,
         "expression": f"{args.param} of {', '.join(sorted(set(fit_keys.values())))}",
         "order_key": axis.name,
         "free_params": [args.param],
@@ -588,13 +593,7 @@ def _held_level(block: list[dict[str, Any]], param: str) -> tuple[float, list[di
 
 
 def _rate_steps(trend, free_params: list[str]) -> list[str]:
-    """A note per width or rate that steps along the scan, with where it leaves each level.
-
-    The step is the split of the scan into two contiguous blocks (two runs or
-    more each) whose error-weighted means differ most, in combined errors. Its
-    place is bracketed by where the parameter leaves each end's level (see
-    :func:`_held_level`), so a gradual change is not reported as a midpoint.
-    """
+    """Bracket changes between contiguous blocks by their error-weighted end levels."""
     notes = []
     axis = trend.order_key
     # An amplitude steps along a supplied or field axis (a range curve, a
@@ -1017,13 +1016,7 @@ def _weight_shift(series: dict[str, Any], trend) -> list[str]:
 
 
 def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
-    """Which trend law this series' axis and parameters call for (Step 6a).
-
-    A field-ordered rate is the Redfield question and needs one rate; a
-    frequency falling with temperature is an order parameter, one held steady
-    is the applied field's and leaves the relaxation as the physics; a rate
-    against a supplied quantity (a concentration) is a linear rate law.
-    """
+    """Suggest Redfield, order-parameter, or linear laws from the axis and observables."""
     order_key = trend.order_key
     by_base: dict[str, list[str]] = {}
     for param in free_params:

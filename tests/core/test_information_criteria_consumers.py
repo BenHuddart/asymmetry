@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import CandidateAssessment, CandidateTemplate
@@ -171,6 +172,7 @@ def test_single_wizard_has_no_recommendation_when_aicc_is_unavailable():
         recommended_key=None,
         comparable_keys=(),
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     ranked = rerank_fit_wizard_recommendation(recommendation, SelectionMetric.AICC)
     assert ranked.recommended_key is None
@@ -193,6 +195,7 @@ def test_restored_single_recommendation_cannot_publish_an_undefined_score():
         recommended_key=row.template.key,
         comparable_keys=(),
         summary="cached recommendation",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     restored = deserialize_fit_wizard_recommendation(serialize_fit_wizard_recommendation(saved))
     assert restored.recommended_key is None
@@ -246,6 +249,7 @@ def test_global_wizard_cannot_recommend_an_undefined_score(restore):
         comparable_keys=(),
         summary="cached recommendation",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     ranked = (
         deserialize_global_fit_wizard_recommendation(
@@ -280,6 +284,7 @@ def test_defined_null_can_anchor_an_unrankable_candidate_without_claiming_struct
         recommended_key=None,
         comparable_keys=(),
         summary="",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     ranked = rerank_fit_wizard_recommendation(recommendation, SelectionMetric.AICC)
     assert ranked.recommended_key == "null"

@@ -22,6 +22,7 @@ from PySide6.QtCore import QSettings  # type: ignore  # noqa: E402
 from PySide6.QtWidgets import QApplication  # type: ignore  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
+from asymmetry.core import computation  # noqa: E402
 from asymmetry.core.fitting.cross_group_roles import (  # noqa: E402
     cross_group_free_parameter_count as count_free_parameters,
 )
@@ -88,6 +89,7 @@ def _result(
         global_uncertainties=global_uncertainties or {},
         error_mode=error_mode,
         n_points=n_points,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
@@ -139,6 +141,7 @@ def test_count_free_parameters_globals_plus_locals() -> None:
         },
         # Fixed params must NOT count toward k.
         fixed_parameters=ParameterSet([Parameter("f", value=9.0)]),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     # 2 globals + 3 locals × 2 groups = 8.
     assert count_free_parameters(result) == 8

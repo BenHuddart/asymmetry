@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
@@ -344,15 +345,18 @@ class FitSeries:
         return [int(r) for r in group_members if int(r) not in excluded]
 
     def is_stale(self, group: object) -> bool:
-        """Return ``True`` when the live membership no longer matches what was fit.
+        """Whether saved execution or group membership no longer qualifies as current.
 
-        Only group-bound run series can be stale: the comparison is between
-        :meth:`effective_members` and :attr:`last_fitted_members`, done as an
-        order-insensitive *set* compare (member ordering is resolved at fit
-        time via ``order_key``, so a re-order alone is not staleness). Frozen
-        series (``group_id is None``) and detector-group series
-        (``member_kind == "groups"``, D8) are **never** stale.
+        Execution compatibility applies to every saved result. Group-bound run
+        series additionally compare order-independent effective membership with
+        the last fitted member set; frozen and detector-group series skip that
+        membership comparison.
         """
+        if self.results_by_run and any(
+            not computation.is_current(result.get("computation_revision"))
+            for result in self.results_by_run.values()
+        ):
+            return True
         if self.group_id is None or self.member_kind != "runs" or group is None:
             return False
         return set(self.effective_members(group)) != set(self.last_fitted_members)
@@ -434,7 +438,9 @@ class FitSeries:
         if self.results_by_run.keys() != other.results_by_run.keys():
             return False
         return bool(self.results_by_run) and all(
-            result.get("input_attribution") is not None
+            computation.is_current(result.get("computation_revision"))
+            and computation.is_current(other.results_by_run[run].get("computation_revision"))
+            and result.get("input_attribution") is not None
             and result["input_attribution"]["identity"]
             == (other.results_by_run[run].get("input_attribution") or {}).get("identity")
             for run, result in self.results_by_run.items()

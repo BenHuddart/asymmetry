@@ -34,6 +34,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -166,6 +167,7 @@ def _single_wizard_payload(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        computation_revision=computation.COMPUTATION_REVISION,
     )
     return assessment, recommendation
 
@@ -508,6 +510,7 @@ def _global_wizard_recommendation_for_dataset(
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
         objective=SelectionObjective.STATISTICAL,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import seed_trend_parameters
@@ -70,10 +71,12 @@ class TrendFitOutcome:
     units: dict[str, str | None]
     #: x of an interior extremum the fitted points turn through, or ``None``.
     turning_point: float | None
+    computation_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
+            "computation_revision": self.computation_revision,
             "param": self.param,
             "expression": self.expression,
             "order_key": self.order_key,
@@ -201,6 +204,7 @@ def fit_trend(
         x_fitted=(float(np.min(x)), float(np.max(x))),
         units={name: model.param_info[name].unit for name in model.param_names},
         turning_point=turning_point(x, y, y_err),
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 

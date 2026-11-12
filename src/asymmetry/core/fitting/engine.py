@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import (
@@ -100,25 +101,12 @@ def _warn_on_scale_mismatch(
     model_wrapper: Callable[..., NDArray[np.float64]],
     initial_values: Sequence[float],
 ) -> None:
-    """Warn when the data and the seeded model curve sit on different scales.
+    """Warn at a fraction/percent boundary crossing, never for poor seeds alone.
 
-    Compares the peak magnitude (max |·|) of the data to that of the model
-    evaluated at its seed. The peak is the amplitude proxy: a decaying model's
-    *median* sits in its near-zero tail and would mismeasure the amplitude,
-    whereas its peak tracks the seeded amplitude.
-
-    The flagged condition is a *fraction/percent boundary crossing*: one peak is
-    fraction-scale (``≤ 1.5`` — a true ``|A| ≤ 1`` cannot be more) while the
-    other can only be percent. An on-scale-but-poorly-guessed amplitude (both
-    peaks clearly percent) is deliberately NOT flagged, however far apart they
-    are — this guard is about scale confusion, not seed quality. A seeded curve
-    flat across the window (a constant-only baseline, or a term whose rate is
-    pinned so fast it has decayed before the first bin) is not judged: its level
-    is a background, which a percent-scale record's tail can hold below 1.5, and
-    it has no amplitude whose scale could be confused. Advisory only:
-    it never raises and never blocks the fit; any evaluation failure is swallowed
-    so the guard cannot change fit outcomes.
-    """
+    Compare peak magnitudes: a decaying model's median measures its tail.
+    A peak at most 1.5 is fraction-like; a larger peak can only be percent.
+    Constant seed curves have no amplitude scale and are not judged.
+    Advisory evaluation failures never change fitting outcomes."""
     try:
         asym = np.asarray(asymmetry, dtype=np.float64)
         data_finite = asym[np.isfinite(asym) & (asym != 0.0)]
@@ -1469,6 +1457,7 @@ def _pack_coupled_block(
             else None
         )
         results[ds.run_number] = FitResult(
+            computation_revision=computation.COMPUTATION_REVISION,
             input_attribution=fit_input_attribution(
                 record, ds, window=(block.t_min, block.t_max), error_oversampling=error_oversampling
             ),
@@ -1771,6 +1760,7 @@ class FitEngine:
             error_msg = str(e)
             if "numba" in error_msg.lower() or "numpy" in error_msg.lower():
                 return FitResult(
+                    computation_revision=computation.COMPUTATION_REVISION,
                     objective=Objective.GAUSSIAN
                     if cost_factory is None
                     else cost_factory.objective,
@@ -1779,6 +1769,7 @@ class FitEngine:
                     "Try: pip install 'numpy<2.3' to fix numpy/numba compatibility.",
                 )
             return FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {error_msg}\nInstall it with: pip install iminuit",
@@ -1791,6 +1782,7 @@ class FitEngine:
             and len(time) <= len(free)
         ):
             return FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 success=False,
                 objective=Objective.GAUSSIAN,
                 parameters=parameters,
@@ -2056,6 +2048,7 @@ class FitEngine:
             else None
         )
         return FitResult(
+            computation_revision=computation.COMPUTATION_REVISION,
             input_attribution=attribution,
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=m.valid and invalid_model is None,
@@ -2454,6 +2447,7 @@ class FitEngine:
             # No iminuit: report the failure on every dataset rather than raising,
             # so a caller fitting a series gets one failed result per run.
             error_result = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {str(e)}",
@@ -2462,6 +2456,7 @@ class FitEngine:
         except _CoupledMinimizationError as e:
             # If fitting fails, return error results
             error_result = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=str(e),
@@ -2699,6 +2694,7 @@ class FitEngine:
             from iminuit import Minuit
         except ImportError as e:  # pragma: no cover - exercised only without iminuit
             error_result = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {e}",
@@ -2849,6 +2845,7 @@ class FitEngine:
             raise
         except Exception as e:
             error_result = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"Profiled global fit failed: {e}",
@@ -2955,6 +2952,7 @@ class FitEngine:
                 if oversampling_message:
                     dataset_warnings.append(oversampling_message)
             results[ds.run_number] = FitResult(
+                computation_revision=computation.COMPUTATION_REVISION,
                 input_attribution=fit_input_attribution(
                     observations[ds.run_number],
                     ds,

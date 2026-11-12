@@ -61,6 +61,8 @@ def _serialize_fit_result(
     """
     return {
         "success": bool(result.success),
+        "computation_revision": result.computation_revision,
+        "input_attribution": result.input_attribution,
         "warnings": list(result.warnings),
         "correction_metadata": dict(result.correction_metadata),
         "observation_report": result.observation_report.to_dict()
@@ -107,6 +109,8 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
             residuals = None
     return FitResult(
         objective=Objective.GAUSSIAN,
+        computation_revision=payload.get("computation_revision"),
+        input_attribution=payload.get("input_attribution"),
         observation_report=(
             ObservationReport(
                 **{k: v for k, v in payload["observation_report"].items() if k != "omitted"}

@@ -677,7 +677,7 @@ class ProjectModel:
                     continue
                 try:
                     representation.invalidate()
-                    representation.ensure_computed(run)
+                    representation.ensure_computed(run, replace_history=False)
                 except Exception:  # noqa: BLE001 - one bad recipe must not abort load
                     representation.invalidate()
 

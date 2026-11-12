@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import shlex
 import sys
@@ -20,6 +19,7 @@ from asymmetry.cli._numbers import (
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
+from asymmetry.core.workflow.workdir import current_results
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.survey import ScanGroup
@@ -240,8 +240,7 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
     joint = [
         (workdir.selection, {int(row["key"]) for row in series["trend"]["rows"]})
         for workdir in workdirs
-        for path in workdir.series_dir.glob("*.json")
-        for series in [json.loads(path.read_text(encoding="utf-8"))]
+        for series in current_results(workdir.series_dir).values()
         if series["kind"] == "global"
     ]
     messages: list[str] = []
@@ -514,22 +513,16 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
 
     found = []
     for root in roots:
-        fits = [
-            json.loads(path.read_text(encoding="utf-8"))["fit"]
-            for path in (root / "fits").glob("*.json")
-        ]
+        fits = [data["fit"] for data in current_results(root / "fits").values()]
         fitted = [fit["parameters"] for fit in fits if fit["success"]] + [
             row
-            for path in (root / "series").glob("*.json")
-            for row in json.loads(path.read_text(encoding="utf-8")).get("trend", {"rows": []})[
-                "rows"
-            ]
+            for series in current_results(root / "series").values()
+            for row in series.get("trend", {"rows": []})["rows"]
             if "failed" not in row["flags"]
         ]
         if any(close_pair(values) is not None for values in fitted):
             continue
-        for path in sorted((root / "spectra").glob("*.json")):
-            spectrum = json.loads(path.read_text(encoding="utf-8"))
+        for spectrum in current_results(root / "spectra").values():
             found.extend(
                 (root, int(spectrum["run"]), peak["frequency_mhz"])
                 # Spectra stored before field_gauss was recorded carry no field.
@@ -545,10 +538,7 @@ def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
 
     found = []
     for root in roots:
-        payloads = {
-            path.stem: json.loads(path.read_text(encoding="utf-8"))
-            for path in sorted((root / "scans").glob("*.json"))
-        }
+        payloads = {path.stem: data for path, data in current_results(root / "scans").items()}
         for name, scan_payload in payloads.items():
             windows = (
                 candidate_dip_windows(field_scan_from_payload(scan_payload["scan"]))
@@ -594,8 +584,7 @@ def _correlations_without_lines(roots: list[Path]) -> list[tuple[Path, int]]:
     found = []
     for root in roots:
         axes: dict[str, set[int]] = {"hyperfine_coupling": set(), "frequency": set()}
-        for path in sorted((root / "spectra").glob("*.json")):
-            spectrum = json.loads(path.read_text(encoding="utf-8"))
+        for spectrum in current_results(root / "spectra").values():
             axes[spectrum["axis"]].add(int(spectrum["run"]))
         found.extend((root, run) for run in sorted(axes["hyperfine_coupling"] - axes["frequency"]))
     return found

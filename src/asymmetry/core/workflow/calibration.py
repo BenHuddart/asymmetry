@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_results import CountFitParameter
 from asymmetry.core.fitting.engine import FitCancelledError
@@ -194,7 +195,9 @@ def calibrate_source(
                 prepared, request, envelope=options.envelope, cancel_callback=cancel_callback
             )
         )
-        result = CalibrationRecord(str(uuid4()), result)
+        result = CalibrationRecord(
+            str(uuid4()), result, computation_revision=computation.COMPUTATION_REVISION
+        )
     else:
         flags = correction_flags_from_grouping(grouping)
         n = len(run.histograms)
@@ -260,6 +263,7 @@ def calibrate_source(
             counts.t0_time_us,
             tuple((int(number), target) for number, target in mapping.items()),
             mapped_period_number=run.metadata.get("period_number") if mapped else None,
+            computation_revision=computation.COMPUTATION_REVISION,
         )
     check_cancel()
     return CalibrationOutcome(result)

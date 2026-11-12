@@ -9,6 +9,9 @@ def write_recipe_header(stream, payload, *, x_range=None, bake_waterfall_offset=
     """Keep the header bound to the actual writer's row selection and offset."""
     recipe = exported_recipe(payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset)
     stream.write(
+        "! computation_revision: " + json.dumps(payload.get("computation_revision")) + "\n"
+    )
+    stream.write(
         "! effective_recipe: " + json.dumps(recipe, sort_keys=True, allow_nan=False) + "\n"
     )
     display = {

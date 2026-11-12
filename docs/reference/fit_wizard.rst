@@ -811,7 +811,8 @@ Rerun the analysis to obtain scores and curves for the edited observation; this
 prevents a different record from being drawn under the saved score.
 
 Cached analyses require the same observation, reduction context, selected
-support, scope, frequencies, and numerical preparation contract. Rebuilt curves
+support, scope, frequencies, numerical preparation contract, and scientific-computation
+revision. Unknown or older executions cannot supply current reusable recommendations. Rebuilt curves
 use the same prepared grid as the fitted assessment. Saved historical results
 retain their values and curve-mean reconstruction semantics; opening them does
 not refit or relabel their scores.

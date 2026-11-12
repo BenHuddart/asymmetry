@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.burg import burg_spectrum
 from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning, unit_area_normalise
@@ -656,6 +657,7 @@ def compute_average_group_spectrum(
                 error=group_dataset.error / 100.0 if group_dataset.error is not None else None,
                 metadata=group_dataset.metadata,
                 run=group_dataset.run,
+                computation_revision=computation.COMPUTATION_REVISION,
             )
         prepared = prepare_fft_time_signal(
             group_dataset,
@@ -957,6 +959,7 @@ def compute_average_group_spectrum(
         error=np.asarray(averaged_error, dtype=float),
         metadata=metadata,
         run=run,
+        computation_revision=computation.COMPUTATION_REVISION,
     )
 
 
