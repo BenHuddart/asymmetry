@@ -38,6 +38,8 @@ geometry-sensitive observable, the regular single-fit panel is faster and
 imposes no grouped overhead. For a full worked example on a rotated single
 crystal, see :doc:`/workflows/knight_shift_angle`.
 
+.. _grouped-count-model:
+
 What this mode fits
 -------------------
 

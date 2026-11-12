@@ -1,7 +1,7 @@
 .. _reduction-pipeline:
 
-Count-based forward/backward reduction
-======================================
+Count reduction and transformed signals
+=======================================
 
 A forward/backward asymmetry compares two groups of acquired positron counts.
 The counts must describe corresponding observations before their ratio has a
@@ -17,17 +17,17 @@ over an arrival-straddling bin.
 
 .. figure:: /_static/reduction-pipeline.svg
    :figclass: reduction-pipeline
-   :alt: Acquired counts pass through selection, detector deadtime correction,
-      whole-bin alignment and group summation, group background correction,
-      count binning, and forward/backward ratio formation. Calibration and
-      reference inputs supply optional dependencies; corrected grouped counts
-      also feed integral observables before time-curve binning.
+   :alt: Acquired counts are selected, detector-corrected, aligned, grouped,
+      and background-treated. Separate branches form lifetime-corrected group
+      signals for FFT or MaxEnt, and F/B ratios for laboratory fitting,
+      two-projection rotation, or scalar filtered display. Integral observables
+      and full-count fits have their own preparation and assumptions.
 
-   Standard count-based F/B reduction for one selected run and period. Solid
-   arrows carry counts and uncertainty information; dashed arrows supply
-   settings, calibration, reference data, or current-count inputs. Corrections
-   act only when enabled. The integral branch has its own window and estimator
-   and accepts no background or a constant subtraction.
+   The observation determines the analysis branch. Solid arrows carry selected
+   observations and retained uncertainty information; dashed lines identify
+   alternative requests with their own preparation. Corrections act only when
+   enabled. Grouped fits and integral observables retain their separate input
+   contracts. A filtered scalar display does not feed a fit.
    On narrow screens the figure can be scrolled horizontally.
 
 Run co-add/subtraction retains original acquisitions behind its raw inspection
@@ -36,6 +36,62 @@ with its own facts before signed weighting and pooling on common observed good
 support. Counts use the coefficient and independent variance its square.
 The requested group background or shared reference is applied once after
 pooling. See :doc:`/reference/run_arithmetic` for exposure and count-model limits.
+
+Branches after count preparation
+--------------------------------
+
+The diagram is a map of alternative observables, not a mandatory sequence
+through every transform. The same post-decoding scientific operations apply to
+ISIS HDF4/HDF5 and PSI BIN/MDU/ROOT when the selected observations and settings
+match. Source structure, measured timing, and geometry can guide settings;
+facility labels guide defaults, and a file suffix does not determine physics.
+
+* **Lifetime-corrected group signals** multiply prepared group counts and errors
+  by :math:`\exp(t/\tau_\mu)`. Grouped FFT and MaxEnt each request uncentred
+  signals, then apply their own window-level preparation. FFT uses a
+  :math:`1/\sigma` fractional level and optional mean removal; MaxEnt uses an
+  inverse-variance starting level and its own phase/amplitude reconstruction.
+  Neither finite-window level nor FFT coherent-gain correction establishes an
+  absolute polarisation calibration. See :doc:`/reference/fourier_analysis`
+  for the selected-window, apodisation, padding, and endpoint limits.
+* **F/B ratios** combine prepared F/B counts with α and β. They can be fitted
+  in the laboratory frame or transformed as described below. The Fourier
+  panel's **F−B asymmetry** source transforms a ratio rather than the default
+  lifetime-corrected grouped signals; its correction contract is specified in
+  :doc:`/reference/fourier_analysis`.
+* **Two measured transverse projections** support pointwise rotation after
+  explicit baseline, gain, sense, and phase adjustment. Retained shared
+  acquisition/reference/background counting noise propagates through the
+  coordinate transformation and packing. Calibration and frame quantities
+  remain conditional assumptions. A group label or fitted phase is not proof
+  of physical detector geometry. See :ref:`vector-geometry-assumptions` and
+  :ref:`vector-rotation-counting-errors` for the authoritative geometry and
+  covariance contracts; :doc:`/reference/rotating_frame_projection` also
+  describes fitting a supported component.
+* **One scalar ratio** supports complex demodulation and FIR low-pass display.
+  Same-bin real/imaginary covariance enters first-order magnitude errors, but
+  filtered bins remain correlated, low-signal magnitude is biased, and a
+  correlated or anisotropic noise pair need not obey an exact Rician law.
+  Fits retain the original laboratory observations, rather than treating the
+  filtered display as independent data. See :ref:`scalar-rrf-magnitude-errors`.
+
+For pooled G+R vector rotation, Asymmetry requires the Red and Green transverse
+baselines to agree; an arithmetic mean is not generally the baseline of a
+pooled count ratio. Unequal baselines make that operation unavailable while
+Lab G+R, rotating Red, Green, and G−R remain supported. This safeguard does not
+restrict decoding or unrelated reductions.
+
+Grouped fits use the full-count model and their own nuisance backgrounds;
+active reference-run subtraction is unsupported there, even though it is
+supported in grouped Fourier/MaxEnt preparation. Their lifetime-corrected
+Gaussian and raw-count Poisson objectives are separate choices. See
+:ref:`grouped-count-model` and :doc:`/reference/count_domain_fitting`. Integral observables retain their own
+window, balance, and estimator rather than integrating a displayed FFT or
+filtered curve. All error statements remain conditional on the documented
+calibration and correction assumptions. Correct marginal errors do not supply
+a general cross-bin or joint-projection likelihood, or certify overlapping-group
+MaxEnt. The operation-specific reference map is in
+:ref:`comparison-spectral-conventions`.
 
 From acquired counts to a ratio
 -------------------------------
@@ -243,7 +299,7 @@ labels and ambiguous file width fields do not establish that input. See
 
 
 Fixed supplied TF calibration response
--------------------------------------
+--------------------------------------
 
 TF calibration's supplied fixed double-delta response belongs to the predicted
 F/B counts. Equal incident births at the supplied midpoint contribute only at

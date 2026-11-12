@@ -123,10 +123,10 @@ Fast Fourier transform (FFT)
 The FFT is the simplest, fastest route to a spectrum: a discrete Fourier
 transform of the (real) apodised asymmetry, evaluated by the radix
 Cooley–Tukey algorithm [1]_ through :func:`numpy.fft.rfft`. It is a *linear*
-transform, so its amplitudes and areas map directly onto the apodisation
-settings and can be trusted quantitatively (subject to the resolution/leakage
-trade above). Asymmetry takes the one-sided real transform and derives every
-display channel — magnitude, real, imaginary, phase — from that one complex
+transform of the prepared signal. Its scale depends on the input observable,
+normalisation, selected support, and window; quantitative interpretation requires
+those assumptions to be matched (see `Normalisation`_). Asymmetry takes the
+one-sided real transform and derives every display channel — magnitude, real, imaginary, phase — from that one complex
 spectrum.
 
 .. code-block:: python
@@ -234,8 +234,9 @@ interval.`` Use **Fixed** binning or resample explicitly before transforming.
 Baseline removal: mean or trend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``subtract_average_signal`` removes a **constant** — WiMDA's error-weighted
-average of the cropped signal. A signal that *relaxes* across the record does
+``subtract_average_signal`` removes a **constant** — the inverse-standard-error
+(:math:`1/\sigma`) weighted average of the cropped signal, as in WiMDA's
+grouped Fourier preparation. A signal that *relaxes* across the record does
 not ride on a constant, and the trend the mean leaves behind dumps power into
 the low-frequency bins, where it can swamp a genuine line. ``detrend=`` removes
 a trend instead, on both the dataset and the array front doors:
@@ -602,6 +603,20 @@ Only ``Phase`` uses the manual ``Phase (deg):`` field, the phase table, and
 peak-bin or power-weighted circular-mean method selected by ``Auto method:``.
 **Auto Phase settings** are separate from those manual estimates.
 
+For a signal written as :math:`\cos(2\pi\nu t+\phi)`, time is in μs,
+frequency in MHz, and model phase :math:`\phi` is in radians. The manual FFT
+controls use degrees. The raw DFT starts at the first retained sample
+:math:`t_s`, so an isolated line carries phase :math:`\phi+2\pi\nu t_s`.
+Manual correction multiplies it by
+:math:`\exp[-i(\phi_{\rm manual}+2\pi\nu\delta t_0)]`, with the degree value
+converted to radians and the supplied offset :math:`\delta t_0` in μs.
+**Auto Phase** explicitly accounts for :math:`t_s` relative to the resolved
+t0; it does not fit a freely adjustable clock ramp. Moving the origin to
+:math:`t'=t-\Delta` changes a cosine phase to :math:`\phi'=\phi+2\pi\nu\Delta`.
+A source-response origin conversion is a further explicit convention, described
+in the pulse-response discussion below. Group labels or a table of fitted
+phases alone do not establish orthogonal physical detector axes.
+
 Use **Auto Phase** for resolved oscillations whose spectral components share
 one initial phase and have nonnegative amplitudes. Complex spectral fitting
 [11]_ and separable least-squares optimisation [12]_ motivate the formulation;
@@ -611,8 +626,8 @@ an asymmetric vortex line consists of one or two Lorentzians.
 
 Select **Auto Phase**, then click **Compute FFT**. Each detector group is
 phased before the corrected measured real channels are averaged, so opposing
-detector phases do not cancel before estimation. The display has calibrated
-percent units. The fitted positive distribution is used to estimate phase;
+detector phases do not cancel before estimation. The display uses the percent
+amplitude convention described in `Normalisation`_. The fitted positive distribution is used to estimate phase;
 it does not replace the measured FFT or remove its noise and wings.
 
 .. image:: /_generated/screenshots/fourier_auto_phase.png
@@ -798,41 +813,85 @@ MaxEnt preparation or solvers. See :ref:`comparison-deadtime-scope`.
 Normalisation
 ~~~~~~~~~~~~~
 
-FFT amplitudes are **calibrated to fractional asymmetry, displayed in percent**:
-a pure cosine of fractional amplitude :math:`A` peaks at :math:`100\,A` in the
-magnitude spectrum. The calibration makes the peak height a physical quantity,
-invariant to counting statistics, the length of the time window, the choice of
-apodisation, and zero padding. Two steps produce it, applied to every canonical
-display channel (``(Power)^1/2``, ``Cos``, ``Sin``, ``Phase``, magnitude, real,
-imaginary, and ``Auto Phase``; ``Power`` is their square, in :math:`\%^2`):
+The grouped FFT uses a finite-window level estimate and a percent amplitude
+convention. These make spectra easier to compare under matched preparation;
+they do not establish an absolute polarisation calibration.
 
-* **Fractional footing.** Each detector group's lifetime-corrected count signal
-  :math:`N_0\,(1 + A\cos\dots)` is divided by its error-weighted baseline
-  :math:`N_0` before the average subtraction, turning counts into the
-  dimensionless asymmetry :math:`A\cos\dots`. A degenerate (non-positive)
-  baseline falls back to the raw footing rather than dividing by zero, and the
-  spectrum is stamped accordingly.
-* **Coherent-gain correction.** The complex spectrum is multiplied by
-  :math:`100 \times 2/\Sigma w`, where :math:`\Sigma w` is the coherent gain of
-  the apodisation actually applied — the sum of the window/filter weights over
-  the populated (unpadded) samples, equal to the sample count when no
-  apodisation is used [7]_. Dividing out :math:`\Sigma w` removes the window's
-  amplitude loss, so an unrelaxed line reads at :math:`100\,A` whatever window
-  is chosen; the factor of two is the one-sided (rfft) convention. Zero padding
-  contributes only zeros to :math:`\Sigma w`, so it leaves the peak height
-  unchanged (it only sinc-interpolates the line shape). The DC and Nyquist bins
-  strictly carry a one-sided gain of :math:`1/\Sigma w` rather than
-  :math:`2/\Sigma w`; DC is already removed by the average subtraction, so this
-  affects only a Nyquist-frequency line, which the calibration does not target.
+Let :math:`C_g(t)` be a group's aligned counts after the requested deadtime and
+background operations. Lifetime correction gives
+:math:`L_g(t)=C_g(t)\exp(t/\tau_\mu)` and multiplies its standard error by the
+same factor. Removing this envelope does not determine detector efficiency,
+a physical background, or the true population level. In particular, an
+oscillation or relaxation can have a nonzero mean over a finite selected window.
 
-A **relaxing** line reads *below* :math:`100\,A`: damping spreads the line over
-many bins, so the calibrated **peak height** falls even though the calibrated
-**area** is preserved. Read peak amplitudes from an FFT only for weakly damped
-lines; otherwise fit the spectrum or integrate the area.
+The grouped FFT and MaxEnt workflows request an uncentred lifetime signal.
+The grouped helper's optional arithmetic centring is not applied in either
+workflow; each uses its own preparation:
 
-A recipe recorded before this calibration existed is flagged stale on load
-(the *displayed FFT is out of sync* banner), inviting a recompute onto the new
-scale.
+* **Fractional FFT footing.** After the inclusive time crop, the level is
+  :math:`\widehat L=\sum_k L_k/\sigma_k\,/\sum_k1/\sigma_k`, using positive
+  finite supplied errors. With no usable error weights it is an arithmetic
+  mean over finite samples. The signal and errors are divided by this level
+  when it is finite and positive. Otherwise the spectrum retains raw footing,
+  with the outcome recorded; its height must not be read as percent polarisation.
+  Optional **Subtract average signal** then removes the :math:`1/\sigma`
+  weighted mean before apodisation. Polynomial detrending instead uses
+  inverse-variance least squares; it is a different operation.
+* **FFT coherent-gain correction.** For amplitude displays the complex transform
+  receives :math:`100\times2/\sum_k w_k`, with :math:`w_k` the actual filter
+  weights on populated, unpadded samples [7]_. This compensates the window sum
+  for a resolved isolated undamped positive-frequency line, away from DC and
+  Nyquist, when opposite-frequency leakage is negligible. With a known or
+  adequately estimated level and a sampled line frequency, the intended scale
+  is :math:`100A` for fractional cosine amplitude :math:`A`. All canonical
+  amplitude channels share this scale; **Power** is squared, in :math:`\%^2`.
+* **MaxEnt starting level.** MaxEnt uses the inverse-variance level
+  :math:`\widehat L_{\rm ME}=\sum_k L_k/\sigma_k^2\,/\sum_k1/\sigma_k^2`
+  on its selected valid observations, preparing :math:`L/\widehat L_{\rm ME}-1`
+  and scaled errors for its own forward model. Interior exclusions are
+  de-weighted after this level is estimated. This is a starting normalisation,
+  not an independent measurement of an oscillating run's true population.
+
+Window length, off-grid frequency, damping, phase, noise, mean removal, and
+leakage can all change the sampled maximum. The implementation applies the
+same factor of two even at DC and Nyquist; the isolated-line amplitude
+interpretation does not cover those endpoints. Zero padding leaves the
+window sum fixed and samples the finite-record transform more finely. It adds
+no observations or resolution and can move the sampled maximum. Neither a
+universal conserved peak height nor a universal conserved magnitude area
+follows from coherent-gain correction. For amplitudes or widths, use a model
+whose preparation and response match the observations; spectral uncertainty
+and moment interpretation retain the limits in :doc:`spectral_moments` and
+:doc:`frequency_domain_fitting`.
+
+Compared with other programs
+++++++++++++++++++++++++++++
+
+WiMDA 1.326 lifetime-corrects grouped Fourier counts, optionally removes a
+:math:`1/\sigma` mean, and scales its grouped spectrum by total events. Its
+F/B Fourier input is a separate observable. Asymmetry retains fractional group
+normalisation instead of adopting that event scale. See the
+`WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_ and [4]_.
+
+musrfit 1.12.1 (revision ``708f777b``, ROOT 6.40.04) uses an arithmetic-mean
+level of the lifetime-corrected observations and a supplied scale factor in
+its theory-free single-histogram Fourier preparation. This does not describe
+every musrfit fit or Fourier path; see the `musrfit manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_. In Mantid's
+`RemoveExpDecay v1 <https://docs.mantidproject.org/nightly/algorithms/RemoveExpDecay-v1.html>`_
+(checked 6.16 development snapshot), lifetime-corrected observations are divided
+by a fitted constant and one is subtracted. With supplied errors this is an
+inverse-variance least-squares constant fit, rather than a universal Mantid FFT
+amplitude convention. An analogous starting level does not equate Asymmetry's
+MaxEnt reconstruction with Mantid
+`MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_.
+
+The three window-level estimates need not agree even without random noise.
+These operation descriptions do not establish matched native FFT errors,
+absolute polarisation, or reconstruction equivalence. Full native Mantid
+FFT/PhaseQuad/MaxEnt execution is unverified here; the standalone pulse-kernel
+comparison below has its own narrower scope. See
+:ref:`comparison-spectral-conventions` for the methods map.
 
 Unit-area field distribution
 ++++++++++++++++++++++++++++
@@ -1390,7 +1449,7 @@ spectrum identity distinguishes computations made under a different conditioning
 policy.
 
 Compared with other programs
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+++++++++++++++++++++++++++++
 
 In Mantid's standalone MaxEnt kernel (revision ``1967ccb4``), the phase origin
 includes the mean pion arrival delay. Multiplying that response by
@@ -1472,16 +1531,15 @@ group id, so the forward/backward mapping never gets crossed.)
 
 .. note::
 
-   **The FFT per-group phases and the MaxEnt fitted-phase exchange are separate
-   stores, by design.** The Fourier panel's per-group phase table (`FFT Phase
-   Modes`_, with its auto-estimate) and this MaxEnt exchange (which swaps phases
-   with the *grouped time-domain fit*) hold the same physical quantity — the
-   per-group detector phase — but do not feed each other: refining phases in
-   MaxEnt does not update the FFT phase table, and filling FFT phase estimates
-   does not seed MaxEnt. Keep them in sync by hand if you switch estimators on
-   the same run. A "use MaxEnt fitted phases" pull on the Fourier panel is a
-   plausible convenience and will be added on the first concrete request for it;
-   until then the two stores are independent.
+   **FFT and MaxEnt retain separate group-phase stores.** The manual FFT
+   table and **Auto Phase** estimate describe a sampled Fourier projection.
+   MaxEnt fits phases within its reconstruction model and exchanges them only
+   with the grouped time-domain fit through **Use fitted phases** and
+   **Send phases to fit**. Neither operation updates the FFT table, and FFT
+   estimates do not seed MaxEnt automatically. Group identity alone does not
+   make estimates interchangeable: timing origin, source response, correction
+   recipe, observation window, and estimator must also match. A group phase
+   is not a detector-geometry calibration.
 
 **Deadtime.** At a pulsed source the detectors lose counts at early times where
 the rate is highest, distorting the signal that carries the high-frequency
@@ -1680,6 +1738,8 @@ Complete workflow for frequency analysis:
    
    plt.tight_layout()
    plt.show()
+
+.. _gui-fourier-workflow:
 
 GUI Fourier workflow
 --------------------
@@ -1898,7 +1958,7 @@ equivalents, to the **Parameters** dock for trend analysis.  See
 :doc:`frequency_domain_fitting` for the full workflow.
 
 A single-run fit needs a single spectrum, so fitting is blocked while an
-`overlay <GUI Fourier workflow>`_ is active: the Fit dock disables and reports
+:ref:`overlay <gui-fourier-workflow>` is active: the Fit dock disables and reports
 *"Multiple spectra overlaid — select a single run to fit in the frequency
 domain."* Untick **Overlay** (or select just one run) to fit again.
 
