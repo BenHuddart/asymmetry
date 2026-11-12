@@ -181,6 +181,10 @@ class FitSeries:
         #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
         #: baseline regions / peaks / view options). Empty for ordinary fits.
         self.extra: dict = dict(extra) if isinstance(extra, dict) else {}
+        if self.extra.get("kind") == "alc_scan":
+            from asymmetry.core.project.scan_migration import migrate_scan_identity
+
+            self.extra = migrate_scan_identity(self.extra)
         #: Legacy provenance (D1, Option B): the id of the DataGroup this series
         #: was launched from, when every member shared exactly one group at
         #: record time. Retained for backward compatibility (older GUI code and

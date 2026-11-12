@@ -150,7 +150,6 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
 from asymmetry.core.io.periods import (
-    build_rf_difference_scan,
     combine_mapped_periods,
     held_period_count,
     held_period_histograms,
@@ -219,7 +218,6 @@ from asymmetry.core.transform import (
     EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
     available_background_modes,
-    build_field_scan,
     common_t0_for_groups,
     detector_t0_overrides,
     differentiate_scan,
@@ -303,6 +301,7 @@ from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
+from asymmetry.gui.scan.construction import ScanController
 from asymmetry.gui.screen_guard import place_window_on_screen
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.typography import header_font, status_font
@@ -845,6 +844,7 @@ class MainWindow(QMainWindow):
         #: All background work goes through this runner (see gui/tasks.py);
         #: closeEvent shuts it down so no live thread outlasts the window.
         self._tasks = TaskRunner(self)
+        self._scan_controller = ScanController(self)
 
         #: Memoises the two uncached time-domain reductions (grouped-count build
         #: and the counts-first rebunch) so dataset switches / view toggles reuse
@@ -12147,127 +12147,8 @@ class MainWindow(QMainWindow):
     _SCAN_QUANTITY = "Integral asymmetry (%)"
 
     def _on_scan_requested(self) -> None:
-        """Build an integral-asymmetry field scan (ALC mode) from the selected runs.
-
-        Integrates each run's asymmetry over the current fit-range window (one
-        value per run, in percent), records it as a model-less ("computed")
-        ``FitSeries`` for persistence/series management, and renders it in the
-        bespoke ALC scan view.
-        """
-        rep_type = self._active_representation_type()
-        if rep_type != RepresentationType.TIME_FB_ASYMMETRY:
-            self._guidance_message(
-                "Integral scan",
-                "Integral-scan (ALC) mode applies to the Forward-Backward asymmetry only.",
-            )
-            return
-
-        datasets = (
-            self._fit_panel.batch_datasets() if hasattr(self._fit_panel, "batch_datasets") else []
-        )
-        runs = [d.run for d in datasets if getattr(d, "run", None) is not None]
-        if len(runs) < 2:
-            self._guidance_message(
-                "Integral scan", "Select at least two runs to build a field scan."
-            )
-            return
-
-        t_min = t_max = None
-        if hasattr(self._plot_panel, "get_fit_range"):
-            t_min, t_max = self._plot_panel.get_fit_range()
-
-        rf_mode = self._alc_fit_panel.rf_difference_enabled()
-        try:
-            # Run ordering retains points whose displayed field/temperature is absent.
-            if rf_mode:
-                scan = build_rf_difference_scan(runs, t_min=t_min, t_max=t_max, order_key="run")
-            else:
-                scan = build_field_scan(
-                    runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
-                )
-        except (ValueError, TypeError) as exc:
-            self._guidance_message(
-                "Integral scan", f"Could not build the scan: {exc}", warning=True
-            )
-            return
-        if scan.n_points < 2:
-            # A failed rebuild must retain the displayed scan's RF mode.
-            self._guidance_message(
-                "Integral scan", "The scan has too few usable points to plot.", warning=True
-            )
-            return
-        self._alc_rf_mode = rf_mode
-
-        # Build-time drops surface in the scan's provenance line (and the log).
-        self._alc_build_excluded = list(scan.excluded)
-        if scan.excluded:
-            dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
-            self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
-        # Run-keyed exclusions survive rebuilds over the same selection.
-        self._alc_excluded_runs &= {int(run) for run in scan.run_numbers}
-
-        # Native integral values are fractions; display conversion happens later.
-        runs_by_number = {
-            int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
-        }
-        self._alc_scan_points = [
-            self._alc_scan_point(
-                run_number,
-                value,
-                error,
-                runs_by_number.get(int(run_number)),
-                {
-                    label: record.to_dict()
-                    for label, record in scan.correction_outcomes.get(run_number, {}).items()
-                },
-            )
-            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
-        ]
-
-        # FitSeries stores scan values in percent; native integrals are fractions.
-        quantity = self._SCAN_QUANTITY
-        results_by_run = {
-            int(run_number): {
-                "success": True,
-                "correction_outcomes": {
-                    label: record.to_dict()
-                    for label, record in scan.correction_outcomes.get(run_number, {}).items()
-                },
-                "parameters": {quantity: float(value) * 100.0},
-                "uncertainties": {quantity: float(error) * 100.0},
-                "chi_squared": 0.0,
-                "reduced_chi_squared": 0.0,
-            }
-            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
-        }
-        scan_kind = "RF scan" if rf_mode else "Integral scan"
-        series = FitSeries(
-            f"scan-{self._next_scan_index}",
-            rep_type,
-            label=f"{scan_kind} {self._next_scan_index}",
-            member_run_numbers=list(scan.run_numbers),
-            order_key="run",  # built/sorted by run; the view picks the display axis
-            canonical_model=None,
-            param_roles={},
-            results_by_run=results_by_run,
-        )
-        self._next_scan_index += 1
-        series.sort_members(runs_by_number)
-        # One scan series owns the active integration window.
-        if self._alc_scan_series_id and self._project_model.batch(self._alc_scan_series_id):
-            self._project_model.remove_batch(self._alc_scan_series_id)
-        self._project_model.add_batch(series)
-        self._alc_scan_series_id = series.batch_id
-        # A built scan is persistent work (P0-2): flag the session modified.
-        self._mark_dirty()
-
-        # Regions/peaks use the old x units; a new scan requires new selections.
-        self._alc_scan_view.clear_analysis()
-        self._render_alc_scan()
-        self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
-
-        # Parameters holds the scan's Baseline/Peaks/RF controls.
-        self._show_panel("fit_parameters")
+        """Build the current count-integral request through the cancellable controller."""
+        self._scan_controller.build()
 
     # x-axis key → (display label, derivative unit label).
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
@@ -12363,7 +12244,12 @@ class MainWindow(QMainWindow):
         excluded_shown = sorted(self._alc_excluded_runs & set(shown_runs))
         included = len(shown_runs) - len(excluded_shown)
         no_axis = len(member_runs) - len(shown_runs)
-        parts = [f"{included} runs in scan"]
+        estimator = {
+            "integral": "Count integral",
+            "differential": "Time-bin mean",
+            "legacy_unspecified": "Stored scan (estimator unspecified)",
+        }
+        parts = [f"{included} runs in scan", estimator[self._scan_controller.estimator()]]
         tooltip_lines: list[str] = []
         if excluded_shown:
             parts.append(f"{len(excluded_shown)} excluded by click")
@@ -12453,7 +12339,7 @@ class MainWindow(QMainWindow):
             error=np.array([s[2] for s in selected], dtype=float),
             run_numbers=[s[3] for s in selected],
             order_key=x_key,
-            method="integral",
+            method=self._scan_controller.estimator(),
             correction_outcomes={
                 point["run"]: {
                     label: CorrectionOutcomes.from_dict(record)
@@ -16804,6 +16690,8 @@ class MainWindow(QMainWindow):
             return
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
+        extra["estimator"] = batch.extra["estimator"]
+        extra["time_window_us"] = batch.extra["time_window_us"]
         extra["mode_active"] = self._alc_mode
         extra["rf_mode"] = self._alc_rf_mode
         extra["rf_fitted"] = self._alc_rf_fitted
@@ -17531,6 +17419,7 @@ class MainWindow(QMainWindow):
 
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
+        self._scan_controller.invalidate()
         self._current_dataset = None
         # The closed session's runs were frozen out of the collector's reach
         # (settle_memory); let the next settle reclaim them.
@@ -17752,6 +17641,7 @@ class MainWindow(QMainWindow):
         Split out of :meth:`closeEvent` so a hosting ProjectShell can run it
         for each tab once the whole quit sequence has been approved.
         """
+        self._scan_controller.shutdown()
         # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit
         # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
         if getattr(self, "_tasks", None) is not None:

@@ -29,7 +29,7 @@ from asymmetry.core.io.periods import (
     source_run_of,
 )
 from asymmetry.core.transform.corrections import CorrectionOutcomes
-from asymmetry.core.transform.integral import FieldScan, build_field_scan
+from asymmetry.core.transform.integral import FieldScan, _resolve_run, build_field_scan
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
     ReductionSettings,
@@ -38,7 +38,7 @@ from asymmetry.core.workflow.reduction import (
 
 
 def build_integral_scan(
-    datasets: Iterable[MuonDataset],
+    datasets: Iterable[MuonDataset | Run],
     settings: ReductionSettings,
     *,
     t_min: float | None = None,
@@ -46,47 +46,51 @@ def build_integral_scan(
     method: str = "integral",
     order_key: str = "field",
 ) -> FieldScan:
-    """Build one integral scan from loaded datasets, reduced under *settings*.
+    """Build a count-integral scan, or an explicit ``differential`` time-bin mean.
 
+    Inputs are explicitly supplied raw Runs or datasets with verified histogram
+    observations. Curve-only datasets retain their explicit mean with default
+    settings; they cannot reconstruct counts or apply count-setting overrides.
     Each run's counts are grouped and corrected under the settings' pair,
     deadtime, t0 and good window. With :data:`GREEN_MINUS_RED` the datasets are
     combined two-period runs and each point is the green period's integral
     asymmetry less the red one's — the RF-resonance and differential-ALC
     observable, with the two periods' errors added in quadrature.
     """
-    runs = [dataset.run for dataset in datasets]
-    if settings.period != GREEN_MINUS_RED:
-        resolved = [_resolved(run, settings) for run in runs]
-        scan = build_field_scan(
-            resolved,
-            t_min=t_min,
-            t_max=t_max,
-            method=method,
-            order_key=order_key,
-        )
-        return _decoded(scan, _source_run_numbers(resolved))
-    two_period = [run for run in runs if period_count(run) == 2]
-    resolved = [
-        replace(
-            run,
-            grouping=dict(
-                resolve_reduction_grouping(run, settings),
-                period_mode=GREEN_MINUS_RED,
-                period_histograms=run.grouping["period_histograms"],
-            ),
-        )
-        for run in two_period
-    ]
-    scan = build_field_scan(resolved, t_min=t_min, t_max=t_max, method=method, order_key=order_key)
+    resolved = []
+    sources = {}
+    excluded = []
+    for item in datasets:
+        if isinstance(item, MuonDataset) and item.histogram_observation is None:
+            if method == "differential" and settings.to_dict() != ReductionSettings().to_dict():
+                raise ValueError(
+                    "Curve-only time-bin means cannot apply reduction settings; "
+                    "reload verified raw data to change count preparation."
+                )
+            resolved.append(item)
+            sources[int(item.run_number)] = source_run_of(item)
+            continue
+        run = _resolve_run(item)
+        sources[int(run.run_number)] = source_run_of(run)
+        if settings.period == GREEN_MINUS_RED and period_count(run) != 2:
+            excluded.append((source_run_of(run), "not a two-period (red/green) run"))
+            continue
+        grouping = resolve_reduction_grouping(run, settings)
+        if settings.period == GREEN_MINUS_RED:
+            grouping.update(
+                period_mode=GREEN_MINUS_RED, period_histograms=run.grouping["period_histograms"]
+            )
+        source = replace(run, grouping=grouping)
+        resolved.append(source)
+    scan = _decoded(
+        build_field_scan(resolved, t_min=t_min, t_max=t_max, method=method, order_key=order_key),
+        sources,
+    )
+    label = "Integral asymmetry" if method == "integral" else "Time-bin mean"
     return replace(
-        _decoded(scan, _source_run_numbers(resolved)),
-        y_label="Integral asymmetry (Green − Red)",
-        excluded=[
-            (int(run.run_number), "not a two-period (red/green) run")
-            for run in runs
-            if period_count(run) != 2
-        ]
-        + scan.excluded,
+        scan,
+        excluded=excluded + scan.excluded,
+        y_label=f"{label} (Green − Red)" if settings.period == GREEN_MINUS_RED else label,
     )
 
 
@@ -108,16 +112,6 @@ def period_field_offset_gauss(runs: Iterable[Run]) -> tuple[float, int] | None:
     slope = float(np.polyfit(hall, main, 1)[0])
     step = float(np.mean([m["period_hall_offset"] for m in logged]))
     return slope * step, len(logged)
-
-
-def _resolved(run: Run, settings: ReductionSettings) -> Run:
-    """*run* carrying the grouping *settings* resolve for it."""
-    return replace(run, grouping=resolve_reduction_grouping(run, settings))
-
-
-def _source_run_numbers(runs: Iterable[Run]) -> dict[int, int]:
-    """Map each *run*'s own number (period-encoded or not) to its source run number."""
-    return {int(run.run_number): source_run_of(run) for run in runs}
 
 
 def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:

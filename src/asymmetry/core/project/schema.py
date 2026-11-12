@@ -16,7 +16,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 36
+CURRENT_SCHEMA_VERSION: int = 37
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -165,6 +165,10 @@ def migrate_to_current(data: dict) -> dict:
         if version == prior:
             version += 1
             migrated = dict(migrated, schema_version=version)
+    if version == 36:
+        from asymmetry.core.project.scan_migration import migrate_scan_identity
+
+        migrated = migrate_scan_identity(migrated) | {"schema_version": 37}
     return migrated
 
 
@@ -576,22 +580,7 @@ def _migrate_v5_to_v6(data: dict) -> dict:
 
 
 def _migrate_v6_to_v7(data: dict) -> dict:
-    """Migrate schema v6 project state to v7.
-
-    v7 generalises the v6 ``Batch`` into a ``FitSeries`` whose members may be
-    runs *or* detector groups, and formalises each representation's
-    ``trend_state``.  The migration is **additive and lossless**:
-
-    * every top-level series (``batches``) gains ``member_kind`` (defaulting to
-      ``"runs"``), an empty ``nuisance_params`` list, and an empty
-      ``member_source_run`` map;
-    * every representation's ``trend_state`` is normalised through
-      :class:`~asymmetry.core.representation.trend_state.TrendState`, which wraps
-      any unrecognised keys under ``legacy`` rather than dropping them.
-
-    Existing v6 projects carry an empty ``batches`` list and empty trend states,
-    so for them this is effectively just the version bump.
-    """
+    """Normalise series member identity and representation trend state."""
     from asymmetry.core.representation.trend_state import TrendState
 
     migrated = dict(data)

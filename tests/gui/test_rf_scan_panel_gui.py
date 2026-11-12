@@ -55,42 +55,37 @@ def _gmr_value(field: float) -> float:
 
 def _two_period_ds(run_number: int, field: float) -> MuonDataset:
     """A two-period (red/green) dataset whose Green − Red curve encodes the model."""
-    time = np.linspace(0.1, 8.0, 48)
-    red = np.zeros_like(time)
-    green = np.full_like(time, _gmr_value(field))
-    err = np.full_like(time, 0.01)
+    from asymmetry.core.transform.preparation import histogram_observation
+
+    time = np.arange(48) * 0.1
+    delta = _gmr_value(field) / 100.0
+    periods = [
+        [Histogram(np.full(48, value), 0.1) for value in pair]
+        for pair in ((10000, 10000), (10000 * (1 + delta), 10000 * (1 - delta)))
+    ]
     meta = {"run_number": run_number, "field": float(field), "temperature": 293.0}
     run = Run(
-        run_number=run_number,
-        # Forward/backward detectors so the *plain* integral path works too
-        # (used by the "RF fit requires an RF scan" guard test); the RF builder
-        # itself reads the period_reduced cache below and ignores these.
-        histograms=[
-            Histogram(counts=np.full(8, 110.0), bin_width=0.1),
-            Histogram(counts=np.full(8, 90.0), bin_width=0.1),
-        ],
-        metadata=dict(meta),
+        run_number,
+        histograms=periods[0],
+        metadata=meta,
         grouping={
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
             "backward_group": 2,
             "alpha": 1.0,
-            "first_good_bin": 0,
-            "last_good_bin": 7,
-            "bunching_factor": 1,
             "period_count": 2,
-            "period_reduced": [
-                (time.copy(), red, err.copy()),
-                (time.copy(), green, err.copy()),
-            ],
+            "period_histograms": periods,
+            "first_good_bin": 0,
+            "last_good_bin": 47,
         },
     )
     return MuonDataset(
-        time=time,
-        asymmetry=np.zeros_like(time),
-        error=err.copy(),
-        metadata=dict(meta),
+        time,
+        np.zeros(48),
+        np.ones(48),
+        metadata=meta,
         run=run,
+        histogram_observation=histogram_observation(run),
     )
 
 

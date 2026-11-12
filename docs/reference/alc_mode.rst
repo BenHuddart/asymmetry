@@ -13,9 +13,9 @@ technique is often called an ALC scan, and the mode is labelled **Integral scan
 Unlike the time-domain fitting workflows, the Integral scan mode does **not**
 fit a model to each spectrum. It reduces every run to one number — the asymmetry integrated
 over a time window — and then lets you fit a baseline and resonance peaks to the
-resulting scan. The method follows WiMDA's count-integral ALC and Mantid's
-``PlotAsymmetryByLogValue``; with :math:`\alpha = 1` it reproduces the WiMDA
-count integral exactly.
+resulting scan. Ordinary and RF scans use the same count-integral estimator.
+Mantid's single-period Integral is the closest count-first reference; program
+comparisons depend on the selected observations, windows, and error conventions.
 
 Every integral reduction uses the independent F/B pair contract in
 :doc:`detector_grouping`: effective sides must be nonempty and disjoint after
@@ -26,10 +26,12 @@ correction settings and raw histograms, but cannot produce an integral value.
 
 Run-level integral preparation shares detector deadtime correction, whole-bin
 alignment, and grouping with the standard :doc:`/explanation/reduction_pipeline`.
-Asymmetry also checks that enabled background correction produces a constant
-subtracted level, as in range, tail-fit, or fixed mode. Reference-run subtraction
-is unavailable for this run-level operation because it does not resolve a
-reference spectrum.
+Enabled background correction uses the same prepared observations as the
+time-domain reduction, including an explicitly resolved reference-run background.
+A verified histogram observation retains the effective pair, timing, α/β,
+correction settings, and reference used to produce it. Asymmetry also checks
+count-replay provenance for a new integral request: attaching a Run to an
+arbitrary curve does not establish it.
 Missing or incomplete File deadtimes leave the entire deadtime operation
 unapplied with a warning and permit integral preparation.
 An unavailable or failed correction prevents an integral value rather than silently
@@ -52,13 +54,20 @@ asymmetry value:
 
 .. math::
 
-   A = \frac{\sum F - \alpha \sum B}{\sum F + \alpha \sum B},
+   A = \frac{\sum F - \alpha \sum B}{\beta \sum F + \alpha \sum B},
 
 where the sums run over the good bins inside the window, :math:`F` and :math:`B`
-are the forward and backward grouped counts, and :math:`\alpha` is the current
-calibration constant from your detector grouping. Summing the counts *before* forming
-the ratio (the WiMDA "count integral") gives Poisson-weighted statistics across
-the whole window rather than averaging per-bin asymmetries.
+are the corrected forward and backward grouped counts, and :math:`\alpha`
+and :math:`\beta` are the chosen detector balances. There is no division by
+window length. Errors propagate the prepared count variances, conditional on
+the chosen calibration; this is not a calibration-uncertainty calculation.
+
+The API and CLI also offer ``method="differential"`` / ``--method differential``:
+the explicit equal-time-bin mean of pointwise asymmetries. It is a distinct
+observable, not **dA/dB**. For example, red counts F=[6000, 10], B=[4000, 90]
+and green counts F=[6000, 90], B=[4000, 10], with α=β=1, give a count-integral
+G−R of 0.015841584158415828 fraction, while the explicit time-bin mean is 0.8.
+Native-bin counts determine the integral independently of display bunching.
 
 Each value is plotted against the run's swept variable to form the scan. A
 resonance shifts the time-averaged asymmetry, so it shows up directly as a
@@ -86,8 +95,7 @@ When it is active:
 * the **Parameters** dock shows the scan's analysis controls — the
   **Baseline**, **Peaks**, and **RF resonance** sections.
 
-This is the key change from earlier versions: the scan is the *main window*, not
-a panel tucked into a dock. In scan mode you no longer interact with the per-run
+The central workspace displays the scan. In scan mode you no longer interact with the per-run
 time spectra — they are only integrated — so the scan occupies the centre and
 the analysis controls stay to the side.
 
@@ -122,6 +130,20 @@ why (see :ref:`which runs are in the scan <alc-scan-membership>`). Runs missing
 the chosen x-axis log (for example, a run with no recorded field on a field
 scan) are dropped and named there. Re-pressing **Build Scan** after changing the
 window rebuilds the scan in place — it does not accumulate copies.
+
+**Build Scan** opens an **Integral scan** progress dialog with **Cancel**.
+Count preparation runs on a worker while the interface remains responsive.
+Cancellation, failure, or a changed request retains the displayed result; a
+superseded request cannot publish a stale scan. Baseline, peak, and RF fitting
+retain their own execution behaviour.
+
+New scans save their estimator and requested time window with the computed
+results. Stored scans without evidenced estimator identity remain labelled
+``Stored scan (estimator unspecified)`` and retain their values. Curve-only
+historical inputs support the explicit G−R time-bin mean through the API.
+A new count-integral or pooled G+R request needs verified count replay; its
+reload explanation applies to that operation and does not prevent loading or
+inspecting the input or its saved results.
 
 .. _alc-integration-window:
 
@@ -490,9 +512,9 @@ run): a W-shaped double dip whose two resonance fields give the muon
 It has first-class support on the integral-scan path:
 
 * In ALC mode, tick **RF resonance (Green − Red)** in the build panel before
-  **Build Scan**. Each two-period run is reduced to its Green − Red period
-  difference and integrated over the window — no hand-assembly of separate
-  red/green scans.
+  **Build Scan**. Each period's corrected counts are integrated over the window,
+  then the green ratio is reduced by the red ratio using the shared chosen
+  calibration.
 * In the **Parameters** dock, open the **RF resonance (A_µ, A_p)** section, set
   **ν_RF** (the RF frequency, held fixed) and the **A_µ₀ / A_p₀** starting
   guesses, and press **Fit RF resonance**. The fit uses the exact muon + electron
@@ -515,12 +537,11 @@ example: the benzene scan, DEVA runs 56426–56462:
    # Green − Red integral scan vs field; non-two-period runs land in `excluded`.
    scan = build_rf_difference_scan(combined, order_key="field", t_min=0.0, t_max=1.0)
    result = fit_rf_resonance(scan, nu_rf=218.5)  # A_µ₀/A_p₀ default to 515/124
-   # A_mu ~ 516 MHz, A_p ~ 124 MHz (ground truth 514.8 / 124.6); resonances ~775/865 G.
 
-The two RF resonances sit at ~775 G and ~865 G (splitting ~90 G), recovering the
-literature ``A_µ`` and ``A_p``. Because the difference is taken **within** each
-run, mixing the RF-on and RF-off periods into one ordinary scan instead would
-shift the apparent resonance positions and badly bias the fitted ``A_p``.
+The fit's inferred couplings depend on the chosen time window, calibration,
+and acquisition conditions. An estimator-consistency check does not establish
+those quantities as experimental truth. Keep the within-run period contrast
+when that is the measured RF observable.
 
 The lower-level route — reducing each period separately with
 :func:`~asymmetry.core.io.periods.select_period` and subtracting two
@@ -542,7 +563,7 @@ Saving and reopening
 --------------------
 
 The scan and its full analysis are saved inside the project (``.asymp``) file.
-Reopening the project rebuilds the scan, restores the x-axis choice, the baseline
+Reopening the project restores the stored scalar values, the x-axis choice, the baseline
 regions, the peaks, and any per-point exclusions, re-runs whichever fits were
 active so the overlays and read-out reappear, and returns to the **Integral
 scan** representation if it was active when you saved — so you resume exactly
@@ -621,6 +642,20 @@ These input checks do not establish agreement of integral endpoints or timing
 conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
 for the versioned grouping observations and sources.
 
+Mantid's single-period ``Integral`` integrates counts before forming asymmetry.
+Its dual-period contrast is detector-wise and differs from :math:`A_G-A_R`;
+its ``Differential`` integrates a pointwise curve rather than taking Asymmetry's
+equal-time-bin mean. Mantid's histogram integration uses edge-based windows,
+whereas Asymmetry selects whole native bins by their centres.
+
+WiMDA 1.326's dedicated ALC route starts from acquisition-integrated columns;
+it does not establish exact arbitrary histogram-window or error agreement.
+musrfit 1.12.1 packs counts before its fitting ratio. Checked packed controls
+agree only on 22 interior points per case at export precision; first/endpoint
+differences remain unresolved. No complete packed-output, fresh native WiMDA
+ALC/RF, full Mantid, or four-program numerical agreement is claimed. See
+:doc:`/explanation/comparison` for the public method references and limits.
+
 See also
 --------
 
@@ -633,12 +668,11 @@ See also
 Period statistics
 -----------------
 
-For G+R, both count-integral and differential estimators use one pooled prepared
-count observation with group background once. The integral estimator sums its
-counts before the ratio; the differential estimator averages its per-bin ratios.
-G−R differences independently reduced set estimates on common observed native
-support. One explicit α/β applies throughout. RF scan construction integrates the
-selected time curve and returns fractional values/errors; time curves use percent.
-A historical curve-only record can reproduce a stored G−R, but pooled G+R requires
-verified raw-count preparation and otherwise reports a reload reason. Red and
-Green labels alone do not identify the RF acquisition conditions.
+G+R pools prepared corrected counts before the selected estimator, preserving
+each acquired period's correction and timing before pooling. G−R subtracts the
+two period asymmetries with one shared chosen α/β and common observed native
+support. Red and Green select their own acquired periods. Inclusive time-window
+bounds select whole bins by native centres in µs; omitted bounds use the good-bin
+window. Core scan values/errors are fractions; the GUI displays and saves scan
+values in percent. Red and Green labels alone do not identify the RF acquisition
+conditions.

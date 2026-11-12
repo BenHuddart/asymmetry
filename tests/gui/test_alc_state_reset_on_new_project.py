@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication  # type: ignore  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
+from asymmetry.core.transform.preparation import histogram_observation  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 
 
@@ -58,6 +59,7 @@ def _ds(run_number: int, fwd: float, bwd: float, field: float) -> MuonDataset:
         error=np.full(n, 0.01),
         metadata=dict(meta),
         run=run,
+        histogram_observation=histogram_observation(run),
     )
 
 

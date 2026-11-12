@@ -1622,3 +1622,35 @@ source into its amplitude, phase, and normalisation. This checks point estimates
 after both births; it does not test native onset, bin integration, or error
 equivalence. Independent count and full-nuisance information controls provide
 the separate scientific targets.
+
+
+Count-integral condition scans
+------------------------------
+
+Asymmetry sums the selected corrected native F/B counts before forming
+:math:`(F-\alpha B)/(\beta F+\alpha B)` for ordinary and RF scans. G−R is
+:math:`A_G-A_R` with shared chosen calibration; G+R pools prepared counts before
+the ratio. The explicit ``differential`` method is an equal-time-bin mean,
+distinct from a field derivative. Windows include whole bins by native centres;
+errors remain conditional on calibration. See :doc:`/reference/alc_mode`.
+
+In Mantid's `PlotAsymmetryByLogValue
+<https://docs.mantidproject.org/v6.11.0/algorithms/PlotAsymmetryByLogValue-v1.html>`_,
+single-period Integral uses count-first ordering. Its dual-period detector-wise
+contrast and Differential operation are different observables; Integration's
+histogram-edge bounds also differ from Asymmetry's centre selection. Full Mantid
+execution is unavailable for this comparison.
+
+WiMDA 1.326's dedicated ALC route starts from integrated acquisition columns;
+arbitrary histogram-window and uncertainty equivalence is not established. Its
+`public overview <https://shadow.nd.rl.ac.uk/wimda/>`_ describes the program;
+no fresh native ALC/RF numeric replay supports this comparison.
+
+musrfit 1.12.1 (revision 708f777b, ROOT 6.40.04) packs counts before forming its
+fitting ratio, as described in its `user manual
+<https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_. Executed positive-count
+and alternating-count controls with α=β=1, fixed zero background, and packing 20
+agree on 22 interior values/errors per case within 5 × 10⁻⁷ (ASCII precision).
+The first packed value differs and the final nominal group is absent. Those
+unresolved boundaries are excluded from agreement; no whole-output or
+four-program numerical equivalence is claimed.

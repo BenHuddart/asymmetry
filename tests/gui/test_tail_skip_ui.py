@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.transform.corrections import correction_warnings
+from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests._qt_helpers import wait_for
@@ -104,6 +105,8 @@ def test_integral_scan_series_and_restored_provenance_keep_skip(qapp):
             window._data_browser.add_dataset(dataset)
             restored._data_browser.add_dataset(dataset)
         window._plot_workspace.set_active_view("integral_scan")
+        for dataset in datasets:
+            dataset.histogram_observation = histogram_observation(dataset.run)
         window._fit_panel.set_datasets(datasets)
         window._on_scan_requested()
         series = window._project_model.batch(window._alc_scan_series_id)

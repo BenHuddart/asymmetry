@@ -303,6 +303,8 @@ def test_fitseries_extra_round_trips():
         "kind": "alc_scan",
         "regions": [[0.0, 100.0]],
         "baseline_fitted": True,
+        "estimator": "legacy_unspecified",
+        "time_window_us": None,
     }
     assert FitSeries("b", _FB).extra == {}
     assert FitSeries.from_dict(FitSeries("b", _FB).to_dict()).extra == {}

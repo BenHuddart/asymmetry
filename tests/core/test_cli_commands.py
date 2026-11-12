@@ -811,28 +811,27 @@ def _two_identical_periods(
     monkeypatch: pytest.MonkeyPatch, single_period_run: int | None = None
 ) -> None:
     """Make every loaded run (bar *single_period_run*) a two-period run with red equal to green."""
-    from asymmetry.core.data.dataset import Histogram
-    from asymmetry.core.io import load as real_load
+    from dataclasses import replace
 
-    def _clone(histogram):
-        return Histogram(
-            counts=histogram.counts.copy(),
-            bin_width=histogram.bin_width,
-            t0_bin=histogram.t0_bin,
-            good_bin_start=histogram.good_bin_start,
-            good_bin_end=histogram.good_bin_end,
-        )
+    from asymmetry.core.io import load as real_load
+    from asymmetry.core.io.periods import period_run
+    from asymmetry.core.transform.preparation import histogram_observation
 
     def _load_two_periods(path):
         dataset = real_load(path)
         if dataset.run_number == single_period_run:
             return dataset
+        histograms = dataset.run.histograms
         dataset.run.grouping["period_histograms"] = [
-            [_clone(histogram) for histogram in dataset.run.histograms] for _period in range(2)
+            [replace(hist, counts=hist.counts.copy()) for hist in histograms] for _ in range(2)
         ]
         reduced = (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy())
         dataset.run.grouping["period_reduced"] = [reduced, reduced]
         dataset.run.metadata["period_count"] = 2
+        dataset.histogram_observation = replace(
+            histogram_observation(dataset.run),
+            cached_periods=tuple(histogram_observation(period_run(dataset.run, i)) for i in (0, 1)),
+        )
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)

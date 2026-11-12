@@ -28,7 +28,9 @@ class AlcFieldScanScenario(Scenario):
         window = MainWindow()
         window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
-        datasets = make_alc_field_scan()
+        from asymmetry.core.simulate import reduce_run_to_dataset
+
+        datasets = [reduce_run_to_dataset(ds.run) for ds in make_alc_field_scan()]
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
         window._data_browser.create_data_group(
@@ -40,12 +42,13 @@ class AlcFieldScanScenario(Scenario):
         _process_events_for(milliseconds=200)
 
         # Enter ALC mode (the integral-scan view) and build the scan — one
-        # integral-asymmetry point per run. The build is synchronous.
+        # count-integral point per run through the cancellable worker.
         window._plot_workspace.set_active_view("integral_scan")
         _process_events_for(milliseconds=150)
         window._alc_fit_panel.build_requested.emit()
         _process_events_for(milliseconds=300)
 
+        assert "Count integral" in window._alc_scan_view._provenance_label.text()
         view = window._alc_scan_view
 
         # Baseline: a linear fit over the two non-resonant edges (the dip is
