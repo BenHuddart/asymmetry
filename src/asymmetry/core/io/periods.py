@@ -29,7 +29,7 @@ from asymmetry.core.transform.integral import (
     _order_value,
     _validate_method,
     build_field_scan,
-    integrate_curve,
+    reduce_period_integral,
 )
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.reference_scale import ReferenceExposure
@@ -907,11 +907,15 @@ def build_rf_difference_scan(
             continue
         time, value, error = combine_period_asymmetry(*curves[0], *curves[1], mode_key)
         try:
-            value, error = integrate_curve(time, value, error, t_min=t_min, t_max=t_max)
+            result = reduce_period_integral(
+                MuonDataset(time, value, error), method="differential", t_min=t_min, t_max=t_max
+            )
         except ValueError as exc:
             excluded.append((number, str(exc)))
             continue
-        points.append(FieldScanPoint(number, x, value / 100.0, error / 100.0))
+        points.append(
+            FieldScanPoint(number, x, result.value, result.error, observation=result.observation)
+        )
     scan = build_field_scan(
         count_inputs,
         t_min=t_min,
@@ -925,8 +929,10 @@ def build_rf_difference_scan(
             acquired_period_histograms(run.grouping, i) is not None for i in (0, 1)
         ),
     )
-    points.extend(scan.points)
+    count_points = scan.points
+    points.extend(count_points)
     points.sort(key=lambda p: (p.x, p.run_number))
+    positions = {id(point): i for i, point in enumerate(points)}
     label = "Green − Red" if mode_key == str(PeriodMode.GREEN_MINUS_RED) else "Green + Red"
     return replace(
         scan,
@@ -934,6 +940,11 @@ def build_rf_difference_scan(
         value=np.array([p.value for p in points]),
         error=np.array([p.error for p in points]),
         run_numbers=[p.run_number for p in points],
+        observations=tuple(p.observation for p in points),
+        correlated_pairs=tuple(
+            (positions[id(count_points[a])], positions[id(count_points[b])])
+            for a, b in scan.correlated_pairs
+        ),
         excluded=excluded
         + [
             (n, "not a two-period (red/green) run" if reason == "excluded by filter" else reason)

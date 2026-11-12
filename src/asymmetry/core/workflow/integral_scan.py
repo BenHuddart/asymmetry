@@ -23,6 +23,7 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.scan_observations import scan_fit_input, usable_scan_observations
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
     period_count,
@@ -30,6 +31,7 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.integral import FieldScan, _resolve_run, build_field_scan
+from asymmetry.core.transform.scalar_observation import ScalarObservation
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
     ReductionSettings,
@@ -55,7 +57,7 @@ def build_integral_scan(
     deadtime, t0 and good window. With :data:`GREEN_MINUS_RED` the datasets are
     combined two-period runs and each point is the green period's integral
     asymmetry less the red one's — the RF-resonance and differential-ALC
-    observable, with the two periods' errors added in quadrature.
+    observable, retaining known reused reference counting responses.
     """
     resolved = []
     sources = {}
@@ -161,12 +163,17 @@ def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
         "units": scan.units.value,
         "x_label": scan.x_label,
         "y_label": scan.y_label,
+        "source_assumption": scan.source_assumption,
+        "correlated_pairs": [list(pair) for pair in scan.correlated_pairs],
         "points": [
             {
                 "run": point.run_number,
                 "x": point.x,
-                "value": point.value,
-                "error": point.error,
+                "value": point.value if np.isfinite(point.value) else None,
+                "error": point.error if np.isfinite(point.error) else None,
+                "observation": point.observation.to_dict()
+                if point.observation is not None
+                else None,
                 "correction_outcomes": {
                     label: record.to_dict() for label, record in point.corrections.items()
                 },
@@ -195,6 +202,16 @@ def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
         y_label=data["y_label"],
         units=AsymmetryUnit(data["units"]),
         excluded=[(entry["run"], entry["reason"]) for entry in data["excluded"]],
+        observations=tuple(
+            ScalarObservation.from_dict(p["observation"])
+            if p.get("observation") is not None
+            else None
+            for p in points
+        ),
+        correlated_pairs=tuple(tuple(pair) for pair in data.get("correlated_pairs", ())),
+        source_assumption=data.get(
+            "source_assumption", "Unknown acquisition identity is assumed distinct."
+        ),
         correction_outcomes={
             int(point["run"]): {
                 label: CorrectionOutcomes.from_dict(record)
@@ -213,6 +230,7 @@ def _parameters(
     fixed: Mapping[str, float] | None,
     bounds: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[Any, ParameterSet]:
+    scan = scan_fit_input(scan)
     model = as_composite_model(expression)
     fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
     unknown = set(fixed) - set(model.param_names)
@@ -276,9 +294,10 @@ def fit_integral_scan(
     """
     # Dips outside a --xmin/--xmax window are still the scan's: they are
     # searched for on the whole of it.
-    whole_scan = scan
+    whole_scan = scan.select(usable_scan_observations(scan)[0])
     if x_min is not None or x_max is not None:
         scan = _cropped(scan, x_min, x_max)
+    scan = scan_fit_input(scan)
     fitted_scan = scan
     baseline_payload = None
     baseline = None
@@ -371,6 +390,11 @@ def fit_integral_scan(
         if result.success
         else fit_payload["resonance_windows"]
     )
+    fit_payload["next_dip_limit"] = (
+        "Known shared counting observations restrict independent-error dip checks."
+        if whole_scan.correlated_pairs
+        else None
+    )
     fit_payload["next_dip_windows"] = (
         (named if result.success else []) + _further_dips(whole_scan, named)
         if any(c.name in _LCR_LINES for c in model.components)
@@ -384,13 +408,7 @@ def _cropped(scan: FieldScan, x_min: float | None, x_max: float | None) -> Field
     inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
         scan.x <= (np.inf if x_max is None else x_max)
     )
-    return replace(
-        scan,
-        x=scan.x[inside],
-        value=scan.value[inside],
-        error=scan.error[inside],
-        run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
-    )
+    return scan.select(inside)
 
 
 #: A line is a dip only with this many widths of data on each side of its
@@ -415,6 +433,7 @@ def candidate_dip_windows(scan: FieldScan) -> list[dict[str, float]]:
     """
     from scipy.signal import find_peaks
 
+    scan = scan.select(usable_scan_observations(scan)[0])
     if scan.order_key != "field" or scan.n_points < _WINDOW_MIN_POINTS:
         return []
     peaks, properties = find_peaks(
@@ -448,7 +467,7 @@ def _held_line(scan: FieldScan, window: Mapping[str, Any]) -> float | None:
     window's edge or its width to a bound, or finds no significant depth.
     """
     part = _cropped(scan, window["x_min"], window["x_max"])
-    if part.x.size < _WINDOW_MIN_POINTS:
+    if part.x.size < _WINDOW_MIN_POINTS or part.correlated_pairs:
         return None
     model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
     result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)

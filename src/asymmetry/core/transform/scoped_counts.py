@@ -189,8 +189,6 @@ class ScopedCounts:
                 )
                 terms.append(Influence(hist.counting_observation, direct))
         noise = CountingNoise(tuple(terms)) if terms else None
-        if noise is not None and variance is None:
-            variance = total.copy()
         return GroupCounts(total, variance, noise=noise)
 
 

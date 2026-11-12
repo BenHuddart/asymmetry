@@ -27,6 +27,7 @@ from asymmetry.cli._reduction import (
 )
 from asymmetry.cli._runs import range_text, resolve_runs, run_spec
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli.commands.scan_observations import repeated_points as _repeated_points
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -349,6 +350,9 @@ def _render(result: dict, settings, notes: list[str]) -> str:
         "difference. Late low-count bins can dominate its uncertainty; for an integrated "
         "RF or field-scan contrast use --method integral with the same --period and window."
     )
+    from asymmetry.cli.commands.scan_observations import observation_lines
+
+    lines.extend(observation_lines(result["scan"]))
     offset = result["period_field_offset"]
     if offset is not None:
         lines.append(
@@ -457,13 +461,19 @@ def _notes(
     fit = result["fit"]
     offset = result["period_field_offset"]
     lines: list[str] = []
-    repeats = _repeated_points(result["scan"]["points"])
+    repeats = _repeated_points(result["scan"]["points"], result["scan"].get("correlated_pairs", ()))
     if repeats:
         lines.append(
             f"NOTE: the scan measures {result['scan']['order_key']} "
             + "; ".join(
                 f"{x:g} more than once (runs {', '.join(str(p['run']) for p in group)}: "
-                + ("they differ by more than three errors" if differ else "they agree")
+                + (
+                    "uncertainty unavailable"
+                    if differ is None
+                    else "they differ by more than three errors"
+                    if differ
+                    else "they agree"
+                )
                 + ")"
                 for x, group, differ in repeats
             )
@@ -799,30 +809,6 @@ def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, d
                     f"scan shows and another lacks is a finding."
                 )
     return notes
-
-
-def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]:
-    """``(x, points, differ)`` for each x measured more than once, *differ* past three errors."""
-    groups: dict[float, list[dict]] = {}
-    for point in points:
-        groups.setdefault(point["x"], []).append(point)
-    return [
-        (
-            x,
-            group,
-            any(
-                abs(a["value"] - b["value"]) > _DISTINCT_REPEAT * math.hypot(a["error"], b["error"])
-                for a in group
-                for b in group
-            ),
-        )
-        for x, group in sorted(groups.items())
-        if len(group) > 1
-    ]
-
-
-#: Repeated points further apart than this many combined errors did not come back.
-_DISTINCT_REPEAT = 3.0
 
 
 def _scaled(fit: dict, name: str) -> float:
