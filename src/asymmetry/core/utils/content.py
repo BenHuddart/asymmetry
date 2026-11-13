@@ -33,7 +33,7 @@ def hash_file(
     digest = hashlib.sha256()
     try:
         stream = path.open("rb")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise ContentReadError(str(exc)) from exc
     with stream:
         try:

@@ -153,6 +153,7 @@ def test_reference_provenance_records_scale_and_public_identity(histograms):
         reference_resolver=lambda _: reference,
     )
     assert result.corrections.background.effective["reference"] == {
+        "content_identity": None,
         "run_number": 42,
         "file_name": "reference.nxs",
         "source_file": "reference.nxs",

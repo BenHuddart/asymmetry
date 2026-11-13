@@ -118,7 +118,13 @@ def verify_sources(
     for source, candidate in zip(sources, paths, strict=True):
         checkpoint()
         path = Path(candidate)
-        key = path.resolve()
+        try:
+            key = path.resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            results.append(
+                SourceVerification(source, str(candidate), "unreadable", diagnostic=str(exc))
+            )
+            continue
         if key not in cache:
             try:
                 observed = ContentIdentity.read(path, checkpoint=checkpoint, progress=progress)
@@ -141,3 +147,57 @@ def verify_sources(
         results.append(SourceVerification(source, str(candidate), status, observed, diagnostic))
     checkpoint()
     return tuple(results)
+
+
+def constituent_sources_for_project(dataset) -> list[dict]:
+    """Retain saved term expectations, with fresh observations kept separate.
+
+    Original role/order/selection/coefficient context belongs to the saved
+    combination. A current reconstructed curve has its own result recipe.
+    """
+    from copy import deepcopy
+
+    current = dataset.metadata.get("combination", {}).get("constituents", [])
+    saved = dataset.metadata.get("constituent_source_expectations")
+    if saved is None:
+        return deepcopy(current)
+    result = deepcopy(saved)
+    for row in result:
+        original = SourceBinding.from_dict(row.get("source_binding"))
+        matches = [
+            r
+            for r in current
+            if all(
+                row.get(k) is None or r.get(k) == row[k]
+                for k in (
+                    "source_run_number",
+                    "data_period_number",
+                    "dae_period_number",
+                    "input_ordinal",
+                )
+            )
+        ]
+        match = matches[0] if len(matches) == 1 else None
+        observed = (
+            SourceBinding.from_dict(match.get("source_binding")).observed
+            if match is not None
+            else None
+        )
+        row["source_binding"] = SourceBinding(original.expected, observed).to_dict()
+    return result
+
+
+def restore_constituent_expectations(dataset, saved: list[dict] | None) -> None:
+    """Transfer historical expected rows; absence stays unknown after reconstruction."""
+    from copy import deepcopy
+
+    rows = deepcopy(
+        saved
+        if saved is not None
+        else dataset.metadata.get("combination", {}).get("constituents", [])
+    )
+    if saved is None:
+        for row in rows:
+            observed = SourceBinding.from_dict(row.get("source_binding")).observed
+            row["source_binding"] = SourceBinding(None, observed).to_dict()
+    dataset.metadata["constituent_source_expectations"] = rows

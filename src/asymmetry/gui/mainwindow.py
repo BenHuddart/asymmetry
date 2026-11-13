@@ -316,7 +316,10 @@ from asymmetry.gui.utils.reduction_cache import (
     capture_histogram_observation,
     histogram_content_key,
 )
-from asymmetry.gui.utils.reference_timing import prepare_reference_timing
+from asymmetry.gui.utils.reference_timing import (
+    load_reference_acquisition,
+    prepare_reference_timing,
+)
 from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -5808,6 +5811,7 @@ class MainWindow(QMainWindow):
             sample_exposure=ReferenceExposure.from_grouping(grouping),
             datasets=self._data_browser.get_all_datasets(),
             cache=self._background_run_cache,
+            reference_loader=functools.partial(load_reference_acquisition, parent=self),
         )
 
         return prepare_reference_timing(reference, grouping, self, cache=self._reduction_cache)
@@ -16352,6 +16356,7 @@ class MainWindow(QMainWindow):
     def collect_project_state(self) -> dict:
         """Snapshot current application state with live reference timing requests."""
         from asymmetry import __version__
+        from asymmetry.core.data.acquisition import constituent_sources_for_project
 
         refresh_reference_timing_requests(
             self._data_browser.get_all_datasets(),
@@ -16415,10 +16420,10 @@ class MainWindow(QMainWindow):
             entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
-                "constituent_sources": self._data_browser._datasets[crn]
-                .metadata.get("combination", {})
-                .get("constituents", []),
             }
+            source_facts = constituent_sources_for_project(self._data_browser._datasets[crn])
+            if source_facts:
+                entry["constituent_sources"] = source_facts
             if combined_methods.get(crn) == "subtract_signed":
                 entry["operation"] = "subtract_signed"
             elif combined_signs.get(crn, 1) == -1:
@@ -16852,9 +16857,7 @@ class MainWindow(QMainWindow):
                     resolved_paths[rn] = candidate
 
         # ── load source files ──────────────────────────────────────────
-        # Prefetch every unique source file on a worker thread (progress
-        # dialog + cancel); the per-dataset loop below then resolves from
-        # this cache. Cached failures retain their per-run warning.
+        # Prefetch unique sources on the worker; cached failures keep per-run warnings.
         unique_paths: list[str] = []
         for ds_info in datasets_info:
             resolved = resolved_paths.get(ds_info.get("run_number"))
@@ -16888,13 +16891,7 @@ class MainWindow(QMainWindow):
             self._log_panel.log(message, tag="grouping")
         combined_datasets_info = state.get("combined_datasets", [])
         with self._browser_batch():
-            # Each dataset's re-application (profile resolve + grouping apply +
-            # asymmetry reduction) is bounded but the loop is O(project size);
-            # run the items one per event-loop turn behind a cancellable
-            # progress dialog instead of freezing the window for the whole
-            # project (50–200 runs in a scan project). The bodies must stay on
-            # the GUI thread: they mutate run/grouping state, the browser, and
-            # the log panel.
+            # Apply completed datasets on the GUI thread between event-loop turns.
             def _restore_one_dataset(ds_info: dict) -> None:
                 rn = ds_info.get("run_number")
                 source_file = ds_info.get("source_file", "")
@@ -16961,7 +16958,7 @@ class MainWindow(QMainWindow):
                         return
                     from asymmetry.core.io.acquisition import restore_source_binding
 
-                    dataset = restore_source_binding(dataset, ds_info.get("source_binding"))
+                    dataset.run = restore_source_binding(dataset, ds_info.get("source_binding")).run
 
                     overrides = dict(ds_info.get("metadata_overrides", {}))
                     saved_direction = overrides.pop("field_direction", None)
@@ -17080,6 +17077,7 @@ class MainWindow(QMainWindow):
                             operation=operation,
                             combined_run_number=int(combined_info["combined_run_number"]),
                             metadata_overrides=combined_info.get("metadata_overrides"),
+                            source_expectations=combined_info.get("constituent_sources"),
                         )
                     except CombineError as exc:
                         self._data_browser.restore_unavailable_combination(combined_info, str(exc))

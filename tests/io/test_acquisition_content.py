@@ -400,3 +400,85 @@ def test_result_recipe_inventory_retains_unknown_and_ordered_signed_terms():
         (1, 1, 1.0, None),
         (2, 2, -2.0, None),
     ]
+
+
+@pytest.mark.parametrize("candidate", ["loop", "bad\x00name"])
+def test_unresolvable_locator_is_unreadable(tmp_path, candidate):
+    path = tmp_path / candidate
+    if candidate == "loop":
+        path.symlink_to(path)
+    fact = verify_sources([SourceDeclaration("sample", str(path), None)])[0]
+    assert fact.status == "unreadable" and fact.observed is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_file", []),
+        ("coefficient", "1"),
+        ("coefficient", float("nan")),
+        ("coefficient", True),
+        ("period_number", True),
+        ("data_period_number", 0),
+        ("input_ordinal", -1),
+        ("dae_period_number", "2"),
+    ],
+)
+def test_new_constituent_codec_rejects_malformed_owned_values(field, value):
+    from asymmetry.core.project import ProjectValidationError
+
+    row = {"source_file": "missing.nxs", "source_binding": SourceBinding().to_dict(), field: value}
+    with pytest.raises(ProjectValidationError, match="constituent_sources"):
+        prepare_project(
+            {
+                "schema_version": CURRENT_SCHEMA_VERSION,
+                "datasets": [],
+                "combined_datasets": [
+                    {
+                        "combined_run_number": -1,
+                        "source_run_numbers": [1, 2],
+                        "constituent_sources": [row],
+                    }
+                ],
+            }
+        )
+
+
+def test_prepared_inventory_keeps_saved_fit_and_series_expectations():
+    from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
+    from asymmetry.core.representation.project_model import ProjectModel
+
+    identity = ContentIdentity("d" * 64)
+    recipe = {
+        "version": 1,
+        "operation": "prepared_counts",
+        "source": {
+            "source_file": "old.nxs",
+            "run_number": 1,
+            "content_identity": identity.to_dict(),
+        },
+    }
+    result = {"input_attribution": {"effective_recipe": recipe}}
+    model = ProjectModel()
+    rep = model.ensure_dataset(1).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(fit_id="history", result=result)
+    model.add_batch(
+        FitSeries(
+            "series",
+            RepresentationType.TIME_FB_ASYMMETRY,
+            member_run_numbers=[1],
+            results_by_run={1: result},
+        )
+    )
+    state = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 1, "source_file": "current.nxs"}],
+    }
+    model.write_to_project_state(state)
+    prepared = prepare_project(state)
+    assert [(d.source_file, d.expected) for d in prepared.sources] == [
+        ("current.nxs", None),
+        ("old.nxs", identity),
+        ("old.nxs", identity),
+    ]
+    assert prepared.state == state

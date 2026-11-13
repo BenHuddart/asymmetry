@@ -190,7 +190,9 @@ One complete hash per candidate path is shared within a verification request,
 while all source terms and coefficients remain distinct. ``progress(done, total)``
 reports bytes for each file; ``checkpoint()`` may raise to cancel between chunks.
 Cancellation returns no partial result. Neither operation mutates project history
-or recomputes scientific results. Call long operations on a worker in GUI clients.
+or recomputes scientific results. Call long operations on a worker in GUI clients. The desktop disk-reference
+fallback uses its existing cancellable scientific-input worker; collection and
+serialization perform no acquisition reads.
 
 .. automodule:: asymmetry.core.data.acquisition
    :members:

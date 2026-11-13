@@ -1070,7 +1070,9 @@ including a legacy unknown, alongside the identity observed with newly loaded
 counts. Saving does not hash files, promote a new observation to an old
 expectation, or certify historical fits, recipes, or calibration records.
 Combined entries retain ordered ``constituent_sources`` with their own bindings,
-coefficients, and period selections. Frozen calibration records and supported
+coefficients, and period selections. Reconstruction retains their historical
+expectations independently of dataset-level expectations and fresh curve recipes,
+including when a combination remains unavailable. Frozen calibration records and supported
 result recipes retain the acquisition facts available to their calculation;
 reference results describe the counts consumed, including retained cached inputs.
 Reference requests may record an expected ``content_identity`` independently.
@@ -1078,7 +1080,8 @@ Absent identities remain unknown.
 
 Structural project preparation performs no acquisition I/O. Its ``sources``
 inventory exposes sample, constituent, reference-request, calibration, and
-recorded representation-result declarations for explicit core verification.
+recorded representation, saved-fit, and series-result declarations for explicit
+core verification.
 ``EffectiveReductionRecipe.sources()`` also exposes captured result inputs.
 No persisted status is accepted as a fresh content comparison. Current project
 opening does not automatically verify content before applying state or provide

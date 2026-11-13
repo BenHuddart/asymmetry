@@ -83,13 +83,16 @@ def load(
     return select_period(result, period)
 
 
-def load_background_run(payload: dict) -> MuonDataset:
+def load_background_run(payload: dict, *, checkpoint=None) -> MuonDataset:
     """Load exactly the declared reference acquisition and acquired period."""
     from asymmetry.core.io.reference_selection import reference_selection, resolve_loaded_reference
 
     if not isinstance(payload, dict) or not payload.get("source_file"):
         raise ValueError("background_run payload has no source_file")
-    result = load(str(payload["source_file"]))
+    result = load(
+        str(payload["source_file"]),
+        **({"checkpoint": checkpoint} if checkpoint is not None else {}),
+    )
     if isinstance(result, list) and len(result) == 1:
         result = result[0]
     candidates = result if isinstance(result, list) else [result]
@@ -130,6 +133,7 @@ def resolve_background_reference(
     datasets: Iterable[MuonDataset] = (),
     cache: dict | None = None,
     allow_file: bool = True,
+    reference_loader=None,
 ) -> BackgroundReference | None:
     """Resolve declared source/period, preferring live inputs over disk snapshots.
 
@@ -173,7 +177,8 @@ def resolve_background_reference(
                 payload,
             )
         if reference_run is None:
-            reference_run = load_background_run(payload).run
+            loader = load_background_run if reference_loader is None else reference_loader
+            reference_run = loader(payload).run
             if cache is not None and reference_run is not None:
                 selection = reference_selection(reference_run)
                 source_key = (

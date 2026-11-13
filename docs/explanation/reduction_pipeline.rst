@@ -412,5 +412,6 @@ calibrations are not completed by consulting today's files.
 The publishable recipe projection retains these digests and interpretation facts
 while omitting local locators and diagnostic prose. Whole-file identity records
 bytes, independently of the sampled-observation and scientific-computation
-identities. It supplies neither covariance nor a claim of physical validity.
+identities. A content digest alone does not change sampled-observation identity
+or numerical recipe identity. It supplies neither covariance nor a claim of physical validity.
 See :doc:`/api/io` for explicit content comparison and cancellation.

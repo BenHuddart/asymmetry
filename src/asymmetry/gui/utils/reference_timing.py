@@ -72,3 +72,26 @@ def _resolve_reference_timing(reference, pair, worker=None):
         reference,
         resolved_timing=ResolvedReferenceTiming.from_grouping(reference.histograms, grouping),
     )
+
+
+def load_reference_acquisition(payload, *, parent):
+    """Read disk-only reference counts on the existing cancellable input worker."""
+    from copy import deepcopy
+
+    from asymmetry.core.io import load_background_run
+
+    if QThread.currentThread() != parent.thread():
+        return load_background_run(payload)
+    request = deepcopy(payload)
+    dialog = ScientificInputDialog(parent, "Resolving reference timing…", "Reference timing")
+    try:
+        result = dialog.run(
+            lambda worker: load_background_run(
+                request, checkpoint=partial(check_task_cancelled, worker)
+            )
+        )
+    finally:
+        dialog.deleteLater()
+    if result is None:
+        raise CorrectionUnavailableError("Reference input preparation cancelled")
+    return result

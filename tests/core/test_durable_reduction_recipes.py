@@ -5,6 +5,7 @@ import json
 import numpy as np
 import pytest
 
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.transform.integral import build_field_scan, differentiate_scan
 from asymmetry.core.workflow.integral_scan import field_scan_from_payload, field_scan_payload
 from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
@@ -140,7 +141,7 @@ def test_nested_publishable_recipe_preserves_identity_without_mutating_history()
 
 
 @pytest.mark.parametrize(
-    "change", ["counts", "errors", "support", "alpha", "title", "oversampling"]
+    "change", ["counts", "errors", "support", "alpha", "title", "oversampling", "content"]
 )
 def test_fit_attribution_identifies_observations_separately_from_recipe_and_labels(change):
     import copy
@@ -164,6 +165,10 @@ def test_fit_attribution_identifies_observations_separately_from_recipe_and_labe
         other.ratio_validity = RatioValidity(reasons)
     elif change == "alpha":
         other = reduce_run(run, ReductionSettings(alpha=1.1, alpha_source="user"))
+    elif change == "content":
+        value = other.effective_recipe.to_dict()
+        value["periods"]["red"]["source"]["content_identity"] = {"sha256": "a" * 64}
+        other.effective_recipe = EffectiveReductionRecipe.from_dict(value)
     elif change == "title":
         other.metadata["title"] = "A renamed display label"
     original = fit_input_attribution(dataset_observations(dataset), dataset)
@@ -172,7 +177,7 @@ def test_fit_attribution_identifies_observations_separately_from_recipe_and_labe
         other,
         error_oversampling=2.0 if change == "oversampling" else 1.0,
     )
-    assert (original["identity"] == changed["identity"]) == (change == "title")
+    assert (original["identity"] == changed["identity"]) == (change in {"title", "content"})
 
 
 def test_real_fit_boundary_retains_recipe_and_exact_observations():
