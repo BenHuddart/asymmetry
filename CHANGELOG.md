@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-13
+
 ### Fixed
 
 - Preserve integral/ALC baseline, peak, and RF fit results when reopening projects;
