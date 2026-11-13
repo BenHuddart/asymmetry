@@ -105,7 +105,7 @@ asymmetry/
 │   │   └── project_model.py  # ProjectModel — in-memory owner of representations + batches
 │   ├── project/        # Project persistence
 │   │   ├── __init__.py
-│   │   └── schema.py         # load_project, save_project, migrate_to_current (v1–v13)
+│   │   └── schema.py         # load_project, save_project, migrate_to_current
 │   ├── workflow/       # Scriptable session façade (drives the engine for the CLI/agents)
 │   │   ├── survey.py         # survey_folder: per-run metadata, calibration candidates, scans
 │   │   ├── reduction.py      # ReductionSettings, reduce_run, estimate_alpha_for_run
@@ -1057,3 +1057,13 @@ Current limitations:
 ---
 
 *This specification is a living document. It will be refined as design decisions are made and prototyping progresses.*
+
+### Released analysis state
+
+Project schema dispatch owns released-format transitions. Small pure converters
+in `core/project/` interpret active saved fit parameters with their model
+descriptors. Standalone wizard recommendations have an independent versioned
+persistence codec. Fit slots, assessment readers, and fit editors consume the
+canonical form; frozen recipes and calibration records remain historical facts.
+Keep every converter and regression fixture needed to load a released project,
+including alpha projects. Storage versions never establish computation currency.

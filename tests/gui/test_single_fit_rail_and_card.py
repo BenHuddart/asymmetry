@@ -29,10 +29,10 @@ from asymmetry.gui.panels.fit.single_tab import (  # noqa: E402
     ADD_TO_SERIES_ACTION,
     COLUMN_GROUPS_SETTINGS_KEY,
     DIAGNOSTIC_ACTION,
-    RESTORED_TAG,
     SEND_TO_BATCH_ACTION,
     SingleFitTab,
 )
+from asymmetry.gui.panels.fit.tab_base import RESTORED_TAG  # noqa: E402
 from asymmetry.gui.styles import tokens  # noqa: E402
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E402
 

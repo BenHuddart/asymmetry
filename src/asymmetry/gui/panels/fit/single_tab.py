@@ -25,7 +25,6 @@ from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import (
     CompositeModel,
-    migrate_legacy_fraction_state,
 )
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
@@ -33,9 +32,6 @@ from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
-)
-from asymmetry.core.fitting.legacy_product_amplitudes import (
-    fold_legacy_product_amplitude_state,
 )
 from asymmetry.core.fitting.parameter_carry import carry_parameter_entries
 from asymmetry.core.fitting.parameters import (
@@ -76,8 +72,6 @@ from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindo
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 from .tab_base import (
-    RESTORED_TAG,
-    TONE_BY_TAG,
     USER,
     FitParameterTable,
     FitTabBase,
@@ -99,7 +93,7 @@ from .tab_base import (
     dataset_error_oversampling,
     fit_results_snapshot,
 )
-from .wizard_cache import WizardCacheEntry, _wizard_response_error, wizard_cache_entry
+from .wizard_cache import WizardCacheEntry, _wizard_response_error
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +189,7 @@ class SingleFitTab(FitTabBase):
         settings: QSettings | None = None,
     ) -> None:
         super().__init__(parent)
+        self._analysis_history: dict | None = None
         layout = QVBoxLayout(self)
 
         #: Where the Parameters rail's chip states live. Injectable so a test can
@@ -1065,6 +1060,11 @@ class SingleFitTab(FitTabBase):
             return
         if not isinstance(assessment, CandidateAssessment):
             return
+        if assessment.analysis_history is not None:
+            from asymmetry.core.fitting.analysis_history import CONSTRAINT_EDIT_MESSAGE
+
+            self._results_card.set_message(CONSTRAINT_EDIT_MESSAGE, tag="Stale", tone="warn")
+            return
         if not computation.is_current(recommendation.computation_revision):
             self._results_card.set_message(
                 "Historical computation revision; reanalyse before applying.",
@@ -1235,6 +1235,11 @@ class SingleFitTab(FitTabBase):
         value (the only hard error; bad bounds fall back to ±inf). Shared by
         the fit run and the pull-distribution diagnostic.
         """
+        from asymmetry.core.fitting.analysis_history import analysis_block_reason
+
+        reason = analysis_block_reason(self._analysis_history, self._param_table.parameters_state())
+        if reason is not None:
+            raise ValueError(reason)
         return self._param_table.read_parameter_set()
 
     def current_seed_values(self) -> dict[str, str]:
@@ -1602,6 +1607,7 @@ class SingleFitTab(FitTabBase):
                 )
 
         state = {
+            "analysis_history": self._analysis_history,
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
             # The table serialises its rows (incl. auxiliary non-model params and
@@ -1624,66 +1630,7 @@ class SingleFitTab(FitTabBase):
         return state
 
     def restore_state(self, state: dict) -> None:
-        """Restore single-fit tab state from a saved dict."""
-        self._cached_wizard_recommendation = None
-        self._cached_wizard_signature = None
-        self._cached_wizard_log_text = ""
+        """Restore a canonical persisted form and its historical content."""
+        from asymmetry.gui.panels.fit.state_restore import restore_single_state
 
-        # Migrate pre-rework parameter entries before restoring the table rows:
-        # legacy ``fraction_<k>`` names to the n-1 free-fraction scheme, and
-        # legacy per-factor amplitudes onto the one-scale-per-product policy.
-        state = migrate_legacy_fraction_state(state)
-        state = fold_legacy_product_amplitude_state(state)
-
-        composite_data = state.get("composite_model")
-        if isinstance(composite_data, dict):
-            try:
-                # Missing user components retain their names and payload.
-                restored = CompositeModel.from_dict(composite_data, allow_missing=True)
-            except ValueError:
-                if "time_response" in composite_data:
-                    raise
-                fallback = (
-                    default_frequency_model()
-                    if self._domain == "frequency"
-                    else CompositeModel(["Exponential", "Constant"], operators=["+"])
-                )
-                self._set_composite_model(fallback, seed_from_record=False)
-            else:
-                self._set_composite_model(restored, seed_from_record=False)
-                if restored.missing_component_names:
-                    names = ", ".join(restored.missing_component_names)
-                    self._results_card.set_message(
-                        f"<b>Missing user function(s):</b> {names}.<br>"
-                        "The saved model is preserved (missing components plot as "
-                        "zero) but cannot be fitted until they are registered — "
-                        "see Setup → User functions…",
-                        tag="Error",
-                    )
-
-        # The table applies the saved values/fix/bounds/link/tie onto its rows
-        # (the model was just rebuilt by _set_composite_model) and re-establishes
-        # auxiliary non-model parameters that have no row.
-        params_data = {p["name"]: p for p in state.get("parameters", []) if isinstance(p, dict)}
-        self._param_table.restore_parameters(params_data)
-        self._refresh_saved_fits_row()
-
-        result_html = state.get("result_html")
-        if isinstance(result_html, str) and result_html:
-            # A state written before the tag was persisted carries none; it is
-            # still a recorded read-out, so it goes back under RESTORED_TAG
-            # rather than under the "no fit" placeholder.
-            tag = state.get("result_tag")
-            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
-            self._results_card.set_message(
-                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
-            )
-
-        # Accepts both shapes: the session handle (no work — the recommendation
-        # is shared by reference) and a persisted dict from a project file or a
-        # fit slot's ``ui_state`` (deserialised once, here).
-        entry = wizard_cache_entry(state.get("wizard_state"))
-        if entry is not None:
-            self._cached_wizard_recommendation = entry.recommendation
-            self._cached_wizard_signature = entry.signature_copy()
-            self._cached_wizard_log_text = entry.log_text
+        restore_single_state(self, state)

@@ -176,7 +176,7 @@ def promote_background_to_grouping(
 
 def _existing_fixed_pair(grouping: dict) -> tuple[float, float]:
     """Return the current fixed background pair, or ``(0.0, 0.0)`` if unset."""
-    for key in ("background_fixed_values", "background_fix", "bkg_fix"):
+    for key in ("background_fixed_values",):
         value = grouping.get(key)
         if isinstance(value, (list, tuple)) and len(value) >= 2:
             return _as_float(value[0], 0.0), _as_float(value[1], 0.0)

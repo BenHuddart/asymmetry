@@ -42,7 +42,7 @@ from asymmetry.core.transform.counting_noise import CountingNoise, combine_noise
 from asymmetry.core.transform.deadtime import (
     DeadtimeDomain,
     deadtime_operation_inputs,
-    normalise_deadtime_mode,
+    deadtime_request_mode,
 )
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
@@ -118,18 +118,10 @@ def correction_flags_from_grouping(grouping: dict[str, Any] | None) -> Correctio
     estimate built from the same grouping agree on which corrections are active.
     """
     grouping = grouping if isinstance(grouping, dict) else {}
+    if {"background_fix", "bkg_fix"}.intersection(grouping):
+        raise ValueError("Use background_fixed_values for authored fixed backgrounds")
     use_deadtime = bool(grouping.get("deadtime_correction", False))
-    deadtime_mode = (
-        str(
-            grouping.get(
-                "deadtime_mode", grouping.get("deadtime_method", "file" if use_deadtime else "off")
-            )
-        )
-        .strip()
-        .lower()
-        or "off"
-    )
-    deadtime_mode = normalise_deadtime_mode(deadtime_mode)
+    deadtime_mode = deadtime_request_mode(grouping, default="from_file" if use_deadtime else "off")
     background_mode = resolve_background_mode(grouping)
     use_background = bool(
         grouping.get("background_correction", False) and background_mode != "none"
