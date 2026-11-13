@@ -111,3 +111,41 @@ class AlcDerivativeScenario(AlcFieldScanScenario):
 
 
 register(AlcDerivativeScenario())
+
+
+class AlcLegacyFitHistoryScenario(AlcFieldScanScenario):
+    name = "alc_legacy_fit_history"
+    description = "Restored settings-only scan with explicit missing-result guidance."
+    size = (440, 560)
+
+    def build(self) -> QWidget:
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+
+        from asymmetry.core.project import save_project
+        from asymmetry.gui.mainwindow import MainWindow
+
+        original = super().build()
+        state = original.collect_project_state()
+        state["schema_version"] = 39
+        extra = next(b["extra"] for b in state["batches"] if b["extra"].get("kind") == "alc_scan")
+        extra.pop("fit_history")
+        extra.update(baseline_fitted=True, peaks_fitted=True)
+        original._clear_dirty()
+        original.close()
+        restored = MainWindow()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "owned-scan.asymp"
+            save_project(state, path)
+            restored._open_project_file(str(path))
+        assert "no captured numerical result" in restored._alc_scan_view._fit_history_status.text()
+        assert restored._alc_scan_view._fit_curve is None
+        panel = restored._alc_scan_view.analysis_widget()
+        panel.setParent(None)
+        restored._clear_dirty()
+        restored.close()
+        restored.deleteLater()
+        return panel
+
+
+register(AlcLegacyFitHistoryScenario())
