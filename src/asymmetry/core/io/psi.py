@@ -20,6 +20,7 @@ from asymmetry.core.instrument import (
     get_instrument_layout,
     preset_grouping_for_run,
 )
+from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
@@ -181,11 +182,9 @@ class PsiLoader(BaseLoader):
     extensions = [".bin", ".mdu"]
     format_name = "PSI BIN/MDU (.bin, .mdu)"
 
+    @capture_acquisition
     def load(self, filepath: str) -> MuonDataset:
         path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
-
         with perf_timer("core.load.psi", filename=path.name) as perf:
             with path.open("rb") as handle:
                 fmt = handle.read(2)

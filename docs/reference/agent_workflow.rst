@@ -2244,3 +2244,20 @@ active TF pulse request. Saved workflow calibration records retain that source
 intent; applying coefficients does not replace the target timing or ordinary
 fit/Fourier response. See :ref:`alpha-calibration` for the centre approximation
 and conditional errors.
+
+Acquisition bytes and saved calculations
+----------------------------------------
+
+Fresh built-in acquisition reads capture complete-file SHA-256 facts with their
+counts. Supported reductions, reference results, and frozen calibration records
+retain the facts available to that calculation. Workdir hashing and acquisition
+capture share the same whole-file reader; workdir size/mtime cache policy remains
+separate from byte equality. Retained reference-cache counts keep their captured
+identity, even if stat hints fail to notice an edit. Explicit core verification
+reads the candidate afresh; see :doc:`/api/io`.
+
+Project ``expected`` identities survive restoration and saving independently of
+fresh ``observed`` identities. Historical unknowns stay unknown. A digest match
+does not make an old computation revision current, establish independent counting
+noise, or grant a new likelihood. Automatic verified reopening and changed-source
+replacement are not provided by the core comparison API.

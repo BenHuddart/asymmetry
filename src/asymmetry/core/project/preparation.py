@@ -12,6 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from asymmetry.core.data.acquisition import ContentIdentity, SourceBinding, SourceDeclaration
+from asymmetry.core.data.reduction_recipe import recipe_source_declarations
 from asymmetry.core.project.calibration import PreparedGrouping, calibration_values
 from asymmetry.core.project.json_values import decode_non_finite
 from asymmetry.core.project.profiles import GroupingProfile
@@ -41,6 +43,7 @@ class PreparedProject:
     model: ProjectModel
     studies: dict[str, GlobalFitStudy]
     groupings: dict[int, PreparedGrouping]
+    sources: tuple[SourceDeclaration, ...] = ()
 
 
 def _shape(value, expected, path):
@@ -86,7 +89,7 @@ def _rows(data, key, path):
     return rows
 
 
-def _analysis_shape(record, path):
+def _analysis_shape(record, path, sources=None):
     """Check active containers, leaving names, draft rows and archives to their owners."""
     _fields(
         record,
@@ -107,6 +110,17 @@ def _analysis_shape(record, path):
     for index, row in enumerate(_rows(record, "parameters", path)):
         _shape(row.get("name"), str, f"{path}.parameters[{index}].name")
         _fields(row, ("tie",), dict, f"{path}.parameters[{index}]")
+    if sources is not None:
+        result = record.get("result") or {}
+        for owner in (result, result.get("input_attribution") or {}):
+            if owner.get("effective_recipe") is not None:
+                sources.extend(
+                    _construct(
+                        recipe_source_declarations,
+                        owner["effective_recipe"],
+                        f"{path}.result.effective_recipe",
+                    )
+                )
     # The archive may contain original names, constraints and unset uncertainties.
     # It is never traversed as an active parameter table.
 
@@ -221,7 +235,16 @@ def _plot_shape(plot, path):
                         )
 
 
-def _grouping_shape(record, path):
+def _construct_optional_identity(value, path):
+    """Decode optional source facts at the existing project input boundary."""
+    return (
+        None
+        if value is None
+        else _construct(ContentIdentity.from_dict, value, f"{path}.content_identity")
+    )
+
+
+def _grouping_shape(record, path, sources):
     _fields(
         record,
         (
@@ -266,6 +289,16 @@ def _grouping_shape(record, path):
     if reference is not None:
         ref_path = f"{path}.background_run"
         _fields(reference, ("source_file",), str, ref_path)
+        identity = _construct_optional_identity(reference.get("content_identity"), ref_path)
+        sources.append(
+            SourceDeclaration(
+                "reference",
+                reference.get("source_file", ""),
+                identity,
+                reference.get("run_number", reference.get("legacy_run_number")),
+                reference.get("period_number"),
+            )
+        )
         _fields(reference, ("timing", "scale_request", "historical_scale"), dict, ref_path)
         for key in ("run_number", "period_number", "legacy_run_number"):
             if reference.get(key) is not None:
@@ -273,14 +306,39 @@ def _grouping_shape(record, path):
     background = record.get("background_policy")
     if background is not None and background.get("details") is not None:
         _shape(background["details"], dict, f"{path}.background_policy.details")
-        _grouping_shape(background["details"], f"{path}.background_policy.details")
+        _grouping_shape(background["details"], f"{path}.background_policy.details", sources)
     _fields(record, ("projection_alpha_policies",), dict, path)
-    _rows(record, "calibration_records", path)
+    for calibration in _rows(record, "calibration_records", path):
+        identity = _construct_optional_identity(calibration.get("content_identity"), path)
+        sources.append(
+            SourceDeclaration(
+                "calibration",
+                calibration.get("source_file", ""),
+                identity,
+                calibration.get("source_run_number"),
+                calibration.get("period_number"),
+            )
+        )
+    policies = [record.get(key, {}) for key in ("alpha_policy", "beta_policy")]
+    policies.extend(record.get("projection_alpha_policies", {}).values())
+    for policy in policies:
+        quick = policy.get("quick_calibration")
+        if quick is not None:
+            identity = _construct_optional_identity(quick.get("content_identity"), path)
+            sources.append(
+                SourceDeclaration(
+                    "calibration",
+                    quick.get("source_file", ""),
+                    identity,
+                    quick.get("run_number"),
+                    quick.get("period_number"),
+                )
+            )
     for index, projection in enumerate(_rows(record, "projections", path)):
         _fields(projection, ("label",), str, f"{path}.projections[{index}]")
 
 
-def _representation_shape(representations, path):
+def _representation_shape(representations, path, sources):
     _shape(representations, dict, path)
     for key, rep in representations.items():
         rep_path = f"{path}[{key!r}]"
@@ -294,7 +352,7 @@ def _representation_shape(representations, path):
             ids = set()
             for index, slot in enumerate(_rows(fit_set, "fits", fit_path)):
                 slot_path = f"{fit_path}.fits[{index}]"
-                _analysis_shape(slot, slot_path)
+                _analysis_shape(slot, slot_path, sources)
                 if slot.get("ui_state") is not None:
                     _fit_editor_shape(slot["ui_state"], f"{slot_path}.ui_state")
                 _unique(_identity(slot.get("fit_id"), str, f"{slot_path}.fit_id"), ids, slot_path)
@@ -458,6 +516,7 @@ def _prepare_canonical(state, checkpoint):
     _ui_shape(state)
     model = ProjectModel()
     groupings = {}
+    sources = []
     runs = set()
     for key in ("datasets", "combined_datasets"):
         if key in state:
@@ -470,6 +529,63 @@ def _prepare_canonical(state, checkpoint):
             _unique(number, runs, f"{path}.{id_key}")
             if "source_file" in entry:
                 _shape(entry["source_file"], str, f"{path}.source_file")
+            binding = _construct(
+                SourceBinding.from_dict, entry.get("source_binding"), f"{path}.source_binding"
+            )
+            if key == "datasets":
+                sources.append(
+                    SourceDeclaration(
+                        "sample", entry.get("source_file", ""), binding.expected, number
+                    )
+                )
+            for member in _rows(entry, "constituent_sources", path):
+                member_path = f"{path}.constituent_sources"
+                _fields(member, ("source_file",), str, member_path, nullable=False)
+                for selection in (
+                    "run_number",
+                    "source_run_number",
+                    "period_number",
+                    "data_period_number",
+                    "dae_period_number",
+                    "input_ordinal",
+                ):
+                    if member.get(selection) is not None:
+                        number_value = _identity(
+                            member[selection], int, f"{member_path}.{selection}"
+                        )
+                        if (
+                            selection not in {"run_number", "source_run_number"}
+                            and number_value < 1
+                        ):
+                            raise ProjectValidationError(
+                                f"{member_path}.{selection}: expected a positive ordinal"
+                            )
+                coefficient = member.get("coefficient", 1.0)
+                if (
+                    isinstance(coefficient, bool)
+                    or not isinstance(coefficient, (int, float))
+                    or not math.isfinite(coefficient)
+                ):
+                    raise ProjectValidationError(
+                        f"{member_path}.coefficient: expected a finite number"
+                    )
+                member_binding = _construct(
+                    SourceBinding.from_dict,
+                    member.get("source_binding"),
+                    f"{path}.constituent_sources",
+                )
+                sources.append(
+                    SourceDeclaration(
+                        "constituent",
+                        member.get("source_file", ""),
+                        member_binding.expected,
+                        member.get("source_run_number", member.get("run_number")),
+                        member.get("data_period_number", member.get("period_number")),
+                        member.get("coefficient", 1.0),
+                        member.get("input_ordinal"),
+                        member.get("dae_period_number"),
+                    )
+                )
             _fields(entry, ("profile",), str, path)
             if "metadata_overrides" in entry:
                 _shape(entry["metadata_overrides"], dict, f"{path}.metadata_overrides")
@@ -480,7 +596,7 @@ def _prepare_canonical(state, checkpoint):
                 path,
             )
             if entry.get("grouping_overrides") is not None:
-                _grouping_shape(entry["grouping_overrides"], f"{path}.grouping_overrides")
+                _grouping_shape(entry["grouping_overrides"], f"{path}.grouping_overrides", sources)
                 groupings[number] = PreparedGrouping(
                     _construct(
                         calibration_values,
@@ -489,18 +605,27 @@ def _prepare_canonical(state, checkpoint):
                     )
                 )
             if key == "combined_datasets":
-                sources = _shape(
+                source_numbers = _shape(
                     entry.get("source_run_numbers"), list, f"{path}.source_run_numbers"
                 )
-                for source in sources:
+                for source in source_numbers:
                     _identity(source, int, f"{path}.source_run_numbers")
             if entry.get("representations") is not None:
-                _representation_shape(entry["representations"], f"{path}.representations")
+                _representation_shape(entry["representations"], f"{path}.representations", sources)
                 model.datasets[number] = _construct(
                     DatasetRepresentations.from_dict,
                     {"run_number": number, "representations": entry["representations"]},
                     f"{path}.representations",
                 )
+                for representation in model.datasets[number]:
+                    for record in representation.result_metadata.get("effective_recipes", []):
+                        if record.get("effective_recipe") is not None:
+                            declarations = _construct(
+                                recipe_source_declarations,
+                                record["effective_recipe"],
+                                f"{path}.result_metadata.effective_recipes",
+                            )
+                            sources.extend(declarations)
             if entry.get("rotating_frame") is not None:
                 model.rotating_frames[number] = _construct(
                     RotatingFrame.from_dict, entry["rotating_frame"], f"{path}.rotating_frame"
@@ -510,7 +635,7 @@ def _prepare_canonical(state, checkpoint):
     for index, raw in enumerate(_rows(state, "grouping_profiles", "project")):
         checkpoint()
         path = f"project.grouping_profiles[{index}]"
-        _grouping_shape(raw, path)
+        _grouping_shape(raw, path, sources)
         name = _identity(raw.get("name"), str, f"{path}.name")
         profile = _construct(GroupingProfile.from_dict, raw, path)
         fingerprint = profile.fingerprint
@@ -533,7 +658,7 @@ def _prepare_canonical(state, checkpoint):
             path = f"project.{key}[{index}]"
             identity = _identity(raw.get(id_key), str, f"{path}.{id_key}")
             _unique(identity, seen, f"{path}.{id_key}")
-            _analysis_shape(raw, path)
+            _analysis_shape(raw, path, sources)
             for member_key in (
                 "member_run_numbers",
                 "last_fitted_members",
@@ -546,6 +671,7 @@ def _prepare_canonical(state, checkpoint):
             _fields(raw, ("results_by_run", "member_source_run", "member_frames"), dict, path)
             for member, result in (raw.get("results_by_run") or {}).items():
                 _shape(result, dict, f"{path}.results_by_run[{member!r}]")
+                _analysis_shape({"result": result}, f"{path}.results_by_run[{member!r}]", sources)
             if key == "batches" and raw.get("recipe") is not None:
                 _analysis_shape(raw["recipe"], f"{path}.recipe")
                 _fields(raw["recipe"], ("fit_range", "coadd"), dict, f"{path}.recipe")
@@ -580,7 +706,7 @@ def _prepare_canonical(state, checkpoint):
             )
     model.active_series = dict(active)
     checkpoint()
-    return PreparedProject(state, profiles, model, studies, groupings)
+    return PreparedProject(state, profiles, model, studies, groupings, tuple(sources))
 
 
 def load_prepared_project(path: str | Path, *, checkpoint: Callable[[], None] = lambda: None):

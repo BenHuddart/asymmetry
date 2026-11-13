@@ -11,6 +11,7 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
@@ -250,6 +251,7 @@ class NexusLoader(BaseLoader):
     extensions = [".nxs", ".nexus"]
     format_name = "ISIS NeXus (.nxs, .nexus)"
 
+    @capture_acquisition
     def load(self, filepath: str) -> LoadResult:
         """Load a NeXus file and return reduced asymmetry dataset(s).
 
@@ -265,9 +267,6 @@ class NexusLoader(BaseLoader):
             more than two periods return one dataset per period.
         """
         path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
-
         # ``.nxs``/``.nexus`` share an extension across two containers: modern
         # HDF5 (h5py) and legacy HDF4 (the v1 ``/run`` muonTD format WiMDA
         # reads). The file magic disambiguates; h5py cannot open HDF4 at all.

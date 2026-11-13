@@ -11,6 +11,7 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.physical_units import (
     CANONICAL_UNITS,
@@ -60,11 +61,9 @@ class RootLoader(BaseLoader):
     extensions = [".root"]
     format_name = "MusrRoot / LEM ROOT (.root)"
 
+    @capture_acquisition
     def load(self, filepath: str) -> MuonDataset:
         path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
-
         try:
             import uproot
         except ImportError as exc:  # pragma: no cover - exercised only without optional dep

@@ -11,6 +11,7 @@ from math import isfinite, isnan
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.fitting.count_results import CountFitDomain, CountFitParameter, JointCountFit
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.tf_calibration import (
@@ -309,6 +310,7 @@ def calibration_payload(record: CalibrationRecord) -> dict:
         if (
             c.fit.domains != domains
             or (c.source_run_number, c.period_number, c.source_file) != source
+            or c.content_identity != first.content_identity
         ):
             raise ValueError("Calibration candidates must share acquisition and count domains")
         fit = {
@@ -336,6 +338,9 @@ def calibration_payload(record: CalibrationRecord) -> dict:
         "source_run_number": source[0],
         "period_number": source[1],
         "source_file": source[2],
+        "content_identity": first.content_identity.to_dict()
+        if first.content_identity is not None
+        else None,
         "domains": [_domain_payload(d) for d in domains],
         "candidates": payloads,
     }
@@ -432,6 +437,7 @@ def restore_calibration(data: dict) -> CalibrationRecord:
                 c["ok"],
                 c["message"],
                 TFEnvelope(c["envelope"]),
+                ContentIdentity.from_dict(data.get("content_identity")),
             )
         )
     envelopes = [c.envelope for c in candidates]

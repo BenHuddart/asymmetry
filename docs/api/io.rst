@@ -159,3 +159,42 @@ correspondence/reuse checks without reducing or scanning counts.
 The float-valued ``Run.field`` and ``Run.temperature`` convenience accessors
 represent an explicit unknown (``None``) as NaN, so summaries and replay
 identities can carry it without a fabricated zero.
+
+Acquisition content facts and verification
+------------------------------------------
+
+Built-in loader reads attach an immutable ``SourceBinding`` to each ``Run``.
+The common ``load`` function and direct built-in loader calls accept ``checkpoint``
+and ``progress`` callbacks. Capture hashes the entire acquisition before and after
+decoding, sharing one fact across acquired periods. Counts remain usable with
+unknown provenance if content capture fails; cancellation raises. Sidecar monitor
+files are outside this acquisition identity.
+
+Explicit comparison accepts prepared declarations or caller-authored source roles:
+
+.. code-block:: python
+
+   from asymmetry.core.project import load_prepared_project
+   from asymmetry.core.data.acquisition import verify_sources
+
+   prepared = load_prepared_project("analysis.asymp")
+   facts = verify_sources(prepared.sources, checkpoint=check_cancelled)
+   # Each fact retains its expected declaration and independently observed bytes.
+
+Pass ``candidates`` in declaration order to compare explicitly resolved relocated
+paths. Verification does no search or substitution. Outcomes are ``matched``,
+``changed``, ``missing``, ``legacy_unknown``, and ``unreadable``. An available
+candidate without an expectation remains ``legacy_unknown``; its observed digest
+is returned separately. Missing/unreadable facts retain the original expectation.
+One complete hash per candidate path is shared within a verification request,
+while all source terms and coefficients remain distinct. Returned candidate
+locators name the resolved target actually read, so retargeting an alias cannot
+cache different bytes under another target. ``progress(done, total)``
+reports bytes for each file; ``checkpoint()`` may raise to cancel between chunks.
+Cancellation returns no partial result. Neither operation mutates project history
+or recomputes scientific results. Call long operations on a worker in GUI clients. The desktop disk-reference
+fallback uses its existing cancellable scientific-input worker; collection and
+serialization perform no acquisition reads.
+
+.. automodule:: asymmetry.core.data.acquisition
+   :members:

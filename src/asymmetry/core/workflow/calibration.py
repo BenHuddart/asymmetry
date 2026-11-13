@@ -263,6 +263,7 @@ def calibrate_source(
             counts.t0_time_us,
             tuple((int(number), target) for number, target in mapping.items()),
             mapped_period_number=run.metadata.get("period_number") if mapped else None,
+            content_identity=run.source_binding.observed,
             computation_revision=computation.COMPUTATION_REVISION,
         )
     check_cancel()

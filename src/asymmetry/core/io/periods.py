@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core import computation
+from asymmetry.core.data.acquisition import SourceBinding
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.reduction_recipe import field_scan_recipe
 from asymmetry.core.io.frame_exposure import summed_period_exposures
@@ -308,6 +309,7 @@ def period_run(combined: Run, index: int) -> Run:
         metadata=metadata,
         grouping=period_grouping,
         source_file=combined.source_file,
+        source_binding=combined.source_binding,
     )
 
     # Per-detector file facts follow the selected period; scalar-only requests
@@ -778,6 +780,9 @@ def combine_mapped_periods(
         metadata=metadata,
         grouping=grouping,
         source_file=source_file or base_run.source_file,
+        source_binding=base_run.source_binding
+        if all(r.source_binding == base_run.source_binding for r in runs)
+        else SourceBinding(),
     )
     return _quick_period_dataset(run, cancel_check=cancel_check)
 
