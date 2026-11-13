@@ -148,11 +148,23 @@ def test_guidance_message_routes_to_log_when_headless(mainwindow: MainWindow, no
     assert "Title B: a warning note" in log_text
 
 
-def test_alc_notify_still_suppressed_while_loading(mainwindow: MainWindow, no_modals):
-    """Project-restore suppression is preserved on top of headless routing."""
-    mw = mainwindow
-    mw._alc_loading = True
-    before = mw._log_panel.entry_count()
-    mw._alc_notify("Baseline", "should be suppressed")
-    assert mw._log_panel.entry_count() == before
-    assert "should be suppressed" not in mw._log_panel.to_plain_text()
+def test_scan_restore_needs_no_fit_guidance(
+    mainwindow: MainWindow, no_modals, tmp_path, monkeypatch
+):
+    """Captured results restore without entering an explicit fitting request."""
+    from asymmetry.core.project import save_project
+    from tests.gui.test_scan_fit_history import build_fitted_scan
+
+    build_fitted_scan(mainwindow, "peaks")
+    path = tmp_path / "captured.asymp"
+    save_project(mainwindow.collect_project_state(), path)
+    reopened = MainWindow()
+
+    def unexpected_guidance(*args, **kwargs):
+        pytest.fail("Opening captured scan results must not request fit guidance")
+
+    monkeypatch.setattr(reopened, "_alc_notify", unexpected_guidance)
+    reopened._open_project_file(str(path))
+    assert reopened._alc_scan_view._fit_curve is not None
+    reopened._clear_dirty()
+    reopened.close()

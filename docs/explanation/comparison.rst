@@ -1659,6 +1659,13 @@ the separate scientific targets.
 Count-integral condition scans
 ------------------------------
 
+Asymmetry projects capture completed baseline, peak, and RF fit results and
+restore their numerical readouts and sampled overlays without optimisation.
+Settings-only histories require explicit fitting for new results. This is an
+Asymmetry history safeguard; the comparisons below do not establish identical
+project-restoration behaviour in WiMDA, Mantid, or musrfit.
+
+
 Asymmetry sums the selected corrected native F/B counts before forming
 :math:`(F-\alpha B)/(\beta F+\alpha B)` for ordinary and RF scans. G−R is
 :math:`A_G-A_R` with shared chosen calibration; G+R pools prepared counts before

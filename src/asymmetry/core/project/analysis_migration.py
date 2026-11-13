@@ -499,3 +499,19 @@ def migrate_analysis_state(data: dict, *, legacy: bool = True) -> dict:
     if legacy:
         project_corrections(migrated)
     return migrated
+
+
+def migrate_timing_displays(data: dict) -> dict:
+    """Derive signed displays from recorded effective bounds, retaining their meaning."""
+
+    def visit(value):
+        if isinstance(value, list):
+            return [visit(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: visit(item) for key, item in value.items()}
+        if all(isinstance(result.get(key), int) for key in ("first_good_bin", "t0_bin")):
+            result["t_good_offset"] = result["first_good_bin"] - result["t0_bin"]
+        return result
+
+    return visit(data) | {"schema_version": 31}

@@ -200,7 +200,7 @@ def test_rf_scan_persists_and_restores(mainwindow: MainWindow) -> None:
     mw._sync_alc_series_extra()
     saved = mw._project_model.batch(mw._alc_scan_series_id).to_dict()
     assert saved["extra"]["rf_mode"] is True
-    assert saved["extra"]["rf_fitted"] is True
+    assert "rf" in saved["extra"]["fit_history"]["active"]
 
     settings = QSettings()
     settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
@@ -213,5 +213,5 @@ def test_rf_scan_persists_and_restores(mainwindow: MainWindow) -> None:
     mw2._restore_alc_scan()
 
     assert mw2._alc_rf_mode is True
-    assert mw2._alc_scan_view._fit_curve is not None  # RF fit re-run on load
+    assert mw2._alc_scan_view._fit_curve is not None  # captured RF overlay
     assert "A_µ" in mw2._alc_scan_view._rf_results.text()

@@ -203,6 +203,9 @@ class ALCScanView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        from asymmetry.core.fitting.scan_history import ScanFitHistory
+
+        self.fit_history = ScanFitHistory()
         self._last_plot: dict | None = None
         #: Fitted overlays as (x, y) pairs — fits run on included points only,
         #: so an overlay's x can be a subset of the rendered scan's.
@@ -282,6 +285,10 @@ class ALCScanView(QWidget):
         analysis = QWidget()
         analysis_layout = QVBoxLayout(analysis)
         analysis_layout.setContentsMargins(0, 0, 0, 0)
+        self._fit_history_status = QLabel("")
+        self._fit_history_status.setWordWrap(True)
+        self._fit_history_status.hide()
+        analysis_layout.addWidget(self._fit_history_status)
         self._baseline_section = self._build_baseline_group()
         self._peaks_section = self._build_peaks_group()
         self._rf_section = self._build_rf_group()
@@ -505,6 +512,7 @@ class ALCScanView(QWidget):
         self._baseline_model_combo.addItems(
             ["Linear", "Constant", "Cubic", "Quartic", "Quintic", "Sextic"]
         )
+        self._baseline_model_combo.currentTextChanged.connect(self._invalidate_baseline)
         row.addWidget(self._baseline_model_combo)
         row.addStretch()
         outer.addLayout(row)
@@ -616,6 +624,8 @@ class ALCScanView(QWidget):
         self._rf_a_p_spin = self._make_mhz_spin(124.0)
         self._rf_a_p_spin.setToolTip("Starting guess for the proton hyperfine coupling A_p (MHz).")
         _seed_row("A_p₀:", self._rf_a_p_spin)
+        for spin in (self._rf_nu_spin, self._rf_a_mu_spin, self._rf_a_p_spin):
+            spin.valueChanged.connect(self._invalidate_rf)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -677,89 +687,23 @@ class ALCScanView(QWidget):
             self._peaks_table.setRowCount(0)
         self._baseline_curve = None
         self._fit_curve = None
+        self.fit_history.invalidate("baseline", "peaks", "rf")
         self._peaks_results.setText("")
         self._rf_results.setText("")
 
     # --- persistence ---------------------------------------------------------
 
     def analysis_state(self) -> dict:
-        """Serialise the view options, baseline regions, and peaks to a dict."""
-        # Persist only valid (normalised lo<hi) regions — the ones the fit uses —
-        # so a reopened scan can't show a phantom region with no effect.
-        regions = [[lo, hi] for lo, hi in self.baseline_regions()]
-        peaks: list[list] = []
-        for row in range(self._peaks_table.rowCount()):
-            type_item = self._peaks_table.item(row, 0)
-            vals = [self._cell_float(self._peaks_table, row, col) for col in (1, 2, 3)]
-            if type_item is None or any(v is None for v in vals):
-                continue
-            peaks.append([type_item.text(), *vals])
-        return {
-            "x_key": self.x_key(),
-            "derivative": self.derivative_enabled(),
-            "baseline_model": self.baseline_model(),
-            "regions": regions,
-            "peaks": peaks,
-            "baseline_fitted": self._baseline_curve is not None,
-            "peaks_fitted": self._fit_curve is not None,
-            "rf_nu": self.rf_nu(),
-            "rf_a_mu": self.rf_a_mu_seed(),
-            "rf_a_p": self.rf_a_p_seed(),
-        }
+        """Return the scan form settings, independently of numerical history."""
+        from asymmetry.gui.scan.view_state import analysis_state
+
+        return analysis_state(self)
 
     def restore_analysis_state(self, state: dict) -> None:
-        """Restore view options + region/peak tables from :meth:`analysis_state`.
+        """Restore settings without evaluating or fitting a model."""
+        from asymmetry.gui.scan.view_state import restore_analysis_state
 
-        Does not re-render or re-fit (the caller drives that); signals are
-        blocked so setting the x-axis does not wipe the tables it just filled.
-        """
-        x_key = state.get("x_key", "field")
-        with QSignalBlocker(self._x_combo):
-            if x_key in self._X_KEYS:
-                self._x_combo.setCurrentIndex(self._X_KEYS.index(x_key))
-        self._update_derivative_label()
-        with QSignalBlocker(self._derivative_check):
-            self._derivative_check.setChecked(bool(state.get("derivative", False)))
-        model_idx = self._baseline_model_combo.findText(str(state.get("baseline_model", "Linear")))
-        if model_idx >= 0:
-            self._baseline_model_combo.setCurrentIndex(model_idx)
-
-        for key, spin in (
-            ("rf_nu", self._rf_nu_spin),
-            ("rf_a_mu", self._rf_a_mu_spin),
-            ("rf_a_p", self._rf_a_p_spin),
-        ):
-            if key in state:
-                try:
-                    spin.setValue(float(state[key]))
-                except (TypeError, ValueError):
-                    pass
-
-        with QSignalBlocker(self._regions_table):
-            self._regions_table.setRowCount(0)
-            for region in self._coerce_rows(state.get("regions"), 2):
-                row = self._regions_table.rowCount()
-                self._regions_table.insertRow(row)
-                for col, val in enumerate(region):
-                    self._regions_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
-
-        with QSignalBlocker(self._peaks_table):
-            self._peaks_table.setRowCount(0)
-            for peak in state.get("peaks", []):
-                if not isinstance(peak, (list, tuple)) or len(peak) != 4:
-                    continue
-                if str(peak[0]) not in self._PEAK_COMPONENTS:
-                    continue
-                vals = self._coerce_rows([peak[1:]], 3)
-                if not vals:
-                    continue
-                row = self._peaks_table.rowCount()
-                self._peaks_table.insertRow(row)
-                type_item = QTableWidgetItem(str(peak[0]))
-                type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self._peaks_table.setItem(row, 0, type_item)
-                for col, val in zip((1, 2, 3), vals[0], strict=True):
-                    self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+        restore_analysis_state(self, state)
 
     @staticmethod
     def _coerce_rows(rows: object, width: int) -> list[list[float]]:
@@ -783,17 +727,34 @@ class ALCScanView(QWidget):
         discard the stored baseline-corrected scan, so a later peak fit cannot
         run against a baseline that no longer matches the regions on screen.
         """
+        self.fit_history.invalidate("baseline", "peaks")
         self._baseline_curve = None
-        self._fit_curve = None
+        if "rf" not in self.fit_history.active:
+            self._fit_curve = None
         self._peaks_results.setText("")
         self.baseline_invalidated.emit()
         self._render_plot()
 
     def _invalidate_peaks(self, *_: object) -> None:
         """A peak change makes the peak fit stale (the baseline still holds)."""
-        self._fit_curve = None
+        self.fit_history.invalidate("peaks")
+        if "rf" not in self.fit_history.active:
+            self._fit_curve = None
         self._peaks_results.setText("")
         self._render_plot()
+
+    def set_fit_history_status(self, text: str) -> None:
+        """Explain unavailable captured results above the fitting controls."""
+        self._fit_history_status.setText(info_html(text) if text else "")
+        self._fit_history_status.setVisible(bool(text))
+
+    def _invalidate_rf(self, *_: object) -> None:
+        """RF frequency and seed edits detach the previous RF execution."""
+        if "rf" in self.fit_history.active:
+            self.fit_history.invalidate("rf")
+            self._fit_curve = None
+            self._rf_results.setText("")
+            self._render_plot()
 
     def _update_derivative_label(self) -> None:
         """Keep the derivative-toggle label in step with the x-axis."""
@@ -1126,6 +1087,8 @@ class ALCScanView(QWidget):
         and the results read-out are emptied (otherwise stale rows, markers, and
         draggable handles would persist onto the next, unrelated scan).
         """
+        self.fit_history.invalidate("baseline", "peaks", "rf")
+        self.set_fit_history_status("")
         self._last_plot = None
         self._baseline_curve = None
         self._fit_curve = None
@@ -1150,6 +1113,9 @@ class ALCScanView(QWidget):
         re-render paths reuse them; only New Project should wipe them.
         """
         self.clear()
+        from asymmetry.core.fitting.scan_history import ScanFitHistory
+
+        self.fit_history = ScanFitHistory()
         self._limits.reset()
         with QSignalBlocker(self._baseline_model_combo):
             self._baseline_model_combo.setCurrentIndex(0)
@@ -1195,6 +1161,7 @@ class ALCScanView(QWidget):
             "excluded": mask,
             "toggleable": bool(toggleable),
         }
+        self.fit_history.invalidate("baseline", "peaks", "rf")
         # A fresh scan (rebuild / x-axis change) invalidates any fit overlays.
         self._baseline_curve = None
         self._fit_curve = None

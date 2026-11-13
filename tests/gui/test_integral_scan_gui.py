@@ -200,7 +200,6 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
 
     # Changing observable invalidates any fit tied to the original scan.
     mw._alc_baseline = object()
-    mw._alc_rf_fitted = True
     view._derivative_check.setChecked(True)
     assert view.derivative_enabled() is True
     assert view.point_count() == 2
@@ -567,11 +566,11 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     saved = mw._project_model.batch(mw._alc_scan_series_id).to_dict()
     assert saved["extra"]["kind"] == "alc_scan"
     assert saved["extra"]["regions"] == [[50.0, 125.0], [275.0, 350.0]]
-    assert saved["extra"]["baseline_fitted"] is True
-    assert saved["extra"]["peaks_fitted"] is True
+    assert "baseline" in saved["extra"]["fit_history"]["active"]
+    assert "peaks" in saved["extra"]["fit_history"]["active"]
     assert saved["extra"]["mode_active"] is True  # ALC mode was on at save
 
-    # Load into a fresh window: scan points + analysis reconstructed, fits re-run.
+    # Load into a fresh window: scan points + analysis reconstructed, captured fits restored.
     settings = QSettings()
     settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
     mw2 = MainWindow()
@@ -585,8 +584,8 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     assert {p["run"] for p in mw2._alc_scan_points} == set(range(11, 42))
     assert mw2._alc_scan_view.baseline_regions() == [(50.0, 125.0), (275.0, 350.0)]
     assert len(mw2._alc_scan_view.peak_specs()) == 1
-    assert mw2._alc_baseline is not None  # baseline re-fit on load
-    assert mw2._alc_scan_view._fit_curve is not None  # peak overlay re-fit
+    assert mw2._alc_baseline is not None  # captured baseline restored
+    assert mw2._alc_scan_view._fit_curve is not None  # captured peak overlay
     assert mw2._alc_mode is True  # integral-scan view resumed
     assert mw2._plot_workspace.active_view() == "integral_scan"
 

@@ -948,12 +948,8 @@ class MainWindow(QMainWindow):
         self._alc_scan_series_id: str | None = None
         #: True when the current scan is an RF (Green − Red) difference scan.
         self._alc_rf_mode = False
-        #: True once an RF-resonance fit has been applied to the current scan.
-        self._alc_rf_fitted = False
         #: Source snapshot and fitted baseline used for propagated peak errors.
         self._alc_baseline: ScanBaselineResult | None = None
-        #: True while restoring a project, to silence ALC fit dialogs.
-        self._alc_loading = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -12136,6 +12132,10 @@ class MainWindow(QMainWindow):
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
     _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
 
+    @property
+    def _alc_rf_fitted(self) -> bool:
+        return "rf" in self._alc_scan_view.fit_history.active
+
     def _render_alc_scan(self, *, reset_view: bool = True) -> None:
         """Render the scan's selected axis and derivative in percent units.
 
@@ -12144,7 +12144,6 @@ class MainWindow(QMainWindow):
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
         self._alc_baseline = None
-        self._alc_rf_fitted = False
         if not self._alc_scan_points:
             self._alc_scan_view.clear()
             return
@@ -12331,9 +12330,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, title, text)
 
     def _alc_notify(self, title: str, text: str, *, warning: bool = False) -> None:
-        """Show an ALC info/warning dialog, suppressed while restoring a project."""
-        if self._alc_loading:
-            return
+        """Show guidance for an explicit scan fitting request."""
         self._guidance_message(title, text, warning=warning)
 
     def _alc_too_few_points_message(self) -> str:
@@ -12371,11 +12368,9 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             self._alc_notify("Baseline", str(exc), warning=True)
             return
-        self._alc_baseline = result
-        # Baseline/peaks and the RF fit share one overlay slot; a baseline fit
-        # supersedes any RF fit so the persisted "rf_fitted" flag stays accurate.
-        self._alc_rf_fitted = False
-        self._alc_scan_view.show_baseline_overlay(scan.x, result.baseline)
+        from asymmetry.gui.scan.fit_history import capture_fit
+
+        capture_fit(self, "baseline", result.scan, result.model, result.fit, result.baseline)
         self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
 
     def _on_alc_baseline_invalidated(self) -> None:
@@ -12417,34 +12412,22 @@ class MainWindow(QMainWindow):
         except (ValueError, TypeError) as exc:
             self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
             return
-        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
-        results: list[dict] = []
-        summary_lines: list[str] = []
-        for i, spec in enumerate(specs):
-            b0_name = model.component_param_name(i, "B0")
-            f_val = fitted_values[model.component_param_name(i, "f")]
-            b0_val = fitted_values[b0_name]
-            bwid_val = abs(fitted_values[model.component_param_name(i, "Bwid")])
-            b0_err = peaks.uncertainties[b0_name]
-            amp_err = peaks.uncertainties[model.component_param_name(i, "f")]
-            width_err = peaks.uncertainties[model.component_param_name(i, "Bwid")]
-            factor = model.components[i].fwhm_factor
-            assert factor is not None, "ALC peak models must define an FWHM factor"
-            fwhm = factor * bwid_val
-            results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
-            summary_lines.append(
-                f"Peak {i + 1} ({spec['label']}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
-                f"FWHM = {fwhm:.4g} ± {factor * width_err:.2g} G, amp = {f_val:.3g} ± {amp_err:.2g} %"
-            )
+        from asymmetry.gui.scan.fit_history import capture_fit
 
-        # Overlay the total fit = baseline + peaks on the raw scan.
-        peak_curve = np.asarray(model.function(baseline.scan.x, **fitted_values), dtype=float)
-        total = baseline.baseline + peak_curve
-        summary_lines.append("Uncertainties include the fitted baseline.")
-        self._alc_rf_fitted = False  # a peaks fit supersedes any RF fit overlay
-        self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
-        self._alc_scan_view.show_fit_overlay(baseline.scan.x, total)
-        self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
+        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
+        curve = baseline.baseline + np.asarray(model.function(baseline.scan.x, **fitted_values))
+        capture_fit(
+            self,
+            "peaks",
+            baseline.scan,
+            model,
+            fit,
+            curve,
+            baseline_index=self._alc_scan_view.fit_history.active["baseline"],
+            covariance=peaks.covariance,
+            effective_dof=peaks.effective_dof,
+        )
+        self._log_panel.log(f"Fitted {len(specs)} peak(s).")
 
     def _on_fit_rf(self) -> None:
         """Fit the RF muon+proton resonance model to the (Green − Red) field scan.
@@ -12488,23 +12471,12 @@ class MainWindow(QMainWindow):
             )
             return
 
-        a_mu = fit.parameters["A_mu"].value
-        a_p = fit.parameters["A_p"].value
-        a_mu_err = fit.uncertainties.get("A_mu", 0.0)
-        a_p_err = fit.uncertainties.get("A_p", 0.0)
-        summary = (
-            f"A_µ = {a_mu:.2f} ± {a_mu_err:.2f} MHz, "
-            f"A_p = {a_p:.2f} ± {a_p_err:.2f} MHz "
-            f"(χ²/dof = {fit.reduced_chi_squared:.2g})"
-        )
-        self._alc_scan_view.set_rf_results(summary)
-        self._alc_rf_fitted = True
+        from asymmetry.gui.scan.fit_history import capture_fit
 
         model = as_composite_model("RFResonanceMuP")
-        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
-        curve = np.asarray(model.function(scan.x, **fitted_values), dtype=float)
-        self._alc_scan_view.show_fit_overlay(scan.x, curve)
-        self._log_panel.log(f"Fitted RF resonance: {summary}")
+        values = {name: fit.parameters[name].value for name in model.param_names}
+        capture_fit(self, "rf", scan, model, fit, model.function(scan.x, **values))
+        self._log_panel.log("Fitted RF resonance.")
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
@@ -16648,7 +16620,8 @@ class MainWindow(QMainWindow):
         batch = self._project_model.batch(self._alc_scan_series_id)
         if batch is None:
             return
-        extra = self._alc_scan_view.analysis_state()
+        extra = dict(batch.extra)
+        extra.update(self._alc_scan_view.analysis_state())
         extra["kind"] = "alc_scan"
         extra["effective_recipe"] = batch.extra.get("effective_recipe")
         extra["computation_revision"] = batch.extra.get("computation_revision")
@@ -16657,7 +16630,7 @@ class MainWindow(QMainWindow):
         extra["time_window_us"] = batch.extra["time_window_us"]
         extra["mode_active"] = self._alc_mode
         extra["rf_mode"] = self._alc_rf_mode
-        extra["rf_fitted"] = self._alc_rf_fitted
+        extra["fit_history"] = self._alc_scan_view.fit_history.to_dict()
         # Already pruned to scan members at every mutation site (build,
         # restore, and the toggle's membership guard).
         extra["excluded_runs"] = sorted(self._alc_excluded_runs)
@@ -16670,7 +16643,7 @@ class MainWindow(QMainWindow):
                 batch
                 for batch in self._project_model.batches.values()
                 if batch.is_computed
-                and isinstance(getattr(batch, "extra", None), dict)
+                and isinstance(batch.extra, dict)
                 and batch.extra.get("kind") == "alc_scan"
             ),
             None,
@@ -16693,24 +16666,11 @@ class MainWindow(QMainWindow):
         self._alc_excluded_runs = excluded & member_runs
         self._alc_scan_view.restore_analysis_state(series.extra)
         self._render_alc_scan()
-        # Re-run whichever fits were active so the overlays/read-out reappear
-        # (deterministic: same data + inputs). Dialogs are silenced via the flag.
-        self._alc_loading = True
-        try:
-            if self._alc_rf_mode and series.extra.get("rf_fitted"):
-                # RF scans use the RF-resonance fit instead of baseline + peaks.
-                self._on_fit_rf()
-            elif series.extra.get("baseline_fitted"):
-                self._on_fit_baseline()
-                if self._alc_baseline is None:
-                    self._log_panel.log(
-                        "ALC: the saved baseline could not be re-fitted on load "
-                        "(some runs may be missing the scan's x-axis log)."
-                    )
-                elif series.extra.get("peaks_fitted"):
-                    self._on_fit_peaks()
-        finally:
-            self._alc_loading = False
+        from asymmetry.gui.scan.fit_history import restore_fits
+
+        restore_fits(
+            self, series.extra.get("fit_history", {"records": [], "active": {}, "missing": []})
+        )
         # Resume the integral-scan view if it was active at save time and the
         # restored view is in the F-B family. New projects persist the view
         # token directly in the workspace state; this also maps legacy saves
@@ -17406,6 +17366,8 @@ class MainWindow(QMainWindow):
         # analysis (baseline model, regions, peaks) so they do not leak into the
         # next project and distort the new scatter's auto-range.
         self._alc_scan_points = []
+        self._alc_baseline = None
+        self._alc_scan_series_id = None
         self._alc_excluded_runs = set()
         self._alc_build_excluded = []
         # The strip was already cleared by _plot_workspace.clear() above (it

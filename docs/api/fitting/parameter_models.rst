@@ -80,3 +80,14 @@ See :doc:`/reference/alc_mode` for baseline propagation and scan units.
 
 .. autoclass:: asymmetry.core.fitting.ScanPeakFit
    :members:
+
+Captured scalar-scan executions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``asymmetry.core.fitting.scan_history`` stores completed baseline, peak, and RF
+executions separately from mutable form settings. Records retain fitted support,
+parameters, available covariance/statistics, computation attribution, and sampled
+predictions; decoding invokes no optimiser. A peak references the baseline
+execution used for its first-order covariance propagation. Unknown historical
+revisions remain unknown. Explicit refitting creates a new execution; persistence
+does not certify acquisition replay or add uncertainty information.

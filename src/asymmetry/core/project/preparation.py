@@ -112,6 +112,11 @@ def _analysis_shape(record, path, sources=None, address=()):
         dict,
         path,
     )
+    extra = record.get("extra") or {}
+    if extra.get("kind") == "alc_scan" and "fit_history" in extra:
+        from asymmetry.core.fitting.scan_history import ScanFitHistory
+
+        _construct(ScanFitHistory.from_dict, extra["fit_history"], f"{path}.extra.fit_history")
     for index, row in enumerate(_rows(record, "parameters", path)):
         _shape(row.get("name"), str, f"{path}.parameters[{index}].name")
         _fields(row, ("tie",), dict, f"{path}.parameters[{index}]")
@@ -134,6 +139,23 @@ def _historical_sources(record, path, address, sources):
                     owner["effective_recipe"], path, (*address, *suffix, "effective_recipe")
                 )
             )
+    extra = record.get("extra") or {}
+    if extra.get("kind") == "alc_scan":
+        history = extra.get("fit_history", {})
+        owners = [(("legacy_settings",), history.get("legacy_settings", {}))]
+        owners.extend(
+            (("records", index, "support"), fit["support"])
+            for index, fit in enumerate(history.get("records", []))
+        )
+        for suffix, support in owners:
+            if support.get("effective_recipe") is not None:
+                sources.extend(
+                    _recipe_sources(
+                        support["effective_recipe"],
+                        path,
+                        (*address, "extra", "fit_history", *suffix, "effective_recipe"),
+                    )
+                )
     archive = record.get("analysis_history") or {}
     if archive.get("original") is not None:
         original = _shape(archive["original"], dict, f"{path}.analysis_history.original")

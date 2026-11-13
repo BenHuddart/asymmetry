@@ -1081,6 +1081,21 @@ scientific-computation compatibility.
 Scientific result history
 -------------------------
 
+Integral/ALC baseline, peak, and RF fits retain completed numerical results and
+sampled overlays on their captured observations. Opening and saving restore
+these outputs without fitting, preserving old or unknown computation revisions.
+Baseline dependencies, conditional and baseline-propagated covariances, and
+available statistics remain distinct. Explicit fitting appends a new execution;
+input edits detach affected overlays without deleting captured history.
+
+Settings-only scan histories keep their settings and retained values, but no
+numerical fit is reconstructed. The scan controls explain
+``Saved fit settings have no captured numerical result. Use Fit baseline, Fit peaks, or Fit RF resonance explicitly to obtain a new result.``
+See :doc:`alc_mode` for explicit fitting and uncertainty limits. Unavailable or
+changed acquisition files do not replace captured scan observations or fits;
+source replacement concerns the selected current acquisition owner.
+
+
 Saved fit summaries, wizard assessments, scalar scans, and representation result
 snapshots retain their captured scientific-computation revision. Missing legacy
 revisions remain unknown when the project is opened and saved. Storage schema

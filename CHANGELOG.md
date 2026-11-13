@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve integral/ALC baseline, peak, and RF fit results when reopening projects;
+  retain settings-only histories without implicitly fitting new results.
+
 - Verify project sources before application and offer explicit history, replacement,
   or cancellation for changed current inputs; preserve historical fits and calibrations.
 
