@@ -59,19 +59,13 @@ def test_pre_apply_cancel_retains_work_and_discards_late_result(
     qapp, tmp_path, monkeypatch, action, phase
 ):
     import threading
+    from time import monotonic
 
     from PySide6.QtCore import QTimer
 
     import asymmetry.gui.utils.project_preparation as module
     from tests._qt_helpers import wait_for
 
-    real_init = module.ProjectPreparation.__init__
-
-    def immediate_progress(self, parent):
-        real_init(self, parent)
-        self.setMinimumDuration(0)
-
-    monkeypatch.setattr(module.ProjectPreparation, "__init__", immediate_progress)
     window = MainWindow()
     dataset = _ds()
     window._data_browser.add_dataset(dataset)
@@ -102,8 +96,11 @@ def test_pre_apply_cancel_retains_work_and_discards_late_result(
     timer.setInterval(1)
     timer.timeout.connect(lambda: beats.append(1))
     timer.start()
+    visibility_deadline = None
 
     def cancel():
+        nonlocal visibility_deadline
+
         if not entered.is_set() or len(beats) < 3:
             QTimer.singleShot(1, window, cancel)
             return
@@ -111,6 +108,11 @@ def test_pre_apply_cancel_retains_work_and_discards_late_result(
 
         dialogs = window.findChildren(ProjectPreparation)
         dialog = next(d for d in dialogs if d._loop.isRunning())
+        if visibility_deadline is None:
+            visibility_deadline = monotonic() + 2
+        if not dialog.isVisible() and monotonic() < visibility_deadline:
+            QTimer.singleShot(1, window, cancel)
+            return
         visible.append(dialog.isVisible())
         if action == "close":
             assert not window.close()
