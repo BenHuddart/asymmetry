@@ -334,11 +334,10 @@ def test_resolve_fixed_beta_default_writes_nothing():
 def test_resolve_deadtime_from_file_uses_run_values():
     facts = _per_run_facts()
     facts["dead_time_us"] = [0.011, 0.012, 0.013, 0.014]
-    run = _run(grouping=facts)
     profile = _base_profile(deadtime_policy=DeadtimePolicy(mode="from_file"))
-    resolved = resolve_effective_grouping(profile, run)
+    resolved = resolve_effective_grouping(profile, _run(grouping=facts))
     assert resolved["deadtime_correction"] is True
-    assert resolved["deadtime_mode"] == "file"
+    assert resolved["deadtime_mode"] == "from_file"
     assert resolved["deadtime_method"] == "file"
     assert resolved["dead_time_us"] == [0.011, 0.012, 0.013, 0.014]
 

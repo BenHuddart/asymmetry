@@ -235,7 +235,7 @@ def test_mapping_keeps_authored_and_acquired_deadtime_tables_separate(mode):
     periods = _four_periods()[:2]
     for dataset in periods:
         dataset.run.grouping.update(
-            deadtime_mode=mode,
+            deadtime_mode="estimate" if mode == "estimate" else "manual",
             deadtime_method=mode,
             dead_time_us=[0.01, -0.02, 0.03],
             deadtime_file_us=[0.004] * 3,

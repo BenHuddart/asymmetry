@@ -87,11 +87,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     deadtime_correction = bool(grouping.get("deadtime_correction", False))
     payload["deadtime_correction"] = deadtime_correction
     if deadtime_correction:
-        mode = (
-            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "file")))
-            .strip()
-            .lower()
-        )
+        mode = str(grouping.get("deadtime_mode", "from_file")).strip().lower()
         payload["deadtime_mode"] = mode
         if mode not in {"off", "none"}:
             payload["good_frames"] = grouping.get("good_frames")
@@ -99,7 +95,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         payload["dead_time_us"] = (
             file_deadtime_table(grouping)
             if mode in {"", "file", "from_file"}
-            else grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
+            else grouping.get("dead_time_us")
         )
 
     background_correction = bool(grouping.get("background_correction", False))
@@ -125,8 +121,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
             "background_forward_range",
             "background_backward_range",
             "background_fixed_values",
-            "background_fix",
-            "bkg_fix",
             "background_run",
         ):
             if key in grouping:
@@ -134,9 +128,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         if (
             mode == "range"
             or isinstance(grouping.get("background_values"), (list, tuple))
-            or any(
-                key in grouping for key in ("background_fixed_values", "background_fix", "bkg_fix")
-            )
+            or any(key in grouping for key in ("background_fixed_values",))
         ):
             forward_group = _digest_int(grouping.get("forward_group", 1))
             backward_group = _digest_int(grouping.get("backward_group", 2))

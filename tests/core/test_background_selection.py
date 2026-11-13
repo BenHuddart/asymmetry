@@ -213,7 +213,7 @@ def test_automatic_range_fourier_ignores_cached_levels_and_keeps_uncertainty():
     assert "background_ranges" not in run.grouping
 
 
-@pytest.mark.parametrize("key", ["background_fixed_values", "background_fix", "bkg_fix"])
+@pytest.mark.parametrize("key", ["background_fixed_values"])
 @pytest.mark.parametrize("pair", [{}, {"forward_group": 1, "backward_group": 2}])
 def test_grouped_fixed_levels_follow_authored_pair_routing(key, pair):
     from asymmetry.core.data.dataset import Histogram, Run
@@ -300,8 +300,6 @@ def test_automatic_profile_does_not_inherit_stale_authored_bounds():
         "background_forward_range",
         "background_backward_range",
         "background_fixed_values",
-        "background_fix",
-        "bkg_fix",
     ],
 )
 def test_background_alias_edits_invalidate_spectral_identity(key):

@@ -54,6 +54,7 @@ class FitResult:
     #: symmetric HESSE :attr:`uncertainties` are unchanged and remain the value
     #: every downstream surface (trends, export, propagation, promote) consumes.
     minos_errors: dict[str, tuple[float, float]] | None = None
+    parameter_history: dict | None = None
     #: Fit warnings are both retained here and emitted through Python warnings.
     warnings: list[str] = field(default_factory=list)
     correction_metadata: dict = field(default_factory=dict)

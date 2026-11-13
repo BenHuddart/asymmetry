@@ -272,7 +272,7 @@ def test_file_calibration_preview_is_usable_and_apply_preserves_policy(qapp, tab
             dataset, dict(dataset.run.grouping)
         )
         assert applied and all(item.complete for item in outcomes.values())
-        assert dataset.run.grouping["deadtime_mode"] == "file"
+        assert dataset.run.grouping["deadtime_mode"] == "from_file"
         assert "correction_error" not in dataset.metadata
         assert list(dataset.metadata["correction_outcomes"].values())[0]["deadtime"]["status"] == (
             "skipped" if len(table) < 2 else "applied"

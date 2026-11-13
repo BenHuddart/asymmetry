@@ -4693,10 +4693,7 @@ class TestMainWindowBasic:
         }
         assert payload["bunching_factor"] == 4
 
-    def test_extract_grouping_overrides_omits_file_deadtime_values(
-        self,
-        mainwindow: MainWindow,
-    ) -> None:
+    def test_extract_file_deadtime_overrides(self, mainwindow: MainWindow) -> None:
         dataset = _make_dataset(7455, with_grouping=True)
         assert dataset.run is not None
         dataset.run.grouping["deadtime_correction"] = True
@@ -4707,7 +4704,7 @@ class TestMainWindowBasic:
         payload = mainwindow._extract_grouping_overrides(dataset)
 
         assert payload is not None
-        assert payload["deadtime_mode"] == "file"
+        assert payload["deadtime_mode"] == "from_file"
         assert payload["deadtime_method"] == "file"
         assert "dead_time_us" not in payload
 
@@ -6507,7 +6504,7 @@ class TestPerRunGoodFramesNormaliser:
         assert "good_frames" not in payload
         # Group definitions and deadtime mode remain shareable template fields.
         assert payload["groups"] == {1: [1], 2: [2]}
-        assert payload["deadtime_mode"] == "file"
+        assert payload["deadtime_mode"] == "from_file"
 
     def test_period_run_keeps_per_period_good_frames_through_regroup(
         self, mainwindow: MainWindow

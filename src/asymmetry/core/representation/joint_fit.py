@@ -112,6 +112,7 @@ class JointFit:
     member_batch_ids: list[str] = field(default_factory=list)
     shared: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None
+    analysis_history: dict | None = None
 
     def __post_init__(self) -> None:
         self.joint_id = str(self.joint_id)
@@ -148,6 +149,11 @@ class JointFit:
         (:meth:`FitSeries.is_stale`). ``is_stale`` is exactly ``bool`` of this,
         so the two can never disagree on whether a record is fresh.
         """
+        from asymmetry.core.fitting.analysis_history import shared_analysis_block_reason
+
+        reason = shared_analysis_block_reason(self.analysis_history, self.shared)
+        if reason is not None:
+            return reason
         if self.result is not None and not computation.is_current(
             self.result.get("computation_revision")
         ):
@@ -170,6 +176,7 @@ class JointFit:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "analysis_history": self.analysis_history,
             "joint_id": self.joint_id,
             "label": self.label,
             "rep_type": self.rep_type.value,
@@ -218,6 +225,7 @@ class JointFit:
             label=data.get("label"),
             rep_type=rep_type,
             member_batch_ids=[str(batch_id) for batch_id in raw_members],
+            analysis_history=data.get("analysis_history"),
             shared=shared,
             result=result,
         )

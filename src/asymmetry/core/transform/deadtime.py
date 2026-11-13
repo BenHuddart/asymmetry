@@ -468,32 +468,38 @@ def promote_deadtime_to_grouping(grouping: dict, calibration: DeadtimeCalibratio
 def normalise_deadtime_mode(value: str) -> str:
     """Name each accepted request consistently while retaining unknown input for errors."""
     mode = str(value).strip().lower()
-    return {
-        "file": "from_file",
-        "from_file": "from_file",
-        "": "from_file",
-        "manual": "manual",
-        "load": "manual",
-        "value": "manual",
-        "estimate": "estimate",
-        "calibrate": "manual",
-        "count_fit": "manual",
-        "maxent_fit": "manual",
-        "off": "off",
-        "none": "off",
-    }.get(mode, mode)
+    if mode == "file":
+        return "from_file"
+    if mode not in {"from_file", "manual", "estimate", "off"}:
+        raise ValueError(
+            f"unknown deadtime correction mode {value!r}; use off, from_file, manual or estimate"
+        )
+    return mode
+
+
+def deadtime_request_mode(grouping: dict, *, default: str = "from_file") -> str:
+    """Parse current authored requests without using coefficient origin as a mode."""
+    if "deadtime_loaded_us" in grouping:
+        raise ValueError("Use dead_time_us for an authored deadtime table")
+    origin = str(grouping.get("deadtime_method") or "file").strip().lower()
+    if "deadtime_mode" not in grouping and origin not in {"file", "from_file"}:
+        raise ValueError(
+            "Set deadtime_mode explicitly; deadtime_method records coefficient provenance"
+        )
+    return normalise_deadtime_mode(grouping.get("deadtime_mode", default))
 
 
 def file_deadtime_table(grouping: dict):
     """Read acquisition coefficients without borrowing an authored calibration."""
     if "deadtime_file_us" in grouping:
         return grouping["deadtime_file_us"]
-    mode = normalise_deadtime_mode(grouping.get("deadtime_mode", ""))
-    if mode in {"manual", "estimate"}:
-        return []
-    if normalise_deadtime_mode(grouping.get("deadtime_method") or mode) in {"from_file", "off"}:
-        return grouping.get("dead_time_us", grouping.get("deadtime_loaded_us", []))
-    return []
+    mode = normalise_deadtime_mode(grouping.get("deadtime_mode", "from_file"))
+    origin = str(grouping.get("deadtime_method") or "file").strip().lower()
+    return (
+        grouping.get("dead_time_us", [])
+        if mode in {"from_file", "off"} and origin in {"file", "from_file"}
+        else []
+    )
 
 
 def resolve_deadtime(
@@ -507,17 +513,13 @@ def resolve_deadtime(
     """Resolve one request without mutating its table or coefficient provenance."""
     if not use:
         return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
-    raw_mode = (
-        mode
-        if mode is not None
-        else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
-    )
+    raw_mode = mode if mode is not None else grouping.get("deadtime_mode", "from_file")
     requested = normalise_deadtime_mode(raw_mode)
     if requested not in {"off", "from_file", "manual", "estimate"}:
         raise ValueError(f"unknown deadtime correction mode {raw_mode!r}")
     if requested == "off":
         return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
-    table = grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
+    table = grouping.get("dead_time_us")
     if requested == "from_file":
         table = file_deadtime_table(grouping)
     required = tuple(range(n_histograms)) if domain is None else domain.detector_indices

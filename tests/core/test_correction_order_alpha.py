@@ -158,13 +158,13 @@ def test_correction_flags_from_grouping():
     flags = correction_flags_from_grouping(
         {
             "deadtime_correction": True,
-            "deadtime_mode": "LOAD",
+            "deadtime_mode": "manual",
             "background_correction": True,
             "background_mode": "fixed",
         }
     )
     assert flags.use_deadtime is True
-    assert flags.deadtime_mode == "manual"  # "load" folds to "manual"
+    assert flags.deadtime_mode == "manual"
     assert flags.use_background is True
 
     off = correction_flags_from_grouping({"background_correction": True, "background_mode": "none"})

@@ -44,7 +44,6 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import (
     CompositeModel,
-    migrate_legacy_fraction_state,
 )
 from asymmetry.core.fitting.count_domain import (
     RESERVED_COUNT_PARAMS,
@@ -74,9 +73,6 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_series,
     fit_grouped_time_domain,
     validate_grouped_model_contract,
-)
-from asymmetry.core.fitting.legacy_product_amplitudes import (
-    fold_legacy_product_amplitude_state,
 )
 from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags
@@ -150,7 +146,6 @@ from .seeding import (
 from .tab_base import (
     RESTORED_TAG,
     SEEDED,
-    TONE_BY_TAG,
     USER,
     VALUE_COL_CHARS,
     ElasticTable,
@@ -476,6 +471,7 @@ class GlobalFitTab(FitTabBase):
         settings: QSettings | None = None,
     ) -> None:
         super().__init__(parent)
+        self._analysis_history: dict | None = None
         layout = QVBoxLayout(self)
         #: Where the Parameters rail's chip states live. Injectable so a test can
         #: use a scratch scope (mirrors ``SingleFitTab`` and ``gui/fit_settings``).
@@ -1295,6 +1291,7 @@ class GlobalFitTab(FitTabBase):
         """
         self._set_member_pool(datasets, excluded_runs, unavailable)
         self.set_bound_group(group_id, group_name)
+        self._analysis_history = series.analysis_history
         self._apply_recipe(series.canonical_model, series.recipe)
         self._open_series_id = series.batch_id
         self._open_series_name = display_name
@@ -1327,6 +1324,7 @@ class GlobalFitTab(FitTabBase):
         self._set_member_pool(datasets, excluded_runs, unavailable)
         self.set_bound_group(group_id, group_name)
         if seed_from is not None:
+            self._analysis_history = seed_from.analysis_history
             self._apply_recipe(seed_from.canonical_model, seed_from.recipe)
         else:
             self._reseed_batch_parameter_table()
@@ -1423,12 +1421,8 @@ class GlobalFitTab(FitTabBase):
         """Replay a series' model and recipe into the form (D2)."""
         recipe = normalise_recipe(recipe)
         if isinstance(canonical_model, dict):
-            try:
-                model = CompositeModel.from_dict(canonical_model, allow_missing=True)
-            except ValueError:
-                model = None
-            if model is not None:
-                self._set_composite_model(model, seed_from_record=False)
+            model = CompositeModel.from_dict(canonical_model, allow_missing=True)
+            self._set_composite_model(model, seed_from_record=False)
         self._apply_parameter_rows(recipe["parameters"])
         self._apply_recipe_fit_range(recipe["fit_range"])
         self.set_batch_seeding_mode(str(recipe["seeding"]))
@@ -2873,6 +2867,11 @@ class GlobalFitTab(FitTabBase):
 
     def _parse_parameter_configuration(self) -> dict[str, object]:
         """Return validated parameter values, roles, and bounds from the table."""
+        from asymmetry.core.fitting.analysis_history import analysis_block_reason
+
+        reason = analysis_block_reason(self._analysis_history, self._parameter_rows_state())
+        if reason is not None:
+            raise ValueError(reason)
         global_params: list[str] = []
         local_params: list[str] = []
         fixed_params: dict[str, float] = {}
@@ -4556,6 +4555,11 @@ class GlobalFitTab(FitTabBase):
         """Apply a global-fit wizard assessment back into the global tab."""
         if not isinstance(assessment, GlobalCandidateAssessment):
             return
+        if assessment.analysis_history is not None:
+            from asymmetry.core.fitting.analysis_history import CONSTRAINT_EDIT_MESSAGE
+
+            self._results_card.set_message(CONSTRAINT_EDIT_MESSAGE, tag="Stale", tone="warn")
+            return
         if not computation.is_current(recommendation.computation_revision):
             self._results_card.set_message(
                 "Historical computation revision; reanalyse before applying.",
@@ -5269,6 +5273,7 @@ class GlobalFitTab(FitTabBase):
         )
 
         state = {
+            "analysis_history": self._analysis_history,
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
             "parameters": [
@@ -5309,90 +5314,10 @@ class GlobalFitTab(FitTabBase):
         return state
 
     def restore_state(self, state: dict) -> None:
-        """Restore global-fit tab state from a saved dict."""
-        self._wizard_cache_by_run_set = {}
-        self._set_active_wizard_cache(None, signature=None, log_text="")
+        """Restore a canonical persisted form and its historical content."""
+        from asymmetry.gui.panels.fit.state_restore import restore_global_state
 
-        # Parameter rows use the canonical fraction and product names.
-        state = migrate_legacy_fraction_state(state)
-        state = fold_legacy_product_amplitude_state(state)
-
-        composite_data = state.get("composite_model")
-        if isinstance(composite_data, dict):
-            try:
-                # Missing user components retain their names and payload.
-                restored = CompositeModel.from_dict(composite_data, allow_missing=True)
-            except ValueError:
-                if "time_response" in composite_data:
-                    raise
-                self._set_composite_model(
-                    CompositeModel(["Exponential", "Constant"], operators=["+"]),
-                    seed_from_record=False,
-                )
-            else:
-                self._set_composite_model(restored, seed_from_record=False)
-                if restored.missing_component_names:
-                    names = ", ".join(restored.missing_component_names)
-                    self._results_card.set_message(
-                        f"Missing user function(s): {names}. The saved model is "
-                        "preserved (missing components plot as zero) but cannot be "
-                        "fitted until they are registered — see Setup → User functions…",
-                        tag="Error",
-                        tone="error",
-                    )
-
-        self._apply_parameter_rows(state.get("parameters", []))
-
-        self._restore_group_param_table_state(state.get("group_parameters"))
-        self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
-        if isinstance(self._group_model_table, FitParameterTable):
-            _configure_fraction_rows_in_table(
-                self._group_model_table,
-                self._grouped_fit_model(),
-                min_column=FitParameterTable.COL_MIN,
-                max_column=FitParameterTable.COL_MAX,
-            )
-        else:
-            _configure_fraction_rows_in_table(
-                self._group_model_table,
-                self._grouped_fit_model(),
-                min_column=_COL_MIN,
-                max_column=_COL_MAX,
-                type_column=2,
-            )
-        self._synchronize_grouped_model_fraction_rows()
-
-        result_html = state.get("result_html")
-        if isinstance(result_html, str) and result_html:
-            # A state written before the tag was persisted carries none; it is
-            # still a recorded read-out, so it goes back under RESTORED_TAG
-            # rather than under the "no fit" placeholder.
-            tag = state.get("result_tag")
-            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
-            self._results_card.set_message(
-                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
-            )
-
-        wizard_state_by_run_set = state.get("wizard_state_by_run_set")
-        if isinstance(wizard_state_by_run_set, list):
-            self._restore_wizard_cache_store(wizard_state_by_run_set)
-
-        # Both shapes: the session handle (shared by reference) and a persisted
-        # dict from a project file / grouped fit slot.
-        active_entry = global_wizard_cache_entry(state.get("wizard_state"))
-        if active_entry is not None:
-            self._cache_wizard_analysis(
-                active_entry.recommendation,
-                signature=active_entry.signature_copy(),
-                log_text=active_entry.log_text,
-            )
-        self._sync_active_wizard_cache_from_selection()
-        self._update_mode_ui(preserve_result=True)
-        # The rows are back, but which *series* they describe is the host's to
-        # resolve (it holds the project model): the tab is a draft until
-        # ``open_series`` lands, and ``saved_open_series_id`` says what to open.
-        self._saved_open_series_id = state.get("open_series_id")
-        self._become_draft()
+        restore_global_state(self, state)
 
     def saved_open_series_id(self) -> str | None:
         """The series id the last :meth:`restore_state` carried, if any.
@@ -6137,6 +6062,13 @@ class GlobalFitTab(FitTabBase):
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []
+        from asymmetry.core.fitting.analysis_history import analysis_block_reason
+
+        reason = analysis_block_reason(
+            self._analysis_history, self._table_state_for(self._group_model_table)
+        )
+        if reason is not None:
+            raise ValueError(reason)
         local_params: list[str] = []
         fixed_params: list[str] = []
         model_values: dict[str, float] = {}

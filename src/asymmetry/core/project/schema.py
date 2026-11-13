@@ -10,13 +10,14 @@ import shutil
 import sys
 import tempfile
 import uuid
+from copy import deepcopy
 from numbers import Integral, Real
 from pathlib import Path
 
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 38
+CURRENT_SCHEMA_VERSION: int = 39
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -63,73 +64,40 @@ def migrate_to_current(data: dict) -> dict:
             "Upgrade the Asymmetry package to open this file, or check that "
             "the file is a valid Asymmetry project."
         )
-    migrated = _migrate_channel_membership(data) if version < 30 else dict(data)
-    if version == 1:
-        migrated = _migrate_v1_to_v2(migrated)
-        version = 2
-    if version == 2:
-        migrated = _migrate_v2_to_v3(migrated)
-        version = 3
-    if version == 3:
-        migrated = _migrate_v3_to_v4(migrated)
-        version = 4
-    if version == 4:
-        migrated = _migrate_v4_to_v5(migrated)
-        version = 5
-    if version == 5:
-        migrated = _migrate_v5_to_v6(migrated)
-        version = 6
-    if version == 6:
-        migrated = _migrate_v6_to_v7(migrated)
-        version = 7
-    if version == 7:
-        migrated = _migrate_v7_to_v8(migrated)
-        version = 8
-    if version == 8:
-        migrated = _migrate_v8_to_v9(migrated)
-        version = 9
-    if version == 9:
-        migrated = _migrate_v9_to_v10(migrated)
-        version = 10
-    if version == 10:
-        migrated = _migrate_v10_to_v11(migrated)
-        version = 11
-    if version == 11:
-        migrated = _migrate_v11_to_v12(migrated)
-        version = 12
-    if version == 12:
-        migrated = _migrate_v12_to_v13(migrated)
-        version = 13
-    if version == 13:
-        migrated = _migrate_v13_to_v14(migrated)
-        version = 14
-    if version == 14:
-        migrated = _migrate_v14_to_v15(migrated)
-        version = 15
-    if version == 15:
-        migrated = _migrate_v15_to_v16(migrated)
-        version = 16
-    if version == 16:
-        migrated = _migrate_v16_to_v17(migrated)
-        version = 17
-    if version == 17:
-        migrated = _migrate_v17_to_v18(migrated)
-        version = 18
-    if version == 18:
-        migrated = _migrate_v18_to_v19(migrated)
-        version = 19
-    if version == 19:
-        migrated = _migrate_v19_to_v20(migrated)
-        version = 20
-    if version == 20:
-        migrated = _migrate_v20_to_v21(migrated)
-        version = 21
-    if version == 21:
-        migrated = _migrate_v21_to_v22(migrated)
-        version = 22
-    if version == 22:
-        migrated = _migrate_v22_to_v23(migrated)
-        version = 23
+    migrated = deepcopy(data)
+    if version < 39:
+        from asymmetry.core.project.correction_migration import project_corrections
+
+        project_corrections(migrated)
+    if version < 30:
+        migrated = _migrate_channel_membership(migrated)
+    for prior, convert in (
+        (1, _migrate_v1_to_v2),
+        (2, _migrate_v2_to_v3),
+        (3, _migrate_v3_to_v4),
+        (4, _migrate_v4_to_v5),
+        (5, _migrate_v5_to_v6),
+        (6, _migrate_v6_to_v7),
+        (7, _migrate_v7_to_v8),
+        (8, _migrate_v8_to_v9),
+        (9, _migrate_v9_to_v10),
+        (10, _migrate_v10_to_v11),
+        (11, _migrate_v11_to_v12),
+        (12, _migrate_v12_to_v13),
+        (13, _migrate_v13_to_v14),
+        (14, _migrate_v14_to_v15),
+        (15, _migrate_v15_to_v16),
+        (16, _migrate_v16_to_v17),
+        (17, _migrate_v17_to_v18),
+        (18, _migrate_v18_to_v19),
+        (19, _migrate_v19_to_v20),
+        (20, _migrate_v20_to_v21),
+        (21, _migrate_v21_to_v22),
+        (22, _migrate_v22_to_v23),
+    ):
+        if version == prior:
+            migrated = convert(migrated)
+            version = prior + 1
     for prior, convert in (
         (23, _migrate_v23_to_v24),
         (24, _migrate_v24_to_v25),
@@ -174,6 +142,15 @@ def migrate_to_current(data: dict) -> dict:
         from asymmetry.core.project.scan_migration import migrate_scan_observations
 
         migrated = migrate_scan_observations(migrated) | {"schema_version": 38}
+        version = 38
+    if version == 38:
+        from asymmetry.core.project.analysis_migration import migrate_analysis_state
+
+        migrated = migrate_analysis_state(migrated) | {"schema_version": 39}
+    if version == 39:
+        from asymmetry.core.project.analysis_migration import migrate_analysis_state
+
+        migrated = migrate_analysis_state(migrated, legacy=False)
     return migrated
 
 

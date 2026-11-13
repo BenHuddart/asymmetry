@@ -28,8 +28,6 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import (
     CompositeModel,
-    _legacy_fraction_rename_map,
-    migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -44,12 +42,12 @@ from asymmetry.core.fitting.fit_wizard import (
     _clone_parameter_set,
     _curve_parameter_values,
     _dense_fit_curves,
-    _deserialize_fit_result,
+    _deserialize_candidate_template,
+    _deserialize_spectrum_fingerprint,
     _execute_assessment_task,
     _field_seed_context,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
-    _migrate_fit_result_fractions,
     _model_identity,
     _needs_fit_backend_fallback,
     _parameter_variants,
@@ -58,7 +56,8 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_diagnostics,
     _residual_gate_reasons,
     _scipy_fit_fallback,
-    _serialize_fit_result,
+    _serialize_candidate_template,
+    _serialize_spectrum_fingerprint,
     _template_cost_rank,
     _template_family_map,
     analysis_rebin_factor,
@@ -119,13 +118,15 @@ from asymmetry.core.fitting.information_criteria import (
 from asymmetry.core.fitting.information_criteria import (
     rank as rank_criteria,
 )
-from asymmetry.core.fitting.legacy_product_amplitudes import (
-    fold_legacy_product_amplitude_names,
-    fold_legacy_product_amplitude_set,
-)
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.result_payload import (
+    _deserialize_fit_result,
+    _deserialize_parameter_set,
+    _serialize_fit_result,
+    _serialize_parameter_set,
+)
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
@@ -514,6 +515,8 @@ class GlobalCandidateAssessment:
     #: Set on a rung of a sharing ladder; ``None`` on a role-search node and a screening row.
     rung: CandidateRung | None = None
 
+    analysis_history: dict | None = None
+
     @property
     def selection_key(self) -> str:
         return self.assessment_key or self.template.key
@@ -587,7 +590,9 @@ class GlobalCandidateAssessment:
     @property
     def is_successful(self) -> bool:
         return (
-            (not self.prescreen_only)
+            self.analysis_history is None
+            and not self.template.model.missing_component_names
+            and (not self.prescreen_only)
             and bool(self.fit_results_by_run)
             and all(result.success for result in self.fit_results_by_run.values())
         )
@@ -4006,7 +4011,10 @@ def serialize_global_fit_wizard_recommendation(
     Both forms deserialise through
     :func:`deserialize_global_fit_wizard_recommendation`.
     """
+    from asymmetry.core.project.analysis_migration import WIZARD_PAYLOAD_VERSION
+
     return {
+        "analysis_payload_version": WIZARD_PAYLOAD_VERSION,
         "computation_revision": recommendation.computation_revision,
         "series_axis_key": recommendation.series_axis_key,
         "series_axis_label": recommendation.series_axis_label,
@@ -4056,6 +4064,9 @@ def deserialize_global_fit_wizard_recommendation(
     """Rebuild a persisted global-fit wizard recommendation payload."""
     if not isinstance(payload, dict):
         return None
+    from asymmetry.core.project.analysis_migration import migrate_wizard_payload
+
+    payload = migrate_wizard_payload(payload)
 
     templates = tuple(
         template
@@ -4137,128 +4148,6 @@ def _fixed_param_names(
         for name in template.model.param_names
         if str(current_parameter_types.get(name, "")).strip().lower() == "fixed"
     )
-
-
-def _serialize_candidate_template(template: CandidateTemplate) -> dict[str, object]:
-    return {
-        "key": template.key,
-        "title": template.title,
-        "category": template.category,
-        "rationale": template.rationale,
-        "model": template.model.to_dict(),
-        "is_current_model_baseline": bool(template.is_current_model_baseline),
-    }
-
-
-def _deserialize_candidate_template(payload: object) -> CandidateTemplate | None:
-    if not isinstance(payload, dict):
-        return None
-    model_payload = payload.get("model")
-    if not isinstance(model_payload, dict):
-        return None
-    try:
-        model = CompositeModel.from_dict(model_payload)
-    except ValueError:
-        return None
-    return CandidateTemplate(
-        key=str(payload.get("key", "")),
-        title=str(payload.get("title", "")),
-        category=str(payload.get("category", "")),
-        rationale=str(payload.get("rationale", "")),
-        model=model,
-        is_current_model_baseline=bool(payload.get("is_current_model_baseline", False)),
-    )
-
-
-def _serialize_spectrum_fingerprint(fingerprint: SpectrumFingerprint) -> dict[str, object]:
-    return {
-        "tail_estimate": fingerprint.tail_estimate,
-        "initial_amplitude_estimate": fingerprint.initial_amplitude_estimate,
-        "zero_crossings": fingerprint.zero_crossings,
-        "smoothed_zero_crossings": fingerprint.smoothed_zero_crossings,
-        "smoothed_turning_points": fingerprint.smoothed_turning_points,
-        "dominant_fft_frequency_mhz": fingerprint.dominant_fft_frequency_mhz,
-        "dominant_fft_snr": fingerprint.dominant_fft_snr,
-        "dominant_fft_cycles_in_window": fingerprint.dominant_fft_cycles_in_window,
-        "monotonic_decay_fraction": fingerprint.monotonic_decay_fraction,
-        "early_time_curvature": fingerprint.early_time_curvature,
-        "semilog_slope_ratio": fingerprint.semilog_slope_ratio,
-        "late_time_dip_recovery_score": fingerprint.late_time_dip_recovery_score,
-        "oscillatory_hint": fingerprint.oscillatory_hint,
-        "kt_like_hint": fingerprint.kt_like_hint,
-        "multi_rate_hint": fingerprint.multi_rate_hint,
-        "damped_line_frequency_mhz": fingerprint.damped_line_frequency_mhz,
-        "damped_line_snr": fingerprint.damped_line_snr,
-        "damped_line_crop_us": fingerprint.damped_line_crop_us,
-    }
-
-
-def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | None:
-    if not isinstance(payload, dict):
-        return None
-    try:
-        return SpectrumFingerprint(
-            tail_estimate=float(payload.get("tail_estimate", 0.0)),
-            initial_amplitude_estimate=float(payload.get("initial_amplitude_estimate", 0.0)),
-            zero_crossings=int(payload.get("zero_crossings", 0)),
-            smoothed_zero_crossings=int(payload.get("smoothed_zero_crossings", 0)),
-            smoothed_turning_points=int(payload.get("smoothed_turning_points", 0)),
-            dominant_fft_frequency_mhz=float(payload.get("dominant_fft_frequency_mhz", 0.0)),
-            dominant_fft_snr=float(payload.get("dominant_fft_snr", 0.0)),
-            dominant_fft_cycles_in_window=float(payload.get("dominant_fft_cycles_in_window", 0.0)),
-            monotonic_decay_fraction=float(payload.get("monotonic_decay_fraction", 0.0)),
-            early_time_curvature=float(payload.get("early_time_curvature", 0.0)),
-            semilog_slope_ratio=float(payload.get("semilog_slope_ratio", 0.0)),
-            late_time_dip_recovery_score=float(payload.get("late_time_dip_recovery_score", 0.0)),
-            oscillatory_hint=bool(payload.get("oscillatory_hint", False)),
-            kt_like_hint=bool(payload.get("kt_like_hint", False)),
-            multi_rate_hint=bool(payload.get("multi_rate_hint", False)),
-            damped_line_frequency_mhz=float(payload.get("damped_line_frequency_mhz", 0.0)),
-            damped_line_snr=float(payload.get("damped_line_snr", 0.0)),
-            damped_line_crop_us=float(payload.get("damped_line_crop_us", 0.0)),
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _serialize_parameter_set(parameters: ParameterSet) -> list[dict[str, object]]:
-    return [
-        {
-            "name": parameter.name,
-            "value": float(parameter.value),
-            "min": float(parameter.min),
-            "max": float(parameter.max),
-            "fixed": bool(parameter.fixed),
-            "expr": parameter.expr,
-        }
-        for parameter in parameters
-    ]
-
-
-def _deserialize_parameter_set(payload: object) -> ParameterSet:
-    parameters = ParameterSet()
-    if not isinstance(payload, list):
-        return parameters
-    for entry in payload:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if not isinstance(name, str):
-            continue
-        try:
-            parameters.add(
-                Parameter(
-                    name=name,
-                    value=float(entry.get("value", 0.0)),
-                    min=float(entry.get("min", -float("inf"))),
-                    max=float(entry.get("max", float("inf"))),
-                    fixed=bool(entry.get("fixed", False)),
-                    expr=str(entry["expr"]) if entry.get("expr") is not None else None,
-                )
-            )
-        except (TypeError, ValueError):
-            continue
-    return parameters
 
 
 def _serialize_run_residual_diagnostic(diagnostic: RunResidualDiagnostic) -> dict[str, object]:
@@ -4400,6 +4289,7 @@ def _serialize_global_candidate_assessment(
         for run_number, curve in assessment.fitted_curves_by_run.items()
     }
     return {
+        "analysis_history": assessment.analysis_history,
         "template": _serialize_candidate_template(assessment.template),
         "fit_results_by_run": {
             str(run_number): _serialize_fit_result(result, include_residuals=False)
@@ -4437,32 +4327,6 @@ def _serialize_global_candidate_assessment(
     }
 
 
-def _migrate_global_param_name_tuple(
-    names: tuple[str, ...], model: CompositeModel
-) -> tuple[str, ...]:
-    """Rename/drop legacy entries in a cached parameter-role tuple.
-
-    Applies the same rename maps as
-    :func:`asymmetry.core.fitting.composite.migrate_legacy_fraction_parameter_set`
-    and
-    :func:`asymmetry.core.fitting.legacy_product_amplitudes.fold_legacy_product_amplitude_names`
-    to a ``global_param_names``/``local_param_names``/``fixed_param_names`` tuple,
-    preserving order and dropping names that have no parameter under the current
-    schemes (a fraction group's derived last term, a folded-away product
-    amplitude).
-    """
-    rename = _legacy_fraction_rename_map(model)
-    migrated: list[str] = []
-    for name in names:
-        if name in rename:
-            new_name = rename[name]
-            if new_name is not None and new_name not in migrated:
-                migrated.append(new_name)
-        elif name not in migrated:
-            migrated.append(name)
-    return fold_legacy_product_amplitude_names(model, migrated)
-
-
 def _deserialize_global_candidate_assessment(
     payload: object,
 ) -> GlobalCandidateAssessment | None:
@@ -4472,13 +4336,8 @@ def _deserialize_global_candidate_assessment(
     if template is None:
         return None
 
-    # A recommendation cached before the fraction rework carries legacy
-    # ``fraction_<k>`` names/values across the per-run fit results, the
-    # standalone global-parameter set, and the three parameter-role tuples.
-    # Migrate all of them against the template's model (mirrors
-    # fit_wizard._deserialize_candidate_assessment's single-fit treatment).
     fit_results_by_run = {
-        int(run_number): _migrate_fit_result_fractions(result, template.model)
+        int(run_number): result
         for run_number, entry in (payload.get("fit_results_by_run", {}) or {}).items()
         if (result := _deserialize_fit_result(entry)) is not None
     }
@@ -4502,29 +4361,15 @@ def _deserialize_global_candidate_assessment(
         for run_number, entry in (payload.get("component_curves_by_run", {}) or {}).items()
     }
 
-    global_parameters, _ = fold_legacy_product_amplitude_set(
-        template.model,
-        migrate_legacy_fraction_parameter_set(
-            template.model, _deserialize_parameter_set(payload.get("global_parameters", []))
-        ),
-        {},
-    )
-    global_param_names = _migrate_global_param_name_tuple(
-        tuple(name for name in payload.get("global_param_names", []) if isinstance(name, str)),
-        template.model,
-    )
-    local_param_names = _migrate_global_param_name_tuple(
-        tuple(name for name in payload.get("local_param_names", []) if isinstance(name, str)),
-        template.model,
-    )
-    fixed_param_names = _migrate_global_param_name_tuple(
-        tuple(name for name in payload.get("fixed_param_names", []) if isinstance(name, str)),
-        template.model,
-    )
+    global_parameters = _deserialize_parameter_set(payload.get("global_parameters", []))
+    global_param_names = tuple(payload.get("global_param_names", []))
+    local_param_names = tuple(payload.get("local_param_names", []))
+    fixed_param_names = tuple(payload.get("fixed_param_names", []))
 
     try:
         return GlobalCandidateAssessment(
             template=template,
+            analysis_history=payload.get("analysis_history"),
             fit_results_by_run=fit_results_by_run,
             global_parameters=global_parameters,
             global_param_names=global_param_names,

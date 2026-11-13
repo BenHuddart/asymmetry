@@ -3421,61 +3421,6 @@ def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
     assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
 
 
-def _legacy_single_fraction_state() -> dict:
-    """A pre-rework single-fit state blob with legacy fraction_<k> keys."""
-    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
-    return {
-        "composite_model": model.to_dict(),
-        "parameters": [
-            {"name": "A_1", "value": 20.0, "fixed": False, "min": "0", "max": "inf"},
-            {"name": "Lambda", "value": 0.5, "fixed": False, "min": "0", "max": "inf"},
-            {"name": "fraction_1", "value": 2.0, "fixed": False, "min": "0", "max": "1"},
-            {"name": "sigma", "value": 0.3, "fixed": False, "min": "0", "max": "inf"},
-            {"name": "fraction_2", "value": 1.0, "fixed": False, "min": "0", "max": "1"},
-            {"name": "fraction_3", "value": 1.0, "fixed": False, "min": "0", "max": "1"},
-        ],
-    }
-
-
-def test_single_fit_restore_migrates_legacy_fraction_state(qapp: QApplication) -> None:
-    tab = SingleFitTab()
-    tab.restore_state(_legacy_single_fraction_state())
-
-    by_name = {p["name"]: p for p in tab.get_state()["parameters"]}
-    # Legacy fraction_1/2 → new free names (normalised 2:1:1 → 0.5/0.25); the
-    # dropped fraction_3 term becomes the display-only derived remainder.
-    assert "f_Exponential" in by_name
-    assert "f_Gaussian" in by_name
-    assert not any(name.startswith("fraction_") for name in by_name)
-    assert float(by_name["f_Exponential"]["value"]) == pytest.approx(0.5)
-    assert float(by_name["f_Gaussian"]["value"]) == pytest.approx(0.25)
-
-    row_by_name = {
-        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
-        for row in range(tab._param_table.rowCount())
-    }
-    # The derived remainder display row is present and shows 1 - 0.5 - 0.25 = 0.25.
-    assert "f_Constant" in row_by_name
-    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
-
-
-def test_global_fit_restore_migrates_legacy_fraction_state(qapp: QApplication) -> None:
-    tab = GlobalFitTab()
-    tab.restore_state(_legacy_single_fraction_state())
-
-    by_name = {p["name"]: p for p in tab.get_state()["parameters"]}
-    assert "f_Exponential" in by_name
-    assert "f_Gaussian" in by_name
-    assert not any(name.startswith("fraction_") for name in by_name)
-
-    row_by_name = {
-        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
-        for row in range(tab._param_table.rowCount())
-    }
-    assert "f_Constant" in row_by_name
-    assert tab._param_table.item(row_by_name["f_Constant"], 1).text() == "0.25"
-
-
 def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_groups(
     qapp: QApplication,
     dataset: MuonDataset,

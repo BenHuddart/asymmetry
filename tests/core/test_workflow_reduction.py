@@ -112,7 +112,7 @@ def test_deadtime_from_file_uses_the_runs_own_values(workflow_folder: Path) -> N
     run = _load_run(workflow_folder, DEADTIME_RUN)
     grouping = resolve_reduction_grouping(run, ReductionSettings(deadtime="from_file"))
     assert grouping["deadtime_correction"] is True
-    assert grouping["deadtime_mode"] == "file"
+    assert grouping["deadtime_mode"] == "from_file"
     assert grouping["dead_time_us"] == pytest.approx([DEADTIME_US] * len(run.histograms))
 
     corrected = reduce_run(run, ReductionSettings(deadtime="from_file"))

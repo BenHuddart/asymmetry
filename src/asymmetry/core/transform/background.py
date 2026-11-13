@@ -712,19 +712,20 @@ def _estimated_background_group(
 
 
 def fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | None:
-    for key in ("background_fixed_values", "background_fix", "bkg_fix"):
-        candidate = grouping.get(key)
-        if isinstance(candidate, (list, tuple)) and len(candidate) == 2:
-            try:
-                values = float(candidate[0]), float(candidate[1])
-            except (TypeError, ValueError):
-                raise ValueError("fixed background values must be two finite numbers") from None
-            if not np.all(np.isfinite(values)):
-                raise ValueError("fixed background values must be two finite numbers")
-            return values
-        if candidate is not None:
-            raise ValueError("fixed background values must be two finite numbers")
-    return None
+    if {"background_fix", "bkg_fix"}.intersection(grouping):
+        raise ValueError("Use background_fixed_values for authored fixed backgrounds")
+    candidate = grouping.get("background_fixed_values")
+    if candidate is None:
+        return None
+    if not isinstance(candidate, (list, tuple)) or len(candidate) != 2:
+        raise ValueError("fixed background values must be two finite numbers")
+    try:
+        values = float(candidate[0]), float(candidate[1])
+    except (TypeError, ValueError):
+        raise ValueError("fixed background values must be two finite numbers") from None
+    if not np.all(np.isfinite(values)):
+        raise ValueError("fixed background values must be two finite numbers")
+    return values
 
 
 def background_window(value: object) -> BinWindow:

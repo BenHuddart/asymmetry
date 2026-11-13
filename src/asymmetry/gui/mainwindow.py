@@ -5107,9 +5107,7 @@ class MainWindow(QMainWindow):
         if isinstance(grouping.get("period_dead_time_us"), list):
             payload["period_dead_time_us"] = copy.deepcopy(grouping.get("period_dead_time_us", []))
 
-        deadtime_mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "off")))
-        if deadtime_mode == "load":
-            deadtime_mode = "manual"
+        deadtime_mode = correction_flags_from_grouping(grouping).deadtime_mode
         payload["deadtime_mode"] = deadtime_mode
         if grouping.get("deadtime_method"):
             payload["deadtime_method"] = str(grouping.get("deadtime_method"))
@@ -5155,11 +5153,9 @@ class MainWindow(QMainWindow):
         if instrument_name:
             payload["instrument"] = str(instrument_name)
 
-        if deadtime_mode != "file":
+        if deadtime_mode != "from_file":
             if isinstance(grouping.get("dead_time_us"), list):
                 payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
-            elif isinstance(grouping.get("deadtime_loaded_us"), list):
-                payload["dead_time_us"] = list(grouping.get("deadtime_loaded_us", []))
         for key in ("good_frames", "reference_exposure", "period_reference_exposure"):
             if key in grouping:
                 payload[key] = grouping[key]
@@ -5171,8 +5167,6 @@ class MainWindow(QMainWindow):
             "background_fixed_values",
             "background_values",
             "background_method",
-            "background_fix",
-            "bkg_fix",
         ):
             if key in grouping:
                 payload[key] = grouping.get(key)
@@ -5374,17 +5368,16 @@ class MainWindow(QMainWindow):
             str(
                 grouping_result.get(
                     "deadtime_mode",
-                    existing_grouping.get(
-                        "deadtime_mode", existing_grouping.get("deadtime_method", "off")
-                    ),
+                    existing_grouping.get("deadtime_mode", "off"),
                 )
             )
             .strip()
             .lower()
             or "off"
         )
-        if deadtime_mode == "load":
-            deadtime_mode = "manual"
+        from asymmetry.core.transform.deadtime import normalise_deadtime_mode
+
+        deadtime_mode = normalise_deadtime_mode(deadtime_mode)
         background_mode = resolve_background_mode(
             grouping_result if "background_mode" in grouping_result else existing_grouping
         )
@@ -5442,13 +5435,9 @@ class MainWindow(QMainWindow):
             _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
             run.grouping.pop("deadtime_source_path", None)
             run.grouping.pop("deadtime_loaded_us", None)
-            if deadtime_mode != "file":
+            if deadtime_mode != "from_file":
                 if isinstance(grouping_result.get("dead_time_us"), list):
                     run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
-                elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
-                    run.grouping["dead_time_us"] = list(
-                        grouping_result.get("deadtime_loaded_us", [])
-                    )
             run.grouping["background_correction"] = use_background
             _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
             if not use_background:
@@ -5557,13 +5546,11 @@ class MainWindow(QMainWindow):
         grouping.pop("deadtime_source_path", None)
         grouping.pop("deadtime_loaded_us", None)
 
-        if deadtime_mode == "file":
+        if deadtime_mode == "from_file":
             if isinstance(grouping.get("deadtime_file_us"), list):
                 grouping["dead_time_us"] = list(grouping.get("deadtime_file_us", []))
         elif isinstance(grouping_result.get("dead_time_us"), list):
             grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
-        elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
-            grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
         self._preserve_per_run_normalisers(grouping, existing_grouping, grouping_result)
         for key in (
             "background_ranges",
@@ -5571,8 +5558,6 @@ class MainWindow(QMainWindow):
             "background_forward_range",
             "background_backward_range",
             "background_fixed_values",
-            "background_fix",
-            "bkg_fix",
         ):
             if key in grouping_result:
                 grouping[key] = grouping_result.get(key)
@@ -11562,6 +11547,7 @@ class MainWindow(QMainWindow):
                 slot.model, slot.parameters, slot.result
             )
             if rebuilt:
+                rebuilt["analysis_history"] = slot.analysis_history
                 return rebuilt
         else:
             active_id = self._project_model.active_series_id(rep_type)
@@ -11573,6 +11559,7 @@ class MainWindow(QMainWindow):
                     series.results_by_run[run_number],
                 )
                 if rebuilt:
+                    rebuilt["analysis_history"] = series.analysis_history
                     return rebuilt
         if representation is None:
             return None
@@ -11743,6 +11730,12 @@ class MainWindow(QMainWindow):
         open_series.nuisance_params = list(candidate.nuisance_params)
         open_series.group_id = candidate.group_id
         open_series.source_group_id = candidate.source_group_id
+        from asymmetry.core.fitting.analysis_history import published_analysis_history
+
+        if candidate.results_by_run and all(
+            row.get("success", False) for row in candidate.results_by_run.values()
+        ):
+            open_series.analysis_history = published_analysis_history(open_series.analysis_history)
         return open_series
 
     def _distinct_series_label(self, series: FitSeries) -> str | None:
@@ -13324,6 +13317,7 @@ class MainWindow(QMainWindow):
             member_run_numbers=[run_number],
             order_key="field",
             canonical_model=canonical_model,
+            analysis_history=fit_slot.analysis_history,
             param_roles={},
             results_by_run={run_number: result},
             group_id=group_id,
@@ -14404,7 +14398,7 @@ class MainWindow(QMainWindow):
             elif model is None:
                 blocked = "No fit model"
             else:
-                blocked = ""
+                blocked = series.refit_block_reason() or ""
             entries.append(
                 JointSeriesEntry(
                     batch_id=series.batch_id,
@@ -14539,16 +14533,7 @@ class MainWindow(QMainWindow):
         self._next_joint_index = max(self._next_joint_index, highest + 1)
 
     def _on_joint_fit_completed(self, launch, result, curves) -> None:
-        """Record a converged joint fit: member results in place, then the record (D8).
-
-        A joint run does not create series — the recipes did not change, only
-        the constraint did — so each member's ``results_by_run`` is rewritten
-        under its existing ``batch_id`` in exactly the shape a Batch-tab run
-        produces (:meth:`_fit_result_summary` plus the per-run trend coords),
-        and each member is stamped with the joint fit it now honours (D5). The
-        ``JointFit`` record is created or updated last, so the stamps it is
-        checked against (D9) are already in place.
-        """
+        """Publish launch-time joint results, retaining superseded parameter history."""
         timestamp = self._fit_record_timestamp()
         shared_by_series: dict[str, dict[str, str]] = {
             batch_id: {} for batch_id in launch.member_batch_ids
@@ -14580,6 +14565,10 @@ class MainWindow(QMainWindow):
                 )
                 summary.update(self._dataset_trend_coords(int(run)))
                 results_by_run[int(run)] = summary
+            from asymmetry.core.fitting.analysis_history import published_analysis_history
+
+            if result.success:
+                series.analysis_history = published_analysis_history(series.analysis_history)
             series.results_by_run = results_by_run
             series.last_fitted_members = sorted(results_by_run)
             series.joint_fit_id = joint_id
@@ -14607,6 +14596,10 @@ class MainWindow(QMainWindow):
             joint.label = label
             joint.member_batch_ids = list(launch.member_batch_ids)
             joint.shared = [dict(row) for row in launch.shared_rows]
+        if result.success:
+            from asymmetry.core.fitting.analysis_history import published_analysis_history
+
+            joint.analysis_history = published_analysis_history(joint.analysis_history)
         joint.result = {
             "computation_revision": result.computation_revision,
             "shared_values": {

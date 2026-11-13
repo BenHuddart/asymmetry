@@ -25,10 +25,8 @@ from asymmetry.core.fitting.composite import (
     CompositeModel,
     ExprLeaf,
     ExprProduct,
-    _legacy_fraction_rename_map,
     iter_nodes,
     leaf_indices,
-    migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
@@ -39,7 +37,6 @@ from asymmetry.core.fitting.information_criteria import (
     ranking_is_available,
     ranking_value,
 )
-from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
 from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
@@ -77,16 +74,8 @@ from asymmetry.core.fitting.resolution import (
     relaxation_rate_parameter_names,
 )
 from asymmetry.core.fitting.result_payload import (
-    _deserialize_fit_result as _deserialize_fit_result,
-)
-from asymmetry.core.fitting.result_payload import (
-    _deserialize_parameter_set as _deserialize_parameter_set,
-)
-from asymmetry.core.fitting.result_payload import (
-    _serialize_fit_result as _serialize_fit_result,
-)
-from asymmetry.core.fitting.result_payload import (
-    _serialize_parameter_set as _serialize_parameter_set,
+    _deserialize_fit_result,
+    _serialize_fit_result,
 )
 from asymmetry.core.fitting.seeding import (
     phase_seed_from_sign,
@@ -362,6 +351,8 @@ class CandidateAssessment:
     #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
     timing: FitTiming | None = None
 
+    analysis_history: dict | None = None
+
     @property
     def residual_diagnostics_available(self) -> bool:
         """Whether every recorded residual diagnostic is a finite value."""
@@ -442,7 +433,11 @@ class CandidateAssessment:
 
     @property
     def is_successful(self) -> bool:
-        return bool(self.fit_result.success)
+        return (
+            self.analysis_history is None
+            and not self.template.model.missing_component_names
+            and bool(self.fit_result.success)
+        )
 
 
 @dataclass(frozen=True)
@@ -3618,7 +3613,10 @@ def serialize_fit_wizard_recommendation(
     payloads are unchanged. Both forms deserialise through
     :func:`deserialize_fit_wizard_recommendation`.
     """
+    from asymmetry.core.project.analysis_migration import WIZARD_PAYLOAD_VERSION
+
     return {
+        "analysis_payload_version": WIZARD_PAYLOAD_VERSION,
         "computation_revision": recommendation.computation_revision,
         "fingerprint": _serialize_spectrum_fingerprint(recommendation.fingerprint),
         "templates": [
@@ -3663,6 +3661,9 @@ def deserialize_fit_wizard_recommendation(
     """Rebuild a persisted single-fit wizard recommendation payload."""
     if not isinstance(payload, dict):
         return None
+    from asymmetry.core.project.analysis_migration import migrate_wizard_payload
+
+    payload = migrate_wizard_payload(payload)
 
     fingerprint = _deserialize_spectrum_fingerprint(payload.get("fingerprint"))
     if fingerprint is None:
@@ -3788,10 +3789,7 @@ def _deserialize_candidate_template(payload: object) -> CandidateTemplate | None
     model_payload = payload.get("model")
     if not isinstance(model_payload, dict):
         return None
-    try:
-        model = CompositeModel.from_dict(model_payload)
-    except ValueError:
-        return None
+    model = CompositeModel.from_dict(model_payload, allow_missing=True)
     return CandidateTemplate(
         key=str(payload.get("key", "")),
         title=str(payload.get("title", "")),
@@ -3963,47 +3961,6 @@ def _persisted_curve_list(values: object, *, stride: int = 1, compact: bool = Fa
     return (_round_significant(array) if compact else array).tolist()
 
 
-def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> FitResult:
-    """Rename a cached result's legacy ``fraction_<k>`` params to the new scheme.
-
-    A wizard recommendation cached before the fraction rework carries fitted
-    ``fraction_<k>`` parameters and matching uncertainty keys. When the candidate
-    template's model has fraction groups and the result carries legacy keys, the
-    :class:`ParameterSet` is rebuilt with the n-1 free-parameter names (normalised
-    weights, last-term entry dropped) and the uncertainty keys are re-mapped so
-    the cached fit still applies after the model rows switch to ``f_<Component>``.
-    A no-op when there are no legacy keys.
-
-    Legacy per-factor product amplitudes (``A_2`` beside ``A_1`` in a cached
-    multiplet) are folded onto the one-scale-per-product names first, on the
-    same in-place result.
-    """
-    result.parameters, result.uncertainties = fold_legacy_product_amplitude_set(
-        model, result.parameters, result.uncertainties
-    )
-    migrated = migrate_legacy_fraction_parameter_set(model, result.parameters)
-    if migrated is result.parameters:
-        # No legacy fraction keys for this model — nothing to rename or re-key.
-        return result
-
-    # Uncertainties keyed by the same legacy fraction names: keep only those that
-    # map 1:1 to a surviving free parameter (the dropped last term has no key).
-    rename = _legacy_fraction_rename_map(model)
-    uncertainties: dict[str, float] = {}
-    for name, value in result.uncertainties.items():
-        if name in rename:
-            new_name = rename[name]
-            if new_name is not None:
-                uncertainties[new_name] = value
-        else:
-            uncertainties[name] = value
-
-    # Mutate in place so covariance/MINOS/dof and every other cached field survive.
-    result.parameters = migrated
-    result.uncertainties = uncertainties
-    return result
-
-
 def _serialize_component_curves(
     curves: tuple[tuple[str, NDArray[np.float64]], ...],
     *,
@@ -4047,6 +4004,7 @@ def _serialize_candidate_assessment(
     # ``fitted_time`` grid, so sampling them together keeps them aligned.
     stride = _persisted_curve_stride(int(np.asarray(assessment.fitted_time).size)) if compact else 1
     return {
+        "analysis_history": assessment.analysis_history,
         "template": _serialize_candidate_template(assessment.template),
         "fit_result": _serialize_fit_result(assessment.fit_result, include_residuals=not compact),
         "sample_count": assessment.sample_count,
@@ -4083,13 +4041,10 @@ def _deserialize_candidate_assessment(
     fit_result = _deserialize_fit_result(payload.get("fit_result"))
     if template is None or fit_result is None:
         return None
-    # A recommendation cached before the fraction rework carries legacy
-    # ``fraction_<k>`` fitted params; rename them to the n-1 scheme against the
-    # template's model so applying the cached fit still lands on the new rows.
-    fit_result = _migrate_fit_result_fractions(fit_result, template.model)
     try:
         return CandidateAssessment(
             template=template,
+            analysis_history=payload.get("analysis_history"),
             fit_result=fit_result,
             sample_count=None
             if payload.get("sample_count") is None

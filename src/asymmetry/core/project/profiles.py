@@ -30,7 +30,8 @@ binning_mode                      shareable   fixed/variable/constant_error
 bin0_us / bin10_us                shareable   binning knobs (non-fixed modes)
 bunching_factor                   shareable   fixed-mode bunching
 deadtime_correction               shareable*  derived from deadtime_policy on/off
-deadtime_mode / deadtime_method   shareable   off/file/manual/estimate
+deadtime_mode                    shareable   off/from_file/manual/estimate
+deadtime_method                  shareable   estimator/table provenance
 deadtime_manual_us                shareable   manual scalar
 deadtime_estimated_us             shareable   estimate result (source_run stored)
 deadtime_reference_run            shareable   source run for calibrate/estimate
@@ -38,7 +39,6 @@ deadtime_source_path              shareable   manual-load source path
 background_correction             shareable*  derived from background_policy on/off
 background_mode                   shareable   none/range/tail_fit/reference_run/fixed
 background_fixed_values           shareable   fixed [forward, backward] constants
-background_fix / bkg_fix          shareable   legacy fixed-value aliases
 background_method                 shareable   provenance
 background_ranges / _range        shareable   range-mode bin windows
 background_forward/backward_range shareable   split range windows
@@ -58,7 +58,6 @@ root_histo_numbers                per-run     ROOT histogram numbers
 good_frames                       per-run     deadtime normaliser (file-derived)
 dead_time_us                      per-run*    file deadtime values (deadtime_policy=from_file),
                                               or profile-stored values (manual/estimate)
-deadtime_loaded_us                per-run     legacy alias of file deadtime values
 period_histograms, period_inputs  per-run     held sets and original acquired inputs
 period_reduced                    per-run     per-period reduced arrays cache
 period_good_frames                per-run     per-period good frames
@@ -95,7 +94,7 @@ from asymmetry.core.project.calibration import (
     restore_profile_calibrations,
 )
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
-from asymmetry.core.transform.deadtime import file_deadtime_table
+from asymmetry.core.transform.deadtime import deadtime_request_mode, file_deadtime_table
 from asymmetry.core.transform.fb_counts import AlignmentCrop
 from asymmetry.core.transform.grouping import (
     InvalidGroupingError,
@@ -145,8 +144,6 @@ GOOD_WINDOW_POLICY_MODES = ("from_file", "manual")
 #: carried, so a profile does not fabricate ranges the user never set.
 _BACKGROUND_DETAIL_KEYS = (
     "background_fixed_values",
-    "background_fix",
-    "bkg_fix",
     "background_method",
     "background_ranges",
     "background_range",
@@ -1098,17 +1095,10 @@ def _deadtime_policy_from_payload(payload: dict[str, Any]) -> DeadtimePolicy:
     """Derive a :class:`DeadtimePolicy` from a payload's deadtime keys."""
     if not bool(payload.get("deadtime_correction", False)):
         return DeadtimePolicy(mode="off")
-    mode = str(payload.get("deadtime_mode", payload.get("deadtime_method", "off"))).strip().lower()
-    # The payload names file deadtime "file" (see _apply_deadtime_policy); the
-    # policy names it "from_file". Translate before the membership check.
-    mode = {"load": "manual", "file": "from_file"}.get(mode, mode)
-    if mode not in DEADTIME_POLICY_MODES:
-        mode = "off"
+    mode = deadtime_request_mode(payload)
     if mode in ("off", "from_file"):
         return DeadtimePolicy(mode=mode)
     raw_values = payload.get("dead_time_us")
-    if not isinstance(raw_values, (list, tuple)):
-        raw_values = payload.get("deadtime_loaded_us")
     values = (
         [_as_float(v, 0.0) for v in raw_values] if isinstance(raw_values, (list, tuple)) else []
     )
@@ -1132,13 +1122,13 @@ def _background_policy_from_payload(payload: dict[str, Any]) -> BackgroundPolicy
     details = {key: payload[key] for key in _BACKGROUND_DETAIL_KEYS if key in payload}
     if not bool(payload.get("background_correction", False)):
         return BackgroundPolicy(mode="none", details=details)
+    from asymmetry.core.transform.background import fixed_background_values
+
+    fixed_background_values(payload)
     mode = str(payload.get("background_mode", "")).strip().lower()
     if mode not in BACKGROUND_POLICY_MODES or mode == "none":
         # Fall back to the same heuristic transform.background uses.
-        has_fixed = any(
-            isinstance(payload.get(key), (list, tuple))
-            for key in ("background_fixed_values", "background_fix", "bkg_fix")
-        )
+        has_fixed = isinstance(payload.get("background_fixed_values"), (list, tuple))
         mode = "fixed" if has_fixed else "range"
     return BackgroundPolicy(mode=mode, details=details)
 
@@ -1630,7 +1620,7 @@ def _apply_deadtime_policy(
     grouping["deadtime_correction"] = True
 
     if policy.mode == "from_file":
-        grouping["deadtime_mode"] = "file"
+        grouping["deadtime_mode"] = "from_file"
         grouping["deadtime_method"] = "file"
         grouping["dead_time_us"] = list(file_deadtime_table(run_grouping))
         return

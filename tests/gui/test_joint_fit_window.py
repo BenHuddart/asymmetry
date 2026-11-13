@@ -789,3 +789,33 @@ def test_deleting_a_member_series_drops_the_joint_fit_and_clears_the_window(mw, 
     assert mw._project_model.batch("batch-b").joint_fit_id is None
     assert window.open_joint_id() is None
     assert [action.text() for action in mw._joint_fits_menu.actions()] == ["(no joint fits yet)"]
+
+
+def test_explicit_joint_execution_publishes_fresh_members_and_retains_archives(mw, app):
+    from copy import deepcopy
+
+    from asymmetry.core.fitting.analysis_history import constraint_signature
+
+    _load_project(mw)
+    series_a, series_b = _record_two_series(mw)
+    originals = {}
+    for series in (series_a, series_b):
+        originals[series.batch_id] = deepcopy(series.to_dict())
+        series.analysis_history = {
+            "reason": "constraints",
+            "original": originals[series.batch_id],
+            "canonical_constraints": constraint_signature(series.recipe["parameters"]),
+        }
+    entries = mw._joint_series_entries()
+    assert all("Historical constraints" in entry.blocked_reason for entry in entries)
+    for series in (series_a, series_b):
+        # An explicit new amplitude bound authorises the canonical input recipe.
+        series.recipe["parameters"][0]["bounds"] = "0, 100"
+    assert all(not entry.blocked_reason for entry in mw._joint_series_entries())
+    _run_joint_fit(mw, app)
+    joint = next(iter(mw._project_model.joint_fits.values()))
+    for series in (series_a, series_b):
+        assert series.analysis_history["reason"] == "authored"
+        assert series.analysis_history["original"] == originals[series.batch_id]
+        assert not series.is_stale(mw._project_model.data_group(series.group_id))
+    assert not joint.is_stale(mw._project_model)

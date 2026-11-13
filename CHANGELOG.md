@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Canonicalise released fit and correction state at persistence boundaries; retain
+  incompatible historical constraints for inspection and explicit editing before refitting.
+
 - Recompute incompatible scientific caches using an explicit computation revision,
   while preserving historical fits and their old or unknown execution attribution.
 

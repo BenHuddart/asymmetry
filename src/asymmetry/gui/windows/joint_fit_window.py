@@ -125,15 +125,7 @@ class JointSeriesEntry:
 
 
 def _member_default_labels(entries: Sequence[JointSeriesEntry]) -> list[str]:
-    """Each of *entries*' ``short_label``, falling back to its full *label*.
-
-    ``naming.joint_member_name`` does not know about any other member, so two
-    ticked entries can resolve to the same short name (the same model, no
-    group, no per-series label of their own) — that collision is only
-    visible here, across the whole ticked set, and is resolved by using that
-    member's full fallback name instead so the joint fit's default label
-    (``naming.default_joint_fit_label``) stays unambiguous.
-    """
+    """Resolve colliding short labels against the complete member selection."""
     counts = Counter(entry.short_label for entry in entries)
     return [
         entry.short_label if counts[entry.short_label] == 1 else entry.label for entry in entries
@@ -142,22 +134,13 @@ def _member_default_labels(entries: Sequence[JointSeriesEntry]) -> list[str]:
 
 @dataclass(frozen=True)
 class JointFitLaunch:
-    """The launch-time context a joint-fit completion is interpreted against.
+    """Frozen members, models and constraints used to interpret completion."""
 
-    The joint fit lands after an arbitrary delay, by which time the user may
-    have ticked a different series, retyped the label or edited the shared
-    table. Every completion — the window's own rendering and the host's
-    recording — reads what was *fitted* off this frozen record, exactly as
-    :class:`~asymmetry.gui.panels.fit.global_tab.FitLaunch` does for a batch.
-    """
-
-    #: The joint fit being re-run, or ``None`` when this run creates one.
     joint_id: str | None
     label: str
     rep_type: RepresentationType
-    #: Member series, in tick order — which is the seed order D6 refers to.
     member_batch_ids: tuple[str, ...]
-    #: The shared table as :attr:`JointFit.shared` rows (name, members, bounds).
+    #: Shared rows carry the launch-time constraints.
     shared_rows: tuple[dict[str, Any], ...]
     models: Mapping[str, CompositeModel]
     global_params: Mapping[str, tuple[str, ...]]
@@ -284,6 +267,7 @@ class JointFitWindow(QMainWindow):
         #: Ticked member ids in tick order — the joint fit's member order (D6).
         self._checked: list[str] = []
         self._shared_rows: list[_SharedRow] = []
+        self._analysis_history: dict | None = None
         self._joint_id: str | None = None
         self._rep_type: RepresentationType | None = None
         #: Set once the user types in the Label field; until then the label
@@ -429,6 +413,7 @@ class JointFitWindow(QMainWindow):
 
     def start_new(self, rep_type: RepresentationType | None) -> None:
         """Open empty on *rep_type*: nothing ticked, no shared rows, no record."""
+        self._analysis_history = None
         self._joint_id = None
         self._rep_type = rep_type
         self._checked = []
@@ -444,6 +429,7 @@ class JointFitWindow(QMainWindow):
 
     def load_joint_fit(self, joint: JointFit, *, stale_reason: str = "") -> None:
         """Show a recorded joint fit: its members ticked, its shared table loaded (D11)."""
+        self._analysis_history = joint.analysis_history
         self._joint_id = joint.joint_id
         self._rep_type = joint.rep_type
         self._label_edited = joint.label is not None
@@ -455,8 +441,7 @@ class JointFitWindow(QMainWindow):
                 minimum=float(row["min"]),
                 maximum=float(row["max"]),
                 ticked=True,
-                # A persisted row is the user's table, not a fresh proposal, so
-                # "Suggest" must leave it alone (D7).
+                # Recorded constraints are not fresh suggestions.
                 tier="user",
             )
             for row in joint.shared
@@ -857,6 +842,18 @@ class JointFitWindow(QMainWindow):
             )
             return
 
+        from asymmetry.core.fitting.analysis_history import shared_analysis_block_reason
+
+        reason = shared_analysis_block_reason(
+            self._analysis_history,
+            [
+                {"name": row.name, "members": row.members, "min": row.minimum, "max": row.maximum}
+                for row in rows
+            ],
+        )
+        if reason is not None:
+            self._results_card.set_message(reason, tag="Stale", tone="warn")
+            return
         problems: list[JointSeriesProblem] = []
         for entry in entries:
             datasets = list(self._datasets_provider(entry.batch_id))

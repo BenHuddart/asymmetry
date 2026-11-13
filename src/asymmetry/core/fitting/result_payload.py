@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.ratio_validity import ObservationReport
 from asymmetry.core.fitting.likelihood import Objective
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 from asymmetry.core.fitting.results import FitResult
 
 
@@ -20,6 +20,8 @@ def _serialize_parameter_set(parameters: ParameterSet) -> list[dict[str, object]
             "max": float(parameter.max),
             "fixed": bool(parameter.fixed),
             "expr": parameter.expr,
+            "link_group": parameter.link_group,
+            "tie": None if parameter.tie is None else parameter.tie.to_dict(),
         }
         for parameter in parameters
     ]
@@ -44,6 +46,8 @@ def _deserialize_parameter_set(payload: object) -> ParameterSet:
                     max=float(entry.get("max", float("inf"))),
                     fixed=bool(entry.get("fixed", False)),
                     expr=str(entry["expr"]) if entry.get("expr") is not None else None,
+                    link_group=entry.get("link_group"),
+                    tie=None if entry.get("tie") is None else AffineTie.from_dict(entry["tie"]),
                 )
             )
         except (TypeError, ValueError):
@@ -62,6 +66,20 @@ def _serialize_fit_result(
     return {
         "success": bool(result.success),
         "computation_revision": result.computation_revision,
+        **(
+            {"parameter_history": result.parameter_history}
+            if result.parameter_history is not None
+            else {}
+        ),
+        **(
+            {
+                "uncertainties_asymmetric": {
+                    name: list(pair) for name, pair in result.minos_errors.items()
+                }
+            }
+            if result.minos_errors is not None
+            else {}
+        ),
         "input_attribution": result.input_attribution,
         "warnings": list(result.warnings),
         "correction_metadata": dict(result.correction_metadata),
@@ -110,6 +128,10 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
     return FitResult(
         objective=Objective.GAUSSIAN,
         computation_revision=payload.get("computation_revision"),
+        parameter_history=payload.get("parameter_history"),
+        minos_errors=None
+        if payload.get("uncertainties_asymmetric") is None
+        else {name: tuple(pair) for name, pair in payload["uncertainties_asymmetric"].items()},
         input_attribution=payload.get("input_attribution"),
         observation_report=(
             ObservationReport(

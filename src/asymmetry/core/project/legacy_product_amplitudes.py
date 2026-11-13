@@ -1,8 +1,4 @@
-"""Alpha-only migration of saved amplitudes onto the one-scale-per-product policy.
-
-**This module is temporary and is deleted at v1.0**, together with its call
-sites and ``tests/core/test_legacy_product_amplitudes.py`` — the deletion list
-lives in ``RELEASING.md`` § "Delete at v1.0".
+"""Permanent migration of released amplitudes onto the one-scale-per-product policy.
 
 Before the policy landed, :class:`~asymmetry.core.fitting.composite.CompositeModel`
 named amplitudes by *spelling*: a flat ``*``/``/`` chain shared one ``A``, while
@@ -66,7 +62,6 @@ from asymmetry.core.fitting.composite import (
     iter_nodes,
     leaf_indices,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 #: Parameters that act as a component's scale factor (frozen copy of the
 #: pre-policy ``CompositeModel._is_scaling_parameter``).
@@ -393,22 +388,27 @@ def _fold_plan(model: CompositeModel) -> _FoldPlan:
 
 
 def _carries_legacy_names(model: CompositeModel, names: Iterable[str]) -> bool:
-    """Return True when some saved name is not a parameter of ``model``.
-
-    The cheap precondition shared by every entry point: data already saved under
-    the current policy names only parameters the model exposes, so it skips the
-    fold entirely (and never pays for the legacy mapping or the tree walk).
-    """
+    """Recognise obsolete scales without treating auxiliary parameters as legacy."""
+    present = set(names)
     exposed = set(model.param_names)
-    return any(name not in exposed for name in names)
+    if present <= exposed:
+        return False
+    plan = _fold_plan(model)
+    legacy = {name for fold in plan.folds for name in fold.legacy_names} - exposed
+    legacy.update(name for distribution in plan.distributions for name in distribution.k_names)
+    legacy.update(plan.dropped)
+    return bool(present.intersection(legacy))
 
 
 def _coerce_float(value: object, default: float = 0.0) -> float:
-    """Best-effort ``float(value)`` for a hand-edited or truncated saved value."""
+    """Reject malformed saved scales instead of silently changing their curve."""
     try:
-        return float(value)  # type: ignore[arg-type]
+        converted = float(value)
     except (TypeError, ValueError):
-        return default
+        raise ValueError(f"Invalid stored product amplitude {value!r}") from None
+    if not math.isfinite(converted):
+        raise ValueError(f"Invalid stored product amplitude {value!r}")
+    return converted
 
 
 def _folded_value(values: Sequence[float]) -> float:
@@ -436,43 +436,6 @@ def _folded_uncertainty(value: float, pairs: Sequence[tuple[float, float | None]
 # ---------------------------------------------------------------------------
 # Entry points, one per saved shape
 # ---------------------------------------------------------------------------
-
-
-def fold_legacy_product_amplitude_values(
-    model: CompositeModel, values: Mapping[str, float]
-) -> dict[str, float]:
-    """Fold a legacy value dict onto ``model``'s current amplitude names.
-
-    Each surviving amplitude takes the product of the legacy amplitude values
-    present for its product's factors; folded-away and dropped keys are removed.
-    A product with no surviving leaf scale instead distributes the product of
-    its present legacy leaf values onto the sum's own surviving scales (see the
-    module docstring). Every other key passes through untouched.  A no-op (a
-    shallow copy) when the keys already match the model's parameters.
-    """
-    if not _carries_legacy_names(model, values):
-        return dict(values)
-
-    plan = _fold_plan(model)
-    folded = {name: value for name, value in values.items() if name not in plan.dropped}
-    for fold in plan.folds:
-        present = [name for name in fold.legacy_names if name in values]
-        if not present:
-            continue
-        for name in present:
-            folded.pop(name, None)
-        folded[fold.new_name] = _folded_value([_coerce_float(values[name]) for name in present])
-    for distribution in plan.distributions:
-        present = [name for name in distribution.k_names if name in values]
-        if not present:
-            continue
-        for name in present:
-            folded.pop(name, None)
-        k = _folded_value([_coerce_float(values[name]) for name in present])
-        for target in distribution.target_names:
-            if target in folded:
-                folded[target] = folded[target] * k
-    return folded
 
 
 def _entry_is_fixed(entry: Mapping[str, object]) -> bool:
@@ -601,112 +564,6 @@ def fold_legacy_product_amplitude_entries(
     return folded
 
 
-def fold_legacy_product_amplitude_set(
-    model: CompositeModel,
-    parameter_set: ParameterSet,
-    uncertainties: Mapping[str, float],
-) -> tuple[ParameterSet, dict[str, float]]:
-    """Fold a :class:`ParameterSet` and its uncertainty dict onto the current names.
-
-    The :class:`ParameterSet` analogue of
-    :func:`fold_legacy_product_amplitude_entries`, for the fit results cached by
-    the wizards (whose uncertainties live beside the parameters rather than on
-    them).  The survivor keeps its own bounds, ``expr``, link group and tie, and
-    is fixed only if every parameter folded into it was.  A distribution target
-    keeps its own bounds, fixedness, ``expr``, link group and tie, with its
-    value (and uncertainty) scaled by its product's leftover legacy amplitudes.
-    Returns the inputs unchanged when the names already match the model's
-    parameters.
-    """
-    if not _carries_legacy_names(model, parameter_set.names):
-        return parameter_set, dict(uncertainties)
-
-    plan = _fold_plan(model)
-    fold_by_name = plan.fold_by_legacy_name()
-    k_names = {name for distribution in plan.distributions for name in distribution.k_names}
-    distribution_by_target = {
-        target: distribution
-        for distribution in plan.distributions
-        for target in distribution.target_names
-    }
-    parameter_by_name = {parameter.name: parameter for parameter in parameter_set}
-
-    folded = ParameterSet()
-    folded_uncertainties = {
-        name: value
-        for name, value in uncertainties.items()
-        if name not in plan.dropped and name not in fold_by_name and name not in k_names
-    }
-    emitted: set[str] = set()
-    for parameter in parameter_set:
-        if parameter.name in plan.dropped or parameter.name in k_names:
-            continue
-        fold = fold_by_name.get(parameter.name)
-        if fold is None:
-            folded.add(parameter)
-            continue
-        if fold.new_name in emitted:
-            continue
-        emitted.add(fold.new_name)
-        present = [
-            parameter_by_name[legacy] for legacy in fold.legacy_names if legacy in parameter_by_name
-        ]
-        values = [float(member.value) for member in present]
-        value = _folded_value(values)
-        survivor = present[0]
-        folded.add(
-            Parameter(
-                name=fold.new_name,
-                value=value,
-                min=survivor.min,
-                max=survivor.max,
-                fixed=all(member.fixed for member in present),
-                expr=survivor.expr,
-                link_group=survivor.link_group,
-                tie=survivor.tie,
-            )
-        )
-        uncertainty = _folded_uncertainty(
-            value,
-            [
-                (member_value, uncertainties.get(member.name))
-                for member_value, member in zip(values, present, strict=True)
-            ],
-        )
-        if uncertainty is not None:
-            folded_uncertainties[fold.new_name] = uncertainty
-
-    for target, distribution in distribution_by_target.items():
-        k_members = [
-            parameter_by_name[name] for name in distribution.k_names if name in parameter_by_name
-        ]
-        if target not in folded or not k_members:
-            continue
-        member = folded[target]
-        k_pairs = [
-            (float(k_member.value), uncertainties.get(k_member.name)) for k_member in k_members
-        ]
-        value = member.value * _folded_value([k_value for k_value, _ in k_pairs])
-        folded.add(
-            Parameter(
-                name=target,
-                value=value,
-                min=member.min,
-                max=member.max,
-                fixed=member.fixed,
-                expr=member.expr,
-                link_group=member.link_group,
-                tie=member.tie,
-            )
-        )
-        uncertainty = _folded_uncertainty(
-            value, [(member.value, folded_uncertainties.get(target)), *k_pairs]
-        )
-        if uncertainty is not None:
-            folded_uncertainties[target] = uncertainty
-    return folded, folded_uncertainties
-
-
 def fold_legacy_product_amplitude_names(
     model: CompositeModel, names: Sequence[str]
 ) -> tuple[str, ...]:
@@ -733,26 +590,3 @@ def fold_legacy_product_amplitude_names(
         if candidate not in migrated:
             migrated.append(candidate)
     return tuple(migrated)
-
-
-def fold_legacy_product_amplitude_state(state: Mapping[str, object]) -> dict[str, object]:
-    """Fold the amplitudes of a saved single-/global-fit form payload.
-
-    ``state`` carries a ``composite_model`` dict and a ``parameters`` list of
-    parameter-state dicts.  When the model reconstructs, its parameters are
-    folded via :func:`fold_legacy_product_amplitude_entries`, which builds a new
-    list.  Otherwise (missing or malformed model payload) the returned shallow
-    copy of ``state`` still references the caller's ``parameters`` list.
-    """
-    folded = dict(state)
-    parameters = state.get("parameters")
-    model_data = state.get("composite_model")
-    if not isinstance(parameters, list) or not isinstance(model_data, dict):
-        return folded
-    try:
-        model = CompositeModel.from_dict(model_data, allow_missing=True)
-    except (ValueError, KeyError, TypeError):
-        # A hand-edited or truncated payload: nothing to fold against.
-        return folded
-    folded["parameters"] = fold_legacy_product_amplitude_entries(model, parameters)
-    return folded

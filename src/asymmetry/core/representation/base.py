@@ -96,6 +96,7 @@ class FitSlot:
     label: str | None = None
     fit_range: dict | None = None
     frame_snapshot: FrameSnapshot | None = None
+    analysis_history: dict | None = None
 
     def is_empty(self) -> bool:
         """Return ``True`` when no model or result has been stored."""
@@ -153,7 +154,8 @@ class FitSlot:
         result = self.result or {}
         return (
             None
-            if recorded is None
+            if self.analysis_history is not None
+            or recorded is None
             or not computation.is_current(result.get("computation_revision"))
             or result.get("ndof") is None
             or result.get("npar") is None
@@ -173,6 +175,8 @@ class FitSlot:
         }
         # Only persist ``ui_state`` when populated — pre-this-change slots carry
         # none, and an empty dict would bloat every saved slot for no gain.
+        if self.analysis_history is not None:
+            payload["analysis_history"] = self.analysis_history
         if self.ui_state:
             payload["ui_state"] = dict(self.ui_state)
         # Only a fit on a rotated projection has a frame to record (D7).
@@ -201,33 +205,12 @@ class FitSlot:
             else []
         )
         model = data.get("model")
-        # Migrate pre-rework parameter entries — legacy ``fraction_<k>`` names to
-        # the n-1 free-fraction scheme, legacy per-factor amplitudes onto the
-        # one-scale-per-product policy — so old projects load, display, and refit.
-        # Guarded: a missing/malformed model payload simply skips migration. Both
-        # migrations carry their own cheap precondition and are no-ops for data
-        # saved under the current schemes.
-        if isinstance(model, dict) and parameters:
-            from asymmetry.core.fitting.composite import (
-                CompositeModel,
-                migrate_legacy_fraction_parameter_entries,
-            )
-            from asymmetry.core.fitting.legacy_product_amplitudes import (
-                fold_legacy_product_amplitude_entries,
-            )
-
-            try:
-                composite = CompositeModel.from_dict(model, allow_missing=True)
-            except (ValueError, KeyError, TypeError):
-                composite = None
-            if composite is not None:
-                parameters = migrate_legacy_fraction_parameter_entries(composite, parameters)
-                parameters = fold_legacy_product_amplitude_entries(composite, parameters)
         result = data.get("result")
         raw_ui_state = data.get("ui_state")
         fit_range = data.get("fit_range")
         snapshot = data.get("frame_snapshot")
         return cls(
+            analysis_history=data.get("analysis_history"),
             model=dict(model) if isinstance(model, dict) else None,
             parameters=parameters,
             result=dict(result) if isinstance(result, dict) else None,

@@ -54,6 +54,33 @@ resolves against a folder chosen on macOS or Linux, and vice versa. The
 stored paths are left as written; saving the project afterwards records
 the new locations.
 
+Saved fit parameters are interpreted at the project boundary, including released
+fraction and product-amplitude names. Canonical snapshot values retain the saved
+curve. If an old constraint cannot be expressed in the current parameterisation,
+the original parameters, constraints, and captured results remain inspectable.
+The fit form reports **Stale** with “Historical constraints cannot be applied to
+this parameterisation.” Edit the parameter constraints (bounds, fixed status,
+links, or ties) before refitting, including using a historical series as a joint-fit
+member; changing only a seed value does not authorise a
+new constrained fit. Saving and reopening retains that distinction and the
+original content in the saved ``analysis_history`` record. Historical
+recommendations cannot be applied automatically. Parameter conversion retains
+reported statistics; it does not reconstruct missing covariance or certify
+uncertainty equivalence under a changed parameterisation.
+
+Asymmetry also checks stored model descriptions and numeric fraction/product
+scales at the project boundary. Invalid owned values cause a contextual load
+error; an unavailable user function remains a supported dependency state.
+
+An unavailable user function retains its saved model and parameters. Register the
+function and reload the project to resolve its deferred parameter conversion.
+Loading, saving, or resolving a dependency never assigns a current computation
+revision to a historical result. Successful explicit computation publishes its own
+current result while retaining the superseded parameter archive.
+
+.. image:: /_generated/screenshots/historical_fit_constraints.png
+   :alt: A restored historical fit with canonical snapshot values and a constraint-editing message.
+
 Asymmetry's project file is JSON with an integer schema version, which
 is independent of the package version: opening a project written by an
 older release triggers automatic schema migration, and the loader
@@ -635,8 +662,11 @@ is preserved without re-running the Grouping dialog.
 ``deadtime_correction``
     Boolean; whether per-detector deadtime correction is active.
 
+``deadtime_mode``
+    Correction request: ``"off"``, ``"from_file"``, ``"manual"``, or ``"estimate"``.
+
 ``deadtime_method``
-    Optional string set after grouping is applied. ``"file"`` means
+    Optional coefficient or estimator provenance. ``"file"`` means
     per-detector deadtime values from the data file were used.
 
 ``dead_time_us``
@@ -797,11 +827,12 @@ Save and load
 
 .. code-block:: python
 
-   from asymmetry.core.project.schema import load_project, save_project
+   from asymmetry import __version__
+   from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, load_project, save_project
 
    state = {
-       "schema_version": 17,
-       "created_with_app_version": "0.1.0",
+       "schema_version": CURRENT_SCHEMA_VERSION,
+       "created_with_app_version": __version__,
        "datasets": [{"run_number": 3077, "source_file": "run3077.nxs", "metadata_overrides": {}}],
        "data_groups": [
            {"group_id": "g1", "name": "B = 60 G", "member_run_numbers": [3077],

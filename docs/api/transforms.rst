@@ -38,18 +38,30 @@ constant levels; exported standard errors derive from the shared components.
 
 .. code-block:: python
 
+   from asymmetry.core.transform.rebin import binning_spec
+
    counts = corrected_grouped_counts(
        histograms=run.histograms, grouping=run.grouping,
        forward_idx=[0], backward_idx=[1],
        use_deadtime=False, deadtime_mode="off", use_background=False,
    )
    time, asymmetry, error = binned_fb_asymmetry(
-       counts, grouping=run.grouping, alpha=1.0,
+       counts, binning=binning_spec(run.grouping), alpha=1.0,
    )
 
 ``time`` is in μs; ``asymmetry`` and ``error`` are fractions. The good-bin
 window is selected before binning, and counts are summed before forming the
 ratio. See :doc:`/reference/data_reduction/binning` for rejection messages.
+
+Authored correction requests use ``deadtime_mode`` with ``"off"``,
+``"from_file"``, ``"manual"``, or ``"estimate"``; the documented ``"file"``
+input spelling is also accepted. ``deadtime_method`` records estimator or table
+provenance and does not select the request. Authored coefficients require an
+explicit request mode. File-table lookup retains acquired coefficient origin
+separately from an authored calibration. Authored tables use ``dead_time_us``;
+fixed background pairs use ``background_fixed_values``. Unsupported authored
+aliases raise a contextual error. Released project spellings are interpreted by
+project persistence before reduction, without changing correction mathematics.
 
 Asymmetry calculation
 ----------------------

@@ -1,9 +1,4 @@
-"""Tests for the alpha-only product-amplitude migration.
-
-Deleted at v1.0 together with
-``src/asymmetry/core/fitting/legacy_product_amplitudes.py`` and its call sites
-(see ``RELEASING.md`` § "Delete at v1.0").
-"""
+"""Permanent controls for released product-amplitude formats."""
 
 from __future__ import annotations
 
@@ -11,17 +6,13 @@ import math
 
 import pytest
 
-from asymmetry.core.fitting import legacy_product_amplitudes
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.legacy_product_amplitudes import (
+from asymmetry.core.project import legacy_product_amplitudes
+from asymmetry.core.project.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_entries,
     fold_legacy_product_amplitude_names,
-    fold_legacy_product_amplitude_set,
-    fold_legacy_product_amplitude_state,
-    fold_legacy_product_amplitude_values,
     legacy_parameter_mapping,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation import FitSlot
 
 MULTIPLET = "(Oscillatory * Exponential) + (Oscillatory * Exponential) + Constant"
@@ -284,7 +275,7 @@ def test_values_shape_folds_and_renames() -> None:
         "A_bg": 0.05,
     }
 
-    folded = fold_legacy_product_amplitude_values(model, values)
+    folded = migrated_values(model, values)
     assert folded == {
         "A_1": pytest.approx(0.1),
         "Lambda_2": 0.5,
@@ -293,61 +284,7 @@ def test_values_shape_folds_and_renames() -> None:
         "A_bg": 0.05,
     }
     # Idempotent: the migrated dict has no legacy names left to fold.
-    assert fold_legacy_product_amplitude_values(model, folded) == folded
-
-
-def test_parameter_set_shape_folds_values_bounds_fixedness_and_uncertainties() -> None:
-    model = CompositeModel.from_expression(MULTIPLET)
-    parameters = ParameterSet(
-        [
-            Parameter(name="A_1", value=0.2, min=0.0, max=1.0, fixed=False),
-            Parameter(name="A_2", value=0.5, fixed=True),
-            Parameter(name="Lambda_2", value=0.5),
-            Parameter(name="A_3", value=0.1),
-            Parameter(name="A_4", value=1.0, fixed=True),
-            Parameter(name="Lambda_4", value=0.2),
-            Parameter(name="A_bg", value=0.05),
-        ]
-    )
-    uncertainties = {"A_1": 0.02, "A_2": 0.05, "Lambda_2": 0.01}
-
-    folded, folded_uncertainties = fold_legacy_product_amplitude_set(
-        model, parameters, uncertainties
-    )
-    assert folded.names == ["A_1", "Lambda_2", "A_3", "Lambda_4", "A_bg"]
-    assert folded["A_1"].value == pytest.approx(0.1)
-    assert folded["A_1"].fixed is False
-    # The survivor keeps its own bounds.
-    assert (folded["A_1"].min, folded["A_1"].max) == (0.0, 1.0)
-    assert folded["A_3"].value == pytest.approx(0.1)
-    assert folded_uncertainties["A_1"] == pytest.approx(0.1 * math.sqrt(0.1**2 + 0.1**2))
-    assert folded_uncertainties["Lambda_2"] == pytest.approx(0.01)
-    assert "A_2" not in folded_uncertainties
-
-    # Already migrated: the inputs come back untouched.
-    again, again_uncertainties = fold_legacy_product_amplitude_set(
-        model, folded, folded_uncertainties
-    )
-    assert again is folded
-    assert again_uncertainties == folded_uncertainties
-
-
-def test_state_shape_folds_the_saved_form_payload() -> None:
-    model = CompositeModel.from_expression(MULTIPLET)
-    state = {
-        "model_name": "Composite",
-        "composite_model": model.to_dict(),
-        "parameters": _multiplet_entries(),
-        "result_html": "<p>fit</p>",
-    }
-
-    folded = fold_legacy_product_amplitude_state(state)
-    assert folded["result_html"] == "<p>fit</p>"
-    names = [entry["name"] for entry in folded["parameters"]]
-    assert "A_2" not in names
-    assert "A_4" not in names
-    # A payload without a usable model is returned unchanged.
-    assert fold_legacy_product_amplitude_state({"parameters": []}) == {"parameters": []}
+    assert migrated_values(model, folded) == folded
 
 
 def test_name_tuple_shape_renames_survivors_and_drops_folded_names() -> None:
@@ -367,7 +304,13 @@ def test_name_tuple_shape_renames_survivors_and_drops_folded_names() -> None:
 def test_fit_slot_round_trip_folds_a_saved_multiplet() -> None:
     """End to end: a pre-policy ``.asymp`` fit slot loads on the current names."""
     model = CompositeModel.from_expression(MULTIPLET)
-    slot = FitSlot.from_dict(
+    from asymmetry.core.project.analysis_migration import fit_slot
+
+    def restore(payload):
+        fit_slot(payload)
+        return FitSlot.from_dict(payload)
+
+    slot = restore(
         {
             "model": model.to_dict(),
             "parameters": _multiplet_entries(envelope_value=0.5, envelope_fixed=False),
@@ -380,3 +323,11 @@ def test_fit_slot_round_trip_folds_a_saved_multiplet() -> None:
     by_name = {entry["name"]: entry for entry in slot.parameters}
     assert by_name["A_1"]["value"] == pytest.approx(0.1)
     assert by_name["A_3"]["value"] == pytest.approx(0.1)
+
+
+def migrated_values(model, values):
+    from asymmetry.core.project.analysis_migration import analysis_result
+
+    result = {"parameters": values}
+    analysis_result(result, model)
+    return result["parameters"]
