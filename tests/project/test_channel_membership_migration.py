@@ -16,7 +16,7 @@ def test_saved_group_membership_is_migrated_without_repair(tmp_path, members):
     grouping = {"groups": {"1": members, "2": [3]}, "forward_group": 2, "backward_group": 1}
     state = {
         "schema_version": 29,
-        "datasets": [{"grouping_overrides": grouping}],
+        "datasets": [{"run_number": 1, "grouping_overrides": grouping}],
         "grouping_profiles": [{"name": "sample", "groups": grouping["groups"]}],
     }
     before = deepcopy(state)

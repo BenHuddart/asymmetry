@@ -156,11 +156,16 @@ from asymmetry.core.maxent import (
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
+    PreparedProject,
     UnsupportedSchemaVersion,
-    load_project,
+    prepare_project,
     save_project,
 )
-from asymmetry.core.project.calibration import CALIBRATION_PAYLOAD_KEYS, calibration_values
+from asymmetry.core.project.calibration import (
+    CALIBRATION_PAYLOAD_KEYS,
+    PreparedGrouping,
+    calibration_values,
+)
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
@@ -305,6 +310,7 @@ from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_edi
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
+from asymmetry.gui.utils.project_preparation import ProjectPreparation
 from asymmetry.gui.utils.reduction_cache import (
     ReductionCache,
     capture_histogram_observation,
@@ -5227,10 +5233,14 @@ class MainWindow(QMainWindow):
                 target[key] = grouping_result.get(key)
 
     def _apply_grouping_settings_to_dataset(
-        self, dataset, grouping_result: dict
+        self, dataset, grouping_result: dict | PreparedGrouping
     ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
         """Apply atomically, returning success and each period's correction outcomes."""
-        grouping_result = calibration_values(grouping_result)
+        grouping_result = (
+            grouping_result.payload
+            if isinstance(grouping_result, PreparedGrouping)
+            else calibration_values(grouping_result)
+        )
         run = dataset.run
         if run is None:
             return False, {}
@@ -6867,19 +6877,9 @@ class MainWindow(QMainWindow):
                 "pole range for a reliable order estimate."
             )
 
-    def _restore_frequency_representations(self, state: dict, lost_runs: set[int]) -> None:
-        """Load recipe state; spectra are recomputed lazily on first view.
-
-        Reads the v6 ``representations``/``batches`` into the project model,
-        less the records of *lost_runs* (:meth:`ProjectModel.forget_runs`).
-        Recipes are *not* recomputed here: a project with many runs used to
-        recompute every FFT before the window became responsive, almost all of
-        it for runs the user may never view this session.
-        :meth:`_ensure_frequency_spectra_for_run` rebuilds each spectrum from
-        its recipe the first time something needs it. Runs that cannot be
-        recomputed keep whatever the legacy array fallback restored.
-        """
-        self._project_model = ProjectModel.from_project_state(state)
+    def _restore_frequency_representations(self, model: ProjectModel, lost_runs: set[int]) -> None:
+        """Adopt prepared owners, forgetting lost runs and computing spectra on first view."""
+        self._project_model = model
         self._project_model.forget_runs(lost_runs)
         # Rebind the browser to the freshly loaded registry (D6): the panel is a
         # view/controller over ``ProjectModel.data_groups`` and must follow the
@@ -14733,27 +14733,12 @@ class MainWindow(QMainWindow):
         if joint_id and joint_id in self._project_model.joint_fits:
             self._display_joint_fit(joint_id)
 
-    def _restore_global_fit_studies(self, state: dict, fit_parameters_state: object) -> None:
-        """Rebuild the studies registry on project load and show the latest one.
-
-        Reads the schema-v13 top-level ``global_fit_studies`` list (tolerantly:
-        a ``None`` from ``GlobalFitStudy.from_dict`` is skipped). Then MIGRATES a
-        pre-v13 project's single-slot cross-group fit: the trend panel's
-        serialized ``last_cross_group_fit`` payload, if present and not already
-        represented by a study of the same id, is lifted into a study via
-        :func:`study_from_legacy_cross_group_payload` (its id derived from the
-        same digest scheme so decorations keep keying by it). Finally the
-        most-recently-updated study is displayed (reopening the window, matching
-        the prior behaviour of reopening when a fit existed).
-        """
-        self._global_fit_studies = {}
+    def _restore_global_fit_studies(
+        self, state: dict, fit_parameters_state: object, studies: dict[str, GlobalFitStudy]
+    ) -> None:
+        """Adopt prepared studies, lift a supported legacy panel record, and show the latest."""
+        self._global_fit_studies = studies
         self._study_staleness_cache = {}
-        raw_studies = state.get("global_fit_studies")
-        if isinstance(raw_studies, list):
-            for entry in raw_studies:
-                study = GlobalFitStudy.from_dict(entry) if isinstance(entry, dict) else None
-                if study is not None and study.study_id:
-                    self._global_fit_studies[study.study_id] = study
 
         # Legacy migration: lift the single-slot payload from the panel state.
         legacy_payload = None
@@ -15928,6 +15913,9 @@ class MainWindow(QMainWindow):
         if self._shell is not None:
             self._shell.add_project()
             return
+        if self._bulk_load_active:
+            self._bulk_load_cancel()
+            return
         if not self._maybe_save("starting a new project"):
             return
         self._clear_all_state()
@@ -16295,8 +16283,10 @@ class MainWindow(QMainWindow):
         return None, False
 
     def _open_project_file(self, path: str) -> None:
-        """Load and restore a project from *path*."""
-        if self._bulk_load_active:
+        """Prepare a project before replacing active state."""
+        global _bulk_load_owner
+
+        if self._bulk_load_active or _bulk_load_owner is not None:
             # Restoring clears all state first, then prefetches data files via
             # _load_paths_with_progress — which the in-progress bulk load's
             # re-entrancy guard would refuse, leaving a wiped, run-less session
@@ -16310,7 +16300,22 @@ class MainWindow(QMainWindow):
         if source_path is None:
             return
         try:
-            state = load_project(source_path)
+            dialog = ProjectPreparation(self)
+            _bulk_load_owner = self
+            self._bulk_load_active = True
+            self._bulk_load_cancel = dialog.cancel_preparation
+            try:
+                prepared = dialog.run(self._tasks, source_path)
+            finally:
+                self._bulk_load_active = False
+                self._bulk_load_cancel = None
+                _bulk_load_owner = None
+            if prepared is None:
+                self.statusBar().showMessage("Project opening cancelled — existing work retained.")
+                self._log_panel.log(
+                    f"Project opening cancelled: {source_path}; existing work retained."
+                )
+                return
         except UnsupportedSchemaVersion as e:
             QMessageBox.critical(self, "Unsupported Project File", str(e))
             self._log_panel.log(f"ERROR opening project: {e}")
@@ -16332,7 +16337,7 @@ class MainWindow(QMainWindow):
         # *path*, so the session is marked dirty once restore finishes instead.
         self._restoring_project = True
         try:
-            self.restore_project_state(state, path)
+            self._apply_prepared_project(prepared, path)
         finally:
             self._restoring_project = False
         self._current_project_path = path
@@ -16765,34 +16770,20 @@ class MainWindow(QMainWindow):
         }
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
-        """Restore the full application state from a project file state dict.
+        """Prepare direct input before any mutation, then restore canonical owners."""
+        self._apply_prepared_project(prepare_project(state), project_path)
 
-        Owns the ``_restoring_project`` flag for its duration (the open-project
-        caller also sets it — idempotent) so direct callers get the same
-        suppressions: no dirty-marking, and no FFT compute-on-view seeding.
-        Restore replays domain/selection changes against a HALF-restored window
-        — the workspace state lands before the project model — so a mid-restore
-        seed would record a recipe into the outgoing model, and its in-flight
-        compute would then block the real recipe recompute against the restored
-        one.
-
-        Parameters
-        ----------
-        state : dict
-            Validated project state as returned by
-            :func:`~asymmetry.core.project.load_project`.
-        project_path : str
-            Absolute path to the project file (used to resolve relative paths).
-        """
+    def _apply_prepared_project(self, prepared: PreparedProject, project_path: str) -> None:
         previous_restoring = self._restoring_project
         self._restoring_project = True
         try:
-            self._restore_project_state_impl(state, project_path)
+            self._restore_project_state_impl(prepared, project_path)
         finally:
             self._restoring_project = previous_restoring
 
-    def _restore_project_state_impl(self, state: dict, project_path: str) -> None:
-        """The body of :meth:`restore_project_state`, which owns the flag."""
+    def _restore_project_state_impl(self, prepared: PreparedProject, project_path: str) -> None:
+        """Apply prepared declarations; acquisition cancellation retains completed items."""
+        state = prepared.state
         project_dir = os.path.dirname(os.path.abspath(project_path))
         loaded_run_numbers: set[int] = set()
 
@@ -16810,15 +16801,7 @@ class MainWindow(QMainWindow):
 
         datasets_info = state.get("datasets", [])
 
-        # Restore project-level grouping profiles (schema v12) before the
-        # per-dataset apply pass so runs naming a ``profile`` (or inheriting one)
-        # can be resolved against them.
-        self._grouping_profiles = []
-        for raw_profile in state.get("grouping_profiles", []) or []:
-            try:
-                self._grouping_profiles.append(GroupingProfile.from_dict(raw_profile))
-            except (TypeError, ValueError) as exc:
-                self._log_panel.log(f"WARNING: skipped malformed grouping profile: {exc}")
+        self._grouping_profiles = prepared.profiles
 
         # First pass: attempt to resolve all paths with no user interaction.
         resolved_paths: dict[int, str | None] = {}
@@ -17013,8 +16996,9 @@ class MainWindow(QMainWindow):
                     requested_profile_name = ds_info.get("profile")
                     try:
                         profile_name = requested_profile_name
-                        grouping_overrides = ds_info.get("grouping_overrides")
-                        if isinstance(grouping_overrides, dict):
+                        grouping = prepared.groupings.get(rn)
+                        if grouping is not None:
+                            grouping_overrides = grouping.payload
                             # Heal the persisted per-run override against the fresh run
                             # (its stored instrument may be stale); discard the wrong
                             # instrument's structure before applying it.
@@ -17024,7 +17008,9 @@ class MainWindow(QMainWindow):
                             if heal_note:
                                 self._log_panel.log(heal_note, tag="grouping")
                             requested_grouping = grouping_overrides
-                            self._apply_grouping_settings_to_dataset(dataset, requested_grouping)
+                            self._apply_grouping_settings_to_dataset(
+                                dataset, PreparedGrouping(requested_grouping)
+                            )
                             dataset.metadata["grouping_overrides"] = True
                             if profile_name:
                                 self._assign_dataset_profile(dataset, str(profile_name))
@@ -17037,7 +17023,7 @@ class MainWindow(QMainWindow):
                                 if resolved_grouping is not None:
                                     requested_grouping = resolved_grouping
                                     self._apply_grouping_settings_to_dataset(
-                                        dataset, requested_grouping
+                                        dataset, PreparedGrouping(requested_grouping)
                                     )
                                     followed_name = str(profile_name)
                             if followed_name is None:
@@ -17054,7 +17040,7 @@ class MainWindow(QMainWindow):
                                     )
                                     requested_grouping = resolved_grouping
                                     self._apply_grouping_settings_to_dataset(
-                                        dataset, requested_grouping
+                                        dataset, PreparedGrouping(requested_grouping)
                                     )
                                     followed_name = inherited.name
                             if followed_name is not None:
@@ -17164,7 +17150,7 @@ class MainWindow(QMainWindow):
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
-        self._restore_frequency_representations(state, lost_combined_runs)
+        self._restore_frequency_representations(prepared.model, lost_combined_runs)
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (
@@ -17228,14 +17214,8 @@ class MainWindow(QMainWindow):
         single_fit_state = time_fit_state.get("single_fit_state")
         global_fit_state = time_fit_state.get("global_fit_state")
 
-        # A corrupt/mis-tagged fit blob makes restore_domain_state raise; on the
-        # project-load path that must never abort the whole open (the rest of
-        # this method is best-effort), so log and skip the offending domain form.
         if hasattr(self._fit_panel, "restore_domain_state"):
-            try:
-                self._fit_panel.restore_domain_state("time", time_fit_state)
-            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
-                self._log_panel.log(f"Skipped restoring the time-domain fit form: {exc}")
+            self._fit_panel.restore_domain_state("time", time_fit_state)
         else:
             # Panels without domain routing: apply the time blob directly.
             single = time_fit_state.get("single_fit_state")
@@ -17259,11 +17239,7 @@ class MainWindow(QMainWindow):
         if isinstance(frequency_fit_state, dict) and hasattr(
             self._fit_panel, "restore_domain_state"
         ):
-            try:
-                self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
-            except ValueError as exc:  # noqa: BLE001 - one bad form must not abort load
-                self._log_panel.log(f"Skipped restoring the frequency-domain fit form: {exc}")
-                frequency_fit_state = None
+            self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
             if (
                 isinstance(frequency_fit_state, dict)
                 and self._plot_workspace.active_domain() == "frequency"
@@ -17301,7 +17277,7 @@ class MainWindow(QMainWindow):
             # left blank.
             self._fit_parameters_panel.refresh_display()
 
-        self._restore_global_fit_studies(state, fit_parameters_state)
+        self._restore_global_fit_studies(state, fit_parameters_state, prepared.studies)
         # Joint fits: the records came back with the project model; re-arm the
         # id counter, the submenu, and the window's open record (D11).
         self._restore_joint_fits(state)

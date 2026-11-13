@@ -2633,7 +2633,7 @@ class TestMainWindowProjectState:
             assert path == str(file_path)
             return _make_dataset(42)
 
-        applied_payloads: list[dict] = []
+        applied_payloads = []
 
         def _stub_apply_grouping(self_inner, dataset, payload):
             applied_payloads.append(payload)
@@ -2658,7 +2658,7 @@ class TestMainWindowProjectState:
         ]
         window.restore_project_state(state, str(tmp_path / "project.asymp"))
 
-        assert applied_payloads == [grouping_payload]
+        assert [payload.payload for payload in applied_payloads] == [grouping_payload]
 
     def test_restore_project_state_restores_multi_group_fit_state(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
@@ -3079,15 +3079,14 @@ class TestNonFiniteJsonSafety:
         assert math.isinf(lst[3]) and lst[3] < 0
 
     def test_legitimate_string_tokens_are_not_converted(self, tmp_path):
-        """A genuine string value equal to 'NaN'/'Infinity' must survive as a
-        string (the wrapper is a uniquely-keyed object, not a bare string)."""
+        """Non-finite wrappers cannot consume genuine metadata strings."""
         state = _minimal_state()
-        state["browser_state"]["filters"] = {"title": "NaN", "note": "Infinity"}
+        state["custom_metadata"] = {"title": "NaN", "note": "Infinity"}
         path = tmp_path / "strings.asymp"
         save_project(state, path)
         loaded = load_project(path)
-        assert loaded["browser_state"]["filters"]["title"] == "NaN"
-        assert loaded["browser_state"]["filters"]["note"] == "Infinity"
+        assert loaded["custom_metadata"]["title"] == "NaN"
+        assert loaded["custom_metadata"]["note"] == "Infinity"
 
 
 class TestRestoreChunkedProgress:

@@ -14,7 +14,7 @@ from copy import deepcopy
 from numbers import Integral, Real
 from pathlib import Path
 
-from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
+from asymmetry.core.project.json_values import encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
 CURRENT_SCHEMA_VERSION: int = 39
@@ -1719,33 +1719,17 @@ def _coerce_float(value: object, default: float) -> float:
 
 
 def validate(data: dict) -> None:
-    """Validate that required top-level keys are present.
+    """Validate canonical owned declarations without resolving external inputs."""
+    from asymmetry.core.project.preparation import prepare_project
 
-    Parameters
-    ----------
-    data : dict
-        Project dict at the current schema version.
-
-    Raises
-    ------
-    ValueError
-        If required keys are missing.
-    """
-    required = {"schema_version", "datasets"}
-    missing = required - set(data)
-    if missing:
-        raise ValueError(
-            f"Project file is missing required keys: {sorted(missing)}. "
-            "The file may be corrupt or not a valid Asymmetry project."
-        )
+    prepare_project(data)
 
 
 def load_project(path: str | Path) -> dict:
-    """Load, migrate, and validate a project file without resolving external inputs."""
-    raw = decode_non_finite(json.loads(Path(path).read_text(encoding="utf-8")))
-    migrated = migrate_to_current(raw)
-    validate(migrated)
-    return migrated
+    """Load, migrate, and prepare project content without resolving external inputs."""
+    from asymmetry.core.project.preparation import load_prepared_project
+
+    return load_prepared_project(path).state
 
 
 def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:

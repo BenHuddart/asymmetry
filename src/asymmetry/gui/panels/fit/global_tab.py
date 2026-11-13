@@ -5328,14 +5328,7 @@ class GlobalFitTab(FitTabBase):
         return self._saved_open_series_id if isinstance(self._saved_open_series_id, str) else None
 
     def _apply_parameter_rows(self, entries: Sequence[dict]) -> None:
-        """Replay stored parameter rows (value, provenance, role, bounds) into the table.
-
-        The one writer of the classification table's cells from a stored form:
-        :meth:`restore_state` replays a project blob's rows and
-        :meth:`open_series` a series recipe's, which are the same shape (D2).
-        Rows the current model does not have are ignored, and rows it has that
-        the store does not mention keep their seeds.
-        """
+        """Replay authored rows, retaining blank drafts without manufacturing numeric seeds."""
         params_data = {
             str(entry["name"]): entry
             for entry in entries
@@ -5346,7 +5339,7 @@ class GlobalFitTab(FitTabBase):
             {
                 str(name): float(entry.get("value", 0.0))
                 for name, entry in params_data.items()
-                if entry.get("value") is not None
+                if entry.get("value") is not None and str(entry["value"]).strip()
             },
         )
         self._updating_fraction_values = True

@@ -361,24 +361,32 @@ def group_parameter_rows(model: CompositeModel, rows: list[dict]) -> list[dict]:
     return converted
 
 
+def _project_dataset_analysis(dataset: dict, legacy: bool) -> None:
+    representations = dataset.get("representations")
+    if not isinstance(representations, dict):
+        return
+    for rep in representations.values():
+        if not isinstance(rep, dict):
+            continue
+        for fit_set in (rep.get("single_fits", {}) or {}).values():
+            for slot in fit_set.get("fits", []):
+                fit_slot(slot, legacy=legacy)
+        for key in ("fit",):
+            if isinstance(rep.get(key), dict):
+                fit_slot(rep[key], legacy=legacy)
+
+
 def migrate_analysis_state(data: dict, *, legacy: bool = True) -> dict:
     """Project v38→v39: visit active fit records through their schema owners."""
     migrated = deepcopy(data)
-    for dataset in migrated.get("datasets", []):
-        if not isinstance(dataset, dict):
-            continue
-        representations = dataset.get("representations")
-        if not isinstance(representations, dict):
-            continue
-        for rep in representations.values():
-            if not isinstance(rep, dict):
+    for key in ("datasets", "combined_datasets"):
+        for index, dataset in enumerate(migrated.get(key, []) or []):
+            if not isinstance(dataset, dict):
                 continue
-            for fit_set in (rep.get("single_fits", {}) or {}).values():
-                for slot in fit_set.get("fits", []):
-                    fit_slot(slot, legacy=legacy)
-            for key in ("fit",):
-                if isinstance(rep.get(key), dict):
-                    fit_slot(rep[key], legacy=legacy)
+            try:
+                _project_dataset_analysis(dataset, legacy)
+            except (AttributeError, KeyError, TypeError) as exc:
+                raise ValueError(f"project.{key}[{index}].representations: {exc}") from exc
     for state in (migrated.get("fit_states", {}) or {}).values():
         if isinstance(state, dict):
             fit_editor(state, legacy=legacy)

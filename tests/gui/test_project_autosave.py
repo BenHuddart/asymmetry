@@ -27,6 +27,7 @@ from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
+import asymmetry.gui.utils.project_preparation as preparation_module  # noqa: E402
 from asymmetry.core.project.schema import save_project as core_save_project  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from tests._qt_helpers import wait_for  # noqa: E402
@@ -307,14 +308,14 @@ def test_open_with_newer_autosave_prompts_and_load_reads_the_autosave(
     win: MainWindow, qapp: QApplication, tmp_path, monkeypatch
 ) -> None:
     proj_path, autosave_path = _write_project_pair(win, tmp_path)
-    real_load_project = mw_module.load_project
+    real_load_project = preparation_module.load_prepared_project
     calls: list[str] = []
 
-    def _recording_load(path):
+    def _recording_load(path, **kwargs):
         calls.append(str(path))
-        return real_load_project(path)
+        return real_load_project(path, **kwargs)
 
-    monkeypatch.setattr(mw_module, "load_project", _recording_load)
+    monkeypatch.setattr(preparation_module, "load_prepared_project", _recording_load)
     _patch_recovery_choice(monkeypatch, "load")
 
     win._open_project_file(str(proj_path))
@@ -329,14 +330,14 @@ def test_open_with_newer_autosave_open_saved_file_reads_the_project(
     win: MainWindow, qapp: QApplication, tmp_path, monkeypatch
 ) -> None:
     proj_path, autosave_path = _write_project_pair(win, tmp_path)
-    real_load_project = mw_module.load_project
+    real_load_project = preparation_module.load_prepared_project
     calls: list[str] = []
 
-    def _recording_load(path):
+    def _recording_load(path, **kwargs):
         calls.append(str(path))
-        return real_load_project(path)
+        return real_load_project(path, **kwargs)
 
-    monkeypatch.setattr(mw_module, "load_project", _recording_load)
+    monkeypatch.setattr(preparation_module, "load_prepared_project", _recording_load)
     _patch_recovery_choice(monkeypatch, "open")
 
     win._open_project_file(str(proj_path))
@@ -353,7 +354,9 @@ def test_open_with_newer_autosave_cancel_aborts_the_open(
 ) -> None:
     proj_path, _autosave_path = _write_project_pair(win, tmp_path)
     calls: list[str] = []
-    monkeypatch.setattr(mw_module, "load_project", lambda path: calls.append(path))
+    monkeypatch.setattr(
+        preparation_module, "load_prepared_project", lambda path: calls.append(path)
+    )
     _patch_recovery_choice(monkeypatch, "cancel")
     win._current_project_path = None
 
