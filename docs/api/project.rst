@@ -36,7 +36,7 @@ Public API
 
 .. autodata:: CURRENT_SCHEMA_VERSION
 
-   The storage schema is ``39``. Wizard payload, workdir, effective-recipe, and
+   The storage schema is ``40``. Wizard payload, workdir, effective-recipe, and
    scientific computation versions are separate authorities.
 
 Preparation and application

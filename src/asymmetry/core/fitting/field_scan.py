@@ -232,6 +232,7 @@ class ScanBaselineResult:
     model: ParameterCompositeModel
     regions: tuple[tuple[float, float], ...]
     fit: ParameterModelFitResult
+    captured_baseline: tuple[float, ...] | None = None
 
     @property
     def success(self) -> bool:
@@ -250,6 +251,8 @@ class ScanBaselineResult:
 
     @property
     def baseline(self) -> NDArray[np.float64]:
+        if self.captured_baseline is not None:
+            return np.asarray(self.captured_baseline, dtype=float)
         return _evaluate_model(self.model, self.fit.parameters, self.scan.x)
 
     @property

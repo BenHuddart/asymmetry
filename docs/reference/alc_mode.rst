@@ -649,12 +649,34 @@ interleaved calibration runs from a repolarisation scan::
 Saving and reopening
 --------------------
 
-The scan and its full analysis are saved inside the project (``.asymp``) file.
-Reopening the project restores the stored scalar values, the x-axis choice, the baseline
-regions, the peaks, and any per-point exclusions, re-runs whichever fits were
-active so the overlays and read-out reappear, and returns to the **Integral
-scan** representation if it was active when you saved — so you resume exactly
-where you left off. See :doc:`project_files`.
+The project (``.asymp``) retains the scalar observations, x-axis choice,
+baseline regions, peak settings, and per-point exclusions. Completed baseline,
+peak, and RF fits retain their numerical parameters, available errors and
+statistics, fitted support, sampled overlays, and computation revisions.
+Reopening restores these results without running an optimiser or evaluating a
+new model curve, and returns to **Integral scan** if it was active when saved.
+Opening, relocating sources, and saving do not turn an old or unknown execution
+into a current one. See :doc:`project_files`.
+
+A settings-only historical fit has no numerical result to restore. Its controls
+and any retained values remain available, with the guidance
+``Saved fit settings have no captured numerical result. Use Fit baseline, Fit peaks, or Fit RF resonance explicitly to obtain a new result.``
+No parameters, errors, or covariance are inferred to fill that gap.
+
+.. image:: /_generated/screenshots/alc_legacy_fit_history.png
+   :alt: Reopened settings-only scan with guidance to fit explicitly for a new numerical result
+   :width: 70%
+
+Use **Fit baseline**, **Fit peaks**, or **Fit RF resonance** explicitly for a
+new result. Each completed execution keeps its own attribution and the older
+captured executions remain in project history. Editing the axis, exclusions,
+derivative option, baseline regions/model, peak settings, or RF frequency/seeds
+detaches the affected overlay; it cannot apply a saved fit to the edited inputs.
+**File → New Project** clears the scan observations and their fit dependencies.
+Peak uncertainties include first-order fitted-baseline propagation, conditional
+on the chosen baseline model and regions. Retaining that covariance does not add
+calibration uncertainty, model-selection uncertainty, or a general cross-run
+covariance model.
 
 Worked example: a synthetic scan
 --------------------------------
@@ -728,6 +750,10 @@ does not establish the same disjointness contract for this operation.
 These input checks do not establish agreement of integral endpoints or timing
 conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
 for the versioned grouping observations and sources.
+
+Captured scan-fit history and no-refit reopening are Asymmetry project safeguards.
+They do not assert identical project-restoration behaviour in WiMDA, Mantid, or
+musrfit, and introduce no new estimator comparison.
 
 Mantid's single-period ``Integral`` integrates counts before forming asymmetry.
 Its dual-period contrast is detector-wise and differs from :math:`A_G-A_R`;

@@ -17,7 +17,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 39
+CURRENT_SCHEMA_VERSION: int = 40
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -113,7 +113,9 @@ def migrate_to_current(data: dict) -> dict:
         migrated = dict(migrated, schema_version=30)
         version = 30
     if version == 30:
-        migrated = _migrate_v30_to_v31(migrated)
+        from asymmetry.core.project.analysis_migration import migrate_timing_displays
+
+        migrated = migrate_timing_displays(migrated)
         version = 31
     from asymmetry.core.project.reference_restore import (
         migrate_reference_declarations,
@@ -147,27 +149,16 @@ def migrate_to_current(data: dict) -> dict:
         from asymmetry.core.project.analysis_migration import migrate_analysis_state
 
         migrated = migrate_analysis_state(migrated) | {"schema_version": 39}
-    if version == 39:
+        version = 39
+    elif version >= 39:
         from asymmetry.core.project.analysis_migration import migrate_analysis_state
 
         migrated = migrate_analysis_state(migrated, legacy=False)
+    if version == 39:
+        from asymmetry.core.project.scan_migration import migrate_scan_fit_history
+
+        migrated = migrate_scan_fit_history(migrated) | {"schema_version": 40}
     return migrated
-
-
-def _migrate_v30_to_v31(data: dict) -> dict:
-    """Derive signed displays from recorded effective bounds, retaining their meaning."""
-
-    def visit(value):
-        if isinstance(value, list):
-            return [visit(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        result = {key: visit(item) for key, item in value.items()}
-        if all(isinstance(result.get(key), int) for key in ("first_good_bin", "t0_bin")):
-            result["t_good_offset"] = result["first_good_bin"] - result["t0_bin"]
-        return result
-
-    return visit(data) | {"schema_version": 31}
 
 
 def _migrate_channel_membership(data: dict) -> dict:
