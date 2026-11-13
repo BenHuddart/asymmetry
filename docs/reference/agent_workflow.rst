@@ -2233,7 +2233,7 @@ without subtracting it from their joint-model inputs.
 
 
 Fixed supplied TF calibration response
--------------------------------------
+--------------------------------------
 
 Use ``--calibration-pulse-separation US`` with ``alpha`` or with
 ``--alpha-from`` to supply a fixed TF double-pulse separation. Omission means
@@ -2259,5 +2259,33 @@ reads the candidate afresh; see :doc:`/api/io`.
 Project ``expected`` identities survive restoration and saving independently of
 fresh ``observed`` identities. Historical unknowns stay unknown. A digest match
 does not make an old computation revision current, establish independent counting
-noise, or grant a new likelihood. Automatic verified reopening and changed-source
-replacement are not provided by the core comparison API.
+noise, or grant a new likelihood. Project reopening and explicit replacement use
+the owner-aware application operation described below; the lower-level comparison
+API remains read-only.
+
+
+Inspect and replace project inputs
+----------------------------------
+
+``asymmetry project-sources session.asymp --json`` reads and verifies without
+writing a project or work-directory log. Source rows include ``index``, ``owner``,
+``active``, ``role``, ``status``, expected/observed digests, and ordered selection
+facts. Status is ``matched``, ``changed``, ``missing``, ``legacy_unknown``, or
+``unreadable``. Paths and private diagnostics are omitted from this report.
+Exit 0 means the comparison completed, including changed or unavailable outcomes;
+exit 1 indicates an invalid action or project, and exit 2 an internal error.
+
+``--candidate INDEX=PATH`` proposes an explicit candidate for one row; repeat it
+for different rows. Relative saved locators resolve against the selected project's
+directory. A candidate is compared, never accepted merely from its name.
+
+To accept a listed current input, use
+``asymmetry project-sources session.asymp --replace 0 --output accepted.asymp --json``.
+Repeat ``--replace`` for each selected current owner, including required dependent
+requests. ``--replace`` and ``--output`` are required together. Historical rows and
+unavailable candidates cannot be accepted. Saving is atomic with the existing
+one-generation backup when replacing an output file. There is no interactive
+approval loop or implicit model/calibration rerun. The action updates expectations;
+GUI reopening or an explicit reduction supplies new observations through its normal
+workflow. Old result and calibration expectations remain unchanged. See
+:doc:`project_files` and :doc:`/api/project`.

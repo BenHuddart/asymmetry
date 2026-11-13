@@ -2732,12 +2732,9 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
         monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
 
-        # Suppress the "locate directory" dialog – user clicks No.
         from PySide6.QtWidgets import QMessageBox
 
-        monkeypatch.setattr(
-            QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.No)
-        )
+        monkeypatch.setattr(QMessageBox, "exec", lambda box: QMessageBox.StandardButton.No)
 
         window = mw_module.MainWindow()
 
@@ -2773,17 +2770,12 @@ class TestMainWindowProjectState:
         fake_nexus = new_data_dir / "run42.nxs"
         fake_nexus.write_bytes(b"\x00")  # empty placeholder
 
-        # Suppress the QMessageBox (user clicks Yes to locate directory).
         from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-        monkeypatch.setattr(
-            QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes)
-        )
-        # Return the new directory from the dialog.
-        monkeypatch.setattr(
-            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(new_data_dir))
-        )
+        monkeypatch.setattr(QMessageBox, "exec", lambda box: QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr(QFileDialog, "selectedFiles", lambda dialog: [str(new_data_dir)])
         # Stub _load_file so we don't need real NeXus parsing – just record the path.
+        monkeypatch.setattr(QFileDialog, "exec", lambda dialog: QFileDialog.DialogCode.Accepted)
         loaded_paths: list[str] = []
 
         def _stub_load_file(self_inner, path):
@@ -2832,14 +2824,13 @@ class TestMainWindowProjectState:
 
         prompts: list[str] = []
 
-        def _question(parent, title, text, *a, **kw):
-            prompts.append(text)
+        def _question(box):
+            prompts.append(box.text())
             return QMessageBox.StandardButton.Yes
 
-        monkeypatch.setattr(QMessageBox, "question", staticmethod(_question))
-        monkeypatch.setattr(
-            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(new_data_dir))
-        )
+        monkeypatch.setattr(QMessageBox, "exec", _question)
+        monkeypatch.setattr(QFileDialog, "selectedFiles", lambda dialog: [str(new_data_dir)])
+        monkeypatch.setattr(QFileDialog, "exec", lambda dialog: QFileDialog.DialogCode.Accepted)
         loaded_paths: list[str] = []
 
         def _stub_load_file(self_inner, path):

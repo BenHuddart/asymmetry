@@ -106,4 +106,92 @@ def saved_fit_matches(slot, dataset):
         window=(window["min"], window["max"]),
         error_oversampling=max(float(dataset.metadata.get("fourier_padding", 1) or 1), 1.0),
     )
-    return current["identity"] == recorded["identity"]
+    return current["identity"] == recorded["identity"] and same_source_context(current, recorded)
+
+
+def same_source_context(first, second):
+    """Keep equal sampled observations from overwriting a different source history.
+
+    This comparison does not redefine observation identity. Unknown legacy sources
+    stay unknown and do not prevent an explicitly requested new fit.
+    """
+    return source_context_key(first) == source_context_key(second)
+
+
+def source_context_key(attribution):
+    """Hashable ordered source context, separate from the sampled-observation digest."""
+    from asymmetry.core.data.reduction_recipe import recipe_source_declarations
+
+    recipe = (attribution or {}).get("effective_recipe")
+    return _source_signature(recipe_source_declarations(recipe) if recipe else ())
+
+
+def _source_signature(sources):
+    """Ordered source content and selectors, independent of local locators."""
+    return tuple(
+        (
+            s.role,
+            s.expected,
+            s.run_number,
+            s.period_number,
+            s.coefficient,
+            s.input_number,
+            s.dae_period_number,
+        )
+        for s in sources
+    )
+
+
+def source_context_status(attribution, dataset):
+    """Describe source currentness from captured in-memory facts without acquisition I/O."""
+    from asymmetry.core.data.reduction_recipe import recipe_source_declarations
+    from asymmetry.core.io.periods import source_run_of
+
+    recipe = (attribution or {}).get("effective_recipe")
+    sources = (
+        tuple(
+            s
+            for s in recipe_source_declarations(recipe)
+            if s.role != "calibration" and s.coefficient != 0
+        )
+        if recipe
+        else ()
+    )
+    if (
+        dataset is not None
+        and not (
+            dataset.run.source_file
+            if dataset.run is not None
+            else dataset.metadata.get("source_file")
+        )
+        and not any(s.source_file or s.expected is not None for s in sources)
+    ):
+        return "in_memory"
+    if not sources or any(s.expected is None for s in sources):
+        return "unverified"
+    if dataset is None:
+        return "unavailable"
+    if dataset.effective_recipe is not None:
+        current = tuple(
+            s
+            for s in dataset.effective_recipe.sources()
+            if s.role != "calibration" and s.coefficient != 0
+        )
+        # Locators do not identify the acquired counts; ordered selections do.
+        if current and all(s.expected is not None for s in current):
+            return (
+                "matched" if _source_signature(sources) == _source_signature(current) else "changed"
+            )
+    run = dataset.run
+    if (
+        run is None
+        or run.source_binding.observed is None
+        or any(
+            s.role not in {"sample", "constituents"} or s.run_number != source_run_of(run)
+            for s in sources
+        )
+    ):
+        return "unverified"
+    return (
+        "matched" if all(s.expected == run.source_binding.observed for s in sources) else "changed"
+    )

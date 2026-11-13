@@ -198,3 +198,13 @@ serialization perform no acquisition reads.
 
 .. automodule:: asymmetry.core.data.acquisition
    :members:
+
+Optional loader callbacks
+-------------------------
+
+The shared ``load`` boundary passes cancellation/progress callbacks only when a
+loader's call signature supports them. Built-in acquisition capture polls between
+hash chunks and around decoding. A filepath-only external loader remains usable;
+its opaque decode is polled immediately before and after it returns, and cannot
+be cancelled internally through this interface. Unknown
+capture remains unverified and is not replaced by the verifier's candidate digest.
