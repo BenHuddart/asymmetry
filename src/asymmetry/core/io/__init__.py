@@ -77,7 +77,28 @@ def load(
         for key, value in (("checkpoint", checkpoint), ("progress", progress))
         if value is not None
     }
+    if callbacks:
+        from inspect import Parameter, signature
+
+        try:
+            parameters = signature(loader.load, follow_wrapped=False).parameters
+        except (TypeError, ValueError):
+            callbacks = {}
+        else:
+            if not any(p.kind is Parameter.VAR_KEYWORD for p in parameters.values()):
+                callbacks = {
+                    key: value
+                    for key, value in callbacks.items()
+                    if key in parameters
+                    and parameters[key].kind
+                    in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+                }
+    opaque_checkpoint = checkpoint is not None and "checkpoint" not in callbacks
+    if opaque_checkpoint:
+        checkpoint()
     result = loader.load(filepath, **callbacks)
+    if opaque_checkpoint:
+        checkpoint()
     if period is None:
         return result
     return select_period(result, period)
@@ -192,8 +213,15 @@ def resolve_background_reference(
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")
 
+    from asymmetry.core.data.acquisition import ContentIdentity
     from asymmetry.core.project.reference_restore import complete_reference_restore
+    from asymmetry.core.transform.corrections import CorrectionUnavailableError
 
+    expected = ContentIdentity.from_dict(payload.get("content_identity"))
+    if expected is not None and expected != reference_run.source_binding.observed:
+        raise CorrectionUnavailableError(
+            "Reference source differs from its recorded content; explicit replacement is required"
+        )
     complete_reference_restore(payload, reference_run)
     scaling = scale_request.resolve(
         sample_exposure, ReferenceExposure.from_grouping(reference_run.grouping)

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Verify project sources before application and offer explicit history, replacement,
+  or cancellation for changed current inputs; preserve historical fits and calibrations.
+
 - Reject malformed projects before replacing unsaved analysis; preserve unavailable
   history and the marked partial-load save guard when restoration is cancelled.
 
@@ -28,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unusable observations, and guard independent-error fits of dependent selections.
 
 ### Changed
+
+- Expose owner-aware project source verification and explicit selected-input replacement
+  through the API and `project-sources` CLI command.
 
 - Retain effective reduction recipes through saved results, projects, scans, and
   exports, with nested local locators omitted from publishable recipe fields.

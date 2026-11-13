@@ -28,6 +28,7 @@ from typing import Any
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.input_attribution import same_source_context
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
@@ -453,6 +454,9 @@ class FitSeries:
             and result.get("input_attribution") is not None
             and result["input_attribution"]["identity"]
             == (other.results_by_run[run].get("input_attribution") or {}).get("identity")
+            and same_source_context(
+                result.get("input_attribution"), other.results_by_run[run].get("input_attribution")
+            )
             for run, result in self.results_by_run.items()
         )
 

@@ -819,3 +819,65 @@ def test_explicit_joint_execution_publishes_fresh_members_and_retains_archives(m
         assert series.analysis_history["original"] == originals[series.batch_id]
         assert not series.is_stale(mw._project_model.data_group(series.group_id))
     assert not joint.is_stale(mw._project_model)
+
+
+def test_joint_completion_preserves_changed_source_member_and_joint_history(mw, app):
+    from copy import deepcopy
+
+    from asymmetry.core.data.acquisition import ContentIdentity
+    from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+
+    _load_project(mw)
+    series_a, series_b = _record_two_series(mw)
+    captured = []
+    window = _prepare_joint_fit(mw)
+    window.joint_fit_completed.connect(
+        lambda launch, result, curves: captured.append((launch, result, curves))
+    )
+    window._on_run_clicked()
+    wait_for(lambda: window._worker is None, app, timeout_s=30.0)
+    launch, result, curves = captured[0]
+    original_joint = next(iter(mw._project_model.joint_fits.values()))
+    old_recipe = EffectiveReductionRecipe.from_dict(
+        {
+            "version": 1,
+            "operation": "prepared_counts",
+            "source": {
+                "source_file": "owned.nxs",
+                "run_number": 1001,
+                "content_identity": ContentIdentity("a" * 64).to_dict(),
+            },
+        }
+    ).to_dict()
+    new_recipe = deepcopy(old_recipe)
+    new_recipe["source"]["content_identity"] = ContentIdentity("b" * 64).to_dict()
+    for key, members in result.series_results.items():
+        series = mw._project_model.batch(key)
+        for run, fit in members.items():
+            recorded = series.results_by_run[run]["input_attribution"]
+            recorded["effective_recipe"] = old_recipe
+            fit.input_attribution = dict(recorded, effective_recipe=new_recipe)
+    for series in (series_a, series_b):
+        series.extra["owned_history"] = {"marker": 1}
+    originals = {s.batch_id: deepcopy(s.to_dict()) for s in (series_a, series_b)}
+    joint_before = deepcopy(original_joint.to_dict())
+    mw._on_joint_fit_completed(
+        dataclasses.replace(launch, joint_id=original_joint.joint_id), result, curves
+    )
+    assert len(mw._project_model.joint_fits) == 2
+    assert original_joint.to_dict() == joint_before
+    for key, saved in originals.items():
+        assert mw._project_model.batch(key).to_dict() == saved
+    new_joint = next(j for j in mw._project_model.joint_fits.values() if j is not original_joint)
+    assert not set(new_joint.member_batch_ids) & set(originals)
+    assert set(new_joint.shared[0]["members"]) == set(new_joint.member_batch_ids)
+    for key in new_joint.member_batch_ids:
+        series = mw._project_model.batch(key)
+        assert series.joint_fit_id == new_joint.joint_id
+        assert all(
+            r["input_attribution"]["effective_recipe"] == new_recipe
+            for r in series.results_by_run.values()
+        )
+
+        series.extra["owned_history"]["marker"] = 2
+    assert all(mw._project_model.batch(key).to_dict() == saved for key, saved in originals.items())

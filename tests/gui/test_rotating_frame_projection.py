@@ -48,6 +48,7 @@ def _vector(run_number: int) -> MuonDataset:
     run = synthetic_vector_run(
         [_nutation], amplitudes=(0.1, 0.1, 0.2), rate=4.0e5, n_bins=600, run_number=run_number
     )
+    run.source_file = ""
     return MuonDataset(
         time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
     )

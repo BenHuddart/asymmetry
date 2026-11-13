@@ -89,6 +89,9 @@ GLE script offsets remain distinct from offsets applied to written values.
 Nested local source locators and diagnostic prose are omitted from these new
 recipe fields; existing user titles and comments are not anonymised. Unsupported
 outputs retain their operation-specific metadata with an unknown complete recipe.
+After project-source replacement, current exports describe newly computed
+observations; retained historical fit summaries keep their original source context.
+Byte verification alone does not certify historical arrays or old execution.
 Exporting one curve prompts for a filename; exporting several prompts for a folder.
 
 A measuring cursor

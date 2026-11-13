@@ -71,6 +71,14 @@ class SourceBinding:
 
 
 @dataclass(frozen=True)
+class SourceOwner:
+    """An owned project address; only current inputs may accept replacements."""
+
+    address: tuple[str | int, ...]
+    active: bool = False
+
+
+@dataclass(frozen=True)
 class SourceDeclaration:
     """One ordered source role; matching content never merges scientific terms."""
 
@@ -82,6 +90,13 @@ class SourceDeclaration:
     coefficient: float = 1.0
     input_number: int | None = None
     dae_period_number: int | None = None
+    owner: SourceOwner | None = None
+
+    def __post_init__(self):
+        if self.source_file is None:
+            object.__setattr__(self, "source_file", "")
+        elif not isinstance(self.source_file, str):
+            raise ValueError("Source declaration source_file requires str or null")
 
 
 @dataclass(frozen=True)
@@ -191,6 +206,23 @@ def restore_constituent_expectations(dataset, saved: list[dict] | None) -> None:
     """Transfer historical expected rows; absence stays unknown after reconstruction."""
     from copy import deepcopy
 
+    current = dataset.metadata.get("combination", {}).get("constituents", [])
+    if saved:
+        from asymmetry.core.data.combine import CombineError
+
+        selectors = (
+            "source_run_number",
+            "data_period_number",
+            "dae_period_number",
+            "input_ordinal",
+            "coefficient",
+        )
+        if len(saved) != len(current) or any(
+            old.get(key) is not None and old[key] != new.get(key)
+            for old, new in zip(saved, current, strict=False)
+            for key in selectors
+        ):
+            raise CombineError("Saved combination terms cannot be reconstructed by this operation")
     rows = deepcopy(
         saved
         if saved is not None

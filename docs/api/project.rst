@@ -137,3 +137,55 @@ expected and observed content facts independently; their absence is unknown.
 Core ``verify_sources`` consumes these declarations and caller-resolved candidates
 without applying state. See :doc:`io` and :doc:`/reference/project_files` for
 outcomes and the limits of current project reopening.
+
+
+Verified source application
+---------------------------
+
+.. autofunction:: verify_project_sources
+
+.. autofunction:: apply_source_decisions
+
+.. autoclass:: ProjectSourceApplication
+   :members:
+
+``SourceDeclaration.owner`` carries its prepared address and whether it represents
+an active input. Verification remains read-only. Explicit replacements name source
+indices from that complete request, not filenames or equal digest values.
+Historical owners cannot accept replacements. Unselected changed inputs remain
+unavailable, while matched and legitimate legacy-unknown inputs continue normally.
+The operation returns detached project owners; it does not mutate the supplied
+project, fit a model, or write a file.
+
+.. code-block:: python
+
+   from asymmetry.core.project import (
+       load_prepared_project, verify_project_sources,
+       apply_source_decisions, save_project,
+   )
+
+   project = "session.asymp"
+   prepared = load_prepared_project(project)
+   verified = verify_project_sources(prepared, project)
+   # Inspect verified.facts and explicitly choose the current owner indices to replace.
+   application = apply_source_decisions(verified, replacements=[0])
+   print(application.report())
+   save_project(application.prepared.state, "accepted.asymp")
+
+``report()`` omits source/candidate locators and private diagnostic text. Local
+verification facts retain those fields for meaningful source selection. A caller
+that consumes acquisitions must read ``candidate_file`` and use ``check_capture``
+to compare the actual loader capture with the accepted observation. GUI restoration
+uses this guard before applying acquired timing or reductions. Number-only legacy
+reference requests retain their existing live-input resolution.
+
+The API/CLI action updates source expectations; recomputation is performed through
+the receiving operation's existing reduction workflow. It is not a general project
+fitting engine, an old-code replay, or a raw-data archive.
+
+``verify_project_sources`` returns ``ProjectSourceVerification`` with the rebound
+``prepared`` owners and ordered ``facts``. Following-profile reference requests
+are classified using the actual instrument and histogram count through the normal
+loader on the cancellable verification worker. Authoritative per-run overrides
+leave their base profiles historical. Unused or disabled reference settings do not
+request replacement. Capture disagreement aborts before project application.

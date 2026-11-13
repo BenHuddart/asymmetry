@@ -26,6 +26,7 @@ from typing import Any, ClassVar
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.fitting.input_attribution import same_source_context
 from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
 
@@ -280,6 +281,10 @@ class SingleFitSet:
                 if s.identity() == identity
                 and slot.data_key() is not None
                 and s.data_key() == slot.data_key()
+                and same_source_context(
+                    (s.result or {}).get("input_attribution"),
+                    (slot.result or {}).get("input_attribution"),
+                )
             ]
         )
         target = next((s for s in matches if s.fit_id == self.open_id), None)

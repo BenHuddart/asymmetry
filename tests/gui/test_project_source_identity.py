@@ -11,10 +11,11 @@ from tests.io.test_acquisition_content import acquisition
 pytestmark = pytest.mark.gui
 
 
-@pytest.mark.parametrize("expected", [None, ContentIdentity("a" * 64)])
-def test_actual_open_and_resave_retains_expected_and_observed(qapp, tmp_path, expected):
+@pytest.mark.parametrize("known", [False, True])
+def test_actual_open_and_resave_retains_expected_and_observed(qapp, tmp_path, known):
     path = acquisition(tmp_path)
     actual = load(str(path)).run.source_binding.observed
+    expected = actual if known else None
     entry = {"run_number": load(str(path)).run_number, "source_file": str(path)}
     if expected is not None:
         entry["source_binding"] = SourceBinding(expected, expected).to_dict()
@@ -91,7 +92,16 @@ def test_disk_reference_capture_uses_worker_and_cancel_discards(
 
 
 @pytest.mark.parametrize("unavailable", [False, True])
-def test_combined_open_resave_keeps_own_expectations(qapp, tmp_path, unavailable):
+def test_combined_open_resave_keeps_own_expectations(qapp, tmp_path, monkeypatch, unavailable):
+    import asymmetry.gui.utils.project_sources as sources_ui
+
+    monkeypatch.setattr(
+        sources_ui,
+        "select_replacements",
+        lambda parent, facts: tuple(
+            i for i, f in enumerate(facts) if f.source.owner.active and f.status == "changed"
+        ),
+    )
     from dataclasses import replace
 
     from asymmetry.core.data.acquisition import constituent_sources_for_project
@@ -142,7 +152,10 @@ def test_combined_open_resave_keeps_own_expectations(qapp, tmp_path, unavailable
     combined = window._data_browser.get_dataset(-1)
     assert combined is not None
     facts = constituent_sources_for_project(combined)
-    assert [r["source_binding"]["expected"] for r in facts] == [old.to_dict(), None]
+    expected_terms = [old, None] if unavailable else [observations[0], None]
+    assert [r["source_binding"]["expected"] for r in facts] == [
+        v.to_dict() if v else None for v in expected_terms
+    ]
     assert [r["coefficient"] for r in facts] == [1.0, 1.0]
     if not unavailable:
         assert [r["source_binding"]["observed"] for r in facts] == [
@@ -153,7 +166,7 @@ def test_combined_open_resave_keeps_own_expectations(qapp, tmp_path, unavailable
     saved = window.collect_project_state()
     save_project(saved, project)
     prepared = load_prepared_project(project)
-    assert [d.expected for d in prepared.sources if d.role == "constituent"] == [old, None]
+    assert [d.expected for d in prepared.sources if d.role == "constituent"] == expected_terms
     window._clear_dirty()
     window.close()
 
@@ -193,7 +206,7 @@ def test_actual_open_missing_sample_and_combined_sources_survive_resave(
     }
     path = tmp_path / "unavailable.asymp"
     save_project(state, path)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
+    monkeypatch.setattr(QMessageBox, "exec", lambda box: QMessageBox.StandardButton.No)
     window = MainWindow()
     window._open_project_file(str(path))
     saved = window.collect_project_state()

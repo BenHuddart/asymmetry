@@ -34,8 +34,18 @@ from asymmetry.core.project.schema import (
     load_project,
     save_project,
 )
+from asymmetry.core.project.sources import (
+    ProjectSourceApplication,
+    ProjectSourceVerification,
+    apply_source_decisions,
+    verify_project_sources,
+)
 
 __all__ = [
+    "ProjectSourceApplication",
+    "ProjectSourceVerification",
+    "apply_source_decisions",
+    "verify_project_sources",
     "PreparedProject",
     "ProjectValidationError",
     "load_prepared_project",

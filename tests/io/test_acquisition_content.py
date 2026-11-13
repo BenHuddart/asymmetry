@@ -508,3 +508,35 @@ def test_verification_reads_the_target_used_for_request_deduplication(tmp_path, 
     )
     assert len(calls) == 1 and calls[0] == first
     assert all(f.status == "matched" and f.candidate_file == str(first) for f in facts)
+
+
+@pytest.mark.parametrize("inspectable", [True, False])
+def test_legacy_loader_callback_boundary_preserves_filepath_only_plugin(
+    tmp_path, monkeypatch, inspectable
+):
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.io.base import BaseLoader, LoaderRegistry
+
+    events = []
+
+    class LegacyLoader(BaseLoader):
+        def load(self, filepath, checkpoint=None, /):
+            assert checkpoint is None
+            events.append("decode")
+            assert filepath == str(tmp_path / "owned.legacy")
+            return MuonDataset(np.arange(3.0), np.zeros(3), np.ones(3))
+
+    if not inspectable:
+        monkeypatch.setattr(LegacyLoader.load, "__signature__", "unavailable", raising=False)
+    monkeypatch.setattr(LoaderRegistry, "_loaders", {".legacy": LegacyLoader})
+    result = load(str(tmp_path / "owned.legacy"), checkpoint=lambda: events.append("poll"))
+    assert result.run is None
+    assert events == ["poll", "decode", "poll"]
+    events.clear()
+
+    def stop_after_decode():
+        if events == ["decode"]:
+            raise InterruptedError("cancelled opaque decoder")
+
+    with pytest.raises(InterruptedError, match="opaque decoder"):
+        load(str(tmp_path / "owned.legacy"), checkpoint=stop_after_decode)

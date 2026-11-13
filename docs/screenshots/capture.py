@@ -366,6 +366,7 @@ def _import_scenarios() -> None:
         plot_fits_on_run,
         quickstart_first_fit,
         project_rejection,
+        project_source_decision,
         rotating_frame_projection,
         run_arithmetic,
         run_info_provenance,

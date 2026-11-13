@@ -1694,13 +1694,13 @@ The summary reports Λ rising from 0.143 ± 0.023 μs⁻¹ at 10 K to
 collapsed to 0.199 ± 0.232 % and its rate is unconstrained, so its value is not
 a result.
 
+For a GUI project, `asymmetry project-sources session.asymp --json` verifies inputs without writing.
+`--candidate INDEX=PATH` proposes a candidate; inspect before `--replace INDEX --output accepted.asymp`.
+Only current owners can be replaced; history/calibrations remain, no fits rerun, and legacy stays unverified.
+
 ## 8. Installing the skill elsewhere
 
-`asymmetry skill install --agent claude` (add `--project` for the current
-directory), `asymmetry skill check` to verify the CLI, loaders, matplotlib and
-the installed skill version, `asymmetry skill uninstall` to remove it.
-
-`asymmetry skill install --agent claude --link` symlinks the packaged skill
-instead of copying it, so edits in a checkout reach the agent without
-reinstalling — for developing this skill, not for using it. `check` reports such
-an install as `linked (development)` and always current.
+`asymmetry skill install --agent claude` installs (`--project` selects this directory).
+`asymmetry skill check` verifies the CLI, loaders, matplotlib, and skill version; `asymmetry skill uninstall` removes it.
+`asymmetry skill install --agent claude --link` symlinks the packaged skill for development;
+`check` reports `linked (development)` and current. Ordinary use copies the skill.

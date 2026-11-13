@@ -20,6 +20,7 @@ Qt-free: no GUI code may be imported here.
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -229,3 +230,37 @@ class JointFit:
             shared=shared,
             result=result,
         )
+
+
+def preserve_joint_source_history(project, inputs, new_batch_id):
+    """Detach a joint publication when current source context differs from saved members.
+
+    Observations and source identity remain separate; equal arrays do not authorise
+    overwriting the prior joint constraint or any of its member results.
+    """
+    from asymmetry.core.fitting.input_attribution import same_source_context
+    from asymmetry.core.representation.series import FitSeries
+
+    if not any(
+        project.batch(key) is not None
+        and run in project.batch(key).results_by_run
+        and not same_source_context(
+            project.batch(key).results_by_run[run].get("input_attribution"), attribution
+        )
+        for key, results in inputs.items()
+        for run, attribution in results.items()
+    ):
+        return {}
+    remap = {}
+    for key in inputs:
+        original = project.batch(key)
+        if original is None:
+            continue
+        clone = FitSeries.from_dict(deepcopy(original.to_dict()))
+        clone.batch_id = new_batch_id()
+        clone.label = f"{original.label or original.batch_id} · new inputs"
+        clone.joint_fit_id = None
+        clone.shared_params = {}
+        project.add_batch(clone)
+        remap[key] = clone.batch_id
+    return remap

@@ -23,13 +23,13 @@ Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
 
 ```
 usage: asymmetry [-h] [--version] [--verbose]
-                 {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info}
+                 {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info,project-sources}
                  ...
 
 Asymmetry — μSR data analysis
 
 positional arguments:
-  {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info}
+  {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info,project-sources}
     survey              List the runs in a folder with their metadata, scans and
                         calibration runs
     alpha               Estimate the forward/backward balance alpha from one run
@@ -51,6 +51,7 @@ positional arguments:
                         printed
     skill               Install, check or remove the asymmetry-analysis agent skill
     info                Show metadata for a data file
+    project-sources     Verify project inputs or accept selected replacements
 
 options:
   -h, --help            show this help message and exit
@@ -710,4 +711,23 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --json      Emit the machine-readable payload
+```
+
+## `asymmetry project-sources`
+
+```
+usage: asymmetry project-sources [-h] [--candidate INDEX=PATH] [--replace INDEX]
+                                 [--output OUTPUT] [--json]
+                                 project
+
+positional arguments:
+  project               Project to inspect
+
+options:
+  -h, --help            show this help message and exit
+  --candidate INDEX=PATH
+                        Propose a file for one source index
+  --replace INDEX       Explicitly accept a readable current input
+  --output OUTPUT       Write the updated project atomically; requires --replace
+  --json                Emit statuses without locators or private diagnostics
 ```

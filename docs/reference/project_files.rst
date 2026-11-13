@@ -75,16 +75,52 @@ snapshot to ``<name>.autosave.asymp`` (or, for a session that has never
 been saved, a file under the platform's application-data directory);
 see `Crash-safe save and autosave`_ below.
 
-Because only paths are stored, a project whose data files have since
-moved cannot reload them directly. On open, Asymmetry lists the files it
-could not find in a **Data Files Not Found** prompt and offers to
-**Locate Data Directory**: choose the folder that now holds the files
-and every missing dataset whose file name is present there is loaded
-from it. The look-up matches on file name alone, so it works across
-operating systems — a project saved on Windows with ``C:\...`` paths
-resolves against a folder chosen on macOS or Linux, and vice versa. The
-stored paths are left as written; saving the project afterwards records
-the new locations.
+A missing current input opens **Data Files Not Found**, offering **Locate Data
+Directory**. The selected directory supplies basename candidates, including
+Windows paths reopened on another operating system. Asymmetry verifies their
+contents before using them; a matching name alone does not establish identity.
+Saving records accepted current locations while historical recipe paths stay
+with their original results.
+
+Source decisions before restoration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The **Opening Project** worker displays **Verifying project sources…** and remains
+cancellable. Byte-identical sources, including relocated files, continue normally.
+Legacy inputs without an expected digest open unverified without a mandatory
+replacement question. Missing or unreadable inputs retain their unavailable state.
+
+Known changed current inputs open **Source Content Changed**. Its listed owners
+identify the current sample, ordered nonzero combination terms, and requested
+reference inputs affected by the decision:
+
+* **Open History Only** retains saved records without consuming those changed
+  inputs. A project does not store raw detector arrays or ordinary reduced arrays;
+  a saved fit summary cannot reconstruct missing historical observations.
+* **Accept Replacement** updates the listed current input expectations to the
+  observed bytes and recomputes supported current observations using the recorded
+  requests. It does not refit models, rerun calibration, or disable a requested
+  correction. Saved fits, series, constraints, calibration records, and effective
+  recipes retain their original source context, even when sampled arrays coincide.
+* **Cancel** retains the outgoing session, unsaved work, project path, and tabs
+  before restoration starts.
+
+Differences confined to historical results, frozen calibrations, inactive reference
+settings, or zero-weight terms are informational in the log. They do not prompt for
+replacement of valid active data. After replacement, save and reopen verifies the
+new current expectation while preserving those historical differences.
+
+Asymmetry also compares the actual acquisition capture with the accepted bytes.
+A second change, or unavailable capture for an accepted known input, prevents it
+from supplying current observations. An ordinary legacy input decoded without a
+capture remains usable and unverified; verification facts are never backfilled as
+its acquisition identity. Unknown capture also includes a built-in read whose
+stability could not be established; this does not certify a replay. A failure after deliberate application retains the completed items
+and the partial-project save guard; restoration is not a whole-session rollback.
+These are source-provenance safeguards, not a judgement of physical validity.
+
+.. image:: /_generated/screenshots/project_source_decision.png
+   :alt: The three source-change decisions for synthetic current sample and reference inputs.
 
 Saved fit parameters are interpreted at the project boundary, including released
 fraction and product-amplitude names. Canonical snapshot values retain the saved
@@ -1067,7 +1103,8 @@ Dataset entries retain optional ``source_binding`` facts with separate
 ``expected`` and ``observed`` whole-file SHA-256 identities. Fresh acquisition
 reads record both from that read. Restoration preserves the saved expectation,
 including a legacy unknown, alongside the identity observed with newly loaded
-counts. Saving does not hash files, promote a new observation to an old
+counts; explicit replacement establishes a new expectation for the selected
+current owner. Saving does not hash files, promote a new observation to an old
 expectation, or certify historical fits, recipes, or calibration records.
 Combined entries retain ordered ``constituent_sources`` with their own bindings,
 coefficients, and period selections. Reconstruction retains their historical
@@ -1085,8 +1122,8 @@ inventory exposes sample, constituent, reference-request, calibration, and
 recorded representation, saved-fit, and series-result declarations for explicit
 core verification.
 ``EffectiveReductionRecipe.sources()`` also exposes captured result inputs.
-No persisted status is accepted as a fresh content comparison. Current project
-opening does not automatically verify content before applying state or provide
-changed-source replacement choices. Byte verification and scientific-computation
+No persisted status is accepted as a fresh content comparison. File opening,
+autosave recovery, and direct GUI restoration verify before deliberate application
+and use the same explicit current-owner decisions as the core API and CLI. Byte verification and scientific-computation
 compatibility are separate: identical bytes can match while a saved calculation
 remains historical. Source mismatches do not invalidate a usable facility file.
