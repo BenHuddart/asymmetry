@@ -675,6 +675,7 @@ def _condition_record(run, coefficient, input_ordinal):
     return {
         "run_number": int(run.run_number),
         "source_file": run.source_file,
+        "source_binding": run.source_binding.to_dict(),
         "source_run_number": run.metadata.get("source_run_number", run.run_number),
         "temperature": _scalar(run, "temperature"),
         "field": _scalar(run, "field"),

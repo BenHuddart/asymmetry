@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.reference_scale import ResolvedReferenceScale
 from asymmetry.core.transform.reference_timing import (
@@ -205,6 +206,7 @@ class BackgroundReference:
     period_number: int = 1
     timing: ReferenceTiming = ReferenceTiming()
     resolved_timing: ResolvedReferenceTiming | None = None
+    content_identity: ContentIdentity | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
@@ -243,6 +245,9 @@ class BackgroundReference:
         return {
             "run_number": self.run_number,
             "period_number": self.period_number,
+            "content_identity": self.content_identity.to_dict()
+            if self.content_identity is not None
+            else None,
             "file_name": Path(self.source_file).name,
             "source_file": self.source_file,
             "scale": self.scale,
@@ -304,7 +309,14 @@ def independent_observations(
 
 def reference_observation_metadata(run: Run) -> dict[str, Any]:
     """Carry canonical Run identity even when optional acquisition metadata is empty."""
-    return dict(run.metadata, source_file=run.source_file, run_number=run.run_number)
+    return dict(
+        run.metadata,
+        source_file=run.source_file,
+        run_number=run.run_number,
+        content_identity=run.source_binding.observed.to_dict()
+        if run.source_binding.observed is not None
+        else None,
+    )
 
 
 def require_complete_dataset(dataset: MuonDataset) -> None:

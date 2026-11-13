@@ -126,3 +126,14 @@ Key fields:
 ``results_by_run``
     Per-member fit result summaries (parameter values, uncertainties, χ²)
     used to drive the Fit Parameters trending panel.
+
+Acquisition declarations
+------------------------
+
+``PreparedProject.sources`` is an ordered immutable inventory assembled at the
+same preparation boundary as dataset, grouping, profile, calibration, and result
+owners. It does not read acquisitions. Optional ``source_binding`` fields preserve
+expected and observed content facts independently; their absence is unknown.
+Core ``verify_sources`` consumes these declarations and caller-resolved candidates
+without applying state. See :doc:`io` and :doc:`/reference/project_files` for
+outcomes and the limits of current project reopening.

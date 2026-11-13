@@ -69,6 +69,7 @@ from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_
 from asymmetry.core.transform.corrections import TAIL_BACKGROUND_POLICY_REVISION
 from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY
+from asymmetry.core.utils.content import hash_file
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionSettings
@@ -112,9 +113,6 @@ _NOT_THE_FIT = frozenset(
 
 #: Visible work-directory name, resolved against the current directory.
 WORKDIR_NAME = "asymmetry-work"
-
-#: Hashing buffer size; file_fingerprint reads through the complete source.
-_FILE_HASH_CHUNK = 1024 * 1024
 
 #: Characters a name may never contain, because each one would make it
 #: something other than a single path component under this directory.
@@ -254,14 +252,11 @@ def file_fingerprint(path: str | Path) -> dict[str, Any]:
     """
     path = Path(path)
     stat = path.stat()
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(_FILE_HASH_CHUNK), b""):
-            digest.update(chunk)
+    digest = hash_file(path)
     return {
         "size": int(stat.st_size),
         "mtime_ns": int(stat.st_mtime_ns),
-        "sha256": digest.hexdigest(),
+        "sha256": digest,
     }
 
 

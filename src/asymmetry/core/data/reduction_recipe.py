@@ -14,6 +14,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from asymmetry.core import computation
+from asymmetry.core.data.acquisition import ContentIdentity, SourceDeclaration
 
 if TYPE_CHECKING:
     from asymmetry.core.transform.constituent_counts import ConstituentCounts
@@ -36,23 +37,48 @@ _PRESENTATION = frozenset(
 )
 
 
-def numerical_recipe(value: Any, *, include_execution: bool = False) -> Any:
+def numerical_recipe(
+    value: Any, *, include_execution: bool = False, include_content: bool = False
+) -> Any:
     """Separate locators and prose from numerical facts, retaining source references."""
     if isinstance(value, dict):
-        # CountFitDomain descriptors put the locator at position 2; ordinals stay numerical.
+        # Source placeholders stay null in numerical identities; acquisition bytes
+        # and CountFitDomain locators do not identify sampled observations.
         return {
             k: (
                 [list(source[:2]) + [None] + list(source[3:]) for source in v]
                 if k == "acquired_sources"
-                else numerical_recipe(v, include_execution=include_execution)
+                else None
+                if k == "content_identity" and not include_content
+                else numerical_recipe(
+                    v, include_execution=include_execution, include_content=include_content
+                )
             )
             for k, v in (
                 value if include_execution else computation.without_revision(value)
             ).items()
-            if k not in _PRESENTATION and not (k == "reason" and isinstance(v, str))
+            if k not in _PRESENTATION
+            and not (k == "reason" and isinstance(v, str))
+            and (include_content or k != "source_binding")
+            and (
+                include_content
+                or k != "content_identity"
+                or set(value) - _PRESENTATION
+                == {
+                    "run_number",
+                    "data_period_number",
+                    "dae_period_number",
+                    "content_identity",
+                }
+            )
         }
     if isinstance(value, list):
-        return [numerical_recipe(v, include_execution=include_execution) for v in value]
+        return [
+            numerical_recipe(
+                v, include_execution=include_execution, include_content=include_content
+            )
+            for v in value
+        ]
     return value
 
 
@@ -94,7 +120,7 @@ class EffectiveReductionRecipe:
         private calibration, reference, or constituent history. Existing export
         titles and comments have their own disclosure policy.
         """
-        return numerical_recipe(self.to_dict(), include_execution=True)
+        return numerical_recipe(self.to_dict(), include_execution=True, include_content=True)
 
     @property
     def identity(self) -> str:
@@ -103,6 +129,14 @@ class EffectiveReductionRecipe:
             numerical_recipe(self.to_dict()), sort_keys=True, separators=(",", ":")
         )
         return sha256(payload.encode("utf-8")).hexdigest()
+
+    def sources(self) -> tuple[SourceDeclaration, ...]:
+        """Inventory captured result inputs without looking up or certifying files.
+
+        Constituent order, signed coefficients, and acquired period selectors
+        survive even when several terms share identical physical file bytes.
+        """
+        return recipe_source_declarations(self.to_dict())
 
     def with_facts(self, **facts: Any) -> EffectiveReductionRecipe:
         """Complete a captured operation with its actual output facts."""
@@ -152,7 +186,7 @@ def source_reference(metadata: dict | None) -> dict:
         "source_file": metadata.get("source_file", ""),
         "data_period_number": metadata.get("data_period_number", metadata.get("period_number")),
         "dae_period_number": metadata.get("dae_period_number"),
-        "content_identity": None,
+        "content_identity": metadata.get("content_identity"),
     }
 
 
@@ -359,3 +393,39 @@ def ratio_recipe(
             "ratio_policy": RATIO_OBSERVATION_POLICY,
         },
     )
+
+
+def recipe_source_declarations(recipe: dict) -> tuple[SourceDeclaration, ...]:
+    """Read owned recipe sources without canonicalising unrelated historical scalars."""
+    sources = []
+
+    def visit(value, role="sample", coefficient=1.0, input_number=None):
+        if isinstance(value, dict):
+            coefficient = value.get("coefficient", coefficient)
+            input_number = value.get("input_number", input_number)
+            if "source_file" in value:
+                sources.append(
+                    SourceDeclaration(
+                        role,
+                        value["source_file"],
+                        ContentIdentity.from_dict(value.get("content_identity")),
+                        value.get("run_number", value.get("source_run_number")),
+                        value.get("data_period_number", value.get("period_number")),
+                        coefficient,
+                        input_number,
+                        value.get("dae_period_number"),
+                    )
+                )
+            for key, child in value.items():
+                visit(
+                    child,
+                    key if key in {"reference", "calibration", "constituents"} else role,
+                    coefficient,
+                    input_number,
+                )
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, role, coefficient, input_number)
+
+    visit(recipe)
+    return tuple(sources)

@@ -398,3 +398,20 @@ Selection compares the same four envelopes at the same supplied response.
 Conditional fit errors exclude source/selection uncertainty. Apply transfers
 coefficients and a frozen source record while retaining target timing and its
 ordinary-fit/Fourier response; see :ref:`alpha-calibration`.
+
+Captured acquisition content
+-----------------------------
+
+Supported fresh reductions capture the whole-file content identity available
+with each acquired input. Sample, reference, calibration, and ordered signed
+constituents retain their own source facts and period selections. A retained
+reference cache supplies its captured identity with its counts; a new hash of its
+path is never attached to those cached observations. Legacy recipes and frozen
+calibrations are not completed by consulting today's files.
+
+The publishable recipe projection retains these digests and interpretation facts
+while omitting local locators and diagnostic prose. Whole-file identity records
+bytes, independently of the sampled-observation and scientific-computation
+identities. A content digest alone does not change sampled-observation identity
+or numerical recipe identity. It supplies neither covariance nor a claim of physical validity.
+See :doc:`/api/io` for explicit content comparison and cancellation.

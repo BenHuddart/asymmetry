@@ -6411,13 +6411,13 @@ class TestMainWindowBasic:
         monkeypatch.setattr(restored, "_load_file", _fake_load_file)
         restored.restore_project_state(load_project(project_path), str(project_path))
 
-        assert restored._data_browser._combined_datasets == {-2: [8433, 8434]}
+        assert restored._data_browser._combined_datasets == {-2: [8433, 8434], -3: [8431, 9999]}
         model = restored._project_model
         series = model.batch("batch-1")
-        assert series.member_run_numbers == [8431, -2]
-        assert series.results_by_run == {8431: {"A": 1}, -2: {"A": 2}}
+        assert series.member_run_numbers == [8431, -2, -3]
+        assert series.results_by_run == {8431: {"A": 1}, -2: {"A": 2}, -3: {"A": 3}}
         assert series.trend_excluded_runs == [-2]
-        assert model.data_group(group.group_id).member_run_numbers == [8431, -2]
+        assert model.data_group(group.group_id).member_run_numbers == [8431, -2, -3]
         assert set(series.effective_members(model.data_group(group.group_id))) == set(
             series.last_fitted_members
         )
@@ -6425,9 +6425,8 @@ class TestMainWindowBasic:
         restored_fit = model.representation(-2, RepresentationType.TIME_FB_ASYMMETRY).fit
         assert (restored_fit.fit_id, restored_fit.result) == (saved_fit_id, {"A": 2})
         assert restored._maxent_panel_state_by_run[-2] == json.loads(json.dumps(maxent_state))
-        # The next combination is numbered below the restored one, onto the
-        # lost -3, whose records are gone with it.
-        assert restored._data_browser._next_combined_id == -3
+        assert restored._data_browser.get_dataset(-3).n_points == 0
+        assert restored._data_browser._next_combined_id == -4
 
 
 class TestPerRunGoodFramesNormaliser:

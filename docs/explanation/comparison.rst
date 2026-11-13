@@ -1754,3 +1754,13 @@ and package-version changes do not invalidate calculations. The operation-histor
 and request/result-file behaviours described above do not establish an identical
 automatic computation-revision contract in WiMDA, Mantid, or musrfit. This check
 adds no muon-spin estimator and makes no new native numerical-equivalence claim.
+
+Asymmetry also checks complete acquisition contents through an explicit cancellable
+core comparison API. Captured expected identities and newly observed candidate
+bytes remain separate; identical relocated bytes match independently of timestamp,
+and legacy expectations remain unknown. Capture binds the fact to a stable new
+read; a retained reference cache keeps the identity of its own counts. This is an
+additional Asymmetry provenance safeguard, not an established identical policy in
+WiMDA, Mantid, or musrfit. It changes no reduction estimator and makes no new native
+numerical-agreement claim. Project reopening does not automatically run this
+comparison or offer changed-source replacement choices.

@@ -5202,13 +5202,9 @@ class DataBrowserPanel(QWidget):
         operation: str | None = None,
         combined_run_number: int,
         metadata_overrides: dict | None = None,
+        source_expectations: list[dict] | None = None,
     ) -> int | None:
-        """Restore a definition atomically, raising CombineError for incompatible inputs.
-
-        Source order and the saved synthetic key retain their meaning. Both signs
-        use core correspondence; co-add additionally requires shared authored intent.
-        Sources are hidden only after successful numerical preparation.
-        """
+        """Restore ordered sources atomically, raising CombineError for incompatible inputs."""
         datasets_to_combine = []
         for rn in source_run_numbers:
             ds = self._datasets.get(rn)
@@ -5241,6 +5237,9 @@ class DataBrowserPanel(QWidget):
         combined_dataset = builder(
             source_datasets, source_run_numbers, combined_run_number=combined_rn
         )
+        from asymmetry.core.data.acquisition import restore_constituent_expectations
+
+        restore_constituent_expectations(combined_dataset, source_expectations)
         if metadata_overrides:
             combined_dataset.metadata.update(
                 metadata_overrides, condition_overrides=metadata_overrides
@@ -5272,7 +5271,9 @@ class DataBrowserPanel(QWidget):
         number = int(definition["combined_run_number"])
         sources = list(definition["source_run_numbers"])
         self._combined_datasets[number] = sources
-        self._combined_source_datasets[number] = [self._datasets[rn] for rn in sources]
+        self._combined_source_datasets[number] = [
+            self._datasets[rn] for rn in sources if rn in self._datasets
+        ]
         operation = definition.get("operation", "coadd")
         if operation != "coadd":
             self._combined_signs[number] = -1
@@ -5286,6 +5287,7 @@ class DataBrowserPanel(QWidget):
                 metadata={
                     "run_number": number,
                     "title": "Combination unavailable",
+                    "constituent_source_expectations": definition.get("constituent_sources", []),
                     "correction_error": reason,
                     "condition_overrides": dict(definition.get("metadata_overrides", {})),
                     **definition.get("metadata_overrides", {}),
@@ -5295,12 +5297,8 @@ class DataBrowserPanel(QWidget):
 
     def get_state(self) -> dict:
         filters = {str(col): sorted(values) for col, values in self._column_filters.items()}
-        # Group *definitions* are canonical in ProjectModel.data_groups (D6). This
-        # browser_state block carries the panel-local view state — group display
-        # order and per-group ``collapsed`` — and doubles as a self-contained
-        # fallback so a standalone ``restore_state`` (tests, scripts) and a legacy
-        # pre-registry project can still rebuild the group rows. ``kind`` rides
-        # along so an auto-group's ramp survives a browser-only round-trip.
+        # Group definitions belong to ProjectModel; browser order and collapsed state
+        # also retain enough context for standalone browser restoration.
         data_groups = []
         for entry in self._display_order:
             if not isinstance(entry, str):

@@ -747,6 +747,10 @@ class ProjectModel:
         ``batches``, ``data_groups``, ``active_series`` and ``joint_fits``
         blocks are written at the top level.
         """
+        live_sources = {row["run_number"] for row in project.get("datasets", [])}
+        for number, owner in self.datasets.items():
+            if number not in live_sources and owner.unavailable_source is not None:
+                project.setdefault("datasets", []).append(dict(owner.unavailable_source))
         for run_number, entry in _run_entries(project):
             container = self.datasets.get(run_number)
             if run_number in self.rotating_frames:

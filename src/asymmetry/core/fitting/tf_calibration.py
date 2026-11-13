@@ -8,6 +8,7 @@ from enum import Enum
 
 import numpy as np
 
+from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_domain import _fit_fb_count_groups
 from asymmetry.core.fitting.count_results import CountFitParameter, JointCountFit
@@ -117,6 +118,7 @@ class TFCalibrationResult:
     ok: bool
     message: str
     envelope: TFEnvelope = TFEnvelope.EXPONENTIAL
+    content_identity: ContentIdentity | None = None
 
     @property
     def n_bins_used(self) -> int:
@@ -401,6 +403,7 @@ def _fit_prepared_tf(dataset, request, groups, objective, params, envelope, canc
         ok,
         message,
         envelope,
+        run.source_binding.observed,
     )
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Fit cancelled.")

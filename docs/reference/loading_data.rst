@@ -1030,3 +1030,27 @@ leaves the quick look unavailable and retains raw histograms for repair.
 Integer-only and legitimate zero calibration remain sufficient. ROOT stores
 per-channel file availability separately from effective timing outcomes.
 See :ref:`t0-search` for source precedence and feature assumptions.
+
+Acquisition content identity
+----------------------------
+
+Fresh reads through the built-in NeXus, PSI, and ROOT loaders capture a whole-file
+SHA-256 identity with the acquired counts. Direct loader calls and the common
+``load`` entry point use the same capture boundary. Two complete hashes bracket
+decoding; equal digests and unchanged filesystem change indicators establish an
+ordinary stable read. This assumes concurrent writers do not defeat filesystem
+change reporting. Period views share the captured fact; selecting another period
+does not hash again. PSI monitor sidecars are outside the acquisition-file digest.
+
+If hashing is unavailable or a change is detected during decoding, usable counts
+remain loadable with unknown content identity. Cancellation aborts the operation.
+Synthetic in-memory runs have unknown identity. Loader quick-look curves produced
+before capture may retain unknown recipe provenance; a subsequent supported core
+reduction records the acquisition fact available with its counts.
+
+``run.source_binding`` separates the saved ``expected`` identity from the
+``observed`` identity captured with the current counts. Content equality is
+independent of filename, run number, timestamp, scientific-computation revision,
+and statistical observation identity. It does not certify metadata interpretation
+or physical validity. See :doc:`project_files` and :doc:`/api/io` for persistence
+and explicit cancellable comparison.

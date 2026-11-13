@@ -117,14 +117,13 @@ def test_scan_heartbeat_and_atomic_publication(qapp, monkeypatch, action):
             window._clear_all_state()
         elif action == "close":
             window._clear_dirty()
+            # Close joins the worker; release after the observed GUI heartbeats.
+            threading.Timer(0.1, released.set).start()
             window.close()
         released.set()
         if action == "supersede":
             window._on_scan_requested()
 
-    # close waits for cooperative work, so release independently of its GUI-thread join.
-    if action == "close":
-        threading.Timer(0.1, released.set).start()
     timer.timeout.connect(heartbeat)
     timer.start()
     window._on_scan_requested()

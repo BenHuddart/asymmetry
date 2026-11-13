@@ -17,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core import computation
+from asymmetry.core.data.acquisition import SourceBinding
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 
@@ -125,6 +126,7 @@ class Run:
     metadata: dict[str, Any] = field(default_factory=dict)
     grouping: dict[str, Any] = field(default_factory=dict)
     source_file: str = ""
+    source_binding: SourceBinding = SourceBinding()
 
     # --- convenience accessors ------------------------------------------
 

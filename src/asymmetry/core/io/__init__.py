@@ -38,6 +38,9 @@ def load(
     filepath: str,
     fmt: str | None = None,
     period: int | str | PeriodMode | None = None,
+    *,
+    checkpoint=None,
+    progress=None,
 ) -> LoadResult:
     """Load a μSR data file and return a :class:`MuonDataset`.
 
@@ -56,25 +59,40 @@ def load(
         files return one :class:`MuonDataset` and 3+ period files a ``list``.
         See :mod:`asymmetry.core.io.periods`.
 
+    checkpoint : callable, optional
+        Cooperative cancellation callback, called between hash chunks and around
+        decoding by the built-in loaders. Raising aborts the load.
+    progress : callable, optional
+        Receives bytes read and total bytes for each of the two whole-file hash
+        passes bracketing built-in decoding. Decoding itself is format-specific.
+
     Raises
     ------
     ValueError
         If ``period`` is out of range or an unknown label.
     """
     loader = LoaderRegistry.get_loader(filepath, fmt=fmt)
-    result = loader.load(filepath)
+    callbacks = {
+        key: value
+        for key, value in (("checkpoint", checkpoint), ("progress", progress))
+        if value is not None
+    }
+    result = loader.load(filepath, **callbacks)
     if period is None:
         return result
     return select_period(result, period)
 
 
-def load_background_run(payload: dict) -> MuonDataset:
+def load_background_run(payload: dict, *, checkpoint=None) -> MuonDataset:
     """Load exactly the declared reference acquisition and acquired period."""
     from asymmetry.core.io.reference_selection import reference_selection, resolve_loaded_reference
 
     if not isinstance(payload, dict) or not payload.get("source_file"):
         raise ValueError("background_run payload has no source_file")
-    result = load(str(payload["source_file"]))
+    result = load(
+        str(payload["source_file"]),
+        **({"checkpoint": checkpoint} if checkpoint is not None else {}),
+    )
     if isinstance(result, list) and len(result) == 1:
         result = result[0]
     candidates = result if isinstance(result, list) else [result]
@@ -115,6 +133,7 @@ def resolve_background_reference(
     datasets: Iterable[MuonDataset] = (),
     cache: dict | None = None,
     allow_file: bool = True,
+    reference_loader=None,
 ) -> BackgroundReference | None:
     """Resolve declared source/period, preferring live inputs over disk snapshots.
 
@@ -158,7 +177,8 @@ def resolve_background_reference(
                 payload,
             )
         if reference_run is None:
-            reference_run = load_background_run(payload).run
+            loader = load_background_run if reference_loader is None else reference_loader
+            reference_run = loader(payload).run
             if cache is not None and reference_run is not None:
                 selection = reference_selection(reference_run)
                 source_key = (
@@ -203,6 +223,7 @@ def resolve_background_reference(
         file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scaling=scaling,
         source_file=reference_run.source_file or source_file,
+        content_identity=reference_run.source_binding.observed,
         deadtime_normaliser=good_frames(reference_run.grouping, default=0.0) or None,
         run_number=reference_selection(reference_run)["run_number"],
         period_number=reference_selection(reference_run)["period_number"],

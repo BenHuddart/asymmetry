@@ -19,6 +19,7 @@ class DatasetRepresentations:
         by_type: dict[RepresentationType, Representation] | None = None,
     ) -> None:
         self.run_number = int(run_number)
+        self.unavailable_source: dict | None = None
         self.by_type: dict[RepresentationType, Representation] = dict(by_type or {})
 
     def get(self, rep_type: RepresentationType) -> Representation | None:
