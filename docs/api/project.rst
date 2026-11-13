@@ -23,149 +23,77 @@ Public API
 
 .. autofunction:: save_project
 
-.. autodata:: CURRENT_SCHEMA_VERSION
+.. autofunction:: prepare_project
 
-   The integer schema version written into every new project file.  Currently
-   ``7``.
+.. autofunction:: load_prepared_project
+
+.. autoclass:: PreparedProject
+   :members:
+
+.. autoexception:: ProjectValidationError
 
 .. autoexception:: UnsupportedSchemaVersion
 
-Schema internals
-----------------
+.. autodata:: CURRENT_SCHEMA_VERSION
 
-These functions are used internally by :func:`load_project` and
-:func:`save_project` but may be useful for testing or migration scripts.
+   The storage schema is ``39``. Wizard payload, workdir, effective-recipe, and
+   scientific computation versions are separate authorities.
+
+Preparation and application
+---------------------------
+
+``load_project`` returns canonical JSON-compatible state. ``prepare_project``
+accepts a complete versioned state dictionary; ``load_prepared_project`` reads a
+file and returns the same prepared form. Each performs the owning migrations and
+pending-model retry, then constructs existing grouping profiles, representations,
+series, joint fits, and parameter studies. Caller input remains unchanged. A
+``checkpoint`` callback can raise cancellation between declarations.
+
+``PreparedProject`` holds the detached canonical dictionary and existing domain
+owners. Application transfers these objects to the receiving session; it is not
+a reusable widget snapshot. No runtime object is inserted into the serialised
+JSON. ``ProjectModel.from_project_state`` uses this same project boundary.
+Standalone ``ProjectModel.from_dict`` reads the model-only codec rather than a
+complete project file.
+
+Malformed owned containers, duplicate identities, and required live links raise
+``ProjectValidationError`` with a field location before GUI state changes. External
+file/model availability, stale historical membership, draft fit forms, and original
+constraint/uncertainty archives remain separate from structural validity. No load,
+save, or preparation assigns current execution to an old or unknown result.
+
+The GUI prepares before replacing the active session. Acquisition restoration can
+still be cancelled after application begins, retaining a marked partial load with
+a save confirmation. See :doc:`../reference/project_files` for the exact UI contract.
+
+Canonical file contents
+-----------------------
+
+A UTF-8 JSON object contains ``schema_version`` and a ``datasets`` array. Dataset
+rows have integer ``run_number`` identities and string source locators. Optional
+``combined_datasets`` rows name their integer identity and ordered declared
+sources. Project-level ``grouping_profiles`` retain grouping and calibration policy
+owners; runs name a profile or retain released per-run overrides.
+
+The optional registries are ``batches`` (fit series), ``data_groups``,
+``joint_fits``, ``global_fit_studies``, and ``active_series``. A dataset's
+``representations`` map is keyed by ``RepresentationType`` values, including
+``time_fb_asymmetry``, ``time_groups``, ``time_maxent_recon``, ``freq_fft``, and
+``freq_maxent``. Each representation retains its recipe, result metadata, trend
+state, and ``single_fits`` sets keyed by projection (``""`` for the default).
+Each set contains ``fits`` and an ``open_id`` selecting a saved fit.
+
+``fit_states`` holds the time and frequency editor forms separately. Browser,
+plot, Fourier, MaxEnt, and analysis-window containers retain presentation state.
+Unknown user metadata is preserved. A future storage schema is rejected, rather
+than interpreted as a known format.
+
+Schema utilities
+----------------
 
 .. autofunction:: asymmetry.core.project.schema.validate
 
 .. autofunction:: asymmetry.core.project.schema.migrate_to_current
-
-Project file format
--------------------
-
-A project file is a UTF-8 JSON document with the following top-level
-structure::
-
-    {
-        "schema_version": 7,
-        "created_with_app_version": "0.1.0",
-        "datasets": [
-            {
-                "source_file": "/absolute/path/to/file.nxs",
-                "run_number": 1234,
-                "metadata_overrides": { "field": 50.0 },
-                "representations": {
-                    "time_fb_asymmetry": {
-                        "recipe": {},
-                        "fit": {
-                            "model": { "component_names": ["Exponential"], "operators": [] },
-                            "parameters": [...],
-                            "result": { "success": true, "reduced_chi_squared": 0.97, ... },
-                            "provenance": "single",
-                            "batch_id": null,
-                            "diverged": false,
-                            "include_in_trend": true
-                        },
-                        "trend_state": {}
-                    },
-                    "freq_fft": {
-                        "recipe": { "fourier_config": { "window": "gaussian", ... } },
-                        "fit": { "model": null, "provenance": "none", ... },
-                        "trend_state": {}
-                    }
-                }
-            }
-        ],
-        "combined_datasets": [
-            { "source_run_numbers": [1234, 1235] }
-        ],
-        "batches": [
-            {
-                "batch_id": "batch-1",
-                "rep_type": "time_fb_asymmetry",
-                "member_kind": "runs",
-                "member_run_numbers": [1234, 1235, 1236],
-                "member_source_run": {},
-                "order_key": "field",
-                "canonical_model": { "component_names": ["Exponential"], "operators": [] },
-                "param_roles": { "A": "local", "Lambda": "global" },
-                "nuisance_params": [],
-                "results_by_run": {
-                    "1234": { "success": true, "parameters": { "Lambda": 0.31 }, ... }
-                },
-                "diverged_runs": []
-            }
-        ],
-        "browser_state": {
-            "sort_column": 0,
-            "sort_order": "ascending",
-            "filters": {},
-            "selected_run_numbers": [1234],
-            "selected_group_ids": [],
-            "data_groups": [],
-            "extra_columns": []
-        },
-        "plot_state": { ... },
-        "single_fit_state": {
-            "model_name": "ExponentialRelaxation",
-            "parameters": [...],
-            "result_html": "<b>χ² = ...</b>"
-        },
-        "global_fit_state": {
-            "model_name": "ExponentialRelaxation",
-            "parameters": [...],
-            "result_html": "<b>χ² = ...</b>"
-        },
-        "fit_ui_state": { "active_tab_index": 0 },
-        "fit_parameters_state": { "rows": [...], "x_axis": "Auto", ... },
-        "fourier_state": {
-            "window": "gaussian",
-            "filter_start_us": 0.0,
-            "filter_time_constant_us": 1.5,
-            "padding": 4,
-            "display": "Power"
-        }
-    }
-
-**Schema versioning history:**
-
-* v1–v4 — initial releases
-* v5 — grouping overrides, wizard cache
-* v6 — per-dataset ``representations`` map (recipe-only FFT, per-run ``FitSlot``,
-  trend state); top-level ``batches`` list
-* v7 — ``FitSeries`` gains ``member_kind``, ``nuisance_params``,
-  ``member_source_run``; ``trend_state`` normalised to structured shape;
-  group series recorded in ``batches``
-
-Unknown top-level keys are silently preserved during migration, ensuring
-forward compatibility when a newer version of the application adds new state.
-
-Representation
---------------
-
-Each dataset entry's ``representations`` map holds one entry per analysis
-view the user has exercised.  Keys are ``RepresentationType`` values:
-``"time_fb_asymmetry"``, ``"time_groups"``, ``"freq_fft"``, ``"freq_maxent"``.
-
-Each representation stores:
-
-``recipe``
-    Generation parameters (for FFT spectra: the ``GroupSpectrumConfig``
-    serialisation; for time-domain views: empty).  On project load the
-    transient arrays are recomputed from the recipe rather than stored.
-
-``fit``
-    A single :class:`~asymmetry.core.representation.base.FitSlot` — the most
-    recent fit for this (dataset, representation) pair.  Includes the model
-    dict, fitted-parameter list, result summary, provenance marker
-    (``"none"``, ``"single"``, ``"batch"``, ``"global"``), the ``batch_id`` of
-    the owning :class:`~asymmetry.core.representation.series.FitSeries` when
-    the fit was part of a series, and divergence flags used by the trending
-    panel.
-
-``trend_state``
-    Opaque dict persisting the user's x-axis and y-parameter selections in the
-    Fit Parameters panel for this representation.
 
 FitSeries (``batches``)
 -----------------------

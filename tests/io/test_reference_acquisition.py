@@ -175,7 +175,13 @@ def test_historical_reference_shapes_round_trip(number, period, shape, tmp_path,
         ]
     else:
         state["grouping_profiles"] = [
-            {"background_policy": {"mode": "reference_run", "details": {"background_run": payload}}}
+            {
+                "name": "sample",
+                "background_policy": {
+                    "mode": "reference_run",
+                    "details": {"background_run": payload},
+                },
+            }
         ]
     path = tmp_path / "old.asymp"
     import json

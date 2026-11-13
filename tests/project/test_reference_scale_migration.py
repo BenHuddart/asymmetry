@@ -35,7 +35,7 @@ def test_released_shapes_convert_and_reopen_without_promoting_unknown_origin(
     state = {"schema_version": 33, "datasets": [], "grouping_profiles": []}
     if location == "profile":
         state["grouping_profiles"] = [
-            {"background_policy": {"mode": "reference_run", "details": grouping}}
+            {"name": "sample", "background_policy": {"mode": "reference_run", "details": grouping}}
         ]
     else:
         state["datasets"] = [

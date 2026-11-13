@@ -8,6 +8,7 @@ import pytest
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION
 from asymmetry.core.representation import (
     DataGroup,
     FitSeries,
@@ -91,7 +92,10 @@ def test_active_series_round_trips_through_to_dict():
 
 
 def test_active_series_round_trips_through_project_state():
-    project = {"datasets": [{"run_number": 1, "source_file": "/tmp/a.nxs"}]}
+    project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 1, "source_file": "a.nxs"}],
+    }
     model = ProjectModel()
     model.add_batch(_batch("b1"))
     model.set_active_series(_FB, "b1")
@@ -106,7 +110,7 @@ def test_active_series_round_trips_through_project_state():
 
 
 def test_trend_excluded_runs_round_trip_through_project_state():
-    project = {"datasets": []}
+    project = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": []}
     model = ProjectModel()
     model.add_batch(_batch("b1", runs=(1, 2, 3)))
     model.set_trend_excluded("b1", 2, True)
@@ -135,9 +139,10 @@ def test_standalone_round_trip():
 
 def test_project_state_integration_round_trip():
     project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "datasets": [
-            {"run_number": 7, "source_file": "/tmp/a.nxs"},
-            {"run_number": 8, "source_file": "/tmp/b.nxs"},
+            {"run_number": 7, "source_file": "a.nxs"},
+            {"run_number": 8, "source_file": "b.nxs"},
         ],
     }
     model = ProjectModel()
@@ -289,7 +294,10 @@ def test_maxent_recipe_and_reconstruction_survive_project_round_trip():
 
 def _project_state_with(model: ProjectModel) -> dict:
     """Write *model* into a fresh project-state dict (its datasets registered)."""
-    project = {"datasets": [{"run_number": 7, "source_file": "/tmp/a.nxs"}]}
+    project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 7, "source_file": "a.nxs"}],
+    }
     model.write_to_project_state(project)
     return project
 
@@ -341,7 +349,7 @@ def test_data_group_round_trips_through_project_model():
 
 
 def test_data_groups_round_trip_through_project_state():
-    project = {"datasets": []}
+    project = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": []}
     model = ProjectModel()
     model.add_data_group(DataGroup("grp-1", "B = 60 G", member_run_numbers=[1, 2, 3]))
     model.write_to_project_state(project)
@@ -355,7 +363,8 @@ def test_data_groups_round_trip_through_project_state():
 def test_data_groups_absent_block_loads_empty_without_crashing():
     """A project saved before Phase 7 has no top-level data_groups key at all."""
     legacy_project = {
-        "datasets": [{"run_number": 7, "source_file": "/tmp/a.nxs"}],
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 7, "source_file": "a.nxs"}],
         "batches": [],
     }
     assert "data_groups" not in legacy_project
@@ -784,7 +793,10 @@ def test_rotating_frames_round_trip_on_their_dataset_entries():
         .with_baseline(1, Provenance.ESTIMATED, 0.12, -0.05)
     )
     model = ProjectModel(rotating_frames={2: frame})
-    project = {"datasets": [{"run_number": 1}, {"run_number": 2}]}
+    project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 1}, {"run_number": 2}],
+    }
     model.write_to_project_state(project)
     assert "rotating_frame" not in project["datasets"][0]
     assert ProjectModel.from_project_state(project).rotating_frames == {2: frame}
@@ -802,7 +814,7 @@ def test_rotated_fits_keep_their_frames_through_project_state():
     model.add_batch(
         FitSeries("b1", _FB, member_run_numbers=[2], projection="P′_y", member_frames={2: snapshot})
     )
-    project = {"datasets": [{"run_number": 2}]}
+    project = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": [{"run_number": 2}]}
     model.write_to_project_state(project)
 
     rebuilt = ProjectModel.from_project_state(project)
@@ -822,7 +834,11 @@ def test_a_combined_runs_frame_rides_with_its_combined_entry():
     # Combined rows are saved apart from the datasets (review of #357).
     frame = RotatingFrame.typed_frequency(1.355, 1)
     model = ProjectModel(rotating_frames={-7: frame})
-    project = {"datasets": [], "combined_datasets": [{"combined_run_number": -7}]}
+    project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [],
+        "combined_datasets": [{"combined_run_number": -7, "source_run_numbers": []}],
+    }
     model.write_to_project_state(project)
     assert project["combined_datasets"][0]["rotating_frame"] == frame.to_dict()
     assert ProjectModel.from_project_state(project).rotating_frames == {-7: frame}
@@ -833,7 +849,11 @@ def test_a_combined_runs_fits_ride_with_its_combined_entry():
     model.ensure_dataset(-7).ensure(_FB).record_single_fit(
         None, FitSlot(provenance="single", result={"chi2": 1.0}), detached=False
     )
-    project = {"datasets": [], "combined_datasets": [{"combined_run_number": -7}]}
+    project = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [],
+        "combined_datasets": [{"combined_run_number": -7, "source_run_numbers": []}],
+    }
     model.write_to_project_state(project)
     restored = ProjectModel.from_project_state(project).representation(-7, _FB)
     assert restored.fit.result == {"chi2": 1.0}
