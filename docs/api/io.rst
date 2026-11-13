@@ -187,7 +187,9 @@ paths. Verification does no search or substitution. Outcomes are ``matched``,
 candidate without an expectation remains ``legacy_unknown``; its observed digest
 is returned separately. Missing/unreadable facts retain the original expectation.
 One complete hash per candidate path is shared within a verification request,
-while all source terms and coefficients remain distinct. ``progress(done, total)``
+while all source terms and coefficients remain distinct. Returned candidate
+locators name the resolved target actually read, so retargeting an alias cannot
+cache different bytes under another target. ``progress(done, total)``
 reports bytes for each file; ``checkpoint()`` may raise to cancel between chunks.
 Cancellation returns no partial result. Neither operation mutates project history
 or recomputes scientific results. Call long operations on a worker in GUI clients. The desktop disk-reference

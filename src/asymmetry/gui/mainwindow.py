@@ -6885,11 +6885,7 @@ class MainWindow(QMainWindow):
         """Adopt prepared owners, forgetting lost runs and computing spectra on first view."""
         self._project_model = model
         self._project_model.forget_runs(lost_runs)
-        # Rebind the browser to the freshly loaded registry (D6): the panel is a
-        # view/controller over ``ProjectModel.data_groups`` and must follow the
-        # model that replaced the one its earlier ``restore_state`` seeded. This
-        # rebuilds the group rows from the canonical registry (falling back to the
-        # legacy browser_state seed for a pre-registry project).
+        # Browser groups follow the transferred ProjectModel authority.
         if hasattr(self._data_browser, "set_project_model"):
             self._data_browser.set_project_model(self._project_model)
         # Seed the batch-id counter past any loaded "batch-N" so the next fit
@@ -16844,10 +16840,7 @@ class MainWindow(QMainWindow):
                     project_dir,
                 )
 
-        # Second pass: apply fallback directory for still-missing files. The
-        # stored path may come from another OS; ``ntpath.basename`` splits on
-        # both ``\`` and ``/`` everywhere, whereas ``os.path.basename`` on
-        # POSIX treats a Windows path as one long filename.
+        # Resolve cross-platform saved basenames in the explicitly chosen directory.
         if fallback_dir:
             for ds_info in missing_info:
                 sf = ds_info.get("source_file", "")
@@ -17090,6 +17083,9 @@ class MainWindow(QMainWindow):
                             f"WARNING: Could not recreate combined dataset {src_runs}; missing source histograms."
                         )
                 else:
+                    self._data_browser.restore_unavailable_combination(
+                        combined_info, "Source acquisitions unavailable"
+                    )
                     missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
                     self._log_panel.log(
                         f"WARNING: Could not recreate combined dataset "
@@ -17120,7 +17116,13 @@ class MainWindow(QMainWindow):
                     "missing runs."
                 )
 
-        # Unavailable definitions with loaded sources retain their history rows.
+        for entry in datasets_info:
+            if entry["run_number"] not in loaded_run_numbers:
+                owner = prepared.model.ensure_dataset(entry["run_number"])
+                owner.unavailable_source = {
+                    key: value for key, value in entry.items() if key != "representations"
+                }
+        # Unavailable definitions retain their history rows.
         lost_combined_runs = {
             int(ci["combined_run_number"]) for ci in combined_datasets_info
         } - set(self._data_browser._combined_datasets)

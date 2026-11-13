@@ -5271,7 +5271,9 @@ class DataBrowserPanel(QWidget):
         number = int(definition["combined_run_number"])
         sources = list(definition["source_run_numbers"])
         self._combined_datasets[number] = sources
-        self._combined_source_datasets[number] = [self._datasets[rn] for rn in sources]
+        self._combined_source_datasets[number] = [
+            self._datasets[rn] for rn in sources if rn in self._datasets
+        ]
         operation = definition.get("operation", "coadd")
         if operation != "coadd":
             self._combined_signs[number] = -1

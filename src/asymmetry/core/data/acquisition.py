@@ -127,7 +127,7 @@ def verify_sources(
             continue
         if key not in cache:
             try:
-                observed = ContentIdentity.read(path, checkpoint=checkpoint, progress=progress)
+                observed = ContentIdentity.read(key, checkpoint=checkpoint, progress=progress)
             except ContentReadError as exc:
                 cache[key] = (
                     None,
@@ -144,7 +144,7 @@ def verify_sources(
             if source.expected == observed
             else "changed"
         )
-        results.append(SourceVerification(source, str(candidate), status, observed, diagnostic))
+        results.append(SourceVerification(source, str(key), status, observed, diagnostic))
     checkpoint()
     return tuple(results)
 

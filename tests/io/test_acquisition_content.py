@@ -482,3 +482,29 @@ def test_prepared_inventory_keeps_saved_fit_and_series_expectations():
         ("old.nxs", identity),
     ]
     assert prepared.state == state
+
+
+def test_verification_reads_the_target_used_for_request_deduplication(tmp_path, monkeypatch):
+    first, second, alias = [tmp_path / name for name in ("first", "second", "alias")]
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    identity = ContentIdentity.read(first)
+    alias.symlink_to(first)
+    real = ContentIdentity.read
+    calls = []
+
+    def retarget(path, **kwargs):
+        calls.append(path)
+        alias.unlink()
+        alias.symlink_to(second)
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(ContentIdentity, "read", retarget)
+    facts = verify_sources(
+        [
+            SourceDeclaration("sample", str(alias), identity),
+            SourceDeclaration("reference", str(first), identity),
+        ]
+    )
+    assert len(calls) == 1 and calls[0] == first
+    assert all(f.status == "matched" and f.candidate_file == str(first) for f in facts)

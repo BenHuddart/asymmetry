@@ -156,3 +156,53 @@ def test_combined_open_resave_keeps_own_expectations(qapp, tmp_path, unavailable
     assert [d.expected for d in prepared.sources if d.role == "constituent"] == [old, None]
     window._clear_dirty()
     window.close()
+
+
+def test_actual_open_missing_sample_and_combined_sources_survive_resave(
+    qapp, tmp_path, monkeypatch
+):
+    from PySide6.QtWidgets import QMessageBox
+
+    identity = ContentIdentity("e" * 64)
+    terms = [
+        {
+            "source_file": f"absent{n}.nxs",
+            "source_run_number": n,
+            "coefficient": c,
+            "input_ordinal": i,
+            "source_binding": SourceBinding(identity, None).to_dict(),
+        }
+        for i, (n, c) in enumerate(((3, 1.0), (4, -2.0)), 1)
+    ]
+    definition = {
+        "combined_run_number": -1,
+        "source_run_numbers": [3, 4],
+        "operation": "subtract_signed",
+        "constituent_sources": terms,
+    }
+    state = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [
+            {
+                "run_number": 3,
+                "source_file": "absent3.nxs",
+                "source_binding": SourceBinding(identity, None).to_dict(),
+            }
+        ],
+        "combined_datasets": [definition],
+    }
+    path = tmp_path / "unavailable.asymp"
+    save_project(state, path)
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
+    window = MainWindow()
+    window._open_project_file(str(path))
+    saved = window.collect_project_state()
+    assert saved["datasets"][0]["source_binding"] == state["datasets"][0]["source_binding"]
+    assert saved["combined_datasets"][0]["constituent_sources"] == terms
+    assert saved["combined_datasets"][0]["operation"] == "subtract_signed"
+    save_project(saved, path)
+    prepared = load_prepared_project(path)
+    assert len(prepared.sources) == 3
+    assert all(d.expected == identity for d in prepared.sources)
+    window._clear_dirty()
+    window.close()

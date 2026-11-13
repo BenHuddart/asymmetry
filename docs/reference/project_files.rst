@@ -1072,7 +1072,9 @@ expectation, or certify historical fits, recipes, or calibration records.
 Combined entries retain ordered ``constituent_sources`` with their own bindings,
 coefficients, and period selections. Reconstruction retains their historical
 expectations independently of dataset-level expectations and fresh curve recipes,
-including when a combination remains unavailable. Frozen calibration records and supported
+including when a combination remains unavailable. Unresolved dataset declarations
+remain with the existing project-model owner and survive collection without
+acquisition reads or fabricated observed identities. Frozen calibration records and supported
 result recipes retain the acquisition facts available to their calculation;
 reference results describe the counts consumed, including retained cached inputs.
 Reference requests may record an expected ``content_identity`` independently.
