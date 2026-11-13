@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Capture acquisition content identities with fresh reads; retain historical expectations
+  separately and provide cancellable core comparison of complete source files.
+
 - Fixed supplied double-pulse TF alpha/beta count calibration through the GUI,
   workflow, CLI, and saved project records, with conditional nuisance errors.
 

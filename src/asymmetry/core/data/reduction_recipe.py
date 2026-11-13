@@ -14,6 +14,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from asymmetry.core import computation
+from asymmetry.core.data.acquisition import ContentIdentity, SourceDeclaration
 
 if TYPE_CHECKING:
     from asymmetry.core.transform.constituent_counts import ConstituentCounts
@@ -104,6 +105,45 @@ class EffectiveReductionRecipe:
         )
         return sha256(payload.encode("utf-8")).hexdigest()
 
+    def sources(self) -> tuple[SourceDeclaration, ...]:
+        """Inventory captured result inputs without looking up or certifying files.
+
+        Constituent order, signed coefficients, and acquired period selectors
+        survive even when several terms share identical physical file bytes.
+        """
+        sources = []
+
+        def visit(value, role="sample", coefficient=1.0, input_number=None):
+            if isinstance(value, dict):
+                coefficient = value.get("coefficient", coefficient)
+                input_number = value.get("input_number", input_number)
+                if "source_file" in value:
+                    sources.append(
+                        SourceDeclaration(
+                            role,
+                            value["source_file"],
+                            ContentIdentity.from_dict(value.get("content_identity")),
+                            value.get("run_number", value.get("source_run_number")),
+                            value.get("data_period_number", value.get("period_number")),
+                            coefficient,
+                            input_number,
+                            value.get("dae_period_number"),
+                        )
+                    )
+                for key, child in value.items():
+                    visit(
+                        child,
+                        key if key in {"reference", "calibration", "constituents"} else role,
+                        coefficient,
+                        input_number,
+                    )
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child, role, coefficient, input_number)
+
+        visit(self.to_dict())
+        return tuple(sources)
+
     def with_facts(self, **facts: Any) -> EffectiveReductionRecipe:
         """Complete a captured operation with its actual output facts."""
         return self.from_dict(self.to_dict() | facts)
@@ -152,7 +192,7 @@ def source_reference(metadata: dict | None) -> dict:
         "source_file": metadata.get("source_file", ""),
         "data_period_number": metadata.get("data_period_number", metadata.get("period_number")),
         "dae_period_number": metadata.get("dae_period_number"),
-        "content_identity": None,
+        "content_identity": metadata.get("content_identity"),
     }
 
 

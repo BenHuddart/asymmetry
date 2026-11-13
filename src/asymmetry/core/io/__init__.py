@@ -38,6 +38,9 @@ def load(
     filepath: str,
     fmt: str | None = None,
     period: int | str | PeriodMode | None = None,
+    *,
+    checkpoint=None,
+    progress=None,
 ) -> LoadResult:
     """Load a μSR data file and return a :class:`MuonDataset`.
 
@@ -56,13 +59,25 @@ def load(
         files return one :class:`MuonDataset` and 3+ period files a ``list``.
         See :mod:`asymmetry.core.io.periods`.
 
+    checkpoint : callable, optional
+        Cooperative cancellation callback, called between hash chunks and around
+        decoding by the built-in loaders. Raising aborts the load.
+    progress : callable, optional
+        Receives bytes read and total bytes for each of the two whole-file hash
+        passes bracketing built-in decoding. Decoding itself is format-specific.
+
     Raises
     ------
     ValueError
         If ``period`` is out of range or an unknown label.
     """
     loader = LoaderRegistry.get_loader(filepath, fmt=fmt)
-    result = loader.load(filepath)
+    callbacks = {
+        key: value
+        for key, value in (("checkpoint", checkpoint), ("progress", progress))
+        if value is not None
+    }
+    result = loader.load(filepath, **callbacks)
     if period is None:
         return result
     return select_period(result, period)
@@ -203,6 +218,7 @@ def resolve_background_reference(
         file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scaling=scaling,
         source_file=reference_run.source_file or source_file,
+        content_identity=reference_run.source_binding.observed,
         deadtime_normaliser=good_frames(reference_run.grouping, default=0.0) or None,
         run_number=reference_selection(reference_run)["run_number"],
         period_number=reference_selection(reference_run)["period_number"],

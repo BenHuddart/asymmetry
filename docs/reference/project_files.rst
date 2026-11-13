@@ -1059,3 +1059,29 @@ Reanalyse or refit to obtain a new result. Opening a project does not refit
 historical analyses or certify their original inputs; regenerated curves have
 their own execution. Manual and explicitly applied historical coefficients
 remain available, with their original attribution.
+
+Expected and observed acquisition bytes
+---------------------------------------
+
+Dataset entries retain optional ``source_binding`` facts with separate
+``expected`` and ``observed`` whole-file SHA-256 identities. Fresh acquisition
+reads record both from that read. Restoration preserves the saved expectation,
+including a legacy unknown, alongside the identity observed with newly loaded
+counts. Saving does not hash files, promote a new observation to an old
+expectation, or certify historical fits, recipes, or calibration records.
+Combined entries retain ordered ``constituent_sources`` with their own bindings,
+coefficients, and period selections. Frozen calibration records and supported
+result recipes retain the acquisition facts available to their calculation;
+reference results describe the counts consumed, including retained cached inputs.
+Reference requests may record an expected ``content_identity`` independently.
+Absent identities remain unknown.
+
+Structural project preparation performs no acquisition I/O. Its ``sources``
+inventory exposes sample, constituent, reference-request, calibration, and
+recorded representation-result declarations for explicit core verification.
+``EffectiveReductionRecipe.sources()`` also exposes captured result inputs.
+No persisted status is accepted as a fresh content comparison. Current project
+opening does not automatically verify content before applying state or provide
+changed-source replacement choices. Byte verification and scientific-computation
+compatibility are separate: identical bytes can match while a saved calculation
+remains historical. Source mismatches do not invalidate a usable facility file.

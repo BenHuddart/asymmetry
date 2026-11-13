@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from math import isfinite
 
+from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.fitting.tf_calibration import TF_CALIBRATION_METHOD, TFCalibrationSelection
 from asymmetry.core.project.calibration import CalibrationRecord, calibration_payload
 from asymmetry.core.project.json_values import encode_non_finite
@@ -31,6 +32,7 @@ class QuickCalibrationResult:
     period_mapping: tuple[tuple[int, str], ...] = ()
     mapped_period_number: int | None = None
     computation_revision: str | None = None
+    content_identity: ContentIdentity | None = None
 
     def to_dict(self) -> dict:
         """Export shared result fields and source context without histogram arrays."""
@@ -39,8 +41,12 @@ class QuickCalibrationResult:
             **{
                 f.name: getattr(self, f.name)
                 for f in fields(self)
-                if f.name not in {"estimate", "corrections", "alignment", "window"}
+                if f.name
+                not in {"estimate", "corrections", "alignment", "window", "content_identity"}
             },
+            "content_identity": self.content_identity.to_dict()
+            if self.content_identity is not None
+            else None,
             "corrections": self.corrections.to_dict(),
             "alignment": asdict(self.alignment),
             "window": asdict(self.window),
@@ -64,11 +70,13 @@ class QuickCalibrationResult:
                     "period_mapping",
                     "mapped_period_number",
                     "computation_revision",
+                    "content_identity",
                 }
             },
             period_mapping=tuple((int(n), target) for n, target in data["period_mapping"]),
             mapped_period_number=data.get("mapped_period_number"),
             computation_revision=data.get("computation_revision"),
+            content_identity=ContentIdentity.from_dict(data.get("content_identity")),
             corrections=CorrectionOutcomes.from_dict(data["corrections"]),
             alignment=AlignmentCrop(
                 **{

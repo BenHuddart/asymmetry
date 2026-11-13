@@ -488,6 +488,9 @@ def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
                 "detector_roles": detector_roles(run),
                 "declared_period_labels": declared_period_labels(run),
                 "source_file": run.source_file,
+                "content_identity": run.source_binding.observed.to_dict()
+                if run.source_binding.observed is not None
+                else None,
                 "run_number": run.metadata.get("source_run_number", run.run_number),
                 "period_number": number,
                 "data_period_number": run.metadata.get("data_period_number"),

@@ -16371,9 +16371,7 @@ class MainWindow(QMainWindow):
             if run_number in seen_run_numbers:
                 return
 
-            source_file = ""
-            if dataset.run:
-                source_file = dataset.run.source_file
+            source_file = dataset.run.source_file if dataset.run is not None else ""
             if not source_file:
                 source_file = str(dataset.metadata.get("source_file", ""))
 
@@ -16391,6 +16389,9 @@ class MainWindow(QMainWindow):
                 {
                     "run_number": run_number,
                     "source_file": source_file,
+                    "source_binding": dataset.run.source_binding.to_dict()
+                    if dataset.run is not None
+                    else None,
                     "metadata_overrides": metadata_overrides,
                     **self._grouping_persistence_for_dataset(dataset),
                 }
@@ -16399,7 +16400,7 @@ class MainWindow(QMainWindow):
 
         for run_number, dataset in self._data_browser._datasets.items():
             if run_number in self._data_browser._combined_datasets:
-                continue  # Combined datasets are captured separately.
+                continue
             _append_dataset_entry(dataset)
 
         combined_sources = self._data_browser._combined_source_datasets
@@ -16414,6 +16415,9 @@ class MainWindow(QMainWindow):
             entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
+                "constituent_sources": self._data_browser._datasets[crn]
+                .metadata.get("combination", {})
+                .get("constituents", []),
             }
             if combined_methods.get(crn) == "subtract_signed":
                 entry["operation"] = "subtract_signed"
@@ -16850,9 +16854,7 @@ class MainWindow(QMainWindow):
         # ── load source files ──────────────────────────────────────────
         # Prefetch every unique source file on a worker thread (progress
         # dialog + cancel); the per-dataset loop below then resolves from
-        # this cache. Values are LoadResult or Exception — a cached failure
-        # is re-raised per referencing dataset for the same per-run warning
-        # the synchronous path produced, without re-reading the file.
+        # this cache. Cached failures retain their per-run warning.
         unique_paths: list[str] = []
         for ds_info in datasets_info:
             resolved = resolved_paths.get(ds_info.get("run_number"))
@@ -16931,9 +16933,6 @@ class MainWindow(QMainWindow):
                     if dataset is None and len(candidates) == 1:
                         dataset = candidates[0]
 
-                    # Mapped entries name a source run; three-plus-period files
-                    # return individually numbered siblings. Authored membership
-                    # reconstructs the held sets from those original observations.
                     if dataset is None:
                         overrides = ds_info.get("grouping_overrides")
                         persisted_mapping = (
@@ -16960,10 +16959,10 @@ class MainWindow(QMainWindow):
                         return
                     if int(dataset.run_number) in loaded_run_numbers:
                         return
+                    from asymmetry.core.io.acquisition import restore_source_binding
 
-                    # Apply saved metadata overrides without prompting. A saved
-                    # field-direction answer goes through the wizard-scope owner,
-                    # so a direction the file has since gained is never overridden.
+                    dataset = restore_source_binding(dataset, ds_info.get("source_binding"))
+
                     overrides = dict(ds_info.get("metadata_overrides", {}))
                     saved_direction = overrides.pop("field_direction", None)
                     overrides.pop("field_direction_source", None)
