@@ -415,3 +415,16 @@ bytes, independently of the sampled-observation and scientific-computation
 identities. A content digest alone does not change sampled-observation identity
 or numerical recipe identity. It supplies neither covariance nor a claim of physical validity.
 See :doc:`/api/io` for explicit content comparison and cancellation.
+
+
+Verified reopening and new observations
+---------------------------------------
+
+Project reopening verifies current acquisition candidates before application.
+Byte equality establishes source content only, independently of observation,
+computation, noise, or calibration identity. Known changed current inputs require
+**Open History Only**, **Accept Replacement**, or **Cancel**; legacy unknowns
+remain loadable and unverified. Replacement recomputes supported current
+observations through the same reduction operations while preserving historical
+fit and calibration expectations. It never substitutes changed bytes for arrays
+that were not saved. See :doc:`/reference/project_files`.

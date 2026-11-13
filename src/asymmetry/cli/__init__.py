@@ -52,6 +52,7 @@ from asymmetry.cli.commands import fit_series as fit_series_command
 from asymmetry.cli.commands import fourier as fourier_command
 from asymmetry.cli.commands import info as info_command
 from asymmetry.cli.commands import integral_scan as integral_scan_command
+from asymmetry.cli.commands import project as project_command
 from asymmetry.cli.commands import recipe as recipe_command
 from asymmetry.cli.commands import reduce as reduce_command
 from asymmetry.cli.commands import skill as skill_command
@@ -77,6 +78,7 @@ _COMMANDS = (
     audit_command,
     skill_command,
     info_command,
+    project_command,
 )
 
 
@@ -168,7 +170,7 @@ def main(argv: list[str] | None = None) -> None:
 
 #: Commands whose output is not analysis output: the audit must not verify a
 #: summary against its own report, and the skill installer prints paths.
-_UNLOGGED = frozenset({"audit", "skill"})
+_UNLOGGED = frozenset({"audit", "skill", "project-sources"})
 
 #: Commands that produce results a summary quotes, each closed by the audit step.
 _RESULT_COMMANDS = frozenset(

@@ -54,10 +54,12 @@ def test_direct_restore_rejects_before_mutation(qapp, tmp_path):
 
 
 @pytest.mark.parametrize("action", ["cancel", "close", "new", "supersede"])
+@pytest.mark.parametrize("phase", ["prepare", "verify", "decide"])
 def test_pre_apply_cancel_retains_work_and_discards_late_result(
-    qapp, tmp_path, monkeypatch, action
+    qapp, tmp_path, monkeypatch, action, phase
 ):
     import threading
+    from time import monotonic
 
     from PySide6.QtCore import QTimer
 
@@ -73,28 +75,45 @@ def test_pre_apply_cancel_retains_work_and_discards_late_result(
     path.write_text(json.dumps(state))
     release = threading.Event()
     entered = threading.Event()
-    real_load = module.load_prepared_project
+    if phase != "prepare":
+        import asymmetry.gui.utils.project_sources as module
+    attribute = {
+        "prepare": "load_prepared_project",
+        "verify": "verify_project_sources",
+        "decide": "apply_source_decisions",
+    }[phase]
+    real_load = getattr(module, attribute)
 
-    def delayed(path, **kwargs):
+    def delayed(*args, **kwargs):
         entered.set()
         release.wait(5)
-        return real_load(path)  # Deliberately finish despite cancellation.
+        return real_load(*args)  # Deliberately finish despite cancellation.
 
-    monkeypatch.setattr(module, "load_prepared_project", delayed)
+    monkeypatch.setattr(module, attribute, delayed)
     beats = []
     visible = []
     timer = QTimer(window)
     timer.setInterval(1)
     timer.timeout.connect(lambda: beats.append(1))
     timer.start()
+    visibility_deadline = None
 
     def cancel():
-        if not entered.is_set():
+        nonlocal visibility_deadline
+
+        if not entered.is_set() or len(beats) < 3:
             QTimer.singleShot(1, window, cancel)
             return
         from asymmetry.gui.utils.project_preparation import ProjectPreparation
 
-        visible.append(window.findChild(ProjectPreparation).isVisible())
+        dialogs = window.findChildren(ProjectPreparation)
+        dialog = next(d for d in dialogs if d._loop.isRunning())
+        if visibility_deadline is None:
+            visibility_deadline = monotonic() + 2
+        if not dialog.isVisible() and monotonic() < visibility_deadline:
+            QTimer.singleShot(1, window, cancel)
+            return
+        visible.append(dialog.isVisible())
         if action == "close":
             assert not window.close()
         elif action == "new":
@@ -105,7 +124,7 @@ def test_pre_apply_cancel_retains_work_and_discards_late_result(
         else:
             window._bulk_load_cancel()
 
-    QTimer.singleShot(650, window, cancel)
+    QTimer.singleShot(0, window, cancel)
     window._open_project_file(str(path))
     assert len(beats) > 2
     assert visible == [True]

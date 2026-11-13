@@ -8,7 +8,6 @@ import copy
 import functools
 import hashlib
 import logging
-import ntpath
 import os
 import time
 import weakref
@@ -307,10 +306,16 @@ from asymmetry.gui.ui_manager import (
 )
 from asymmetry.gui.utils import app_data
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
+from asymmetry.gui.utils.joint_publication import joint_source_publication
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.project_preparation import ProjectPreparation
+from asymmetry.gui.utils.project_sources import (
+    apply_project_application,
+    prepare_source_application,
+    series_source_reason,
+)
 from asymmetry.gui.utils.reduction_cache import (
     ReductionCache,
     capture_histogram_observation,
@@ -816,6 +821,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._background_run_cache: dict[str, object] = {}
+        self._project_source_application = None
         # QMainWindow forces the Window flag on. A hosted page must lose it
         # before the native (macOS) menu bar built below hands the page its own
         # native window, which would survive into the shell and mis-map every
@@ -5710,7 +5716,12 @@ class MainWindow(QMainWindow):
         flags = correction_flags_from_grouping(grouping)
         reference = (
             self._resolve_background_reference(
-                grouping | {"background_run": copy.deepcopy(grouping.get("background_run"))}
+                grouping | {"background_run": copy.deepcopy(grouping.get("background_run"))},
+                **(
+                    {"source_request": grouping.get("background_run")}
+                    if self._restoring_project
+                    else {}
+                ),
             )
             if flags.use_background and resolve_background_mode(grouping) == "reference_run"
             else None
@@ -5804,16 +5815,26 @@ class MainWindow(QMainWindow):
             f"Added mapped dataset for run {mapped.run_number} ({mapping_text}).", 8000
         )
 
-    def _resolve_background_reference(self, grouping: dict) -> BackgroundReference | None:
+    def _resolve_background_reference(
+        self, grouping: dict, *, source_request=None
+    ) -> BackgroundReference | None:
         """Resolve live source facts and prepare timing without GUI-thread searches."""
+        payload = grouping.get("background_run")
+        indices = ()
+        if self._restoring_project and self._project_source_application is not None and payload:
+            indices = self._project_source_application.reference_inputs(
+                payload if source_request is None else source_request
+            )
         reference = resolve_background_reference(
-            grouping.get("background_run"),
+            payload,
             sample_exposure=ReferenceExposure.from_grouping(grouping),
             datasets=self._data_browser.get_all_datasets(),
             cache=self._background_run_cache,
             reference_loader=functools.partial(load_reference_acquisition, parent=self),
         )
 
+        if self._restoring_project and self._project_source_application is not None and payload:
+            self._project_source_application.check_reference_capture(indices, reference)
         return prepare_reference_timing(reference, grouping, self, cache=self._reduction_cache)
 
     def _maybe_apply_comment_field(
@@ -11264,7 +11285,7 @@ class MainWindow(QMainWindow):
         Membership (series D1) and the members' rotating frames (D7) are
         separate facts, each read from its own record.
         """
-        reasons = []
+        reasons = [reason for reason in (series_source_reason(self, series),) if reason]
         if series.results_by_run and any(
             not computation.is_current(result.get("computation_revision"))
             for result in series.results_by_run.values()
@@ -11832,7 +11853,7 @@ class MainWindow(QMainWindow):
                         else (
                             ""
                             if saved_fit_matches(slot, self._bound_record())
-                            else "Historical fit: observations or computation are different or unverified; the next fit is saved separately."
+                            else "Historical fit: observations, source context, or computation are different or unverified; the next fit is saved separately."
                         )
                     ),
                 )
@@ -14534,6 +14555,7 @@ class MainWindow(QMainWindow):
 
     def _on_joint_fit_completed(self, launch, result, curves) -> None:
         """Publish launch-time joint results, retaining superseded parameter history."""
+        launch, result, curves = joint_source_publication(self, launch, result, curves)
         timestamp = self._fit_record_timestamp()
         shared_by_series: dict[str, dict[str, str]] = {
             batch_id: {} for batch_id in launch.member_batch_ids
@@ -14627,7 +14649,7 @@ class MainWindow(QMainWindow):
         self._refresh_trend_panel(select_batch_id=launch.member_batch_ids[0])
         window = self._joint_fit_window
         if window is not None:
-            window.note_recorded(joint_id)
+            window.load_joint_fit(joint)
         self._rebuild_joint_fits_menu()
         self._log_panel.log(
             f"Joint fit completed: {len(launch.member_batch_ids)} series, "
@@ -16300,16 +16322,7 @@ class MainWindow(QMainWindow):
         if source_path is None:
             return
         try:
-            dialog = ProjectPreparation(self)
-            _bulk_load_owner = self
-            self._bulk_load_active = True
-            self._bulk_load_cancel = dialog.cancel_preparation
-            try:
-                prepared = dialog.run(self._tasks, source_path)
-            finally:
-                self._bulk_load_active = False
-                self._bulk_load_cancel = None
-                _bulk_load_owner = None
+            prepared = self._prepare_project_application(source_path)
             if prepared is None:
                 self.statusBar().showMessage("Project opening cancelled — existing work retained.")
                 self._log_panel.log(
@@ -16776,78 +16789,47 @@ class MainWindow(QMainWindow):
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Prepare direct input before any mutation, then restore canonical owners."""
-        self._apply_prepared_project(prepare_project(state), project_path)
+        global _bulk_load_owner
+        if self._bulk_load_active or _bulk_load_owner is not None:
+            return
+        application = self._prepare_project_application(project_path, state)
+        if application is not None:
+            self._apply_prepared_project(application, project_path)
 
-    def _apply_prepared_project(self, prepared: PreparedProject, project_path: str) -> None:
-        previous_restoring = self._restoring_project
-        self._restoring_project = True
+    def _prepare_project_application(self, path, state=None):
+        global _bulk_load_owner
+        dialog = ProjectPreparation(self)
+        _bulk_load_owner = self
+        self._bulk_load_active = True
+        self._bulk_load_cancel = dialog.cancel_preparation
         try:
-            self._restore_project_state_impl(prepared, project_path)
+            prepared = (
+                dialog.run(self._tasks, path)
+                if state is None
+                else dialog.run(
+                    self._tasks,
+                    operation=lambda worker: prepare_project(
+                        state, checkpoint=lambda: check_task_cancelled(worker)
+                    ),
+                )
+            )
+            return None if prepared is None else prepare_source_application(self, prepared, path)
         finally:
-            self._restoring_project = previous_restoring
+            self._bulk_load_active = False
+            self._bulk_load_cancel = None
+            _bulk_load_owner = None
+
+    def _apply_prepared_project(self, application, project_path: str) -> None:
+        apply_project_application(self, application, project_path)
 
     def _restore_project_state_impl(self, prepared: PreparedProject, project_path: str) -> None:
         """Apply prepared declarations; acquisition cancellation retains completed items."""
         state = prepared.state
-        project_dir = os.path.dirname(os.path.abspath(project_path))
+        application = self._project_source_application
         loaded_run_numbers: set[int] = set()
-
-        # ── resolve source file paths, prompting once for a fallback dir ──
-        def _resolve_source_file(source_file: str) -> str | None:
-            """Return resolved path to *source_file*, or None if not found."""
-            if not source_file:
-                return None
-            if os.path.exists(source_file):
-                return source_file
-            rel = os.path.join(project_dir, source_file)
-            if os.path.exists(rel):
-                return rel
-            return None
-
         datasets_info = state.get("datasets", [])
-
         self._grouping_profiles = prepared.profiles
-
-        # First pass: attempt to resolve all paths with no user interaction.
-        resolved_paths: dict[int, str | None] = {}
-        missing_info: list[dict] = []  # entries whose files cannot be found
-        for ds_info in datasets_info:
-            sf = ds_info.get("source_file", "")
-            rn = ds_info.get("run_number")
-            resolved = _resolve_source_file(sf) if sf else None
-            resolved_paths[rn] = resolved
-            if resolved is None:
-                missing_info.append(ds_info)
-
-        # If any files are missing, offer the user one chance to redirect to a new directory.
-        fallback_dir: str | None = None
-        if missing_info:
-            names = ", ".join(ntpath.basename(d.get("source_file", "?")) for d in missing_info[:5])
-            suffix = f" and {len(missing_info) - 5} more" if len(missing_info) > 5 else ""
-            answer = QMessageBox.question(
-                self,
-                "Data Files Not Found",
-                f"The following data file(s) could not be found:\n\n"
-                f"  {names}{suffix}\n\n"
-                f"Would you like to locate the directory where these files are now stored?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            if answer == QMessageBox.StandardButton.Yes:
-                fallback_dir = QFileDialog.getExistingDirectory(
-                    self,
-                    "Locate Data Directory",
-                    project_dir,
-                )
-
-        # Resolve cross-platform saved basenames in the explicitly chosen directory.
-        if fallback_dir:
-            for ds_info in missing_info:
-                sf = ds_info.get("source_file", "")
-                rn = ds_info.get("run_number")
-                candidate = os.path.join(fallback_dir, ntpath.basename(sf))
-                if os.path.exists(candidate):
-                    resolved_paths[rn] = candidate
+        resolved_paths = application.dataset_paths()
 
         # ── load source files ──────────────────────────────────────────
         # Prefetch unique sources on the worker; cached failures keep per-run warnings.
@@ -16856,7 +16838,7 @@ class MainWindow(QMainWindow):
             resolved = resolved_paths.get(ds_info.get("run_number"))
             if resolved and resolved not in unique_paths:
                 unique_paths.append(resolved)
-        prefetched = self._load_paths_with_progress(unique_paths)
+        prefetched = application.checked_samples(self._load_paths_with_progress(unique_paths))
         if len(prefetched) < len(unique_paths):
             # Mark the session incomplete so a later save hard-confirms rather
             # than silently writing a project file missing the unloaded runs.
@@ -16869,10 +16851,7 @@ class MainWindow(QMainWindow):
         loaded_file_cache: dict[str, object] = {
             path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
         }
-        # D2/D3: a pre-v21 absolute manual t0 and a manual policy that never
-        # shifted anything can only be repaired now that the runs are loaded —
-        # resolution raises on the former. Heal before the per-dataset pass
-        # below resolves any profile against a run.
+        # Resolve persisted timing policies against acquired run facts.
         runs_by_number: dict[int, Run] = {}
         for loaded_obj in loaded_file_cache.values():
             candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
@@ -16885,7 +16864,7 @@ class MainWindow(QMainWindow):
         combined_datasets_info = state.get("combined_datasets", [])
         with self._browser_batch():
             # Apply completed datasets on the GUI thread between event-loop turns.
-            def _restore_one_dataset(ds_info: dict) -> None:
+            def _restore_one_dataset(index: int, ds_info: dict) -> None:
                 rn = ds_info.get("run_number")
                 source_file = ds_info.get("source_file", "")
                 if not source_file:
@@ -16951,6 +16930,8 @@ class MainWindow(QMainWindow):
                         return
                     from asymmetry.core.io.acquisition import restore_source_binding
 
+                    source_index = application.input_for(("datasets", index))
+                    application.check_capture(source_index, dataset.run.source_binding.observed)
                     dataset.run = restore_source_binding(dataset, ds_info.get("source_binding")).run
 
                     overrides = dict(ds_info.get("metadata_overrides", {}))
@@ -17054,9 +17035,10 @@ class MainWindow(QMainWindow):
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)
                 except Exception as e:
+                    self._project_load_incomplete = True
                     self._log_panel.log(f"ERROR loading {source_file}: {e}")
 
-            def _restore_one_combined(combined_info: dict) -> None:
+            def _restore_one_combined(index: int, combined_info: dict) -> None:
                 src_runs = combined_info.get("source_run_numbers", [])
                 operation = combined_info.get("operation")
                 sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
@@ -17064,6 +17046,7 @@ class MainWindow(QMainWindow):
                     from asymmetry.core.data.combine import CombineError
 
                     try:
+                        application.check_constituents(index, self._data_browser.get_all_datasets())
                         restored_id = self._data_browser.add_combined_dataset(
                             src_runs,
                             sign=sign,
@@ -17072,7 +17055,7 @@ class MainWindow(QMainWindow):
                             metadata_overrides=combined_info.get("metadata_overrides"),
                             source_expectations=combined_info.get("constituent_sources"),
                         )
-                    except CombineError as exc:
+                    except (CombineError, ValueError) as exc:
                         self._data_browser.restore_unavailable_combination(combined_info, str(exc))
                         self._log_panel.log(
                             f"WARNING: Could not recreate combined dataset {src_runs}: {exc}"
@@ -17095,16 +17078,16 @@ class MainWindow(QMainWindow):
             items: list[tuple[str, Callable[[], None]]] = [
                 (
                     f"Run {ds_info.get('run_number', '?')}",
-                    functools.partial(_restore_one_dataset, ds_info),
+                    functools.partial(_restore_one_dataset, index, ds_info),
                 )
-                for ds_info in datasets_info
+                for index, ds_info in enumerate(datasets_info)
             ]
             items += [
                 (
                     "Combined " + "+".join(str(rn) for rn in ci.get("source_run_numbers", [])),
-                    functools.partial(_restore_one_combined, ci),
+                    functools.partial(_restore_one_combined, index, ci),
                 )
-                for ci in combined_datasets_info
+                for index, ci in enumerate(combined_datasets_info)
             ]
             completed = self._apply_items_with_progress("Restoring project", items)
             if not completed:
@@ -17360,6 +17343,8 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._scan_controller.invalidate()
+        self._project_source_application = None
+        self._background_run_cache.clear()
         self._current_dataset = None
         # The closed session's runs were frozen out of the collector's reach
         # (settle_memory); let the next settle reclaim them.

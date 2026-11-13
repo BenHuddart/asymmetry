@@ -1054,3 +1054,14 @@ independent of filename, run number, timestamp, scientific-computation revision,
 and statistical observation identity. It does not certify metadata interpretation
 or physical validity. See :doc:`project_files` and :doc:`/api/io` for persistence
 and explicit cancellable comparison.
+
+
+Opening project sources
+-----------------------
+
+Project opening verifies caller-resolved input candidates before replacing the
+session. Identical relocation proceeds; legacy unknowns remain usable and
+unverified. **Source Content Changed** offers **Open History Only**,
+**Accept Replacement**, and **Cancel** for known changed current inputs.
+Historical-only differences are informational. See :doc:`project_files` for the
+preserved history, unavailable observations, and partial-restoration contract.

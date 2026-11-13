@@ -684,7 +684,7 @@ See also
 - :doc:`grouped_time_domain_fitting` — multi-detector-group fits.
 
 Execution compatibility of saved fits
-------------------------------------
+-------------------------------------
 
 Asymmetry also checks the captured scientific-computation revision alongside the
 actual fitted observations and objective before verified saved-fit ranking,
@@ -694,3 +694,21 @@ execution; saving or exporting a historical result preserves its revision.
 This compatibility check changes neither the objective nor the statistical
 meaning of its uncertainties. See :doc:`project_files` for saved history and
 :doc:`agent_workflow` for persistent work-directory recomputation.
+
+
+Source context and retained fits
+--------------------------------
+
+Automatic replacement of a saved single fit or series requires matching recorded
+source context as well as observations and execution. Changed acquisition bytes
+can produce identical sampled arrays; a new fit then retains the original result
+separately. Historical curves remain inspectable, while current residuals and
+verified rankings require matching input context. Unknown legacy input provenance
+does not prevent an explicit new fit. Project source decisions are described in
+:doc:`project_files`.
+
+Series with changed, unavailable, or unknown source context report
+``Historical source contents are different, unavailable, or unverified; results remain available.``
+This is a currentness qualifier, not a prohibition on new fitting. A joint refit
+with changed member source context records fresh member series and a fresh joint
+record; the original members and joint summary remain intact.

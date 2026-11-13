@@ -28,12 +28,13 @@ class ProjectPreparation(QProgressDialog):
         self._result = None
         self._worker = None
 
-    def run(self, tasks, path):
+    def run(self, tasks, path=None, *, operation=None):
         self._worker = tasks.start(
-            lambda worker: _read_project(worker, path),
+            lambda worker: _read_project(worker, path) if operation is None else operation(worker),
             on_finished=self._finished,
             on_error=self._error,
             on_cancelled=self._loop.quit,
+            on_progress=self._progress,
         )
         self.canceled.connect(self.cancel_preparation)
         self.setValue(0)
@@ -67,3 +68,10 @@ class ProjectPreparation(QProgressDialog):
         if self._loop.isRunning():
             self._result = ValueError(message)
             self._loop.quit()
+
+    @Slot(int, int, str)
+    def _progress(self, done, total, label):
+        if self._loop.isRunning():
+            self.setRange(0, total)
+            self.setLabelText(label)
+            self.setValue(done)

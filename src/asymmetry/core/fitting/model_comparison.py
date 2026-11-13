@@ -27,7 +27,7 @@ from asymmetry.core.fitting.information_criteria import (
     information_weights,
     score_deltas,
 )
-from asymmetry.core.fitting.input_attribution import saved_fit_matches
+from asymmetry.core.fitting.input_attribution import saved_fit_matches, source_context_key
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations
 from asymmetry.core.fitting.parameters import Parameter
 
@@ -399,11 +399,19 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
 
 def _saved_fit_comparison_key(
     slot: FitSlot,
-) -> tuple[tuple[str, int], Objective] | None:
-    """Only known likelihoods on the same sampled data share a ranking pool."""
+) -> tuple[tuple[str, int], Objective, tuple] | None:
+    """Matching observations, likelihoods, and source context share a ranking pool."""
     data_key = slot.data_key()
     objective = None if slot.result is None else slot.result.get("objective")
-    return None if data_key is None or objective is None else (data_key, Objective(objective))
+    return (
+        None
+        if data_key is None or objective is None
+        else (
+            data_key,
+            Objective(objective),
+            source_context_key(slot.result.get("input_attribution")),
+        )
+    )
 
 
 def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
@@ -429,7 +437,7 @@ def summarise_saved_fits(
 
     ``fits`` pairs each slot with the name it reads under; the summary's key is
     its ``fit_id``. Fits sharing :meth:`FitSlot.data_key` saw the same points,
-    and must record the same objective to share Δ and weights. A group of one
+    and must record the same objective and source context to share Δ and weights. A group of one
     or a fit with no key/objective is not ranked (Δ is infinite, its weight 0). The group
     holding *first* leads, then the others in the order given. ``curves``
     holds the dense curves built so far; a fit missing from it has none yet.
@@ -509,7 +517,7 @@ def _saved_fit_summary(
         gate_passed=None,
         gate_summary=""
         if saved_fit_matches(slot, dataset)
-        else "Historical fit: observations or computation are different or unverified.",
+        else "Historical fit: observations, source context, or computation are different or unverified.",
         series_warnings=(),
         runs=(run,),
         parameters=tuple(sorted(rows, key=lambda row: role_order.index(row.role))),

@@ -1762,5 +1762,10 @@ and legacy expectations remain unknown. Capture binds the fact to a stable new
 read; a retained reference cache keeps the identity of its own counts. This is an
 additional Asymmetry provenance safeguard, not an established identical policy in
 WiMDA, Mantid, or musrfit. It changes no reduction estimator and makes no new native
-numerical-agreement claim. Project reopening does not automatically run this
-comparison or offer changed-source replacement choices.
+numerical-agreement claim. Project reopening runs this comparison before
+application, with explicit history, selected current-input replacement, and
+cancellation choices for known changed inputs. Saved historical records and
+calibration expectations remain intact; historical-only differences do not block
+valid active inputs. API/CLI actions use the same owner-aware core operation.
+These choices do not establish an identical replacement workflow in the other
+programs.
