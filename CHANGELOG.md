@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject malformed projects before replacing unsaved analysis; preserve unavailable
+  history and the marked partial-load save guard when restoration is cancelled.
+
 - Canonicalise released fit and correction state at persistence boundaries; retain
   incompatible historical constraints for inspection and explicit editing before refitting.
 

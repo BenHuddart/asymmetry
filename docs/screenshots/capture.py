@@ -365,6 +365,7 @@ def _import_scenarios() -> None:
         period_mapping_dialog,
         plot_fits_on_run,
         quickstart_first_fit,
+        project_rejection,
         rotating_frame_projection,
         run_arithmetic,
         run_info_provenance,

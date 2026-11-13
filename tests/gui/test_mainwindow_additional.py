@@ -31,6 +31,7 @@ from asymmetry.core.instrument import instrument_display_name
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
+from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.reference_scale import ReferenceExposure
@@ -720,16 +721,14 @@ class TestMainWindowFourier:
         assert "freq_fft" in entry["representations"]
         assert "fourier_config" in entry["representations"]["freq_fft"]["recipe"]
 
-        # Simulate reload: drop the in-memory cache and restore recipe state.
+        # Prepared recipes restore without recomputing spectra.
         mainwindow._frequency_spectra_by_run = {}
-        mainwindow._restore_frequency_representations(state, set())
-        # Lazy contract: restore loads recipes only; nothing is recomputed
-        # until first view, which rebuilds the identical spectrum on demand.
+        mainwindow._restore_frequency_representations(ProjectModel.from_project_state(state), set())
+        # The first view rebuilds the spectrum on demand.
         assert 8820 not in mainwindow._frequency_spectra_by_run
         spectra = mainwindow._ensure_frequency_spectra_for_run(8820, RepresentationType.FREQ_FFT)
         assert spectra, "first view should recompute the spectrum from its recipe"
         recomputed = spectra[0]
-        # And the cache is now warm for subsequent views.
         assert 8820 in mainwindow._frequency_spectra_by_run
 
         np.testing.assert_allclose(recomputed.time, generated.time)
@@ -745,7 +744,7 @@ class TestMainWindowFourier:
         state = mainwindow.collect_project_state()
 
         mainwindow._frequency_spectra_by_run = {}
-        mainwindow._restore_frequency_representations(state, set())
+        mainwindow._restore_frequency_representations(ProjectModel.from_project_state(state), set())
         assert 8821 not in mainwindow._frequency_spectra_by_run
 
         mainwindow._sync_frequency_plot_for_run(8821)
@@ -839,7 +838,7 @@ class TestMainWindowFourier:
         mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
             mainwindow._frequency_spectra_by_run
         )
-        mainwindow._restore_frequency_representations(state, set())
+        mainwindow._restore_frequency_representations(ProjectModel.from_project_state(state), set())
         # The snapshot must be RETAINED (not popped) pending a recompute.
         assert 8823 in mainwindow._frequency_spectra_by_run
 
@@ -863,7 +862,7 @@ class TestMainWindowFourier:
         mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
             mainwindow._frequency_spectra_by_run
         )
-        mainwindow._restore_frequency_representations(state, set())
+        mainwindow._restore_frequency_representations(ProjectModel.from_project_state(state), set())
 
     def test_async_recompute_overlays_then_clears_and_populates(
         self, mainwindow: MainWindow
@@ -2699,19 +2698,17 @@ class TestMainWindowFourier:
         if legend is not None:
             assert legend.get_texts(), "legend present without entries"
 
-    def test_restore_tolerates_mistagged_fit_state_blob(
+    def test_restore_rejects_mistagged_fit_state_blob(
         self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
     ) -> None:
-        """A corrupt/mis-tagged fit blob must not abort the whole project open;
-        it is logged and skipped (the rest of restore is best-effort)."""
+        """Misrouted forms are rejected before any project state changes."""
         state = mainwindow.collect_project_state()
         # Mislabel the time-domain block so restore_domain_state('time', ...) raises.
         state["fit_states"]["time"]["domain"] = "frequency"
 
         restored = MainWindow()
-        # Must not raise.
-        restored.restore_project_state(state, str(tmp_path / "mistagged.asymp"))
-        assert "Skipped restoring the time-domain fit form" in (restored._log_panel.to_plain_text())
+        with pytest.raises(ValueError, match="fit_states.*domain"):
+            restored.restore_project_state(state, str(tmp_path / "mistagged.asymp"))
 
     def test_restore_partial_fit_states_falls_back_per_domain(
         self, mainwindow: MainWindow, qapp: QApplication, tmp_path: Path
@@ -7867,7 +7864,7 @@ def test_project_restore_heals_stale_instrument_override(
 
     # The project persists a stale (GPS, 8) override AND a (GPS, 8) profile.
     state = {
-        "version": 12,
+        "schema_version": 12,
         "grouping_profiles": [
             {
                 "name": "Default (GPS)",

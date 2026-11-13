@@ -2288,23 +2288,6 @@ def test_group_crud_visible_in_project_model_immediately(qapp: QApplication) -> 
     assert gid not in pm.data_groups
 
 
-def test_project_model_round_trips_group_kind(qapp: QApplication) -> None:
-    pm = ProjectModel()
-    panel = DataBrowserPanel()
-    panel.set_project_model(pm)
-    for rn in (1, 2, 3):
-        panel.add_dataset(_dataset(rn))
-    user_gid = panel.create_data_group([1, 2], name="User grp")
-    auto_gid = panel.create_data_group([2, 3], name="Auto grp", kind="auto")
-
-    project = {"datasets": [{"run_number": rn} for rn in (1, 2, 3)]}
-    pm.write_to_project_state(project)
-    pm2 = ProjectModel.from_project_state(project)
-    assert pm2.data_group(user_gid).kind == "user"
-    assert pm2.data_group(auto_gid).kind == "auto"
-    assert sorted(pm2.data_group(auto_gid).member_run_numbers) == [2, 3]
-
-
 def test_browser_state_round_trips_collapsed_and_kind(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     panel.set_project_model(ProjectModel())

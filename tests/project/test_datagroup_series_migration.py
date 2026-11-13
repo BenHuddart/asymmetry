@@ -164,7 +164,7 @@ def test_v15_round_trips_through_write_read():
     assert series.excluded_run_numbers == []
 
     # Write back out and re-read: the new fields survive the round-trip.
-    project: dict = {"datasets": []}
+    project: dict = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": []}
     model.write_to_project_state(project)
     assert project["data_groups"][0]["kind"] == "user"
     assert project["batches"][0]["group_id"] == "grp-1"
@@ -248,7 +248,7 @@ def test_v18_project_with_groups_migrates_and_round_trips():
         ],
     )
 
-    project: dict = {"datasets": []}
+    project: dict = {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": []}
     model.write_to_project_state(project)
 
     rebuilt = ProjectModel.from_project_state(project)

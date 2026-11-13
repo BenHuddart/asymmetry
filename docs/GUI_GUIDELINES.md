@@ -185,6 +185,13 @@ signals, hold strong references to live threads, and shut them down in
 worker signal to a bare lambda/partial that touches widgets — route through a
 GUI-thread `QObject` method.
 
+Project opening prepares detached core objects through `ProjectPreparation` and
+the existing `TaskRunner` before clearing active state. Its QObject-bound handlers
+ignore late results after cancellation. The existing bulk-load guard blocks
+reentrant opens, defers close, and cancels a standalone new-project request during
+preparation. Internal restore consumes prepared owners; source and item restore
+retain their marked partial-load behaviour after application starts.
+
 ## Keeping the GUI responsive
 
 Distilled from the 2026-07 responsiveness programme (PRs #214–#226). Every

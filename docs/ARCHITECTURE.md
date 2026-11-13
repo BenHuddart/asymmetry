@@ -229,6 +229,22 @@ no other file may hardcode hex strings. Current accent families:
 accepts `palette="red"` to apply the red family instead of blue — used for
 the series buttons in the Fit Parameters panel.
 
+### Project preparation boundary
+
+`core.project.prepare_project` owns complete versioned project input. After
+schema dispatch and pending-model retry it constructs a detached `PreparedProject`
+using existing profiles and `ProjectModel`/fit owners. Structural errors carry the
+serialized field path. Missing acquisitions/plugins and historical membership or
+constraint archives remain supported unavailable states; they are not repaired
+into current results. Canonical JSON contains no runtime objects.
+
+File open and autosave recovery prepare on `TaskRunner` before `_clear_all_state`.
+Direct restore and `ProjectModel.from_project_state` use the same core boundary.
+Internal application consumes prepared domain objects. Cancellation before apply
+leaves active state intact; acquisition/item cancellation during apply retains
+completed items and the explicit incomplete-project save guard. Source-content
+identity and scientific execution compatibility remain separate contracts.
+
 ### 3.3 Fit Wizard Boundary
 
 The single-spectrum Fit Wizard is intentionally split across the core and GUI

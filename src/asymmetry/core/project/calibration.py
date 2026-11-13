@@ -218,6 +218,13 @@ def resolve_projection_calibrations(policies, grouping):
                     target[prefix + suffix] = value
 
 
+@dataclass(frozen=True)
+class PreparedGrouping:
+    """A detached grouping payload whose captured coefficient links are resolved."""
+
+    payload: dict
+
+
 def calibration_values(payload):
     """Derive runtime coefficient views from canonical override transport at its boundary."""
     if not any(key in payload for key in CALIBRATION_PAYLOAD_KEYS):

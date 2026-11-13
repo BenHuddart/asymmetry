@@ -119,7 +119,7 @@ def test_historical_project_and_workdir_outputs_load_without_reduction(tmp_path,
     historical = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "datasets": [],
-        "plot_state": {"fit_curve": {"time": [0.0, 1.0], "asymmetry": [100.0, 100.0]}},
+        "plot_state": {"fit_curve": {"t": [0.0, 1.0], "y": [100.0, 100.0]}},
         "saved_science": {
             "chi_squared": 12.5,
             "frame": frame.to_dict(),

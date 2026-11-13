@@ -422,7 +422,10 @@ def test_migrated_project_round_trips_through_the_project_model():
     assert model.active_series_id(_FB) == "b1"
     identity = series.recipe_identity()
 
-    project: dict = {"datasets": [{"run_number": 10}, {"run_number": 11}]}
+    project: dict = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "datasets": [{"run_number": 10}, {"run_number": 11}],
+    }
     model.write_to_project_state(project)
     rebuilt = ProjectModel.from_project_state(project)
     assert rebuilt.batch("b1").recipe_identity() == identity

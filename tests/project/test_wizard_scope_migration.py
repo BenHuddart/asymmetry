@@ -87,8 +87,8 @@ def _v22_project() -> dict:
                 "run_number": 11,
                 "source_file": "/data/run11.nxs",
                 "representations": {
-                    "time_grouped": {
-                        "rep_type": "time_grouped",
+                    "time_groups": {
+                        "rep_type": "time_groups",
                         "fit": {
                             "result": _FITTED,
                             "ui_state": {
@@ -143,7 +143,7 @@ def test_v22_scopes_migrate_to_version_2_physics_payloads():
         exclude_components=frozenset({"Bessel"}),
     )
 
-    grouped_ui = open_fit(result["datasets"][1]["representations"]["time_grouped"])["ui_state"]
+    grouped_ui = open_fit(result["datasets"][1]["representations"]["time_groups"])["ui_state"]
     assert WizardScope.from_payload(grouped_ui["wizard_state"]["signature"]["scope"]) == _scope(
         {PhysicsClass.MUONIUM}
     )

@@ -33,6 +33,38 @@ raw data when sending an analysis to a collaborator, or to archive
 alongside paper supplementary material so that readers can reproduce
 every fit shown in the figures.
 
+Opening safely
+--------------
+
+Asymmetry also checks owned project structure before replacing an active session:
+container types, unique run/profile/fit identities, saved-fit selection, applied
+calibration references, active-series links, and finite held plot bounds. These checks protect unsaved
+work from malformed project content; they do not validate raw acquisition files
+or establish source-content identity.
+
+The **Opening Project** dialog displays **Checking project…** and offers
+**Cancel**. Rejection shows **Could Not Open Project**, followed by
+``Failed to read project file:`` and the owning field, for example
+``project.datasets[0].source_file: expected str``. The existing runs, profiles,
+fit history, project path, and unsaved changes remain intact. Cancellation before
+restoration displays **Project opening cancelled — existing work retained.**
+A future schema shows **Unsupported Project File**.
+
+Missing external files or user functions remain supported unavailable states.
+Saved historical constraints and uncertainty archives remain inspectable; stale
+series and joint-fit membership do not become malformed merely because a live
+member is absent. Optional blocks and custom metadata can remain absent.
+
+After preparation succeeds, restoration reloads source acquisitions and applies
+items in order. Cancelling **Restoring project** retains completed items and marks
+the session as partially loaded. Its log states **The project is PARTIALLY loaded
+— saving it now would drop the missing runs.** Saving requires the existing
+incomplete-project confirmation. This deliberately partial restore does not roll
+back to the outgoing session.
+
+.. image:: /_generated/screenshots/project_rejection.png
+   :alt: A contextual malformed-project error in the log with retained unsaved synthetic Ag data.
+
 Saving is crash-safe: the new content is written to a temporary file
 next to the target and only swapped into place once it is fully flushed
 to disk, so a crash or a full disk mid-write leaves the previous save
@@ -971,7 +1003,7 @@ Count-fit editor state does not author a separation-estimation recipe.
 
 
 Fixed supplied TF calibration response
--------------------------------------
+--------------------------------------
 
 TF calibration records retain the consumed optional ``pulse_separation_us``
 in each candidate request and its fixed effective ``dpsep``. Restoring a record

@@ -733,57 +733,10 @@ class ProjectModel:
 
     @classmethod
     def from_project_state(cls, project: dict) -> ProjectModel:
-        """Build a model from a schema-v6 project dict.
+        """Prepare a complete project at its persistence boundary and return its model."""
+        from asymmetry.core.project.preparation import prepare_project
 
-        Reads ``datasets[i].representations``, the top-level ``batches``, the
-        optional top-level ``data_groups`` block (Phase 7, additive — absent on
-        a project saved before this phase, which loads with an empty registry
-        rather than failing), the top-level ``active_series`` pointer map
-        (D5; absent before v20, which loads with no active series), and the
-        top-level ``joint_fits`` list (schema v22, additive — absent before it,
-        which loads with an empty registry).
-        """
-        datasets: dict[int, DatasetRepresentations] = {}
-        batches: dict[str, FitSeries] = {}
-        data_groups: dict[str, DataGroup] = {}
-        joint_fits: dict[str, JointFit] = {}
-        rotating_frames: dict[int, RotatingFrame] = {}
-        if not isinstance(project, dict):
-            return cls()
-
-        for run_number, entry in _run_entries(project):
-            if "rotating_frame" in entry:
-                rotating_frames[run_number] = RotatingFrame.from_dict(entry["rotating_frame"])
-            reps = entry.get("representations")
-            if isinstance(reps, dict) and reps:
-                container = DatasetRepresentations.from_dict(
-                    {"run_number": run_number, "representations": reps}
-                )
-                datasets[run_number] = container
-
-        for batch_data in project.get("batches", []) or []:
-            if isinstance(batch_data, dict):
-                batch = FitSeries.from_dict(batch_data)
-                batches[batch.batch_id] = batch
-
-        for group_data in project.get("data_groups", []) or []:
-            if isinstance(group_data, dict):
-                group = DataGroup.from_dict(group_data)
-                data_groups[group.group_id] = group
-
-        for joint_data in project.get("joint_fits", []) or []:
-            joint = JointFit.from_dict(joint_data)
-            if joint is not None:
-                joint_fits[joint.joint_id] = joint
-
-        return cls(
-            datasets,
-            batches,
-            data_groups,
-            project.get("active_series"),
-            joint_fits,
-            rotating_frames,
-        )
+        return prepare_project(project).model
 
     def write_to_project_state(self, project: dict) -> None:
         """Write representations onto each dataset entry, and the top-level blocks.
