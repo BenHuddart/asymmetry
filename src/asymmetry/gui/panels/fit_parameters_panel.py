@@ -101,7 +101,6 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
     unregister_derived_param_info,
 )
-from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
@@ -120,6 +119,18 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label, format_value_uncertainty
+from asymmetry.gui.utils.parameter_export_data import (
+    _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+    _UNSET,
+    ParameterExportData,
+    PhaseDecoration,
+    _coerce_abscissa,
+    _fit_overlay_color,
+    _FitRow,
+    _normalize_x_key,
+    _x_custom_id,
+    _x_param_name,
+)
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.flow_layout import FlowLayout
@@ -134,8 +145,6 @@ from asymmetry.gui.windows.fit_results_window import (
     FitResults,
     FitResultsWindow,
 )
-
-_PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
 #: Resting label of a transform button: the identity lens has no formula to show.
 _IDENTITY_TRANSFORM_GLYPH = "ƒ"
@@ -155,12 +164,10 @@ _TABLE_DIALOG_SCREEN_FRACTION = 0.9
 _MENU_BUTTON_QSS = "QToolButton::menu-indicator { image: none; }"
 
 #: The lens of a y parameter with no transform of its own.
-_IDENTITY_TRANSFORM = AxisTransform.identity()
 
 #: Sentinel distinguishing "x_domain not provided" (GUI callers — read it live
 #: from the rows) from an explicitly-passed snapshot that may itself be ``None``
 #: (the off-thread worker — must never read ``self`` for it).
-_UNSET = object()
 
 
 #: Human-readable labels for the advisory member-quality flags (Phase 2).
@@ -213,35 +220,6 @@ def _format_x_label_gle(x_key: str, custom_labels: dict[str, str] | None = None)
     return "Run Number"
 
 
-def _gle_series_color(index: int, override: str | None = None) -> str:
-    """Named GLE colour for exported curve *index*, or *override* when given.
-
-    *override* is the active series' phase colour (D4) when the curve being
-    coloured is that whole series' identity colour (a lone y-parameter, or one
-    subplot per parameter) — mirroring the on-screen substitution in
-    :meth:`FitParametersPanel._single_series_color`.
-    """
-    if override is not None:
-        return override
-    primary = ["black", "blue", "red"]
-    fallback = ["green", "orange", "purple", "brown", "magenta", "cyan", "olive"]
-    if index < len(primary):
-        return primary[index]
-    return fallback[(index - len(primary)) % len(fallback)]
-
-
-def _fit_overlay_color(index: int) -> str:
-    colors = ["red", "green", "orange", "purple", "brown", "magenta", "cyan"]
-    return colors[index % len(colors)]
-
-
-def _fit_overlay_label(base: str, index: int, total: int) -> str:
-    suffix = "" if index == 0 else f" #{index + 1}"
-    if total <= 1:
-        suffix = ""
-    return f"fit {base}{suffix}"
-
-
 def _first_solved_range(fit: ParameterModelFit | None) -> ModelFitRange | None:
     """The first range of an *active* fit that solved — the card's headline fit."""
     if fit is None or not fit.active:
@@ -285,93 +263,6 @@ def _transform_button_labels(transform: AxisTransform, base: str) -> tuple[str, 
     return described, f"Plotting {described}; the table and exports keep the raw values."
 
 
-def _safe_data_name(value: object) -> str:
-    """Build a filesystem-safe stem for generated GLE data files."""
-    text = "".join(ch.lower() if str(ch).isalnum() else "_" for ch in str(value))
-    text = "_".join(part for part in text.split("_") if part)
-    return text or "series"
-
-
-def _normalize_x_key(value: object) -> str:
-    """Normalize persisted x-axis key to an internal identifier.
-
-    Recognises the reserved run-level axes (``field``/``temperature``/``run``),
-    the first-class ``angle`` axis, the ``param:<name>`` namespace used for
-    parameter-vs-parameter trending (item 1), and the ``custom:<id>`` namespace
-    for data-browser custom columns. Anything else collapses to ``run``.
-    """
-    text = str(value or "").strip()
-    if text in ("field", "temperature", "run", "angle"):
-        return text
-    if text.startswith("param:") and len(text) > len("param:"):
-        return text
-    if text.startswith("custom:") and len(text) > len("custom:"):
-        return text
-    return "run"
-
-
-def _x_param_name(x_key: str) -> str | None:
-    """Return the fitted-parameter name for a ``param:<name>`` x-key, else None."""
-    if x_key.startswith("param:"):
-        return x_key[len("param:") :]
-    return None
-
-
-@dataclass
-class _FitRow:
-    run_number: int
-    run_label: str
-    field: float
-    temperature: float
-    values: dict[str, float]
-    errors: dict[str, float]
-    combined_from: list[int] | None = None
-    covariance: dict[str, dict[str, float]] | None = None
-    #: Per-run data-browser custom-column values, keyed by column id
-    #: (``custom:<hex>``). Stored as raw text — they are free-form and may be
-    #: empty or non-numeric for some runs; coercion to a float abscissa (and the
-    #: dropping of invalid points) happens lazily in :meth:`_x_value`.
-    custom_values: dict[str, str] = field(default_factory=dict)
-    #: Originating time-domain fit provenance, surfaced so parameter-plot exports
-    #: record which model produced the values and each run's goodness of fit.
-    #: ``model_name`` is the model formula/label; the χ² fields are ``None`` when
-    #: the source path did not supply them (e.g. legacy projects).
-    model_name: str = ""
-    chi_squared: float | None = None
-    reduced_chi_squared: float | None = None
-    #: Phase 2 trend-gating. ``batch_id``/``trend_member_key`` identify the
-    #: FitSlot this row's include-toggle writes; ``include_in_trend`` is the
-    #: current gate; ``quality_flags`` are the advisory member-quality flags
-    #: (``failed``/``large_rel_err``/``bound_pinned``/``spurious_reseeded``).
-    batch_id: str | None = None
-    trend_member_key: int | None = None
-    include_in_trend: bool = True
-    quality_flags: list[str] = field(default_factory=list)
-    computation_revision: str | None = None
-
-
-def _x_custom_id(x_key: str) -> str | None:
-    """Return the custom-column id for a ``custom:<id>`` x-key, else None."""
-    return x_key if isinstance(x_key, str) and x_key.startswith("custom:") else None
-
-
-def _coerce_abscissa(raw: object) -> float:
-    """Coerce a free-text custom/Angle cell value to a numeric abscissa.
-
-    Empty, non-numeric, and non-finite (``inf``/``nan``) values all map to NaN so
-    the point is dropped (and counted in the skip note) rather than plotted at 0
-    or corrupting the axis/fit.
-    """
-    text = str(raw).strip()
-    if not text:
-        return float("nan")
-    try:
-        value = float(text)
-    except ValueError:
-        return float("nan")
-    return value if np.isfinite(value) else float("nan")
-
-
 def _optional_float(value: object) -> float | None:
     """Coerce to a finite float, or ``None`` when missing/non-numeric.
 
@@ -411,39 +302,6 @@ class _PlotPages(CurrentPageSizingMixin, QStackedWidget):
 class _YParamControls:
     fit_button: QPushButton
     log: QCheckBox
-
-
-@dataclass(frozen=True)
-class PhaseDecoration:
-    """Identity of the phase (Global Fit Wizard transitions, D1) a series belongs to.
-
-    Built by :meth:`MainWindow._refresh_trend_panel` from the owning
-    ``DataGroup`` (``asymmetry.core.representation.group``) for every series
-    whose ``FitSeries.group_id`` names a phase group (``DataGroup.is_phase``);
-    ``None`` on a plain (non-phase) series — a series belonging to no phase is
-    a real, first-class case, not sniffed from an optional field.
-
-    ``color``/``color_dark`` are the light/dark swatch colours
-    (:func:`asymmetry.gui.utils.phase_colors.phase_color`); the app currently
-    forces a single light palette everywhere (see
-    ``gui/styles/palette.py::apply_bench_style`` — Fusion + the BENCH palette,
-    specifically so an OS dark mode never shows through), so every consumer
-    here resolves ``color`` and leaves ``color_dark`` unused until a real
-    dark-theme toggle exists.
-    """
-
-    color: str
-    color_dark: str
-    ordinal: int
-    name: str
-    #: The order axis this phase is defined along (``"temperature"``,
-    #: ``"field"``, or ``"run"`` — ``DataGroup.order_key``, inherited from the
-    #: parent series group). The range/boundary shading only ever applies when
-    #: the plot's *effective* x-axis matches this key.
-    axis_key: str
-    range: tuple[float, float]
-    lower: tuple[float, float] | None
-    upper: tuple[float, float] | None
 
 
 @dataclass
@@ -3433,14 +3291,12 @@ class FitParametersPanel(QWidget):
 
     # ── Axis transforms ───────────────────────────────────────────────────────
     def _y_transform_for(self, name: str) -> AxisTransform:
-        """The lens one y parameter is plotted through (identity by default)."""
-        return self._y_transforms.get(name, _IDENTITY_TRANSFORM)
+        return ParameterExportData._y_transform_for(self, name)
 
     def _transformed_y_params(self) -> list[str]:
-        """Selected y parameters carrying a non-identity lens, in display order."""
-        return [
-            n for n in self._selected_y_parameters() if not self._y_transform_for(n).is_identity
-        ]
+        return ParameterExportData._transformed_y_params(
+            self,
+        )
 
     def _pick_transform_kind(self, position, current: AxisTransform, axis: str) -> str | None:
         """Pop the preset lens menu at *position*; return the chosen kind or None.
@@ -3609,15 +3465,7 @@ class FitParametersPanel(QWidget):
             )
 
     def _transform_signature(self, name: str) -> tuple:
-        """Identity of the transforms one parameter is plotted under, for
-        cache/overlay invalidation."""
-        y_transform = self._y_transform_for(name)
-        return (
-            self._x_transform.kind,
-            self._x_transform.expression,
-            y_transform.kind,
-            y_transform.expression,
-        )
+        return ParameterExportData._transform_signature(self, name)
 
     def _angle_axis_active(self) -> bool:
         """Whether the Angle field is the current trend x-axis."""
@@ -3825,8 +3673,9 @@ class FitParametersPanel(QWidget):
             self._refresh_plot()
 
     def _angle_x_key(self) -> str | None:
-        """Return the key identifying the first-class Angle x-axis, or None."""
-        return self._angle_x_field[1] if self._angle_x_field is not None else None
+        return ParameterExportData._angle_x_key(
+            self,
+        )
 
     def _angle_fold_suffix(self) -> str:
         """Axis-label suffix noting the active angle fold (empty when off)."""
@@ -5583,17 +5432,7 @@ class FitParametersPanel(QWidget):
         return name in self._log_y_params
 
     def _overlay_suppressed_for_transform(self, param_name: str) -> bool:
-        """Suppress a stored fit's overlay when this parameter's axes are
-        transformed but the fit was computed under a *different* transform (its
-        ranges live in the old coordinate). No-op when both the abscissa and this
-        parameter's lens are identity, so the common path is unchanged — and
-        another parameter's lens never touches it; the fit's pill/table stay
-        usable, only the curve waits for a re-fit under the current transform."""
-        if self._x_transform.is_identity and self._y_transform_for(param_name).is_identity:
-            return False
-        return self._model_fit_transform_sig.get(param_name) != self._transform_signature(
-            param_name
-        )
+        return ParameterExportData._overlay_suppressed_for_transform(self, param_name)
 
     def _draw_model_overlay_mpl(self, ax, param_name: str, color: str = "red") -> None:
         fit = self._model_fits.get(param_name)
@@ -5674,37 +5513,9 @@ class FitParametersPanel(QWidget):
         self,
         components: list[tuple[str, np.ndarray]],
     ) -> list[tuple[str, np.ndarray]]:
-        """Return a stable bottom-to-top stacking order for additive components.
+        from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
 
-        Heuristic:
-        1. Put background-like components (bg/constant) at the bottom.
-        2. For remaining components, place smoother/lower-variance traces lower.
-        3. Break ties by mean magnitude (smaller first).
-        """
-        if not components:
-            return []
-
-        def _priority(name: str) -> int:
-            lname = name.lower()
-            if "bg" in lname or "background" in lname or "constant" in lname:
-                return 0
-            return 1
-
-        scored: list[tuple[int, float, float, int, tuple[str, np.ndarray]]] = []
-        for idx, item in enumerate(components):
-            name, values = item
-            arr = np.maximum(np.asarray(values, dtype=float), 0.0)
-            finite = arr[np.isfinite(arr)]
-            if finite.size == 0:
-                mean_val = 0.0
-                variability = 0.0
-            else:
-                mean_val = float(np.mean(finite))
-                variability = float(np.std(finite) / max(mean_val, 1e-12))
-            scored.append((_priority(name), variability, mean_val, idx, item))
-
-        scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
-        return [item for *_meta, item in scored]
+        return ParameterGleSnapshot._ordered_components_for_stacking(self, components)
 
     def _active_overlay_params(self) -> list[str]:
         """Selected y-parameters that have an active model-fit overlay to draw."""
@@ -6447,21 +6258,10 @@ class FitParametersPanel(QWidget):
     def _apply_x_transform(
         self, x_vals: np.ndarray, x_err: np.ndarray | None
     ) -> tuple[np.ndarray, np.ndarray | None]:
-        """Transform an abscissa array (and its optional per-point error)."""
-        if self._x_transform.is_identity:
-            return x_vals, x_err
-        vals, errs = self._x_transform.apply(x_vals, x_err if x_err is not None else None)
-        # Run-level axes carry no uncertainty; keep it absent after transform.
-        return vals, (errs if x_err is not None else None)
+        return ParameterExportData._apply_x_transform(self, x_vals, x_err)
 
     def _series_y_arrays(self, rows: list[_FitRow], y_name: str) -> tuple[np.ndarray, np.ndarray]:
-        """Build (and transform) one parameter's value/error arrays for *rows*."""
-        y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-        y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-        transform = self._y_transform_for(y_name)
-        if transform.is_identity:
-            return y_vals, y_err
-        return transform.apply(y_vals, y_err)
+        return ParameterExportData._series_y_arrays(self, rows, y_name)
 
     @staticmethod
     def _axis_symbol(label: str) -> str:
@@ -6536,29 +6336,7 @@ class FitParametersPanel(QWidget):
         )
 
     def _x_value(self, row: _FitRow, x_key: str, *, fold: bool = True) -> float:
-        name = _x_param_name(x_key)
-        if name is not None:
-            return float(row.values.get(name, float("nan")))
-        # The Angle field and the generic custom columns both store free text per
-        # run under their key in ``custom_values``; coerce to a numeric abscissa
-        # (empty/non-numeric/non-finite → NaN so the point is dropped and counted
-        # rather than plotted at 0 or corrupting the axis/fit).
-        value_key = x_key if x_key == self._angle_x_key() else _x_custom_id(x_key)
-        if value_key is not None:
-            value = _coerce_abscissa(row.custom_values.get(value_key, ""))
-            # Fold the Angle axis into its chosen period so equivalent orientations
-            # overlay (no-op for non-angle custom columns or when folding is off).
-            # ``fold=False`` recovers the raw scan coordinate — used by crossing
-            # detection, which must follow the true rotation order, not the folded
-            # display (folding would collapse distinct orientations onto one x).
-            if fold and x_key == self._angle_x_key() and self._angle_wrap_period is not None:
-                return wrap_angle_deg(value, self._angle_wrap_period)
-            return value
-        if x_key == "field":
-            return row.field
-        if x_key == "temperature":
-            return row.temperature
-        return float(row.run_number)
+        return ParameterExportData._x_value(self, row, x_key, fold=fold)
 
     def _x_error(self, row: _FitRow, x_key: str) -> float:
         """Per-point x-uncertainty for a ``param:<name>`` x-key (NaN otherwise).
@@ -6999,55 +6777,20 @@ class FitParametersPanel(QWidget):
         return restored
 
     def _iter_active_fit_ranges(self, x_key: str, y_params: list[str] | None = None):
-        """Yield (parameter_name, range_index, fit_range) for successful active fits."""
-        allowed = set(y_params or self._display_y_parameters())
-        for pname, fit in self._model_fits.items():
-            if pname not in allowed:
-                continue
-            if not fit.active or fit.x_key != x_key:
-                continue
-            # A fit computed under a different transform lives in the old
-            # coordinate; the screen suppresses its overlay, so the export must
-            # not write a `.fit` sidecar the plot deliberately hides.
-            if self._overlay_suppressed_for_transform(pname):
-                continue
-            for idx, fit_range in enumerate(fit.ranges):
-                if fit_range.result is None or not fit_range.result.success:
-                    continue
-                yield pname, idx, fit_range
+        return ParameterExportData._iter_active_fit_ranges(self, x_key, y_params)
 
     def _count_fit_curves(self, x_key: str, y_params: list[str]) -> int:
-        count = 0
-        for pname in y_params:
-            count += len(
-                self._sampled_fit_curves(
-                    pname,
-                    x_key,
-                    num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
-                )
-            )
-        return count
+        from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
+
+        return ParameterGleSnapshot._count_fit_curves(self, x_key, y_params)
 
     def _count_fit_curves_for_param(self, x_key: str, param_name: str) -> int:
-        return len(
-            self._sampled_fit_curves(
-                param_name,
-                x_key,
-                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
-            )
-        )
+        from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
+
+        return ParameterGleSnapshot._count_fit_curves_for_param(self, x_key, param_name)
 
     def _x_domain_for_sampling(self, x_key: str) -> tuple[float, float] | None:
-        if not self._rows:
-            return None
-        x_vals = np.array([self._x_value(r, x_key) for r in self._rows], dtype=float)
-        # Sample in the transformed coordinate the fit lives in (min/max of the
-        # transformed values, robust to non-monotonic transforms).
-        x_vals, _ = self._apply_x_transform(x_vals, None)
-        finite = x_vals[np.isfinite(x_vals)]
-        if finite.size == 0:
-            return None
-        return float(np.nanmin(finite)), float(np.nanmax(finite))
+        return ParameterExportData._x_domain_for_sampling(self, x_key)
 
     def _sample_fit_range_curve(
         self,
@@ -7057,62 +6800,9 @@ class FitParametersPanel(QWidget):
         *,
         x_domain: object = _UNSET,
     ) -> tuple[np.ndarray, np.ndarray] | None:
-        """Sample one fit range's overlay curve.
-
-        ``x_domain`` lets the off-thread trend recompute pass a GUI-thread
-        snapshot of the data x-range. When it is omitted (``_UNSET``) the
-        GUI-thread callers read it live from the rows; when passed explicitly
-        (even as ``None``) the snapshot is used as-is, so the worker thread never
-        touches ``self._rows``.
-        """
-        result = fit_range.result
-        if result is None or not result.success:
-            return None
-
-        try:
-            # Window-union envelope when windows exist, else the plain bounds
-            # — keeps the overlay span consistent with the fitted mask.
-            x_min, x_max = effective_range_bounds(fit_range)
-        except ValueError:
-            return None
-        if x_min is None or x_max is None:
-            domain = self._x_domain_for_sampling(x_key) if x_domain is _UNSET else x_domain
-            if domain is None:
-                return None
-            if x_min is None:
-                x_min = domain[0]
-            if x_max is None:
-                x_max = domain[1]
-
-        if x_max <= x_min:
-            return None
-
-        sample_count = max(2, int(num_points))
-        # Geometric sampling suits a bare (untransformed) field axis; once the
-        # abscissa is transformed the domain is no longer a raw field, so sample
-        # it linearly.
-        if (
-            x_key == "field"
-            and self._x_transform.is_identity
-            and float(x_min) > 0.0
-            and float(x_max) > 0.0
-        ):
-            xs = np.geomspace(float(x_min), float(x_max), num=sample_count, dtype=float)
-        else:
-            xs = np.linspace(float(x_min), float(x_max), num=sample_count, dtype=float)
-        kwargs = {p.name: p.value for p in result.parameters}
-        try:
-            ys = fit_range.model.function(xs, **kwargs)
-        except KeyError:
-            return None
-        mask = np.isfinite(xs) & np.isfinite(ys)
-        if not np.any(mask):
-            return None
-
-        xs = xs[mask]
-        ys = ys[mask]
-        order = np.argsort(xs)
-        return xs[order], ys[order]
+        return ParameterExportData._sample_fit_range_curve(
+            self, fit_range, x_key, num_points, x_domain=x_domain
+        )
 
     def _sampled_fit_curves(
         self,
@@ -7120,18 +6810,7 @@ class FitParametersPanel(QWidget):
         x_key: str,
         num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     ) -> list[tuple[int, np.ndarray, np.ndarray]]:
-        fit = self._model_fits.get(param_name)
-        if fit is None or not fit.active or fit.x_key != x_key:
-            return []
-
-        curves: list[tuple[int, np.ndarray, np.ndarray]] = []
-        for idx, fit_range in enumerate(fit.ranges):
-            sampled = self._sample_fit_range_curve(fit_range, x_key=x_key, num_points=num_points)
-            if sampled is None:
-                continue
-            xs, ys = sampled
-            curves.append((idx, xs, ys))
-        return curves
+        return ParameterExportData._sampled_fit_curves(self, param_name, x_key, num_points)
 
     def _compute_trend_curves(
         self,
@@ -7269,245 +6948,35 @@ class FitParametersPanel(QWidget):
     def _write_fit_files(
         self, gle_path: Path, x_key: str, y_params: list[str]
     ) -> dict[tuple[str, int], Path]:
-        """Write model-fit sidecar files with metadata and sampled curve points."""
-        entries = list(self._iter_active_fit_ranges(x_key, y_params))
-        if not entries:
-            return {}
-
-        unique_params = sorted({pname for pname, _, _ in entries})
-        include_param_name = len(unique_params) > 1
-
-        def _safe_token(name: str) -> str:
-            return gle_export.safe_file_token(name, fallback="fit")
-
-        base_names: list[str] = []
-        for pname, _, _fit_range in entries:
-            if include_param_name:
-                base_names.append(f"{gle_path.stem}_{_safe_token(pname)}")
-            else:
-                base_names.append(gle_path.stem)
-
-        totals: dict[str, int] = {}
-        for base in base_names:
-            totals[base] = totals.get(base, 0) + 1
-
-        seen: dict[str, int] = {}
-        written: dict[tuple[str, int], Path] = {}
-        for (pname, r_idx, fit_range), base in zip(entries, base_names, strict=True):
-            seen[base] = seen.get(base, 0) + 1
-            occurrence = seen[base]
-            stem = base if occurrence == 1 else f"{base}_{occurrence}"
-            fit_path = gle_path.with_name(f"{stem}.fit")
-
-            if totals[base] == 1:
-                fit_path = gle_path.with_name(f"{base}.fit")
-
-            result = fit_range.result
-            assert result is not None
-
-            sampled = self._sample_fit_range_curve(
-                fit_range,
-                x_key=x_key,
-                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
-            )
-            if sampled is None:
-                continue
-            x_vals, y_vals = sampled
-
-            with open(fit_path, "w", encoding="utf-8") as f:
-                f.write("! Parameter model fit curve\n")
-                f.write("! Generated by Asymmetry (GLE-readable data file)\n")
-                f.write(f"! parameter: {pname}\n")
-                f.write(f"! x_variable: {x_key}\n")
-                if fit_range.windows:
-                    windows_text = " ".join(f"[{lo:g}, {hi:g}]" for lo, hi in fit_range.windows)
-                    f.write(f"! fit_windows: {windows_text}\n")
-                    f.write(f"! x_min: {x_vals[0]:.10g}\n")
-                    f.write(f"! x_max: {x_vals[-1]:.10g}\n")
-                else:
-                    f.write(f"! x_min: {fit_range.x_min}\n")
-                    f.write(f"! x_max: {fit_range.x_max}\n")
-                f.write(f"! model_function: {fit_range.model.formula_string()}\n")
-                f.write(f"! chi_squared: {result.chi_squared:.8g}\n")
-                f.write(f"! reduced_chi_squared: {result.reduced_chi_squared:.8g}\n")
-                f.write("! fitted_parameters:\n")
-                for p in result.parameters:
-                    err = result.uncertainties.get(p.name, np.nan)
-                    if np.isfinite(err):
-                        f.write(f"!   {p.name} = {p.value:.8g} +/- {err:.4g}\n")
-                    else:
-                        f.write(f"!   {p.name} = {p.value:.8g}\n")
-                for xv, yv in zip(x_vals, y_vals, strict=True):
-                    f.write(f"{xv:.10g} {yv:.10g}\n")
-
-            written[(pname, r_idx)] = fit_path
-
-        return written
+        return self._gle_snapshot()._write_fit_files(gle_path, x_key, y_params)
 
     def _write_gle_data_file(self, data_path: Path) -> None:
-        x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-
-        with open(data_path, "w", encoding="utf-8") as f:
-            f.write("! Fit parameter data for GLE export\n")
-
-            model_label = self._export_model_label()
-            if model_label:
-                f.write(f"! Model: {model_label}\n")
-
-            x_active = not self._x_transform.is_identity
-            transformed_y = self._transformed_y_params()
-            if x_active:
-                f.write(f"! X transform: {self._x_transform.expression_text}\n")
-            for name in transformed_y:
-                f.write(f"! Y transform [{name}]: {self._y_transform_for(name).expression_text}\n")
-            if len(self._series_to_plot()) > 1:
-                f.write("! Note: overlaid series not exported; active series only.\n")
-
-            if self._global_params is not None:
-                f.write("! Global fitting parameters:\n")
-                for param in self._global_params:
-                    unit = get_param_info(param.name).unit
-                    label = f"{param.name} ({unit})" if unit else param.name
-                    err = self._global_param_uncertainties.get(param.name)
-                    if err is not None:
-                        f.write(f"!   {label} = {param.value:.6g} +/- {err:.6g}\n")
-                    else:
-                        f.write(f"!   {label} = {param.value:.6g}\n")
-
-            f.write("!\n")
-
-            headers = ["Run", "B_field(G)", "Temperature(K)"]
-            for name in self._display_y_parameters():
-                unit = get_param_info(name).unit
-                if unit:
-                    headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
-                else:
-                    headers.extend([name, f"err_{name}"])
-            # A free-text x-axis (Angle/custom) is appended as a trailing column so
-            # GLE can plot against it; param columns keep their fixed indices.
-            abscissa = self._export_abscissa_column()
-            abscissa_key = abscissa[0] if abscissa is not None else None
-            if abscissa is not None:
-                headers.append(abscissa[1])
-            # Per-run goodness of fit as trailing columns. Appended *after* the
-            # abscissa so the fixed parameter/abscissa column indices that
-            # _gle_columns_for_param / _gle_x_column compute are unaffected.
-            headers.extend(["reduced_chi2", "chi2"])
-            # Transformed columns are appended *after* χ² for the same reason: the
-            # raw-column indices stay put; the transformed indices are computed by
-            # _gle_transformed_x_column / _gle_transformed_columns_for_param.
-            if x_active:
-                headers.append(self._transformed_x_export_header(x_key))
-            for name in transformed_y:
-                header = self._transformed_y_export_header(name)
-                headers.extend([header, f"err_{header}"])
-
-            x_transformed = (
-                self._apply_x_transform(
-                    np.array([self._x_value(r, x_key) for r in rows], dtype=float), None
-                )[0]
-                if x_active
-                else None
-            )
-            y_transformed = {name: self._series_y_arrays(rows, name) for name in transformed_y}
-
-            f.write("! Column map:\n")
-            for col_idx, name in enumerate(headers, start=1):
-                f.write(f"!   c{col_idx:>2} = {name}\n")
-            combined_rows = [row for row in rows if row.combined_from]
-            if combined_rows:
-                f.write("!\n")
-                f.write("! Combined run mapping:\n")
-                for row in combined_rows:
-                    combined_label = " + ".join(str(v) for v in row.combined_from or [])
-                    f.write(f"!   {row.run_number} = {combined_label}\n")
-            f.write("!\n")
-            f.write("! " + " ".join(f"{h:>16}" for h in headers) + "\n")
-
-            for i, row in enumerate(rows):
-                values: list[float] = [
-                    float(row.run_number),
-                    float(row.field),
-                    float(row.temperature),
-                ]
-                for name in self._display_y_parameters():
-                    values.append(row.values.get(name, np.nan))
-                    values.append(row.errors.get(name, np.nan))
-                if abscissa_key is not None:
-                    values.append(self._x_value(row, abscissa_key))
-                values.append(
-                    row.reduced_chi_squared if row.reduced_chi_squared is not None else np.nan
-                )
-                values.append(row.chi_squared if row.chi_squared is not None else np.nan)
-                if x_active:
-                    values.append(float(x_transformed[i]))
-                for name in transformed_y:
-                    vals, errs = y_transformed[name]
-                    values.extend([float(vals[i]), float(errs[i])])
-                f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
+        return self._gle_snapshot()._write_gle_data_file(data_path)
 
     def _gle_x_column(self, x_key: str) -> int:
-        name = _x_param_name(x_key)
-        if name is not None:
-            # Parameter-vs-parameter: x is the fitted parameter's value column,
-            # which the data file already emits (with its error column alongside).
-            cols = self._gle_columns_for_param(name)
-            return cols[0] if cols is not None else 1
-        if x_key == "run":
-            return 1
-        if x_key == "field":
-            return 2
-        if x_key == "temperature":
-            return 3
-        # Angle / custom column: the trailing column appended by _write_gle_data_file
-        # (after Run/B/T and the 2-per-parameter columns).
-        return 4 + 2 * len(self._display_y_parameters())
+        return ParameterExportData._gle_x_column(self, x_key)
 
     def _gle_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        display_params = self._display_y_parameters()
-        if name not in display_params:
-            return None
-        idx = display_params.index(name)
-        value_col = 4 + idx * 2
-        error_col = value_col + 1
-        return value_col, error_col
+        return ParameterExportData._gle_columns_for_param(self, name)
 
     def _gle_base_column_count(self) -> int:
-        """1-indexed count of raw columns (Run/B/T, params, abscissa, χ²ᵣ, χ²)."""
-        count = 3 + 2 * len(self._display_y_parameters())
-        if self._export_abscissa_column() is not None:
-            count += 1
-        return count + 2  # reduced_chi2, chi2
+        return ParameterExportData._gle_base_column_count(
+            self,
+        )
 
     def _gle_transformed_x_column(self) -> int | None:
-        """1-indexed transformed-x column (``None`` when x is untransformed)."""
-        if self._x_transform.is_identity:
-            return None
-        return self._gle_base_column_count() + 1
+        return ParameterExportData._gle_transformed_x_column(
+            self,
+        )
 
     def _gle_transformed_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        """1-indexed (value, err) transformed columns for a plotted param.
-
-        ``None`` for a parameter plotted through the identity lens: the data file
-        writes a transformed column pair only for the transformed parameters.
-        """
-        transformed = self._transformed_y_params()
-        if name not in transformed:
-            return None
-        base = self._gle_base_column_count()
-        if not self._x_transform.is_identity:
-            base += 1  # the transformed-x column is written first
-        value_col = base + 1 + transformed.index(name) * 2
-        return value_col, value_col + 1
+        return ParameterExportData._gle_transformed_columns_for_param(self, name)
 
     def _gle_effective_x_column(self, x_key: str) -> int:
-        """The x column the GLE plot should read — transformed when active."""
-        transformed = self._gle_transformed_x_column()
-        return transformed if transformed is not None else self._gle_x_column(x_key)
+        return ParameterExportData._gle_effective_x_column(self, x_key)
 
     def _gle_effective_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        return self._gle_transformed_columns_for_param(name) or self._gle_columns_for_param(name)
+        return ParameterExportData._gle_effective_columns_for_param(self, name)
 
     def _gle_effective_x_label(self, x_key: str) -> str:
         if self._x_transform.is_identity:
@@ -7518,176 +6987,6 @@ class FitParametersPanel(QWidget):
         if self._y_transform_for(name).is_identity:
             return _format_gle_label(name)
         return self._transformed_y_export_header(name)
-
-    def _add_gle_model_overlay(
-        self,
-        ax,
-        param_name: str,
-        color: str,
-        yaxis: str = "y",
-        include_labels: bool = False,
-        fit_file_map: dict[tuple[str, int], Path] | None = None,
-    ) -> None:
-        fit = self._model_fits.get(param_name)
-        if fit is None or not fit.active:
-            return
-        if fit.x_key != self._effective_x_key():
-            return
-        if self._overlay_suppressed_for_transform(param_name):
-            return
-
-        show_components = self._show_components_action.isChecked()
-        component_colors = ["lightblue", "lightgreen", "pink", "lightgray", "cyan", "yellow"]
-
-        curves = self._sampled_fit_curves(
-            param_name,
-            x_key=fit.x_key,
-            num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
-        )
-        for idx, (range_index, xs, ys) in enumerate(curves):
-            line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
-            line_label = (
-                _fit_overlay_label(self._legend_param_label(param_name, gle=True), idx, len(curves))
-                if include_labels
-                else None
-            )
-            base_name = f"{_safe_data_name(param_name)}_range_{int(range_index)}"
-
-            if show_components and range_index < len(fit.ranges):
-                fit_range = fit.ranges[range_index]
-                result = fit_range.result
-                if result is not None and result.success:
-                    kwargs = {p.name: p.value for p in result.parameters}
-                    components = fit_range.model.evaluate_components(
-                        xs, additive_only=True, **kwargs
-                    )
-                    ordered_components = self._ordered_components_for_stacking(components)
-                    cumulative = np.zeros_like(xs, dtype=float)
-                    for cidx, (_cname, comp_y) in enumerate(ordered_components):
-                        cname = _safe_data_name(_cname)
-                        fill_color = component_colors[cidx % len(component_colors)]
-                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
-                        lower = cumulative
-                        upper = cumulative + comp_fill
-                        ax.fill_between(
-                            xs,
-                            lower,
-                            upper,
-                            color=fill_color,
-                            alpha=0.3,
-                            data_name=f"component_{base_name}_{cname}_fill",
-                        )
-                        ax.plot(
-                            xs,
-                            upper,
-                            linestyle="--",
-                            color=fill_color,
-                            linewidth=1,
-                            yaxis=yaxis,
-                            data_name=f"component_{base_name}_{cname}_edge",
-                        )
-                        cumulative = upper
-
-            fit_path = None
-            if fit_file_map is not None:
-                fit_path = fit_file_map.get((param_name, int(range_index)))
-            if fit_path is not None and hasattr(ax, "line_from_file"):
-                ax.line_from_file(
-                    fit_path.name,
-                    x_col=1,
-                    y_col=2,
-                    color=line_color,
-                    linestyle="-",
-                    linewidth=1,
-                    yaxis=yaxis,
-                    label=line_label,
-                )
-            else:
-                ax.plot(
-                    xs,
-                    ys,
-                    linestyle="-",
-                    color=line_color,
-                    linewidth=1,
-                    yaxis=yaxis,
-                    label=line_label,
-                    data_name=f"model_{base_name}",
-                )
-
-    def _add_gle_annotations(self, ax, axis_tag: str) -> None:
-        """Add user plot annotations to a specific exported axis."""
-        for ann in self._plot_annotations:
-            if str(ann.get("axis_tag", "main")) != axis_tag:
-                continue
-            text = str(ann.get("text", "")).strip()
-            if not text:
-                continue
-            try:
-                x = float(ann.get("x", 0.0))
-                y = float(ann.get("y", 0.0))
-            except (TypeError, ValueError):
-                continue
-            ax.text(x, y, text, color="black", ha="left")
-
-    @staticmethod
-    def _gle_phase_y_extent(*value_arrays: np.ndarray) -> tuple[float, float] | None:
-        """A (padded) vertical extent spanning every finite value in *value_arrays*.
-
-        gleplot has no ``axvspan``/``axvline`` (unlike matplotlib, whose blended
-        transform spans the full axes height regardless of the y-limits) — the
-        band and boundary lines are drawn as an ordinary ``fill_between``/``plot``
-        rectangle instead, so it needs an explicit y-range. A 5% margin on the
-        combined data extent mirrors matplotlib's own default autoscale margin.
-        Returns ``None`` when no finite value is present (nothing to anchor to).
-        """
-        finite = np.concatenate(
-            [np.asarray(values, dtype=float)[np.isfinite(values)] for values in value_arrays]
-        )
-        if finite.size == 0:
-            return None
-        lo, hi = float(np.min(finite)), float(np.max(finite))
-        if lo == hi:
-            pad = abs(lo) * 0.05 or 0.5
-        else:
-            pad = (hi - lo) * 0.05
-        return lo - pad, hi + pad
-
-    def _add_gle_phase_band(self, ax, phase: PhaseDecoration, *value_arrays: np.ndarray) -> None:
-        """Draw *phase*'s range shading and boundary lines on an exported GLE axis.
-
-        Mirrors :meth:`_draw_phase_band`'s matplotlib picture with gleplot's
-        ``fill_between``/``plot`` primitives (see :meth:`_add_gle_model_overlay`
-        for the same primitives used for the component-stack fill): the range is
-        a filled rectangle spanning ``_gle_phase_y_extent(*value_arrays)``, each
-        boundary a dashed vertical line plus a fainter ``± half_gap`` rectangle.
-        Always drawn on the primary (``"y"``) axis — the one caller that shares
-        an axis with a second y-parameter (the two-parameter export) draws the
-        band once there, since both parameters share the same x-range.
-        """
-        extent = self._gle_phase_y_extent(*value_arrays)
-        if extent is None:
-            return
-        y_lo, y_hi = extent
-        lo, hi = phase.range
-        ax.fill_between([lo, hi], [y_lo, y_lo], [y_hi, y_hi], color=phase.color, alpha=0.12)
-        for boundary in (phase.lower, phase.upper):
-            if boundary is None:
-                continue
-            estimate, half_gap = boundary
-            ax.plot(
-                [estimate, estimate],
-                [y_lo, y_hi],
-                linestyle="--",
-                color=phase.color,
-                linewidth=1.2,
-            )
-            ax.fill_between(
-                [estimate - half_gap, estimate + half_gap],
-                [y_lo, y_lo],
-                [y_hi, y_hi],
-                color=phase.color,
-                alpha=0.08,
-            )
 
     def _export_gle(self, output_format: str) -> None:
         if not self._rows:
@@ -7709,241 +7008,48 @@ class FitParametersPanel(QWidget):
 
         gle_export.run_gle_export(
             self,
-            tasks=self._tasks,
             dialog_title="Export to GLE",
             default_name="fit_parameters.gleplot",
             output_format=output_format,
-            build=self._build_gle_export,
+            prepare=lambda: self._gle_snapshot().build,
         )
 
-    def _build_gle_export(
-        self, glp: Any, gle_path: Path, export_dir: Path
-    ) -> gle_export.GleExportBuild | None:
-        if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
-            gle_export.show_warning(
-                self, "gleplot update required", "Please update gleplot to a newer version."
-            )
-            return None
+    def _gle_snapshot(self):
+        from copy import deepcopy
 
-        data_path = gle_path.with_suffix(".dat")
-        self._write_gle_data_file(data_path)
+        from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
+
+        display = self._display_y_parameters()
         x_key = self._effective_x_key()
-        # GLE export always writes the active series only (see _export_gle) —
-        # this is that series' phase, gated for the current axis/transform.
-        phase = self._active_phase_decoration_for_axis(x_key)
-
-        # Export fit sidecars for all active fits on this x-axis, regardless of
-        # current y-selection, so restored projects always emit .fit files.
-        all_active_fit_params = [
-            pname
-            for pname, fit in self._model_fits.items()
-            if fit.active and _normalize_x_key(fit.x_key) == x_key
-        ]
-        fit_file_map = self._write_fit_files(gle_path, x_key, all_active_fit_params)
-
-        if fit_file_map and (not hasattr(glp.Axes, "line_from_file")):
-            gle_export.show_warning(
-                self, "gleplot update required", "Please update gleplot to a newer version."
-            )
-            return None
-
-        display_params = self._display_y_parameters()
-        y_params = self._selected_y_parameters() or ([display_params[0]] if display_params else [])
-        if not y_params:
-            return None
-
-        x_label = self._gle_effective_x_label(x_key)
-        data_file_ref = data_path.name
-        x_col = self._gle_effective_x_column(x_key)
-        plot_mode = self._plot_mode()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-        show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
-
-        if plot_mode == "Subplots" and len(y_params) > 1:
-            fig, axes = glp.subplots(
-                nrows=len(y_params), ncols=1, figsize=(5.8, 3.0 * len(y_params)), sharex=True
-            )
-            subplot_axes = axes if isinstance(axes, list) else [axes]
-            for idx, y_name in enumerate(y_params):
-                cols = self._gle_effective_columns_for_param(y_name)
-                if cols is None:
-                    continue
-                y_col, yerr_col = cols
-                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-                has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
-                ax = subplot_axes[idx]
-                show_subplot_fit_legend = self._count_fit_curves_for_param(x_key, y_name) > 1
-                self._add_gle_model_overlay(
-                    ax,
-                    y_name,
-                    color=_fit_overlay_color(0),
-                    yaxis="y",
-                    include_labels=show_subplot_fit_legend,
-                    fit_file_map=fit_file_map,
-                )
-                # One subplot per parameter — series identity, so a phase-owned
-                # active series takes its phase colour (mirrors the on-screen
-                # single-series Subplots substitution).
-                ax.errorbar_from_file(
-                    data_file_ref,
-                    x_col=x_col,
-                    y_col=y_col,
-                    yerr_col=yerr_col if has_err else None,
-                    color=_gle_series_color(0, override=phase.color if phase else None),
-                    marker="o",
-                    markersize=5,
-                    capsize=2,
-                )
-                ax.set_xlabel(x_label)
-                ax.set_ylabel(self._gle_effective_y_label(y_name))
-                if self._log_x_check.isChecked():
-                    ax.set_xscale("log")
-                if not self._show_components_action.isChecked() and self._is_log_y_for(y_name):
-                    ax.set_yscale("log")
-                if self._show_components_action.isChecked():
-                    ax.set_ylim(0.0, None)
-                self._add_gle_annotations(ax, y_name)
-                if phase is not None:
-                    self._add_gle_phase_band(ax, phase, y_vals)
-                if show_subplot_fit_legend:
-                    ax.legend(loc="best")
-        else:
-            fig = glp.figure(figsize=(5.8, 4.2))
-            ax = fig.add_subplot(111)
-
-            if len(y_params) == 2:
-                left_name, right_name = y_params
-                left_cols = self._gle_effective_columns_for_param(left_name)
-                right_cols = self._gle_effective_columns_for_param(right_name)
-                if left_cols is None or right_cols is None:
-                    return None
-                left_y_col, left_err_col = left_cols
-                right_y_col, right_err_col = right_cols
-
-                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
-                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
-                left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
-                right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
-                has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
-                has_right_err = bool(np.any(np.isfinite(right_err) & (right_err > 0)))
-
-                self._add_gle_model_overlay(
-                    ax,
-                    left_name,
-                    color=_fit_overlay_color(0),
-                    yaxis="y",
-                    include_labels=show_fit_legend,
-                    fit_file_map=fit_file_map,
-                )
-                self._add_gle_model_overlay(
-                    ax,
-                    right_name,
-                    color=_fit_overlay_color(1),
-                    yaxis="y2",
-                    include_labels=show_fit_legend,
-                    fit_file_map=fit_file_map,
-                )
-                ax.errorbar_from_file(
-                    data_file_ref,
-                    x_col=x_col,
-                    y_col=left_y_col,
-                    yerr_col=left_err_col if has_left_err else None,
-                    color=_gle_series_color(0),
-                    marker="o",
-                    markersize=5,
-                    capsize=2,
-                    yaxis="y",
-                )
-                ax.errorbar_from_file(
-                    data_file_ref,
-                    x_col=x_col,
-                    y_col=right_y_col,
-                    yerr_col=right_err_col if has_right_err else None,
-                    color=_gle_series_color(1),
-                    marker="o",
-                    markersize=5,
-                    capsize=2,
-                    yaxis="y2",
-                )
-                ax.set_ylabel(self._gle_effective_y_label(left_name), axis="y")
-                ax.set_ylabel(self._gle_effective_y_label(right_name), axis="y2")
-                if self._show_components_action.isChecked():
-                    ax.set_ylim(0.0, None, axis="y")
-                    ax.set_ylim(0.0, None, axis="y2")
-                self._add_gle_annotations(ax, left_name)
-                self._add_gle_annotations(ax, right_name)
-                if phase is not None:
-                    # Shared x-axis: one band spanning both parameters' extents.
-                    self._add_gle_phase_band(ax, phase, left_vals, right_vals)
-                if show_fit_legend:
-                    ax.legend(loc="best")
-            else:
-                # A single parameter on this shared axis is the whole series'
-                # curve (series identity, phase colour applies); several share
-                # it to distinguish *parameters* (their own identity colours).
-                single_param = len(y_params) == 1
-                all_y_vals: list[np.ndarray] = []
-                for idx, y_name in enumerate(y_params):
-                    cols = self._gle_effective_columns_for_param(y_name)
-                    if cols is None:
-                        continue
-                    y_col, yerr_col = cols
-                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                    all_y_vals.append(y_vals)
-                    y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-                    has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
-                    self._add_gle_model_overlay(
-                        ax,
-                        y_name,
-                        color=_fit_overlay_color(idx),
-                        yaxis="y",
-                        include_labels=show_fit_legend,
-                        fit_file_map=fit_file_map,
-                    )
-                    override = phase.color if (single_param and phase is not None) else None
-                    ax.errorbar_from_file(
-                        data_file_ref,
-                        x_col=x_col,
-                        y_col=y_col,
-                        yerr_col=yerr_col if has_err else None,
-                        color=_gle_series_color(idx, override=override),
-                        marker="o",
-                        markersize=5,
-                        capsize=2,
-                    )
-
-                if len(y_params) == 1:
-                    ax.set_ylabel(self._gle_effective_y_label(y_params[0]))
-                else:
-                    ax.set_ylabel("Parameter value")
-                    if show_fit_legend:
-                        ax.legend(loc="best")
-
-                if self._show_components_action.isChecked():
-                    ax.set_ylim(0.0, None)
-                elif len(y_params) == 1 and self._is_log_y_for(y_params[0]):
-                    ax.set_yscale("log")
-                elif len(y_params) > 1 and any(self._is_log_y_for(name) for name in y_params):
-                    ax.set_yscale("log")
-
-                self._add_gle_annotations(ax, "main")
-                if phase is not None and all_y_vals:
-                    self._add_gle_phase_band(ax, phase, *all_y_vals)
-
-            ax.set_xlabel(x_label)
-            if self._log_x_check.isChecked():
-                ax.set_xscale("log")
-
-        try:
-            fig.savefig(str(gle_path))
-        except TypeError as exc:
-            if "folder" in str(exc):
-                gle_export.show_warning(
-                    self, "gleplot update required", "Please update gleplot to a newer version."
-                )
-                return None
-            raise
-
-        fit_files = list(fit_file_map.values()) if fit_file_map else []
-        return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files])
+        label_names = set(display) | set(self._model_fits)
+        return ParameterGleSnapshot(
+            _rows=deepcopy(self._rows),
+            _model_fits=deepcopy(self._model_fits),
+            _x_transform=self._x_transform,
+            _y_transforms=dict(self._y_transforms),
+            _model_fit_transform_sig=dict(self._model_fit_transform_sig),
+            _global_params=deepcopy(self._global_params),
+            _global_param_uncertainties=dict(self._global_param_uncertainties),
+            _angle_x_field=self._angle_x_field,
+            _angle_wrap_period=self._angle_wrap_period,
+            display_params=tuple(display),
+            selected_params=tuple(self._selected_y_parameters()),
+            x_key=x_key,
+            abscissa=self._export_abscissa_column(),
+            model_label=self._export_model_label(),
+            overlaid=len(self._series_to_plot()) > 1,
+            x_header=self._transformed_x_export_header(x_key),
+            y_headers={name: self._transformed_y_export_header(name) for name in display},
+            phase=self._active_phase_decoration_for_axis(x_key),
+            x_label=self._gle_effective_x_label(x_key),
+            y_labels={name: self._gle_effective_y_label(name) for name in display},
+            legend_labels={name: self._legend_param_label(name, gle=True) for name in label_names},
+            log_x=self._log_x_check.isChecked(),
+            log_y=frozenset(self._log_y_params),
+            show_components=self._show_components_action.isChecked(),
+            plot_mode=self._plot_mode(),
+            _plot_annotations=tuple(
+                {k: deepcopy(v) for k, v in a.items() if k != "artist"}
+                for a in self._plot_annotations
+            ),
+        )

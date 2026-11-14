@@ -351,6 +351,12 @@ grouped context, GC pauses, deferred event-loop turns). Run it on the real
 display (`QT_QPA_PLATFORM` unset) for numbers that include Retina
 rasterisation.
 
+GLE exports capture plain-data snapshots before starting the preview's
+`TaskRunner`. `gui.utils.gle_figure` constructs independent gleplot figures
+with copied configurations; workers never use gleplot's current-figure API.
+`GLE Plot Preview` owns the compiler task and PDF buffer. Closing a project
+closes its previews and cancels their tasks through `close_gle_previews`.
+
 ## What the harness enforces
 
 `python tools/harness.py structural` fails fast on:
