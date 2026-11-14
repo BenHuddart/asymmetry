@@ -75,6 +75,14 @@ calibration, and reduction, and :doc:`/reference/detector_grouping` for policy.
 
 .. autofunction:: asymmetry.core.workflow.apply_grouping_preset
 
+Scripted temperature selection
+------------------------------
+
+See :ref:`logged-temperature-selection` for channel, statistic, unit, and failure
+semantics and :ref:`temperature-selection-example` for a synthetic example.
+
+.. autofunction:: asymmetry.core.workflow.select_logged_temperature
+
 Instrument geometry
 -------------------
 

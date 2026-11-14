@@ -88,6 +88,7 @@ from asymmetry.core.workflow.survey import (
     run_geometry,
     survey_folder,
 )
+from asymmetry.core.workflow.temperature import select_logged_temperature
 from asymmetry.core.workflow.trend_fit import TrendFitOutcome, fit_trend, fit_trend_table
 from asymmetry.core.workflow.workdir import (
     SCHEMA,
@@ -103,6 +104,7 @@ from asymmetry.core.workflow.workdir import (
 
 __all__ = [
     "apply_grouping_preset",
+    "select_logged_temperature",
     "CalibrationOptions",
     "CalibrationOutcome",
     "QuickCalibrationResult",
