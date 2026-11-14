@@ -48,6 +48,17 @@ def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) 
     )
 
 
+from tests.gui.gle_helpers import recording_factories, wait_for_gle, write_compile_outputs
+
+
+@pytest.fixture(autouse=True)
+def _record_gle_factories(monkeypatch):
+    from asymmetry.gui.utils import gle_export
+
+    recording_factories(monkeypatch)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
+
+
 def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(
     qapp: QApplication,
 ) -> None:
@@ -483,19 +494,13 @@ def test_export_plot_gle_saves_and_compiles(
     )
 
     compile_calls: list[tuple[Path, str]] = []
-    result_dialogs: list[tuple[str, str]] = []
 
     def _fake_compile(exe, gle_file, fmt, *, cwd, **kw):
+        write_compile_outputs(gle_file, fmt)
         compile_calls.append((Path(gle_file), fmt))
 
     monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
-    monkeypatch.setattr(
-        gle_export,
-        "show_export_result_dialog",
-        lambda p, title, summary, details: result_dialogs.append((summary, details)),
-    )
-    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
     class _FakeFigure:
         def savefig(self, path: str, **kwargs) -> None:
@@ -511,18 +516,26 @@ def test_export_plot_gle_saves_and_compiles(
     def _builder(glp, _gle_path):
         return glp.figure(figsize=(7.0, 4.5))
 
+    from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
+
+    monkeypatch.setattr(
+        GlobalGleSnapshot,
+        "_build_fit_subplot_gle_figure",
+        lambda self, glp, path: _builder(glp, path),
+    )
     window._export_plot_gle(
         title="Export Test",
         default_name="test.gle",
         builder=_builder,
         output_format="eps",
     )
+    preview = wait_for_gle(window)
 
-    assert _wait(qapp, lambda: result_dialogs)
+    assert preview is not None
     assert resolved_gle_path.exists()
-    assert compile_calls == [(resolved_gle_path, "eps")]
-    assert result_dialogs
-    _summary, details = result_dialogs[0]
+    assert compile_calls == [(resolved_gle_path, ("eps", "pdf"))]
+    assert preview is not None
+    details = preview.details.toPlainText()
     assert str(resolved_gle_path) in details
 
 
@@ -552,15 +565,12 @@ def test_export_plot_gle_collects_data_sidecars_referenced_by_the_script(
         staticmethod(lambda *_a, **_k: (str(out_path), "GLE files (*.gle)")),
     )
 
-    result_dialogs: list[tuple[str, str]] = []
-    monkeypatch.setattr(gle_export, "compile_gle", lambda *a, **k: None)
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
     monkeypatch.setattr(
         gle_export,
-        "show_export_result_dialog",
-        lambda p, title, summary, details: result_dialogs.append((summary, details)),
+        "compile_gle",
+        lambda exe, path, devices, **k: write_compile_outputs(path, devices),
     )
-    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
 
     class _FakeFigure:
         def savefig(self, path: str, **kwargs) -> None:
@@ -587,15 +597,23 @@ def test_export_plot_gle_collects_data_sidecars_referenced_by_the_script(
         )
         return glp.figure(figsize=(7.0, 4.5))
 
+    from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
+
+    monkeypatch.setattr(
+        GlobalGleSnapshot,
+        "_build_fit_subplot_gle_figure",
+        lambda self, glp, path: _builder(glp, path),
+    )
     window._export_plot_gle(
         title="Export Test",
         default_name="test.gle",
         builder=_builder,
         output_format="pdf",
     )
+    preview = wait_for_gle(window)
 
-    assert _wait(qapp, lambda: result_dialogs)
-    _summary, details = result_dialogs[0]
+    assert preview is not None
+    details = preview.details.toPlainText()
     assert str(resolved_gle_path) in details
     assert str(export_dir / "export_sidecars_g0_data.dat") in details
 
@@ -626,6 +644,7 @@ def test_export_plot_gle_requires_result(
         builder=lambda _glp, _gle_path: None,
         output_format="pdf",
     )
+    wait_for_gle(window)
 
     assert infos
     assert "Run a cross-group fit first" in infos[0]
@@ -653,12 +672,11 @@ def test_export_plot_gle_runs_compile_in_export_dir(
     compile_cwds: list[Path] = []
 
     def _fake_compile(exe, gle_file, fmt, *, cwd, **kw):
+        write_compile_outputs(gle_file, fmt)
         compile_cwds.append(Path(cwd))
 
     monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
-    monkeypatch.setattr(gle_export, "show_export_result_dialog", lambda *a, **k: None)
-    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
     class _FakeFigure:
         def savefig(self, path: str, **kwargs) -> None:
@@ -671,12 +689,20 @@ def test_export_plot_gle_runs_compile_in_export_dir(
 
     monkeypatch.setattr(gle_export.importlib, "import_module", lambda _name: _FakeGlp())
 
+    from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
+
+    monkeypatch.setattr(
+        GlobalGleSnapshot,
+        "_build_fit_subplot_gle_figure",
+        lambda self, glp, path: glp.figure(figsize=(7.0, 4.5)),
+    )
     window._export_plot_gle(
         title="Export Test",
         default_name="test.gle",
         builder=lambda glp, _gle_path: glp.figure(figsize=(7.0, 4.5)),
         output_format="pdf",
     )
+    wait_for_gle(window)
 
     assert _wait(qapp, lambda: compile_cwds)
     assert compile_cwds == [export_dir]

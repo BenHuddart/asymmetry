@@ -6,7 +6,6 @@ source dataset. Existing fit curves retain their recorded model and window."""
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
@@ -80,17 +79,13 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
-from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.errorbar_dots import add_errorbar_dots
 from asymmetry.gui.utils.gle_export import (
-    GleExportBuild,
     dedup_export_token,
-    gle_offset_supported,
     run_gle_export,
     safe_file_token,
     show_export_result_dialog,
 )
-from asymmetry.gui.utils.recipe_export import write_recipe_header
 from asymmetry.gui.utils.waterfall import auto_waterfall_delta
 from asymmetry.gui.widgets.axis_limits import (
     AxisLimitControls,
@@ -151,44 +146,6 @@ _FREQUENCY_REFERENCE_MODES = ("run", "common")
 _DENSITY_YLABELS = {
     "gauss": "Field distribution p(B) (1/G)",
     "tesla": "Field distribution p(B) (1/T)",
-}
-
-#: Export y-column names for a unit-area density, keyed like above.
-_DENSITY_COLUMN_NAME = {
-    "mhz": "density_per_MHz",
-    "gauss": "density_per_G",
-    "tesla": "density_per_T",
-}
-
-# Self-describing x-column names for frequency-view ``.dat`` sidecars, keyed on
-# the panel's current display unit. The correlation (hyperfine-coupling) axis
-# names its column separately (``coupling_MHz``); shift/relative axes name their
-# column from the mode (see ``_frequency_x_column_name``).
-_FREQUENCY_X_COLUMN_NAME = {
-    "frequency_mhz": "frequency_MHz",
-    "field_gauss": "field_G",
-    "field_tesla": "field_T",
-}
-
-#: Shift-axis ``.dat`` x-column names, keyed on the display unit.
-_FREQUENCY_SHIFT_X_COLUMN_NAME = {
-    "frequency_mhz": "shift_MHz",
-    "field_gauss": "shift_G",
-    "field_tesla": "shift_T",
-}
-
-# GLE has no fill transparency: gleplot's writer drops fill_between's alpha and
-# rgb_to_gle quantizes computed tints to named colors (a 75%-gray tint maps to
-# WHITE, and the series color itself renders as a solid block that swallows the
-# line). The exported ±1σ band therefore uses an explicit light GLE tint
-# matched to the series color; LIGHTGRAY/LIGHTBLUE/LIGHTCYAN/LIGHTGREEN are the
-# only light tints in gleplot's passthrough color set.
-_GLE_BAND_TINT = {
-    "black": "lightgray",
-    "gray": "lightgray",
-    "blue": "lightblue",
-    "cyan": "lightcyan",
-    "green": "lightgreen",
 }
 
 #: Fit id of the run's own Single-tab fit (D5). Every other fit id stored here
@@ -353,7 +310,6 @@ class PlotPanel(QWidget):
         super().__init__(parent)
         #: Background tasks owned by this panel (GLE export compiles). Shut
         #: down via :meth:`shutdown_workers` from the main window's closeEvent.
-        self._tasks = TaskRunner(self)
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
         #: Host-injected counts-first re-reduction hook for display bunching
         #: Histogram-backed bunching requires this provider; curve-only panels do not.
@@ -7707,36 +7663,6 @@ class PlotPanel(QWidget):
         """Return a token unique within *used* (shared foundation)."""
         return dedup_export_token(base, used)
 
-    @staticmethod
-    def _strip_matplotlib_math(value: object) -> str:
-        """Strip matplotlib math markup so an axis label renders as plain text.
-
-        Frequency y-labels can carry matplotlib mathtext (e.g. the
-        ``$|F|$ (arb.)`` fallback). GLE has no use for the ``$…$`` delimiters,
-        ``\\mathrm``-style commands, or their braces, so they are removed here —
-        locally, on the frequency labels only — rather than by widening the
-        shared :meth:`_sanitize_gle_text` (which the byte-identical time-domain
-        export also flows through).
-        """
-        text = str(value)
-        text = text.replace("$", "")
-        text = re.sub(r"\\(?:mathrm|mathit|mathsf|mathbf|text|rm|it|bf)\b", "", text)
-        text = text.replace("{", "").replace("}", "")
-        return text
-
-    @staticmethod
-    def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
-        """Return text that is safe for GLE string rendering."""
-        text = str(value)
-        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-        text = text.replace("\r", " ").replace("\n", " ")
-        text = text.replace("μ", "u").replace("µ", "u")
-        text = text.replace("χ", "chi").replace("²", "^2")
-        text = "".join(ch for ch in text if ch.isprintable())
-        text = " ".join(text.split())
-        text = text.encode("ascii", "ignore").decode("ascii")
-        return text or fallback
-
     def get_current_plot_export_data(
         self, datasets: list[MuonDataset] | None = None
     ) -> list[dict] | None:
@@ -7930,193 +7856,6 @@ class PlotPanel(QWidget):
             return axis_key.lower().replace("_", "")
         return "main"
 
-    def _export_axis_ylabel(self, axis_key: str | None) -> str:
-        """Return plain-text y-axis label for plot exports."""
-        if axis_key in {"P_x", "P_y", "P_z"}:
-            suffix = axis_key.split("_", 1)[1]
-            return f"a_0 P_{{{suffix}}}(t) (%)"
-        return "Asymmetry (%)"
-
-    def _plot_export_payloads_on_axis(
-        self,
-        ax,
-        payloads: list[dict],
-        *,
-        axis_key: str | None,
-        written_files: list[Path],
-        dat_writes: list[tuple[Path, dict, object, str | None]],
-        gle_path: Path,
-        colors: list[str],
-        show_legend: bool,
-        used_tokens: set[str] | None = None,
-    ) -> None:
-        """Draw export payloads on a provided axis with axis-specific naming."""
-        is_multi = len(payloads) > 1
-        axis_suffix = self._export_axis_suffix(axis_key)
-        # gleplot ≥ 1.7 stacks a waterfall offset in the GLE script (``offset=``
-        # -> ``let``), keeping the written .dat/.fit values raw. Older gleplot
-        # has no such knob, so fall back to baking the offset into the arrays
-        # (and the sidecar writers) so the plot still matches the data.
-        offset_in_gle = gle_offset_supported()
-
-        for i, payload in enumerate(payloads):
-            label_text = payload.get("label", f"dataset_{i}")
-            safe_label = self._sanitize_gle_text(
-                label_text,
-                fallback=f"Run {payload.get('run_number', i)}",
-            )
-            # Digit-led sidecar filenames (a bare run number like ``20`` →
-            # ``20_main.dat``) break the gleplot editor's parser when referenced
-            # unquoted; prefix the GLE sidecar token with ``run_`` before dedup.
-            raw_token = self._safe_file_token(f"{label_text}_{axis_suffix}")
-            if raw_token[:1].isdigit():
-                raw_token = f"run_{raw_token}"
-            token = self._dedup_export_token(raw_token, used_tokens)
-            data_color = colors[i % len(colors)] if is_multi else "black"
-            fit_color = data_color if is_multi else "red"
-            suppress_subplot_labels = axis_key in {"P_x", "P_y", "P_z"} and not show_legend
-            data_label = None if suppress_subplot_labels else safe_label
-
-            data = payload.get("data") or {}
-            fit = payload.get("fit") or {}
-            t_data = data.get("t")
-            y_data = data.get("y")
-            y_err = data.get("err")
-            t_fit = fit.get("t")
-            y_fit = fit.get("y")
-            # Mirror the on-screen waterfall stack. With modern gleplot the
-            # offset is handed to the plot calls (``gle_offset`` below) and
-            # applied in the GLE script; against older gleplot we bake it into
-            # the arrays here. 0.0 (absent) leaves y as-is either way.
-            offset = float(payload.get("waterfall_offset", 0.0))
-            gle_offset = offset if offset_in_gle else 0.0
-            if offset and not offset_in_gle and y_data is not None:
-                y_data = np.asarray(y_data, dtype=float) + offset
-            if offset and not offset_in_gle and y_fit is not None:
-                y_fit = np.asarray(y_fit, dtype=float) + offset
-
-            dat_path = gle_path.parent / f"{token}.dat"
-            if t_data is not None and y_data is not None:
-                dat_writes.append((dat_path, payload, label_text, axis_key))
-                written_files.append(dat_path)
-                if payload.get("domain") == "frequency":
-                    # Mirror the on-screen renderer (_plot_frequency_line_masked):
-                    # a solid line in display-unit x, plus a shaded ±1σ band
-                    # when the error array carries any positive finite value.
-                    x_display = payload.get("x_display")
-                    x_plot = (
-                        np.asarray(x_display, dtype=float)
-                        if x_display is not None
-                        else np.asarray(t_data, dtype=float)
-                    )
-                    ax.plot(
-                        x_plot,
-                        y_data,
-                        "-",
-                        color=data_color,
-                        linewidth=1.2,
-                        label=data_label,
-                        offset=gle_offset,
-                        data_name=token,
-                    )
-                    if y_err is not None:
-                        err = np.asarray(y_err, dtype=float)
-                        if bool(np.any(np.isfinite(err) & (err > 0.0))):
-                            band_err = np.where(np.isfinite(err), err, 0.0)
-                            y_arr = np.asarray(y_data, dtype=float)
-                            band_color = _GLE_BAND_TINT.get(str(data_color).lower(), "lightgray")
-                            ax.fill_between(
-                                x_plot,
-                                y_arr - band_err,
-                                y_arr + band_err,
-                                color=band_color,
-                                alpha=0.25,
-                                label=None,
-                                offset=gle_offset,
-                                data_name=f"{token}_band",
-                            )
-                else:
-                    ax.errorbar(
-                        t_data,
-                        y_data,
-                        yerr=y_err,
-                        fmt="none",
-                        marker="o",
-                        color=data_color,
-                        markersize=4,
-                        capsize=2,
-                        label=data_label,
-                        offset=gle_offset,
-                        data_name=token,
-                    )
-
-            fit_path = gle_path.parent / f"{token}.fit"
-            if t_fit is not None and y_fit is not None:
-                self._write_fit_file(fit_path, payload, bake_waterfall_offset=not offset_in_gle)
-                written_files.append(fit_path)
-
-                fit_label = fit.get("label", "Fit")
-                if is_multi or suppress_subplot_labels:
-                    fit_label = None
-                else:
-                    fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
-                if payload.get("domain") == "frequency" and fit.get("x_display") is not None:
-                    x_fit = np.asarray(fit.get("x_display"), dtype=float)
-                else:
-                    x_fit = t_fit
-                ax.plot(
-                    x_fit,
-                    y_fit,
-                    color=fit_color,
-                    linewidth=1.6,
-                    label=fit_label,
-                    offset=gle_offset,
-                    data_name=f"{token}_fit",
-                )
-
-        annotations = payloads[0].get("annotations") or []
-        for ann in annotations:
-            try:
-                x = float(ann.get("x", 0.0))
-                y = float(ann.get("y", 0.0))
-            except (TypeError, ValueError):
-                continue
-            text = str(ann.get("text", "")).strip()
-            text = self._sanitize_gle_text(text)
-            if text:
-                ax.text(x, y, text, color="black", ha="left")
-
-        frequency_payload = next((p for p in payloads if p.get("domain") == "frequency"), None)
-        if frequency_payload is not None:
-            ax.set_ylabel(
-                self._sanitize_gle_text(
-                    self._strip_matplotlib_math(frequency_payload.get("y_label")),
-                    fallback="FFT (%)",
-                )
-            )
-        else:
-            ax.set_ylabel(self._export_axis_ylabel(axis_key))
-        if hasattr(ax, "set_xlim"):
-            x_lo = float(self._x_min.value())
-            x_hi = float(self._x_max.value())
-            if self._is_frequency_plot_panel():
-                x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
-                x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
-            ax.set_xlim(x_lo, x_hi)
-
-        # An exported layout can stack panes that are not on screen (e.g. the
-        # individual-groups export from a single view); a pane the policy has
-        # never framed takes the focused pane's window from the fields.
-        held_y = self._limits.held(self._y_axis_id(axis_key))
-        if hasattr(ax, "set_ylim"):
-            if held_y is None:
-                ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
-            else:
-                ax.set_ylim(float(held_y[0]), float(held_y[1]))
-
-        if show_legend:
-            style_legend(ax.legend(loc="best"))
-
     def _write_fit_file(
         self,
         fit_path: Path,
@@ -8125,82 +7864,9 @@ class PlotPanel(QWidget):
         x_range: tuple[float, float] | None = None,
         bake_waterfall_offset: bool = True,
     ) -> None:
-        """Write a .fit file with fit-curve data and metadata header.
-
-        ``x_range`` optionally restricts the written rows to ``[lo, hi]``;
-        ``None`` (the GLE-export default) writes the whole curve.
-
-        ``bake_waterfall_offset`` adds the payload's waterfall offset to the
-        written curve. The plain-text export leaves it ``True`` (the text is the
-        final artifact, so it must carry the stack). The GLE export passes
-        ``False`` when the installed gleplot applies the offset in the script
-        (``let``) instead, keeping the sidecar values raw. The header records
-        the offset either way.
-        """
-        fit = payload.get("fit") or {}
-        t_fit = fit.get("t")
-        y_fit = fit.get("y")
-        if t_fit is None or y_fit is None:
-            return
-
-        # Match the drawn fit curve's waterfall offset (see _write_data_file).
-        waterfall_offset = float(payload.get("waterfall_offset", 0.0))
-        if waterfall_offset and bake_waterfall_offset:
-            y_fit = np.asarray(y_fit, dtype=float) + waterfall_offset
-
-        meta = payload.get("fit_metadata") or {}
-        with open(fit_path, "w", encoding="utf-8") as f:
-            f.write(f"! Fit curve for {payload.get('label', 'dataset')}\n")
-            f.write(f"! run_number: {payload.get('run_number', '')}\n")
-            if waterfall_offset:
-                f.write(f"! waterfall offset: {waterfall_offset:.10g}\n")
-            fit_function = meta.get("fit_function") or fit.get("label") or "Fit"
-            f.write(f"! fit_function: {fit_function}\n")
-            chi2 = meta.get("chi_squared")
-            red_chi2 = meta.get("reduced_chi_squared")
-            if chi2 is not None:
-                f.write(f"! chi_squared: {chi2:.8g}\n")
-            if red_chi2 is not None:
-                f.write(f"! reduced_chi_squared: {red_chi2:.8g}\n")
-            params = meta.get("parameters")
-            if params:
-                f.write("! fitted_parameters:\n")
-                for p in params:
-                    err = p.get("error", float("nan"))
-                    if np.isfinite(err):
-                        f.write(f"!   {p['name']} = {p['value']:.8g} +/- {err:.4g}\n")
-                    else:
-                        f.write(f"!   {p['name']} = {p['value']:.8g}\n")
-            f.write("!\n")
-            if payload.get("domain") == "frequency":
-                x_unit = str(payload.get("x_unit", "frequency_mhz"))
-                x_column = self._frequency_x_column_name(
-                    x_unit,
-                    str(payload.get("axis_mode", "absolute")),
-                    bool(payload.get("is_correlation")),
-                )
-                x_display = fit.get("x_display")
-                x_fit = (
-                    np.asarray(x_display, dtype=float)
-                    if x_display is not None
-                    else self._convert_frequency_axis_for_display(t_fit)
-                )
-                density_unit = payload.get("density_unit")
-                y_fit_column = (
-                    f"{_DENSITY_COLUMN_NAME.get(str(density_unit), 'density_per_MHz')}_fit"
-                    if density_unit is not None
-                    else "amplitude_fit"
-                )
-                f.write(f"! {x_column}  {y_fit_column}\n")
-            else:
-                x_fit = t_fit
-                f.write("! time  asymmetry_fit\n")
-            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
-            for t_val, y_val in zip(x_fit, y_fit):
-                tf = float(t_val)
-                if lo is not None and (tf < lo or tf > hi):
-                    continue
-                f.write(f"{tf:.10g} {float(y_val):.10g}\n")
+        return self._plot_export_context()._write_fit_file(
+            fit_path, payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset
+        )
 
     def _write_data_file(
         self,
@@ -8212,241 +7878,14 @@ class PlotPanel(QWidget):
         axis_key: str | None = None,
         bake_waterfall_offset: bool = True,
     ) -> None:
-        """Write a .dat file with spectra data and metadata header.
-
-        Row selection and baked display offsets are recorded with the captured
-        effective recipe; GLE script offsets leave the written values unchanged.
-        """
-        data = payload.get("data") or {}
-        t_data = data.get("t")
-        y_data = data.get("y")
-        y_err = data.get("err")
-        if t_data is None or y_data is None:
-            return
-
-        # Only baked offsets change the written values.
-        waterfall_offset = float(payload.get("waterfall_offset", 0.0))
-        if waterfall_offset and bake_waterfall_offset:
-            y_data = np.asarray(y_data, dtype=float) + waterfall_offset
-
-        display_label = label_text if label_text is not None else payload.get("label", "dataset")
-        run_metadata = (
-            payload.get("run_metadata") if isinstance(payload.get("run_metadata"), dict) else {}
+        return self._plot_export_context()._write_data_file(
+            dat_path,
+            payload,
+            label_text=label_text,
+            x_range=x_range,
+            axis_key=axis_key,
+            bake_waterfall_offset=bake_waterfall_offset,
         )
-        histogram_info = (
-            payload.get("histogram_info") if isinstance(payload.get("histogram_info"), dict) else {}
-        )
-        grouping = payload.get("grouping") if isinstance(payload.get("grouping"), dict) else {}
-
-        def _fmt_float(value: object, decimals: int) -> str:
-            try:
-                return f"{float(value):.{decimals}f}"
-            except (TypeError, ValueError):
-                return ""
-
-        def _fmt_mev(value: object) -> str:
-            try:
-                return f"{float(value) / 1.0e6:.2f}"
-            except (TypeError, ValueError):
-                return ""
-
-        def _safe_int(value: object) -> int | None:
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-
-        title = str(run_metadata.get("title", "") or "")
-        comment = str(run_metadata.get("comment", "") or "")
-        started = str(run_metadata.get("started", "") or "")
-        stopped = str(run_metadata.get("stopped", "") or "")
-        temperature = _fmt_float(run_metadata.get("temperature"), 3)
-        temperature_label = str(
-            run_metadata.get("temperature_label") or run_metadata.get("temperature_setpoint") or ""
-        ).strip()
-        field = _fmt_float(run_metadata.get("field"), 2)
-
-        n_hist = _safe_int(histogram_info.get("count"))
-        n_bins = _safe_int(histogram_info.get("n_bins"))
-        bin_width_us = histogram_info.get("bin_width_us")
-        bin_width_ps_text = ""
-        bin_width_us_text = ""
-        if bin_width_us is not None:
-            bin_width_ps_text = _fmt_float(float(bin_width_us) * 1.0e6, 6)
-            bin_width_us_text = _fmt_float(bin_width_us, 2)
-
-        events_grouped = _fmt_mev(histogram_info.get("events_grouped"))
-        events_raw = _fmt_mev(histogram_info.get("events_total"))
-
-        groups_raw = grouping.get("groups")
-        groups: dict[int, list[int]] = {}
-        if isinstance(groups_raw, dict):
-            for key, values in groups_raw.items():
-                gid = _safe_int(key)
-                if gid is None or not isinstance(values, list):
-                    continue
-                detectors: list[int] = []
-                for v in values:
-                    vv = _safe_int(v)
-                    if vv is not None:
-                        detectors.append(vv)
-                if detectors:
-                    groups[gid] = sorted(set(detectors))
-
-        # Backward-compatible fallback for payloads that store detectors as
-        # direct forward/backward lists rather than a groups mapping.
-        if not groups:
-            f_list = grouping.get("forward")
-            b_list = grouping.get("backward")
-            if isinstance(f_list, list):
-                f_det = [v for v in (_safe_int(x) for x in f_list) if v is not None]
-                if f_det:
-                    groups[1] = sorted(set(f_det))
-            if isinstance(b_list, list):
-                b_det = [v for v in (_safe_int(x) for x in b_list) if v is not None]
-                if b_det:
-                    groups[2] = sorted(set(b_det))
-
-        t0_bins = (
-            histogram_info.get("t0_bins") if isinstance(histogram_info.get("t0_bins"), list) else []
-        )
-        forward_group = _safe_int(grouping.get("forward_group"))
-        backward_group = _safe_int(grouping.get("backward_group"))
-        alpha = _fmt_float(grouping_balances(grouping)[0], 4)
-        t0_bin = _safe_int(grouping.get("t0_bin"))
-        if t0_bin is None:
-            t0_bin = 0
-        t_good_offset = _safe_int(grouping.get("t_good_offset"))
-        first_good_bin = _safe_int(grouping.get("first_good_bin"))
-        if t_good_offset is None and first_good_bin is not None:
-            t_good_offset = first_good_bin - t0_bin
-        last_good_bin = _safe_int(grouping.get("last_good_bin"))
-        binning = binning_spec(grouping)
-        bunching_factor = binning.factor
-        deadtime_correction = bool(grouping.get("deadtime_correction", False))
-
-        with open(dat_path, "w", encoding="utf-8") as f:
-            f.write("! START OF RUN INFORMATION\n")
-            write_recipe_header(
-                f, payload, x_range=x_range, bake_waterfall_offset=bake_waterfall_offset
-            )
-            f.write(f"!  Run number  : {payload.get('run_number', '')}\n")
-            if title:
-                f.write(f"!  Title       : {title}\n")
-            if temperature:
-                if temperature_label:
-                    f.write(f"!  Temperature : {temperature} K (label {temperature_label})\n")
-                else:
-                    f.write(f"!  Temperature : {temperature} K\n")
-            if field:
-                f.write(f"!  Field       : {field} G\n")
-            if comment:
-                f.write(f"!  Comment     : {comment}\n")
-            if started:
-                f.write(f"!  Started     : {started}\n")
-            if stopped:
-                f.write(f"!  Stopped     : {stopped}\n")
-            if (
-                n_hist is not None
-                and n_bins is not None
-                and bin_width_ps_text
-                and bin_width_us_text
-            ):
-                f.write(
-                    "!  Histograms  : "
-                    f"{n_hist} ({n_bins} bins of {bin_width_ps_text} ps = {bin_width_us_text} us)\n"
-                )
-            if events_grouped and events_raw:
-                f.write(
-                    f"!  Events      : {events_grouped} MEv grouped in range (raw = {events_raw})\n"
-                )
-            elif events_raw:
-                f.write(f"!  Events      : {events_raw} MEv\n")
-            f.write("! END OF RUN INFORMATION\n")
-            f.write("!\n")
-
-            f.write("! START OF GROUPING INFORMATION\n")
-            for gid in sorted(groups):
-                det_tokens: list[str] = []
-                for det in groups[gid]:
-                    idx = det - 1
-                    if 0 <= idx < len(t0_bins):
-                        det_tokens.append(f"{det:02d}({int(t0_bins[idx])})")
-                    else:
-                        det_tokens.append(f"{det:02d}")
-                f.write(f"!  Group#{gid:02d}  Hist(t0): {', '.join(det_tokens)}\n")
-
-            if forward_group is not None or backward_group is not None:
-                fwd_text = "" if forward_group is None else str(forward_group)
-                bwd_text = "" if backward_group is None else str(backward_group)
-                f.write(
-                    f"!  Forward Group = {fwd_text}, Backward Group = {bwd_text}, Alpha = {alpha}\n"
-                )
-            elif isinstance(grouping.get("forward"), list) or isinstance(
-                grouping.get("backward"), list
-            ):
-                f.write(f"!  Forward Group = forward, Backward Group = backward, Alpha = {alpha}\n")
-            if t_good_offset is not None or last_good_bin is not None:
-                fg_text = "" if t_good_offset is None else str(t_good_offset)
-                lg_text = "" if last_good_bin is None else str(last_good_bin)
-                f.write(f"!  Offset to first good bin = {fg_text}, Last good bin = {lg_text}\n")
-            binning_mode = binning.mode
-            if binning_mode == "variable":
-                f.write(
-                    f"!  Variable binning, initial bin = {binning.bin0_us} us, "
-                    f"bin at 10 us = {binning.bin10_us} us\n"
-                )
-            elif binning_mode == "constant_error":
-                f.write(f"!  Constant-error binning, initial bin = {binning.bin0_us} us\n")
-            elif bunching_factor is not None:
-                f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
-            f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
-            f.write("! END OF GROUPING INFORMATION\n")
-            f.write("!\n")
-
-            if payload.get("domain") == "frequency":
-                self._write_frequency_data_body(
-                    f, payload, display_label=display_label, x_range=x_range
-                )
-                return
-
-            if axis_key in {"P_x", "P_y", "P_z"}:
-                suffix = axis_key.split("_", 1)[1]
-                datarow_label = f"a_0 P_{suffix}(t)"
-                ylabel = f"a_0 P_{suffix}(t) (%)"
-            else:
-                datarow_label = "FB asymmetry"
-                ylabel = "% Asymmetry"
-
-            f.write("! START OF DATA SET INFORMATION\n")
-            f.write(f"!  Datarow: (Time) ({datarow_label}) (Error)\n")
-            if axis_key in {"P_x", "P_y", "P_z"}:
-                f.write(f"!  Projection: {axis_key}\n")
-            f.write(f"!  Title: {display_label}\n")
-            f.write("!  Xlabel: Time in microseconds\n")
-            f.write(f"!  Ylabel: {ylabel}\n")
-            if waterfall_offset:
-                f.write(f"!  waterfall offset: {waterfall_offset:.10g}\n")
-            f.write("! END OF DATA SET INFORMATION\n")
-            f.write("! time  asymmetry  error\n")
-            err_arr = y_err if y_err is not None else np.zeros_like(y_data)
-            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
-            for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
-                tf = float(t_val)
-                if lo is not None and (tf < lo or tf > hi):
-                    continue
-                f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
-
-    @staticmethod
-    def _frequency_x_column_name(x_unit: str, axis_mode: str, is_correlation: bool) -> str:
-        """Return the self-describing ``.dat`` x-column name for the display mode."""
-        if is_correlation:
-            return "coupling_MHz"
-        if axis_mode == "relative_ppm":
-            return "relative_shift_ppm"
-        if axis_mode == "shift":
-            return _FREQUENCY_SHIFT_X_COLUMN_NAME.get(x_unit, "shift_MHz")
-        return _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
 
     def _write_frequency_data_body(
         self,
@@ -8456,102 +7895,9 @@ class PlotPanel(QWidget):
         display_label: object,
         x_range: tuple[float, float] | None,
     ) -> None:
-        """Write the frequency-view DATA SET / FOURIER header and data rows.
-
-        Columns are ``c1`` = x in the current display unit, ``c2`` = amplitude,
-        ``c3`` = error, and — only when the display unit differs from canonical
-        MHz — ``c4`` = the canonical ``frequency_MHz`` axis, so the file stays
-        self-describing while the GLE script's ``d1=c1,c2`` mapping (plotted x,
-        amplitude) remains valid. The x-range filter is applied to the
-        display-unit column, matching the on-screen window and the text
-        export's control-value conversion.
-        """
-        data = payload.get("data") or {}
-        t_data = data.get("t")
-        y_data = data.get("y")
-        y_err = data.get("err")
-        if t_data is None or y_data is None:
-            return
-
-        mhz_arr = np.asarray(t_data, dtype=float)
-        x_display = payload.get("x_display")
-        x_disp_arr = (
-            np.asarray(x_display, dtype=float)
-            if x_display is not None
-            else self._convert_frequency_axis_for_display(t_data)
+        return self._plot_export_context()._write_frequency_data_body(
+            f, payload, display_label=display_label, x_range=x_range
         )
-
-        x_unit = str(payload.get("x_unit", "frequency_mhz"))
-        axis_mode = str(payload.get("axis_mode", "absolute"))
-        is_correlation = bool(payload.get("is_correlation"))
-        x_column = self._frequency_x_column_name(x_unit, axis_mode, is_correlation)
-        # Shift/ppm columns are not self-describing on their own (they need the
-        # reference), so always keep the canonical frequency_MHz column beside
-        # them; absolute field columns keep it only when the unit differs from MHz.
-        if is_correlation:
-            include_mhz = False
-        elif axis_mode in ("shift", "relative_ppm"):
-            include_mhz = True
-        else:
-            include_mhz = x_unit in ("field_gauss", "field_tesla")
-
-        x_label = str(payload.get("x_label") or self._display_x_label())
-        y_label = str(payload.get("y_label") or "FFT (%)")
-        # A unit-area field distribution is a density in the displayed x unit
-        # (the payload carries the exported Jacobian's unit), so name its column
-        # distinctly from an amplitude spectrum. The label sniff is a fallback
-        # for payloads without the explicit key.
-        density_unit = payload.get("density_unit")
-        if density_unit is None and "1/mhz" in y_label.lower():
-            density_unit = "mhz"
-        amplitude_column = (
-            _DENSITY_COLUMN_NAME.get(str(density_unit), "density_per_MHz")
-            if density_unit is not None
-            else "amplitude"
-        )
-
-        f.write("! START OF DATA SET INFORMATION\n")
-        f.write(f"!  Datarow: ({x_label}) (Amplitude) (Error)\n")
-        f.write(f"!  Title: {display_label}\n")
-        f.write(f"!  Xlabel: {x_label}\n")
-        f.write(f"!  Ylabel: {y_label}\n")
-        f.write("! END OF DATA SET INFORMATION\n")
-        f.write("!\n")
-
-        f.write("! START OF FOURIER INFORMATION\n")
-        fourier_metadata = payload.get("fourier_metadata")
-        if isinstance(fourier_metadata, dict):
-            for key in sorted(fourier_metadata):
-                f.write(f"!  {key}: {fourier_metadata[key]}\n")
-        f.write(f"!  Display mode: {y_label}\n")
-        f.write(f"!  X unit: {x_unit}\n")
-        f.write(f"!  Axis mode: {axis_mode}\n")
-        if density_unit is not None:
-            f.write(
-                f"!  Density unit: {_DENSITY_COLUMN_NAME.get(str(density_unit), str(density_unit))}\n"
-            )
-        reference_gauss = payload.get("reference_field_gauss")
-        if reference_gauss is not None:
-            f.write(f"!  Reference field: {float(reference_gauss):.4g} G\n")
-        f.write("! END OF FOURIER INFORMATION\n")
-
-        column_names = [x_column, amplitude_column, "error"]
-        if include_mhz:
-            column_names.append("frequency_MHz")
-        f.write("! " + "  ".join(column_names) + "\n")
-
-        err_arr = y_err if y_err is not None else np.zeros_like(y_data)
-        lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
-        for x_val, y_val, e_val, mhz_val in zip(x_disp_arr, y_data, err_arr, mhz_arr):
-            xf = float(x_val)
-            if lo is not None and (xf < lo or xf > hi):
-                continue
-            if include_mhz:
-                f.write(
-                    f"{xf:.10g} {float(y_val):.10g} {float(e_val):.10g} {float(mhz_val):.10g}\n"
-                )
-            else:
-                f.write(f"{xf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results (delegates to the shared foundation)."""
@@ -8778,35 +8124,6 @@ class PlotPanel(QWidget):
                     written.append(fit_path)
         return written
 
-    def _make_stacked_gle_axes(self, glp, n_axes: int):
-        """Create *n_axes* vertically stacked, x-shared GLE axes.
-
-        Returns ``(figure, axes_list)``. Prefers ``glp.subplots`` and falls back
-        to manual ``add_subplot`` wiring. Shared by the vector-projection and
-        grouped-time-domain export branches so both render as stacked subplots.
-        """
-        if hasattr(glp, "subplots"):
-            fig, axes_candidate = glp.subplots(
-                nrows=n_axes,
-                ncols=1,
-                figsize=(6.4, 2.8 * n_axes),
-                sharex=True,
-            )
-            axes_objs = (
-                list(axes_candidate) if isinstance(axes_candidate, list) else [axes_candidate]
-            )
-            return fig, axes_objs
-
-        fig = glp.figure(figsize=(6.4, 2.8 * n_axes))
-        axes_objs = []
-        shared_ax = None
-        for idx in range(n_axes):
-            ax = fig.add_subplot(n_axes, 1, idx + 1, sharex=shared_ax)
-            if shared_ax is None:
-                shared_ax = ax
-            axes_objs.append(ax)
-        return fig, axes_objs
-
     def export_plots_to_gle(self) -> None:
         """Export the visible curves as GLE with their plotted errors and bands."""
         if not self._export_corrections_ready():
@@ -8822,173 +8139,67 @@ class PlotPanel(QWidget):
 
         run_gle_export(
             self,
-            tasks=self._tasks,
             dialog_title="Export Plot(s) to GLE",
             default_name="asymmetry_plot.gleplot",
             output_format=self._gle_format_combo.currentText().lower(),
-            build=lambda glp, gle_path, export_dir: self._build_gle_export(glp, gle_path, payloads),
+            prepare=lambda: self._gle_snapshot(payloads).build,
         )
 
-    def _build_gle_export(self, glp, gle_path: Path, payloads: list[dict]) -> GleExportBuild:
-        """Build the export figure + sidecars (``run_gle_export`` builder)."""
-        colors = [
-            "black",
-            "red",
-            "blue",
-            "green",
-            "orange",
-            "purple",
-            "cyan",
-            "magenta",
-            "brown",
-            "gray",
-        ]
+    def _plot_export_context(self):
+        from asymmetry.gui.utils.plot_export_data import PlotExportData
 
-        written_files: list[Path] = []
-        dat_writes: list[tuple[Path, dict, object, str | None]] = []
-        # Track every data-file token used this export so two series sharing a
-        # label cannot silently overwrite each other's .dat/.fit files.
-        used_tokens: set[str] = set()
+        return PlotExportData(
+            self._current_frequency_x_unit,
+            self._frequency_axis_mode,
+            self._frequency_axis_is_correlation,
+            self._is_frequency_plot_panel(),
+            self._active_reference_mhz(),
+            self._display_x_label(),
+        )
 
-        grouped_datasets = list(getattr(self, "_grouped_time_subplot_datasets", []) or [])
+    def _gle_snapshot(self, payloads):
+        from copy import deepcopy
 
-        axis_order: list[str] = []
+        from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
+
+        axes = []
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
-            axis_order = self._projection_subplot_order(self._vector_subplot_datasets)
-
-        if axis_order:
-            fig, axes_objs = self._make_stacked_gle_axes(glp, len(axis_order))
-            last_ax = None
-            for idx, axis_key in enumerate(axis_order):
-                ax = axes_objs[idx]
-                axis_payloads = self.get_current_plot_export_data(
-                    self._vector_subplot_datasets.get(axis_key, [])
+            for key in self._projection_subplot_order(self._vector_subplot_datasets):
+                axes.append(
+                    (key, self.get_current_plot_export_data(self._vector_subplot_datasets[key]), "")
                 )
-                if not axis_payloads:
-                    continue
-                show_legend = idx == 0 and len(axis_payloads) > 1
-                self._plot_export_payloads_on_axis(
-                    ax,
-                    axis_payloads,
-                    axis_key=axis_key,
-                    written_files=written_files,
-                    dat_writes=dat_writes,
-                    gle_path=gle_path,
-                    colors=colors,
-                    show_legend=show_legend,
-                    used_tokens=used_tokens,
-                )
-                last_ax = ax
-            # Label the time axis on the last subplot that actually drew data, so
-            # an empty trailing projection cannot leave the figure unlabeled.
-            if last_ax is not None:
-                last_ax.set_xlabel("Time (µs)")
-
-            if hasattr(fig, "subplots_adjust"):
-                # Keep y-axis labels and bottom x-label clear of clipping.
-                fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
-        elif len(grouped_datasets) > 1:
-            # Individual groups: render one stacked subplot per group, mirroring
-            # the on-screen grouped-time-domain view rather than overlaying every
-            # group on a single axis.
-            fig, axes_objs = self._make_stacked_gle_axes(glp, len(grouped_datasets))
-            last_ax = None
-            for idx, dataset in enumerate(grouped_datasets):
-                ax = axes_objs[idx]
-                group_payloads = self.get_current_plot_export_data([dataset])
-                if not group_payloads:
-                    continue
-                # Use the group's run label as its identity so per-group data
-                # files get distinct names and the subplot title matches screen.
-                group_label = str(
-                    getattr(dataset, "run_label", group_payloads[0].get("label", f"group_{idx}"))
-                )
-                group_payloads[0]["label"] = group_label
-                self._plot_export_payloads_on_axis(
-                    ax,
-                    group_payloads,
-                    axis_key=None,
-                    written_files=written_files,
-                    dat_writes=dat_writes,
-                    gle_path=gle_path,
-                    colors=colors,
-                    show_legend=False,
-                    used_tokens=used_tokens,
-                )
-                if hasattr(ax, "set_title"):
-                    ax.set_title(self._sanitize_gle_text(group_label), loc="left")
-                last_ax = ax
-            if last_ax is not None:
-                last_ax.set_xlabel("Time (µs)")
-
-            if hasattr(fig, "subplots_adjust"):
-                fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
+        elif len(self._grouped_time_subplot_datasets) > 1:
+            for dataset in self._grouped_time_subplot_datasets:
+                data = self.get_current_plot_export_data([dataset])
+                label = dataset.run_label
+                if data:
+                    data[0]["label"] = label
+                axes.append((None, data, label))
         else:
-            # Create the figure only in the branch that uses it (the stacked
-            # branches build their own via _make_stacked_gle_axes).
-            figure_kwargs: dict = {"figsize": self._export_figure_size(len(payloads))}
-            if any(p.get("domain") == "frequency" for p in payloads) and hasattr(
-                glp, "GLEGraphConfig"
-            ):
-                # A measured spectrum must render piecewise-linear: GLE's
-                # ``smooth`` spline overshoots on sharp resonance lines.
-                # ``GlobalConfig.get_graph()`` hands every figure the shared
-                # singleton, so never flip ``smooth_curves`` on it in place —
-                # pass this figure its own config instead. Time-domain exports
-                # keep gleplot's default behavior untouched.
-                figure_kwargs["graph"] = glp.GLEGraphConfig(smooth_curves=False)
-            fig = glp.figure(**figure_kwargs)
-            ax = fig.add_subplot(111)
-            self._plot_export_payloads_on_axis(
-                ax,
-                payloads,
-                axis_key=None,
-                written_files=written_files,
-                dat_writes=dat_writes,
-                gle_path=gle_path,
-                colors=colors,
-                show_legend=len(payloads) > 1,
-                used_tokens=used_tokens,
-            )
-            if payloads and payloads[0].get("domain") == "frequency":
-                ax.set_xlabel(
-                    self._sanitize_gle_text(
-                        self._strip_matplotlib_math(
-                            payloads[0].get("x_label") or self._display_x_label()
-                        ),
-                        fallback="Frequency (MHz)",
-                    )
-                )
-            else:
-                ax.set_xlabel("Time (µs)")
-
-        fig.savefig(str(gle_path))
-
-        # Ensure our sidecar .dat files retain metadata headers even when
-        # gleplot generates/overwrites data_name-matched data files on save.
-        # These sidecars stay raw when gleplot applies the waterfall offset in
-        # the script (``let``); against older gleplot the offset is baked here
-        # so the file matches the drawn stack.
-        bake_offset = not gle_offset_supported()
-        for dat_path, payload, label_text, axis_key in dat_writes:
-            self._write_data_file(
-                dat_path,
-                payload,
-                label_text=label_text,
-                axis_key=axis_key,
-                bake_waterfall_offset=bake_offset,
-            )
-
-        return GleExportBuild(files=written_files)
+            axes.append((None, payloads, ""))
+        context = self._plot_export_context()
+        return PlotGleSnapshot(
+            context.frequency_unit,
+            context.axis_mode,
+            context.correlation,
+            context.frequency_panel,
+            context.reference_mhz,
+            context.x_label,
+            tuple(deepcopy(axes)),
+            (float(self._x_min.value()), float(self._x_max.value())),
+            {
+                key: self._limits.held(self._y_axis_id(key))
+                or (float(self._y_min.value()), float(self._y_max.value()))
+                for key, _, _ in axes
+            },
+            (6.4, 2.8 * len(axes)) if len(axes) > 1 else self._export_figure_size(len(payloads)),
+            len(axes) > 1,
+        )
 
     # Keep old name as alias for backward compatibility with tests.
     def export_current_plot(self) -> None:
         """Export current main-plot view as GLE (with optional compiled output)."""
         self.export_plots_to_gle()
-
-    def shutdown_workers(self, timeout_ms: int = 10_000) -> None:
-        """Stop this panel's background tasks (GLE export compiles)."""
-        self._tasks.shutdown(timeout_ms)
 
     # ── rotating reference frame (Options → Advanced) ───────────────────
 

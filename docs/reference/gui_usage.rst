@@ -499,7 +499,7 @@ on-screen stack, but differ in *where* the offset lives. With ``gleplot`` >= 1.7
 the GLE export applies each per-trace offset in the GLE script itself (a GLE
 ``let`` that shifts the trace at plot time), so the exported ``.dat``/``.fit``
 sidecars keep their raw, unshifted values — the stack is a property of the
-figure, not of the data, and the gleplot figure editor can retune it. Against
+figure, not of the data, and can be retuned in the script. Against
 older ``gleplot`` (and always for the plain-text export, which has no script to
 carry the offset) the offset is baked into the written column instead. Either
 way each file records a ``waterfall offset:`` header line documenting the
@@ -823,17 +823,17 @@ Compilation behaviour:
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
-After the export is written, Asymmetry opens the exported ``.gle`` script
-directly in the gleplot figure editor (an in-app window, styled to match the
-rest of Asymmetry) so you can tweak the script and re-render without leaving
-the app. The editor opens even when no GLE binary is installed — you can still
-edit the script, and the editor reports "GLE: not found" in its status bar.
-Its live preview compiles with the same GLE binary configured under
-**Setup ▸ GLE Setup…**. This requires ``gleplot`` >= 1.6; against older
-``gleplot`` installs Asymmetry falls back to the previous behaviour, a
-read-only static preview dialog after successful compiles. The same editor is
-also reachable directly from **Analysis ▸ GLE Figure Editor…**, which opens a
-blank editor window at any time.
+The **GLE Plot Preview** window displays the compiled vector figure. Use
+**Fit to window**, **Zoom in**, **Zoom out**, and **100%** to inspect the plot.
+Drag with the middle mouse button to pan. **Details** shows the saved files.
+The window is non-modal. EPS exports include
+a PDF companion used for the preview. The configured **Setup ▸ GLE Setup…**
+compiler is used. Generation and compilation run in the background; **Close**
+cancels an active export. Without GLE, the script and sidecars are still saved.
+
+.. image:: /_generated/screenshots/gle_plot_preview.png
+   :alt: Zoomable vector preview of a synthetic ZF Ag plot
+   :width: 100%
 
 Fitting panel
 -------------
@@ -1467,13 +1467,10 @@ via the ``gleplot`` Python library:
      parameters recorded as comments at the top of the file
    * Any optional ``.fit`` sidecars needed for active model overlays
 
-4. If GLE is installed on your system, the script is compiled automatically
-   to PDF or EPS and the exported ``.gle`` script opens in the gleplot figure
-   editor (falling back to a read-only static preview dialog against
-   ``gleplot`` < 1.6)
-5. If GLE is not installed, the script and data files are still saved — and
-   still open in the figure editor for editing — you can compile them later
-   with ``gle -d pdf <name>.gle`` from inside the ``.gleplot`` folder
+4. If GLE is installed, the script is compiled and shown in **GLE Plot Preview**.
+   EPS exports also write a PDF companion for previewing.
+5. Without GLE, the script and data are saved for later compilation with
+   ``gle -d pdf <name>.gle`` inside the export folder.
 
 .. note::
 
@@ -1489,9 +1486,7 @@ The Global Parameter Fit window provides two dedicated GLE export buttons:
 * **Export fits to GLE** (left pane): exports the per-dataset fit overlays
 * **Export plot(s) to GLE** (right pane): exports local-parameter trend plots
 
-Both buttons open the exported ``.gle`` script in the gleplot figure editor
-after the export is written, the same as the main-plot and fit-parameters GLE
-exports above.
+Both buttons show the compiled figure in **GLE Plot Preview**.
 
 For local-parameter exports, Asymmetry also writes:
 
