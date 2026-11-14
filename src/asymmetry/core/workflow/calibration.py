@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from numbers import Integral
 from uuid import uuid4
 
 import numpy as np
@@ -64,6 +65,11 @@ class CalibrationOptions:
     TF with no envelope selects among TFEnvelope in declared order. Parameter
     constraints use the shared TF request vocabulary. Period is the source's
     acquired period, independent of a target ReductionSettings.period.
+
+    ``count_packing`` is a TF-only positive integral number of native bins per
+    fitted observation. None inherits source binning; an explicit factor
+    replaces it with fixed packing (one requests native bins). It is independent
+    of ReductionSettings.rebin. Quick methods retain their native-window estimator.
     """
 
     method: str | None = None
@@ -75,10 +81,20 @@ class CalibrationOptions:
     exclude: tuple[float, float] | None = None
     minos: bool = False
     pulse_separation_us: float | None = None
+    count_packing: int | None = None
 
     def __post_init__(self):
         if self.method is not None and self.method not in CALIBRATION_METHODS:
             raise ValueError(f"Unknown calibration method {self.method!r}")
+        if self.count_packing is not None:
+            if (
+                isinstance(self.count_packing, bool)
+                or not isinstance(self.count_packing, Integral)
+                or self.count_packing < 1
+            ):
+                raise ValueError("Count packing must be an integer >= 1")
+            if self.method != TF_CALIBRATION_METHOD:
+                raise ValueError("Count packing requires tf_calibration_fit")
         if not supports_joint_calibration(self.method) and (
             self.fit_beta
             or self.envelope is not None
@@ -111,6 +127,8 @@ def calibrate_run(
     period. The historical ratio uses red for a difference and preserves its
     single-period source adaptation. Corrections/timing come from the source
     profile; TF owns its own native-window and fitted-background preparation.
+    ``options.count_packing`` controls TF count packing; ``settings.rebin``
+    applies only to science reduction and is not composed with calibration bins.
     """
 
     def check_cancel():
@@ -165,6 +183,10 @@ def calibrate_source(
     if run is None or not run.histograms:
         raise ValueError("Calibration requires source detector histograms")
     grouping = run.grouping
+    if options.count_packing is not None:
+        grouping = dict(grouping, binning_mode="fixed", bunching_factor=options.count_packing)
+        run = replace(run, grouping=grouping)
+        dataset = replace(dataset, run=run)
     projections = derive_projection_pairs(
         grouping.get("groups"), grouping.get("group_names"), grouping.get("projections")
     )

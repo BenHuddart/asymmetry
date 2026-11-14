@@ -75,6 +75,15 @@ calibration, and reduction, and :doc:`/reference/detector_grouping` for policy.
 
 .. autofunction:: asymmetry.core.workflow.apply_grouping_preset
 
+Scripted calibration packing
+----------------------------
+
+Use ``CalibrationOptions.count_packing`` to request fixed TF count packing
+independently of science reduction. See :ref:`calibration-count-packing` for
+the public-call example, inherited-source behaviour, and quick-method limits.
+
+The request and operation are documented in :doc:`fitting/calibration`.
+
 Scripted temperature selection
 ------------------------------
 

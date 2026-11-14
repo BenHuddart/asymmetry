@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request explicit TF calibration count packing through `CalibrationOptions`,
+  independently of science reduction, while retaining fitted support and joint uncertainty.
+
 - Select an explicit logged thermometer in scripts with consistent dataset/run
   temperatures and scan coordinates, retaining original readings and selection context.
 

@@ -67,6 +67,12 @@ also drops its incomplete final group, even when its base mode is nonuniform.
 Display bunching
 ----------------
 
+Scripted TF calibration has its own ``CalibrationOptions.count_packing``
+request, independent of ``ReductionSettings.rebin`` and display merging.
+Omission inherits the source's fixed bunching factor; an explicit positive
+integer replaces it, without composition. See :ref:`calibration-count-packing`
+for the count-sum, trailing-bin, and time-window semantics and a scripting example.
+
 The main toolbar's **Bunch:** control merges that many recorded output bins.
 Its tooltip is ``Merge this many recorded output bins.`` The grouping dialog
 sets the base binning; the toolbar composes with it. Fixed factor 4 and
