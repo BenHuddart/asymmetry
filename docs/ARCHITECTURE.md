@@ -190,9 +190,9 @@ them:
   construction.
 - `gui.widgets.fit_run_controls.FitRunControls` — the Stop/Cancel button plus
   optional progress bar shared by the single and global fit tabs.
-- `gui.utils.export.compile_gle()` — the GLE subprocess-invocation wrapper
-  (`subprocess.run([gle, "-d", fmt, file], ...)`) shared by every GLE
-  export/preview call site.
+- `gui.utils.export.compile_gle()` — the cancellable GLE subprocess wrapper,
+  shared by every GLE export/preview call site, with bounded compilation and
+  support for multiple output devices in one invocation.
 - `gui.utils.formatting.format_param_label()` — shared parameter-name display
   formatting.
 - `gui.windows.wizard_base.WizardWindowBase` — the shared `TaskRunner` +

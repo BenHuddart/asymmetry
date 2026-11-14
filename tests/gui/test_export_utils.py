@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from asymmetry.gui.utils.export import compile_gle
+pytest.importorskip("PySide6")
+
+from asymmetry.gui.utils.export import compile_gle  # noqa: E402
+
+pytestmark = pytest.mark.gui
 
 
 def test_compile_gle_builds_expected_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -58,3 +62,31 @@ def test_compile_gle_propagates_called_process_error(
         compile_gle("gle", tmp_path / "plot.gle", "png", cwd=tmp_path)
 
     assert exc_info.value.stderr == "boom"
+
+
+@pytest.mark.parametrize("cancel", [True, False])
+def test_compiler_cancellation_and_timeout_reap_process(monkeypatch, tmp_path, cancel):
+    import sys
+
+    from asymmetry.gui.tasks import TaskCancelledError
+
+    original = subprocess.Popen
+    processes = []
+
+    def launch(args, **kwargs):
+        process = original([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    with pytest.raises(TaskCancelledError if cancel else subprocess.TimeoutExpired):
+        compile_gle(
+            "gle",
+            tmp_path / "plot.gle",
+            ("eps", "pdf"),
+            cwd=tmp_path,
+            timeout=0.05,
+            cancelled=lambda: cancel,
+        )
+    assert len(processes) == 1
+    assert processes[0].poll() is not None

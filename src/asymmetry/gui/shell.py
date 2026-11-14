@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
 from asymmetry.gui.mainwindow import MainWindow, _load_window_icon
 from asymmetry.gui.screen_guard import place_window_on_screen
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.utils.gle_editor import close_all_gle_editors
 from asymmetry.gui.utils.reduction_cache import ReductionCache
 
 if TYPE_CHECKING:
@@ -238,7 +237,4 @@ class ProjectShell(QWidget):
                 return
         for page in pages:
             page._shutdown_workers()
-        # Parentless gleplot editor windows are shared across the tabs, so they
-        # are closed once here rather than by each page.
-        close_all_gle_editors()
         super().closeEvent(event)

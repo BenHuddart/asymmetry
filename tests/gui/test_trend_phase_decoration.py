@@ -235,6 +235,9 @@ def test_gle_export_writes_the_phase_band_and_boundary_line(
 ) -> None:
     panel.select_series(["s-phase"])
 
+    from tests.gui.gle_helpers import recording_factories
+
+    recording_factories(monkeypatch)
     axis = _FakeGleAxis()
     fig = _FakeGleFigure(axis)
     fake_glp = SimpleNamespace(
@@ -253,7 +256,7 @@ def test_gle_export_writes_the_phase_band_and_boundary_line(
     out_gle = tmp_path / "phase.gleplot"
     gle_path, export_dir = resolve_gle_export_paths(out_gle, folder=True)
     export_dir.mkdir(parents=True, exist_ok=True)
-    build = panel._build_gle_export(fake_glp, gle_path, export_dir)
+    build = panel._gle_snapshot().build(fake_glp, gle_path, export_dir)
     assert build is not None
 
     # The lone y-parameter's data-point colour is the phase colour (mirrors
@@ -273,6 +276,9 @@ def test_gle_export_omits_band_for_plain_series(
 ) -> None:
     panel.select_series(["s-plain"])
 
+    from tests.gui.gle_helpers import recording_factories
+
+    recording_factories(monkeypatch)
     axis = _FakeGleAxis()
     fig = _FakeGleFigure(axis)
     fake_glp = SimpleNamespace(
@@ -291,7 +297,7 @@ def test_gle_export_omits_band_for_plain_series(
     out_gle = tmp_path / "plain.gleplot"
     gle_path, export_dir = resolve_gle_export_paths(out_gle, folder=True)
     export_dir.mkdir(parents=True, exist_ok=True)
-    build = panel._build_gle_export(fake_glp, gle_path, export_dir)
+    build = panel._gle_snapshot().build(fake_glp, gle_path, export_dir)
     assert build is not None
     assert axis.fill_between_calls == []
     assert axis.plot_calls == []

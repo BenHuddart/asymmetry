@@ -68,9 +68,7 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
 # (docs/plans/axis-limit-policy.md). A `set_xlim(`/`set_ylim(` call elsewhere
 # in these files bypasses the policy.
 AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
-    GUI_ROOT / "panels" / "plot_panel.py": frozenset(
-        {"_apply_limits", "_plot_export_payloads_on_axis"}
-    ),
+    GUI_ROOT / "panels" / "plot_panel.py": frozenset({"_apply_limits"}),
     GUI_ROOT / "panels" / "alc_panel.py": frozenset({"_apply_axis_limits"}),
 }
 # Surfaces that are not axis-limit-policy plots at all (a fit-parameter chart,
@@ -81,6 +79,9 @@ AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
 AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset(
     {
         GUI_ROOT / "panels" / "fit_parameters_panel.py",
+        # File exports apply captured limits to independent GLE axes.
+        GUI_ROOT / "utils" / "parameter_gle.py",
+        GUI_ROOT / "utils" / "plot_gle.py",
         GUI_ROOT / "widgets" / "detector_schematic.py",
         GUI_ROOT / "widgets" / "series_fit_canvas.py",
         GUI_ROOT / "widgets" / "suggestion_overlay.py",
@@ -100,8 +101,8 @@ TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
 SCREEN_GUARD_HOME = GUI_ROOT / "screen_guard.py"
 
 # ── GLE export orchestration ──────────────────────────────────────────────────
-# Canonical home for the GLE export sequence (save dialog → build → async
-# compile on a TaskRunner → result dialogs → editor/static-preview step).
+# Canonical home for the GLE export sequence (save dialog → snapshot →
+# worker generation and compilation → vector preview).
 # A direct `compile_gle(` call, a fresh `importlib.import_module("gleplot")`,
 # or a bespoke `_show_gle_preview` implementation outside gui/utils re-rolls
 # that foundation — and, for the compile, re-introduces a synchronous
@@ -111,7 +112,6 @@ GLE_EXPORT_UTILS = frozenset(
     {
         GLE_EXPORT_HOME,
         GUI_ROOT / "utils" / "export.py",
-        GUI_ROOT / "utils" / "gle_editor.py",
     }
 )
 GLEPLOT_IMPORT_RE = re.compile(r"""import_module\(\s*["']gleplot["']\s*\)""")

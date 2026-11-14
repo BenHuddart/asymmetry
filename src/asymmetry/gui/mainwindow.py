@@ -305,7 +305,6 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.utils import app_data
-from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.utils.joint_publication import joint_source_publication
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
@@ -331,6 +330,7 @@ from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.rotating_frame_bar import FRAME_METADATA_KEY
 from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
+from asymmetry.gui.windows.gle_preview import close_gle_previews
 from asymmetry.gui.windows.global_fit_compare_dialog import GlobalFitCompareDialog
 from asymmetry.gui.windows.global_parameter_fit_window import (
     GlobalParameterFitWindow,
@@ -1297,8 +1297,6 @@ class MainWindow(QMainWindow):
             self._batch_seeding_group.addAction(action)
             self._batch_seeding_actions[mode] = action
         analysis_menu.addAction("Export fit report…", self._on_export_fit_report)
-        analysis_menu.addSeparator()
-        analysis_menu.addAction("GLE Figure &Editor…", self._on_open_gle_editor)
 
         # View
         view_menu = mb.addMenu("&View")
@@ -5992,17 +5990,6 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"ERROR writing fit report: {exc}")
             return
         self._log_panel.log(f"Exported fit report ({len(records)} fits) to {path}", tag="fit")
-
-    def _on_open_gle_editor(self) -> None:
-        """Open a blank gleplot figure editor window (Analysis menu)."""
-        if not launch_gle_editor(None):
-            QMessageBox.information(
-                self,
-                "GLE Figure Editor Unavailable",
-                "The GLE figure editor requires the gleplot package with its GUI "
-                "extra (gleplot ≥ 1.6). Update Asymmetry's optional dependencies "
-                "or install gleplot[gui].",
-            )
 
     def _should_launch_multi_group_fit_window(self) -> bool:
         """Return True when Fit should open the multi-group fit window."""
@@ -17528,6 +17515,7 @@ class MainWindow(QMainWindow):
         Split out of :meth:`closeEvent` so a hosting ProjectShell can run it
         for each tab once the whole quit sequence has been approved.
         """
+        close_gle_previews(self)
         self._scan_controller.shutdown()
         # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit
         # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
@@ -17542,8 +17530,7 @@ class MainWindow(QMainWindow):
         params_panel = getattr(self, "_fit_parameters_panel", None)
         if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
             params_panel.shutdown_workers()
-        # GLE export compile workers in the plot panels, and the data browser's
-        # background combine worker (all docked widgets too).
+        # Docked surfaces shut down any background work they own.
         for attr in ("_plot_panel", "_frequency_plot_panel", "_data_browser"):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
@@ -17589,12 +17576,6 @@ class MainWindow(QMainWindow):
         if not self._dirty:
             self._delete_autosave_file()
         self._shutdown_workers()
-        # Parentless gleplot editor windows (Analysis ▸ GLE Figure Editor… and
-        # post-export previews) outlive the panel that opened them — close them
-        # explicitly rather than leaving them dangling after MainWindow exits.
-        # Hosted, they are shared across tabs, so the shell closes them on quit.
-        if self._shell is None:
-            close_all_gle_editors()
         super().closeEvent(event)
 
 

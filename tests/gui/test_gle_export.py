@@ -9,7 +9,6 @@ for tests to observe the flow.
 
 from __future__ import annotations
 
-import subprocess
 import time
 from pathlib import Path
 
@@ -23,7 +22,6 @@ pytest.importorskip("gleplot", reason="gle extra not installed")
 from PySide6.QtWidgets import QFileDialog, QWidget  # noqa: E402
 
 import asymmetry.gui.utils.gle_export as gle_export  # noqa: E402
-from asymmetry.gui.tasks import TaskRunner  # noqa: E402
 from asymmetry.gui.utils.gle_export import (  # noqa: E402
     GleExportBuild,
     dedup_export_token,
@@ -32,36 +30,6 @@ from asymmetry.gui.utils.gle_export import (  # noqa: E402
     run_gle_export,
     safe_file_token,
 )
-
-
-@pytest.fixture
-def harness(qapp, tmp_path, monkeypatch):
-    """A parent widget + TaskRunner + recorded dialog seams + canned save path."""
-    parent = QWidget()
-    tasks = TaskRunner(parent)
-
-    rec: dict[str, list] = {"result": [], "warning": [], "info": [], "view": []}
-    monkeypatch.setattr(
-        gle_export,
-        "show_export_result_dialog",
-        lambda p, title, summary, details: rec["result"].append((summary, details)),
-    )
-    monkeypatch.setattr(
-        gle_export, "show_warning", lambda p, title, msg: rec["warning"].append((title, msg))
-    )
-    monkeypatch.setattr(
-        gle_export, "show_info", lambda p, title, msg: rec["info"].append((title, msg))
-    )
-    monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: rec["view"].append(Path(gp)))
-    monkeypatch.setattr(
-        QFileDialog,
-        "getSaveFileName",
-        staticmethod(lambda *a, **k: (str(tmp_path / "figure.gleplot"), "")),
-    )
-
-    yield parent, tasks, rec, tmp_path
-    tasks.shutdown()
-    parent.close()
 
 
 def _wait(qapp, predicate, timeout_s=10.0) -> bool:
@@ -74,7 +42,7 @@ def _wait(qapp, predicate, timeout_s=10.0) -> bool:
     return False
 
 
-def _build(glp, gle_path: Path, export_dir: Path) -> GleExportBuild:
+def _build(glp, gle_path: Path, export_dir: Path, **kwargs) -> GleExportBuild:
     fig = glp.figure()
     ax = fig.add_subplot(1, 1, 1)
     ax.plot([0, 1], [0, 1])
@@ -193,227 +161,65 @@ def test_prune_stale_sidecars_refuses_non_gleplot_directory(tmp_path):
 # ---------------------------------------------------------------------------
 # run_gle_export terminal paths
 # ---------------------------------------------------------------------------
-def test_export_success_path(qapp, harness, monkeypatch):
-    parent, tasks, rec, tmp_path = harness
-    compiled = []
+@pytest.mark.parametrize("device", ["pdf", "eps"])
+def test_export_preview_compiles_once(qapp, tmp_path, monkeypatch, device):
+    from asymmetry.gui.windows.gle_preview import GlePlotPreview
+
+    parent = QWidget()
+    calls = []
     monkeypatch.setattr(
-        gle_export,
-        "compile_gle",
-        lambda exe, gle_file, fmt, *, cwd, **kw: compiled.append((Path(gle_file), fmt)),
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "figure.gleplot"), "")
     )
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "gle")
 
+    def compile(exe, script, devices, **kwargs):
+        calls.append(devices)
+
+        for device in devices:
+            Path(script).with_suffix("." + device).write_bytes(b"invalid PDF")
+
+    monkeypatch.setattr(gle_export, "compile_gle", compile)
     run_gle_export(
         parent,
-        tasks=tasks,
         dialog_title="Export",
         default_name="figure.gleplot",
-        output_format="pdf",
-        build=_build,
+        output_format=device,
+        prepare=lambda: _build,
     )
+    preview = parent.findChild(GlePlotPreview)
+    assert preview is not None
+    assert _wait(qapp, lambda: not preview.tasks.active_count)
+    assert calls == ([("pdf",)] if device == "pdf" else [("eps", "pdf")])
+    assert "Preview unavailable" in preview.status.text()
+    preview.zoom_in()
+    preview.fit()
+    assert len(calls) == 1
+    preview.close()
+    parent.close()
 
-    assert _wait(qapp, lambda: rec["result"] or rec["warning"])
-    assert not rec["warning"]
-    gle_path = tmp_path / "figure.gleplot" / "figure.gle"
-    assert gle_path.exists()
-    assert compiled == [(gle_path, "pdf")]
-    summary, details = rec["result"][0]
-    assert str(gle_path) in summary and "figure.pdf" in summary
-    assert str(gle_path) in details
-    assert rec["view"] == [gle_path]
 
+def test_export_without_compiler_saves_script(qapp, tmp_path, monkeypatch):
+    from asymmetry.gui.windows.gle_preview import GlePlotPreview
 
-def test_export_compile_error_surfaces_stderr(qapp, harness, monkeypatch):
-    parent, tasks, rec, tmp_path = harness
-
-    def _boom(exe, gle_file, fmt, *, cwd, **kw):
-        raise subprocess.CalledProcessError(1, ["gle"], stderr="fonts exploded")
-
-    monkeypatch.setattr(gle_export, "compile_gle", _boom)
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=_build,
+    parent = QWidget()
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "figure.gleplot"), "")
     )
-
-    assert _wait(qapp, lambda: rec["warning"])
-    title, msg = rec["warning"][0]
-    assert title == "GLE compilation failed"
-    assert "fonts exploded" in msg
-    assert not rec["result"]
-    # The exported script still opens for editing after a failed compile.
-    assert rec["view"] == [tmp_path / "figure.gleplot" / "figure.gle"]
-
-
-def test_export_with_unrunnable_gle_binary_names_the_path(qapp, harness, monkeypatch):
-    """A configured path that exists but cannot execute (lost x-bit, not a
-    binary) must surface as a clear warning naming the path — not a raw
-    traceback out of the click handler (the pre-refactor behavior)."""
-    parent, tasks, rec, tmp_path = harness
-
-    def _denied(exe, gle_file, fmt, *, cwd, **kw):
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(gle_export, "compile_gle", _denied)
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/opt/broken/gle")
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=_build,
-    )
-
-    assert _wait(qapp, lambda: rec["warning"])
-    title, msg = rec["warning"][0]
-    assert title == "GLE compilation failed"
-    assert "/opt/broken/gle" in msg
-    assert "GLE Setup" in msg
-    # The export itself succeeded; the script still opens for editing.
-    assert rec["view"] == [tmp_path / "figure.gleplot" / "figure.gle"]
-
-
-def test_export_without_gle_binary(qapp, harness, monkeypatch):
-    parent, tasks, rec, tmp_path = harness
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
-    monkeypatch.setattr(
-        gle_export,
-        "compile_gle",
-        lambda *a, **k: pytest.fail("must not compile without a GLE binary"),
-    )
-
     run_gle_export(
         parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="eps",
-        build=_build,
-    )
-
-    # Synchronous path: no task is started.
-    assert rec["info"] and "GLE script saved" in rec["info"][0][1]
-    assert rec["view"] == [tmp_path / "figure.gleplot" / "figure.gle"]
-    assert not rec["result"] and not rec["warning"]
-
-
-def test_build_returning_none_aborts_silently(qapp, harness, monkeypatch):
-    parent, tasks, rec, _tmp = harness
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
         dialog_title="Export",
         default_name="figure.gleplot",
         output_format="pdf",
-        build=lambda glp, gle_path, export_dir: None,
+        prepare=lambda: _build,
     )
+    preview = parent.findChild(GlePlotPreview)
+    assert _wait(qapp, lambda: not preview.tasks.active_count)
+    assert "Install GLE" in preview.status.text()
+    assert (tmp_path / "figure.gleplot" / "figure.gle").exists()
+    preview.close()
+    parent.close()
 
-    qapp.processEvents()
-    assert not any(rec.values())
-
-
-def test_build_typeerror_reports_gleplot_update(qapp, harness):
-    parent, tasks, rec, _tmp = harness
-
-    def _old_api(glp, gle_path, export_dir):
-        raise TypeError("savefig() got an unexpected keyword argument")
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=_old_api,
-    )
-
-    assert rec["warning"] and rec["warning"][0][0] == "gleplot update required"
-    assert not rec["view"]
-
-
-def test_build_failure_shows_export_failed_dialog(qapp, harness):
-    """A non-TypeError builder failure surfaces as an 'Export failed' warning
-    (parity with the pre-refactor catch-alls), not an uncaught slot exception."""
-    parent, tasks, rec, _tmp = harness
-
-    def _broken(glp, gle_path, export_dir):
-        raise RuntimeError("disk full while writing sidecars")
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=_broken,
-    )
-
-    assert rec["warning"] and rec["warning"][0][0] == "Export failed"
-    assert "disk full" in rec["warning"][0][1]
-    assert not rec["view"]
-
-
-def test_export_prunes_stale_sidecars_from_previous_larger_export(qapp, harness, monkeypatch):
-    """Re-exporting to the same ``.gleplot`` folder must clean up sidecars
-    left over from a previous, larger export (e.g. 10 datasets, then a
-    3-dataset re-export to the same name) — a stale ``orphan.dat`` must be
-    gone afterward, while the file the new export actually uses survives.
-    """
-    parent, tasks, rec, tmp_path = harness
-    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
-    monkeypatch.setattr(gle_export, "compile_gle", lambda exe, gle_file, fmt, *, cwd, **kw: None)
-
-    export_dir = tmp_path / "figure.gleplot"
-    export_dir.mkdir()
-    orphan = export_dir / "orphan.dat"
-    orphan.write_text("stale from a previous, larger export\n")
-
-    def _build(glp, gle_path: Path, export_dir: Path) -> GleExportBuild:
-        used = export_dir / "used.dat"
-        used.write_text("1 2\n")
-        gle_path.write_text('begin graph\n  data "used.dat"\nend graph\n')
-        return GleExportBuild(files=[gle_path, used])
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=_build,
-    )
-
-    assert not orphan.exists()
-    assert (export_dir / "used.dat").exists()
-
-
-def test_cancelled_save_dialog_does_nothing(qapp, harness, monkeypatch):
-    parent, tasks, rec, _tmp = harness
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: ("", "")))
-    built = []
-
-    run_gle_export(
-        parent,
-        tasks=tasks,
-        dialog_title="Export",
-        default_name="figure.gleplot",
-        output_format="pdf",
-        build=lambda *a: built.append(True),
-    )
-
-    assert not built and not any(rec.values())
-
-
-# ── Waterfall offset propagation into export payloads and .dat/.fit files ───────
 
 import numpy as np  # noqa: E402
 

@@ -51,11 +51,9 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, widest_button_width
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.gle_export import (
-    GleExportBuild,
-    extract_gle_data_dependencies,
     run_gle_export,
-    safe_file_token,
 )
+from asymmetry.gui.utils.parameter_export_data import _PARAMETER_FIT_CURVE_SAMPLE_COUNT
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.windows.global_fit_window_helpers import (
@@ -77,7 +75,6 @@ _COMPONENT_COLORS = [
     "#ffd166",
 ]
 
-_PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
 #: Absolute floor (guards the ``err > 3×|value|`` test when ``value`` is ~0) for
 #: the uncertainty trust flag. An uncertainty above ``max(3×|value|, this)`` — or
@@ -1092,11 +1089,9 @@ class GlobalParameterFitWindow(QMainWindow):
         return bool(self._local_param_log_y.get(param_name, False))
 
     def _local_group_x_key(self) -> str:
-        if self._x_key == "field":
-            return "temperature"
-        if self._x_key == "temperature":
-            return "field"
-        return "run"
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._local_group_x_key(self)
 
     def _open_local_model_fit_dialog(self, param_name: str) -> None:
         if self._result is None:
@@ -1481,6 +1476,9 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         """Cancel and join any in-flight fit-curve recompute before closing."""
+        from asymmetry.gui.windows.gle_preview import close_gle_previews
+
+        close_gle_previews(self)
         self._tasks.shutdown()
         super().closeEvent(event)
 
@@ -1496,16 +1494,9 @@ class GlobalParameterFitWindow(QMainWindow):
     def _x_label_gle(self) -> str:
         # Known keys keep the {\it B}/{\it T} classics; a custom study label is
         # rendered as plain text (GLE-safe) since it carries no math markup.
-        known = {
-            "field": "{\\it B} (G)",
-            "temperature": "{\\it T} (K)",
-            "run": "Run Number",
-        }
-        if self._x_key in known:
-            return known[self._x_key]
-        if self._x_label_override:
-            return self._x_label_override
-        return "x"
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._x_label_gle(self)
 
     def _local_group_axis_label(self) -> str:
         if self._group_variable_label_override:
@@ -1517,28 +1508,14 @@ class GlobalParameterFitWindow(QMainWindow):
         }.get(self._x_key, "Group variable")
 
     def _local_group_axis_label_gle(self) -> str:
-        known = {
-            "field": "{\\it T} (K)",
-            "temperature": "{\\it B} (G)",
-            "run": "Group variable",
-        }
-        if self._x_key in known:
-            return known[self._x_key]
-        if self._group_variable_label_override:
-            return self._group_variable_label_override
-        return "Group variable"
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._local_group_axis_label_gle(self)
 
     def _local_group_axis_label_plain(self) -> str:
-        known = {
-            "field": "T (K)",
-            "temperature": "B (G)",
-            "run": "Group variable",
-        }
-        if self._x_key in known:
-            return known[self._x_key]
-        if self._group_variable_label_override:
-            return self._group_variable_label_override
-        return "Group variable"
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._local_group_axis_label_plain(self)
 
     def _parameter_label(self, name: str | None) -> str:
         if not name:
@@ -1546,240 +1523,61 @@ class GlobalParameterFitWindow(QMainWindow):
         return get_param_info(name).latex_label()
 
     def _parameter_label_gle(self, name: str | None) -> str:
-        if not name:
-            return "y"
-        return get_param_info(name).gle_label()
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._parameter_label_gle(self, name)
 
     def _safe_file_token(self, value: str) -> str:
-        return safe_file_token(value, fallback="group")
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._safe_file_token(self, value)
 
     def _safe_data_name(self, value: str) -> str:
         # Unlike filename tokens, data names feed gleplot ``data_name=``
         # identifiers: keep the historical strictness (no hyphens, lowercase).
-        return safe_file_token(str(value).replace("-", "_"), fallback="series").lower()
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._safe_data_name(self, value)
 
     @staticmethod
     def _model_kwargs(result, model, group_id: str) -> dict[str, float]:
-        """Build a group's model kwargs (global + fixed + local, defaults-filled).
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
 
-        Pure — takes ``result``/``model`` explicitly so it is safe to call from
-        the off-thread fit-curve worker as well as the GUI thread.
-        """
-        kwargs = {p.name: p.value for p in result.global_parameters}
-        for p in result.fixed_parameters:
-            kwargs[p.name] = p.value
-        local = result.local_parameters.get(group_id)
-        if local is not None:
-            for p in local:
-                kwargs[p.name] = p.value
-        # Backward-compatible restore support: older saved cross-group states may
-        # miss newer model parameters (e.g. D_perp). Fill from model defaults.
-        missing = [name for name in getattr(model, "param_names", []) if name not in kwargs]
-        defaults = getattr(model, "param_defaults", {})
-        for name in missing:
-            if isinstance(defaults, dict) and name in defaults:
-                kwargs[name] = float(defaults[name])
-        return kwargs
+        return GlobalExportData._model_kwargs(result, model, group_id)
 
     def _model_kwargs_for_group(self, group_id: str) -> dict[str, float]:
-        if self._result is None:
-            return {}
-        return self._model_kwargs(self._result, self._model, group_id)
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
+
+        return GlobalExportData._model_kwargs_for_group(self, group_id)
 
     def _cached_group_total_curve(self, group_id: str) -> tuple[np.ndarray, np.ndarray] | None:
-        """Return a group's cached total ``(xx, yy)`` curve, or ``None`` if cold.
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
 
-        The total fit curve is identical across both components flags, so either
-        cache entry serves the GLE export. Returns ``None`` when neither flag has
-        been computed yet (cold cache) or the entry carries an error.
-        """
-        for flag in (False, True):
-            entry = self._curve_cache.get(flag)
-            if not entry:
-                continue
-            curve = entry.get(group_id)
-            if isinstance(curve, dict) and "error" not in curve and curve.get("xx") is not None:
-                return curve["xx"], curve["yy"]
-        return None
+        return GlobalExportData._cached_group_total_curve(self, group_id)
 
     def _sample_group_fit_curve(
         self, group: ParameterGroupData
     ) -> tuple[np.ndarray, np.ndarray] | None:
         # Reuse the warm curve cache when present (post-display it always is);
         # only fall back to an inline evaluation when the cache is cold.
-        cached = self._cached_group_total_curve(group.group_id)
-        if cached is not None:
-            return cached
-        if self._model is None:
-            return None
-        kwargs = self._model_kwargs_for_group(group.group_id)
-        if not kwargs:
-            return None
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
 
-        xx = np.asarray(group.x, dtype=float)
-        finite_x = xx[np.isfinite(xx)]
-        if finite_x.size < 2:
-            return None
-
-        xx = np.sort(finite_x)
-        if (
-            np.isfinite(self._fit_x_min)
-            and np.isfinite(self._fit_x_max)
-            and self._fit_x_max > self._fit_x_min
-        ):
-            mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
-            xx = xx[mask]
-        if xx.size < 2:
-            return None
-
-        x_min = float(np.nanmin(xx))
-        x_max = float(np.nanmax(xx))
-        if self._local_group_x_key() == "field" and x_min > 0.0 and x_max > 0.0:
-            xs = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
-        else:
-            xs = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
-        try:
-            ys = np.asarray(self._model.function(xs, **kwargs), dtype=float)
-        except KeyError:
-            return None
-        mask = np.isfinite(xs) & np.isfinite(ys)
-        if not np.any(mask):
-            return None
-        return xs[mask], ys[mask]
+        return GlobalExportData._sample_group_fit_curve(self, group)
 
     @staticmethod
     def _global_parameter_table_lines(result) -> list[str]:
-        """Return the ``! Global parameter table`` provenance lines for a result.
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
 
-        Shared by the fit-subplot and local-parameter exports so the global /
-        fixed parameter formatting (units, precision, ``nan`` sentinel, ``[fixed]``
-        flag) stays identical across both. Lines have no trailing newline.
-        """
-        lines: list[str] = []
-        if not (len(result.global_parameters) or len(result.fixed_parameters)):
-            return lines
-        lines.append("! Global parameter table:")
-        lines.append("!   Parameter                     Value                Uncertainty")
-        for p in result.global_parameters:
-            info = get_param_info(p.name)
-            unit = f" ({info.unit})" if info.unit else ""
-            err = result.global_uncertainties.get(p.name)
-            err_text = "nan"
-            if err is not None and np.isfinite(err):
-                err_text = f"{float(err):.10g}"
-            lines.append(f"!   {p.name}{unit:<24} {float(p.value):>16.10g} {err_text:>24}")
-        for p in result.fixed_parameters:
-            info = get_param_info(p.name)
-            unit = f" ({info.unit})" if info.unit else ""
-            lines.append(f"!   {p.name}{unit} [fixed] = {float(p.value):.10g}")
-        return lines
+        return GlobalExportData._global_parameter_table_lines(result)
 
     def _fit_metadata_header_lines(self) -> list[str]:
-        """Return shared provenance lines for GLE fit-subplot exports.
+        from asymmetry.gui.utils.global_export_data import GlobalExportData
 
-        Mirrors the comprehensive local-parameter export header so the fit-data
-        and model-curve files record *which* model was fitted, the values (and
-        uncertainties) of the shared global parameters, and the fit quality —
-        not just bare ``x y yerr`` columns.
-        """
-        lines: list[str] = []
-        if self._model is not None:
-            try:
-                formula = self._model.formula_string()
-            except Exception:
-                formula = ""
-            if formula:
-                lines.append(f"! model: {formula}")
-
-        result = self._result
-        if result is not None:
-            lines.extend(self._global_parameter_table_lines(result))
-            if np.isfinite(result.chi_squared):
-                lines.append(f"! chi_squared: {float(result.chi_squared):.8g}")
-            if np.isfinite(result.reduced_chi_squared):
-                lines.append(f"! reduced_chi_squared: {float(result.reduced_chi_squared):.8g}")
-            lines.append(f"! error_mode: {result.error_mode}")
-            if result.n_points:
-                lines.append(f"! n_points: {int(result.n_points)}")
-            if result.per_group_chi_squared:
-                lines.append("! Per-group chi-squared:")
-                for gid in sorted(result.per_group_chi_squared):
-                    chi = result.per_group_chi_squared[gid]
-                    npts = result.per_group_n_points.get(gid)
-                    npts_txt = f" (n={int(npts)})" if npts is not None else ""
-                    lines.append(f"!   {gid}: {float(chi):.8g}{npts_txt}")
-            if result.global_correlations is not None:
-                names, matrix = result.global_correlations
-                lines.append("! Global parameter correlations:")
-                lines.append("!   " + " ".join(str(n) for n in names))
-                for i, name in enumerate(names):
-                    row = matrix[i] if i < len(matrix) else []
-                    row_txt = " ".join(f"{float(v):+.3f}" for v in row)
-                    lines.append(f"!   {name}: {row_txt}")
-        return lines
+        return GlobalExportData._fit_metadata_header_lines(self)
 
     def _write_fit_subplot_files(self, gle_path: Path) -> dict[str, dict[str, object]]:
-        """Write explicit per-group data and fit files for GLE export."""
-        written: dict[str, dict[str, object]] = {}
-        header_lines = self._fit_metadata_header_lines()
-        x_axis_label = self._local_group_axis_label_plain()
-        for group in self._groups:
-            token = self._safe_file_token(group.group_name or group.group_id)
-            data_path = gle_path.with_name(f"{gle_path.stem}_{token}_data.dat")
-            fit_path = gle_path.with_name(f"{gle_path.stem}_{token}_fit.fit")
-            group_label = str(group.group_name or group.group_id)
 
-            x = np.asarray(group.x, dtype=float)
-            y = np.asarray(group.y, dtype=float)
-            yerr = np.asarray(group.yerr, dtype=float)
-            if yerr.shape != y.shape:
-                yerr = np.full_like(y, np.nan, dtype=float)
-
-            mask = np.isfinite(x) & np.isfinite(y)
-            x = x[mask]
-            y = y[mask]
-            yerr = yerr[mask] if yerr.size else np.full_like(y, np.nan, dtype=float)
-            if x.size == 0:
-                continue
-            order = np.argsort(x)
-            x = x[order]
-            y = y[order]
-            yerr = yerr[order]
-
-            with open(data_path, "w", encoding="utf-8") as f:
-                f.write("! Cross-group fit data\n")
-                f.write(f"! group: {group_label}\n")
-                for line in header_lines:
-                    f.write(line + "\n")
-                f.write(f"! x-axis: {x_axis_label}\n")
-                f.write("! columns: x y yerr\n")
-                for xv, yv, ev in zip(x, y, yerr, strict=True):
-                    ev_out = ev if np.isfinite(ev) and ev > 0 else np.nan
-                    f.write(f"{xv:.10g} {yv:.10g} {ev_out:.10g}\n")
-
-            sampled = self._sample_group_fit_curve(group)
-            fit_written = False
-            if sampled is not None:
-                xs, ys = sampled
-                with open(fit_path, "w", encoding="utf-8") as f:
-                    f.write("! Cross-group fit model curve\n")
-                    f.write(f"! group: {group_label}\n")
-                    for line in header_lines:
-                        f.write(line + "\n")
-                    f.write(f"! x-axis: {x_axis_label}\n")
-                    f.write("! columns: x y\n")
-                    for xv, yv in zip(xs, ys, strict=True):
-                        f.write(f"{xv:.10g} {yv:.10g}\n")
-                fit_written = True
-
-            written[group.group_id] = {
-                "data_path": data_path,
-                "fit_path": fit_path,
-                "has_fit": fit_written,
-                "has_err": bool(np.any(np.isfinite(yerr) & (yerr > 0))),
-            }
-
-        return written
+        return self._gle_snapshot()._write_fit_subplot_files(gle_path)
 
     def _apply_fit_axis_scales(self, ax) -> None:
         if self._fit_log_x_check.isChecked():
@@ -2603,155 +2401,23 @@ class GlobalParameterFitWindow(QMainWindow):
         gle_path: Path,
         traces: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]],
     ) -> tuple[Path, dict[str, tuple[int, int]]]:
-        data_path = gle_path.with_name(f"{gle_path.stem}_local_parameters.dat")
 
-        x_keys: dict[str, float] = {}
-        for _pname, x_arr, _y_arr, _e_arr in traces:
-            for xv in x_arr:
-                x_keys[f"{float(xv):.12g}"] = float(xv)
-        x_values = np.array(sorted(x_keys.values()), dtype=float)
-
-        col_map: dict[str, tuple[int, int]] = {}
-        columns: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-        for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
-            y_out = np.full_like(x_values, np.nan, dtype=float)
-            e_out = np.full_like(x_values, np.nan, dtype=float)
-            local = {
-                f"{float(x):.12g}": (float(y), float(e))
-                for x, y, e in zip(x_arr, y_arr, e_arr, strict=True)
-            }
-            for i, xv in enumerate(x_values):
-                key = f"{float(xv):.12g}"
-                if key in local:
-                    yv, ev = local[key]
-                    y_out[i] = yv
-                    e_out[i] = ev if np.isfinite(ev) and ev >= 0 else np.nan
-            columns[pname] = (y_out, e_out)
-            y_col = 2 + idx * 2
-            e_col = y_col + 1
-            col_map[pname] = (y_col, e_col)
-
-        global_cols: list[tuple[str, float, float]] = []
-        if self._result is not None:
-            for p in self._result.global_parameters:
-                err = self._result.global_uncertainties.get(p.name, np.nan)
-                err_val = (
-                    float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
-                )
-                global_cols.append((p.name, float(p.value), err_val))
-
-        with open(data_path, "w", encoding="utf-8") as f:
-            f.write("! Local parameter trends\n")
-
-            if self._result is not None:
-                for line in self._global_parameter_table_lines(self._result):
-                    f.write(line + "\n")
-                f.write("!\n")
-
-            f.write(f"! columns: {self._local_group_axis_label_plain()}")
-            for pname, _x, _y, _e in traces:
-                info = get_param_info(pname)
-                unit = f" ({info.unit})" if info.unit else ""
-                f.write(f" {pname}{unit} err_{pname}{unit}")
-            for gname, _gval, _gerr in global_cols:
-                info = get_param_info(gname)
-                unit = f" ({info.unit})" if info.unit else ""
-                f.write(f" {gname}{unit} err_{gname}{unit}")
-            f.write("\n")
-
-            col_idx = 1
-            f.write("! Column map:\n")
-            f.write(f"!   c{col_idx:>2} = {self._local_group_axis_label_plain()}\n")
-            col_idx += 1
-            for pname, _x, _y, _e in traces:
-                info = get_param_info(pname)
-                unit = f" ({info.unit})" if info.unit else ""
-                f.write(f"!   c{col_idx:>2} = {pname}{unit}\n")
-                col_idx += 1
-                f.write(f"!   c{col_idx:>2} = err_{pname}{unit}\n")
-                col_idx += 1
-            for gname, _gval, _gerr in global_cols:
-                info = get_param_info(gname)
-                unit = f" ({info.unit})" if info.unit else ""
-                f.write(f"!   c{col_idx:>2} = {gname}{unit}\n")
-                col_idx += 1
-                f.write(f"!   c{col_idx:>2} = err_{gname}{unit}\n")
-                col_idx += 1
-
-            for row_idx, xv in enumerate(x_values):
-                parts = [f"{xv:.10g}"]
-                for pname, _x, _y, _e in traces:
-                    yv, ev = columns[pname]
-                    parts.append(f"{yv[row_idx]:.10g}")
-                    parts.append(f"{ev[row_idx]:.10g}")
-                for _gname, gval, gerr in global_cols:
-                    parts.append(f"{gval:.10g}")
-                    parts.append(f"{gerr:.10g}")
-                f.write(" ".join(parts) + "\n")
-
-        return data_path, col_map
+        return self._gle_snapshot()._write_local_parameter_data_file(gle_path, traces)
 
     def _write_local_parameter_fit_files(
         self,
         gle_path: Path,
         traces: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]],
     ) -> dict[str, Path]:
-        fit_files: dict[str, Path] = {}
-        for pname, _x_arr, _y_arr, _e_arr in traces:
-            fit = self._local_model_fits.get(pname)
-            if fit is None or not fit.active or fit.x_key != self._local_group_x_key():
-                continue
 
-            curves = evaluate_parameter_model_fit(fit, num_points=200)
-            if not curves:
-                continue
-
-            fit_path = gle_path.with_name(
-                f"{gle_path.stem}_local_{self._safe_data_name(pname)}.fit"
-            )
-            info = get_param_info(pname)
-            with open(fit_path, "w", encoding="utf-8") as f:
-                f.write("! Local parameter model fit curve\n")
-                f.write(f"! parameter: {info.plain_label()}\n")
-                f.write(f"! x-axis: {self._local_group_axis_label_plain()}\n")
-                f.write("! columns: x y\n")
-                for cidx, curve in enumerate(curves):
-                    if cidx > 0:
-                        f.write("nan nan\n")
-                    for xv, yv in zip(curve.x, curve.y, strict=True):
-                        f.write(f"{float(xv):.10g} {float(yv):.10g}\n")
-
-            fit_files[pname] = fit_path
-
-        return fit_files
+        return self._gle_snapshot()._write_local_parameter_fit_files(gle_path, traces)
 
     def _ordered_components_for_stacking(
         self, components: list[tuple[str, np.ndarray]]
     ) -> list[tuple[str, np.ndarray]]:
-        if not components:
-            return []
+        from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
 
-        def _priority(name: str) -> int:
-            lname = name.lower()
-            if "bg" in lname or "background" in lname or "constant" in lname:
-                return 0
-            return 1
-
-        scored: list[tuple[int, float, float, int, tuple[str, np.ndarray]]] = []
-        for idx, item in enumerate(components):
-            name, values = item
-            arr = np.maximum(np.asarray(values, dtype=float), 0.0)
-            finite = arr[np.isfinite(arr)]
-            if finite.size == 0:
-                mean_val = 0.0
-                variability = 0.0
-            else:
-                mean_val = float(np.mean(finite))
-                variability = float(np.std(finite) / max(mean_val, 1e-12))
-            scored.append((_priority(name), variability, mean_val, idx, item))
-
-        scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
-        return [item for *_meta, item in scored]
+        return GlobalGleSnapshot._ordered_components_for_stacking(self, components)
 
     def _set_add_label_mode(self, enabled: bool) -> None:
         self._add_label_mode = bool(enabled)
@@ -2929,423 +2595,68 @@ class GlobalParameterFitWindow(QMainWindow):
         self._dragging_annotation = None
 
     def _fit_subplot_layout_params(self, subplot_aspect: float) -> dict[str, float]:
-        """Return aspect-aware subplot spacing to reduce clipping across shapes."""
-        # Narrower plots need more side margins for y-labels/ticks; wider plots can use tighter margins.
-        t = max(0.0, min(1.0, (2.8 - float(subplot_aspect)) / 1.8))
-        left = 0.11 + 0.09 * t
-        right = 0.992 - 0.045 * t
-        return {
-            "left": left,
-            "right": right,
-            "top": 0.968,
-            "bottom": 0.065,
-            "hspace": 0.50,
-        }
+        from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
+
+        return GlobalGleSnapshot._fit_subplot_layout_params(self, subplot_aspect)
 
     def _build_fit_subplot_gle_figure(self, glp, gle_path: Path):
-        share_x_axis = self._fit_share_x_check.isChecked()
-        subplot_height = 3.1
-        subplot_aspect = float(self._fit_subplot_aspect_spin.value())
-        plot_width = subplot_aspect * subplot_height
-        fig, axes = glp.subplots(
-            nrows=max(1, len(self._groups)),
-            ncols=1,
-            figsize=(plot_width, max(5.2, subplot_height * max(1, len(self._groups)))),
-            sharex=share_x_axis,
-        )
-        subplot_axes = axes if isinstance(axes, list) else [axes]
-        file_map = self._write_fit_subplot_files(gle_path)
-
-        x_label = self._x_label_gle()
-        y_label = self._parameter_label_gle(self._parameter_name)
-        for idx, group in enumerate(self._groups):
-            ax = subplot_axes[idx]
-            file_info = file_map.get(group.group_id)
-            data_path = file_info.get("data_path") if isinstance(file_info, dict) else None
-            if (
-                isinstance(file_info, dict)
-                and data_path is not None
-                and hasattr(ax, "errorbar_from_file")
-            ):
-                ax.errorbar_from_file(
-                    data_path.name,
-                    x_col=1,
-                    y_col=2,
-                    yerr_col=3 if bool(file_info.get("has_err", False)) else None,
-                    color="black",
-                    marker="o",
-                    markersize=4,
-                    capsize=2,
-                )
-            else:
-                yerr = np.asarray(group.yerr, dtype=float)
-                has_err = bool(np.any(np.isfinite(yerr) & (yerr > 0)))
-                ax.errorbar(
-                    group.x,
-                    group.y,
-                    yerr=group.yerr if has_err else None,
-                    fmt="o",
-                    linestyle="none",
-                    marker="o",
-                    color="black",
-                    capsize=2,
-                )
-
-            fit_path = file_info.get("fit_path") if isinstance(file_info, dict) else None
-            sampled = self._sample_group_fit_curve(group)
-            if sampled is not None:
-                xx, yy = sampled
-            else:
-                xx, yy = None, None
-
-            if (
-                xx is not None
-                and self._show_components_check.isChecked()
-                and self._model is not None
-            ):
-                try:
-                    kwargs = self._model_kwargs_for_group(group.group_id)
-                    components = self._model.evaluate_components(xx, additive_only=True, **kwargs)
-                    ordered = self._ordered_components_for_stacking(components)
-                    cumulative = np.zeros_like(xx, dtype=float)
-                    component_colors = [
-                        "lightblue",
-                        "lightgreen",
-                        "pink",
-                        "lightgray",
-                        "cyan",
-                        "yellow",
-                    ]
-                    group_token = self._safe_data_name(group.group_name or group.group_id)
-                    for cidx, (_name, comp_y) in enumerate(ordered):
-                        fill_color = component_colors[cidx % len(component_colors)]
-                        comp_token = self._safe_data_name(_name)
-                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
-                        lower = cumulative
-                        upper = cumulative + comp_fill
-                        ax.fill_between(
-                            xx,
-                            lower,
-                            upper,
-                            color=fill_color,
-                            alpha=0.3,
-                            data_name=f"component_{group_token}_{comp_token}_fill",
-                        )
-                        ax.plot(
-                            xx,
-                            upper,
-                            linestyle="--",
-                            linewidth=0.8,
-                            color=fill_color,
-                            data_name=f"component_{group_token}_{comp_token}_edge",
-                        )
-                        cumulative = upper
-                except KeyError:
-                    pass
-
-            if (
-                isinstance(file_info, dict)
-                and bool(file_info.get("has_fit", False))
-                and fit_path is not None
-                and hasattr(ax, "line_from_file")
-            ):
-                ax.line_from_file(
-                    fit_path.name,
-                    x_col=1,
-                    y_col=2,
-                    color="red",
-                    linestyle="-",
-                    linewidth=1.5,
-                )
-            else:
-                if xx is not None and yy is not None:
-                    group_token = self._safe_data_name(group.group_name or group.group_id)
-                    ax.plot(xx, yy, color="red", linewidth=1.5, data_name=f"model_{group_token}")
-                else:
-                    ax.text(0.02, 0.95, "Fit curve unavailable", color="red", ha="left")
-
-            for ann in self._plot_annotations:
-                if str(ann.get("axis_tag", "")) != group.group_id:
-                    continue
-                is_group_label = bool(ann.get("is_group_label"))
-                if is_group_label and not share_x_axis:
-                    continue
-                try:
-                    x_ann = float(ann.get("x", 0.0))
-                    y_ann = float(ann.get("y", 0.0))
-                except (TypeError, ValueError):
-                    continue
-                text = str(ann.get("text", "")).strip()
-                if text:
-                    ax.text(
-                        x_ann,
-                        y_ann,
-                        text,
-                        ha="left",
-                        va="top" if is_group_label else "bottom",
-                        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.7, "pad": 1.5}
-                        if is_group_label
-                        else None,
-                    )
-
-            if share_x_axis:
-                self._ensure_group_label_annotation(group.group_id, group.group_name, ax)
-                ax.set_title("")
-            else:
-                ax.set_title(group.group_name)
-            ax.set_ylabel(y_label)
-            self._apply_fit_axis_scales(ax)
-            if (not share_x_axis) or idx == len(self._groups) - 1:
-                ax.set_xlabel(x_label)
-
-        if hasattr(fig, "subplots_adjust"):
-            fig.subplots_adjust(**self._fit_subplot_layout_params(subplot_aspect))
-
-        return fig
+        return self._gle_snapshot()._build_fit_subplot_gle_figure(glp, gle_path)
 
     def _build_local_parameter_gle_figure(self, glp, gle_path: Path):
-        local_param_names = sorted(
-            {p.name for pset in self._result.local_parameters.values() for p in pset}
-        )
-        if not local_param_names:
-            fig = glp.figure(figsize=(7.0, 4.5))
-            ax = fig.add_subplot(111)
-            ax.set_title("No local parameters in this fit")
-            return fig
-
-        traces: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]] = []
-        for pname in local_param_names:
-            xs: list[float] = []
-            ys: list[float] = []
-            es: list[float] = []
-            for group in self._groups:
-                pset = self._result.local_parameters.get(group.group_id)
-                if pset is None or pname not in pset:
-                    continue
-                xs.append(float(group.group_variable_value))
-                ys.append(float(pset[pname].value))
-                err = self._result.local_uncertainties.get(group.group_id, {}).get(pname)
-                es.append(
-                    float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
-                )
-            if not xs:
-                continue
-            x_arr = np.asarray(xs, dtype=float)
-            y_arr = np.asarray(ys, dtype=float)
-            e_arr = np.asarray(es, dtype=float)
-            order = np.argsort(x_arr)
-            traces.append((pname, x_arr[order], y_arr[order], e_arr[order]))
-
-        all_traces = list(traces)
-        selected_names = self._selected_local_y_parameters()
-        if selected_names:
-            traces = [t for t in traces if t[0] in selected_names]
-        if not traces:
-            fig = glp.figure(figsize=(7.0, 4.5))
-            ax = fig.add_subplot(111)
-            ax.set_title("No local parameters selected")
-            return fig
-
-        data_path, col_map = self._write_local_parameter_data_file(gle_path, all_traces)
-        fit_file_map = self._write_local_parameter_fit_files(gle_path, all_traces)
-
-        x_label = self._local_group_axis_label_gle()
-        plot_mode = self._local_plot_mode_combo.currentText()
-        if plot_mode == "Subplots" and len(traces) > 1:
-            num_cols = 1
-            num_rows = (len(traces) + num_cols - 1) // num_cols
-            fig, axes = glp.subplots(
-                nrows=num_rows, ncols=num_cols, figsize=(7.2, max(4.8, 2.8 * num_rows)), sharex=True
-            )
-            flat_axes = axes if isinstance(axes, list) else [axes]
-            for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
-                ax = flat_axes[idx]
-                has_err = bool(np.any(np.isfinite(e_arr) & (e_arr >= 0)))
-                cols = col_map[pname]
-                if hasattr(ax, "errorbar_from_file"):
-                    ax.errorbar_from_file(
-                        data_path.name,
-                        x_col=1,
-                        y_col=cols[0],
-                        yerr_col=cols[1] if has_err else None,
-                        marker="o",
-                        color="black",
-                        capsize=2,
-                    )
-                else:
-                    ax.errorbar(
-                        x_arr,
-                        y_arr,
-                        yerr=e_arr if has_err else None,
-                        marker="o",
-                        color="black",
-                        linestyle="none",
-                        capsize=2,
-                    )
-                ax.set_ylabel(self._parameter_label_gle(pname))
-                row = idx // num_cols
-                if row == num_rows - 1:
-                    ax.set_xlabel(x_label)
-                if self._local_log_x_check.isChecked():
-                    ax.set_xscale("log")
-                param_log = self._is_local_param_log_enabled(pname)
-                if param_log:
-                    ax.set_yscale("log")
-                fit = self._local_model_fits.get(pname)
-                if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
-                    fit_path = fit_file_map.get(pname)
-                    if fit_path is not None and hasattr(ax, "line_from_file"):
-                        ax.line_from_file(
-                            fit_path.name,
-                            x_col=1,
-                            y_col=2,
-                            color="red",
-                            linestyle="-",
-                            linewidth=1.5,
-                        )
-                    else:
-                        for curve in evaluate_parameter_model_fit(fit, num_points=200):
-                            ax.plot(
-                                curve.x,
-                                curve.y,
-                                color="red",
-                                linewidth=1.5,
-                                data_name=f"model_local_{self._safe_data_name(pname)}",
-                            )
-                for ann in self._local_plot_annotations:
-                    if str(ann.get("axis_tag", "")) != pname:
-                        continue
-                    text = str(ann.get("text", "")).strip()
-                    if not text:
-                        continue
-                    try:
-                        x_ann = float(ann.get("x", 0.0))
-                        y_ann = float(ann.get("y", 0.0))
-                    except (TypeError, ValueError):
-                        continue
-                    ax.text(x_ann, y_ann, text, ha="left")
-            return fig
-
-        fig = glp.figure(figsize=(7.0, 4.5))
-        ax = fig.add_subplot(111)
-        for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
-            color = ["black", "blue", "red"][idx % 3]
-            has_err = bool(np.any(np.isfinite(e_arr) & (e_arr >= 0)))
-            cols = col_map[pname]
-            if hasattr(ax, "errorbar_from_file"):
-                ax.errorbar_from_file(
-                    data_path.name,
-                    x_col=1,
-                    y_col=cols[0],
-                    yerr_col=cols[1] if has_err else None,
-                    marker="o",
-                    color=color,
-                    capsize=2,
-                    label=self._parameter_label_gle(pname),
-                )
-            else:
-                ax.errorbar(
-                    x_arr,
-                    y_arr,
-                    yerr=e_arr if has_err else None,
-                    marker="o",
-                    linestyle="none",
-                    color=color,
-                    capsize=2,
-                    label=self._parameter_label_gle(pname),
-                )
-            fit = self._local_model_fits.get(pname)
-            if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
-                fit_path = fit_file_map.get(pname)
-                if fit_path is not None and hasattr(ax, "line_from_file"):
-                    ax.line_from_file(
-                        fit_path.name,
-                        x_col=1,
-                        y_col=2,
-                        color=color,
-                        linestyle="-",
-                        linewidth=1.2,
-                    )
-                else:
-                    for curve in evaluate_parameter_model_fit(fit, num_points=200):
-                        ax.plot(
-                            curve.x,
-                            curve.y,
-                            color=color,
-                            linewidth=1.2,
-                            data_name=f"model_local_{self._safe_data_name(pname)}",
-                        )
-        ax.set_xlabel(x_label)
-        if self._local_log_x_check.isChecked():
-            ax.set_xscale("log")
-        if len(traces) == 1:
-            param_log = self._is_local_param_log_enabled(traces[0][0])
-            if param_log:
-                ax.set_yscale("log")
-        if len(traces) == 1:
-            ax.set_ylabel(self._parameter_label_gle(traces[0][0]))
-        else:
-            ax.set_ylabel("Parameter Value")
-            ax.legend(loc="best")
-
-        for ann in self._local_plot_annotations:
-            axis_tag = str(ann.get("axis_tag", ""))
-            if axis_tag not in {"main"} and not any(name == axis_tag for name, *_rest in traces):
-                continue
-            text = str(ann.get("text", "")).strip()
-            if not text:
-                continue
-            try:
-                x_ann = float(ann.get("x", 0.0))
-                y_ann = float(ann.get("y", 0.0))
-            except (TypeError, ValueError):
-                continue
-            ax.text(x_ann, y_ann, text, ha="left")
-
-        return fig
+        return self._gle_snapshot()._build_local_parameter_gle_figure(glp, gle_path)
 
     def _export_plot_gle(
         self, *, title: str, default_name: str, builder, output_format: str
     ) -> None:
-        """Thin wrapper over the shared :func:`run_gle_export` orchestrator.
-
-        Keeps the pre-dialog "no result" guard (must fire before any file
-        dialog appears) and the wait-cursor for a cold fit-curve cache, then
-        delegates the save dialog, gleplot import, path resolution, async
-        compile, and result/preview dialogs to the shared sequence. ``builder``
-        keeps its existing ``(glp, gle_path) -> fig`` shape; ``fig.savefig``
-        and the written-file list move into the ``build`` closure below.
-        """
         if self._result is None or self._parameter_name is None:
             QMessageBox.information(self, "No result", "Run a cross-group fit first.")
             return
-
-        def build(glp, gle_path: Path, export_dir: Path) -> GleExportBuild | None:
-            # The fit-subplot export reuses the warm curve cache; if it is
-            # cold (export before the plot has drawn) the builder falls back
-            # to an inline 800-pt evaluation per group — show a busy cursor
-            # for that stretch.
-            cold = self._fit_curve_cache_is_cold()
-            if cold:
-                QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                fig = builder(glp, gle_path)
-                fig.savefig(str(gle_path))
-            finally:
-                if cold:
-                    QGuiApplication.restoreOverrideCursor()
-
-            deps = extract_gle_data_dependencies(gle_path)
-            files = [gle_path, *(export_dir / name for name in deps)]
-            return GleExportBuild(files=files)
-
+        local = builder == self._build_local_parameter_gle_figure
         run_gle_export(
             self,
-            tasks=self._tasks,
             dialog_title=title,
             default_name=default_name,
             output_format=output_format,
-            build=build,
+            prepare=lambda: (
+                self._gle_snapshot().build_local if local else self._gle_snapshot().build_fits
+            ),
+        )
+
+    def _gle_snapshot(self):
+        from copy import deepcopy
+
+        from asymmetry.gui.utils.global_gle import GlobalGleSnapshot
+
+        return GlobalGleSnapshot(
+            _groups=deepcopy(self._groups),
+            _result=deepcopy(self._result),
+            _model=deepcopy(self._model),
+            _curve_cache=deepcopy(self._curve_cache),
+            _parameter_name=self._parameter_name,
+            _x_key=self._x_key,
+            _x_label_override=self._x_label_override,
+            _group_variable_label_override=self._group_variable_label_override,
+            _local_model_fits=deepcopy(self._local_model_fits),
+            _fit_x_min=self._fit_x_min,
+            _fit_x_max=self._fit_x_max,
+            share_x=self._fit_share_x_check.isChecked(),
+            aspect=self._fit_subplot_aspect_spin.value(),
+            show_components=self._show_components_check.isChecked(),
+            fit_log_x=self._fit_log_x_check.isChecked(),
+            fit_log_y=self._fit_log_y_check.isChecked(),
+            local_log_x=self._local_log_x_check.isChecked(),
+            local_plot_mode=self._local_plot_mode_combo.currentText(),
+            selected_local=tuple(self._selected_local_y_parameters()),
+            _local_param_log_y=frozenset(self._local_param_log_y),
+            _plot_annotations=tuple(
+                {k: deepcopy(v) for k, v in a.items() if k != "artist"}
+                for a in self._plot_annotations
+            ),
+            _local_plot_annotations=tuple(
+                {k: deepcopy(v) for k, v in a.items() if k != "artist"}
+                for a in self._local_plot_annotations
+            ),
+            _suppressed_group_label_tags=frozenset(self._suppressed_group_label_tags),
         )
 
     def _fit_curve_cache_is_cold(self) -> bool:

@@ -70,7 +70,7 @@ def _build(panel: PlotPanel, ds: MuonDataset, tmp_path: Path, name: str = "figur
     export_dir.mkdir()
     gle_path = export_dir / f"{name}.gle"
     payloads = panel.get_current_plot_export_data([ds])
-    panel._build_gle_export(glp, gle_path, payloads)
+    panel._gle_snapshot(payloads).build(glp, gle_path, export_dir)
     return gle_path, export_dir
 
 
@@ -255,7 +255,7 @@ def test_frequency_annotation_lands_at_display_unit_x(qapp, tmp_path):
 
         fig = glp.figure()
         ax = fig.add_subplot(1, 1, 1)
-        panel._plot_export_payloads_on_axis(
+        panel._gle_snapshot(payloads)._plot_export_payloads_on_axis(
             ax,
             payloads,
             axis_key=None,

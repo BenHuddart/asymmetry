@@ -100,8 +100,8 @@ jobs:
           (sudo apt-get update -q && sudo apt-get install -y -q libegl1) &
           apt_pid=$!
           # gle: gleplot (tag-pinned) so the GLE export orchestrator and the
-          # in-app figure-editor integration run for real in CI instead of
-          # skipping via their importorskip / feature-detection guards.
+          # vector-preview generation run for real in CI instead of
+          # skipping via their importorskip guards.
           uv pip install -c constraints.txt -e ".[gui,gle,hdf5,root,dev]"
           wait "$apt_pid"
       - name: Run test suite

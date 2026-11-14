@@ -559,7 +559,7 @@ class TestWaterfallGleExport:
         assert payloads is not None
         gle_path = tmp_path / "figure.gleplot" / "figure.gle"
         gle_path.parent.mkdir(parents=True, exist_ok=True)
-        panel._build_gle_export(glp, gle_path, payloads)
+        panel._gle_snapshot(payloads).build(glp, gle_path, gle_path.parent)
         script = gle_path.read_text(encoding="utf-8")
         dats = {p.name: p.read_text(encoding="utf-8") for p in gle_path.parent.glob("*.dat")}
         return script, dats
@@ -568,7 +568,7 @@ class TestWaterfallGleExport:
         if not time_panel._has_mpl:
             pytest.skip("matplotlib not available")
         pytest.importorskip("gleplot")
-        from asymmetry.gui.panels import plot_panel as pp
+        from asymmetry.gui.utils import plot_gle as pp
 
         monkeypatch.setattr(pp, "gle_offset_supported", lambda: True)
         datasets = [_time_dataset(1, 0.2), _time_dataset(2, 0.2)]
@@ -591,7 +591,7 @@ class TestWaterfallGleExport:
         if not time_panel._has_mpl:
             pytest.skip("matplotlib not available")
         pytest.importorskip("gleplot")
-        from asymmetry.gui.panels import plot_panel as pp
+        from asymmetry.gui.utils import plot_gle as pp
 
         monkeypatch.setattr(pp, "gle_offset_supported", lambda: False)
         datasets = [_time_dataset(1, 0.2), _time_dataset(2, 0.2)]

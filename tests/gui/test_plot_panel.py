@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -27,7 +26,6 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.utils.gle_editor import open_gle_editor_count
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 
 _PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
@@ -215,6 +213,17 @@ class _FakeFigure:
             with open(data_path, "w", encoding="utf-8") as f:
                 for xv, yv, ev in zip(x_vals, y_vals, err):
                     f.write(f"{float(xv):.10g} {float(yv):.10g} {float(ev):.10g}\n")
+
+
+from tests.gui.gle_helpers import recording_factories, wait_for_gle, write_compile_outputs
+
+
+@pytest.fixture(autouse=True)
+def _record_gle_factories(monkeypatch):
+    from asymmetry.gui.utils import gle_export
+
+    recording_factories(monkeypatch)
+    monkeypatch.setattr(gle_export, "get_gle_executable", lambda: None)
 
 
 @pytest.fixture
@@ -4201,6 +4210,7 @@ class TestPlotPanel:
         )
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         assert warnings
         assert "No plotted data" in warnings[0]
@@ -4329,8 +4339,6 @@ class TestPlotPanel:
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
 
         subprocess_calls: list[tuple[list[str], str | None]] = []
-        dialogs: list[tuple[str, str, str]] = []
-        previews: list[str] = []
 
         panel._x_min.setValue(1.25)
         panel._x_max.setValue(8.75)
@@ -4344,33 +4352,19 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr(
-            "subprocess.run",
-            lambda args, **kwargs: subprocess_calls.append((list(args), kwargs.get("cwd"))),
-        )
+
+        def compile_plot(executable, script, devices, *, cwd, **kwargs):
+            subprocess_calls.append(([executable, "-d", ",".join(devices), str(script)], str(cwd)))
+            write_compile_outputs(script, devices)
+
+        monkeypatch.setattr(gle_export, "compile_gle", compile_plot)
+        monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "gle")
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr(
-            gle_export,
-            "show_export_result_dialog",
-            lambda parent, title, summary, details: dialogs.append((title, summary, details)),
-        )
-        monkeypatch.setattr(
-            gle_export,
-            "post_export_view",
-            lambda parent, gle_path: previews.append(str(gle_path)),
-        )
 
         panel.export_current_plot()
-        # The GLE compile runs on the panel's TaskRunner; drain it before
-        # asserting (and before monkeypatch teardown restores subprocess.run).
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and not dialogs:
-            QApplication.processEvents()
-            time.sleep(0.01)
-        assert panel._tasks.active_count == 0 or dialogs
-
+        preview = wait_for_gle(panel)
         assert resolved_gle.exists()
         assert axis.errorbar_calls
         assert axis.plot_calls
@@ -4390,14 +4384,11 @@ class TestPlotPanel:
         assert fit_files
         fit_text = fit_files[0].read_text(encoding="utf-8")
         assert f"! fit_function: {fit_function}" in fit_text
-        assert dialogs
-        assert dialogs[0][0] == "Export Successful"
-        assert str(resolved_gle) in dialogs[0][1]
-        assert previews == [str(resolved_gle)]
+        assert preview is not None
+        assert str(resolved_gle) in preview.details.toPlainText()
         # Under pytest (PYTEST_CURRENT_TEST is set by the runner itself), the
         # post-export view seam is suppressed internally, so no real editor
         # window may open (the seam is stubbed above to observe the call).
-        assert open_gle_editor_count() == 0
 
     def test_export_current_plot_sanitizes_gle_text(
         self,
@@ -4437,6 +4428,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         label = axis.errorbar_calls[0]["kwargs"].get("label")
         assert "\x1b" not in str(label)
@@ -4493,6 +4485,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         dat_files = sorted(resolved_gle.parent.glob("*.dat"))
         assert dat_files
@@ -4551,6 +4544,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         dat_files = sorted(resolved_gle.parent.glob("*.dat"))
         assert dat_files
@@ -4609,6 +4603,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         assert created_figs
         assert created_figs[0].figsize is not None
@@ -4708,6 +4703,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         assert len(fig.axes) == 3
         y_labels = [axis.ylabel_calls[-1] for axis in fig.axes if axis.ylabel_calls]
@@ -4791,6 +4787,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a, **k: None)
 
         panel.export_plots_to_gle()
+        wait_for_gle(panel)
 
         # One stacked subplot per group, each titled with its run label — not a
         # single overlaid axis.
@@ -5222,6 +5219,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         assert subplots_calls
         assert subplots_calls[0]["nrows"] == 3
@@ -5300,6 +5298,7 @@ class TestPlotPanel:
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
 
         panel.export_current_plot()
+        wait_for_gle(panel)
 
         assert len(fig.axes) == 3
         assert all(axis.legend_call_count == 0 for axis in fig.axes)
