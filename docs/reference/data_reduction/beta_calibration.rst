@@ -3,6 +3,12 @@
 Beta calibration
 ================
 
+For scripts, ``CalibrationOptions(method="tf_calibration_fit", fit_beta=True,
+count_packing=4)`` sums four native bins per fitted observation and retains the
+joint alpha/beta covariance. Calibration packing is independent of science
+reduction; see :ref:`calibration-count-packing` for precedence, time selection,
+and a complete example.
+
 Joint TF beta calibration accepts the same fixed supplied double-pulse response
 as alpha-only TF calibration. **Time response** defaults to **Off**; choose
 **Fixed double pulse** and supply **Pulse separation** in µs. Beta scales only

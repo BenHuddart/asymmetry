@@ -660,8 +660,53 @@ is absent; it does not fit again. Manual policies and recorded historical quick
 errors remain authored values, without inferred TF or HESSE provenance. See
 :doc:`../project_files` for the record and conditional uncertainty contract.
 
+.. _calibration-count-packing:
+
 Explicit workflow and CLI calibration
 -------------------------------------
+
+Scripts can choose calibration count packing independently of science reduction
+through ``CalibrationOptions.count_packing``:
+
+.. code-block:: python
+
+   from asymmetry import load
+   from asymmetry.core.workflow import (
+       CalibrationOptions, ReductionSettings, calibrate_run, reduce_run,
+   )
+
+   source = load("calibration.nxs")
+   science_settings = ReductionSettings(rebin=2, t_min=0.5, t_max=5.0)
+   calibration = calibrate_run(
+       source, science_settings,
+       CalibrationOptions(
+           method="tf_calibration_fit", fit_beta=True,
+           count_packing=4, period=1,
+       ),
+   )
+   # Apply the captured joint coefficients to a separate science run.
+   from dataclasses import replace
+   science = load("science.nxs")
+   reduced = reduce_run(science.run, replace(science_settings, alpha=calibration.record))
+
+The factor must be a positive integer; booleans and non-integral values are
+rejected. ``None`` (the default) preserves the source profile's fixed bunching
+factor. An explicit factor replaces that factor, with one requesting native
+bins; it does not multiply source binning. TF count fitting uses fixed packing,
+including when the source has a nonuniform display-binning mode.
+``ReductionSettings.rebin`` controls only science reduction and does not compose
+with calibration packing. The same option is supported by ``calibrate_source``.
+Quick methods, including automatic ratio, reject explicit ``count_packing`` and
+retain their native-window estimators.
+
+Counts are summed from the selected acquired period's inclusive good-bin window
+before fitting. Incomplete trailing groups are dropped. Times are the mean of
+the contributing native centres; ``t_min``, ``t_max``, and ``exclude`` select
+these packed centres. Correction preflight and fitted-background treatment are
+unchanged. The captured domains record the actual native windows and times,
+and alpha and beta retain their joint covariance. Different packing can change
+a nonlinear fit; compare fitted values and covariance only on identical
+observations. Saved results load as captured, without refitting.
 
 The :doc:`../agent_workflow` ``alpha`` command and ``--alpha-from`` accept
 ``--calibration-method tf_calibration_fit`` for the shared TF operation.

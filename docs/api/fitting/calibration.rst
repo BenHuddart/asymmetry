@@ -51,12 +51,19 @@ Scripted calibration and CLI requests use the same core operations::
    from asymmetry.core.workflow import CalibrationOptions, ReductionSettings, calibrate_run, reduce_run
 
    source = load("calibrant.nxs")
-   settings = ReductionSettings(deadtime="from_file")
+   settings = ReductionSettings(deadtime="from_file", rebin=2)
    outcome = calibrate_run(source, settings,
-       CalibrationOptions("tf_calibration_fit", fit_beta=True, period=1))
+       CalibrationOptions("tf_calibration_fit", fit_beta=True, period=1, count_packing=4))
    if outcome.alpha is not None:
        applied = ReductionSettings(alpha=outcome.record, deadtime="from_file")
        signal = reduce_run(target.run, applied)
+
+``CalibrationOptions.count_packing`` replaces the source's fixed bunching factor
+for this TF operation; ``None`` inherits it and one requests native bins.
+It accepts positive integers and rejects booleans. Science ``settings.rebin``
+does not affect calibration. Quick methods reject explicit calibration packing.
+See :ref:`calibration-count-packing` for window selection, incomplete trailing
+groups, and an example applying the record with independent science packing.
 
 ``ReductionSettings.alpha`` accepts an authored scalar or a captured
 ``CalibrationRecord``. ``effective_alpha`` and ``effective_alpha_source`` derive

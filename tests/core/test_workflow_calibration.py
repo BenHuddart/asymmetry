@@ -129,9 +129,10 @@ def test_selection_matches_core_without_comparing_independently_captured_ids():
     assert outcome.to_dict()["model"] == direct.selected.model
 
 
+@pytest.mark.parametrize("packing", [None, 4])
 @pytest.mark.parametrize("deadtime", ["off", "from_file"])
 @pytest.mark.parametrize("background", ["none", "range", "tail_fit"])
-def test_source_corrections_and_native_window_match_direct(deadtime, background):
+def test_source_corrections_and_native_window_match_direct(deadtime, background, packing):
     from asymmetry.core.project.profiles import (
         AlphaPolicy,
         BackgroundPolicy,
@@ -175,6 +176,9 @@ def test_source_corrections_and_native_window_match_direct(deadtime, background)
             grouping=dict(data.run.grouping) | resolve_effective_grouping(profile, data.run),
         ),
     )
+    options = replace(options, count_packing=packing)
+    if packing is not None:
+        prepared.run.grouping.update(binning_mode="fixed", bunching_factor=packing)
     outcome = calibrate_run(data, settings, options)
     direct = fit_tf_calibration(
         prepared, TFCalibrationRequest(1, 2, fit_beta=True, frequency_mhz=1.3, t_min=0.5, t_max=5)
