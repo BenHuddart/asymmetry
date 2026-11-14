@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Select an explicit logged thermometer in scripts with consistent dataset/run
+  temperatures and scan coordinates, retaining original readings and selection context.
+
 - Apply complete instrument grouping presets to datasets through a public scripting
   helper, preserving acquisition inputs and rejecting incompatible captured calibrations.
 

@@ -48,6 +48,45 @@ limits within observed support; omitted endpoints keep their mapped file limits.
 An invalid authored selection remains editable without changing file loading.
 See :ref:`comparison-file-manual-windows`.
 
+.. _logged-temperature-selection:
+
+Explicit temperature channels in scripts
+---------------------------------------
+
+A script can choose a thermometer explicitly with
+:func:`~asymmetry.core.workflow.select_logged_temperature`. Supply the exact full
+channel path from ``dataset.metadata["nexus_time_series"]``. Display names and
+suffixes are not resolved, so two channels named ``sample`` require their full
+paths. The :ref:`temperature-selection-example` uses synthetic logs.
+
+The representative value is the arithmetic mean of all readings whose timestamps
+are at or after the run start (``time >= 0``). Each reading has equal weight;
+unevenly spaced readings are not duration-weighted. The time and value arrays
+must be non-empty, one-dimensional, and equally sized, and every timestamp must
+be finite. Pre-run readings are excluded. At least one run-active reading is
+required, and every included reading must be finite and strictly above 0 K after
+conversion. Missing readings, NaN, infinity, and sensor dropouts raise
+``ValueError`` rather than being discarded or replaced by a header or summary.
+
+Declared units must be ``K``, ``mK``, or ``°C`` (including ``degC``), or their
+spelled-out aliases: kelvin(s), millikelvin(s), celsius, degree(s) celsius, and
+centigrade. Conversion follows the `BIPM SI Brochure, ninth edition
+<https://www.bipm.org/en/publications/si-brochure>`_, sections 2.3.1 and 3,
+with the same shared unit conversions as the raw-file loaders.
+Missing, unknown, and incompatible units raise ``ValueError``.
+
+The returned copy exposes the chosen value in kelvin through both ``temperature``
+and ``sample_temperature_logged`` on the dataset and its Run, so scalar labels
+and temperature scan coordinates agree. ``sample_temperature_log_source`` names
+the selected path. ``temperature_selection`` records ``statistic``
+(``arithmetic_mean``), the sample policy, and ``original`` scalar fields
+(``temperature``, ``sample_temperature_logged``, and
+``sample_temperature_log_source`` where present). Selecting another channel retains
+these original fields. Raw logs and the input dataset remain unchanged; analysis
+arrays and histograms are shared. Loading without this operation retains the
+loader's default policy. A representative temperature does not establish thermal
+equilibrium or supply a temperature uncertainty.
+
 Supported formats
 -----------------
 
