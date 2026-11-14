@@ -66,6 +66,15 @@ Logbook
    :undoc-members:
    :show-inheritance:
 
+
+Scripted grouping preparation
+-----------------------------
+
+See :ref:`preset-scripting-example` for synthetic loading, preset application,
+calibration, and reduction, and :doc:`/reference/detector_grouping` for policy.
+
+.. autofunction:: asymmetry.core.workflow.apply_grouping_preset
+
 Instrument geometry
 -------------------
 

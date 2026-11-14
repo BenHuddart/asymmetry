@@ -26,6 +26,35 @@ grouping-profile model that stores the settings, the per-format (PSI/ROOT)
 details, and the beam-vs-analysis naming conventions. For a hands-on
 walkthrough with a worked calibration, see :doc:`grouping_calibration`.
 
+
+Scripted preset application
+---------------------------
+
+Call :func:`~asymmetry.core.workflow.apply_grouping_preset` with a loaded dataset
+and an exact preset name. Instrument recognition and histogram-count variant
+resolution select the layout; preset membership and detector labels are checked
+against the acquired run. Unknown instruments or preset names, missing channels,
+and groups emptied by exclusions raise errors. Exclusions cannot hide a missing
+required channel. No preset is chosen automatically.
+
+The helper returns a new dataset with complete groups, names, the preset pair,
+and projections, reduced through the same profile and histogram owners used by
+other core callers. It retains acquired histograms, file timing, unrelated
+metadata, exclusions, binning, and correction policies. Preset projection
+balances replace manually authored projection balances; scalar policies remain.
+Changing membership, the selected pair, or projection pairs while a captured
+calibration is active raises ``ValueError``. Apply the preset to the original
+uncalibrated source, then measure a calibration for the new grouping. An identical
+grouping retains its canonical calibration policies and records.
+
+Regrouping discards cached period curves and rebuilds them from held raw
+histograms; cached-only periods raise an error. Projection labels are removed
+from the returned curve because it uses the preset's selected pair. For a
+rotating-frame curve, pass its original laboratory-frame source dataset.
+
+See :ref:`preset-scripting-example` for a complete synthetic
+load/preset/calibrate/reduce example and :doc:`/api/core` for the API.
+
 Grouping profiles
 ------------------
 

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Apply complete instrument grouping presets to datasets through a public scripting
+  helper, preserving acquisition inputs and rejecting incompatible captured calibrations.
+
 ## [0.28.0] - 2026-11-13
 
 ### Fixed
