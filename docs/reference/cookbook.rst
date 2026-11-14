@@ -63,6 +63,52 @@ always deadtime → background → grouping → asymmetry. See
 the error model.
 
 
+.. _temperature-selection-example:
+
+Select a logged thermometer
+---------------------------
+
+Use a full channel path to label a dataset with a chosen thermometer and carry
+the same value into temperature scan coordinates. This synthetic example has
+uneven sampling and a distinct header setpoint:
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.data import MuonDataset, Run
+   from asymmetry.core.workflow import scan_axis, select_logged_temperature
+
+   metadata = {
+       "temperature": 100.0,
+       "nexus_time_series": {
+           "logs/sample": {
+               "time": [-1.0, 0.0, 1.0, 4.0],
+               "values": [999.0, 10.0, 20.0, 60.0],
+               "units": "K",
+           },
+           "logs/controller": {
+               "time": [0.0, 1.0], "values": [40.0, 80.0], "units": "K",
+           },
+       },
+   }
+   source = MuonDataset(
+       time=np.array([0.0, 1.0]),
+       asymmetry=np.array([20.0, 18.0]),
+       error=np.array([1.0, 1.0]),
+       metadata=metadata,
+       run=Run(run_number=7, metadata=metadata),
+   )
+   selected = select_logged_temperature(source, "logs/sample")
+   assert selected.temperature == 30.0       # (10 + 20 + 60) / 3
+   assert selected.run.temperature == 30.0
+   assert scan_axis({7: selected}, "temperature").values == {7: 30.0}
+   assert source.temperature == 100.0
+   assert selected.metadata["temperature_selection"]["original"]["temperature"] == 100.0
+
+Use the returned dataset (or its Run for reduction) in subsequent calls.
+See :ref:`logged-temperature-selection` for supported units, the strict
+missing-value policy, and retained provenance.
+
 .. _preset-scripting-example:
 
 Load a synthetic run, apply a preset, calibrate, and reduce

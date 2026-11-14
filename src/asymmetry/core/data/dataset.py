@@ -136,7 +136,10 @@ class Run:
 
     @property
     def temperature(self) -> float:
-        """Sample setpoint; explicit unknown values (None) are NaN."""
+        """Sample setpoint or explicitly selected logged value, in kelvin.
+
+        Explicit unknown values (None) are NaN.
+        """
         value = self.metadata.get("temperature", 0.0)
         return float(value) if value is not None else float("nan")
 
@@ -144,9 +147,10 @@ class Run:
     def sample_temperature_logged(self) -> float | None:
         """Representative *logged* sample temperature, if recorded.
 
-        The loader's sample-thermometer reading (a ``Temp_Sample`` NXlog, or
-        PSI header sensor 1 — ``metadata["sample_temperature_log_source"]``
-        says which), as distinct from :attr:`temperature` (the setpoint).
+        The explicit selection, or the loader's sample-thermometer reading
+        (a ``Temp_Sample`` NXlog or PSI header sensor 1).
+        ``metadata["sample_temperature_log_source"]`` names its source.
+        Without an explicit selection, :attr:`temperature` is the setpoint.
         ``None`` when the file holds no usable reading.
         """
         value = self.metadata.get("sample_temperature_logged")
@@ -258,7 +262,7 @@ class MuonDataset:
 
     @property
     def temperature(self) -> float | None:
-        """Sample temperature setpoint (``metadata["temperature"]``), or ``None``.
+        """Sample setpoint or explicitly selected logged value, or ``None``.
 
         Unlike :attr:`Run.temperature` (which floors a missing value to ``0.0``),
         this returns ``None`` when no temperature was recorded so a trend point
@@ -278,10 +282,11 @@ class MuonDataset:
     def sample_temperature_logged(self) -> float | None:
         """Representative *logged* sample temperature, if recorded.
 
-        The loader's sample-thermometer reading (a ``Temp_Sample`` NXlog, or
-        PSI header sensor 1 — ``metadata["sample_temperature_log_source"]``
-        says which), as distinct from the ``metadata['temperature']``
-        setpoint. ``None`` when the file holds no usable reading.
+        The explicit selection, or the loader's sample-thermometer reading
+        (a ``Temp_Sample`` NXlog or PSI header sensor 1).
+        ``metadata["sample_temperature_log_source"]`` names its source.
+        Without an explicit selection, :attr:`temperature` is the setpoint.
+        ``None`` when the file holds no usable reading.
         """
         value = self.metadata.get("sample_temperature_logged")
         return None if value is None else float(value)
