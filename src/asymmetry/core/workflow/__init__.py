@@ -28,6 +28,7 @@ from asymmetry.core.workflow.global_fit import (
     fit_global,
     fit_global_batch,
 )
+from asymmetry.core.workflow.grouping import apply_grouping_preset
 from asymmetry.core.workflow.integral_scan import (
     build_integral_scan,
     field_scan_payload,
@@ -101,6 +102,7 @@ from asymmetry.core.workflow.workdir import (
 )
 
 __all__ = [
+    "apply_grouping_preset",
     "CalibrationOptions",
     "CalibrationOutcome",
     "QuickCalibrationResult",

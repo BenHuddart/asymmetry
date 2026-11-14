@@ -63,6 +63,67 @@ always deadtime → background → grouping → asymmetry. See
 the error model.
 
 
+.. _preset-scripting-example:
+
+Load a synthetic run, apply a preset, calibrate, and reduce
+-----------------------------------------------------------
+
+Use :func:`~asymmetry.core.workflow.apply_grouping_preset` to prepare complete
+instrument groups, names, the selected pair, and all declared projections.
+This example creates a synthetic NeXus file in a temporary directory; it needs
+``asymmetry[hdf5]``. Replace the synthetic file with your acquisition file for
+experimental work.
+
+.. code-block:: python
+
+   from pathlib import Path
+   from tempfile import TemporaryDirectory
+
+   import numpy as np
+
+   from asymmetry.core.data.dataset import Histogram, Run
+   from asymmetry.core.instrument import get_instrument_layout
+   from asymmetry.core.io import load
+   from asymmetry.core.io.nexus_writer import write_nexus_v1
+   from asymmetry.core.workflow import (
+       CalibrationOptions, ReductionSettings, apply_grouping_preset,
+       calibrate_run, reduce_run,
+   )
+
+   layout = get_instrument_layout("MuSR")
+   synthetic = Run(
+       run_number=1,
+       metadata={"instrument": "MuSR", "facility": "ISIS"},
+       histograms=[
+           Histogram(np.full(32, 200.0 + i), 0.1,
+                     t0_bin=2, good_bin_start=3, good_bin_end=29)
+           for i in range(layout.n_detectors)
+       ],
+       grouping={"groups": {1: list(range(1, 33)),
+                            2: list(range(33, 65))},
+                 "forward_group": 2, "backward_group": 1},
+   )
+   with TemporaryDirectory() as directory:
+       path = Path(directory) / "synthetic.nxs"
+       write_nexus_v1(synthetic, path)
+       loaded = load(str(path))
+       prepared = apply_grouping_preset(loaded, "Transverse (Vector)")
+       calibration = calibrate_run(
+           prepared, ReductionSettings(), CalibrationOptions(method="ratio")
+       )
+       reduced = reduce_run(
+           prepared.run, ReductionSettings(alpha=calibration.result)
+       )
+       assert reduced.n_points > 0
+
+The returned dataset contains a freshly reduced curve for the preset's selected
+pair. Its ``run.grouping["projections"]`` also prepares the other pairs for
+:func:`~asymmetry.core.transform.projections.reduce_selected_projections`.
+Calibrate each projection's pair separately when measuring projection balances.
+The source dataset is unchanged. See :doc:`detector_grouping` for exclusions,
+calibration compatibility, and layout validation.
+
+
 Recompute the asymmetry with a custom α
 ---------------------------------------
 
