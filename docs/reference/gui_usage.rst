@@ -799,13 +799,18 @@ Output files and naming inside ``<name>.gleplot``:
 * ``<label>.dat`` for each exported dataset (time, asymmetry, error)
 * ``<label>.fit`` for each exported fit curve when present (time, fitted asymmetry)
 * file stems are derived from the selected **Label** field value and sanitised
-   for safe filenames
+   for safe filenames, lowercased, and given distinct suffixes for duplicate stems
 
-The ``.dat`` sidecar now includes structured comment headers describing the run
-and grouping state used to produce the plotted asymmetry, including run number,
+The ``.dat`` sidecar includes structured comment headers describing the run
+and source settings captured for export, including run number,
 title/comment timestamps when available, histogram/binning information,
 forward/backward grouping, alpha, good-bin limits, bunching, and deadtime
 correction state.
+
+The grouping block states ``Context: source settings at export capture``.
+Its editable source settings are separate from the result's immutable
+``effective_recipe``. ``Captured result settings: effective_recipe`` identifies
+that authority; ``Captured result settings: unknown`` preserves missing history.
 
 The ``.fit`` header includes run metadata and fit metadata, including:
 

@@ -1737,10 +1737,10 @@ does not establish acquisition hashing or general reduction equivalence. Mantid'
 public `workspace-history script generation
 <https://docs.mantidproject.org/nightly/algorithms/GeneratePythonScript-v1.html>`_
 describes applied operations separately from saved data and external replay inputs.
-This comparison has no matched native Mantid run. WiMDA 1.326 provides grouping and
-correction annotations in reduced exports; its `overview/manual
-<https://shadow.nd.rl.ac.uk/wimda/>`_ supplies workflow context, without a new native
-execution or a claim of identical canonical identity safeguards.
+This comparison has no matched native Mantid run. WiMDA 1.326 saves and restores
+grouping settings and annotates reduced exports with grouping and corrections;
+its `overview/manual <https://shadow.nd.rl.ac.uk/wimda/>`_ supplies workflow
+context. These workflows do not establish identical canonical identity safeguards.
 
 Asymmetry also checks canonical recipe identity independently of dictionary order,
 local paths, and display labels. The identity retains available source references;

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -236,14 +238,19 @@ def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
     assert build_integral_scan(datasets, settings, method="differential").n_points == 2
 
 
-def test_a_single_period_scan_reports_the_source_run_number() -> None:
+@pytest.mark.parametrize("period", [0, 1])
+def test_a_single_period_scan_reports_the_source_run_number(period) -> None:
     """``select_period`` encodes a period's run number as ``run*1000+period``;
 
     the scan must report the run it was cut from, not that internal key.
     """
     from asymmetry.core.io.periods import period_run
     from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
-    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.integral_scan import (
+        build_integral_scan,
+        field_scan_from_payload,
+        field_scan_payload,
+    )
     from asymmetry.core.workflow.reduction import ReductionSettings
 
     def relax(t, A=20.0):  # noqa: N803 (A is the conventional asymmetry symbol)
@@ -263,14 +270,24 @@ def test_a_single_period_scan_reports_the_source_run_number() -> None:
             seed=50 + index,
             run_number=500 + index,
         )
-        datasets.append(period_run(run, 0))
+        datasets.append(period_run(run, period))
 
-    settings = ReductionSettings(period="red")
+    settings = ReductionSettings(period="red" if period == 0 else "green")
     scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
     by_run = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0, order_key="run")
 
     assert scan.run_numbers == [500, 501]
     assert by_run.x.tolist() == [500.0, 501.0]
+    assert by_run.effective_recipe.to_dict()["coordinates"] == [500.0, 501.0]
+    assert scan.effective_recipe.to_dict()["coordinates"] == [700.0, 800.0]
+    restored = field_scan_from_payload(json.loads(json.dumps(field_scan_payload(by_run))))
+    assert restored.effective_recipe == by_run.effective_recipe
+    np.testing.assert_array_equal(restored.x, by_run.x)
+    np.testing.assert_array_equal(restored.value, by_run.value)
+    np.testing.assert_array_equal(restored.error, by_run.error)
+    assert restored.effective_recipe.to_dict()["point_recipes"] == [
+        point.effective_recipe.to_dict() for point in by_run.points
+    ]
 
 
 @pytest.mark.parametrize("background", ["Quadratic", "Cubic"])

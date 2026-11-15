@@ -236,6 +236,12 @@ class PlotExportData:
             f.write("!\n")
 
             f.write("! START OF GROUPING INFORMATION\n")
+            f.write("!  Context: source settings at export capture\n")
+            f.write(
+                "!  Captured result settings: "
+                + ("effective_recipe" if payload.get("effective_recipe") is not None else "unknown")
+                + "\n"
+            )
             for gid in sorted(groups):
                 self.check_cancelled()
                 det_tokens: list[str] = []

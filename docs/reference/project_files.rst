@@ -1065,6 +1065,10 @@ Scan-series percent values carry percent recipes with their native fractional
 recipe as the captured input. Restoring the internal fractional view uses that
 recorded input; it does not infer a recipe from current controls.
 
+Workflow scan construction retains source-run coordinates separately from the acquired
+period selectors in the point recipes. Loading a record preserves its captured
+coordinates; saving does not reinterpret historical scan recipes.
+
 Absent historical recipes and observation digests remain unknown. Frozen
 calibration references remain frozen, including the distinction between a saved
 pending preview and committed calibration history. Ordinary point errors stay
