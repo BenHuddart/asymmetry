@@ -236,6 +236,9 @@ Project files store:
   including fits, frame, series membership and results, exclusions, and
   data-group membership. Source rows remain available. Preserved history does
   not supply newly reconstructed numerical observations for the unavailable row.
+  Later source rebuilds also check the saved terms before replacing the row:
+  unsupported coefficients or selected periods retain the definition and history
+  with ``Saved combination terms cannot be reconstructed by this operation``.
 * **Fit series (batches)** — each batch, global, grouped or scan fit over
   multiple runs (or multiple runs' detector groups) is recorded as a
   ``FitSeries`` that carries the member list, parameter roles, per-member

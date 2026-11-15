@@ -207,9 +207,20 @@ arrays reconstructs through current arithmetic. A failed restoration retains a `
 and historical records, reports its ``Corrections incomplete`` diagnosis, and
 leaves source rows available. A failed
 source rebuild retains saved arrays with an explicit incomplete-correction
-marker. Condition labels alone do not invalidate count snapshots; wizard
+marker. Asymmetry also checks saved constituent coefficients and period selections
+before replacing a row during a source rebuild. An unsupported weighted definition
+stays unavailable with its definition and history; a later grouping edit cannot
+reopen it as an ordinary unit sum. This does not provide arbitrary-weight project
+reconstruction. Condition labels alone do not invalidate count snapshots; wizard
 model/coordinate identities separately retain the conditions they consume. No
 label edit authorises an automatic numerical refit.
+
+.. figure:: /_generated/screenshots/combination_rebuild.png
+   :alt: Synthetic weighted observations retained after a unit-weight rebuild is refused
+
+   A registered weighted result keeps its observations when the browser's rebuild
+   cannot reproduce its terms. The diagnosis is
+   ``Saved combination terms cannot be reconstructed by this operation``.
 
 Compared with other programs
 -----------------------------
@@ -235,15 +246,17 @@ Asymmetry deliberately uses each original's own correction facts, so its result
 is independent of the primary run under shared authored intent. This unequal-fact
 case is a deliberate difference, not native numerical agreement.
 
-Mantid's documented 6.16 development `Scale v1
+Mantid 6.16.1 `Scale v1
 <https://docs.mantidproject.org/nightly/algorithms/Scale-v1.html>`_ and `Plus v1
 <https://docs.mantidproject.org/nightly/algorithms/Plus-v1.html>`_ provide the
 weighted-arithmetic analogue: multiplication scales errors and independent
 addition adds variances. `Minus v1
 <https://docs.mantidproject.org/nightly/algorithms/Minus-v1.html>`_ subtracts the
 supplied quantity, so subtracting counts and subtracting asymmetries are
-different requests. These are documented arithmetic comparisons, not native
-Mantid numerical checks. `MuonPreProcess v1
+different requests. Matched count/error controls reproduce the 50/90,
+supplied 30/74, and signed 190/405 examples, including counterpart WorkspaceGroup
+arithmetic. A workspace group alone does not declare acquired-period identity.
+`MuonPreProcess v1
 <https://docs.mantidproject.org/nightly/algorithms/MuonPreProcess-v1.html>`_
 can correct each workspace before merging. Generic merge alone does not choose
 the correction order. `MergeRuns v1

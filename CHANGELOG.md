@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep saved combination terms and history when a source rebuild cannot reproduce
+  their coefficients, rather than replacing an unavailable weighted definition with a unit sum.
+
 - Retain source-run coordinates in period-selected scan recipes and the correct
   result provenance in GLE data files, including labels differing only by case;
   distinguish source settings from captured execution in export headers.

@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtWidgets import QLabel, QSplitter, QVBoxLayout, QWidget
 
+from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.simulate import reduce_run_to_dataset
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
@@ -113,3 +114,27 @@ class RunArithmeticScenario(Scenario):
 
 
 register(RunArithmeticScenario())
+
+
+class CombinationRebuildScenario(Scenario):
+    name = "combination_rebuild"
+    description = "A weighted result retains its observations when a unit rebuild cannot reproduce it."
+    size = (1250, 900)
+
+    def build(self):
+        demo = ArithmeticDemo()
+        number = next(iter(demo.browser._combined_datasets))
+        sources = demo.browser.get_combined_source_datasets(number)
+        weighted = reduce_combined_run(
+            combine_runs([source.run for source in sources], scales=[1, 2], run_number=number)
+        )
+        demo.browser.add_dataset(weighted)
+        if demo.browser.rebuild_combined_dataset(number) is not None:
+            raise ValueError("A unit rebuild cannot replace the authored weighted result")
+        demo.plot.reset_view_limits()
+        demo.show_run(number)
+        demo.layout().addWidget(QLabel(weighted.metadata["correction_error"]))
+        return demo
+
+
+register(CombinationRebuildScenario())
