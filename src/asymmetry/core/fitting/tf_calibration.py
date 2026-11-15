@@ -224,8 +224,12 @@ def _require_acquired_tf_counts(run, groups):
 
 def _prepare_tf_counts(dataset, request, cancel_callback):
     """Resolve the acquisition and one bank pair for every candidate."""
-    if cancel_callback is not None and cancel_callback():
-        raise FitCancelledError("Fit cancelled.")
+
+    def check_cancel():
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit cancelled.")
+
+    check_cancel()
     if request.period is not None:
         dataset = select_period(dataset, request.period)
     run = dataset.run
@@ -267,6 +271,7 @@ def _prepare_tf_counts(dataset, request, cancel_callback):
         t_max=request.t_max,
         exclude=request.exclude,
         lifetime_corrected=False,
+        cancel_check=check_cancel,
     )
     objective = (
         Objective.GAUSSIAN

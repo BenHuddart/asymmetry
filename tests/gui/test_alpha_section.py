@@ -134,6 +134,11 @@ def test_held_worker_obsolete_results_never_publish_and_heartbeat(qapp, monkeypa
         "background",
         "reference",
         "manual",
+        "source_counts",
+        "source_metadata",
+        "native_clock",
+        "source_variance",
+        "pair",
     ],
 )
 def test_dialog_dependency_edits_invalidate_held_result(qapp, monkeypatch, dependency):
@@ -145,51 +150,72 @@ def test_dialog_dependency_edits_invalidate_held_result(qapp, monkeypatch, depen
     _wait_for_t0_detection(dialog)
     section = dialog._alpha_section
     entered, release = Event(), Event()
-    original = module.run_calibration
+    from asymmetry.core.transform import asymmetry
 
-    def held(worker, request):
-        entered.set()
-        assert release.wait(5)
-        return original(worker, request)
+    section._method_combo.setCurrentIndex(section._method_combo.findData("diamagnetic"))
+    original = asymmetry._diamagnetic_objective
+    calls = []
 
-    monkeypatch.setattr(module, "run_calibration", held)
-    section._on_estimate()
-    _wait_until(entered.is_set)
-    if dependency == "group":
-        dialog._groups[1] = [1]
-    elif dependency == "projection":
-        dialog._projection_specs = [{"label": "other", "forward_group": 2, "backward_group": 1}]
-    elif dependency == "exclusion":
-        dialog._exclude_edit.setText("1")
-    elif dependency == "period":
-        dialog._set_period_mode("green")
-    elif dependency == "mapping":
-        dialog._run.grouping["period_mapping"] = {1: "green"}
-    elif dependency == "mapping_draft":
-        dialog.period_mapping_request = {"mapping": {1: "red", 2: "green"}}
-    elif dependency == "window":
-        dialog._last_good_spin.setValue(dialog._last_good_spin.value() - 1)
-    elif dependency == "binning":
-        dialog._bunch_spin.setValue(2)
-    elif dependency == "timing":
-        dialog._t0_spin.setValue(dialog._t0_spin.value() + 1)
-    elif dependency == "deadtime":
-        dialog._deadtime_section._mode_buttons["manual"].click()
-    elif dependency == "background":
-        dialog._background_mode = "fixed"
-    elif dependency == "reference":
-        dialog._background_run_payload = {"run_number": 123}
-    else:
-        dialog._alpha_spin.setValue(1.7)
-    dialog._refresh_preview()
-    release.set()
-    _wait_until(lambda: section._tasks.active_count == 0)
-    assert section.pending() == {}
-    assert "Computing calibration" not in section._result_label.text()
-    if dependency == "manual":
-        assert dialog._alpha_spin.value() == 1.7
-    dialog._clear_dirty()
-    dialog.close()
+    def held(*args):
+        value = original(*args)
+        calls.append(1)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(10)
+        return value
+
+    monkeypatch.setattr(asymmetry, "_diamagnetic_objective", held)
+    try:
+        section._on_estimate()
+        _wait_until(entered.is_set)
+        if dependency == "group":
+            dialog._groups[1] = [2]
+        elif dependency == "pair":
+            dialog._forward_combo.setCurrentIndex(dialog._forward_combo.findData(2))
+        elif dependency == "source_counts":
+            dialog._run.histograms[0].counts = dialog._run.histograms[0].counts.copy()
+        elif dependency == "source_variance":
+            dialog._run.histograms[0].count_variance = dialog._run.histograms[0].counts.copy()
+        elif dependency == "native_clock":
+            dialog._run.histograms[0].t0_time_us = 0.024
+        elif dependency == "source_metadata":
+            dialog._run.metadata["field"] = 123.0
+        elif dependency == "projection":
+            dialog._projection_specs = [{"label": "other", "forward_group": 2, "backward_group": 1}]
+        elif dependency == "exclusion":
+            dialog._exclude_edit.setText("1")
+        elif dependency == "period":
+            dialog._set_period_mode("green")
+        elif dependency == "mapping":
+            dialog._run.grouping["period_mapping"] = {1: "green"}
+        elif dependency == "mapping_draft":
+            dialog.period_mapping_request = {"mapping": {1: "red", 2: "green"}}
+        elif dependency == "window":
+            dialog._last_good_spin.setValue(dialog._last_good_spin.value() - 1)
+        elif dependency == "binning":
+            dialog._bunch_spin.setValue(2)
+        elif dependency == "timing":
+            dialog._t0_spin.setValue(dialog._t0_spin.value() + 1)
+        elif dependency == "deadtime":
+            dialog._deadtime_section._mode_buttons["manual"].click()
+        elif dependency == "background":
+            dialog._background_mode = "fixed"
+        elif dependency == "reference":
+            dialog._background_run_payload = {"run_number": 123}
+        else:
+            dialog._alpha_spin.setValue(1.7)
+        dialog._refresh_preview()
+        release.set()
+        _wait_until(lambda: section._tasks.active_count == 0)
+        assert len(calls) == 1
+        assert section.pending() == {}
+        assert "Computing calibration" not in section._result_label.text()
+        if dependency == "manual":
+            assert dialog._alpha_spin.value() == 1.7
+    finally:
+        release.set()
+        dialog._clear_dirty()
+        dialog.close()
 
 
 @pytest.mark.parametrize("mode", ["off", "from_file", "manual", "estimate"])

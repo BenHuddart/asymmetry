@@ -89,7 +89,8 @@ settings out to whichever runs happen to be checked:
   **Estimate calibration** compares four count envelopes and displays the selected
   model. **Calibrate β** is available only for TF in a single-pair layout;
   vector projections retain beta one. **Diamagnetic**, **Decay balance**, and
-  **Count ratio ΣF/ΣB** remain quick choices. **Stop** invalidates pending work;
+  **Count ratio ΣF/ΣB** remain quick choices. **Stop** cancels pending work at
+  cooperative numerical boundaries and restores **No calibration result**;
   completed values update the draft spinboxes and preview immediately. Their
   method labels return to ``manual`` on a coefficient edit. **Apply** commits
   the draft results and their full source context.

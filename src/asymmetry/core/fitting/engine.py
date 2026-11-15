@@ -378,11 +378,6 @@ def drive_minuit(
 ) -> dict[str, tuple[float, float]] | None:
     """Drive a constructed, limit-set Minuit through minimisation and report MINOS.
 
-    The single shared minimiser-drive seam (W13): the three minimiser sites in the
-    codebase (:meth:`FitEngine.fit`, :meth:`FitEngine.global_fit`, and the
-    count-domain ``_solve``) all route their migrad/simplex call through here so the
-    *explicit HESSE* refinement and *opt-in MINOS* behaviour are defined once.
-
     ``m`` must already have its cost function, parameter names, and limits set; this
     function owns only the post-construction drive. ``migrad_kwargs`` is forwarded to
     ``m.migrad``/``m.simplex`` so each caller keeps its own ncall/iterate/use_simplex
@@ -413,6 +408,8 @@ def drive_minuit(
     if run_hesse and method == "simplex" and not explicit_hesse:
         try:
             m.hesse()
+        except FitCancelledError:
+            raise
         except Exception:
             # HESSE is a fidelity refinement, not a correctness requirement; a
             # back-end that rejects it leaves the simplex state in place.
@@ -423,6 +420,8 @@ def drive_minuit(
             m.minos(*minos_parameters)
         else:
             m.minos()
+    except FitCancelledError:
+        raise
     except (RuntimeError, ValueError):
         # MINOS can fail wholesale (non-quadratic blow-up, call-limit); fall back
         # to the symmetric HESSE errors the caller already has.

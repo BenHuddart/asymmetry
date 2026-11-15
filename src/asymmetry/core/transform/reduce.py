@@ -386,6 +386,7 @@ def prepare_grouped_corrections(
                     use_deadtime=use_deadtime,
                     mode=deadtime_mode,
                     retain_variance=True,
+                    cancel_check=cancel_check,
                 )
                 if reference_outcome.status in {
                     CorrectionStatus.UNAVAILABLE,
@@ -394,6 +395,8 @@ def prepare_grouped_corrections(
                     deadtime_outcome = replace(
                         reference_outcome, reason=f"reference run: {reference_outcome.reason}"
                     )
+            if cancel_check is not None:
+                cancel_check()
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -426,6 +429,8 @@ def prepare_grouped_corrections(
             forward_counts = forward
             backward_counts = backward
 
+        if cancel_check is not None:
+            cancel_check()
         corrections = CorrectionOutcomes(deadtime_outcome, background_outcome)
         if not allow_incomplete:
             corrections.require_complete(context=context)
