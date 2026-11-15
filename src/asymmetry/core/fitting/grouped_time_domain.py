@@ -225,7 +225,7 @@ def build_grouped_time_domain_groups(
         raise ValueError(
             "Grouped time-domain fitting requires at least two included detector groups"
         )
-    ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
+    ctx = _count_group_context(grouping, run, specs, t_min, t_max, exclude)
 
     if ctx is None:
         raise ValueError("Grouped time-domain fitting produced fewer than two usable groups")
@@ -261,7 +261,7 @@ def build_count_groups(
         gid = int(raw_gid)
         indices = effective_group_indices(grouping, gid, n_histograms=len(run.histograms))
         specs.append((gid, indices))
-    ctx = _count_group_context(dataset, grouping, run, specs, t_min, t_max, exclude)
+    ctx = _count_group_context(grouping, run, specs, t_min, t_max, exclude)
 
     if ctx is None:
         raise ValueError(f"Count-domain group {specs[0][0]!r} produced no usable bins")

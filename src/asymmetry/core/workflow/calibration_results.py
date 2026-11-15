@@ -33,6 +33,16 @@ class QuickCalibrationResult:
     mapped_period_number: int | None = None
     computation_revision: str | None = None
     content_identity: ContentIdentity | None = None
+    #: Zero-based acquired-channel indices; None denotes uncaptured legacy membership.
+    forward_indices: tuple[int, ...] | None = None
+    backward_indices: tuple[int, ...] | None = None
+    excluded_indices: tuple[int, ...] | None = None
+
+    def __post_init__(self):
+        for name in ("forward_indices", "backward_indices", "excluded_indices"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, tuple(value))
 
     def to_dict(self) -> dict:
         """Export shared result fields and source context without histogram arrays."""
@@ -71,7 +81,14 @@ class QuickCalibrationResult:
                     "mapped_period_number",
                     "computation_revision",
                     "content_identity",
+                    "forward_indices",
+                    "backward_indices",
+                    "excluded_indices",
                 }
+            },
+            **{
+                name: data.get(name)
+                for name in ("forward_indices", "backward_indices", "excluded_indices")
             },
             period_mapping=tuple((int(n), target) for n, target in data["period_mapping"]),
             mapped_period_number=data.get("mapped_period_number"),

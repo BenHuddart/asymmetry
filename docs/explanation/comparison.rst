@@ -1376,6 +1376,12 @@ acquired physical alpha truth or pulse-model adequacy. Asymmetry also checks
 request freshness before displaying or applying GUI results, so changes to the
 source, pair, timing, or corrections cannot apply an obsolete result.
 
+Asymmetry retains resolved F/B channel members and authored exclusions with a
+new calibration, so later regrouping cannot rewrite its source request. Legacy
+records keep uncaptured facts unknown. Mantid ``AlphaCalc`` returns a scalar
+ratio for the selected groups and window; it does not return a native alpha
+uncertainty or perform TF envelope fitting.
+
 Asymmetry also checks that a displayed calibration coefficient is finite and
 positive before offering application. A numerical ratio of zero from an empty
 forward group cannot be used as a detector calibration; the workflow reports

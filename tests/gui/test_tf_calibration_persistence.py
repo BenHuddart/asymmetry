@@ -108,6 +108,9 @@ def test_staged_dialog_result_applies_and_reopens_without_refitting(qapp, tmp_pa
     else:
         assert isinstance(profile.alpha_policy, QuickCalibratedCoefficient)
         assert profile.alpha_policy.result == outcome.result
+        assert outcome.result.forward_indices is not None
+        assert outcome.result.backward_indices is not None
+        assert outcome.result.excluded_indices == ()
     path = tmp_path / "calibrated.asymp"
     from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION
 

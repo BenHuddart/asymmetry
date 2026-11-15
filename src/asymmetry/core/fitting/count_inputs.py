@@ -19,10 +19,7 @@ from asymmetry.core.transform.constituent_counts import (
     resolve_group_observation,
     single_acquisition_model_source,
 )
-from asymmetry.core.transform.corrections import (
-    CorrectionOutcome,
-    require_complete_dataset,
-)
+from asymmetry.core.transform.corrections import CorrectionOutcome
 from asymmetry.core.transform.deadtime import _deadtime_number, deadtime_operation_inputs
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.grouping import effective_group_indices, resolve_alignment
@@ -105,7 +102,6 @@ def _resolve_group_indices(
 
 
 def _count_group_context(
-    dataset: MuonDataset,
     grouping: dict,
     run: Any,
     group_specs: list[tuple[int, list[int]]],
@@ -113,7 +109,8 @@ def _count_group_context(
     t_max,
     exclude,
 ) -> _CountGroupContext | None:
-    require_complete_dataset(dataset)
+    # Count observations are rebuilt from histograms and current corrections;
+    # a cached asymmetry curve's failure cannot describe this new request.
     if grouping.get("period_mode") == "green_minus_red":
         raise FitInputError(
             "G−R has no grouped-count observation; select Red or Green, or use an asymmetry fit."
@@ -270,7 +267,7 @@ def _build_one_count_group(
     errors = np.sqrt(variance if retained_noise else np.maximum(variance, 1.0)) * scale
 
     group_name = ctx.group_names.get(group_id, f"Group {group_id}")
-    metadata = dict(run.metadata)
+    metadata = {key: value for key, value in run.metadata.items() if key != "correction_error"}
     metadata.update(
         {
             "count_variance_source": CountSource.RETAINED_VARIANCE

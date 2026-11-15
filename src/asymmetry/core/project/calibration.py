@@ -311,6 +311,7 @@ def calibration_payload(record: CalibrationRecord) -> dict:
             c.fit.domains != domains
             or (c.source_run_number, c.period_number, c.source_file) != source
             or c.content_identity != first.content_identity
+            or c.excluded_indices != first.excluded_indices
         ):
             raise ValueError("Calibration candidates must share acquisition and count domains")
         fit = {
@@ -341,6 +342,7 @@ def calibration_payload(record: CalibrationRecord) -> dict:
         "content_identity": first.content_identity.to_dict()
         if first.content_identity is not None
         else None,
+        "excluded_indices": first.excluded_indices,
         "domains": [_domain_payload(d) for d in domains],
         "candidates": payloads,
     }
@@ -438,6 +440,7 @@ def restore_calibration(data: dict) -> CalibrationRecord:
                 c["message"],
                 TFEnvelope(c["envelope"]),
                 ContentIdentity.from_dict(data.get("content_identity")),
+                data.get("excluded_indices"),
             )
         )
     envelopes = [c.envelope for c in candidates]

@@ -40,7 +40,7 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.fb_counts import native_count_time
-from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.grouping import ChannelMembership, effective_group_indices
 from asymmetry.core.transform.rebin import BinningSpec
 from asymmetry.core.transform.reduce import corrected_period_counts, correction_flags_from_grouping
 from asymmetry.core.workflow.calibration_results import CalibrationOutcome, QuickCalibrationResult
@@ -223,6 +223,8 @@ def calibrate_source(
     else:
         flags = correction_flags_from_grouping(grouping)
         n = len(run.histograms)
+        forward_indices = effective_group_indices(grouping, forward, n_histograms=n)
+        backward_indices = effective_group_indices(grouping, backward, n_histograms=n)
         counts = next(
             iter(
                 corrected_period_counts(
@@ -230,8 +232,8 @@ def calibrate_source(
                     grouping,
                     grouping.get("period_mode", "red"),
                     binning=BinningSpec(),
-                    forward_idx=effective_group_indices(grouping, forward, n_histograms=n),
-                    backward_idx=effective_group_indices(grouping, backward, n_histograms=n),
+                    forward_idx=forward_indices,
+                    backward_idx=backward_indices,
                     use_deadtime=flags.use_deadtime,
                     deadtime_mode=flags.deadtime_mode,
                     use_background=flags.use_background,
@@ -285,6 +287,11 @@ def calibrate_source(
             counts.t0_time_us,
             tuple((int(number), target) for number, target in mapping.items()),
             mapped_period_number=run.metadata.get("period_number") if mapped else None,
+            forward_indices=tuple(forward_indices),
+            backward_indices=tuple(backward_indices),
+            excluded_indices=ChannelMembership.from_entries(
+                grouping.get("excluded_detectors", [])
+            ).indices(n),
             content_identity=run.source_binding.observed,
             computation_revision=computation.COMPUTATION_REVISION,
         )

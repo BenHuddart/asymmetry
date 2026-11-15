@@ -650,7 +650,8 @@ identity and tagged nonfinite endpoints through restoration; reading does not
 refit or generate a new identity. Scalar/source-only documents remain scalar
 records without inferred joint provenance. Explicit quick results retain their
 shared typed estimate, method/error meaning, source, acquired period, pair,
-correction outcomes, contributor mapping, and timing/window context in
+correction outcomes, resolved F/B channel members, authored exclusions,
+contributor mapping, and timing/window context in
 ``quick_calibration`` settings; a nontrivial mapped quick source retains its
 contributor recipe and selected mapped-set ordinal with no acquired-period ordinal;
 no TF covariance or joint record is inferred. General count-domain science fitting

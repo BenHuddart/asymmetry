@@ -40,7 +40,11 @@ freedom, with ``conditional errors`` marked when unavailable or unreliable.
 These are diagnostics of the selected fit, without a model-truth verdict.
 Quick methods show the bins used and ``first-order errors`` or
 ``no error estimate``. The calibration-run selector identifies the source;
-the complete source context remains in the captured record.
+the complete source context remains in the captured record. Quick records retain
+the resolved forward/backward channel members, and quick and TF records retain
+authored channel exclusions. These are frozen at execution, independently of
+later regrouping or target settings. Older records without these captured facts
+leave them unknown rather than infer them from the current groups.
 
 A completed calibration updates the draft alpha and beta spinboxes and the
 preview immediately. Fixed-beta operations show beta one. The coefficient's
@@ -80,19 +84,15 @@ ratio of the pooled corrected native-good sums. Output packing and time crops
 retain the complete calibration dependency. A G−R asymmetry uses the Red
 estimate on both conditions; explicit projection coefficients take precedence.
 
-:math:`\alpha` is estimated on the *corrected* forward/backward counts — the
-deadtime correction and the background subtraction configured in the grouping
-dialog are applied to the histograms **before** the estimate reads them, so the
-balance is measured on exactly the spectra the reduction forms the asymmetry
-from. This matters most for the background: a flat background pedestal does not
-track the detectors' efficiency ratio, so estimating :math:`\alpha` from the raw
-(unsubtracted) counts balances the *totals* and leaves the reduced weak-TF
-asymmetry off-centre once the background is subtracted. Estimating on the
-background-subtracted counts avoids this pedestal-induced imbalance; the quick
-objective can still retain finite-window and weighting biases. Asymmetry estimates on counts after
-deadtime correction, grouping,
-and background subtraction. This preparation does not imply that every
-reference program uses the same estimator or automatic policy. See
+Quick estimates use the corrected forward/backward counts: configured deadtime
+correction, grouping, and background subtraction precede the estimate. Their
+native good-bin window is independent of science output packing and time crops.
+A flat background pedestal need not track the detector efficiency ratio, so
+background subtraction can change the quick estimate; finite-window and
+weighting biases can remain. TF calibration instead fits its own count model
+with separate constant backgrounds, using retained counting variances when
+supported deadtime correction is applied. The grouping background subtraction
+does not fix or subtract those fitted model backgrounds. See
 :ref:`comparison-calibration-policies` and :doc:`/explanation/reduction_pipeline`.
 
 The calibration dialog shows which corrections the estimate reflects beneath the
@@ -100,6 +100,12 @@ result, and warns when a *requested* correction could not be applied to the
 selected calibration run — for example a reference-run background whose reference
 could not be resolved — so a flattened "after" curve never misrepresents a
 calibration the reduction will not reproduce.
+
+A fresh count request prepares the retained acquired histograms with its current
+grouping and corrections. A failed cached asymmetry curve does not block that
+request after its grouping is repaired; the cached diagnosis remains history.
+Current unavailable corrections, missing acquired observations, and unsupported
+count likelihoods still receive their own diagnostics.
 
 Diamagnetic method
 ------------------

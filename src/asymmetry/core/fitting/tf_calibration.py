@@ -20,7 +20,7 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.io.periods import select_period, source_run_of
 from asymmetry.core.transform.corrections import CorrectionStatus
-from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.grouping import ChannelMembership, effective_group_indices
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 TF_CALIBRATION_METHOD = "tf_calibration_fit"
@@ -119,6 +119,12 @@ class TFCalibrationResult:
     message: str
     envelope: TFEnvelope = TFEnvelope.EXPONENTIAL
     content_identity: ContentIdentity | None = None
+    #: Zero-based authored exclusions, independent of the retained effective bank members.
+    excluded_indices: tuple[int, ...] | None = None
+
+    def __post_init__(self):
+        if self.excluded_indices is not None:
+            object.__setattr__(self, "excluded_indices", tuple(self.excluded_indices))
 
     @property
     def n_bins_used(self) -> int:
@@ -404,6 +410,9 @@ def _fit_prepared_tf(dataset, request, groups, objective, params, envelope, canc
         message,
         envelope,
         run.source_binding.observed,
+        ChannelMembership.from_entries(run.grouping.get("excluded_detectors", [])).indices(
+            len(run.histograms)
+        ),
     )
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Fit cancelled.")

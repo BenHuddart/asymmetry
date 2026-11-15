@@ -345,6 +345,8 @@ joint calibration is requested for a single pair. The GUI stages the selected
 model and conditional errors until Apply; input changes invalidate pending work.
 Automatic per-run ratio, manual coefficients, and loaded historical records keep
 their own policies. A reduction without a calibration source never starts a TF fit.
+Captured quick members and quick/TF exclusions describe the calibration source,
+independently of later target regrouping. Missing legacy context stays unknown.
 
 Combined condition labels
 --------------------------
