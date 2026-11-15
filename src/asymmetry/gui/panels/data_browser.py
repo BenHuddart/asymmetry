@@ -60,6 +60,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.data.acquisition import (
+    constituent_sources_for_project,
+    restore_constituent_expectations,
+)
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
@@ -1350,6 +1354,8 @@ class DataBrowserPanel(QWidget):
 
     def add_dataset(self, dataset: MuonDataset) -> None:
         rn = int(dataset.run_number)
+        if rn in self._combined_datasets and "combination" in dataset.metadata:
+            restore_constituent_expectations(dataset, constituent_sources_for_project(dataset))
         self._datasets[rn] = dataset
         if rn not in self._display_order and rn not in self._run_to_groups:
             self._display_order.append(rn)
@@ -3407,17 +3413,12 @@ class DataBrowserPanel(QWidget):
         if len(source_datasets) < 2:
             return None
 
-        source_run_numbers = self._combined_datasets.get(
-            combined_rn,
-            [int(ds.run_number) for ds in source_datasets],
-        )
         from asymmetry.core.data.combine import CombineError
 
-        builder = self._combine_builder_for(combined_rn)
         try:
-            rebuilt = builder(
+            rebuilt = self._combine_builder_for(combined_rn)(
                 source_datasets,
-                source_run_numbers,
+                self._combined_datasets[combined_rn],
                 combined_run_number=combined_rn,
                 existing_dataset=self._datasets.get(combined_rn),
             )
@@ -4988,10 +4989,8 @@ class DataBrowserPanel(QWidget):
         """Prepare original acquisitions off-thread, then pool corrected independent counts."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
-        runs = self._runs_for_combine(datasets)
         combined_run = combine_runs(
-            runs,
-            sign=1,
+            self._runs_for_combine(datasets),
             run_number=combined_run_number,
             cancel_check=cancel_check,
             label=" + ".join(map(str, run_numbers)),
@@ -5047,12 +5046,10 @@ class DataBrowserPanel(QWidget):
         """Prepare independent acquisitions before applying the signed coefficients."""
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
-        runs = self._runs_for_combine(datasets)
         combined_run = combine_runs(
-            runs,
+            self._runs_for_combine(datasets),
             sign=-1,
             subtract_method="signed",
-            scales=[1.0] * len(runs),
             run_number=combined_run_number,
             cancel_check=cancel_check,
             label=" − ".join(map(str, run_numbers)),
@@ -5092,6 +5089,9 @@ class DataBrowserPanel(QWidget):
         """Mutate a combined dataset in place so rebuild references stay valid."""
         if existing_dataset is None:
             return reduced
+        saved = existing_dataset.metadata.get("constituent_source_expectations")
+        if saved is not None:
+            restore_constituent_expectations(reduced, saved)
         overrides = existing_dataset.metadata.get("condition_overrides", {})
         if overrides:
             reduced.metadata.update(overrides, condition_overrides=dict(overrides))
@@ -5237,8 +5237,6 @@ class DataBrowserPanel(QWidget):
         combined_dataset = builder(
             source_datasets, source_run_numbers, combined_run_number=combined_rn
         )
-        from asymmetry.core.data.acquisition import restore_constituent_expectations
-
         restore_constituent_expectations(combined_dataset, source_expectations)
         if metadata_overrides:
             combined_dataset.metadata.update(

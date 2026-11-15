@@ -189,3 +189,7 @@ The returned dataset records an immutable counts-first replay snapshot; the raw
 inspection sum alone does not authorise reconstruction. Shared group background
 is applied once. See :doc:`/reference/run_arithmetic` for exposure and likelihood
 eligibility. Ordinary GUI co-add remains unit weighted.
+Core weighted Runs are transient in-memory results; saved reduced results and recipes
+do not supply histogram reconstruction. A project/browser definition that cannot
+reproduce its saved coefficients or selected periods retains its observations or
+unavailable state and history, including after a later source rebuild.
