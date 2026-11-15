@@ -49,6 +49,11 @@ class AlphaCalibrationDialogScenario(Scenario):
         expected = set(dialog._vector_alpha_spins) if self.vector else {"single"}
         if set(section.pending()) != expected:
             raise RuntimeError(section._result_label.text())
+        for outcome in section.pending().values():
+            if outcome.source.excluded_indices is None:
+                raise RuntimeError("Fresh calibration must capture source exclusions")
+            if outcome.record is None and outcome.result.forward_indices is None:
+                raise RuntimeError("Fresh quick calibration must capture source members")
         preview = dialog._preview_pane
         preview.flush()
         _pump_until(

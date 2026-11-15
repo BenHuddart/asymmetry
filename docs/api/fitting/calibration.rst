@@ -10,12 +10,24 @@ supplied dataset owns acquisition/grouping/correction facts; the request owns
 intent. Explicit periods use the existing acquired-period selector. Returned
 native domains retain detector membership, alignment, raw-bin windows, timing,
 and correction preflight outcomes without copying a mutable grouping table.
+``TFCalibrationResult.excluded_indices`` retains the source's authored exclusions
+once alongside the shared domains. Quick results retain ``forward_indices``,
+``backward_indices``, and ``excluded_indices``. All are immutable zero-based
+acquired-channel ordinals, independent of physical detector labels; an empty
+tuple means no exclusions, whereas ``None`` means uncaptured legacy context.
+JSON/project/workdir restoration preserves that distinction without refitting.
 
 .. automodule:: asymmetry.core.fitting.tf_calibration
    :members: TFCalibrationRequest, TFCalibrationResult, TFEnvelope, TFCalibrationSelection, fit_tf_calibration, select_tf_calibration
 
 .. automodule:: asymmetry.core.fitting.count_results
    :members: CountFitParameter, CountFitDomain, JointCountFit
+
+A fresh count request prepares the retained acquired histograms with its current
+grouping and corrections. A failed cached asymmetry curve does not block that
+request after its grouping is repaired; the cached diagnosis remains history.
+Current unavailable corrections, missing acquired observations, and unsupported
+count likelihoods still receive their own diagnostics.
 
 Applying and saving a captured result
 -------------------------------------

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rebuild calibration and grouped-fit count observations from the current request
+  when an earlier cached asymmetry curve has an unrelated correction failure.
+
+- Preserve quick calibration's resolved detector members and quick/TF source
+  exclusions through regrouping and saved history, leaving uncaptured legacy facts unknown.
+
 - Keep saved combination terms and history when a source rebuild cannot reproduce
   their coefficients, rather than replacing an unavailable weighted definition with a unit sum.
 
