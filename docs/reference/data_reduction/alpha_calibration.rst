@@ -57,6 +57,23 @@ project never starts a calibration. A zero or nonfinite coefficient
 cannot be applied as a detector calibration; the source and diagnostic remain
 available for inspection.
 
+While running, the status reads **Computing calibration…**. **Stop** clears the
+pending request and restores **No calibration result**; an error reads
+**Calibration failed:** followed by its diagnostic. An input rejected before work
+starts reads **Calibration unavailable:** followed by the input diagnostic. A
+source edit observed during preview refresh also cancels the captured request.
+Source and reference identity are checked again before queued results update the
+draft. An obsolete success, error, or cancellation cannot overwrite a newer request.
+
+Cancellation is cooperative: quick Diamagnetic work polls before each objective
+evaluation, Decay balance before each diagnostic sub-window, and count preparation
+between detector and bank stages. TF minimisation, HESSE, and optional MINOS retain
+the solver's eight-cost-evaluation polling interval; envelope transitions and the
+final result boundary also check cancellation. A single array operation or native
+call finishes before its next check, so there is no universal time deadline.
+Cancellation returns no partial calibration or vector batch. Committed manual
+coefficients and completed calibration history remain available.
+
 Choosing a method
 -----------------
 

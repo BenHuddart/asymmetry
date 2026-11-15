@@ -581,9 +581,13 @@ class AlphaSectionWidget(QWidget):
             and all(source_identity(source) == key for source, key in self._references)
         )
 
-    def pending(self):
+    def invalidate_changed_sources(self):
+        """Cancel captured work when a source edit is observed by its consumer."""
         if self._source is not None and not self._sources_current():
             self.invalidate()
+
+    def pending(self):
+        self.invalidate_changed_sources()
         return (
             {}
             if self._worker is not None

@@ -115,6 +115,7 @@ def deadtime_corrected_pair(
     use_deadtime: bool,
     mode: str,
     retain_variance: bool = False,
+    cancel_check=None,
 ) -> tuple[GroupCounts, GroupCounts, CorrectionOutcome]:
     """Correct required raw samples before summing; retain acquired noise.
 
@@ -123,7 +124,13 @@ def deadtime_corrected_pair(
     Only the F/B window and active estimators consume corrected samples.
     """
     prepared = ScopedCounts.prepare(
-        histograms, grouping, domain, use_deadtime=use_deadtime, mode=mode, allow_incomplete=True
+        histograms,
+        grouping,
+        domain,
+        use_deadtime=use_deadtime,
+        mode=mode,
+        allow_incomplete=True,
+        cancel_check=cancel_check,
     )
     return (
         prepared.aligned(list(forward_idx), alignment, retain_variance=retain_variance),

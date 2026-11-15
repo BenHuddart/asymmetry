@@ -935,11 +935,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._alpha_section = AlphaSectionWidget()
         self._alpha_section.result_ready.connect(self._on_calibration_ready)
 
-        # The estimation *method* is now chosen inside the calibration dialog, so
-        # the inline method combo is retired from the visible row. It is kept as a
-        # hidden control because the current-method key still seeds the payload's
-        # ``alpha_method`` provenance (and a calibration writes the chosen method
-        # back into it).
+        # The hidden method control carries the selected provenance into the payload.
         self._alpha_method_combo = NoScrollComboBox()
         for label, key, explanation in _ALPHA_METHOD_ITEMS:
             self._alpha_method_combo.addItem(label, key)
@@ -3857,6 +3853,7 @@ class GroupingDialog(TimingControls, QDialog):
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
+        self._alpha_section.invalidate_changed_sources()
         key = self._calibration_input_key()
         if key != self._calibration_key:
             self._calibration_key = key

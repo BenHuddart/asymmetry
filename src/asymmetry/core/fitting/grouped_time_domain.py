@@ -20,6 +20,7 @@ from asymmetry.core.fitting.count_inputs import (
     _count_group_context,
     _count_group_setup,
     _resolve_group_indices,
+    build_count_groups,
 )
 from asymmetry.core.fitting.count_results import JointCountFit
 from asymmetry.core.fitting.engine import (
@@ -43,9 +44,6 @@ from asymmetry.core.fitting.series_seeding import recommend_series_seeding
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     CorrectionStatus,
-)
-from asymmetry.core.transform.grouping import (
-    effective_group_indices,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
@@ -243,41 +241,6 @@ def build_grouped_time_domain_groups(
         built_groups.append(group)
 
     return built_groups
-
-
-def build_count_groups(
-    dataset: MuonDataset,
-    group_ids: list[int],
-    *,
-    t_min: float | None = None,
-    t_max: float | None = None,
-    lifetime_corrected: bool = True,
-    exclude: tuple[float, float] | None = None,
-) -> list[GroupedTimeDomainGroup]:
-    """Build banks in order on a common t0 aligned over their detector union."""
-    run, grouping, _groups_raw, _included = _count_group_setup(dataset)
-    specs: list[tuple[int, list[int]]] = []
-    for raw_gid in group_ids:
-        gid = int(raw_gid)
-        indices = effective_group_indices(grouping, gid, n_histograms=len(run.histograms))
-        specs.append((gid, indices))
-    ctx = _count_group_context(grouping, run, specs, t_min, t_max, exclude)
-
-    if ctx is None:
-        raise ValueError(f"Count-domain group {specs[0][0]!r} produced no usable bins")
-    built: list[GroupedTimeDomainGroup] = []
-    for gid, indices in specs:
-        group = _build_one_count_group(
-            ctx,
-            gid,
-            indices,
-            t_min=t_min,
-            t_max=t_max,
-            lifetime_corrected=lifetime_corrected,
-            exclude=exclude,
-        )
-        built.append(group)
-    return built
 
 
 def build_count_group(

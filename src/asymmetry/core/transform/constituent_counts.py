@@ -159,6 +159,7 @@ class PreparedConstituents:
                 member.histograms,
                 domain,
                 raw_sources=member.arithmetic or len(observation.members) > 1,
+                cancel_check=cancel_check,
             )
         sources = []
         for (histograms, grouping), domain in zip(inputs, domains, strict=True):
@@ -172,6 +173,7 @@ class PreparedConstituents:
                     use_deadtime=use_deadtime,
                     mode=mode,
                     allow_incomplete=True,
+                    cancel_check=cancel_check,
                 )
             )
         outcomes = [source.outcome for source in sources]

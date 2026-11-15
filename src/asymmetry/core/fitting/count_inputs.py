@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -108,6 +109,8 @@ def _count_group_context(
     t_min,
     t_max,
     exclude,
+    *,
+    cancel_check: Callable[[], None] | None = None,
 ) -> _CountGroupContext | None:
     # Count observations are rebuilt from histograms and current corrections;
     # a cached asymmetry curve's failure cannot describe this new request.
@@ -117,7 +120,9 @@ def _count_group_context(
         )
     observation = None
     if "period_inputs" in grouping:
-        observation, run, expanded = resolve_group_observation(run, group_specs)
+        observation, run, expanded = resolve_group_observation(
+            run, group_specs, cancel_check=cancel_check
+        )
         group_specs[:] = expanded
         grouping = run.grouping
     prepared_histograms = list(run.histograms)
@@ -171,6 +176,8 @@ def _count_group_context(
         BinWindow(first_good + i * bunch_factor, first_good + (i + 1) * bunch_factor - 1)
         for i in np.flatnonzero(mask)
     ]
+    if cancel_check is not None:
+        cancel_check()
     parts = [(alignment, selected, windows)]
     if correction_flags_from_grouping(grouping).use_background:
         parts.extend(
@@ -183,20 +190,23 @@ def _count_group_context(
             grouping,
             domain,
             use_deadtime=bool(grouping.get("deadtime_correction", False)),
+            cancel_check=cancel_check,
         )
     else:
         inputs, domains = observation.participants(domain)
         use_deadtime = bool(grouping.get("deadtime_correction", False))
         inputs = deadtime_operation_inputs(inputs, use_deadtime, domains=domains)
         prepared = PreparedConstituents.prepare(
-            observation, inputs, domains, use_deadtime=use_deadtime
+            observation, inputs, domains, use_deadtime=use_deadtime, cancel_check=cancel_check
         )
         from asymmetry.core.transform.corrections import CorrectionOutcomes
 
         CorrectionOutcomes(deadtime=prepared.outcome).require_complete()
     background = {}
     if correction_flags_from_grouping(grouping).use_background:
-        background = require_count_background(prepared, grouping, group_specs, run.metadata)
+        background = require_count_background(
+            prepared, grouping, group_specs, run.metadata, cancel_check=cancel_check
+        )
     return _CountGroupContext(
         run=run,
         prepared=prepared,
@@ -221,12 +231,17 @@ def _build_one_count_group(
     t_max: float | None,
     lifetime_corrected: bool,
     exclude: tuple[float, float] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> GroupedTimeDomainGroup:
     """Align counts and measured variance before bunching and masking."""
     from asymmetry.core.fitting.grouped_time_domain import GroupedTimeDomainGroup
 
     run = ctx.run
-    aligned = [ctx.prepared.aligned([index], ctx.alignment) for index in indices]
+    aligned = []
+    for index in indices:
+        if cancel_check is not None:
+            cancel_check()
+        aligned.append(ctx.prepared.aligned([index], ctx.alignment))
     terminal_bin = ctx.last_good + 1
     detector_counts = np.asarray([trace.counts[ctx.first_good : terminal_bin] for trace in aligned])
     counts = detector_counts.sum(axis=0)
@@ -258,6 +273,8 @@ def _build_one_count_group(
         )
         trimmed_counts = detector_counts.sum(axis=0)
 
+    if cancel_check is not None:
+        cancel_check()
     scale = np.exp(time / MUON_LIFETIME_US) if lifetime_corrected else 1.0
     out_counts = trimmed_counts * scale
     retained_noise = any(run.histograms[i].count_variance is not None for i in indices) or (
@@ -316,3 +333,51 @@ def count_model_frame_norm(dataset: MuonDataset, group) -> float:
     frames = _deadtime_number(source.grouping.get("good_frames"), "good frames", positive=True)
     width = _deadtime_number(source.histograms[0].bin_width, "bin width (µs)", positive=True)
     return width * group.metadata["grouped_time_domain_bunch_factor"] * frames
+
+
+def build_count_groups(
+    dataset: MuonDataset,
+    group_ids: list[int],
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    lifetime_corrected: bool = True,
+    exclude: tuple[float, float] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> list[GroupedTimeDomainGroup]:
+    """Build banks in order on a common t0 aligned over their detector union.
+
+    Optional ``cancel_check`` raises at preparation, detector correction/alignment,
+    background and bank boundaries. Its exception propagates without partial banks.
+    Individual vectorised/native operations finish before the next check.
+    """
+    if cancel_check is not None:
+        cancel_check()
+    run, grouping, _groups_raw, _included = _count_group_setup(dataset)
+    specs: list[tuple[int, list[int]]] = []
+    for raw_gid in group_ids:
+        gid = int(raw_gid)
+        indices = effective_group_indices(grouping, gid, n_histograms=len(run.histograms))
+        specs.append((gid, indices))
+    ctx = _count_group_context(
+        grouping, run, specs, t_min, t_max, exclude, cancel_check=cancel_check
+    )
+
+    if ctx is None:
+        raise ValueError(f"Count-domain group {specs[0][0]!r} produced no usable bins")
+    built: list[GroupedTimeDomainGroup] = []
+    for gid, indices in specs:
+        group = _build_one_count_group(
+            ctx,
+            gid,
+            indices,
+            t_min=t_min,
+            t_max=t_max,
+            lifetime_corrected=lifetime_corrected,
+            exclude=exclude,
+            cancel_check=cancel_check,
+        )
+        built.append(group)
+    if cancel_check is not None:
+        cancel_check()
+    return built

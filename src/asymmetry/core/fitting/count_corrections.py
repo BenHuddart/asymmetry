@@ -51,7 +51,7 @@ def count_background_domain(histograms, grouping, group_specs, metadata):
     return [(crop, indices, required) for indices, required in zip(groups, windows, strict=True)]
 
 
-def require_count_background(prepared, grouping, group_specs, metadata):
+def require_count_background(prepared, grouping, group_specs, metadata, *, cancel_check=None):
     """Check availability on corrected count groups without inventing a ratio."""
     if resolve_background_mode(grouping) == "reference_run":
         CorrectionOutcomes(
@@ -78,6 +78,8 @@ def require_count_background(prepared, grouping, group_specs, metadata):
         pairs = [(str(gid), indices, indices) for gid, indices in group_specs]
     outcomes = {}
     for label, forward, backward in pairs:
+        if cancel_check is not None:
+            cancel_check()
         background = apply_grouped_background_correction(
             prepared.aligned(forward, crop),
             prepared.aligned(backward, crop),

@@ -112,6 +112,13 @@ with source/count context. TF with ``envelope=None`` selects all four; an explic
 ``envelope=`` directly and retains exponential as its default. Historical
 ``count_fit`` consumers retain their identity and exponential model.
 Parameter overrides and cancellation pass into the shared TF operation.
+Both workflow entries accept an optional boolean ``cancel_callback``. A true
+return raises ``FitCancelledError`` through quick estimation, count preparation,
+TF minimisation, covariance scans, and candidate transitions; no partial outcome
+is returned. The lower-level quick estimator and count builder instead accept a
+raising ``cancel_check`` and propagate its exception unchanged. Individual native
+array operations complete before the next work-boundary check; see
+:doc:`/reference/data_reduction/alpha_calibration` for polling granularity.
 A failed/no-selection result can be emitted for diagnostics but cannot become
 applied settings. :doc:`/reference/agent_workflow` documents CLI flags and
 independent source-period semantics.
