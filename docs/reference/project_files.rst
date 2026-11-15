@@ -1023,7 +1023,10 @@ Calibration records
 The project format stores full TF candidate/history records and conditional
 covariance once, with coefficient policies referencing them. Quick calibration
 policies retain their source period or mapped-set recipe, timing/window,
-corrections, and error meaning. Vector policies identify the actual calibrated
+corrections, resolved F/B channel members, authored exclusions, and error meaning.
+TF domains retain their consumed bank members, with exclusions stored once per
+record. The captured tuples survive later regrouping and JSON save/open/resave;
+missing legacy membership or exclusion facts remain unknown. Vector policies identify the actual calibrated
 projection pair and keep beta fixed at one. Manual changes replace the applied
 policy while retained fit history stays available. Opening an existing project
 preserves its authored values and method identities and never starts a fit.

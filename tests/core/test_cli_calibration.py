@@ -90,6 +90,9 @@ def test_quick_json_uncertainty_is_honest(workflow_folder, capsys, method):
     assert (summary["alpha_error"] is not None) == (method == "ratio")
     assert summary["beta_fixed"] and summary["beta_error"] is None
     assert "calibration" not in summary
+    assert summary["forward_indices"] == [0, 1, 2, 3]
+    assert summary["backward_indices"] == [4, 5, 6, 7]
+    assert summary["excluded_indices"] == []
 
 
 @pytest.mark.parametrize(

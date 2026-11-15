@@ -193,7 +193,7 @@ def test_dialog_dependency_edits_invalidate_held_result(qapp, monkeypatch, depen
 
 
 @pytest.mark.parametrize("mode", ["off", "from_file", "manual", "estimate"])
-@pytest.mark.parametrize("method", ["ratio", "tf_calibration_fit"])
+@pytest.mark.parametrize("method", ["ratio", "diamagnetic", "general", "tf_calibration_fit"])
 def test_resolved_gui_corrections_match_direct_core(qapp, mode, method):
     from asymmetry.core.project.profiles import BackgroundPolicy, DeadtimePolicy
     from asymmetry.core.workflow.calibration import calibrate_source
@@ -530,3 +530,27 @@ def test_source_metadata_fallback_is_frozen_and_in_identity(fact):
     value[0 if fact == "histogram_labels" else 1] = "changed"
     assert module.source_identity(data) != identity
     assert captured.run.metadata[fact] == expected
+
+
+def test_repaired_source_count_request_ignores_old_curve_failure(qapp):
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+    from docs.screenshots.data.calibration import calibration_control
+    from tests.gui.test_grouping_dialog import _wait_for_t0_detection, _wait_until
+
+    data = calibration_control()
+    reason = "Old curve used an unavailable detector group"
+    data.metadata["correction_error"] = reason
+    data.run.metadata["correction_error"] = reason
+    dialog = GroupingDialog([data])
+    try:
+        _wait_for_t0_detection(dialog)
+        section = dialog._alpha_section
+        section._on_estimate()
+        _wait_until(lambda: section._tasks.active_count == 0)
+        outcome = section.pending()["single"]
+        assert outcome.alpha is not None, outcome.message
+        assert data.metadata["correction_error"] == reason
+        assert data.run.metadata["correction_error"] == reason
+    finally:
+        dialog._clear_dirty()
+        dialog.close()

@@ -17,6 +17,12 @@ fit:
   the natural mode for continuous-source data where a single detector already
   carries the full decay envelope.
 
+A fresh count request prepares the retained acquired histograms with its current
+grouping and corrections. A failed cached asymmetry curve does not block that
+request after its grouping is repaired; the cached diagnosis remains history.
+Current unavailable corrections, missing acquired observations, and unsupported
+count likelihoods still receive their own diagnostics.
+
 The grouping background preflight retains its typed decisions as
 ``count_background_preflight``. An unusable automatic tail is a warned skip,
 coordinated over the count groups contributing to the fit. Count inputs retain

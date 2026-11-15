@@ -239,7 +239,9 @@ Stored joint calibration
 When a shared TF result is applied through the core grouping-profile API, beta
 and alpha refer to the same frozen fit and nuisance covariance. Fixed beta has
 no fitted error or correlation. Replacing beta with a manual policy removes its
-active joint link while keeping the captured fit in profile history. Stored
+active joint link while keeping the captured fit in profile history. Captured
+TF source context retains the consumed bank membership and authored channel
+exclusions independently of subsequent grouping edits. Stored
 independent scalar alpha and beta records do not imply a joint measurement,
 even when their source runs match. See :doc:`../project_files`.
 
