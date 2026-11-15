@@ -111,8 +111,9 @@ def test_filled_joint_values_keep_canonical_methods_after_apply_and_reopen(qapp,
 @pytest.mark.parametrize("finish", ["failure", "stop"])
 @pytest.mark.parametrize("failed_slot", ["P_y", "P_x"])
 def test_vector_batch_does_not_publish_partial_results(qapp, monkeypatch, finish, failed_slot):
-    from threading import Event
+    from threading import Event, local
 
+    from asymmetry.core.fitting import count_domain
     from asymmetry.gui.windows.grouping import alpha_section as module
 
     data = calibration_control(vector=True)
@@ -123,20 +124,33 @@ def test_vector_batch_does_not_publish_partial_results(qapp, monkeypatch, finish
     spins = {label: spin.value() for label, spin in dialog._vector_alpha_spins.items()}
     entered, release = Event(), Event()
     original = module.run_calibration
+    original_cost = count_domain._cost_value
+    active = local()
+    completed = []
     published = []
     section.result_ready.connect(published.append)
 
     def held(worker, request):
-        if request.slot == failed_slot:
+        active.slot = request.slot
+        result = original(worker, request)
+        completed.append(request.slot)
+        return result
+
+    def held_cost(*args):
+        value = original_cost(*args)
+        if active.slot == failed_slot and not entered.is_set():
             entered.set()
-            assert release.wait(5)
-            raise ValueError("owned second-pair failure")
-        return original(worker, request)
+            assert release.wait(10)
+            if finish == "failure":
+                raise ValueError("owned later-pair failure")
+        return value
 
     monkeypatch.setattr(module, "run_calibration", held)
+    monkeypatch.setattr(count_domain, "_cost_value", held_cost)
     try:
         dialog._estimate_all_alpha()
         _wait_until(entered.is_set)
+        assert completed == (["P_z"] if failed_slot == "P_y" else ["P_z", "P_y"])
         during = list(published)
         pending_during = section.pending()
         if finish == "stop":
@@ -155,6 +169,7 @@ def test_vector_batch_does_not_publish_partial_results(qapp, monkeypatch, finish
         dialog._on_apply()
         assert dialog.get_profile_result()["profile"].calibration_records == ()
         monkeypatch.setattr(module, "run_calibration", original)
+        monkeypatch.setattr(count_domain, "_cost_value", original_cost)
         dialog._estimate_all_alpha()
         _wait_until(lambda: section._tasks.active_count == 0)
         assert len(published) == 3

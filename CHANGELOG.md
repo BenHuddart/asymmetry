@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop alpha calibration during quick estimation, count preparation, and covariance
+  scans; cancel observed source edits while preserving current results and history.
+
 - Rebuild calibration and grouped-fit count observations from the current request
   when an earlier cached asymmetry curve has an unrelated correction failure.
 

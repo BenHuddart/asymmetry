@@ -20,6 +20,7 @@ documentation for the whole picture.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -425,6 +426,7 @@ def _general_flatness(
     b: NDArray[np.float64],
     time_us: NDArray[np.float64],
     alpha: float,
+    cancel_check: Callable[[], None] | None = None,
 ) -> _GeneralFlatness | None:
     """Flatness of ``(F/√α + B√α)·exp(t/τ_μ)`` across equal-statistics windows.
 
@@ -439,6 +441,8 @@ def _general_flatness(
     residual rate ``s = 1/τ_μ − 1/τ_eff`` that alpha could *not* absorb, which
     inverts to the effective lifetime.
     """
+    if cancel_check is not None:
+        cancel_check()
     root_alpha = float(np.sqrt(alpha))
     combined = np.clip(f, 0.0, None) + np.clip(b, 0.0, None)
     if float(np.sum(combined)) <= 0.0:
@@ -460,6 +464,8 @@ def _general_flatness(
     times: list[float] = []
     derivatives: list[float] = []
     for lo, hi in zip(edges[:-1], edges[1:], strict=False):
+        if cancel_check is not None:
+            cancel_check()
         w = weight[lo:hi]
         w_sum = float(np.sum(w))
         if w_sum <= 0.0:
@@ -476,6 +482,8 @@ def _general_flatness(
     if len(levels) < _GENERAL_GATE_MIN_WINDOWS:
         return None
 
+    if cancel_check is not None:
+        cancel_check()
     n = np.asarray(levels, dtype=np.float64)
     sigma = np.asarray(errors, dtype=np.float64)
     # Flatness chi-square about the inverse-variance-weighted mean level.
@@ -615,6 +623,7 @@ def _single_alpha_estimate(
     f: NDArray[np.float64],
     b: NDArray[np.float64],
     t: NDArray[np.float64] | None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> float | None:
     """One point estimate on method-specific prepared counts."""
     if f.size == 0:
@@ -623,8 +632,14 @@ def _single_alpha_estimate(
         bs = float(np.sum(b))
         return float(np.sum(f)) / bs if bs > 0.0 else None
     if method == "diamagnetic":
+
+        def objective(ln_alpha):
+            if cancel_check is not None:
+                cancel_check()
+            return _diamagnetic_objective(float(np.exp(ln_alpha)), f, b)
+
         result = minimize_scalar(
-            lambda ln_alpha: _diamagnetic_objective(float(np.exp(ln_alpha)), f, b),
+            objective,
             bounds=_LN_ALPHA_BOUNDS,
             method="bounded",
             options={"xatol": 1e-10},
@@ -658,6 +673,7 @@ def estimate_alpha_detailed(
     time_us: NDArray[np.float64] | None = None,
     first_good_bin: int | None = None,
     last_good_bin: int | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> AlphaEstimate:
     """Estimate alpha using a quick balance or the integral ratio.
 
@@ -675,7 +691,14 @@ def estimate_alpha_detailed(
     ``objective_value`` is the flatness chi-square, or weighted asymmetry power
     for Diamagnetic; it is absent for the ratio. See the alpha calibration
     reference for assumptions and diagnostic limits.
+
+    ``cancel_check`` is an optional raising check, polled at preparation
+    boundaries, before each Diamagnetic objective and General diagnostic
+    sub-window, and before return. Its exception propagates unchanged; no
+    partial estimate is returned. Individual NumPy calls run to completion.
     """
+    if cancel_check is not None:
+        cancel_check()
     if method not in ALPHA_ESTIMATION_METHODS:
         raise ValueError(
             f"Unknown alpha estimation method {method!r}; "
@@ -689,6 +712,8 @@ def estimate_alpha_detailed(
         # ratio and general use the raw window.
         f, b, t = _pack_for_estimation(f, b, t)
         f, b, t = _positive_mask(f, b, t)
+    if cancel_check is not None:
+        cancel_check()
     n_bins = int(f.size)
     if n_bins == 0 or (method == "ratio" and float(np.sum(b)) <= 0.0):
         return AlphaEstimate(
@@ -701,7 +726,9 @@ def estimate_alpha_detailed(
             message="No usable bins (need positive counts in both groups)",
         )
 
-    alpha = _single_alpha_estimate(method, f, b, t)
+    alpha = _single_alpha_estimate(method, f, b, t, cancel_check)
+    if cancel_check is not None:
+        cancel_check()
     if alpha is None:
         message = "Estimate is degenerate on this data"
         if method == "general":
@@ -724,7 +751,7 @@ def estimate_alpha_detailed(
     if method == "diamagnetic":
         objective_value = _diamagnetic_objective(alpha, f, b)
     elif method == "general" and t is not None:
-        flatness = _general_flatness(f, b, t, alpha)
+        flatness = _general_flatness(f, b, t, alpha, cancel_check)
         if flatness is not None:
             objective_value = flatness.chi2
 
@@ -760,6 +787,8 @@ def estimate_alpha_detailed(
         )
         alpha_error = _ratio_alpha_error(alpha, forward, backward, edges)
 
+    if cancel_check is not None:
+        cancel_check()
     return AlphaEstimate(
         alpha=float(alpha),
         alpha_error=alpha_error,

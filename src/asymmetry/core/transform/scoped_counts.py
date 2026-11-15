@@ -48,9 +48,11 @@ def observation_domain(
     return DeadtimeDomain(tuple(observations))
 
 
-def require_independent_noise(histograms, domain, *, raw_sources=False):
+def require_independent_noise(histograms, domain, *, raw_sources=False, cancel_check=None):
     """Reject unknown noise only where a declared calculation consumes it."""
     for index, windows in domain.observations:
+        if cancel_check is not None:
+            cancel_check()
         hist = histograms[index]
         for window in windows:
             variance = hist.count_variance
@@ -87,10 +89,18 @@ class ScopedCounts:
 
     @classmethod
     def prepare(
-        cls, histograms, grouping, domain, *, use_deadtime, mode=None, allow_incomplete=False
+        cls,
+        histograms,
+        grouping,
+        domain,
+        *,
+        use_deadtime,
+        mode=None,
+        allow_incomplete=False,
+        cancel_check=None,
     ):
         """Resolve once, then invert each required detector/bin once."""
-        require_independent_noise(histograms, domain)
+        require_independent_noise(histograms, domain, cancel_check=cancel_check)
         outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode, domain=domain)
         if not allow_incomplete:
             CorrectionOutcomes(deadtime=outcome).require_complete()
@@ -99,6 +109,8 @@ class ScopedCounts:
         corrected = {}
         if outcome.status is CorrectionStatus.APPLIED:
             for index, windows in domain.observations:
+                if cancel_check is not None:
+                    cancel_check()
                 coefficient = outcome.effective["tau_us"][index]
                 if coefficient == 0:
                     continue
@@ -116,7 +128,13 @@ class ScopedCounts:
                 )
                 bins.flags.writeable = values.flags.writeable = False
                 corrected[index] = bins, values
-        return cls(histograms, domain, outcome, corrected, scoped_source_digest(histograms, domain))
+        return cls(
+            histograms,
+            domain,
+            outcome,
+            corrected,
+            scoped_source_digest(histograms, domain, cancel_check=cancel_check),
+        )
 
     def require_source(self):
         """Reject reuse after required acquired values or supplied variance change."""
@@ -192,10 +210,12 @@ class ScopedCounts:
         return GroupCounts(total, variance, noise=noise)
 
 
-def scoped_source_digest(histograms, domain):
+def scoped_source_digest(histograms, domain, *, cancel_check=None):
     """Fingerprint only consumed raw values and their supplied variance."""
     digest = hashlib.sha256()
     for index, windows in domain.observations:
+        if cancel_check is not None:
+            cancel_check()
         histogram = histograms[index]
         for window in windows:
             for values in (histogram.counts, histogram.count_variance):

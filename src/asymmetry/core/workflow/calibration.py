@@ -129,6 +129,9 @@ def calibrate_run(
     profile; TF owns its own native-window and fitted-background preparation.
     ``options.count_packing`` controls TF count packing; ``settings.rebin``
     applies only to science reduction and is not composed with calibration bins.
+    ``cancel_callback`` returns true to request cooperative exit. Preparation,
+    quick estimation, TF solver/covariance and candidate boundaries poll it;
+    cancellation raises FitCancelledError without an outcome.
     """
 
     def check_cancel():
@@ -171,6 +174,8 @@ def calibrate_source(
 
     Front ends resolve source selection/profile through their existing owners.
     This boundary never replaces those policies with CLI reduction defaults.
+    ``cancel_callback`` has the same boolean/exception contract as calibrate_run;
+    raised cancellation is never an unavailable coefficient or partial selection.
     """
 
     def check_cancel():
@@ -270,6 +275,7 @@ def calibrate_source(
                 ),
                 first_good_bin=counts.window.first,
                 last_good_bin=counts.window.last,
+                cancel_check=check_cancel,
             )
         mapping = run.grouping.get("period_mapping", run.metadata.get("period_mapping", {}))
         mapped = reference_mapping_requires_replay(mapping)
