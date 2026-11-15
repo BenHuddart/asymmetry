@@ -1550,8 +1550,11 @@ Asymmetry deliberately retains each input's correction facts and is invariant
 under primary-run reversal for shared authored intent. WiMDA pools raw inputs
 before correction. In Mantid, individual MuonPreProcess workspaces can be
 prepared before merging; generic merging does not determine correction order.
-Mantid 6.16 development Scale/Plus/Minus document the explicit independent
-weighted-arithmetic analogue, without a native numerical check here. The owning
+Mantid 6.16.1 Scale/Plus/Minus provide the explicit independent
+weighted-arithmetic analogue: matched count/error controls reproduce 50/90,
+supplied 30/74, and signed 190/405. Separate MuonPreProcess deadtime preparation
+retains each input's correction context before addition. These operations do not
+certify raw-Poisson eligibility or acquired-period identity. The owning
 page links the public manuals and algorithms and distinguishes each operation.
 WiMDA and standalone musrfit addRun retain master condition metadata. Asymmetry
 also retains the first ordered input's displayed conditions and identity, with
