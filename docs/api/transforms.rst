@@ -175,6 +175,10 @@ policy before seeding and weighting; legacy inputs retain their recorded
 independent-source assumption. See :doc:`/reference/alc_mode` for the mathematics
 and :doc:`/explanation/comparison` for reference-program qualifications.
 
+Workflow integral scans ordered by run number retain source-run coordinates in
+their effective recipe and JSON payload. Point recipes retain their selected
+acquired periods independently of those displayed coordinates.
+
 
 Condition-scan derivatives
 --------------------------

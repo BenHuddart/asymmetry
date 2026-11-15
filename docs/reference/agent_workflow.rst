@@ -1499,6 +1499,8 @@ conditional on calibration. See :doc:`alc_mode` for period and history semantics
 The scan JSON records each point's mathematical ``observation`` status and
 exclusive used/omitted counts, plus point-index ``correlated_pairs`` and
 ``source_assumption``.
+Run-ordered scans use source run numbers in both their coordinates and effective
+recipes. Selected acquired periods remain recorded in the individual point recipes.
 Undefined numeric values and unavailable errors are JSON ``null``. A defined
 zero-variance point retains its value and error zero. Text output reports
 omissions and known shared counting observations. Fits select usable points

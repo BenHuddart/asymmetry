@@ -59,6 +59,8 @@ Two-projection rotation records both inputs and the supplied frame. Native scala
 reductions distinguish a ratio of summed counts from a mean of native ratios; scan
 selection and forward differences retain their operation and display-only derivative
 restriction. These records do not add covariance or likelihood capabilities.
+Run-ordered workflow scans retain source-run coordinates in the scan recipe;
+the point recipes retain the acquired period selectors.
 
 The small recipe is separate from the transient histogram replay snapshot. A
 historical curve without captured provenance keeps an unknown recipe; a transform

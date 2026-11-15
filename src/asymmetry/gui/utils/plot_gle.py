@@ -132,8 +132,9 @@ class PlotGleSnapshot(PlotExportData):
                 label_text,
                 fallback=f"Run {payload.get('run_number', i)}",
             )
+            # Writer and GLE references share ASCII lowercase stems before deduplication.
             # A letter-led token keeps unquoted GLE data references unambiguous.
-            raw_token = safe_file_token(f"{label_text}_{axis_suffix}")
+            raw_token = safe_file_token(f"{safe_label}_{axis_suffix}").lower()
             if raw_token[:1].isdigit():
                 raw_token = f"run_{raw_token}"
             token = dedup_export_token(raw_token, used_tokens)
