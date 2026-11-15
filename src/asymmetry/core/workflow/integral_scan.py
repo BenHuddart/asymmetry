@@ -103,9 +103,13 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
     so the lookup cannot miss.
     """
     run_numbers = [sources[number] for number in scan.run_numbers]
+    x = np.asarray(run_numbers, dtype=float) if scan.order_key == "run" else scan.x
     return replace(
         scan,
-        x=np.asarray(run_numbers, dtype=float) if scan.order_key == "run" else scan.x,
+        x=x,
+        effective_recipe=scan.effective_recipe.with_facts(coordinates=x.tolist())
+        if scan.effective_recipe is not None
+        else None,
         run_numbers=run_numbers,
         correction_outcomes={
             sources[number]: outcomes for number, outcomes in scan.correction_outcomes.items()

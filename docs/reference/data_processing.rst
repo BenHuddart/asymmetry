@@ -23,6 +23,11 @@ deadtime and background corrections for raw detector histograms. The order is
 deadtime, grouping, background subtraction, then asymmetry. The nonlinear
 deadtime inverse acts on each raw detector before any count subtraction.
 
+The result's captured effective recipe retains its resolved processing settings
+independently of later source edits. Export headers distinguish source settings
+captured for inspection from that result history; see :doc:`workflow_conveniences`
+and :doc:`/explanation/reduction_pipeline`.
+
 Rebinning is the most common operation. Combining :math:`N` adjacent bins
 reduces the per-bin uncertainty by :math:`\sqrt{N}` at the cost of time
 resolution, so the new bin width should stay well below the period of any

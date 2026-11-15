@@ -36,7 +36,53 @@ def test_plot_payload_and_text_writer_use_captured_recipe(qapp, tmp_path):
             arrays[:, 1], payload["data"]["y"][mask] + (2.0 if bake else 0.0), rtol=1e-8
         )
     assert json.dumps(payload["effective_recipe"], sort_keys=True) == captured
+    payload["effective_recipe"] = None
+    path = tmp_path / "unknown.dat"
+    panel._write_data_file(path, payload)
+    assert "!  Captured result settings: unknown" in path.read_text()
+    assert "! effective_recipe: null" in path.read_text()
     panel.close()
+
+
+@pytest.mark.parametrize("labels", [("SIM", "sim"), ("μSR", "uSR")])
+def test_gle_referenced_sidecars_retain_each_captured_recipe(qapp, tmp_path, labels):
+    glp = pytest.importorskip("gleplot")
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+    from asymmetry.gui.utils.gle_export import extract_gle_data_dependencies
+
+    panel = PlotPanel()
+    datasets = [
+        reduce_run(_continuous_run(0), ReductionSettings(alpha=alpha)) for alpha in (1.0, 2.0)
+    ]
+    for number, (dataset, label) in enumerate(zip(datasets, labels, strict=True), 1):
+        dataset.metadata.update(run_number=number, run_label=label)
+    try:
+        panel.plot_datasets(datasets)
+        path = tmp_path / "owned.gle"
+        panel._gle_snapshot(panel.get_current_plot_export_data()).build(glp, path, tmp_path)
+        dependencies = extract_gle_data_dependencies(path)
+        assert len(dependencies) == 2
+        assert len(set(dependencies)) == 2
+        for dependency, dataset in zip(dependencies, datasets, strict=True):
+            sidecar = tmp_path / dependency
+            assert "!  Context: source settings at export capture" in sidecar.read_text()
+            assert "!  Captured result settings: effective_recipe" in sidecar.read_text()
+            recipe = json.loads(
+                next(
+                    line.split(": ", 1)[1]
+                    for line in sidecar.read_text().splitlines()
+                    if line.startswith("! effective_recipe:")
+                )
+            )
+            assert (
+                recipe["periods"]["red"]["alpha"]
+                == dataset.effective_recipe.to_dict()["periods"]["red"]["alpha"]
+            )
+            assert recipe["curve_operations"][-1]["operation"] == "export_curve"
+            arrays = np.loadtxt(sidecar, comments="!")
+            np.testing.assert_allclose(arrays[:, 1], dataset.asymmetry, rtol=1e-8, atol=1e-8)
+    finally:
+        panel.close()
 
 
 def test_gui_scan_series_restores_captured_coordinates_and_recipes(qapp):

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Retain source-run coordinates in period-selected scan recipes and the correct
+  result provenance in GLE data files, including labels differing only by case;
+  distinguish source settings from captured execution in export headers.
+
 ### Added
 
 - Request explicit TF calibration count packing through `CalibrationOptions`,
