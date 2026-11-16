@@ -486,3 +486,23 @@ def test_migration_helper_tolerates_malformed_group_entry() -> None:
     )
     assert study is not None
     assert len(study.groups) == 2  # junk entry dropped
+
+
+def test_known_width_context_changes_staleness_without_reinterpreting_unknown_groups():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    groups = _groups()
+    legacy_digest = compute_group_input_digest(groups)
+    groups[0].width_context = TrendWidthContext("rate", (None,) * len(groups[0].x))
+    assert compute_group_input_digest(groups) == legacy_digest
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    groups[0].width_context = TrendWidthContext("rate", (source,) * len(groups[0].x))
+    raw_digest = compute_group_input_digest(groups)
+    assert raw_digest != legacy_digest
+    groups[0].width_context = TrendWidthContext(
+        "rate", (source,) * len(groups[0].x), AxisTransform.custom("sqrt(2)*x")
+    )
+    assert compute_group_input_digest(groups) != raw_digest
+    assert groups[0].y.tolist() == _groups()[0].y.tolist()

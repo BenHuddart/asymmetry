@@ -5,6 +5,7 @@ import pytest
 from scipy.integrate import quad
 
 from asymmetry.core.fitting.models import gaussian_relaxation
+from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
 from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us, sigma_to_lambda_nm
 from asymmetry.core.utils.constants import MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -76,3 +77,177 @@ def test_brandt_help_identifies_second_moment_input(name):
     assert "second-moment" in help_text
     assert "√2" in help_text
     assert get_component_references(name)
+
+
+@pytest.mark.parametrize(
+    "expression", ["Gaussian", "Gaussian + Gaussian", "Oscillatory * Gaussian + Gaussian"]
+)
+def test_width_sources_follow_component_identity(expression):
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.fitting.parameter_carry import ComponentParameter
+    from asymmetry.core.fitting.sc.trend_width import model_width_sources
+
+    model = CompositeModel.from_expression(expression)
+    sources = model_width_sources(model)
+    for name, identity in model.parameter_identities().items():
+        if isinstance(identity, ComponentParameter):
+            source = sources[name]
+            assert source["component"] == model.components[identity.component].name
+            assert source["parameter"] == identity.local_name
+            assert source["index"] == identity.component
+            assert bool(source["widths"]) == (
+                source["component"] == "Gaussian" and identity.local_name == "sigma"
+            )
+
+
+@pytest.mark.parametrize(
+    "consumer", ["SC_Brandt_VortexLattice", "SC_Brandt_VortexLattice_Powder + Constant"]
+)
+@pytest.mark.parametrize(
+    "expression,allowed",
+    [
+        (None, False),
+        ("sqrt(2)*x", True),
+        ("x * sqrt(2)", True),
+        ("1.4142135623730951*x", False),
+        ("sqrt(2)*x + x**2", False),
+        ("x*x", False),
+    ],
+)
+def test_only_explicit_width_conversion_admits_known_gaussian(consumer, expression, allowed):
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    transform = AxisTransform.identity() if expression is None else AxisTransform.custom(expression)
+    context = TrendWidthContext(
+        "renamed",
+        (None, WidthSource("Gaussian", 2, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))),
+        transform,
+    )
+    if allowed:
+        context.validate(ParameterCompositeModel.from_expression(consumer))
+        assert context.effective_widths() == (GaussianWidth.SECOND_MOMENT,)
+    else:
+        with pytest.raises(ValueError, match="renamed.*Gaussian.*second-moment.*sqrt"):
+            context.validate(ParameterCompositeModel.from_expression(consumer))
+    context.validate(ParameterCompositeModel(["SC_SWave"]))
+
+
+def test_mixed_widths_need_separate_conversion_and_selected_rows_keep_identity():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    gaussian = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    second = WidthSource("SC_SWave", 0, "sigma_0", (GaussianWidth.SECOND_MOMENT,))
+    mixed = TrendWidthContext("rate", (None, second, gaussian), AxisTransform.custom("sqrt(2)*x"))
+    with pytest.raises(ValueError, match="mixed conventions"):
+        mixed.validate(ParameterCompositeModel(["SC_Brandt_VortexLattice"]))
+    selected = mixed.select([False, False, True])
+    selected.validate(ParameterCompositeModel(["SC_Brandt_VortexLattice"]))
+    assert TrendWidthContext.from_dict(selected.to_dict()) == selected
+    with pytest.raises(ValueError, match="already has second-moment"):
+        mixed.select([False, True, False]).validate(
+            ParameterCompositeModel(["SC_Brandt_VortexLattice"])
+        )
+    TrendWidthContext("rate", (second,), AxisTransform.custom("x")).validate(
+        ParameterCompositeModel(["SC_Brandt_VortexLattice"])
+    )
+
+
+def test_registered_alias_keeps_canonical_gaussian_identity(monkeypatch):
+    from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+    from asymmetry.core.fitting.sc.trend_width import model_width_sources
+
+    monkeypatch.setitem(COMPONENTS, "GaussianAlias", COMPONENTS["Gaussian"])
+    sources = model_width_sources(CompositeModel.from_expression("GaussianAlias + Gaussian"))
+    assert sources["sigma_1"]["component"] == "Gaussian"
+    assert sources["sigma_2"]["widths"] == ["GAUSSIAN_COMPONENT"]
+
+
+def test_brandt_consumer_alias_uses_canonical_component(monkeypatch):
+    from asymmetry.core.fitting.parameter_models import (
+        PARAMETER_MODEL_COMPONENTS,
+        ParameterCompositeModel,
+        fit_parameter_model,
+    )
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    monkeypatch.setitem(
+        PARAMETER_MODEL_COMPONENTS,
+        "BrandtAlias",
+        PARAMETER_MODEL_COMPONENTS["SC_Brandt_VortexLattice"],
+    )
+    model = ParameterCompositeModel.from_expression("BrandtAlias")
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    with pytest.raises(ValueError, match="Gaussian.*second-moment"):
+        fit_parameter_model(
+            np.arange(1.0, 5.0),
+            np.ones(4),
+            np.ones(4),
+            model,
+            ParameterSet([Parameter(name, value) for name, value in model.param_defaults.items()]),
+            width_context=TrendWidthContext("width", (source,) * 4),
+        )
+
+
+def test_nonadditive_parameter_models_do_not_claim_an_absolute_width_contract():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import (
+        TrendWidthContext,
+        WidthSource,
+        model_width_sources,
+    )
+
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    context = TrendWidthContext("normalised", (source,), AxisTransform.custom("x*x"))
+    model = ParameterCompositeModel.from_expression(
+        "SC_Brandt_VortexLattice / SC_Brandt_VortexLattice"
+    )
+    context.validate(model)
+    for expression in ["SC_SWave * Constant", "Linear / Constant"]:
+        sources = model_width_sources(
+            ParameterCompositeModel.from_expression(expression), (GaussianWidth.GAUSSIAN_COMPONENT,)
+        )
+        assert all(not source["widths"] for source in sources.values())
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "SC_Brandt_VortexLattice + Constant*Constant",
+        "SC_Brandt_VortexLattice ⊕ (Constant*Constant)",
+    ],
+)
+def test_bare_brandt_branch_still_requires_second_moment_beside_a_product(expression):
+    from asymmetry.core.fitting.parameter_models import fit_parameter_model
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    model = ParameterCompositeModel.from_expression(expression)
+    parameters = ParameterSet(
+        [
+            Parameter(name, value, fixed=name != "lambda_ab")
+            for name, value in model.param_defaults.items()
+        ]
+    )
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    with pytest.raises(ValueError, match="Gaussian.*second-moment"):
+        fit_parameter_model(
+            np.linspace(0.01, 1.0, 5),
+            np.ones(5),
+            np.ones(5),
+            model,
+            parameters,
+            width_context=TrendWidthContext("width", (source,) * 5),
+        )
+    nested = ParameterCompositeModel.from_expression(
+        "(SC_Brandt_VortexLattice + Constant)*Constant"
+    )
+    TrendWidthContext("normalised", (source,)).validate(nested)

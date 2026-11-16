@@ -118,3 +118,88 @@ def _wait_until(predicate, *, timeout_ms: int, poll_ms: int = 30) -> None:
 
 
 register(TrendModelFitDialogScenario())
+
+
+class TrendGaussianWidthConversionScenario(Scenario):
+    """Show the explicit Gaussian-width conversion at its Brandt fit consumer."""
+
+    name = "trend_gaussian_width_conversion"
+    description = "Brandt fit after explicit Gaussian-width and error conversion"
+    size = (1180, 720)
+    requires_fit = True
+
+    def capture(self, ctx: CaptureContext) -> Path:
+        import numpy as np
+
+        from asymmetry.core.fitting.axis_transforms import AxisTransform
+        from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.fitting.parameter_models import (
+            ModelFitRange,
+            ParameterCompositeModel,
+            ParameterModelFit,
+        )
+        from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+        from asymmetry.core.fitting.sc import GaussianWidth
+        from asymmetry.core.fitting.sc.models import brandt_field_width_sigma
+        from asymmetry.core.fitting.sc.trend_width import (
+            TrendWidthContext,
+            WidthSource,
+            model_width_sources,
+        )
+        from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+
+        field = np.linspace(100.0, 12000.0, 16)
+        sigma = brandt_field_width_sigma(field, 220.0, 2.0)
+        sigma /= GaussianWidth.GAUSSIAN_COMPONENT.value
+        transform = AxisTransform.custom("sqrt(2)*x")
+        values, errors = transform.apply(sigma, np.full_like(sigma, 0.01))
+        source = model_width_sources(CompositeModel.from_expression("Gaussian"))["sigma"]
+        context = TrendWidthContext(
+            "sigma", (WidthSource.from_dict(source),) * len(field), transform
+        )
+        model = ParameterCompositeModel.from_expression("SC_Brandt_VortexLattice")
+        parameters = ParameterSet(
+            [
+                Parameter("lambda_ab", 215.0, min=1.0),
+                Parameter("Bc2", 2.0, fixed=True),
+                Parameter("sigma_bg", 0.0, fixed=True),
+            ]
+        )
+        fit = ParameterModelFit(
+            "sigma",
+            "field",
+            ranges=[ModelFitRange(float(field.min()), float(field.max()), model, parameters)],
+        )
+        dialog = ModelFitDialog(
+            "sigma",
+            "field",
+            field,
+            values,
+            errors,
+            existing_fit=fit,
+            width_context=context,
+            x_label="B (G)",
+        )
+        dialog.resize(*self.size)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialog.show()
+        dialog._run_fit(0)
+        _wait_until(lambda: not dialog._fit_in_progress, timeout_ms=20000)
+        _wait_until(lambda: not dialog._preview_active, timeout_ms=10000)
+        result = dialog._fit.ranges[0].result
+        if result is None or not result.success:
+            raise RuntimeError("Converted Gaussian-width Brandt fit did not converge")
+        if not np.isclose(result.parameters["lambda_ab"].value, 220.0, rtol=1e-5):
+            raise RuntimeError("Converted Gaussian-width fit did not recover the control")
+        _pump_events(250)
+        path = ctx.output_dir / f"{self.name}.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not dialog.grab().save(str(path)):
+            raise RuntimeError("Failed to save the converted-width screenshot")
+        dialog.close()
+        dialog.deleteLater()
+        _pump_events(40)
+        return path
+
+
+register(TrendGaussianWidthConversionScenario())

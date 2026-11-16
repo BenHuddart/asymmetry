@@ -41,3 +41,24 @@ def axes_for(panel: FitParametersPanel, name: str):
         if panel._axes_tag_map.get(id(axes)) == name:
             return axes
     return panel._figure.axes[0]
+
+
+def forbid_trend_optimization(monkeypatch) -> None:
+    """Fail actual history restoration if a frontend or optimizer starts a fit."""
+    import pytest
+    from iminuit import Minuit
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("restoring width history must not fit or optimize")
+
+    for target in (
+        "asymmetry.core.fitting.parameter_models.fit_parameter_model",
+        "asymmetry.core.fitting.parameter_models.global_fit_parameter_model",
+        "asymmetry.gui.panels.fit_parameters_panel.fit_parameter_model",
+        "asymmetry.gui.panels.model_fit_dialog.fit_parameter_model",
+        "asymmetry.gui.panels.cross_group_config.global_fit_parameter_model",
+        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+    ):
+        monkeypatch.setattr(target, unexpected)
+    for method in ("migrad", "simplex", "hesse"):
+        monkeypatch.setattr(Minuit, method, unexpected)

@@ -93,6 +93,11 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.result_summary import reduced_statistic_summary
+from asymmetry.core.fitting.sc.trend_width import (
+    cross_group_width_sources,
+    fitted_width_sources,
+    model_width_sources,
+)
 from asymmetry.core.fitting.wizard_scope import (
     restore_user_field_direction,
     set_user_field_direction,
@@ -10498,17 +10503,18 @@ class MainWindow(QMainWindow):
         Grouped physics parameters collapse to one point per source run; group
         nuisances are excluded from the trend."""
         rows: list[dict] = []
+        captured_sources = (
+            model_width_sources(
+                CompositeModel.from_dict(series.canonical_model, allow_missing=True)
+            )
+            if series.canonical_model is not None and series.rep_type.domain == "time"
+            else {}
+        )
         is_frequency = series.rep_type in (
             RepresentationType.FREQ_FFT,
             RepresentationType.FREQ_MAXENT,
         )
-        # Every model-function parameter in a grouped fit is shared across a run's
-        # detector groups (a "local"/"global" role is about sharing ACROSS runs, not
-        # within a run), so it holds one value per source run regardless of role. The
-        # only per-(run, group) quantities are the nuisance block, which are not
-        # trendable scientific parameters. So always collapse a group series to one
-        # trend point per source run and drop the nuisances — the parameters tab then
-        # shows only the model-function parameters, once per dataset.
+        # Scientific parameters are shared within a run; group nuisances are not trendable.
         collapse_groups = series.member_kind == "groups"
         seen_source_runs: set[int] = set()
         for member_key in series.member_run_numbers:
@@ -10630,6 +10636,7 @@ class MainWindow(QMainWindow):
                     "field": float(field),
                     "temperature": float(temperature),
                     "values": values,
+                    "parameter_sources": summary.get("parameter_sources", captured_sources),
                     "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
                     "custom_values": custom_values,
@@ -13994,9 +14001,8 @@ class MainWindow(QMainWindow):
         )
         # Re-record the trendable results series so the refit's outputs replace
         # the stale ones, then re-display (which clears the stale banner).
-        # ``_record_model_fit_results_series`` reads only ``fit_result`` and
-        # ``x_key`` off the output, so a minimal namespace suffices.
-        output = SimpleNamespace(fit_result=run.result, x_key=study.x_key)
+        # Source attribution follows the model captured by this refit.
+        output = SimpleNamespace(model=run.model, fit_result=run.result, x_key=study.x_key)
         self._record_model_fit_results_series(study.parameter_name, run.fitted_groups, output)
         self._mark_dirty()
         self._display_global_fit_study(study_id)
@@ -14686,16 +14692,7 @@ class MainWindow(QMainWindow):
     def _record_model_fit_results_series(
         self, parameter_name: str, groups: object, output: object
     ) -> None:
-        """Record a cross-group fit's outputs as a computed ``FitSeries``.
-
-        Each selected group becomes one member carrying that group's local
-        parameters (plus the shared global parameters as constant columns),
-        indexed by the group's orthogonal coordinate; a final ``globals`` member
-        carries the shared parameters and χ²ᵣ. The series is model-less
-        (``is_computed``), so it joins the trend panel like any other series and
-        can be trended again — the recursion the follow-on is for. Re-running the
-        same fit replaces its results series rather than duplicating it.
-        """
+        """Record captured cross-group outputs as a computed, trendable series."""
         fit_result = getattr(output, "fit_result", None)
         x_key = getattr(output, "x_key", "run")
         if not isinstance(fit_result, CrossGroupFitResult) or not fit_result.success:
@@ -14737,6 +14734,7 @@ class MainWindow(QMainWindow):
                 "success": True,
                 "computation_revision": fit_result.computation_revision,
                 "parameters": {**global_vals, **local_vals},
+                "parameter_sources": cross_group_width_sources(output.model, fit_result, gid),
                 "uncertainties": {**global_unc, **local_unc},
                 "chi_squared": float(fit_result.chi_squared),
                 "reduced_chi_squared": float(fit_result.reduced_chi_squared),
@@ -14752,6 +14750,7 @@ class MainWindow(QMainWindow):
             "success": True,
             "computation_revision": fit_result.computation_revision,
             "parameters": {**global_vals, "chi2_r": float(fit_result.reduced_chi_squared)},
+            "parameter_sources": cross_group_width_sources(output.model, fit_result),
             "uncertainties": dict(global_unc),
             "chi_squared": float(fit_result.chi_squared),
             "reduced_chi_squared": float(fit_result.reduced_chi_squared),
@@ -14793,6 +14792,7 @@ class MainWindow(QMainWindow):
             global_vals=global_vals,
             global_unc=global_unc,
             fit_result=fit_result,
+            parameter_sources=cross_group_width_sources(output.model, fit_result),
         )
         self._refresh_trend_panel()
 
@@ -14806,19 +14806,9 @@ class MainWindow(QMainWindow):
         global_vals: dict,
         global_unc: dict,
         fit_result: object,
+        parameter_sources: dict | None = None,
     ) -> None:
-        """Upsert one row for this fit into the per-representation accumulator.
-
-        A dedicated, persistent ``Global summary`` series collects one member per
-        *distinct* cross-group fit (keyed by the per-fit ``digest`` — the same
-        one that names the fit's results series — so re-running a fit updates its
-        single row rather than appending a duplicate). Each row carries that
-        fit's shared global parameters, χ²ᵣ, and a monotonic first-seen
-        ``fit_index``; the globals are then trendable across fits (pick
-        ``fit_index`` or another global as the x-axis via arbitrary-X). The rows
-        sit off both physical axes (field/temperature → NaN) so they never
-        pollute a real group-variable trend.
-        """
+        """Upsert captured global outputs under the stable fit digest; physical coordinates remain absent."""
         accum_id = f"modelfit-globals-{rep_type.value}"
         existing = self._project_model.batches.get(accum_id)
 
@@ -14859,6 +14849,7 @@ class MainWindow(QMainWindow):
             "chi_squared": float(fit_result.chi_squared),
             "reduced_chi_squared": float(fit_result.reduced_chi_squared),
             "run_label": f"{parameter_name} vs {x_key}",
+            "parameter_sources": parameter_sources or {},
             # Off both physical axes (None → NaN coordinate): a successive-fit
             # series has no field/temperature; it is trended against fit_index or
             # a global parameter via arbitrary-X.
@@ -15055,15 +15046,7 @@ class MainWindow(QMainWindow):
     def _record_single_model_fit_results_series(
         self, parameter_name: str, x_key: str, fit: object
     ) -> None:
-        """Turn a single fit's ranges into a trendable results series (item B).
-
-        Each successful :class:`ModelFitRange` becomes one member carrying that
-        range's fitted parameters, χ²ᵣ and a ``range_center`` column; the row's
-        trend coordinate is the centre of the range's fitted x-window (in the
-        trend's native x-units), so a multi-range fit is immediately trendable
-        and a single trend fit's outputs can themselves be trended. Re-running
-        the same fit (same parameter + x-key) replaces its series.
-        """
+        """Record each successful range at its fitted-window centre, retaining captured width context."""
         ranges = list(getattr(fit, "ranges", []) or [])
         if not ranges:
             return
@@ -15102,6 +15085,9 @@ class MainWindow(QMainWindow):
             summary = {
                 "success": True,
                 "parameters": values,
+                "parameter_sources": fitted_width_sources(
+                    fit_range.model, result.input_width_context
+                ),
                 "computation_revision": result.computation_revision,
                 "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
                 "chi_squared": float(result.chi_squared),

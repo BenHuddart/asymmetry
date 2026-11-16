@@ -307,9 +307,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             if roles.get(p.name, default_role) == "Fixed":
                 fixed_params[p.name] = float(p.value)
 
-        # Snapshot everything the worker needs as plain data (no widget access
-        # off-thread). The engine masks to windows/range itself, so pass the full
-        # groups plus the shared range/windows.
+        # The worker consumes detached groups, model, and fit windows.
         model_snapshot = ParameterCompositeModel(
             component_names=list(fit_range.model.component_names),
             operators=list(fit_range.model.operators),
@@ -318,6 +316,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             ParameterGroupData(
                 group_id=g.group_id,
                 group_name=g.group_name,
+                width_context=g.width_context,
                 x=np.asarray(g.x, dtype=float).copy(),
                 y=np.asarray(g.y, dtype=float).copy(),
                 yerr=np.asarray(g.yerr, dtype=float).copy(),
@@ -851,6 +850,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 ParameterGroupData(
                     group_id=group.group_id,
                     group_name=group.group_name,
+                    width_context=group.width_context.select(mask) if group.width_context else None,
                     x=np.asarray(group.x, dtype=float)[mask],
                     y=np.asarray(group.y, dtype=float)[mask],
                     yerr=np.asarray(group.yerr, dtype=float)[mask],
@@ -895,6 +895,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             ParameterGroupData(
                 group_id=group.group_id,
                 group_name=group.group_name,
+                width_context=group.width_context,
                 x=np.asarray(group.x, dtype=float).copy(),
                 y=np.asarray(group.y, dtype=float).copy(),
                 yerr=np.asarray(group.yerr, dtype=float).copy(),
@@ -910,9 +911,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._fit_progress_label.setText("Cross-group fit in progress...")
         error_mode = self._error_mode()
         error_value = self._error_value()
-        # Effective-variance x-uncertainty: pass per-group σ_x only when the user
-        # opted in (and the toggle is live, i.e. x is a fitted param under a real
-        # error mode). The core ignores it under None/Scatter regardless.
+        # Effective variance requires physical point errors.
         xerr_map: dict[str, object] | None = None
         if self._use_x_errors():
             xerr_map = {

@@ -28,7 +28,7 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _FitRow,
     _GroupFitData,
 )
-from tests.gui._trend_panel import card
+from tests.gui._trend_panel import card, forbid_trend_optimization
 
 
 def _row(run_number: int, field: float, lam: float, lam_err: float = 0.02) -> _FitRow:
@@ -701,3 +701,198 @@ def test_overlay_legend_carries_each_parameters_lens(qapp) -> None:
         "Lambda"
     )
     assert panel._legend_param_label("Beta", gle=True) == fpp._format_gle_legend_label("Beta")
+
+
+@pytest.mark.parametrize("converted", [False, True])
+def test_captured_gaussian_series_reaches_real_model_fit_worker(qapp, monkeypatch, converted):
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.models import brandt_field_width_sigma
+    from asymmetry.core.representation import FitSeries, RepresentationType
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+
+    fields = np.array([20.0, 50.0, 100.0, 200.0, 400.0, 800.0, 1200.0, 2000.0])
+    widths = brandt_field_width_sigma(fields, 220, 2) / GaussianWidth.GAUSSIAN_COMPONENT.value
+    source = CompositeModel.from_expression("Gaussian")
+    series = FitSeries(
+        "gaussian",
+        RepresentationType.TIME_FB_ASYMMETRY,
+        member_run_numbers=list(range(len(fields))),
+        canonical_model=source.to_dict(),
+        results_by_run={
+            i: {
+                "success": True,
+                "parameters": {"sigma": width},
+                "uncertainties": {"sigma": 0.01},
+                "field": field,
+                "temperature": 1.0,
+                "model_name": "a misleading display label",
+            }
+            for i, (field, width) in enumerate(zip(fields, widths, strict=True))
+        },
+    )
+    window = MainWindow()
+    rows = window._build_series_rows(series)
+    panel = window._fit_parameters_panel
+    panel.load_representation_series([("gaussian", "Gaussian", rows)])
+    panel._x_key = "field"
+    panel._inferred_x_key = "field"
+    if converted:
+        panel._set_y_transform("sigma", AxisTransform.custom("sqrt(2)*x"))
+    seen = {}
+
+    class DrivenDialog(ModelFitDialog):
+        def exec(self):
+            model = ParameterCompositeModel.from_expression("SC_Brandt_VortexLattice")
+            parameters = ParameterSet(
+                [
+                    Parameter("lambda_ab", 220, min=1),
+                    Parameter("Bc2", 2, fixed=True),
+                    Parameter("sigma_bg", 0, fixed=True),
+                ]
+            )
+            self._fit.ranges = [ModelFitRange(None, None, model, parameters)]
+            self._select_range(0)
+            seen.update(y=self._y.copy(), errors=self._yerr.copy(), context=self._width_context)
+            self._run_fit(0)
+            loop = QEventLoop()
+            timer = QTimer()
+            timer.timeout.connect(lambda: loop.quit() if not self._fit_in_progress else None)
+            timer.start(10)
+            QTimer.singleShot(10000, loop.quit)
+            loop.exec()
+            timer.stop()
+            assert not self._fit_in_progress
+            seen["result"] = self._fit.ranges[0].result
+
+            self.reject()
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog._show_warning",
+        lambda parent, title, message: seen.update(message=message),
+    )
+    monkeypatch.setattr(fpp, "ModelFitDialog", DrivenDialog)
+    panel._open_model_fit_dialog("sigma")
+    assert seen["context"].sources[0].component == "Gaussian"
+    factor = GaussianWidth.GAUSSIAN_COMPONENT.value if converted else 1.0
+    np.testing.assert_allclose(seen["y"], widths * factor)
+    np.testing.assert_allclose(seen["errors"], np.full_like(widths, 0.01 * factor))
+    if converted:
+        assert seen["result"].success
+        assert seen["result"].parameters["lambda_ab"].value == pytest.approx(220, rel=1e-5)
+    else:
+        assert seen["result"] is None
+        assert "second-moment" in seen["message"]
+        assert "Traceback" not in seen["message"]
+    window.close()
+
+
+def test_width_history_survives_changed_lens_and_restore_without_fitting(
+    qapp, monkeypatch, tmp_path
+):
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    panel = _panel_with_rows(_lambda_series([1, 2, 3], [4, 2, 1]))
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    for row in panel._rows:
+        row.parameter_sources["Lambda"] = source.to_dict()
+    fit = _linear_fit("Lambda")
+    fit.ranges[0].result.input_width_context = TrendWidthContext(
+        "Lambda", (source,) * 3, AxisTransform.custom("sqrt(2)*x")
+    ).to_dict()
+    panel._model_fits["Lambda"] = fit
+    panel._set_y_transform("Lambda", AxisTransform.custom("sqrt(2)*x"))
+    panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
+    assert not panel._overlay_suppressed_for_transform("Lambda")
+    panel._set_y_transform("Lambda", AxisTransform.identity())
+    state = panel.get_state()
+    forbid_trend_optimization(monkeypatch)
+    from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, load_project, save_project
+
+    path = tmp_path / "width-history.asymp"
+    save_project(
+        {"schema_version": CURRENT_SCHEMA_VERSION, "datasets": [], "fit_parameters_state": state},
+        path,
+    )
+    restored = FitParametersPanel()
+    restored.restore_state(load_project(path)["fit_parameters_state"])
+    result = restored._model_fits["Lambda"].ranges[0].result
+    assert result.input_width_context == fit.ranges[0].result.input_width_context
+    assert result.parameters["m"].value == fit.ranges[0].result.parameters["m"].value
+    assert restored._rows[0].values == panel._rows[0].values
+    assert restored._rows[0].parameter_sources == panel._rows[0].parameter_sources
+    assert restored._overlay_suppressed_for_transform("Lambda")
+    assert list(restored._iter_active_fit_ranges("field", ["Lambda"])) == []
+
+
+def test_literal_derived_alias_cannot_erase_known_gaussian_width(qapp):
+    from asymmetry.core.fitting.composite_parameters import CompositeParameterDefinition
+    from asymmetry.core.fitting.parameter_models import fit_parameter_model
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.models import brandt_field_width_sigma
+    from asymmetry.core.fitting.sc.trend_width import WidthSource
+
+    fields = np.linspace(100.0, 10000.0, 8)
+    widths = brandt_field_width_sigma(fields, 220.0, 2.0) / GaussianWidth.GAUSSIAN_COMPONENT.value
+    rows = _lambda_series(fields.tolist(), widths.tolist())
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    for row in rows:
+        row.parameter_sources["Lambda"] = source.to_dict()
+    panel = _panel_with_rows(rows)
+    panel._apply_composite_parameters_to_rows(
+        rows, [CompositeParameterDefinition("copy", "Lambda")]
+    )
+    model = ParameterCompositeModel.from_expression("SC_Brandt_VortexLattice")
+    parameters = ParameterSet(
+        [
+            Parameter("lambda_ab", 220),
+            Parameter("Bc2", 2, fixed=True),
+            Parameter("sigma_bg", 0, fixed=True),
+        ]
+    )
+    y, errors = panel._series_y_arrays(rows, "copy")
+    with pytest.raises(ValueError, match="Gaussian.*second-moment"):
+        fit_parameter_model(
+            fields,
+            y,
+            errors,
+            model,
+            parameters,
+            width_context=panel._trend_width_context(rows, "copy"),
+        )
+    panel._apply_composite_parameters_to_rows(
+        rows, [CompositeParameterDefinition("copy", "sqrt(2)*Lambda")]
+    )
+    values, errors = panel._series_y_arrays(rows, "copy")
+    np.testing.assert_allclose(errors, [0.02 * GaussianWidth.GAUSSIAN_COMPONENT.value] * len(rows))
+    result = fit_parameter_model(
+        fields,
+        values,
+        errors,
+        model,
+        parameters,
+        width_context=panel._trend_width_context(rows, "copy"),
+    )
+    assert result.success
+    assert result.parameters["lambda_ab"].value == pytest.approx(220, rel=1e-5)
+    assert result.input_width_context["sources"][0]["conversion_expression"] == "sqrt(2)*Lambda"
+    panel._set_y_transform("copy", AxisTransform.custom("sqrt(2)*x"))
+    with pytest.raises(ValueError, match="already has second-moment"):
+        fit_parameter_model(
+            fields,
+            values,
+            errors,
+            model,
+            parameters,
+            width_context=panel._trend_width_context(rows, "copy"),
+        )
+    panel._apply_composite_parameters_to_rows(
+        rows, [CompositeParameterDefinition("copy", "Lambda**2")]
+    )
+    assert "copy" not in rows[0].parameter_sources
+    assert result.input_width_context["sources"][0]["conversion_expression"] == "sqrt(2)*Lambda"

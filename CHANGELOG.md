@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refuse known unconverted Gaussian-component widths at Brandt trend fits;
+  preserve explicit value/error conversion, captured fit context, and unknown legacy data.
+
 - Use captured counts on fixed native support for internal FFT diagnostics of
   variable-binned runs, keeping fitted observations and original residual statistics.
 
