@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clarify calibration standard errors, separate MINOS intervals, conditional
+  assumptions, and the limits of quick-method and comparative precision claims.
+
 - Run integral-scan baseline, peak, and RF fits in cancellable background tasks,
   retaining captured requests and rejecting obsolete results without changing fit history.
 

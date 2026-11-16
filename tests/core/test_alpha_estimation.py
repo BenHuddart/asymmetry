@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform import estimate_alpha, estimate_alpha_detailed
 from asymmetry.core.transform.asymmetry import (
     _alpha_window,
@@ -18,12 +18,45 @@ from asymmetry.core.transform.asymmetry import (
 from asymmetry.core.transform.fb_counts import GroupCounts, SharedComponent
 from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_source
 
 ALPHA_TRUE = 1.37
 A0 = 0.25
 N_BINS = 2000
 BIN_WIDTH_US = 0.016
 TIME_US = np.arange(N_BINS) * BIN_WIDTH_US
+
+
+@pytest.mark.parametrize("background_last", [0, 1])
+def test_public_ratio_preserves_shared_background_and_overlap(background_last):
+    raw = np.array([[120, 140, 160, 180], [90, 110, 130, 150]])
+    grouping = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 1,
+        "last_good_bin": 3,
+        "deadtime_correction": False,
+        "background_correction": True,
+        "background_mode": "range",
+        "background_ranges": [[0, background_last], [0, background_last]],
+    }
+    run = Run(431, [Histogram(y, 0.025) for y in raw], grouping=grouping)
+    empty = np.empty(0)
+    outcome = calibrate_source(
+        MuonDataset(empty, empty, empty, run=run), CalibrationOptions("ratio")
+    )
+    # Each acquired bin enters once; the shared mean has coefficient -3/m.
+    # Squaring the combined coefficients retains the negative overlap term.
+    weights = np.array([0.0, 1, 1, 1])
+    weights[: background_last + 1] -= 3 / (background_last + 1)
+    sums = raw @ weights
+    variances = raw @ weights**2
+    ratio = sums[0] / sums[1]
+    assert outcome.alpha == pytest.approx(ratio, rel=1e-14)
+    assert outcome.selected.alpha_error == pytest.approx(
+        ratio * np.sqrt(np.sum(variances / sums**2)), rel=1e-14
+    )
 
 
 def _synthetic_counts(rate_backward: float, polarization: np.ndarray, seed: int):

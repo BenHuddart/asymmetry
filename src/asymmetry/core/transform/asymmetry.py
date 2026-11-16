@@ -273,7 +273,9 @@ class AlphaEstimate:
     """Result of an alpha estimation.
 
     ``alpha_error`` is absent for the quick diamagnetic and General estimates.
-    ``ratio`` reports first-order propagation of the detector-group sums.
+    ``ratio`` reports a first-order standard error of the detector-group sums,
+    including represented shared counting terms. Estimate plus/minus this error
+    is not an exact confidence interval; polarisation and model bias are excluded.
     ``objective_value`` is the minimised objective for the optimising methods
     and ``None`` for the ``ratio`` method.
     """
