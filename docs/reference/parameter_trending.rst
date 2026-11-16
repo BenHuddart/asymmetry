@@ -1486,6 +1486,16 @@ References
 2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
    Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Closed-form identities, typed numerical anchors, and synthetic fit round-trips
+check the parameter-model equations and parameter conventions below. They are
+analytic checks, not recorded WiMDA execution. The bounded supplied-error
+constant control against Mantid 6.16.1 and musrfit 1.12.1 checks a separate
+three-point Gaussian objective; it does not certify the complete model library.
+See :doc:`/explanation/comparison` for versions, settings, and limits.
+
 Migrating WiMDA model functions
 -------------------------------
 

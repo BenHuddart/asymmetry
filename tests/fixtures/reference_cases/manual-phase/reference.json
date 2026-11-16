@@ -1,0 +1,95 @@
+{
+  "format_version": 1,
+  "case_id": "musrview-manual-phase-v1",
+  "evidence_class": "recorded_native_execution",
+  "operation": "manual_phase_fft",
+  "identity": {
+    "musrview": {
+      "version": "1.12.1",
+      "build": "root6/708f777b/ROOT6.40.04",
+      "executable_sha256": "a2a3b6bb448585e133da4d689fbd78c9db286907702cb4f77c48a88af9eb02c2"
+    }
+  },
+  "inputs": {
+    "export_canvas.C": "52c9ca7b3dec308c67629c0d99a0b09ea04b7dd0e16373c6b77612702b1fb1b5",
+    "musrfit_startup.xml": "9594b1482127068bf9e1a9d65a1d3de397781d86d7eff614795f4aeb85dad9b7",
+    "synthetic.nxs": "43408aededa8376d8ff402034ba35edf9b2dc83f4d585d6bddc5c1714799f0a6",
+    "phase37.msr": "2362fe2733caecced93e130d1077cd015eabdf99cd8141b9d46e3160f1bfc89b",
+    "phase0.msr": "bd660a1af0c1cd03b402a9119e2b4c3f9f75f043bae79088d782558e2c446e89"
+  },
+  "settings": {
+    "generator": "Owned deterministic rounded counts: round(200000+30000*cos(2*pi*1.3*k*0.01+0.41)), k=0..1000; two identical histograms. Complete consumed NeXus file included.",
+    "seed": null,
+    "units": {
+      "time": "us",
+      "frequency": "MHz",
+      "input": "counts",
+      "output": "native arbitrary Fourier units"
+    },
+    "selected_bins": "data3..993 native exclusive upper; plot0.03..9.93us; exported495 frequency bins, endpoints retained",
+    "t0": 0,
+    "grouping": {
+      "forward": [
+        1
+      ]
+    },
+    "corrections": {
+      "background": 200000,
+      "deadtime": false,
+      "lifetime": "native type0 musrview displayed-count Fourier path; no equivalence to raw musrFT magnitude asserted"
+    },
+    "packing": 1,
+    "objective": "fixed parameters only; musrview plotting, no fit invoked",
+    "phase_degrees": [
+      0,
+      37
+    ],
+    "window": "none",
+    "padding": "no fourier_power requested (native default no padding)",
+    "normalization": "native musrview, unchanged between phase runs",
+    "ordering": "nonnegative increasing native frequency axis; observed DataRun only, not theory"
+  },
+  "native_output": {
+    "file": "native.csv",
+    "sha256": "cd54ea2c1dcb0a1095db9809d916134f84810c57b22ed874bdf3e23c34e6f70b",
+    "columns": [
+      "frequency_mhz",
+      "real_0",
+      "imag_0",
+      "real_37",
+      "imag_37"
+    ],
+    "bins": 495
+  },
+  "native_status": {
+    "phase0": "exit0, observed TH1F real/imag exported from ROOT canvas",
+    "phase37": "exit0, observed TH1F real/imag exported from ROOT canvas"
+  },
+  "mapping": {
+    "description": "For native bins0..493, z37=z0*exp(-i*pi*37/180), the same negative constant rotation as Asymmetry. Native final bin494 remains unchanged; all495bins are retained and tested. No origin/Shift is substituted for manual phase.",
+    "rotation_sign": -1,
+    "phase_unit": "degree",
+    "rotated_bins": [
+      0,
+      494
+    ],
+    "unrotated_bins": [
+      494
+    ],
+    "normalization_scale": 1
+  },
+  "anchor": "Independent complex DFT phase identity: rotating cosine/sine coordinates by phi gives (Re*cos(phi)+Im*sin(phi), Im*cos(phi)-Re*sin(phi)). Direct finite sums independently check the Asymmetry Fourier sign/origin. Native absolute DFT scale is not certified.",
+  "tolerances": {
+    "rotation": {
+      "atol": 0,
+      "rtol": 4.76837158203125e-07,
+      "reason": "Per-bin absolute bound rtol*(abs(z0)+abs(z37)) from four TH1F float32 storage roundings. Final unrotated bin tested separately, not omitted."
+    },
+    "frequency": {
+      "atol": 0,
+      "rtol": 0,
+      "reason": "Identical native axes between phases; no resampling."
+    }
+  },
+  "limits": "Same-bin phase relation only, with explicitly unchanged last bin. Native musrFT CLI phase options do not change dump/graphic output in the tested data-file path. Retain known musrFT endpoint/full-amplitude differences; no full-scale, error, coverage, detector-phase, MaxEnt, or wizard equivalence."
+}

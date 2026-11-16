@@ -1,0 +1,20 @@
+{
+  "evidence_class": "external_source_module_execution",
+  "commit": "1967ccb45164a21dc611f03361ee0251b46a0a94",
+  "module": "scripts/Muon/MaxentTools/start.py",
+  "sha256": "1f5b394ea9bd8473f8df159e73f711841b994151ed74052587260cee2e448562",
+  "scope": "START response only; no installed Mantid algorithm or reconstruction",
+  "settings": {
+    "npts": 1000,
+    "n_spectrum": 256,
+    "resolution_us": 0.016,
+    "fine_offset_us": 0.0,
+    "n_pulses": [1, 2],
+    "half_width_us": 0.05,
+    "separation_us": 0.324,
+    "source_pion_lifetime_us": 0.026,
+    "source_muon_lifetime_us": 2.19704,
+    "origin": "mean pion arrival; multiply by exp(-i*2*pi*f*0.026) for proton centre",
+    "response_convention": "P_cos - i*P_sin; f[k]=k/(2*npts*resolution_us)"
+  }
+}

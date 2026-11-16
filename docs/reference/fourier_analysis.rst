@@ -804,6 +804,16 @@ interpolation; estimation uses the native Fourier grid.
 Compared with other programs
 ++++++++++++++++++++++++++++
 
+Manual constant phase uses a negative complex rotation. A recorded musrview
+1.12.1 (``708f777b``, ROOT 6.40.04) type-0 control at 0° and 37° checks that
+relation on observed real/imaginary bins 0–493 within float32 storage precision;
+its final bin 494 remains unrotated and is retained as a difference. Background
+200000 counts, 0.01 μs sampling, t0 zero, packing one, 0.03–9.93 μs support,
+no apodisation, and no requested padding define this bounded control. It does
+not establish absolute Fourier scale or endpoint/error agreement. musrFT's
+tested data-file dump and graphic phase options leave their exported values
+unchanged. See :doc:`/explanation/comparison` for evidence classes and conditions.
+
 Automatic phase methods need not optimise the same physical or numerical
 criterion. The entropy method of Chen *et al.* [14]_ minimises a derivative
 entropy with a negativity penalty. Sawall *et al.* [13]_ combine phase and
@@ -1490,13 +1500,20 @@ policy.
 Compared with other programs
 ++++++++++++++++++++++++++++
 
-In Mantid's standalone MaxEnt kernel (revision ``1967ccb4``), the phase origin
+In Mantid's standalone MaxEnt kernel (checkout
+``1967ccb45164a21dc611f03361ee0251b46a0a94``), the phase origin
 includes the mean pion arrival delay. Multiplying that response by
 exp(−iωτ_π) converts it to Asymmetry's proton-centred origin. Kernel agreement
 is checked with this explicit conversion: relative tolerance 10⁻⁹ for a single
 pulse and 10⁻³ for double pulses (absolute 10⁻¹² and 10⁻⁶ respectively), the latter
 allowing for the different muon-lifetime constants. This executes the standalone
-kernel, not a full native MuonMaxent reconstruction. See
+kernel in a separate Python process, not a full installed MuonMaxent
+reconstruction. The module ``scripts/Muon/MaxentTools/start.py`` is pinned to
+SHA256 ``1f5b394ea9bd8473f8df159e73f711841b994151ed74052587260cee2e448562``.
+The control uses 1000 points at 0.016 μs, 256 frequency channels, zero fine
+offset, half-width 0.05 μs, separation 0.324 μs, and one or two pulses. Its
+source lifetimes are 0.026 μs (pion) and 2.19704 μs (muon); the origin conversion
+is explicit. This source identity is separate from installed Mantid 6.16.1. See
 `MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_.
 WiMDA 1.326 provides **Single Pulse** and **Double Pulse** choices for MaxEnt and
 **Apply Frequency Response Compensation** for Fourier analysis. Its Gaussian

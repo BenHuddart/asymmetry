@@ -1,0 +1,35 @@
+Owned type0 Fourier phase control
+###############################################################
+FITPARAMETER
+1 norm 30000 0 none
+2 bg 200000 0 none
+3 asym 0 0 none
+###############################################################
+THEORY
+asymmetry 3
+###############################################################
+RUN synthetic EMU ISIS NEXUS
+fittype 0
+norm 1
+backgr.fit 2
+forward 1
+t0 0
+data 3 993
+deadtime-cor no
+fit 0.03 9.93
+packing 1
+###############################################################
+COMMANDS
+SCALE_N0_BKG FALSE
+MIGRAD
+SAVE
+###############################################################
+PLOT 0
+runs 1
+range 0.03 9.93
+###############################################################
+FOURIER
+units MHz
+plot real_and_imag
+apodization none
+phase 37
