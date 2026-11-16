@@ -25,44 +25,42 @@ def _make_dataset(
     )
 
 
-def _wimda_projected_real(
+def _projected_real(
     freqs_mhz: np.ndarray,
     spectrum: np.ndarray,
     *,
     phase_degrees: float,
     t0_offset_us: float = 0.0,
 ) -> np.ndarray:
-    """Return WiMDA-style projected real spectrum.
+    """Project a complex DFT onto cos/sin axes after a negative phase rotation.
 
-    WiMDA projects cosine and sine components into one real-valued spectrum
-    using a manual phase and, optionally, a time-zero-derived frequency term.
-    With NumPy's FFT sign convention this is equivalent to taking the real part
-    of the complex spectrum after a phase rotation by ``phase + 2π f t0``.
+    The Fourier shift theorem contributes 2π f t0 to the constant manual phase.
+    This authored identity does not execute a reference program.
     """
 
     angles = np.deg2rad(phase_degrees) + 2.0 * np.pi * freqs_mhz * t0_offset_us
     return np.real(spectrum * np.exp(-1j * angles))
 
 
-def _wimda_group_lifetime_correction(signal: np.ndarray, time_us: np.ndarray) -> np.ndarray:
-    """Apply WiMDA's grouped-count FFT lifetime correction."""
+def _decay_corrected_counts(signal: np.ndarray, time_us: np.ndarray) -> np.ndarray:
+    """Undo exponential muon decay in the grouped-count signal."""
 
     return np.asarray(signal, dtype=float) * np.exp(
         np.asarray(time_us, dtype=float) / MUON_LIFETIME_US
     )
 
 
-def test_wimda_manual_phase_projection_matches_asymmetry_rotation() -> None:
+def test_manual_phase_projection_identity() -> None:
     dataset = _make_dataset(frequency_mhz=0.9375, phase_degrees=33.0)
     freqs, raw_spectrum = fft_complex_asymmetry(dataset)
     _rotated_freqs, rotated_spectrum = fft_complex_asymmetry(dataset, phase_degrees=33.0)
 
-    projected = _wimda_projected_real(freqs, raw_spectrum, phase_degrees=33.0)
+    projected = _projected_real(freqs, raw_spectrum, phase_degrees=33.0)
 
     np.testing.assert_allclose(rotated_spectrum.real, projected, atol=1e-12)
 
 
-def test_wimda_t0_phase_projection_matches_asymmetry_rotation() -> None:
+def test_time_origin_phase_projection_identity() -> None:
     dataset = _make_dataset(frequency_mhz=0.9375, phase_degrees=12.0)
     t0_offset_us = 0.1375
     freqs, raw_spectrum = fft_complex_asymmetry(dataset)
@@ -71,7 +69,7 @@ def test_wimda_t0_phase_projection_matches_asymmetry_rotation() -> None:
         t0_offset_us=t0_offset_us,
     )
 
-    projected = _wimda_projected_real(
+    projected = _projected_real(
         freqs,
         raw_spectrum,
         phase_degrees=0.0,
@@ -97,6 +95,6 @@ def test_grouped_fft_source_uses_decay_corrected_counts() -> None:
     )
 
     dataset = build_group_signal_dataset(run, 1, center_signal=False)
-    expected = _wimda_group_lifetime_correction(raw_counts, dataset.time)
+    expected = _decay_corrected_counts(raw_counts, dataset.time)
 
     np.testing.assert_allclose(dataset.asymmetry, expected, rtol=1e-12, atol=1e-12)

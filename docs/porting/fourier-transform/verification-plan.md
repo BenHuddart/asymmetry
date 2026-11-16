@@ -7,7 +7,7 @@ Run the smallest checks that can falsify the phase-handling hypothesis:
 1. `python tools/harness.py structural`
 2. `python tools/harness.py test -- tests/test_fourier.py`
 3. `python tools/harness.py test -- tests/test_gui_panels_basic.py tests/test_project_schema.py`
-4. `python tools/harness.py test -- tests/test_fourier_reference_methods.py`
+4. `python tools/harness.py test -- tests/core/test_fourier_analytic_identities.py`
 
 ## Behavior To Verify
 

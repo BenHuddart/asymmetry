@@ -122,6 +122,15 @@ musrfit 1.12.1 provides a post-arrival model check, without establishing a gener
 pulse switch, onset agreement, or equal uncertainties. See
 :doc:`/explanation/comparison` for the qualified reference evidence.
 
+A recorded supplied-error constant control compares Mantid 6.16.1 and musrfit
+1.12.1 (``708f777b``, ROOT 6.40.04) on all three values 2, 4, 7 with errors
+1, 2, 1. Independent normal equations give mean :math:`40/9`, standard error
+:math:`2/3`, and chi-square :math:`113/9` with two degrees of freedom. Both
+use absolute supplied errors without residual rescaling. The recorded statuses,
+fit selections, rounded-output tolerances, and optional fresh execution are
+qualified in :doc:`/explanation/comparison`. This scalar objective check does not
+certify nonlinear uncertainty or interval coverage.
+
 Basic workflow
 --------------
 

@@ -441,16 +441,16 @@ Mantid the **framework** is not importable (`import mantid` →
 `ModuleNotFoundError`), but the pure-numpy `MaxentTools` kernel modules were
 probed standalone (follow-on resolved):
 
-- **`start.py` imports cleanly** standalone (exposes `START`, `np`, `math`; no
-  Mantid-framework imports). Its pulse-shape kernel is
-  exactly ours, with real part `P_cos` and imaginary part `−P_sin`. With its fine
-  time zero set to `−τ_π` its internal time-shift phase cancels,
-  giving a clean comparison. `tests/test_maxent_pulse_oracle.py` (skipif-guarded
-  on a local `~/Source/mantid` checkout, so it skips in CI) confirms the match:
-  **single pulse to machine precision** (no τ_µ dependence — the tanh
-  interference weight vanishes), **double pulse to ~1e-3** (Mantid truncates
-  τ_µ = 2.19704 vs our CODATA 2.1969811, which only enters the tanh). This is the
-  documented constants-differ tolerance the study predicted. No code copied.
+- **`start.py` executes standalone** through an isolated subprocess in
+  `tests/core/test_maxent_pulse_oracle.py`. `ASYMMETRY_MANTID_SOURCE` explicitly
+  selects the pinned checkout/module recorded in the test fixture. Unset
+  configuration skips; configured identity, import, command, or output failures
+  fail. Zero fine-offset response uses the mean-pion-arrival origin; multiplying
+  by exp(-i*omega*tau_pi) maps it to the proton-centred clock. Single-pulse
+  relative tolerance1e-9 and double-pulse1e-3 retain the separate source lifetime
+  conventions. This is external source-module execution, not installed Mantid
+  MuonMaxent reconstruction. The owning Fourier reference gives the exact source
+  identity, settings, and absolute tolerances. No reference implementation is copied.
 - **`deadfit.py` does not import** standalone (`from ...Muon import …` →
   `ModuleNotFoundError: No module named 'Muon'`), so the DEADFIT 2×2 solve has
   **no usable kernel oracle**. Asymmetry's deadtime fit is verified synthetically

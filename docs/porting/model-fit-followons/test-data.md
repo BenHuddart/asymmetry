@@ -2,7 +2,7 @@
 
 Oracles are synthetic (the features are GUI/numerics, not new physics formulas);
 the one real-data check reuses the EuO ν(T) trend fixture already frozen in
-`tests/test_wimda_model_function_parity.py`. Compute oracle constants in the
+`tests/core/test_parameter_model_identities.py`. Compute oracle constants in the
 test with numpy/scipy where noted, do not hand-transcribe.
 
 ## 1. Item 1 — arbitrary X (param-vs-param)

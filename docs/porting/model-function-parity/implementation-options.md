@@ -138,7 +138,7 @@ milestone commit. No push, no PR.
    symbols, no inline citations) + `PARAMETER_MODEL_REFERENCES` entries
    (APS style; *Muon Spectroscopy: An Introduction* by name for
    MuRepolarisation, plus original literature where applicable).
-4. Tests (new `tests/test_wimda_model_function_parity.py`, pattern of
+4. Tests (new `tests/core/test_parameter_model_identities.py`, pattern of
    `test_wimda_parity_components.py`): oracle tables from test-data
    §1.1–1.4, Polynomial round-trip, MuRepolarisation B₀/limit/recovery
    checks, recipe identities (Arrhenius delta D4, OrderParameter+Constant
@@ -217,7 +217,7 @@ is a panel-level feature, not a dialog tweak. The core is already x-agnostic
   with `OrderParameter`) gives Tc = 69.24(9) K, β = 0.409(7), α = 1.18(4) —
   within combined uncertainties of the PR #15 GUI extraction
   (Tc = 69.2(1) K, β = 0.417(7), α = 1.23(5)); the ν(T) trend is frozen as a
-  fixture in `tests/test_wimda_model_function_parity.py` so the regression
+  fixture in `tests/core/test_parameter_model_identities.py` so the regression
   runs without the corpus.
 - Scatter-mode equivalence with WiMDA's Estimate iteration is *tested* by
   explicitly iterating the WiMDA scheme

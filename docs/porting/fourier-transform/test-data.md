@@ -45,7 +45,7 @@ slice will use synthetic datasets inside pytest because they are deterministic
 and cheap to run in the harness.
 
 The synthetic comparison contracts now live in
-`tests/test_fourier_reference_methods.py`.
+`tests/core/test_fourier_analytic_identities.py`.
 
 ## Data Contracts To Preserve
 

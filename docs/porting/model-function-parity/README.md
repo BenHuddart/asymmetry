@@ -5,7 +5,7 @@ Components shipped: `Polynomial`, `PowerLawQuadBG`, `MuRepolarisation`.
 Machinery shipped: error-mode selector (Column/Percent/Absolute/None/Scatter),
 union multi-range fit windows, shared χ² quality helper
 (`core/fitting/fit_quality.py`) with verdict display in `ModelFitDialog`.
-Tests: `tests/test_wimda_model_function_parity.py` (23, incl. the EuO
+Tests: `tests/core/test_parameter_model_identities.py` (23, incl. the EuO
 real-data regression) and `tests/test_model_fit_machinery.py` (17) plus 7 GUI
 tests in `tests/test_model_fit_dialog.py`. User docs: six new sections in
 `docs/user_guide/parameter_trending.rst` incl. the WiMDA migration table.

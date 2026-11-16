@@ -7,7 +7,6 @@ comparisons allow 5e-6 relative error. No reference implementation source is use
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 
 import numpy as np
@@ -17,6 +16,7 @@ from asymmetry.core.io import load
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import apply_grouping_aligned
 from asymmetry.core.transform.rebin import rebin_counts
+from tests.reference_programs import musrfit_executable
 
 pytestmark = [pytest.mark.io, pytest.mark.integration]
 h5py = pytest.importorskip("h5py")
@@ -73,14 +73,7 @@ def _synthetic_nexus(path, coefficient):
 @pytest.mark.parametrize("packing", [1, 4])
 @pytest.mark.parametrize("detectors", ["1", "1 2"])
 def test_musrfit_single_histogram_uncertainty(tmp_path, coefficient, packing, detectors):
-    executable = shutil.which("musrfit")
-    if executable is None:
-        pytest.skip("musrfit executable is not installed")
-    version = subprocess.run(
-        [executable, "--version"], capture_output=True, text=True, check=True, timeout=15
-    ).stdout
-    if "1.12.1" not in version or "708f777b" not in version:
-        pytest.skip("reference requires musrfit 1.12.1, revision 708f777b")
+    executable = musrfit_executable()
     _synthetic_nexus(
         tmp_path / "synthetic.nxs", 0.02 if coefficient in (None, "short") else coefficient
     )
@@ -126,7 +119,7 @@ range 0 9
 """
     )
     result = subprocess.run(
-        [executable, "reference.msr", "-c", "--dump", "ascii"],
+        [executable, "reference.msr", "-c", "--dump", "ascii", "--use-no-of-threads", "1"],
         cwd=tmp_path,
         capture_output=True,
         text=True,

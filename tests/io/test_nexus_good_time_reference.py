@@ -4,7 +4,6 @@ The native single-histogram ASCII export has six significant digits. Its
 integer channel timing is compared separately from exact NeXus calibration.
 """
 
-import shutil
 import subprocess
 from dataclasses import replace
 
@@ -22,8 +21,10 @@ from asymmetry.core.project.profiles import (
 from asymmetry.core.simulate import reduce_run_to_dataset
 from asymmetry.core.transform.grouping import group_forward_backward
 from tests.io.test_deadtime_reference_programs import _synthetic_nexus
+from tests.reference_programs import musrfit_executable
 
 h5py = pytest.importorskip("h5py")
+
 pytestmark = [pytest.mark.io, pytest.mark.integration]
 
 
@@ -31,12 +32,7 @@ pytestmark = [pytest.mark.io, pytest.mark.integration]
 @pytest.mark.parametrize("channel", [1, 2])
 @pytest.mark.parametrize("shift,manual", [(0, False), (5, False), (5, True)])
 def test_musrfit_matched_explicit_data_channels(tmp_path, channel, exact, shift, manual):
-    program = shutil.which("musrfit")
-    if program is None:
-        pytest.skip("musrfit executable is not installed")
-    version = subprocess.check_output([program, "--version"], text=True, timeout=15)
-    if "1.12.1" not in version or "708f777b" not in version:
-        pytest.skip("reference requires musrfit 1.12.1 revision 708f777b")
+    program = musrfit_executable()
     path = tmp_path / "synthetic.nxs"
     _synthetic_nexus(path, 0)
     raw = np.stack([100 + np.arange(32), 300 + 2 * np.arange(32)])
@@ -89,7 +85,7 @@ runs 1
 range -1 2
 """)
     result = subprocess.run(
-        [program, "reference.msr", "-c", "--dump", "ascii"],
+        [program, "reference.msr", "-c", "--dump", "ascii", "--use-no-of-threads", "1"],
         cwd=tmp_path,
         capture_output=True,
         text=True,

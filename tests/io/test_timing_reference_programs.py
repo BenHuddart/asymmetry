@@ -1,7 +1,6 @@
 """Optional native feature comparisons, distinct from timing application checks."""
 
 import re
-import shutil
 import subprocess
 
 import numpy as np
@@ -10,20 +9,14 @@ import pytest
 from asymmetry.core.io import load
 from asymmetry.core.transform.t0 import find_t0_for_run
 from tests.io.test_psi_loader import _write_psi_bin
+from tests.reference_programs import musrfit_executable
 
 pytestmark = [pytest.mark.io, pytest.mark.integration]
 
 
 @pytest.mark.parametrize("pulsed", [False, True])
 def test_native_musrt0_unique_features(tmp_path, pulsed):
-    executable = shutil.which("musrt0")
-    if executable is None:
-        pytest.skip("musrt0 is not installed")
-    version = subprocess.run(
-        [executable, "--version"], capture_output=True, text=True, timeout=15, check=True
-    ).stdout
-    if "1.12.1" not in version or "708f777b" not in version:
-        pytest.skip("comparison requires musrt0 1.12.1/708f777b")
+    executable = musrfit_executable("musrt0")
     raw = np.full((2, 128), 10, dtype="<i4")
     if pulsed:
         for i, start in enumerate((20, 31)):

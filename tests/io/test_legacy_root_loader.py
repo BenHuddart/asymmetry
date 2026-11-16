@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.io import load
+from tests.reference_cases import load_reference_case
 
 pytestmark = pytest.mark.io
 uproot = pytest.importorskip("uproot")
@@ -46,7 +47,6 @@ def test_serialized_lem_header_calibration():
     ["synthetic.bin", "legacy-lem.root", "musrroot-folder.root", "musrroot-directory.root"],
 )
 def test_cross_format_selected_observations(filename):
-    import json
     from dataclasses import replace
 
     from asymmetry.core.simulate import reduce_run_to_dataset
@@ -89,7 +89,10 @@ def test_cross_format_selected_observations(filename):
     np.testing.assert_allclose(reduced.error, 100 * error, rtol=1e-14)
     # BIN float32 width and legacy decimal ns differ by 2.24e-8 relative.
     np.testing.assert_allclose(reduced.time, (raw - 4) * 0.01, rtol=3e-8, atol=1e-16)
-    reference = json.loads((FIXTURES / "reference.json").read_text())
+    case = load_reference_case(FIXTURES / "reference.json")
+    assert case["mapping"]["asymmetry_scale_to_percent"] == 100
+    assert case["mapping"]["forward_t0_bin"] == 4
+    reference = case["native_output"]
     counts_export = np.asarray(reference["summed_counts"])
     fb_export = np.asarray(reference["asymmetry"])
     np.testing.assert_array_equal(counts_export[:, 1], forward + backward)

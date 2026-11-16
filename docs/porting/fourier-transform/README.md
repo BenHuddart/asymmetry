@@ -72,7 +72,7 @@ The following musrfit and Mantid features remain as follow-on work:
 - GUI entry point: `src/asymmetry/gui/panels/fourier_panel.py`
 - Existing tests:
   - `tests/test_fourier.py`
-  - `tests/test_fourier_reference_methods.py`
+  - `tests/core/test_fourier_analytic_identities.py`
   - `tests/test_gui_panels_basic.py`
   - `tests/test_project_schema.py`
 
