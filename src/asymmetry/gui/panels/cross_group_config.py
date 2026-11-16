@@ -135,6 +135,7 @@ def run_cross_group_fit_from_config(
             ParameterGroupData(
                 group_id=group.group_id,
                 group_name=group.group_name,
+                width_context=group.width_context.select(mask) if group.width_context else None,
                 x=np.asarray(group.x, dtype=float)[mask],
                 y=np.asarray(group.y, dtype=float)[mask],
                 yerr=np.asarray(group.yerr, dtype=float)[mask],

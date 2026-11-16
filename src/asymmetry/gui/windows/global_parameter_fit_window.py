@@ -45,6 +45,11 @@ from asymmetry.core.fitting.parameter_models import (
     parse_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.sc.trend_width import (
+    TrendWidthContext,
+    WidthSource,
+    cross_group_width_sources,
+)
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import tokens
@@ -678,6 +683,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 if fit_range.result is not None:
                     range_item["result"] = {
                         "computation_revision": fit_range.result.computation_revision,
+                        "input_width_context": fit_range.result.input_width_context,
                         "success": fit_range.result.success,
                         "chi_squared": fit_range.result.chi_squared,
                         "reduced_chi_squared": fit_range.result.reduced_chi_squared,
@@ -798,6 +804,7 @@ class GlobalParameterFitWindow(QMainWindow):
                     result_obj = ParameterModelFitResult(
                         success=bool(result_state.get("success", False)),
                         computation_revision=result_state.get("computation_revision"),
+                        input_width_context=result_state.get("input_width_context"),
                         chi_squared=float(result_state.get("chi_squared", 0.0)),
                         reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
                         parameters=result_params,
@@ -1100,10 +1107,15 @@ class GlobalParameterFitWindow(QMainWindow):
         xs: list[float] = []
         ys: list[float] = []
         es: list[float] = []
+        sources = []
         for group in self._groups:
             pset = self._result.local_parameters.get(group.group_id)
             if pset is None or param_name not in pset:
                 continue
+            source = cross_group_width_sources(self._model, self._result, group.group_id).get(
+                param_name
+            )
+            sources.append(WidthSource.from_dict(source) if source else None)
             xs.append(float(group.group_variable_value))
             ys.append(float(pset[param_name].value))
             err = self._result.local_uncertainties.get(group.group_id, {}).get(param_name)
@@ -1137,6 +1149,7 @@ class GlobalParameterFitWindow(QMainWindow):
             existing_fit=self._local_model_fits.get(param_name),
             parent=self,
             model_memory=self._local_trend_model_memory,
+            width_context=TrendWidthContext(param_name, tuple(sources[i] for i in order)),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1177,10 +1190,7 @@ class GlobalParameterFitWindow(QMainWindow):
         x_label: str | None = None,
         group_variable_label: str | None = None,
     ) -> None:
-        # Showing a *different* fit replaces the decoration context: the previous
-        # fit's local model fits and annotations belong to its own series and
-        # must not bleed onto the new one. A re-run of the *same* fit (matching
-        # batch id) keeps the live decorations so they follow the replacement.
+        # Decorations belong to the captured fit identified by batch_id.
         if batch_id is not None and batch_id != self._batch_id:
             self._local_model_fits = {}
             self._plot_annotations = []
@@ -1201,27 +1211,16 @@ class GlobalParameterFitWindow(QMainWindow):
         # that are no longer present.
         valid_ids = {g.group_id for g in groups}
         self._group_visibility = {gid: self._group_visibility.get(gid, True) for gid in valid_ids}
-        # Curves depend only on the inputs just rebound above, so the previous
-        # fit's cached curves are now invalid — clear them. Both components-flag
-        # entries are dropped; the display recomputes the one it needs off-thread.
+        # Curves belong to the newly bound captured observations and model.
         self._curve_cache = {}
         self._refresh_table()
         self._refresh_quality_bar()
         self._refresh_local_parameter_plots()
-        # The cross-group fit curves are the heavy part (per-group model eval
-        # over an 800-point axis); compute them off-thread behind the overlay so
-        # restoring a saved fit on project open does not block the GUI.
+        # Model sampling stays off the GUI thread, including during restoration.
         self._start_fit_curve_compute()
 
     def set_study(self, study, *, stale: bool, stale_reason: str = "") -> None:
-        """Display *study* (a ``GlobalFitStudy``) with a stale banner if needed.
-
-        Thin adapter over :meth:`set_results`: the study is the persisted entity,
-        this window is the view. The study id is the batch id (they share the
-        digest scheme), so decorations keep keying by it. Custom x/group-variable
-        labels are carried so the plots read the study's stored labels rather than
-        this window's hardcoded field/T/run maps (Phase 3 consumes them fully).
-        """
+        """Display a persisted study; its id owns the captured labels and decorations."""
         self.set_results(
             parameter_name=study.parameter_name,
             x_key=study.x_key,

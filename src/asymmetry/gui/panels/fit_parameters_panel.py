@@ -101,6 +101,10 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
     unregister_derived_param_info,
 )
+from asymmetry.core.fitting.sc.trend_width import (
+    TrendWidthContext,
+    derived_width_source,
+)
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
@@ -961,6 +965,7 @@ class FitParametersPanel(QWidget):
             {
                 "run_number": int(row.run_number),
                 "computation_revision": row.computation_revision,
+                "parameter_sources": dict(row.parameter_sources),
                 "run_label": str(row.run_label),
                 "field": float(row.field),
                 "temperature": float(row.temperature),
@@ -1160,6 +1165,7 @@ class FitParametersPanel(QWidget):
                         _FitRow(
                             run_number=int(entry.get("run_number", 0)),
                             computation_revision=entry.get("computation_revision"),
+                            parameter_sources=dict(entry.get("parameter_sources", {})),
                             run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
                             temperature=float(entry.get("temperature", 0.0)),
@@ -1532,6 +1538,7 @@ class FitParametersPanel(QWidget):
                         _FitRow(
                             run_number=int(rd["run_number"]),
                             computation_revision=rd.get("computation_revision"),
+                            parameter_sources=dict(rd.get("parameter_sources", {})),
                             run_label=str(rd.get("run_label") or rd["run_number"]),
                             field=float(rd.get("field", 0.0)),
                             temperature=float(rd.get("temperature", 0.0)),
@@ -2201,6 +2208,7 @@ class FitParametersPanel(QWidget):
         result = ParameterModelFitResult(
             success=fit_result.success,
             computation_revision=fit_result.computation_revision,
+            input_width_context=fit_result.input_width_contexts.get(group_id),
             chi_squared=float(fit_result.chi_squared),
             reduced_chi_squared=float(fit_result.reduced_chi_squared),
             parameters=param_result,
@@ -2303,6 +2311,7 @@ class FitParametersPanel(QWidget):
                     {
                         "run_number": int(row.run_number),
                         "computation_revision": row.computation_revision,
+                        "parameter_sources": dict(row.parameter_sources),
                         "run_label": str(row.run_label),
                         "field": float(row.field),
                         "temperature": float(row.temperature),
@@ -2361,6 +2370,7 @@ class FitParametersPanel(QWidget):
                         _FitRow(
                             run_number=int(row_entry.get("run_number", 0)),
                             computation_revision=row_entry.get("computation_revision"),
+                            parameter_sources=dict(row_entry.get("parameter_sources", {})),
                             run_label=str(
                                 row_entry.get("run_label", row_entry.get("run_number", ""))
                             ),
@@ -2592,6 +2602,7 @@ class FitParametersPanel(QWidget):
                 for name in names_to_clear:
                     row.values.pop(name, None)
                     row.errors.pop(name, None)
+                    row.parameter_sources.pop(name, None)
 
         if definitions:
             for row in rows:
@@ -2616,6 +2627,14 @@ class FitParametersPanel(QWidget):
                     except (CompositeExpressionError, ValueError):
                         row.values[definition.name] = float("nan")
                         row.errors[definition.name] = float("nan")
+                    else:
+                        source = derived_width_source(
+                            definition.expression,
+                            evaluation.referenced_symbols,
+                            row.parameter_sources,
+                        )
+                        if source is not None:
+                            row.parameter_sources[definition.name] = source.to_dict()
 
         # Knight-shift quantities are derived from the (just-applied) frequencies
         # the same way composites are, so apply them through the same chokepoint.
@@ -4317,9 +4336,7 @@ class FitParametersPanel(QWidget):
         if not rows:
             return
 
-        # Transform into the coordinate the trend fit lives in, so fitting a
-        # ``Linear`` model to a Redfield (1/λ vs B²) / Arrhenius (ln λ vs 1/T)
-        # transform *is* the linearised fit — slope/intercept fall straight out.
+        # Fit the displayed coordinates, including propagated errors.
         x_vals, x_err = self._apply_x_transform(
             np.array([self._x_value(r, x_key) for r in rows], dtype=float),
             self._x_error_array(rows, x_key),
@@ -4344,6 +4361,7 @@ class FitParametersPanel(QWidget):
             x_errors=x_err,
             x_label=self._transformed_x_display_label(x_key),
             model_memory=self._trend_model_memory,
+            width_context=self._trend_width_context(rows, param_name),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -4377,22 +4395,10 @@ class FitParametersPanel(QWidget):
         group_variable_overrides: dict[str, float] | None = None,
         group_order: list[str] | None = None,
     ) -> list[ParameterGroupData] | None:
-        """Assemble ``ParameterGroupData`` for a cross-group fit from live rows.
+        """Assemble captured, included rows for live cross-group fitting and study staleness.
 
-        Resolves *group_ids* against the panel's live group registry, then
-        delegates to :meth:`_assemble_cross_group_from_data`. This is the single
-        source of truth the staleness digest and a study Refit use, so they see
-        exactly the fitting path's data. Returns ``None`` when any id is missing
-        from the registry (a deleted source series) or a group lacks the fitted
-        parameter for an included member; a group with fewer than two valid
-        points is dropped, so the list may be shorter than *group_ids*.
-
-        ``group_variable_overrides`` (Phase 4) replaces the inferred per-group
-        orthogonal coordinate with the user's explicit setup values; when a group
-        id is absent from it the inference is used, so a study built before
-        Phase 4 (no overrides) keeps the same digest. ``group_order`` orders the
-        output by the setup's checklist order rather than the registry order.
-        """
+        Missing sources/parameters return None; groups with fewer than two points are dropped.
+        Authored group-variable overrides and ordering take precedence over inference."""
         groups: list[_GroupFitData] = []
         for gid in group_ids:
             group = self._group_fit_results.get(str(gid))
@@ -4416,21 +4422,10 @@ class FitParametersPanel(QWidget):
         group_variable_overrides: dict[str, float] | None = None,
         group_order: list[str] | None = None,
     ) -> list[ParameterGroupData] | None:
-        """Build ``ParameterGroupData`` from live ``_GroupFitData`` objects.
+        """Capture each group's included rows, coordinates, errors, and width context.
 
-        For each group it keeps only the members the user left in the trend
-        (``include_in_trend``, mirroring :meth:`_included_trend_rows`), sorts
-        them by the abscissa, and applies the same y/σ fallback and per-group
-        orthogonal coordinate the dialog path used. Returns ``None`` when a group
-        does not carry ``param_name`` for every included member; a group with
-        fewer than two valid points is dropped.
-
-        ``group_variable_overrides`` maps ``group_id`` → explicit group-variable
-        value; a group present there uses that value instead of the inference.
-        ``group_order`` (a list of group ids) reorders the assembled output so a
-        setup dialog's checklist order is honoured (groups not listed keep their
-        original relative order at the end).
-        """
+        Apply the plotted lenses and optional group-variable overrides. Missing parameters
+        return None; fewer than two valid points omit the group."""
         if group_order:
             order = {gid: i for i, gid in enumerate(group_order)}
             groups = sorted(
@@ -4474,6 +4469,7 @@ class FitParametersPanel(QWidget):
                     group_id=group.group_id,
                     group_name=group.group_name,
                     input_computation_revisions=tuple(row.computation_revision for row in rows),
+                    width_context=self._trend_width_context(rows, param_name),
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
@@ -5029,6 +5025,7 @@ class FitParametersPanel(QWidget):
                 {
                     "group_id": g.group_id,
                     "input_computation_revisions": list(g.input_computation_revisions),
+                    "width_context": g.width_context.to_dict() if g.width_context else None,
                     "group_name": g.group_name,
                     "x": np.asarray(g.x, dtype=float).tolist(),
                     "y": np.asarray(g.y, dtype=float).tolist(),
@@ -5041,6 +5038,7 @@ class FitParametersPanel(QWidget):
             "model": model.to_dict(),
             "fit_result": {
                 "computation_revision": fit_result.computation_revision,
+                "input_width_contexts": dict(fit_result.input_width_contexts),
                 "success": bool(fit_result.success),
                 "chi_squared": float(fit_result.chi_squared),
                 "reduced_chi_squared": float(fit_result.reduced_chi_squared),
@@ -5111,6 +5109,7 @@ class FitParametersPanel(QWidget):
                 ParameterGroupData(
                     group_id=str(entry.get("group_id", "")),
                     input_computation_revisions=tuple(entry.get("input_computation_revisions", ())),
+                    width_context=TrendWidthContext.from_dict(entry.get("width_context")),
                     group_name=str(entry.get("group_name", "")),
                     x=np.asarray(entry.get("x", []), dtype=float),
                     y=np.asarray(entry.get("y", []), dtype=float),
@@ -5164,6 +5163,7 @@ class FitParametersPanel(QWidget):
         fit_result = CrossGroupFitResult(
             success=bool(fit_state.get("success", False)),
             computation_revision=fit_state.get("computation_revision"),
+            input_width_contexts=dict(fit_state.get("input_width_contexts", {})),
             chi_squared=float(fit_state.get("chi_squared", 0.0)),
             reduced_chi_squared=float(fit_state.get("reduced_chi_squared", 0.0)),
             global_parameters=global_params,
@@ -5316,25 +5316,13 @@ class FitParametersPanel(QWidget):
         )
 
     def refit_active_model_fits(self) -> None:
-        """Re-solve every attached trend model fit over the included members.
+        """Refit attached models over included members on TaskRunner.
 
-        Called after a member is excluded/included so an attached OrderParameter
-        / Linear fit re-fits without the dropped point. Each range is re-run with
-        its stored model/seed/window and error mode; a range that fails to re-fit
-        keeps its previous result rather than vanishing. The minimisation itself
-        (iminuit, one call per range) runs on the shared TaskRunner — never on
-        the GUI thread, matching the Fit-button path in ModelFitDialog.
-        """
+        Capture arrays, source context, and lenses before dispatch; failed ranges retain history."""
         if not self._model_fits or self._refit_in_progress:
             return
-        # Snapshot the per-parameter x/y/err arrays on the GUI thread (cheap: no
-        # minimisation, just reading already-materialised _FitRow attributes) so
-        # the worker touches no widget state.
-        # The fit lives in the plotted coordinates (the x lens and the parameter's
-        # own y lens), exactly as the Model Fit dialog solved it.
-        jobs: dict[
-            str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, ParameterModelFit]
-        ] = {}
+        # Workers consume captured arrays and source context, never live widgets.
+        jobs = {}
         for name, fit in self._model_fits.items():
             rows = self._included_trend_rows(fit.x_key)
             if not rows or not fit.ranges:
@@ -5344,7 +5332,7 @@ class FitParametersPanel(QWidget):
                 self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None,
             )
             y_vals, y_err = self._series_y_arrays(rows, name)
-            jobs[name] = (x_vals, y_vals, y_err, x_err, fit)
+            jobs[name] = (x_vals, y_vals, y_err, x_err, fit, self._trend_width_context(rows, name))
         if not jobs:
             return
 
@@ -5355,7 +5343,7 @@ class FitParametersPanel(QWidget):
 
         def _run(_worker) -> dict[str, ParameterModelFit]:
             updated: dict[str, ParameterModelFit] = {}
-            for name, (x_vals, y_vals, y_err, x_err, fit) in jobs.items():
+            for name, (x_vals, y_vals, y_err, x_err, fit, width_context) in jobs.items():
                 new_ranges: list[ModelFitRange] = []
                 for rng in fit.ranges:
                     error_mode = (
@@ -5373,6 +5361,7 @@ class FitParametersPanel(QWidget):
                             error_mode=error_mode,
                             windows=rng.windows,
                             xerr=x_err,
+                            width_context=width_context,
                         )
                     except Exception:
                         new_ranges.append(rng)
@@ -6260,6 +6249,11 @@ class FitParametersPanel(QWidget):
     ) -> tuple[np.ndarray, np.ndarray | None]:
         return ParameterExportData._apply_x_transform(self, x_vals, x_err)
 
+    def _trend_width_context(self, rows: list[_FitRow], name: str) -> TrendWidthContext:
+        return TrendWidthContext.for_column(
+            name, [row.parameter_sources for row in rows], self._y_transform_for(name)
+        )
+
     def _series_y_arrays(self, rows: list[_FitRow], y_name: str) -> tuple[np.ndarray, np.ndarray]:
         return ParameterExportData._series_y_arrays(self, rows, y_name)
 
@@ -6602,6 +6596,7 @@ class FitParametersPanel(QWidget):
                     range_item["result"] = {
                         "success": fit_range.result.success,
                         "computation_revision": fit_range.result.computation_revision,
+                        "input_width_context": fit_range.result.input_width_context,
                         "chi_squared": fit_range.result.chi_squared,
                         "reduced_chi_squared": fit_range.result.reduced_chi_squared,
                         "message": fit_range.result.message,
@@ -6734,6 +6729,7 @@ class FitParametersPanel(QWidget):
                     result_obj = ParameterModelFitResult(
                         success=bool(result_state.get("success", False)),
                         computation_revision=result_state.get("computation_revision"),
+                        input_width_context=result_state.get("input_width_context"),
                         chi_squared=float(result_state.get("chi_squared", 0.0)),
                         reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
                         parameters=result_params,

@@ -320,6 +320,9 @@ def test_refit_done_persists_healed_config_not_stale_one(mainwindow: MainWindow)
     model's current param_names), not the stale study.config that was passed
     in to request the refit. Drives the handler directly with a stub run
     object so it does not depend on a real fit executing off-thread."""
+    from asymmetry.core.representation import RepresentationType
+
+    mainwindow._active_representation_type = lambda: RepresentationType.TIME_FB_ASYMMETRY
     g = _groups("A")
     mainwindow._on_cross_group_fit_completed("A", g, _output("A", "field", g))
     _wait_idle(mainwindow)
@@ -342,7 +345,12 @@ def test_refit_done_persists_healed_config_not_stale_one(mainwindow: MainWindow)
 
     stub_run = SimpleNamespace(
         model=ParameterCompositeModel(["Arrhenius"], []),
-        result=_result(),
+        result=CrossGroupFitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            global_parameters=ParameterSet([Parameter("a", 1.0), Parameter("Ea", 1.0)]),
+        ),
         fitted_groups=g,
         fit_x_min=float("nan"),
         fit_x_max=float("nan"),
@@ -356,6 +364,15 @@ def test_refit_done_persists_healed_config_not_stale_one(mainwindow: MainWindow)
     assert updated.config["model"]["component_names"] == ["Arrhenius"]
     persisted_names = {row["name"] for row in updated.config["parameter_rows"]}
     assert persisted_names == {"a", "Ea"}
+
+    recorded = mainwindow._project_model.batch(study_id)
+    assert recorded is not None
+    assert (
+        recorded.results_by_run[recorded.member_run_numbers[0]]["parameter_sources"]["a"][
+            "component"
+        ]
+        == "Arrhenius"
+    )
 
 
 def test_deleted_source_series_marks_stale_and_disables_refit(

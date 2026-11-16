@@ -61,6 +61,7 @@ from asymmetry.core.fitting.parameter_models import (
     windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthConventionError
 from asymmetry.core.fitting.seeding import seed_trend_parameters
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import metrics, tokens
@@ -542,25 +543,17 @@ class ModelFitDialog(QDialog):
         x_errors: np.ndarray | None = None,
         x_label: str | None = None,
         model_memory: dict[str, str] | None = None,
+        width_context: TrendWidthContext | None = None,
     ) -> None:
         super().__init__(parent)
 
-        # Caller-owned "remember last-used model per (parameter, x_key)" store
-        # (item 4.2). A None caller (e.g. CrossGroupFitDialog, which does not
-        # participate) gets a session-local dict that is never persisted, so
-        # it simply never remembers across dialogs. Assigned EARLY — before
-        # ``_create_default_range`` (below) reads it.
+        # Initialise model memory before creating the default range.
         self._model_memory: dict[str, str] = model_memory if model_memory is not None else {}
 
-        # ``x_key`` is the internal abscissa id (e.g. ``custom:84576a7e``) used
-        # by the fit backend / persistence; ``x_label`` is the friendly column
-        # name shown to the user ("Current (A)"). Fall back to the key when no
-        # label is supplied so older callers keep working.
+        # Persistence uses the axis key; the title uses its display label.
         x_display = x_label or x_key
         self.setWindowTitle(f"Model Fit: {parameter_name} vs {x_display}")
-        # Cap the default to the available screen — the wider default leaves room
-        # for the preview pane on the right; the smaller floor keeps it usable on
-        # a small display (P2-3).
+        # Keep the controls and preview within the available screen.
         resize_to_available(self, 1280, 700, min_width=560, min_height=420)
 
         self._parameter_name = parameter_name
@@ -570,6 +563,7 @@ class ModelFitDialog(QDialog):
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
         self._yerr = np.asarray(y_errors, dtype=float)
+        self._width_context = width_context
         self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
         # One RangeCard per fit range (recreated each _rebuild_ranges_ui).
@@ -2167,6 +2161,7 @@ class ModelFitDialog(QDialog):
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
         y_errs = np.asarray(self._yerr, dtype=float).copy()
+        width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
         windows = list(fit_range.windows) if fit_range.windows else None
@@ -2185,6 +2180,7 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
+                width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
                 x_min=x_min,
@@ -3071,6 +3067,7 @@ class ModelFitDialog(QDialog):
         x_vals = np.asarray(self._x, dtype=float).copy()
         y_vals = np.asarray(self._y, dtype=float).copy()
         y_errs = np.asarray(self._yerr, dtype=float).copy()
+        width_context = self._width_context
         x_min = fit_range.x_min
         x_max = fit_range.x_max
         windows = list(fit_range.windows) if fit_range.windows else None
@@ -3083,6 +3080,7 @@ class ModelFitDialog(QDialog):
                 x=x_vals,
                 y=y_vals,
                 yerr=y_errs,
+                width_context=width_context,
                 model=model_snapshot,
                 parameters=params_snapshot,
                 x_min=x_min,
@@ -3625,9 +3623,9 @@ class ModelFitDialog(QDialog):
             try:
                 return task()
             except Exception as exc:
-                # TaskWorker would surface only str(exc); wrap the full
-                # traceback so the failure dialog keeps the same detail the
-                # old _FitWorker.failed signal carried.
+                if isinstance(exc, WidthConventionError):
+                    raise RuntimeError(str(exc)) from None
+                # Unexpected failures retain their diagnostic traceback.
                 raise RuntimeError(traceback.format_exc()) from exc
 
         self._tasks.start(
@@ -3656,7 +3654,7 @@ class ModelFitDialog(QDialog):
     def _on_fit_worker_failed(self, trace: str) -> None:
         """Handle fit failure on the dialog (UI) thread."""
         try:
-            _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
+            _show_warning(self, "Fit failed", trace)
         finally:
             self._fit_done_callback = None
             self._fit_in_progress = False

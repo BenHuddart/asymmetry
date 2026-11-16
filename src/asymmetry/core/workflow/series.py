@@ -22,6 +22,7 @@ from asymmetry.core.fitting.member_quality import assess_member_quality
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.sc.trend_width import model_width_sources
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import resolve_series_params
@@ -652,6 +653,7 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
         "background_held": held is not None,
+        "parameter_sources": model_width_sources(model),
         **summary,
     }
 
@@ -818,6 +820,7 @@ def fit_series(
                 "background_held": run in held_runs,
                 "member_quality": quality.to_payload(),
                 **summary,
+                "parameter_sources": model_width_sources(model),
                 **(
                     {}
                     if rival is None
@@ -921,6 +924,7 @@ def build_trend_table(
         if compared:
             row["envelope"] = entry["envelope"]["preferred"]
             row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
+        row["parameter_sources"] = dict(entry.get("parameter_sources", {}))
         row["params_at_bound"] = list(entry["params_at_bound"])
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)

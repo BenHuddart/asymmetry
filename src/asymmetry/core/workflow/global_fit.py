@@ -10,6 +10,7 @@ from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.sc.trend_width import model_width_sources
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.series import ScanAxis, TrendTable, build_trend_table
@@ -121,7 +122,12 @@ def fit_global(
         strategy=strategy,
     )
     results = [
-        {"run": run, "x": axis.values[run], **fit_result_summary(results_by_run[run])}
+        {
+            "run": run,
+            "x": axis.values[run],
+            **fit_result_summary(results_by_run[run]),
+            "parameter_sources": model_width_sources(model),
+        }
         for run in runs
     ]
     free_params = [
@@ -215,6 +221,7 @@ def fit_global_batch(
         name: {
             "x": batch_axis.values[name],
             "parameters": outcome.shared,
+            "parameter_sources": model_width_sources(recipe.model()),
             "uncertainties": outcome.shared_uncertainties,
             "params_at_bound": sorted(
                 {name for result in outcome.results for name in result["params_at_bound"]}

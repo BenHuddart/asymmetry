@@ -403,6 +403,14 @@ alpha, fractional amplitude, Gaussian-rate, and degree/radian conventions are
 matched. This tests component points, not native automatic selection or an
 extension of the likelihood error-scale comparison above.
 
+The Gaussian envelope convention determines the conversion to a field-distribution
+second moment; a function name alone does not. Asymmetry also checks captured
+Gaussian-component provenance at Brandt trend consumers and requires explicit
+conversion of values and errors. This is an Asymmetry request safeguard, not a
+claim that WiMDA, Mantid, or musrfit provides an equivalent provenance check.
+See :ref:`trend-width-inputs` and :ref:`sc-width-convention`; the component
+comparisons above retain their stated versions and conditions.
+
 Mantid's `StretchExpMuon documentation
 <https://docs.mantidproject.org/nightly/fitting/fitfunctions/StretchExpMuon.html>`_
 defines the corresponding non-oscillatory stretched envelope and describes a

@@ -57,6 +57,13 @@ field models. In the **Fit Parameters** card, click **ƒ** → **Custom…**; in
 This transforms the values and their errors. The expression variable remains
 ``x`` for a Y transform.
 
+Known Gaussian-component inputs are refused at Brandt trend fits until the
+explicit conversion is supplied; see :ref:`trend-width-inputs`. This applies
+only to declared second-moment consumers on additive, subtractive, or quadrature
+branches. An arbitrary product/ratio branch is not assigned an absolute width
+convention. Temperature laws continue inheriting their
+input convention, and source-unknown tables remain the analyst's responsibility.
+
 The conversion helpers require a :class:`~asymmetry.core.fitting.sc.GaussianWidth`
 argument; select the convention of the supplied or requested width explicitly:
 
