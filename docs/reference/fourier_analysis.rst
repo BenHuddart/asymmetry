@@ -215,6 +215,44 @@ sample, its displacement in intervals, and the tolerance. A crop retaining
 fewer than two samples reports ``the FFT needs at least 2 to fix its sampling
 interval.`` Use **Fixed** binning or resample explicitly before transforming.
 
+Internal count-based diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fit-wizard fingerprints, FFT peak detection and workflow precession surveys
+preserve an already uniform input curve. For a nonuniform **Variable** or
+**Constant error** histogram observation, they prepare a separate counts-first
+view with **Fixed** native bins: factor 1, merge 1. The captured base binning,
+toolbar merges, centre-selected crop and later complete merges first resolve to
+their actual native edges. Only that retained contiguous support is expanded
+into native bins; discarded tails and bins outside the selected observation
+are not restored. The source reduction and its displayed curve remain intact.
+
+This view uses the captured detector pair and exclusions, periods/arithmetic,
+alpha/beta, exact t0 and good bins, corrections, reference exposure and retained
+variance. Its provenance records the source observation, fixed-bin policy,
+effective recipe, actual interval/origin/support and transform window. Duration,
+resolution and Nyquist describe this diagnostic grid. They do not certify the
+adequacy of centre-point model evaluation on a coarsely binned fit.
+
+A nonuniform curve without captured histogram context retains the sampling
+refusal above. Attaching a Run or recipe to a custom curve does not grant
+count replay; rotated and projected quantities need their own supported
+observation context. Empty, singleton or undefined native ratio support does not
+produce a substitute zero spectrum. Defined boundary ratios, including one empty
+bank with a nonempty counterpart, retain the canonical values/display errors and
+the same FFT support as Fixed controls. Gaussian zero-variance omission is a
+separate fit rule; it does not ban those finite source-FFT samples. These limits concern the requested
+diagnostic, not file loading or ordinary nonuniform reduction.
+
+For residual spectra the same fitted model and parameters are evaluated on the
+separate fixed count view. The fit objective, selected points, degrees of freedom,
+parameters/covariance and stored residual times/errors remain those of the fitted
+observations; RMS and runs use those original residuals. Nonuniform original
+residuals have no acquisition-lag autocorrelation. A sampled-only detrend array
+cannot be moved to new times: supply an evaluable model or a uniform curve.
+There is no interpolation, gap filling or refit on the diagnostic grid, and no
+new claim of calibrated spectral uncertainty or coverage.
+
 .. note::
 
    **The FFT is scale-linear: percent in, percent-scaled spectrum out.**
@@ -888,10 +926,11 @@ MaxEnt reconstruction with Mantid
 
 The three window-level estimates need not agree even without random noise.
 These operation descriptions do not establish matched native FFT errors,
-absolute polarisation, or reconstruction equivalence. Full native Mantid
-FFT/PhaseQuad/MaxEnt execution is unverified here; the standalone pulse-kernel
+absolute polarisation, or reconstruction equivalence. A bounded native Mantid
+6.16.1 point-data FFT control agrees with a direct DFT after matching its interval scaling and full-modulus output; this does not
+verify PhaseQuad or MaxEnt. The standalone pulse-kernel
 comparison below has its own narrower scope. See
-:ref:`comparison-spectral-conventions` for the methods map.
+:ref:`spectral conventions <comparison-spectral-conventions>` for the methods map.
 
 Unit-area field distribution
 ++++++++++++++++++++++++++++

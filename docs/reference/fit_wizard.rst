@@ -758,13 +758,13 @@ record it used:
    Candidates were fitted on a ×8 rebinned copy (11250 points); information
    criteria refer to that record.
 
-Line detection is *not* rebinned: it runs on the full record, where the
-bandwidth a heavily damped line needs still exists. Only the fitting stage
-sees the copy. Every number in the comparison table — ``AIC``, ``AICc``,
-``BIC``, χ²ᵣ, and the residual diagnostics — is computed on that copy, which
-is worth remembering when comparing a wizard score against one from a
-hand-built fit on the raw record. The recommendation records both the factor
-and the point count, as ``rebin_factor`` and ``analysed_points``.
+Line detection uses its declared spectral observation, retaining the native
+bandwidth for captured nonuniform histograms. Candidates fit the selected
+rebinned observation. ``AIC``, ``AICc``, ``BIC``, χ²ᵣ, RMS and runs refer to that
+fit; a separate residual FFT evaluates the same fitted model and parameters
+on the diagnostic observation. Its attribution distinguishes that view from
+the original residuals. The recommendation records the fit rebin factor and
+point count as ``rebin_factor`` and ``analysed_points``.
 
 For a reproducible histogram observation the wizard merges counts and their
 retained variance before forming asymmetry. It preserves the selected period,
@@ -799,10 +799,39 @@ The wizards still fit asymmetry with conditional Gaussian point errors;
 TF alpha/beta count calibration is a separate operation. Models are evaluated
 at the prepared timestamps, so wide bins can attenuate rapid signals.
 
-Detection uses the original input grid. Variable and Constant error preparation
-is supported, but an actually nonuniform input can still be refused by the
-internal FFT diagnostic. Choosing a count-merge factor does not remove that
-sampling requirement.
+.. image:: /_generated/screenshots/fit_wizard_variable.png
+   :alt: Variable science bins with the separately labelled fixed native diagnostic FFT
+
+The spectral plot is labelled ``Windowed FFT (fixed native diagnostic)`` when a
+separate native count view is used. ``Preparing spectral preview…`` runs through
+the existing cancellable worker preparation; redraws reuse its captured spectrum.
+
+Spectral detection preserves uniform curves. Nonuniform **Variable** and
+**Constant error** histogram observations use a separate **Fixed** native-bin
+count reduction (factor 1, merge 1) over exactly their retained native support.
+Base/toolbar/crop/merge selections are resolved before selecting this grid;
+incomplete merged tails stay excluded. The captured pair, periods, balances,
+timing, corrections/reference and retained variances supply the same operation.
+Hann, early, damped-line and Burg passes share this declared view, whose actual
+sampling interval and informative window determine spectral bandwidth/resolution.
+Non-spectral fingerprint features still describe the original science curve.
+See :doc:`fourier_analysis` for the support rule and direct-FFT sampling limits.
+
+Residual FFTs evaluate the same fitted model/parameters on that separate fixed
+count view. The original objective, points, scores, parameters/covariance and
+residual times/errors are unchanged; RMS and runs still use original residuals.
+The result records ``separate_fixed_count_reduction`` when that view is used.
+Acquisition-lag autocorrelation is unavailable for nonuniform original residuals.
+Omitted Gaussian observations retain the unavailable diagnostic guard above.
+Missing diagnostics are not evidence that a model explains the data.
+
+A nonuniform curve-only/custom curve with an attached Run is still refused;
+a Run or recipe alone does not establish count replay. Uniform curve-only FFTs
+remain supported. A sampled ``detrend_curve`` cannot be evaluated on a different
+grid; supply ``detrend_model(time)`` for a fitted trend. Undefined native ratios
+remain unavailable rather than being filled, omitted or averaged into a spectrum.
+Defined zero-variance boundary ratios retain Fixed controls' FFT support and
+canonical display errors; Gaussian fit selection remains separate.
 
 Asymmetry also checks that a current assessment's source observation is unchanged
 before rebuilding curves. A changed input raises
@@ -824,6 +853,12 @@ WiMDA 1.326 grouping, musrfit 1.12.1 ordinary packing, and documented Mantid
 muon preprocessing combine counts before the F/B ratio. This comparison concerns
 input observations, not wizard search or ranking. See :ref:`comparison-binning`
 for public sources, uncertainty conventions, and matched-support limits.
+Mantid 6.16.1 ``FFT`` requires linear X coordinates and exposes its shift convention
+and full/positive-frequency outputs. musrFT 1.12.1 (``708f777b``, ROOT 6.40.04)
+supports explicit packing and Fourier controls. Matched fixed-grid 1.3 MHz
+controls agree within one actual frequency bin; endpoint and amplitude conventions
+remain distinct. Neither comparison establishes equivalent wizard ranking or
+spectral uncertainties. See :ref:`spectral conventions <comparison-spectral-conventions>`.
 
 .. _fit-wizard-scripting-and-parallelism:
 

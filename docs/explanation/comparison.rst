@@ -1058,6 +1058,28 @@ See :doc:`/reference/data_reduction/backgrounds` and
 Normalisation and transformed observations
 ------------------------------------------
 
+Asymmetry's internal fingerprint, peak and residual diagnostics preserve a
+uniform curve or prepare captured nonuniform histograms on fixed native bins
+(factor 1, merge 1) over exactly their retained native support. They do not change
+the user's fit observations. A separate residual view evaluates the same fitted
+model/parameters, while original RMS/runs, scores and residual times/errors remain
+with the original fit. This is an explicit Asymmetry diagnostic policy, not an
+assertion that the reference programs implement an equivalent wizard.
+
+Mantid 6.16.1 `FFT v1
+<https://docs.mantidproject.org/v6.16.1/algorithms/FFT-v1.html>`_ requires linear X
+coordinates and specifies output/shift conventions. A matched point-data 1.3 MHz
+control agrees with a direct DFT modulus, including interval scaling, to
+2e-10 absolute/2e-11 relative. musrFT 1.12.1 (``708f777b``, ROOT 6.40.04) packing
+1 and 3 controls locate that line within their actual frequency bins; native
+endpoint/packing and amplitude conventions are not equated. WiMDA 1.326's
+fixed-bin, unfiltered F/B Fourier control locates the line within its actual
+0.097656 MHz bin, matching the corresponding direct-DFT maximum. The manual
+control uses its observed 950-point display support and next-power-of-two
+padding; exact native endpoints, amplitude/phase conventions and errors are not
+equated. No equivalent wizard or new spectral uncertainty agreement follows
+from these controls.
+
 A group count trace and an F/B ratio are different observations. Dividing out
 the muon lifetime creates a lifetime-corrected count signal, not a calibrated
 polarisation. A finite-window level then defines a fractional residual for
@@ -1068,9 +1090,10 @@ Fourier analysis or a starting scale for a reconstruction. The
 The spectral descriptions below refer to WiMDA 1.326, musrfit 1.12.1
 (revision ``708f777b``, ROOT 6.40.04), and Mantid algorithm-v1 documentation
 with the 6.16 development snapshot (revision ``1967ccb4``). Formula and
-manual behaviour are distinct from executed numerical agreement. Full native
-Mantid FFT, PhaseQuad, and MaxEnt comparisons are unverified here; the separate
-standalone pulse-kernel comparison does not establish them.
+manual behaviour are distinct from executed numerical agreement. The bounded
+Mantid point-data FFT control above does not verify a complete muon-input
+Fourier workflow, PhaseQuad or MaxEnt; the separate standalone pulse-kernel
+comparison does not establish them either.
 
 .. list-table:: Operations and conventions
    :class: reduction-conventions

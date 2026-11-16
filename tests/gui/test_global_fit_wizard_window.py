@@ -41,6 +41,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardScreeningTable,
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
+    build_global_fit_wizard_candidate_portfolio,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.likelihood import Objective
@@ -378,7 +379,7 @@ def _fake_screening_table(
         store.clear()
         store.update(sources)
     return GlobalFitWizardScreeningTable(
-        portfolio=wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+        portfolio=build_global_fit_wizard_candidate_portfolio(datasets_arg),
         recommendations_by_run=completed_by_run,
         single_fit_recommendations_by_run=sources,
         generated_run_numbers=generated,
@@ -1145,7 +1146,6 @@ def test_cancel_in_the_progress_block_cancels_and_lands_on_the_origin(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The progress block's Cancel, shown while running, cooperatively cancels the run."""
     import threading
 
     released = threading.Event()
@@ -1174,7 +1174,6 @@ def test_cancel_in_the_progress_block_cancels_and_lands_on_the_origin(
     assert window._run_progress.isHidden() is True
 
     window._start_analysis()
-    # Busy: the progress block, with Cancel, runs in the Screen step.
     wait_for(lambda: window._tasks.active_count == 1, qapp)
     cancel = _run_progress_cancel(window)
     assert window._stepper.current_key() == "screen"

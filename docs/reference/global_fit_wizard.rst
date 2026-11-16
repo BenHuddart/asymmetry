@@ -1014,8 +1014,22 @@ the current observation policy.
 
 These remain asymmetry-domain fits with conditional point errors and
 centre-point model evaluation; TF alpha/beta count calibration stays separate.
-Internal FFT diagnostics still require a uniform input grid. Saved historical
-scores load without automatic refitting or reinterpretation.
+Internal spectral diagnostics preserve uniform curves and prepare nonuniform
+captured histograms on separate **Fixed** native bins (factor 1, merge 1) over
+exactly the retained native support. Original base/toolbar/crop/merge selections
+resolve before that grid is chosen; discarded incomplete tails stay excluded.
+Screening, completion, rescue and reconstruction retain the fitted observations
+and scores. Residual spectra evaluate the same model/parameters on the separate
+count view; original RMS/runs and residual times/errors stay with the fit.
+Nonuniform original residuals have no acquisition-lag autocorrelation.
+The residual-gate cell shows ``Unavailable`` when a measurement is missing;
+it cannot establish a passing model-evidence gate. The result
+records the separate view, policy, source observation, interval/support and recipe.
+Curve-only nonuniform inputs and sampled-only trends cannot supply this replay.
+See :doc:`fourier_analysis` and :doc:`fit_wizard` for the diagnostic support rule,
+unavailable cases and compared-program limits. Saved historical scores load
+without automatic fitting, FFT regeneration or reinterpretation; missing
+historical diagnostic provenance remains unknown.
 
 Every remaining run is then scored against every candidate at one common
 rebinning factor — the smallest any run's own analysis chose — so the

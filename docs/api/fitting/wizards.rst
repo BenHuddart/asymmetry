@@ -14,6 +14,23 @@ variance, carrying the core observation report through worker records, scoring,
 completion, and rebuilding. Historical scores retain their recorded meaning;
 compact caches omit residual arrays and current reuse requires the current policy.
 
+Internal spectral diagnostics use
+:func:`~asymmetry.core.fourier.diagnostic.prepare_diagnostic_observation`.
+Uniform input curves retain their samples. Nonuniform captured histogram
+observations use fixed native bins (factor 1, merge 1) over the actual retained
+native edge support, after all recorded selections. No Run/recipe-only replay
+or curve interpolation is inferred. The resulting lightweight owned arrays
+cross existing process tasks without detector/reference replay buffers.
+
+``PeakAnalysis.diagnostic_attribution`` and
+``SpectrumFingerprint.diagnostic_attribution`` retain policy, source observation,
+recipe and actual window/grid. ``FitResult.spectral_residual_attribution`` labels
+a separate fixed count residual view, evaluated with the same model/parameters.
+Original residual arrays, objective and statistics remain attached to the fit.
+Absent historical attribution remains ``None``; loading never regenerates it.
+``analyze_dataset_peaks(..., detrend_model=callable)`` evaluates a trend in percent
+at the diagnostic times; sampled-only ``detrend_curve`` requires the same grid.
+
 Single-spectrum fit-wizard helpers:
 
 .. autoclass:: asymmetry.core.fitting.CandidateTemplate
@@ -50,3 +67,11 @@ Global fit-wizard helpers:
 .. autofunction:: asymmetry.core.fitting.build_global_fit_wizard_recommendation
 
 .. autofunction:: asymmetry.core.fitting.rerank_global_fit_wizard_recommendation
+
+Spectral peak analysis
+---------------------
+
+.. autoclass:: asymmetry.core.fitting.peak_detection.PeakAnalysis
+   :members:
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.analyze_dataset_peaks

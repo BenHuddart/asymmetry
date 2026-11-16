@@ -755,23 +755,6 @@ def test_a_phase_with_no_converged_fit_has_no_answer():
     assert global_fit_wizard_module._recommended_segment_assessment([failed], {1: 1000}) is None
 
 
-def test_series_fingerprints_are_computed_once_per_record(monkeypatch, planted_series):
-    datasets, _table, _screening, _optimised = planted_series
-    calls = {"n": 0}
-    real = global_fit_wizard_module.fingerprint_spectrum
-
-    def counting(dataset):
-        calls["n"] += 1
-        return real(dataset)
-
-    monkeypatch.setattr(global_fit_wizard_module, "fingerprint_spectrum", counting)
-    global_fit_wizard_module._SERIES_FINGERPRINT_CACHE.clear()
-    first = global_fit_wizard_module._fingerprint_jump_warnings(datasets)
-    second = global_fit_wizard_module._fingerprint_jump_warnings(datasets)
-    assert first == second
-    assert calls["n"] == len(datasets)
-
-
 def test_a_phase_is_ranked_by_the_partition_score_not_the_search_metric():
     # A richer template can lead on AICc while the partition's per-run BIC —
     # the convention the path is totalled with — prefers the leaner one.

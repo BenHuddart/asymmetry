@@ -81,6 +81,7 @@ def _serialize_fit_result(
             else {}
         ),
         "input_attribution": result.input_attribution,
+        "spectral_residual_attribution": result.spectral_residual_attribution,
         "warnings": list(result.warnings),
         "correction_metadata": dict(result.correction_metadata),
         "observation_report": result.observation_report.to_dict()
@@ -133,6 +134,7 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
         if payload.get("uncertainties_asymmetric") is None
         else {name: tuple(pair) for name, pair in payload["uncertainties_asymmetric"].items()},
         input_attribution=payload.get("input_attribution"),
+        spectral_residual_attribution=payload.get("spectral_residual_attribution"),
         observation_report=(
             ObservationReport(
                 **{k: v for k, v in payload["observation_report"].items() if k != "omitted"}

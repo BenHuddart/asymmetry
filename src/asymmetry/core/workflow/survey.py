@@ -30,6 +30,8 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.fourier.diagnostic import prepare_diagnostic_observation
+from asymmetry.core.fourier.sampling import _uniform_sample_interval
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.deadtime import resolve_deadtime
@@ -174,12 +176,6 @@ class PrecessionEvidence:
         )
 
 
-def _nyquist_mhz(dataset: MuonDataset) -> float:
-    """The record's Nyquist frequency, from the spacing of its time axis."""
-    time = np.asarray(dataset.time, dtype=float)
-    return 0.5 / float(time[1] - time[0])
-
-
 def precession_evidence(dataset: MuonDataset, field: float | None) -> PrecessionEvidence:
     """Does *dataset* precess at the Larmor frequency of its recorded *field*?
 
@@ -204,10 +200,13 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
             larmor_mhz=None,
             note="the file records no applied field, so there is no Larmor frequency to look for",
         )
+    diagnostic = prepare_diagnostic_observation(dataset)
     larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field)))
     if larmor_mhz == 0.0:
-        return _spontaneous_precession(fingerprint_spectrum(dataset))
-    nyquist_mhz = _nyquist_mhz(dataset)
+        return _spontaneous_precession(fingerprint_spectrum(dataset, diagnostic=diagnostic))
+    nyquist_mhz = 0.5 / _uniform_sample_interval(
+        diagnostic.time, caller="Survey spectrum", t_min=None, t_max=None
+    )
     if larmor_mhz > nyquist_mhz:
         return PrecessionEvidence(
             state=None,
@@ -220,7 +219,7 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
             ),
         )
 
-    fingerprint = fingerprint_spectrum(dataset)
+    fingerprint = fingerprint_spectrum(dataset, diagnostic=diagnostic)
     frequency_mhz = float(fingerprint.dominant_fft_frequency_mhz)
     snr = float(fingerprint.dominant_fft_snr)
     matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
