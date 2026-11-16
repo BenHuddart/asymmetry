@@ -1098,6 +1098,14 @@ Baseline dependencies, conditional and baseline-propagated covariances, and
 available statistics remain distinct. Explicit fitting appends a new execution;
 input edits detach affected overlays without deleting captured history.
 
+Scalar-scan background fits publish only when the captured project, series,
+observations, settings, and baseline dependency still apply. Stop, failure,
+and obsolete completion append no execution. A completed record keeps the
+request that ran; fitted peak seeds used for the next request remain separate
+applicability settings. Opening and resaving use retained predictions and
+readouts without evaluating a new model or optimiser.
+
+
 Settings-only scan histories keep their settings and retained values, but no
 numerical fit is reconstructed. The scan controls explain
 ``Saved fit settings have no captured numerical result. Use Fit baseline, Fit peaks, or Fit RF resonance explicitly to obtain a new result.``

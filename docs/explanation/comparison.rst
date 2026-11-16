@@ -1674,6 +1674,21 @@ Settings-only histories require explicit fitting for new results. This is an
 Asymmetry history safeguard; the comparisons below do not establish identical
 project-restoration behaviour in WiMDA, Mantid, or musrfit.
 
+Asymmetry runs baseline, peak, and RF fitting and prediction in cancellable
+background tasks and publishes only a complete applicable result. This does not
+imply identical Stop, threading, or saved-execution behaviour in other programs.
+A bounded Mantid 6.16.1 `Fit v1
+<https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`_ comparison on
+61 owned scalar observations uses the same supplied Gaussian errors, a linear
+background, and a Gaussian peak. Mantid's Height, PeakCentre, and Sigma match
+Asymmetry's amplitude, centre, and Gaussian width; neither amplitude is an
+integrated area. Predictions agree within 0.005 of a supplied point standard
+error and fitted parameters within 0.02 of the native standard errors.
+This checks matched least-squares controls, not the specialised RF model or
+Asymmetry's two-stage fitted-baseline propagation, and does not equate the
+programs' cancellation granularity.
+
+
 
 Asymmetry sums the selected corrected native F/B counts before forming
 :math:`(F-\alpha B)/(\beta F+\alpha B)` for ordinary and RF scans. G−R is

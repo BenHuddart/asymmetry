@@ -646,6 +646,39 @@ interleaved calibration runs from a repolarisation scan::
        filter=lambda run: run.run_number not in calibration_run_numbers,
    )
 
+Responsive fitting and Stop
+---------------------------
+
+**Fit baseline**, **Fit peaks**, and **Fit RF resonance** run the solve,
+model prediction, and any baseline-error propagation in a background task.
+The scan remains editable. An indeterminate progress bar shows
+``Fitting baseline…``, ``Fitting peaks…``, or ``Fitting rf resonance…``;
+peak and RF curve sampling shows ``Sampling fitted prediction…``.
+Press **Stop** to request cooperative cancellation. The status becomes
+``Stopping fit…`` until the current numerical unit returns, then
+``Fit stopped.``. A current failure shows ``Fit failed.`` and its diagnostic;
+a complete current success shows ``Fit complete.``.
+
+A new fit request replaces the pending request and shows
+``Stopping fit; replacement queued…``. There is at most one running solve and
+one replacement waiting for its exit. Editing the relevant inputs, rebuilding
+the scan, or opening or clearing a project cancels affected work. Baseline edits
+also cancel dependent peaks; a peak keeps the exact baseline execution it used.
+Obsolete progress, errors, and results cannot replace a newer result. Only a
+complete applicable success updates fitted controls, overlays, project history,
+and the unsaved-changes indicator. A stopped or failed fit can be retried.
+
+Cancellation is checked at solver model evaluations, RF seed detuning
+evaluations, seed/multi-start transitions, each finite-difference Jacobian
+sample, covariance stages, and prediction/capture boundaries. Individual model
+evaluations, array operations, matrix products, and native solves finish before
+the next check; there is no fixed millisecond response guarantee. Building a
+scan retains its separate window-modal **Cancel** progress dialog.
+
+.. image:: /_generated/screenshots/alc_fit_progress.png
+   :alt: Synthetic integral scan during a baseline refit with indeterminate progress and Stop
+   :width: 90%
+
 Saving and reopening
 --------------------
 
@@ -750,6 +783,13 @@ does not establish the same disjointness contract for this operation.
 These input checks do not establish agreement of integral endpoints or timing
 conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
 for the versioned grouping observations and sources.
+
+Mantid 6.16.1 ``Fit`` linear-background/Gaussian controls on matching owned
+scalar observations agree within 0.005 supplied point standard errors in the
+sampled predictions, with peak Height/Sigma matched to amplitude/Gaussian width.
+This is a matched least-squares control; it does not reproduce the specialised
+RF model or the two-stage fitted-baseline covariance. See
+:doc:`/explanation/comparison` for conditions and limits.
 
 Captured scan-fit history and no-refit reopening are Asymmetry project safeguards.
 They do not assert identical project-restoration behaviour in WiMDA, Mantid, or

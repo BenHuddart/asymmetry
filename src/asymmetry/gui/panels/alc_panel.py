@@ -193,6 +193,7 @@ class ALCScanView(QWidget):
     rf_fit_requested = Signal()
     #: Emitted when a region edit/drag invalidates the baseline-corrected scan.
     baseline_invalidated = Signal()
+    fit_invalidated = Signal(str)
     #: Emitted when the user clicks a scan point: exclude/restore that run.
     point_toggled = Signal(int)
 
@@ -289,6 +290,12 @@ class ALCScanView(QWidget):
         self._fit_history_status.setWordWrap(True)
         self._fit_history_status.hide()
         analysis_layout.addWidget(self._fit_history_status)
+        from asymmetry.gui.widgets.fit_run_controls import FitRunControls
+
+        self.fit_controls = FitRunControls(with_progress=True, parent=self)
+        analysis_layout.addWidget(self.fit_controls.progress_label)
+        analysis_layout.addWidget(self.fit_controls.progress_bar)
+        analysis_layout.addWidget(self.fit_controls.button)
         self._baseline_section = self._build_baseline_group()
         self._peaks_section = self._build_peaks_group()
         self._rf_section = self._build_rf_group()
@@ -705,21 +712,6 @@ class ALCScanView(QWidget):
 
         restore_analysis_state(self, state)
 
-    @staticmethod
-    def _coerce_rows(rows: object, width: int) -> list[list[float]]:
-        """Coerce *rows* (untrusted on-disk data) to ``width``-float lists, skipping bad ones."""
-        out: list[list[float]] = []
-        if not isinstance(rows, (list, tuple)):
-            return out
-        for row in rows:
-            if not isinstance(row, (list, tuple)) or len(row) != width:
-                continue
-            try:
-                out.append([float(v) for v in row])
-            except (TypeError, ValueError):
-                continue
-        return out
-
     def _invalidate_baseline(self, *_: object) -> None:
         """A region change makes the baseline (and the peak fit on it) stale.
 
@@ -737,6 +729,7 @@ class ALCScanView(QWidget):
 
     def _invalidate_peaks(self, *_: object) -> None:
         """A peak change makes the peak fit stale (the baseline still holds)."""
+        self.fit_invalidated.emit("peaks")
         self.fit_history.invalidate("peaks")
         if "rf" not in self.fit_history.active:
             self._fit_curve = None
@@ -750,6 +743,7 @@ class ALCScanView(QWidget):
 
     def _invalidate_rf(self, *_: object) -> None:
         """RF frequency and seed edits detach the previous RF execution."""
+        self.fit_invalidated.emit("rf")
         if "rf" in self.fit_history.active:
             self.fit_history.invalidate("rf")
             self._fit_curve = None

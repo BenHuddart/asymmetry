@@ -414,6 +414,7 @@ class GlobalFitTab(FitTabBase):
     """
 
     # Use object/object to avoid Qt container coercion (which can alter key types).
+    members_changed = Signal()
     global_fit_started = Signal()  # emitted just before the worker launches
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     # (recommendation, partition_k) — the Global Fit Wizard's Transitions card
@@ -1754,6 +1755,7 @@ class GlobalFitTab(FitTabBase):
         ad-hoc batch), and the include-checkbox list is repopulated, with the
         *unavailable* runs listed disabled.
         """
+        self.members_changed.emit()
         self._datasets = list(datasets or [])
         if self._member_kind == "runs":
             self._member_pool = list(self._datasets)
@@ -1765,9 +1767,7 @@ class GlobalFitTab(FitTabBase):
         self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
         # A fresh member pool is a fresh analysis: whatever series was open no
-        # longer describes what the tab fits (D7 keeps this off the selection
-        # path, so only the deliberate "new series over these runs" gestures
-        # reach here).
+        # longer describes the current member pool.
         self._become_draft()
 
     def _become_draft(self, label: str = "") -> None:
@@ -1876,12 +1876,11 @@ class GlobalFitTab(FitTabBase):
                 continue
             if entry.checkState() != Qt.CheckState.Checked:
                 excluded.add(int(run_number))
+        self.members_changed.emit()
         self._excluded_runs = excluded
         self._datasets = [
             ds for ds in self._member_pool if int(ds.run_number) not in self._excluded_runs
         ]
-        # A membership filter changes the batch's run set; keep any displayed
-        # result (the fit hasn't re-run) while refreshing the mode/seed UI.
         self._invalidate_wizard_cache_if_stale()
         self._reseed_batch_parameter_table()
         self._update_mode_ui(preserve_result=True)

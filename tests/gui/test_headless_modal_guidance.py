@@ -20,6 +20,8 @@ import time
 import numpy as np
 import pytest
 
+from tests.gui.scan_fit_helpers import wait_for_fit
+
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
@@ -130,6 +132,7 @@ def test_fit_rf_without_rf_mode_logs_without_modal(mainwindow: MainWindow, no_mo
 
     start = time.monotonic()
     mw._on_fit_rf()
+    wait_for_fit(mw)
     elapsed = time.monotonic() - start
 
     assert elapsed < 5.0, "RF fit blocked instead of returning promptly"
