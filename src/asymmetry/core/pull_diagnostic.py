@@ -1,45 +1,85 @@
-"""Pull-distribution diagnostic: is the analysis chain's error bar honest?
+"""Conditional ideal-count simulation/refit summaries, independent of Qt.
 
-Given a completed fit — a model, its generating parameter values and the run it
-was fit on — re-simulate many synthetic runs at matched statistics, refit each,
-and collect the *pulls*
-
-    pull = (θ̂ − θ_true) / σ_θ̂
-
-for every free parameter. For a correctly calibrated analysis the pulls are
-standard normal: a mean consistent with zero says the fit is unbiased, and a
-**width consistent with one** says the reported errors are neither over- nor
-under-estimated. A width persistently below one flags over-estimated errors,
-above one under-estimated errors — the single most informative check that the
-whole reduction → fit → covariance chain is trustworthy.
-
-This module is Qt-free and engine-agnostic: the caller injects a ``refit``
-callable so the diagnostic never imports the fitting engine (or iminuit)
-itself. It builds on :func:`asymmetry.core.simulate.simulate_run`.
+Pull means and sample widths describe a common usable subset, not estimator
+bias, interval coverage or the adequacy of the acquired-data model.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any
+import json
+import platform
+from collections import Counter
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core import computation
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.fitting.engine import FitCancelledError
+from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite
+from asymmetry.core.pull_request import (
+    PullRequest,
+    make_pull_request,
+    pull_model_unavailable_reason,
+    request_binning,
+)
 from asymmetry.core.simulate import reduce_run_to_dataset, simulate_run
 
-#: A refit maps a reduced dataset to ``(values, errors)`` dicts keyed by
-#: parameter name, or ``None`` when the fit did not converge.
-RefitResult = tuple[Mapping[str, float], Mapping[str, float]] | None
-Refit = Callable[[MuonDataset], RefitResult]
+__all__ = [
+    "ParameterPull",
+    "PullDistribution",
+    "PullAttempt",
+    "RefitOutcome",
+    "PullRequest",
+    "make_pull_request",
+    "pull_model_unavailable_reason",
+    "run_pull_distribution",
+    "run_pull_request",
+]
+
+
+@dataclass(frozen=True)
+class RefitOutcome:
+    """Expected numerical outcome; coding errors and cancellation still propagate.
+
+    ``errors`` contains the symmetric reported errors. Optional MINOS signed
+    offsets are separate, never substituted into pulls.
+    """
+
+    success: bool
+    values: Mapping[str, float] = field(default_factory=dict)
+    errors: Mapping[str, float | None] = field(default_factory=dict)
+    message: str = ""
+    minos: Mapping[str, tuple[float, float]] | None = None
+    refit_provenance_json: str | None = None
+
+
+Refit = Callable[[MuonDataset, Callable[[], bool]], RefitOutcome | None]
+
+
+@dataclass(frozen=True)
+class PullAttempt:
+    """One seed's outcome; all tracked pulls are admitted or rejected together."""
+
+    seed: int
+    fit_success: bool | None
+    reason: str
+    values: tuple[tuple[str, float], ...] = ()
+    errors: tuple[tuple[str, float], ...] = ()
+    pulls: tuple[tuple[str, float], ...] = ()
+    minos: tuple[tuple[str, tuple[float, float]], ...] = ()
+    recipe_index: int | None = None
+    message: str = ""
+    refit_provenance_json: str | None = None
 
 
 @dataclass(frozen=True)
 class ParameterPull:
-    """Collected pulls for one fitted parameter."""
+    """Descriptive standardised residuals on the common usable subset."""
 
     name: str
     truth: float
@@ -51,164 +91,276 @@ class ParameterPull:
 
     @property
     def mean(self) -> float:
-        """Sample mean of the pulls (consistent with 0 for an unbiased fit)."""
-        return float(self.pulls.mean()) if self.n else float("nan")
+        if not self.n:
+            return float("nan")
+        scale = float(np.max(np.abs(self.pulls)))
+        return scale * float((self.pulls / scale).mean()) if scale else 0.0
 
     @property
     def mean_uncertainty(self) -> float:
-        """Standard error of the mean under the N(0, 1) null (1/√N)."""
+        """Reference SE 1/√N for independent standard-normal pulls only."""
         return 1.0 / np.sqrt(self.n) if self.n else float("nan")
 
     @property
     def width(self) -> float:
-        """Sample standard deviation (consistent with 1 for honest errors)."""
-        return float(self.pulls.std(ddof=1)) if self.n > 1 else float("nan")
+        """Sample SD; two observations suffice for a descriptive value."""
+        if self.n < 2:
+            return float("nan")
+        scale = float(np.max(np.abs(self.pulls)))
+        with np.errstate(over="ignore"):
+            return float(scale * np.std(self.pulls / scale, ddof=1)) if scale else 0.0
 
     @property
     def width_uncertainty(self) -> float:
-        """Standard error of the width under the N(0, 1) null (1/√(2(N−1)))."""
+        """Approximate SD reference SE under independent N(0,1) pulls only."""
         return 1.0 / np.sqrt(2.0 * (self.n - 1)) if self.n > 1 else float("nan")
 
     def verdict(self) -> str:
-        """One-line calibration verdict for this parameter's error bar."""
-        if self.n <= 1:
-            return f"{self.name}: too few converged fits to judge"
-        deviation = (self.width - 1.0) / self.width_uncertainty
-        width_text = f"width {self.width:.2f}({self.width_uncertainty * 100:.0f})"
-        if abs(deviation) <= 2.0:
-            return f"{self.name}: errors well-calibrated ({width_text})"
-        if deviation > 0:
-            return f"{self.name}: errors UNDER-estimated ({width_text} > 1)"
-        return f"{self.name}: errors OVER-estimated ({width_text} < 1)"
+        """Measured quantities without directional error or coverage certification."""
+        if self.n < 2:
+            return f"{self.name}: fewer than two usable pulls; sample width unavailable."
+        return f"{self.name}: mean {self.mean:.3g}; sample width {self.width:.3g} (N={self.n})."
 
 
 @dataclass(frozen=True)
 class PullDistribution:
-    """Result of a pull-distribution run over many seeds."""
+    """Attempts are authoritative; counts and parameter samples are derived."""
 
-    parameters: dict[str, ParameterPull]
-    truth: dict[str, float]
-    n_seeds: int
-    n_converged: int
-    total_events: float
+    request: PullRequest
+    attempts: tuple[PullAttempt, ...]
+    stopped: bool
+    recipes: tuple[EffectiveReductionRecipe, ...]
+    runtime_json: str
+
+    @property
+    def n_attempted(self) -> int:
+        return len(self.attempts)
+
+    @property
+    def n_fit_success(self) -> int:
+        return sum(a.fit_success is True for a in self.attempts)
+
+    @property
+    def n_usable(self) -> int:
+        return sum(a.reason == "usable" for a in self.attempts)
+
+    @property
+    def n_failed(self) -> int:
+        """Unsuccessful/unavailable refits; interrupted attempts remain separate."""
+        return sum(a.fit_success is False for a in self.attempts)
+
+    @property
+    def failure_reasons(self) -> dict[str, int]:
+        return dict(Counter(a.reason for a in self.attempts if a.reason != "usable"))
+
+    @property
+    def parameters(self) -> dict[str, ParameterPull]:
+        config = self.request.to_dict()
+        return {
+            name: ParameterPull(
+                name,
+                config["parameters"][name],
+                np.asarray([dict(a.pulls)[name] for a in self.attempts if a.reason == "usable"]),
+            )
+            for name in config["track"]
+        }
 
     def verdict(self) -> str:
-        """Overall headline plus a per-parameter calibration line."""
-        if self.n_converged <= 1:
-            return (
-                f"Only {self.n_converged}/{self.n_seeds} fits converged — "
-                "too few to judge error calibration."
-            )
+        config = self.request.to_dict()
         lines = [
-            f"{self.n_converged}/{self.n_seeds} fits converged at "
-            f"{self.total_events / 1e6:g} MEv matched statistics."
+            f"{'Stopped — partial' if self.stopped else 'Completed'} conditional simulation: "
+            f"{self.n_attempted}/{config['n_seeds']} attempted; {self.n_failed} failed refits; "
+            f"{self.n_fit_success} fit successes; {self.n_usable} usable.",
+            f"Requested seeds {config['seed_start']}…{config['seed_start'] + config['n_seeds'] - 1}.",
         ]
-        lines.extend(pull.verdict() for pull in self.parameters.values())
+        lines.extend(f"{reason}: {count}" for reason, count in self.failure_reasons.items())
+        lines.extend(p.verdict() for p in self.parameters.values())
+        lines.append("Usable-subset summaries do not establish unbiasedness or interval coverage.")
         return "\n".join(lines)
 
-
-def pull_model_unavailable_reason(model: object) -> str | None:
-    """Explain an unsupported count-generating request before simulating it."""
-    if isinstance(model, CompositeModel) and model.time_response.separation_us > 0:
-        return (
-            "The count-based Pull Diagnostic has no matching pulse-count generator for "
-            "positive ordinary pulse separation. Ordinary fitting and its conditional "
-            "parameter errors remain available."
+    def to_dict(self) -> dict:
+        """Strict JSON-compatible provenance using the existing nonfinite codec."""
+        return encode_non_finite(
+            {
+                "version": 1,
+                "request": self.request.to_dict(),
+                "attempts": [asdict(a) for a in self.attempts],
+                "stopped": self.stopped,
+                "recipes": [r.to_dict() for r in self.recipes],
+                "runtime": json.loads(self.runtime_json),
+            }
         )
-    return None
+
+    @classmethod
+    def from_dict(cls, value: Mapping) -> PullDistribution:
+        """Restore recorded facts only; never execute a model or reconstruct history."""
+        data = dict(value)
+        if data["version"] != 1:
+            raise ValueError("Pull result requires version 1")
+        attempts = []
+        for item in data["attempts"]:
+            fields = decode_non_finite(dict(item))
+            for key in ("values", "errors", "pulls", "minos"):
+                fields[key] = tuple((k, tuple(v) if key == "minos" else v) for k, v in fields[key])
+            attempts.append(PullAttempt(**fields))
+        return cls(
+            PullRequest.from_dict(data["request"]),
+            tuple(attempts),
+            data["stopped"],
+            tuple(EffectiveReductionRecipe.from_dict(r) for r in data["recipes"]),
+            json.dumps(data["runtime"], sort_keys=True),
+        )
 
 
-def run_pull_distribution(
-    template: Run,
-    model: Any,
-    parameters: Mapping[str, float],
+def assess_pull_attempt(seed, outcome, config, recipe_index) -> PullAttempt:
+    """Admit a complete tracked vector only after finite subtraction/division."""
+    if outcome is None:
+        return PullAttempt(seed, False, "no_refit_result", recipe_index=recipe_index)
+    values, errors = dict(outcome.values), dict(outcome.errors)
+    reasons = []
+    pulls = {}
+    if not outcome.success:
+        reasons.append("unsuccessful_refit")
+    else:
+        for name in config["track"]:
+            if name not in values:
+                reasons.append(f"missing_value:{name}")
+            elif not np.isfinite(values[name]):
+                reasons.append(f"nonfinite_value:{name}")
+            if name not in errors:
+                reasons.append(f"missing_error:{name}")
+            elif errors[name] is None:
+                reasons.append(f"unavailable_uncertainty:{name}")
+            elif not np.isfinite(errors[name]) or errors[name] <= 0:
+                reasons.append(f"invalid_error:{name}")
+            if (
+                name in values
+                and name in errors
+                and errors[name] is not None
+                and np.isfinite(values[name])
+                and np.isfinite(errors[name])
+                and errors[name] > 0
+            ):
+                with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                    pull = float(
+                        (np.float64(values[name]) - config["parameters"][name]) / errors[name]
+                    )
+                if np.isfinite(pull):
+                    pulls[name] = pull
+                else:
+                    reasons.append(f"nonfinite_pull:{name}")
+    return PullAttempt(
+        seed,
+        outcome.success,
+        "; ".join(reasons) if reasons else "usable",
+        tuple(values.items()),
+        tuple(errors.items()),
+        () if reasons else tuple(pulls.items()),
+        tuple((outcome.minos or {}).items()),
+        recipe_index,
+        outcome.message,
+        outcome.refit_provenance_json,
+    )
+
+
+def pull_runtime_identity() -> dict:
+    """Identify the executed RNG/runtime, including unavailable optional engines."""
+    packages = {}
+    for name in ("asymmetry", "numpy", "scipy", "iminuit"):
+        try:
+            packages[name] = version(name)
+        except PackageNotFoundError:
+            packages[name] = None
+    return {
+        "python": platform.python_version(),
+        "packages": packages,
+        "rng": f"numpy.random.default_rng/{type(np.random.default_rng(0).bit_generator).__name__}",
+        "computation_revision": computation.COMPUTATION_REVISION,
+    }
+
+
+def run_pull_request(
+    request: PullRequest,
+    model,
     refit: Refit,
     *,
-    total_events: float,
-    n_seeds: int = 200,
-    seed_start: int = 0,
-    track: Sequence[str] | None = None,
-    alpha: float | None = None,
-    background_per_bin: float = 0.0,
-    time_range: tuple[float | None, float | None] | None = None,
     progress: Callable[[int, int], None] | None = None,
     should_continue: Callable[[], bool] | None = None,
 ) -> PullDistribution:
-    """Re-simulate, refit and histogram parameter pulls over ``n_seeds`` seeds.
+    """Execute a declarative request with the same supplied callable/environment.
 
-    ``parameters`` are the generating (true) values bound into ``model`` for
-    every synthetic run; ``track`` selects which of them to collect pulls for
-    (default: all of them — pass the *free* parameters to skip fixed ones).
-    Each seed simulates a run from ``template`` at ``total_events`` matched
-    statistics, reduces it, optionally restricts it to ``time_range`` (the
-    fit window), and refits it via the injected ``refit``. Seeds whose refit
-    fails to converge — or returns a non-finite/non-positive error for a
-    tracked parameter — are dropped and counted in ``n_converged``.
-
-    ``progress(done, total)`` is called after each seed when supplied.
-    ``should_continue()`` is polled before each seed; returning ``False`` stops
-    the run early (a cancel button), and the reported ``n_seeds`` is then the
-    number actually attempted, so the converged fraction stays meaningful.
+    Generation is indivisible. Cancellation is checked between generation,
+    reduction and refit, and passed into numerical fitting. An interrupted seed
+    stays in the partial record, without a fabricated nonconvergence.
     """
-    unavailable = pull_model_unavailable_reason(model)
-    if unavailable is not None:
-        raise ValueError(unavailable)
-    if n_seeds < 1:
-        raise ValueError("n_seeds must be at least 1.")
-    tracked = list(track) if track is not None else list(parameters.keys())
-    if not tracked:
-        raise ValueError("No parameters to track.")
+    config = request.to_dict()
+    template = request.template()
+    packing = request_binning(request)
+    attempts = []
+    recipes = []
+    stopped = False
 
-    collected: dict[str, list[float]] = {name: [] for name in tracked}
-    n_converged = 0
-    attempted = 0
-    for index in range(n_seeds):
-        if should_continue is not None and not should_continue():
+    def cancelled():
+        return should_continue is not None and not should_continue()
+
+    def cancel_check():
+        if cancelled():
+            raise FitCancelledError("Pull experiment stopped")
+
+    for seed in request.requested_seeds:
+        if cancelled():
+            stopped = True
             break
-        attempted += 1
-        run = simulate_run(
-            template,
-            model,
-            dict(parameters),
-            total_events=total_events,
-            seed=seed_start + index,
-            alpha=alpha,
-            background_per_bin=background_per_bin,
-        )
-        dataset = reduce_run_to_dataset(run)
-        if time_range is not None:
-            dataset = dataset.time_range(*time_range)
-
-        result = refit(dataset)
-        if result is not None:
-            values, errors = result
-            contributions: dict[str, float] = {}
-            ok = True
-            for name in tracked:
-                error = errors.get(name)
-                if name not in values or error is None or not np.isfinite(error) or error <= 0:
-                    ok = False
-                    break
-                contributions[name] = (float(values[name]) - float(parameters[name])) / float(error)
-            if ok:
-                n_converged += 1
-                for name, pull in contributions.items():
-                    collected[name].append(pull)
-
-        if progress is not None:
-            progress(index + 1, n_seeds)
-
-    return PullDistribution(
-        parameters={
-            name: ParameterPull(
-                name=name,
-                truth=float(parameters[name]),
-                pulls=np.asarray(values, dtype=float),
+        recipe_index = None
+        try:
+            run = simulate_run(
+                template,
+                model,
+                config["parameters"],
+                total_events=config["total_events"],
+                seed=seed,
+                background_per_bin=config["background_per_bin"],
             )
-            for name, values in collected.items()
-        },
-        truth={name: float(parameters[name]) for name in tracked},
-        n_seeds=attempted,
-        n_converged=n_converged,
-        total_events=float(total_events),
+            cancel_check()
+            dataset = reduce_run_to_dataset(run, binning=packing, cancel_check=cancel_check)
+            if config["time_range"] is not None:
+                dataset = dataset.time_range(*config["time_range"])
+            recipe = dataset.effective_recipe
+            if recipe not in recipes:
+                recipes.append(recipe)
+            recipe_index = recipes.index(recipe)
+            cancel_check()
+            outcome = refit(dataset, cancelled)
+            cancel_check()
+        except FitCancelledError:
+            attempts.append(PullAttempt(seed, None, "cancelled", recipe_index=recipe_index))
+            stopped = True
+            break
+        attempts.append(assess_pull_attempt(seed, outcome, config, recipe_index))
+        if progress is not None:
+            progress(len(attempts), config["n_seeds"])
+    return PullDistribution(
+        request,
+        tuple(attempts),
+        stopped,
+        tuple(recipes),
+        json.dumps(pull_runtime_identity(), sort_keys=True),
+    )
+
+
+def run_pull_distribution(
+    template, model, parameters, refit: Refit, *, progress=None, should_continue=None, **settings
+) -> PullDistribution:
+    """Validate/snapshot a request, then run the conditional experiment.
+
+    Call :func:`make_pull_request` before worker launch when caller-owned mutable
+    inputs may change. Replay uses :func:`run_pull_request` with supplied code;
+    JSON contains no executable functions or promise of cross-version identity.
+    """
+    return run_pull_request(
+        make_pull_request(template, model, parameters, **settings),
+        model,
+        refit,
+        progress=progress,
+        should_continue=should_continue,
     )

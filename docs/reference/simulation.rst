@@ -3,13 +3,12 @@
 Synthetic runs and degraded statistics
 ======================================
 
-Asymmetry can manufacture a complete synthetic run — per-detector count
-histograms, grouping, provenance, and a loadable NeXus file — from any fit
-model, and can resample a measured run to a lower statistics level. Both
-tools draw Poisson counts at the histogram level, so the synthetic data flow
-through exactly the same reduction chain (grouping, α balance, error
-propagation, binning) as beamline data, and everything downstream — fitting,
-Fourier analysis, MaxEnt — behaves as it would on a real measurement.
+Asymmetry generates ideal per-detector Poisson count histograms with grouping
+and provenance, and can write them as loadable NeXus files. Statistics degradation
+below one instead uses binomial thinning of recorded counts. Supported synthetic
+runs use the standard grouping, balance, binning, and fitting operations; this
+shared processing does not reproduce every acquisition mechanism or uncertainty.
+The :ref:`pull-diagnostic` states the conditions and omissions of repeated refits.
 
 Generate a synthetic run
 ------------------------
@@ -77,8 +76,9 @@ storing histograms. A synthetic run that has not been saved this way is held
 in memory only; saving a project that still references one raises a warning,
 because the project will not be able to reload it.
 
-Reproducibility is exact: the same template, model, parameters, events and
-**seed** produce bit-identical counts on any machine. Leave *Fixed seed*
+The same template, model, parameters, events, **seed**, and numerical environment
+reproduce the count draw; cross-version or cross-platform bitwise identity is
+not guaranteed. Leave *Fixed seed*
 checked when you want a regenerable dataset (the seed is recorded in the
 provenance either way); untick it to draw a fresh seed per generation.
 
@@ -144,9 +144,9 @@ continuous F/B** is a PSI-style pair with fine 1 ns binning over a short
 time-independent uncorrelated background that characterises a continuous
 source, where muons arrive one at a time and the time-zero clock runs free.
 Select either from the *Template run* list; the event budget and background
-spinners pre-fill with sensible values for the chosen instrument. Everything
-downstream — generation, the NeXus round trip, refitting — behaves exactly as
-for a loaded-run template.
+spinners pre-fill with values for the chosen idealised template. Generation,
+NeXus transport, and refitting use the same supported operations as a loaded-run
+template, under the stated ideal-count assumptions.
 
 A third built-in, the **ideal continuous octant ring**
 (``"ideal_continuous_ring8"``), supplies the geometry for a PSI HAL-9500-style
@@ -271,10 +271,12 @@ a single measurement yields a whole family of statistics levels.
 
 Right-click a run in the Data Browser and choose **Degrade Statistics…**.
 A factor :math:`f < 1` keeps each recorded count independently with
-probability :math:`f` — binomial thinning. Thinning a Poisson process is
-exactly Poisson, so the result is statistically indistinguishable from a
-measurement :math:`f` times as long: per-bin errors grow as
-:math:`1/\sqrt{f}`, with no approximation. The derived run appears beside
+probability :math:`f` — binomial thinning. For independent Poisson source
+counts with fixed rates, the unconditional thinned counts are Poisson at the
+reduced exposure. Conditional on the observed source, the draw is binomial;
+its replicas are not independent new acquisitions and do not reproduce omitted
+physical effects. Relative errors scale approximately as :math:`1/\sqrt{f}`
+in the informative count limit. The derived run appears beside
 the source (which is never modified), badged with its factor, seed and
 parent run, and can be saved as NeXus like any synthetic run.
 
@@ -286,44 +288,124 @@ sketches only — never for quantitative sensitivity claims.
 
 .. _pull-diagnostic:
 
-Validating error bars: the pull distribution
+Conditional simulation: the pull distribution
 ---------------------------------------------
 
-**When to use this.** After a fit, to ask the sharpest question you can ask
-of any analysis chain: *are the error bars honest?* A fitted value is only as
-trustworthy as its uncertainty, and the only way to test an uncertainty is to
-repeat the measurement many times and see whether the scatter matches. The
-pull diagnostic does exactly that, with synthetic repeats.
+After a converged Single-tab fit, **Diagnostic…** opens **Pull Distribution
+Diagnostic**, bound to that completed execution. The fitted parameters are
+plug-in generating values for a supported ideal experiment. They are not known
+physical truth for the acquisition. Choose **Seeds:** and **First seed:**, then
+**Run**. **Cancel** requests a cooperative stop; an interrupted seed and earlier
+attempts remain an explicitly partial result. Generating-model validation, generation, and individual array
+operations are indivisible; cancellation is also polled during supported numerical
+refits, without a fixed response-time guarantee. Closing discards late delivery.
+The source fit, project history, and grouping remain intact.
 
-For positive ordinary pulse separation, **Diagnostic…** explains that its
-count generator does not match the two-birth population. A correct normalised
-mean alone does not establish the time-dependent counting variances required
-by a pull test. The ordinary fit and its conditional errors remain available;
-**Off** and zero separation retain the single-source diagnostic. This is an
-Asymmetry request check, not a restriction on file loading or ordinary fitting.
+The experiment draws independent Poisson detector counts from the simulator's
+single-source lifetime model. Event budget and flat background are fixed plug-in
+conditions estimated from the captured selected detector pair after exclusions and resolved
+integer source origins. Background counts are added to
+the signal budget. Deadtime distortion is absent and detector deadtimes are zero;
+deadtime and background correction are off in synthetic reduction. Source
+corrections remain source context, distinct from the recorded synthetic recipe.
+A nonzero generated flat background can therefore change the mean asymmetry;
+this is a simpler experiment, not replay of background-subtracted observations.
+Timing, alpha, detector membership/exclusions, and calibration are fixed.
 
-After a converged single fit, click **Diagnostic…** on the Single tab's Results
-card. The tool
-re-simulates the fitted run many times at matched statistics, refits each copy
-over the same window, and for every free parameter forms the *pull*
+Captured count packing, centre-selected fit support, model,
+bounds, fixed/tied parameters, Gaussian objective, and optional MINOS are reused through the ordinary fitting
+engine. Replicas start at the fitted plug-in values; original execution starts
+and parameter history remain source context. Source frequency offsets are recorded; synthetic refits optimise
+laboratory parameters, omitting that numerical conditioning reparameterisation. Frequencies
+and generating values remain in the laboratory frame; amplitudes and symmetric
+errors use percent. FFT error oversampling is recorded with the captured options,
+but transformed/FFT observations have no matching generator in this diagnostic.
+No uncertain response, calibration draws, deadtime acquisition process, general
+cross-bin covariance, or model-selection uncertainty is added.
+
+Asymmetry also checks representability at this diagnostic boundary. Fixed-only
+fits have no free-parameter diagnostic. Frequency-offset expressions or equality
+links with unequal offsets cannot be translated here and are unavailable. Non-unit beta, combined period/run
+observations, fractional source-clock residuals, and models outside finite
+±100 percent on generated support are unavailable here. Positive ordinary
+pulse separation retains its explicit refusal: a matched normalised mean does
+not provide the required two-birth count generator. Ordinary fitting and file
+loading remain available. Captured integer detector origins and exclusions are
+resolved through the standard grouping owner; native detector support is retained.
+
+For each tracked free parameter the pull is
 
 .. math::
 
-   \mathrm{pull} = \frac{\hat\theta - \theta_{\mathrm{true}}}{\sigma_{\hat\theta}},
+   p = (\hat\theta - \theta_{\mathrm{gen}}) / s_{\hat\theta}.
 
-where :math:`\theta_{\mathrm{true}}` is the value you fitted and
-:math:`\sigma_{\hat\theta}` the error each refit reports. For a sound chain the
-pulls are standard normal. Read the histogram against its :math:`N(0, 1)`
-overlay two ways: the **mean** should sit at zero (a non-zero mean is a
-*bias* — the fit systematically misses), and the **width** should sit at one.
-A width below one means the reported errors are too large; above one, too
-small. The verdict line states this for each parameter, with the measured
-width and its uncertainty, e.g. ``width 1.02(7)`` — well-calibrated.
+Here :math:`s_{\hat\theta}` is the engine's **symmetric parabolic error**, without
+residual scaling. Optional MINOS signed endpoints are recorded separately and
+never substituted into this denominator. A usable attempt requires a successful
+refit and every tracked value, positive finite symmetric error, and computed
+pull to be finite, including subtraction/division overflow. Missing results,
+unsuccessful fits, missing values/errors, unavailable or invalid uncertainty,
+nonfinite values/pulls, and cancellation have explicit reasons. All parameters
+use the same usable subset. Coding errors surface as diagnostic errors.
 
-Asymmetry's reduction uses exact Poisson error propagation for the asymmetry,
-:math:`\sigma_A^2 = (1 - A^2)/(F + \alpha B)`-style rather than the
-independent-numerator-and-denominator form, so the pull widths centre on one
-with no fudge factor — the same check the test suite runs on every build.
+Attempted, failed-refit, fit-success, and usable counts appear beside the
+histograms. Histograms include tails and normalise over all usable pulls. The
+mean is a mean standardised residual; the sample width is a sample standard
+deviation. Neither establishes estimator unbiasedness, and width near one alone
+is not interval coverage. Constraints, skewness, variable uncertainties, failure
+selection, or a misspecified generating experiment can change both summaries.
+Two usable observations permit a sample SD, without scientific certification.
+The reference standard errors :math:`1/\sqrt{N}` and
+:math:`1/\sqrt{2(N-1)}` assume independent standard-normal pulls; they are not
+calibrated sampling uncertainties for arbitrary pull samples [pdg-pulls]_.
+
+Reduction uses first-order ratio propagation, not an exact ratio variance.
+For independent Poisson F/B counts and fixed alpha with beta one, the fractional
+variance approximation is
+
+.. math::
+
+   \operatorname{Var}(A) \simeq
+   \frac{4\alpha^2 F B(F+B)}{(F+\alpha B)^4}.
+
+The familiar :math:`(1-A^2)/(F+B)` limit holds at alpha one. Percent errors
+multiply by 100 (variances by 10000). The authoritative
+:ref:`general-alpha/beta and shared-error treatment <asymmetry-counting-errors>`
+includes represented background/shared terms and its conditional limitations;
+see also [gum-pulls]_.
+
+.. image:: /_generated/screenshots/pull_diagnostic.png
+   :alt: Conditional pull histograms with full attempt counts, seed range, and descriptive summaries.
+   :width: 100%
+
+The core exposes :func:`~asymmetry.core.pull_request.make_pull_request`,
+:func:`~asymmetry.core.pull_diagnostic.run_pull_request`, and strict
+JSON-compatible request/result ``to_dict``/``from_dict`` methods. Records retain
+requested/attempted/usable seeds, runtime/RNG identity, outcomes, fitted plug-in
+truth, constraints/options, source context, and actual synthetic recipes. Actual per-refit selected/omitted observations and fitter attribution are retained.
+Common recipes are stored once; any seed-dependent recipe differences retain their
+own references. Replay supplies the same model/refit callable and environment.
+Supported ``EngineRefit`` settings can be reconstructed from their configuration;
+opaque callable settings remain unknown. No executable functions are serialised,
+no universal cross-version bitwise replay is promised, and loading records never
+simulates or refits. Diagnostics are not automatically added to project history.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+WiMDA's documented **generate test data** workflow selects a fitting function,
+sets event statistics, and permits refitting and recording errors. The checked
+WiMDA 1.326 environment does not establish an identical automated seeded pull
+workflow; the public manual describes the closest operation [wimda-pulls]_.
+`Mantid 6.16.1 Fit <https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`_
+and `musrfit 1.12.1 Gaussian fitting <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#non-musr-fit>`_ provide independent
+supplied-error controls, rather than equivalent pull products. On owned scalar
+observations (2, 4, 7) with errors (1, 2, 1), the constant weighted-fit oracle
+is 40/9 with symmetric error 2/3 and chi-square 113/9. Mantid agrees within
+absolute 1e-7; musrfit's ASCII type-8 MIGRAD/HESSE control agrees in value/error
+within 1e-5, with all three observations explicitly selected. These checks do
+not validate acquisition physics, fit-selection coverage, or arbitrary
+likelihood conventions. See :doc:`/explanation/comparison`.
 
 Scripting
 ---------
@@ -432,13 +514,13 @@ azimuth for a signal that itself depends on the detector's angle:
    signals = {gid: signal_at(np.deg2rad(az)) for gid, az in azimuths.items()}
    run = simulate_signal_run(ring, signals, total_events=40e6, seed=7)
 
-A pull-distribution check makes the strongest validation pattern, and
-:func:`asymmetry.core.pull_diagnostic.run_pull_distribution` packages it:
-simulate many seeds from one parameter set, refit each, and histogram
-:math:`(\hat\theta - \theta_{\mathrm{true}})/\sigma_{\hat\theta}`. For a
-healthy analysis chain the pulls are standard normal; widths persistently
-below one flag over-estimated errors and above one under-estimated errors.
-Asymmetry's own test suite runs exactly this check.
+The engine-agnostic :func:`asymmetry.core.pull_diagnostic.run_pull_distribution`
+validates and runs a conditional simulation request. Supply a refit callable
+``refit(dataset, cancelled)`` returning ``RefitOutcome`` (or ``None`` for an
+unavailable result). Propagate unexpected errors and cooperative cancellation;
+reported numerical failure is distinct from an unusable symmetric uncertainty.
+Use the descriptive summaries and retained attempt records with the limitations
+above.
 
 References
 ----------
@@ -448,3 +530,14 @@ References
   2022), Chs. 14–15.
 - F. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose Simulate
   and Degrade Statistics tools this feature parallels.
+
+.. [pdg-pulls] G. Cowan and L. Lista, Particle Data Group, *Statistics* (2025),
+   Secs. 40.2 and 40.4,
+   `PDG review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
+
+.. [gum-pulls] Joint Committee for Guides in Metrology, *Evaluation of measurement
+   data — Guide to the expression of uncertainty in measurement*, JCGM 100:2008,
+   Secs. 5.1–5.2, `doi:10.59161/JCGM100-2008E <https://doi.org/10.59161/JCGM100-2008E>`_.
+
+.. [wimda-pulls] WiMDA, *User manual*, Sec. 3.7,
+   `manual and overview <https://shadow.nd.rl.ac.uk/wimda/>`_.

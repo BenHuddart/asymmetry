@@ -55,19 +55,20 @@ is labelled "Fit objective was not recorded." Known Gaussian producers retain
 their objective when loaded. A likelihood cannot be inferred from a numeric
 field named ``chi_squared`` alone. See :doc:`project_files` for saved results.
 
-3. Are the error bars themselves honest?
-----------------------------------------
+3. What does a conditional pull experiment show?
+------------------------------------------------
 
-The strongest test does not look at χ² at all; it asks whether the *reported
-uncertainties* are calibrated. The :ref:`pull diagnostic <pull-diagnostic>`
-re-simulates the fitted run many times at matched statistics, refits each copy,
-and forms the pull :math:`(\hat\theta - \theta_\mathrm{true})/\sigma_{\hat\theta}`
-for every free parameter. For a sound analysis chain the pulls are standard
-normal: the **mean** sits at zero (a non-zero mean is a bias) and the **width**
-sits at one (a width below one means the errors are too large; above one, too
-small). This is the definitive answer to "can I quote this uncertainty?" — and
-the one a low χ² alone cannot give, because a fit can land a perfect χ² while
-its Hessian errors are mis-scaled.
+The :ref:`pull diagnostic <pull-diagnostic>` simulates ideal independent Poisson
+detector counts at fitted plug-in values, refits each copy, and forms
+:math:`(\hat\theta-\theta_{\mathrm{gen}})/s_{\hat\theta}`. Its mean standardised
+residual and sample width describe the common usable subset. They do not
+establish estimator unbiasedness, interval coverage, model correctness, or
+uncertainty from omitted acquisition effects. Failures, selection, boundaries,
+and skewness matter even when a width is near one. The display retains counts,
+reasons, seed ranges, assumptions, and explicit partial-stop status. Normal
+reference SEs assume independent standard-normal pulls. See the
+`PDG Statistics review (2025), Secs. 40.2 and 40.4
+<https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
 
 ALC fits that subtract an estimated baseline have two uncertainty levels.
 Conditional errors hold that baseline fixed. Baseline-propagated errors include
@@ -83,8 +84,8 @@ suspect — the likelihood is skewed or the parameter is against a bound — and
 pull diagnostic is worth running.
 
 Use the three together: the χ² band is a fast triage, the recorded verdict
-tracks quality across a series, and the pull diagnostic validates the error
-bars before you quote them.
+tracks quality across a series, and the pull diagnostic explores error behaviour under its stated simulated
+conditions.
 
 See also
 --------
@@ -92,7 +93,7 @@ See also
 * :ref:`fit-statistics` — reading χ², reduced χ², and residuals.
 * :doc:`parameter_trending` — the recorded per-fit summary and how it feeds
   trending, including the χ² quality band's confidence level.
-* :ref:`pull-diagnostic` — the pull-distribution error-bar validation.
+* :ref:`pull-diagnostic` — conditional simulation, failed refits, and pull summaries.
 * :doc:`fit_wizard` — choosing a starting model when the χ² says the current
   one is wrong.
 

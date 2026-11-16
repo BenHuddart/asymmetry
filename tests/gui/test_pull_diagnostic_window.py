@@ -1,285 +1,379 @@
-"""GUI: pull-distribution diagnostic window and its fit-panel launch hook."""
+"""Actual diagnostic actions, captured fit inputs and worker lifecycle."""
 
 from __future__ import annotations
 
-import os
 import threading
-import time
 
 import numpy as np
 import pytest
-
-pytestmark = [pytest.mark.gui]
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-pytest.importorskip("iminuit")
-
+from PySide6.QtCore import QTimer
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.pull_diagnostic import ParameterPull, PullDistribution
-from asymmetry.core.simulate import (
-    build_builtin_template,
-    reduce_run_to_dataset,
-    simulate_run,
-    total_events_of,
-)
-from asymmetry.gui.panels.fit.single_tab import DIAGNOSTIC_ACTION
-from asymmetry.gui.windows import pull_diagnostic_window as pull_diagnostic_window_module
-from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow, make_engine_refit
+from asymmetry.core.pull_diagnostic import RefitOutcome, make_pull_request, run_pull_request
+from asymmetry.core.pull_refit import EngineRefit
+from asymmetry.core.simulate import reduce_run_to_dataset, simulate_run
+from asymmetry.gui.panels.fit.single_tab import DIAGNOSTIC_ACTION, SingleFitTab
+from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow
 from tests._qt_helpers import wait_for
+from tests.core.test_pull_diagnostic import _constant, _small_template
+
+pytestmark = pytest.mark.gui
 
 
-def _exp_composite() -> CompositeModel:
-    return CompositeModel(["Exponential", "Constant"], operators=["+"])
-
-
-def test_window_runs_and_centres_pulls(qapp) -> None:
-    template = build_builtin_template("ideal_pulsed_fb")
-    model = _exp_composite()
-    # Generating values on the composite's mangled names (A_1, Lambda, A_bg).
-    truth = {"A_1": 20.0, "Lambda": 0.5, "A_bg": 0.0}
-    params = ParameterSet(
-        [
-            Parameter(name="A_1", value=15.0, min=0.0, max=100.0),
-            Parameter(name="Lambda", value=1.0, min=0.0, max=10.0),
-            Parameter(name="A_bg", value=0.0, min=-10.0, max=10.0, fixed=True),
-        ]
+def _window(refit=None):
+    request = make_pull_request(
+        _small_template(), _constant, {"a": 20}, total_events=100000, n_seeds=3, seed_start=71
     )
-    refit = make_engine_refit(model, params, t_min=0.0, t_max=8.0)
-    window = PullDiagnosticWindow(
-        template=template,
-        model=model,
-        parameters=truth,
-        refit=refit,
-        track=["A_1", "Lambda"],
-        total_events=20.0e6,
-        time_range=(0.0, 8.0),
-    )
-    result = window.run_diagnostic(40)
-    assert result.n_converged >= 30
-    for name in ("A_1", "Lambda"):
-        pull = result.parameters[name]
-        # Loose tolerance for N=40: mean near 0, width near 1.
-        assert abs(pull.mean) < 0.5, name
-        assert 0.6 < pull.width < 1.6, name
-    assert "converged" in window.last_result.verdict()
-
-
-def _make_window(
-    *, track: list[str], parameters: dict[str, float] | None = None
-) -> PullDiagnosticWindow:
-    template = build_builtin_template("ideal_pulsed_fb")
-    model = _exp_composite()
-    truth = parameters if parameters is not None else {"A_1": 20.0, "Lambda": 0.5, "A_bg": 0.0}
-    params = ParameterSet(
-        [
-            Parameter(name="A_1", value=15.0, min=0.0, max=100.0),
-            Parameter(name="Lambda", value=1.0, min=0.0, max=10.0),
-            Parameter(name="A_bg", value=0.0, min=-10.0, max=10.0, fixed=True),
-        ]
-    )
-    refit = make_engine_refit(model, params, t_min=0.0, t_max=8.0)
     return PullDiagnosticWindow(
-        template=template,
-        model=model,
-        parameters=truth,
-        refit=refit,
-        track=track,
-        total_events=20.0e6,
-        time_range=(0.0, 8.0),
+        request=request,
+        model=_constant,
+        refit=refit
+        or (lambda ds, cancel: RefitOutcome(True, {"a": float(np.mean(ds.asymmetry))}, {"a": 1})),
     )
 
 
-def test_run_button_runs_off_the_gui_thread_and_populates_results(qapp, monkeypatch) -> None:
-    """The GUI-thread invariant: clicking Run must not execute the diagnostic
-    on the calling thread — this is the exact anti-pattern (processEvents
-    keep-alive) the fix removes. A spy wraps the real
-    run_pull_distribution so the test both records which thread ran it and
-    exercises the genuine simulate+refit path end to end."""
-    seen: dict[str, threading.Thread] = {}
-    real_run = pull_diagnostic_window_module.run_pull_distribution
-
-    def _spy(*args, **kwargs):
-        seen["thread"] = threading.current_thread()
-        return real_run(*args, **kwargs)
-
-    monkeypatch.setattr(pull_diagnostic_window_module, "run_pull_distribution", _spy)
-
-    window = _make_window(track=["A_1", "Lambda"])
-    window._seeds_spin.setValue(10)
-    window._on_run()
-    assert window._running is True
-    assert window._run_button.isEnabled() is False
-    assert window._cancel_button.isEnabled() is True
-
-    wait_for(lambda: not window._running, qapp, timeout_s=20.0)
-
-    assert seen["thread"] is not threading.main_thread()
-    assert window.last_result is not None
-    assert window.last_result.n_seeds == 10
-    assert window._run_button.isEnabled() is True
-    assert window._cancel_button.isEnabled() is False
-    assert window._verdict_label.text() != "Running…"
+def _drain(window, qapp):
+    wait_for(lambda: window._worker is None and window._tasks.active_count == 0, qapp, timeout_s=10)
 
 
-def test_cancel_mid_run_stops_promptly_and_restores_ui(qapp, monkeypatch) -> None:
-    """Cancel gives immediate UI feedback (button disabled) before the gated
-    worker call ever returns, then the finished result — a normal (shorter)
-    PullDistribution, since run_pull_distribution has no cancel exception —
-    is reported as cancelled and the Run/Cancel buttons are restored."""
-    gate = threading.Event()
+def test_actual_run_button_worker_heartbeat_and_seed_capture(qapp):
+    entered, release = threading.Event(), threading.Event()
+    seen = []
 
-    def _fake_run(*_args, **_kwargs):
-        gate.wait(timeout=2.0)
-        return PullDistribution(
-            parameters={
-                "A_1": ParameterPull(name="A_1", truth=20.0, pulls=np.array([0.1, -0.2])),
-                "Lambda": ParameterPull(name="Lambda", truth=0.5, pulls=np.array([0.05, -0.1])),
-            },
-            truth={"A_1": 20.0, "Lambda": 0.5},
-            n_seeds=2,
-            n_converged=2,
-            total_events=1.0e6,
-        )
+    def held(ds, cancel):
+        seen.append(threading.current_thread())
+        entered.set()
+        assert release.wait(5)
+        return RefitOutcome(True, {"a": 21}, {"a": 1})
 
-    monkeypatch.setattr(pull_diagnostic_window_module, "run_pull_distribution", _fake_run)
-
-    window = _make_window(track=["A_1", "Lambda"])
+    window = _window(held)
+    beats = []
+    timer = QTimer()
+    timer.timeout.connect(lambda: beats.append(1))
+    timer.start(1)
     try:
-        window._on_run()
-        wait_for(lambda: window._running, qapp, timeout_s=5.0)
-        assert window._cancel_button.isEnabled() is True
-
-        window._on_cancel()
-        # Immediate feedback: the button disables before the gated worker
-        # call has returned anything at all.
-        assert window._cancel_button.isEnabled() is False
-        assert window._running is True
+        window._run_button.click()
+        wait_for(entered.is_set, qapp, timeout_s=5)
+        wait_for(lambda: len(beats) >= 3, qapp, timeout_s=5)
+        assert not window._run_button.isEnabled()
+        window._seed_start_spin.setValue(999)
     finally:
-        gate.set()
+        release.set()
+        timer.stop()
+    _drain(window, qapp)
+    assert all(t is not threading.main_thread() for t in seen)
+    assert [a.seed for a in window.last_result.attempts] == [71, 72, 73]
+    assert "3 usable" in window._verdict_label.text()
+    assert window._run_button.isEnabled()
 
-    wait_for(lambda: not window._running, qapp, timeout_s=5.0)
 
-    assert window._cancel_requested is True
-    assert window._run_button.isEnabled() is True
-    assert window._cancel_button.isEnabled() is False
-    assert "Cancelled" in window._verdict_label.text()
+def test_stop_held_numerical_refit_partial_then_recovery(qapp):
+    from asymmetry.core.fitting.engine import FitCancelledError
+
+    entered, release = threading.Event(), threading.Event()
+
+    def held(ds, cancel):
+        entered.set()
+        assert release.wait(5)
+        assert cancel()
+        raise FitCancelledError("stopped in numerical fit")
+
+    window = _window(held)
+    try:
+        window._run_button.click()
+        wait_for(entered.is_set, qapp, timeout_s=5)
+        window._cancel_button.click()
+        assert not window._cancel_button.isEnabled()
+    finally:
+        release.set()
+    _drain(window, qapp)
+    result = window.last_result
+    assert result.stopped and result.n_attempted == 1 and result.n_failed == 0
+    assert "partial" in window._verdict_label.text()
+    window._refit = lambda ds, cancel: RefitOutcome(True, {"a": 20}, {"a": 1})
+    window._run_button.click()
+    _drain(window, qapp)
+    assert not window.last_result.stopped and window.last_result.n_usable == 3
 
 
-def test_close_mid_run_shuts_down_without_crashing(qapp, monkeypatch) -> None:
-    """Closing the window mid-run must cancel and tear the worker down
-    cleanly instead of crashing or leaving a dangling thread — the Close
-    button can now stay enabled throughout the run."""
+def test_error_recovery_keeps_previous_result(qapp):
+    window = _window()
+    window._run_button.click()
+    _drain(window, qapp)
+    previous = window.last_result
 
-    def _fake_run(*_args, should_continue=None, **_kwargs):
-        # Poll cooperatively like the real engine so the bounded shutdown()
-        # started from closeEvent/reject() returns promptly.
-        for _ in range(500):
-            if should_continue is not None and not should_continue():
-                break
-            time.sleep(0.01)
-        return PullDistribution(parameters={}, truth={}, n_seeds=0, n_converged=0, total_events=0.0)
+    def broken(ds, cancel):
+        raise RuntimeError("coding error is visible")
 
-    monkeypatch.setattr(pull_diagnostic_window_module, "run_pull_distribution", _fake_run)
+    window._refit = broken
+    window._run_button.click()
+    _drain(window, qapp)
+    assert window.last_result is previous
+    assert "coding error is visible" in window._verdict_label.text()
+    window._refit = lambda ds, cancel: None
+    window._run_button.click()
+    _drain(window, qapp)
+    assert window.last_result.n_failed == 3
 
-    window = _make_window(track=[])
-    assert window._button_box.isEnabled()
 
-    window._on_run()
-    wait_for(lambda: window._running, qapp, timeout_s=5.0)
+@pytest.mark.parametrize("terminal", ["finished", "error"])
+def test_close_with_queued_terminal_does_not_publish_and_reopens(qapp, terminal):
+    release, terminal_sent = threading.Event(), threading.Event()
 
-    window.close()  # native close path: closeEvent -> reject() -> shutdown()
+    def refit(ds, cancel):
+        assert release.wait(5)
+        if terminal == "error":
+            raise RuntimeError("late error")
+        return RefitOutcome(True, {"a": 20}, {"a": 1})
 
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        qapp.processEvents()
-        time.sleep(0.01)
-
+    window = _window(refit)
+    window._seeds_spin.setValue(1)
+    window._run_button.click()
+    signal = window._worker.finished if terminal == "finished" else window._worker.error
+    signal.connect(lambda *args: terminal_sent.set())
+    release.set()
+    # Terminal is emitted while the GUI event loop is held, guaranteeing queueing.
+    assert terminal_sent.wait(5)
+    window.close()
+    qapp.processEvents()
+    assert window.last_result is None
     assert window._tasks.active_count == 0
+    window._refit = lambda ds, cancel: RefitOutcome(True, {"a": 20}, {"a": 1})
+    window.show()
+    assert window._run_button.isEnabled()
+    window._run_button.click()
+    _drain(window, qapp)
+    assert window.last_result.n_usable == 1
 
 
-def test_total_events_of_sums_histograms(qapp) -> None:
-    template = build_builtin_template("ideal_continuous_fb")
-    run = simulate_run(
-        template,
-        lambda t, a0=10.0: a0 * np.ones_like(t),
-        total_events=5.0e6,
-        seed=1,
+def test_histogram_keeps_extreme_tail_denominator(qapp):
+    outcomes = iter([RefitOutcome(True, {"a": x}, {"a": 1}) for x in (20, 21, 30)])
+    window = _window()
+    result = run_pull_request(window._request, _constant, lambda ds, cancel: next(outcomes))
+    window._on_diagnostic_finished(result)
+    ax = window._figure.axes[0]
+    assert sum(p.get_height() * p.get_width() for p in ax.patches) == pytest.approx(1)
+    assert max(p.get_x() + p.get_width() for p in ax.patches) >= 1
+    assert result.parameters["a"].n == 3
+
+
+def _fitted_tab(qapp, *, fixed=False):
+    tab = SingleFitTab()
+    run = simulate_run(_small_template(), _constant, {"a": 20}, total_events=2e6, seed=17)
+    dataset = reduce_run_to_dataset(run).time_range(0.2, 5)
+    tab.set_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["Constant"]))
+    tab._param_table.item(0, 1).setText("15")
+    if fixed:
+        from PySide6.QtWidgets import QCheckBox
+
+        tab._param_table.cellWidget(0, 2).findChild(QCheckBox).setChecked(True)
+    tab._minos_checkbox.setChecked(True)
+    tab._run_fit()
+    assert tab.wait_for_fit(10000)
+    assert tab._last_fit_result.success
+    return tab, dataset
+
+
+def test_single_action_uses_execution_model_truth_options_support_and_state(qapp):
+    import copy
+
+    tab, dataset = _fitted_tab(qapp)
+    assert tab._can_run_pull_diagnostic()
+    original = copy.deepcopy(tab._last_fit_result.parameters["A_bg"])
+    recipe = dataset.effective_recipe
+    grouping = copy.deepcopy(dataset.run.grouping)
+    original_result = tab._last_fit_result
+    history = copy.deepcopy(original_result.parameter_history)
+    tab._composite_model = CompositeModel(["Exponential"])
+    tab._minos_checkbox.setChecked(False)
+    tab._results_card._actions[DIAGNOSTIC_ACTION].click()
+    window = tab._pull_diagnostic_window
+    tab.set_dataset(None)
+    window._seeds_spin.setValue(2)
+    window._run_button.click()
+    _drain(window, qapp)
+    config = window.last_result.request.to_dict()
+    assert config["parameters"]["A_bg"] == original.value
+    assert config["model"] == CompositeModel(["Constant"]).to_dict()
+    assert config["refit"]["options"]["minos"] is True
+    assert config["time_range"] == [0.2, 5]
+    assert config["source_context"]["effective_recipe"] == recipe.to_dict()
+    assert window.last_result.n_attempted == 2
+    assert dataset.run.grouping == grouping
+    assert original_result.parameter_history == history
+    assert tab._pull_fit_input is None
+    assert window.last_result.request.to_dict()["refit"]["source_fit_input_attribution"] is not None
+
+
+def test_fixed_only_fit_has_no_free_parameter_diagnostic(qapp):
+    tab, _ = _fitted_tab(qapp, fixed=True)
+    assert not tab._can_run_pull_diagnostic()
+    assert "Fixed-only" in tab._pull_fit_input.unavailable_reason()
+
+
+def test_engine_refit_detaches_and_passes_cancel_without_blanket_catch(qapp, monkeypatch):
+    from asymmetry.core.fitting.engine import FitCancelledError, FitEngine
+
+    model = CompositeModel(["Constant"])
+    params = ParameterSet([Parameter("A_bg", 20)])
+    refit = EngineRefit(model, params, minos=True)
+    params["A_bg"].value = 99
+
+    def spy(self, ds, fn, parameters, **options):
+        assert parameters["A_bg"].value == 20
+        assert options["minos"] is True
+        assert options["cancel_callback"]()
+        raise FitCancelledError("cooperative")
+
+    monkeypatch.setattr(FitEngine, "fit", spy)
+    with pytest.raises(FitCancelledError):
+        refit(reduce_run_to_dataset(_small_template()), lambda: True)
+
+
+def test_pre_cancel_actual_button_attempts_zero(qapp, monkeypatch):
+    from asymmetry.gui.tasks import TaskWorker
+
+    original = TaskWorker.run
+
+    def pre_cancel(self):
+        self.cancel()
+        return original(self)
+
+    monkeypatch.setattr(TaskWorker, "run", pre_cancel)
+    window = _window()
+    window._run_button.click()
+    _drain(window, qapp)
+    assert window.last_result.stopped and window.last_result.n_attempted == 0
+
+
+def test_supported_refit_is_owned_and_extreme_finite_histogram_survives(qapp):
+    refit = EngineRefit(_constant, ParameterSet([Parameter("a", 18)]))
+    window = _window(refit)
+    refit.parameters["a"].value = 99
+    assert window._refit.parameters["a"].value == 18
+    results = iter([-1e308, 1e308])
+    config = window._request.to_dict()
+    config["n_seeds"] = 2
+    from asymmetry.core.pull_request import PullRequest
+
+    result = run_pull_request(
+        PullRequest.from_dict(config),
+        _constant,
+        lambda ds, cancel: RefitOutcome(True, {"a": next(results)}, {"a": 1}),
     )
-    total = total_events_of(run)
-    assert total == sum(float(h.counts.sum()) for h in run.histograms)
-    assert total > 0
+    window._on_diagnostic_finished(result)
+    assert window.last_result.n_usable == 2
+    assert "1e+308" in window._figure.axes[0].get_xlabel()
 
 
-def _diagnostic(tab):
-    """The Single tab's results-card ``Diagnostic…`` hand-off."""
-    return tab._results_card._actions[DIAGNOSTIC_ACTION]
+@pytest.mark.parametrize("terminal", ["cancel", "error", "close"])
+def test_actual_source_action_preserves_project_history_selection_and_dirty_state(
+    qapp, terminal, monkeypatch
+):
+    import copy
+    import json
 
+    from asymmetry.core.fitting.engine import FitCancelledError
+    from asymmetry.core.project.json_values import encode_non_finite
+    from asymmetry.gui.mainwindow import MainWindow
 
-class TestFitPanelHook:
-    def test_button_enables_after_successful_fit_and_opens_window(self, qapp) -> None:
-        from asymmetry.gui.panels.fit_panel import SingleFitTab
-
-        tab = SingleFitTab()
-        template = build_builtin_template("ideal_pulsed_fb")
-        run = simulate_run(
-            template,
-            lambda t, a0=20.0, rate=0.4: a0 * np.exp(-rate * t),
-            {"a0": 20.0, "rate": 0.4},
-            total_events=20.0e6,
-            seed=2,
-        )
-        dataset = reduce_run_to_dataset(run)
-        tab.set_dataset(dataset)
-        # No fit yet → diagnostic disabled.
-        assert not _diagnostic(tab).isEnabled()
-        assert not tab._can_run_pull_diagnostic()
-
-        # Simulate a converged fit having run on this dataset. The fit engine
-        # does NOT mutate the input set, so _last_fit_parameters holds the
-        # pre-fit START guesses while _last_fit_result.parameters holds the
-        # converged values — they must differ here to catch the truth-source bug.
-        tab._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-        tab._last_fit_parameters = ParameterSet(
-            [
-                Parameter(name="A_1", value=10.0, min=0.0, max=100.0),  # start guess
-                Parameter(name="Lambda", value=1.5, min=0.0, max=10.0),  # start guess
-                Parameter(name="A_bg", value=0.0, min=-10.0, max=10.0, fixed=True),
-            ]
-        )
-
-        class _Result:
-            success = True
-            parameters = ParameterSet(
-                [
-                    Parameter(name="A_1", value=20.0),  # converged
-                    Parameter(name="Lambda", value=0.4),  # converged
-                    Parameter(name="A_bg", value=0.0),
-                ]
+    host = MainWindow()
+    try:
+        host._on_fit()
+        datasets = []
+        for number in (446, 447):
+            run = simulate_run(
+                _small_template(),
+                _constant,
+                {"a": 20},
+                total_events=1e6,
+                seed=number,
+                run_number=number,
             )
+            ds = reduce_run_to_dataset(run)
+            host._data_browser.add_dataset(ds)
+            datasets.append(ds)
+        host._on_dataset_selected(446)
+        tab = host._fit_panel._single_tab
+        tab._set_composite_model(CompositeModel(["Constant"]))
+        tab._run_fit()
+        assert tab.wait_for_fit(10000)
+        assert tab._last_fit_result.success
+        tab._results_card._actions[DIAGNOSTIC_ACTION].click()
+        dialog = tab._pull_diagnostic_window
+        entered, release = threading.Event(), threading.Event()
 
-        tab._last_fit_result = _Result()
-        assert tab._can_run_pull_diagnostic()
+        def held(ds, cancel):
+            entered.set()
+            assert release.wait(5)
+            if terminal == "error":
+                raise RuntimeError("injected code error")
+            if cancel():
+                raise FitCancelledError("cooperative")
+            return RefitOutcome(True, {"A_bg": 20}, {"A_bg": 1})
 
-        tab._on_pull_diagnostic()
-        window = tab._pull_diagnostic_window
-        assert isinstance(window, PullDiagnosticWindow)
-        # Truth must be the CONVERGED values, not the start guesses.
-        assert window._parameters["Lambda"] == pytest.approx(0.4)
-        assert window._parameters["A_1"] == pytest.approx(20.0)
+        monkeypatch.setattr(EngineRefit, "__call__", lambda self, ds, cancel: held(ds, cancel))
+        representation = host._project_model.representation(446, host._active_representation_type())
+        fits = representation.fit_set(None).fits
+        assert fits
+        history = json.dumps(encode_non_finite([f.to_dict() for f in fits]), sort_keys=True)
+        grouping = copy.deepcopy(datasets[0].run.grouping)
+        original = tab._last_fit_result
+        values = {p.name: p.value for p in original.parameters}
+        try:
+            dialog._run_button.click()
+            wait_for(entered.is_set, qapp, timeout_s=5)
+            host._on_dataset_selected(447)
+            dirty = (host._dirty, host._dirty_generation)
+            selection = host._current_dataset
+            if terminal == "cancel":
+                dialog._cancel_button.click()
+            release.set()
+            if terminal == "close":
+                dialog.close()
+        finally:
+            release.set()
+        _drain(dialog, qapp)
+        assert json.dumps(encode_non_finite([f.to_dict() for f in fits]), sort_keys=True) == history
+        assert datasets[0].run.grouping == grouping
+        assert {p.name: p.value for p in original.parameters} == values
+        assert host._current_dataset is selection
+        assert (host._dirty, host._dirty_generation) == dirty
+    finally:
+        host._dirty = False
+        host.close()
 
-    def test_changing_dataset_clears_fit_result(self, qapp) -> None:
-        from asymmetry.gui.panels.fit_panel import SingleFitTab
 
-        tab = SingleFitTab()
+def test_captured_model_preparation_runs_on_same_diagnostic_worker(qapp, monkeypatch):
+    tab, _ = _fitted_tab(qapp)
+    entered, release = threading.Event(), threading.Event()
+    original = CompositeModel.function
+    seen = []
 
-        class _Result:
-            success = True
+    def held_model(self, t, **values):
+        seen.append(threading.current_thread())
+        entered.set()
+        assert release.wait(5)
+        return original(self, t, **values)
 
-        tab._last_fit_result = _Result()
-        tab._last_fit_parameters = ParameterSet([Parameter(name="x", value=1.0)])
-        tab.set_dataset(None)
-        assert tab._last_fit_result is None
-        assert not _diagnostic(tab).isEnabled()
+    monkeypatch.setattr(CompositeModel, "function", held_model)
+    tab._results_card._actions[DIAGNOSTIC_ACTION].click()
+    window = tab._pull_diagnostic_window
+    assert not entered.is_set()
+    beats = []
+    timer = QTimer()
+    timer.timeout.connect(lambda: beats.append(1))
+    timer.start(1)
+    try:
+        window._run_button.click()
+        wait_for(entered.is_set, qapp, timeout_s=5)
+        wait_for(lambda: len(beats) >= 3, qapp, timeout_s=5)
+        window._cancel_button.click()
+    finally:
+        release.set()
+        timer.stop()
+    _drain(window, qapp)
+    assert all(t is not threading.main_thread() for t in seen)
+    assert window.last_result.stopped and window.last_result.n_attempted == 0

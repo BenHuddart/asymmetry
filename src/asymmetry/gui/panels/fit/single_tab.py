@@ -44,7 +44,8 @@ from asymmetry.core.fitting.rrf_offset import (
 )
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
-from asymmetry.core.pull_diagnostic import pull_model_unavailable_reason
+from asymmetry.core.pull_refit import CapturedPullFit, PullFitInput
+from asymmetry.core.pull_request import pull_model_unavailable_reason
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
@@ -214,7 +215,7 @@ class SingleFitTab(FitTabBase):
         # display is active), else None. Default no-op keeps the tab standalone.
         self._rrf_frequency_provider: Callable[[], float | None] = lambda: None
         self._last_fit_result: FitResult | None = None
-        self._last_fit_parameters: ParameterSet | None = None
+        self._pull_fit_input: PullFitInput | None = None
         # See set_has_recorded_fit: whether the active run has a *persisted*
         # single fit, independent of _last_fit_result (this session's transient
         # in-memory result).
@@ -341,8 +342,8 @@ class SingleFitTab(FitTabBase):
             actions=(
                 (
                     DIAGNOSTIC_ACTION,
-                    "Re-simulate this fit at matched statistics, refit each copy, and "
-                    "check that the parameter pulls are standard normal (honest errors).",
+                    "Inspect descriptive parameter pulls under a conditional ideal-count "
+                    "simulation with explicit assumptions and failed refits.",
                 ),
                 (ADD_TO_SERIES_ACTION, ""),
                 (
@@ -576,8 +577,12 @@ class SingleFitTab(FitTabBase):
         self._results_card.set_action_enabled(
             DIAGNOSTIC_ACTION,
             self._can_run_pull_diagnostic(),
-            pull_model_unavailable_reason(self._composite_model)
-            or "Re-simulate the fitted run and inspect parameter pulls.",
+            (
+                self._pull_fit_input.unavailable_reason()
+                if self._pull_fit_input is not None
+                else pull_model_unavailable_reason(self._composite_model)
+            )
+            or "Inspect a conditional ideal-count simulation of the captured fit.",
         )
 
     def _show_fit_summary(
@@ -700,7 +705,7 @@ class SingleFitTab(FitTabBase):
         self._current_dataset = dataset
         # A fit result belongs to the dataset it was fit on; drop it on change.
         self._last_fit_result = None
-        self._last_fit_parameters = None
+        self._pull_fit_input = None
         self._last_fit_snapshot = None
         self._chi2_chip.hide()
         # Reset to the safe default; FitPanel.set_dataset calls
@@ -729,58 +734,22 @@ class SingleFitTab(FitTabBase):
         self._update_card_actions()
 
     def _can_run_pull_diagnostic(self) -> bool:
-        """A successful time-domain fit on a run with histograms is required."""
+        """Only the captured execution can supply a free-parameter experiment."""
         return (
-            self._domain == "time"
-            and pull_model_unavailable_reason(self._composite_model) is None
+            self._pull_fit_input is not None
             and self._last_fit_result is not None
             and self._last_fit_result.success
-            and self._last_fit_parameters is not None
-            and self._current_dataset is not None
-            and self._current_dataset.run is not None
-            and bool(self._current_dataset.run.histograms)
+            and self._pull_fit_input.unavailable_reason() is None
         )
 
     def _on_pull_diagnostic(self) -> None:
-        """Open the pull-distribution diagnostic for the last converged fit."""
+        """Open a modeless result bound to the completed execution."""
         if not self._can_run_pull_diagnostic():
             return
-        from asymmetry.core.simulate import matched_statistics
-        from asymmetry.gui.windows.pull_diagnostic_window import (
-            PullDiagnosticWindow,
-            make_engine_refit,
-        )
+        from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow
 
-        dataset = self._current_dataset
-        run = dataset.run
-        # The generating "truth" is the CONVERGED fit, not the pre-fit guesses:
-        # FitEngine.fit does not mutate its input ParameterSet, so
-        # _last_fit_parameters still holds the start values. Seed the refit
-        # template from result.parameters while keeping the fit's
-        # bounds/fixed/link metadata.
-        fitted_values = {p.name: float(p.value) for p in self._last_fit_result.parameters}
-        refit_template = copy.deepcopy(self._last_fit_parameters)
-        for parameter in refit_template:
-            if parameter.name in fitted_values:
-                parameter.value = fitted_values[parameter.name]
-        truth = {p.name: float(p.value) for p in refit_template}
-        free = [p.name for p in refit_template if not getattr(p, "fixed", False)]
-        time_range = (float(dataset.time.min()), float(dataset.time.max()))
-        refit = make_engine_refit(
-            self._composite_model, refit_template, t_min=time_range[0], t_max=time_range[1]
-        )
-        # Matched statistics: split the run's flat background off the gross
-        # count so background is regenerated as background, not as extra signal.
-        signal_events, background_per_bin = matched_statistics(run)
         window = PullDiagnosticWindow(
-            template=run,
-            model=self._composite_model,
-            parameters=truth,
-            refit=refit,
-            track=free or list(truth),
-            total_events=signal_events,
-            background_per_bin=background_per_bin,
-            time_range=time_range,
+            request=CapturedPullFit.capture(self._pull_fit_input, self._last_fit_result),
             parent=self,
         )
         self._pull_diagnostic_window = window
@@ -906,7 +875,8 @@ class SingleFitTab(FitTabBase):
     ) -> None:
         """Rebuild model rows while carrying component values and constraints."""
         if model.time_response != self._composite_model.time_response:
-            self._last_fit_result = self._last_fit_parameters = self._last_fit_snapshot = None
+            self._last_fit_result = self._last_fit_snapshot = None
+            self._pull_fit_input = None
             self._chi2_chip.hide()
             self._results_card.set_message(
                 "Time response changed; fit again to update results.", tag="Setup"
@@ -1346,6 +1316,7 @@ class SingleFitTab(FitTabBase):
         oversampling = dataset_error_oversampling(dataset)
         if oversampling > 1.0:
             fit_kwargs["error_oversampling"] = oversampling
+        pull_input = PullFitInput.capture(model, fit_seed, dataset, fit_kwargs)
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(
@@ -1356,8 +1327,10 @@ class SingleFitTab(FitTabBase):
                 **fit_kwargs,
             ),
             on_finished=(
-                lambda result, p=parameters, d=dataset, m=model, g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0: (
-                    self._apply_single_fit_result(result, p, d, m, g, rrf_offsets=off, rrf_nu0=nu0)
+                lambda result, p=parameters, d=dataset, m=model, g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0, captured=pull_input: (
+                    self._apply_single_fit_result(
+                        result, p, d, m, g, rrf_offsets=off, rrf_nu0=nu0, pull_input=captured
+                    )
                 )
             ),
             on_error=self._on_single_fit_error,
@@ -1479,6 +1452,7 @@ class SingleFitTab(FitTabBase):
         *,
         rrf_offsets=None,
         rrf_nu0=None,
+        pull_input=None,
     ) -> None:
         """Apply a completed single fit to the panel (GUI thread)."""
         self._set_fit_busy(False)
@@ -1546,7 +1520,7 @@ class SingleFitTab(FitTabBase):
 
         # Fresh: remember the converged fit for the pull-distribution diagnostic.
         self._last_fit_result = result
-        self._last_fit_parameters = parameters
+        self._pull_fit_input = pull_input
         self._record_fit_verdict(result)
         self._update_card_actions()
 
