@@ -1706,9 +1706,9 @@ define :math:`c_F=(F_G-F_R)/(F_G+F_R)` and
 :math:`c_B=(B_G-B_R)/(B_G+B_R)`; its Integral contrast is :math:`c_B-c_F`,
 not :math:`A_G-A_R`. Its single-period Differential integrates pointwise
 asymmetry along time rather than taking Asymmetry's equal-time-bin mean.
-Integration's
-histogram-edge bounds also differ from Asymmetry's centre selection. Full Mantid
-execution is unavailable for this comparison.
+Integration's histogram-edge bounds also differ from Asymmetry's centre
+selection. The scalar ``Fit`` control above does not establish agreement for
+these count-integral algorithm conventions.
 
 WiMDA 1.326's dedicated ALC route starts from integrated acquisition columns;
 arbitrary histogram-window and uncertainty equivalence is not established. Its
