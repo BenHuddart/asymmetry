@@ -982,10 +982,7 @@ def _fingerprint(**fields):
     [
         # A sub-cycle "line" away from Larmor is leakage; the damped scan's
         # line (a muonium line in a 2 G field, here) is the precession.
-        (
-            {"damped_line_frequency_mhz": 2.8, "damped_line_snr": 68.0},
-            ("other", 2.8),
-        ),
+        ({"damped_line_frequency_mhz": 2.8, "damped_line_snr": 68.0}, ("other", 2.8)),
         # ... and with no damped line there is no precession at all.
         ({}, ("none", None)),
         # A slow line at the Larmor frequency is a weak-TF calibration, kept.
@@ -1006,7 +1003,7 @@ def test_a_sub_cycle_line_away_from_larmor_is_not_precession(
     from asymmetry.core.workflow import survey as survey_module
 
     monkeypatch.setattr(
-        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+        survey_module, "fingerprint_spectrum", lambda dataset, **kwargs: _fingerprint(**fingerprint)
     )
     time = np.arange(0.0, 8.0, 0.016)
     dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
@@ -1036,7 +1033,7 @@ def test_a_zero_field_line_is_spontaneous_precession(monkeypatch, fingerprint, e
     from asymmetry.core.workflow import survey as survey_module
 
     monkeypatch.setattr(
-        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+        survey_module, "fingerprint_spectrum", lambda dataset, **kwargs: _fingerprint(**fingerprint)
     )
     time = np.arange(0.0, 8.0, 0.016)
     dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})

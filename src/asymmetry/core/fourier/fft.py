@@ -14,6 +14,7 @@ from asymmetry.core.fourier.apodisation import (
     ApodisationEarlySignalWarning,
     early_signal_apodisation_loss,
 )
+from asymmetry.core.fourier.sampling import _uniform_sample_interval
 from asymmetry.core.fourier.window import apply_fft_filter, apply_window
 
 _DISPLAY_ALIASES = {
@@ -237,41 +238,6 @@ class PreparedFFTSignal:
     def percent_scale(self) -> float:
         """Return ``100·2/Σw``, targeting an isolated fractional cosine line in percent."""
         return 100.0 * 2.0 / self.window_sum
-
-
-_SAMPLING_GRID_TOLERANCE = 1e-6
-
-
-def _uniform_sample_interval(
-    time: NDArray[np.float64], *, caller: str, t_min: float | None, t_max: float | None
-) -> float:
-    """Require a finite, increasing uniform grid in the retained transform window."""
-    if time.size < 2:
-        raise ValueError(
-            f"{caller}: the transform window t_min={t_min!r}, t_max={t_max!r} holds "
-            f"{time.size} time sample(s); the FFT needs at least 2 to fix its sampling interval."
-        )
-    if not np.all(np.isfinite(time)):
-        raise ValueError(
-            f"{caller}: time must contain only finite samples in the transform window."
-        )
-    dt = float(np.mean(np.diff(time)))
-    if not np.isfinite(dt) or dt <= 0.0:
-        raise ValueError(
-            f"{caller}: time must increase; the window runs from {time[0]:g} µs to {time[-1]:g} µs."
-        )
-    # At Nyquist a displacement δ changes phase by πδ/dt, bounded here by π·1e-6.
-    # Positional residuals prevent interval errors accumulating across a long record.
-    residual = np.abs((time - time[0]) - np.arange(time.size) * dt) / dt
-    index = int(np.argmax(residual))
-    if residual[index] > _SAMPLING_GRID_TOLERANCE:
-        raise ValueError(
-            f"{caller}: time is not uniformly sampled: sample {index} at {time[index]:g} µs "
-            f"lies {residual[index]:.3g} intervals from the uniform grid {time[0]:g} + k·{dt:g} µs "
-            f"(tolerance {_SAMPLING_GRID_TOLERANCE:g}). The FFT assigns frequencies only to a "
-            "uniform grid; use Fixed binning, or resample explicitly before transforming."
-        )
-    return dt
 
 
 def _validated_fft_arrays(

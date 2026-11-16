@@ -96,3 +96,13 @@ shape, marking pulse-removed values/errors as NaN and exposing the amplitude
 ``gain`` (zero for removed support). The public spectrum operation selects the
 retained bins before returning a dataset. Errors remain conditional on the
 supplied response and existing estimator; no response uncertainty is added.
+
+Internal diagnostic observations
+-------------------------------
+
+These Qt-free helpers preserve uniform curves or prepare fixed native count
+bins over a captured nonuniform observation's retained native support. They do
+not change the fitted observation or the direct FFT sampling requirements.
+
+.. automodule:: asymmetry.core.fourier.diagnostic
+   :members: DiagnosticObservation, prepare_diagnostic_observation

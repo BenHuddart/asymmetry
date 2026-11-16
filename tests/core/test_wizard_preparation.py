@@ -243,14 +243,23 @@ def test_single_real_fit_scores_and_rebuilds_the_prepared_record(monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["variable", "constant_error"])
-def test_actual_nonuniform_wizard_detection_retains_fft_diagnostic(mode):
+def test_actual_nonuniform_wizard_completes_on_captured_counts(mode):
     run = _run(
         np.arange(1.0, 102), np.arange(103.0, 204), binning_mode=mode, bin0_us=0.14, bin10_us=0.5
     )
     dataset = observed(run)
     assert np.ptp(np.diff(dataset.time)) > 0.01
-    with pytest.raises(ValueError, match="uniform"):
-        single.build_fit_wizard_recommendation(dataset, max_workers=1)
+    recommendation = single.build_fit_wizard_recommendation(
+        dataset,
+        max_workers=1,
+        refine_top_candidates=0,
+        scope=WizardScope(physics=frozenset({PhysicsClass.GENERIC_RELAXATION})),
+    )
+    assert any(a.fit_result.success for a in recommendation.assessments)
+    assert (
+        recommendation.fingerprint.diagnostic_attribution["preparation"] == "fixed_native_support"
+    )
+    assert recommendation.analysed_points == dataset.n_points
 
 
 def test_global_completion_fits_and_rebuilds_count_record():

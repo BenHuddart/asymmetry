@@ -61,12 +61,6 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_peak_analysis,
 )
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
-from asymmetry.core.fitting.residual_statistics import (
-    max_abs_autocorrelation as _max_abs_autocorrelation,
-)
-from asymmetry.core.fitting.residual_statistics import (
-    runs_test_z_score as _runs_test_z_score,
-)
 from asymmetry.core.fitting.resolution import (
     DEFAULT_MIN_BINS_PER_E_FOLDING,
     ComponentResolutionAssessment,
@@ -83,6 +77,7 @@ from asymmetry.core.fitting.seeding import (
     record_scale_window_counts,
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.fitting.spectral_residual import _dominant_peak_metrics, _residual_diagnostics
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     UNTIMED,
@@ -95,7 +90,15 @@ from asymmetry.core.fitting.wizard_scope import (
 )
 from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
+from asymmetry.core.fourier.diagnostic import (
+    DiagnosticFitRecord,
+    DiagnosticObservation,
+    check_diagnostic_cancelled,
+    diagnostic_fit_record,
+    prepare_diagnostic_observation,
+)
 from asymmetry.core.fourier.fft import fft_arrays
+from asymmetry.core.fourier.sampling import is_uniform_sampling
 from asymmetry.core.transform.preparation import (
     WIZARD_PREPARATION,
     prepare_wizard_dataset,
@@ -261,6 +264,7 @@ class SpectrumFingerprint:
     #: from a pass that does not measure one.  Additive — old payloads
     #: deserialize to ``0.0``.
     damped_line_rate_per_us: float = 0.0
+    diagnostic_attribution: dict | None = None
 
     @property
     def has_damped_line_candidate(self) -> bool:
@@ -374,10 +378,21 @@ class CandidateAssessment:
             ("Max |autocorrelation|", self.max_abs_autocorrelation),
             ("Residual FFT peak SNR", self.residual_fft_peak_snr),
         )
-        return tuple(
-            f"{label}: {value:.3f}" if np.isfinite(value) else f"{label}: unavailable"
-            for label, value in metrics
-        ) + tuple(self.fit_result.warnings)
+        return (
+            tuple(
+                f"{label}: {value:.3f}" if np.isfinite(value) else f"{label}: unavailable"
+                for label, value in metrics
+            )
+            + (
+                (
+                    "Residual FFT observation: "
+                    + self.fit_result.spectral_residual_attribution["observation"],
+                )
+                if self.fit_result.spectral_residual_attribution is not None
+                else ()
+            )
+            + tuple(self.fit_result.warnings)
+        )
 
     @property
     def is_disqualified(self) -> bool:
@@ -528,7 +543,11 @@ class FitWizardRecommendation:
 
 
 def fingerprint_spectrum(
-    dataset: MuonDataset, *, peak_analysis: PeakAnalysis | None = None
+    dataset: MuonDataset,
+    *,
+    peak_analysis: PeakAnalysis | None = None,
+    diagnostic: DiagnosticObservation | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> SpectrumFingerprint:
     """Extract deterministic features used to shortlist candidate models.
 
@@ -540,6 +559,13 @@ def fingerprint_spectrum(
     disagree once the merge policy drops one of them.  Passed in, they are the
     same peaks by construction.
     """
+    if cancel_check is not None:
+        cancel_check()
+    view = (
+        diagnostic
+        if diagnostic is not None
+        else prepare_diagnostic_observation(dataset, cancel_check=cancel_check)
+    )
     n_points = max(int(dataset.n_points), 1)
     early_count, late_count = record_scale_window_counts(n_points)
 
@@ -567,22 +593,27 @@ def fingerprint_spectrum(
     error_full = np.asarray(dataset.error, dtype=float)
     fft_end = effective_analysis_window(t, error_full)
     t_win = t[:fft_end]
-    centered_win = centered[:fft_end]
     smoothed_win = smoothed_centered[:fft_end]
     error_win = error_full[:fft_end]
+    spectral_end = effective_analysis_window(view.time, view.error)
+    spectral_time = view.time[:spectral_end]
+    spectral_signal = (view.asymmetry - tail_estimate)[:spectral_end]
+    spectral_error = view.error[:spectral_end]
     # Internal seeding FFT: the window is this module's choice, not the
     # user's, so the early-signal guard's advice is not actionable here.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
         frequencies, _real, magnitude = fft_arrays(
-            t_win,
-            centered_win,
-            error_win,
+            spectral_time,
+            spectral_signal,
+            spectral_error,
             window=_DEFAULT_FFT_WINDOW,
             padding_factor=_DEFAULT_FFT_PADDING,
         )
+    if cancel_check is not None:
+        cancel_check()
     dominant_fft_frequency_mhz, dominant_fft_snr = _dominant_peak_metrics(frequencies, magnitude)
-    duration = max(float(t_win[-1] - t_win[0]), _EPS) if t_win.size > 1 else 1.0
+    duration = max(float(spectral_time[-1] - spectral_time[0]), _EPS)
     dominant_fft_cycles_in_window = float(dominant_fft_frequency_mhz * duration)
 
     # The Hann view above cannot contain a heavily damped line, so the
@@ -591,7 +622,11 @@ def fingerprint_spectrum(
     # exactly the information ``dominant_fft_*`` structurally cannot supply.
     # "Strongest" means first in the pass's own order, which is Δχ²-descending:
     # the scan's SNR ranks rungs, its Δχ² ranks lines.
-    if peak_analysis is not None:
+    if (
+        peak_analysis is not None
+        and not peak_analysis.detrended
+        and peak_analysis.diagnostic_attribution == view.window_attribution(spectral_end, "hann")
+    ):
         scan_peaks = tuple(peak for peak in peak_analysis.peaks if peak.source == "damped_scan")
         if not scan_peaks:
             # A line both passes saw is reported by the Hann peak that won the
@@ -601,7 +636,7 @@ def fingerprint_spectrum(
                 peak for peak in peak_analysis.peaks if peak.damping_rate_per_us is not None
             )
     else:
-        scan_peaks = analyze_damped_scan_peaks(t_win, centered_win, error_win).peaks
+        scan_peaks = analyze_damped_scan_peaks(spectral_time, spectral_signal, spectral_error).peaks
     damped_line = scan_peaks[0] if scan_peaks else None
 
     curvature_count = min(n_points, max(8, n_points // 6))
@@ -659,6 +694,7 @@ def fingerprint_spectrum(
     )
 
     return SpectrumFingerprint(
+        diagnostic_attribution=view.window_attribution(spectral_end, "hann"),
         tail_estimate=tail_estimate,
         initial_amplitude_estimate=initial_amplitude_estimate,
         zero_crossings=zero_crossings,
@@ -998,7 +1034,7 @@ def _scope_filter_family(
 
 
 def build_wizard_families(
-    fingerprint: SpectrumFingerprint,
+    fingerprint: SpectrumFingerprint | None,
     current_model: CompositeModel | None = None,
     *,
     scope_resolution: ScopeResolution | None = None,
@@ -1131,7 +1167,7 @@ def build_wizard_families(
                     ),
                 ),
             ),
-            priority=1.0 if fingerprint.multi_rate_hint else 0.0,
+            priority=1.0 if fingerprint is not None and fingerprint.multi_rate_hint else 0.0,
         )
     )
 
@@ -1191,7 +1227,7 @@ def build_wizard_families(
                     rationale="Static Gaussian KT under a longitudinal field.",
                 ),
             ),
-            priority=1.0 if fingerprint.kt_like_hint else 0.0,
+            priority=1.0 if fingerprint is not None and fingerprint.kt_like_hint else 0.0,
         )
     )
 
@@ -1286,7 +1322,7 @@ def build_wizard_families(
                     ),
                 ),
             ),
-            priority=1.0 if fingerprint.oscillatory_hint else 0.0,
+            priority=1.0 if fingerprint is not None and fingerprint.oscillatory_hint else 0.0,
         )
     )
 
@@ -2564,6 +2600,7 @@ def build_fit_wizard_recommendation(
     refine_top_candidates: int = _REFINEMENT_CANDIDATES,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
+    diagnostic: DiagnosticObservation | None = None,
 ) -> FitWizardRecommendation:
     """Analyze one asymmetry spectrum and recommend a fit candidate.
 
@@ -2634,6 +2671,11 @@ def build_fit_wizard_recommendation(
     and :attr:`~FitWizardRecommendation.analysed_points`, and every information
     criterion in it refers to that analysed record.
     """
+
+    def _check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit wizard analysis cancelled.")
+
     # Peak pass A first, so the fingerprint's damped-line candidate and the
     # peaks that seed the candidates are one computation rather than two that
     # can disagree.  Nothing in the peak pass depends on the fingerprint.
@@ -2643,8 +2685,20 @@ def build_fit_wizard_recommendation(
         stage_callback=stage_callback,
         message="Spectral detection: Hann pass, damped-line scan and fingerprint",
     ):
-        peak_analysis = analyze_dataset_peaks(dataset)
-        fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
+        diagnostic = (
+            diagnostic
+            if diagnostic is not None
+            else prepare_diagnostic_observation(dataset, cancel_check=_check_cancelled)
+        )
+        peak_analysis = analyze_dataset_peaks(
+            dataset, diagnostic=diagnostic, cancel_check=_check_cancelled
+        )
+        fingerprint = fingerprint_spectrum(
+            dataset,
+            peak_analysis=peak_analysis,
+            diagnostic=diagnostic,
+            cancel_check=_check_cancelled,
+        )
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_dataset(dataset, scope, fit_times)
@@ -2663,10 +2717,6 @@ def build_fit_wizard_recommendation(
     def _progress(message: str) -> None:
         if progress_callback is not None:
             progress_callback(message)
-
-    def _check_cancelled() -> None:
-        if cancel_callback is not None and cancel_callback():
-            raise FitCancelledError("Fit wizard analysis cancelled.")
 
     if not families:
         return FitWizardRecommendation(
@@ -2720,7 +2770,9 @@ def build_fit_wizard_recommendation(
         peak_analysis = _peaks_within_analysis_band(peak_analysis, analysis_dataset)
 
     # Candidate workers receive fitted arrays and provenance, with replay inputs removed.
-    analysis_fit_record = analysis_dataset.fit_record()
+    analysis_fit_record = diagnostic_fit_record(
+        analysis_dataset, diagnostic=diagnostic if analysis_dataset is dataset else None
+    )
 
     stage1_context = TemplateSeedContext(
         peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
@@ -2829,16 +2881,14 @@ def build_fit_wizard_recommendation(
                 curve_values = _curve_parameter_values(
                     best_smooth.template.model, best_smooth.fit_result.parameters
                 )
-                detrend_curve = np.asarray(
-                    best_smooth.template.model.function(
-                        np.asarray(dataset.time, dtype=float), **curve_values
-                    ),
-                    dtype=float,
-                )
                 detrended_analysis = analyze_dataset_peaks(
                     dataset,
-                    detrend_curve=detrend_curve,
+                    detrend_model=lambda times: best_smooth.template.model.function(
+                        times, **curve_values
+                    ),
                     detrend_template_key=best_smooth.template.key,
+                    diagnostic=diagnostic,
+                    cancel_check=_check_cancelled,
                 )
                 if user_frequencies_mhz:
                     detrended_analysis = merge_user_peaks(
@@ -2887,7 +2937,9 @@ def build_fit_wizard_recommendation(
                         analysis_dataset,
                         field_gauss=field_gauss,
                         include_families=envelope_scope,
-                        analysis_window_us=effective_window_duration(dataset),
+                        analysis_window_us=effective_window_duration(
+                            dataset, diagnostic=diagnostic
+                        ),
                     ),
                 )
         pattern_family_keys = frozenset(
@@ -3093,21 +3145,8 @@ def build_fit_wizard_recommendation(
             tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
         )
         all_assessments = _apply_frequency_support_disqualifiers(
-            # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
-            # Every effective-window quantity in the wizard's verdict (this
-            # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
-            # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
-            # fingerprint's window) has to be measured on the record peak detection
-            # ran on, or the verdict changes when the *cost* heuristic decides to
-            # rebin. ``effective_analysis_window`` truncates at the first bin whose
-            # σ exceeds 5× the early σ, and rebinning averages away the per-bin
-            # scatter in σ, so a rebinned copy of a real record keeps a visibly
-            # longer informative window (4.93 µs against 3.85 µs on one measured
-            # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
-            # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
-            # disqualified the whole precession family on a textbook TF record.
-            # The fits themselves stay on ``analysis_dataset``; only the window
-            # arithmetic is anchored here.
+            # Spectral support uses the declared diagnostic's informative µs
+            # window. Cost packing changes the fitted observation, not T_eff.
             dataset,
             tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
             peak_analysis,
@@ -3121,7 +3160,7 @@ def build_fit_wizard_recommendation(
             message="Refinement: re-fitting top candidates with the full seed ladder",
         ):
             all_assessments = _refine_top_candidates(
-                dataset=analysis_dataset,
+                dataset=analysis_fit_record,
                 fingerprint=fingerprint,
                 assessments=all_assessments,
                 metric=metric,
@@ -3202,7 +3241,8 @@ def build_fit_wizard_recommendation_for_templates(
     factor); they are tried ahead of the seed ladder, whose depth is
     ``variant_budget``.
     """
-    active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
+    diagnostic = prepare_diagnostic_observation(dataset)
+    active_fingerprint = fingerprint or fingerprint_spectrum(dataset, diagnostic=diagnostic)
     active_templates = tuple(templates)
     warm_starts = dict(warm_start_by_template or {})
     # No peak detection on this path, but the applied field is metadata rather
@@ -3210,7 +3250,7 @@ def build_fit_wizard_recommendation_for_templates(
     active_seed_context = seed_context or _field_seed_context(dataset)
     # The tasks carry the fit record, not the record: a task payload is built to
     # cross a process boundary, and no assessment reads a raw count.
-    fit_record = dataset.fit_record()
+    fit_record = diagnostic_fit_record(dataset, diagnostic=diagnostic)
     assessments = tuple(
         _run_template_assessments(
             [
@@ -3564,8 +3604,13 @@ def rerank_fit_wizard_recommendation(
 
     if not primary.residual_diagnostics_available:
         caveat = (caveat + " " if not primary.residual_gate_passed else "") + (
-            "Residual FFT and autocorrelation are unavailable after Gaussian observation omission; "
-            "inspect the available residual checks."
+            "Unavailable residual diagnostics: "
+            + ", ".join(
+                line.removesuffix(": unavailable")
+                for line in primary.diagnostic_summary()
+                if line.endswith(": unavailable")
+            )
+            + "; inspect the available residual checks."
         )
 
     # Edge-of-window caveat: keep the tier as computed, but flag an
@@ -3802,6 +3847,7 @@ def _deserialize_candidate_template(payload: object) -> CandidateTemplate | None
 
 def _serialize_spectrum_fingerprint(fingerprint: SpectrumFingerprint) -> dict[str, object]:
     return {
+        "diagnostic_attribution": fingerprint.diagnostic_attribution,
         "tail_estimate": fingerprint.tail_estimate,
         "initial_amplitude_estimate": fingerprint.initial_amplitude_estimate,
         "zero_crossings": fingerprint.zero_crossings,
@@ -3829,6 +3875,7 @@ def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | 
         return None
     try:
         return SpectrumFingerprint(
+            diagnostic_attribution=payload.get("diagnostic_attribution"),
             tail_estimate=float(payload.get("tail_estimate", 0.0)),
             initial_amplitude_estimate=float(payload.get("initial_amplitude_estimate", 0.0)),
             zero_crossings=int(payload.get("zero_crossings", 0)),
@@ -4335,7 +4382,12 @@ def _assess_candidate_template(
     n_points = gaussian_selection(dataset).used
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
-        _residual_diagnostics(dataset, best_result)
+        _residual_diagnostics(
+            dataset,
+            best_result,
+            template.model.function,
+            cancel_check=lambda: check_diagnostic_cancelled(cancel_callback),
+        )
     )
     bound_hits = _bound_hit_names(best_result.parameters)
     residual_gate_reasons = _residual_gate_reasons(
@@ -4515,30 +4567,6 @@ def _moving_average(values: NDArray[np.float64], window: int) -> NDArray[np.floa
     padded = np.pad(arr, pad_width=pad, mode="edge")
     kernel = np.full(window, 1.0 / float(window), dtype=float)
     return np.convolve(padded, kernel, mode="valid")
-
-
-def _dominant_peak_metrics(
-    frequencies: NDArray[np.float64],
-    magnitude: NDArray[np.float64],
-) -> tuple[float, float]:
-    if frequencies.size < 2 or magnitude.size < 2:
-        return 0.0, 0.0
-
-    freqs = np.asarray(frequencies, dtype=float)
-    mags = np.asarray(magnitude, dtype=float)
-    positive = np.flatnonzero(freqs > 0.0)
-    if positive.size == 0:
-        return 0.0, 0.0
-
-    positive_mags = mags[positive]
-    peak_idx_local = int(np.argmax(positive_mags))
-    peak_idx = int(positive[peak_idx_local])
-    peak_mag = float(mags[peak_idx])
-
-    noise = np.delete(positive_mags, peak_idx_local)
-    noise_floor = float(np.median(noise)) if noise.size else 0.0
-    snr = peak_mag / max(noise_floor, _EPS)
-    return float(freqs[peak_idx]), float(snr)
 
 
 def _quadratic_curvature(x: NDArray[np.float64], y: NDArray[np.float64]) -> float:
@@ -4755,8 +4783,22 @@ def _initial_parameters_for_template(
     t = np.asarray(dataset.time, dtype=float)
     y = np.asarray(dataset.asymmetry, dtype=float)
     duration = max(float(t[-1] - t[0]), _EPS) if t.size > 1 else 1.0
-    dt = max(float(np.mean(np.diff(t))), _EPS) if t.size > 1 else 1.0
-    nyquist = 0.5 / dt
+    spectral_duration = duration
+    t_origin = float(t[0]) if t.size else 0.0
+    uniform_grid = is_uniform_sampling(t)
+    if uniform_grid:
+        nyquist = 0.5 / float(np.mean(np.diff(t)))
+    else:
+        attribution = (
+            prepare_diagnostic_observation(dataset).attribution.to_dict()
+            if isinstance(dataset, DiagnosticFitRecord)
+            or fingerprint.diagnostic_attribution is None
+            else fingerprint.diagnostic_attribution
+        )
+        support = attribution["source_support"]
+        t_origin = support["origin_us"]
+        nyquist = 0.5 / support["interval_us"]
+        spectral_duration = max(support["last_time_us"] - support["origin_us"], _EPS)
 
     data_min = float(np.min(y)) if y.size else 0.0
     data_max = float(np.max(y)) if y.size else 0.0
@@ -4777,14 +4819,9 @@ def _initial_parameters_for_template(
         )
     )
     gaussian_width = max(0.05, min(20.0, gaussian_width if np.isfinite(gaussian_width) else 0.5))
-    # Frequency seed from the dominant FFT line. FOLLOW-UP (high-TF envelope
-    # seeding, GUI Round-4 AFM finding): for high transverse fields the precession
-    # (e.g. ~800-1100 MHz) sits near/above the bin Nyquist, so the FFT peak and
-    # this seed under-resolve it and the Oscillatory*Gaussian envelope fit stays
-    # seed-fragile. A robust fix needs a field-derived frequency seed
-    # (gamma_mu * B via spectral.field_gauss_to_frequency_mhz) plus finer
-    # rebinning, which spans the GUI populate path; tracked as a separate change.
-    frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / duration)
+    # Frequency floors and bands describe the diagnostic's uniform µs grid;
+    # envelope and amplitude estimates retain the original fitted observations.
+    frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / spectral_duration)
     phase_guess = phase_seed_from_sign(y[0] - fingerprint.tail_estimate)
 
     # Peak-detection seeds supersede the single-line fingerprint guess; a
@@ -4823,14 +4860,8 @@ def _initial_parameters_for_template(
             min(peak.frequency_mhz + half_width, 0.98 * nyquist),
         )
 
-    # The damped-line scan refers its amplitude and phase to the FIRST SAMPLE of
-    # the record it measured; the model refers every parameter to t = 0. On a
-    # record that starts at t = 0 the two coincide, and on one that does not the
-    # conversion is exact: A(0) = A(t₀)·e^{+λt₀} and φ(0) = φ(t₀) − 2πf·t₀.
-    # (A rebinned copy's first sample sits half a merged bin later than the
-    # original's; that residue is far below what a seed needs to be right to.)
-    t_origin = float(t[0]) if t.size else 0.0
-
+    # The scan measures A and phase at its diagnostic origin; the model uses
+    # t=0: A(0)=A(t₀)exp(λt₀), φ(0)=φ(t₀)−2πft₀, with t in microseconds.
     def _seeded_amplitude(peak: DetectedPeak | None, fallback: float) -> float:
         """The line's measured amplitude referred to t = 0, else ``fallback``.
 
@@ -4849,7 +4880,7 @@ def _initial_parameters_for_template(
             return fallback
         amplitude = abs(float(peak.amplitude_percent))
         rate = peak.damping_rate_per_us
-        if rate is not None and rate > 0.0 and t_origin > 0.0:
+        if rate is not None and rate > 0.0 and (t_origin > 0.0 or not uniform_grid):
             growth = float(rate) * t_origin
             if growth > _MAX_SEED_BACK_EXTRAPOLATION:
                 return fallback
@@ -5236,7 +5267,7 @@ def _initial_parameters_for_template(
                 data_min=data_min,
                 data_max=data_max,
                 data_span=data_span,
-                duration=duration,
+                duration=spectral_duration if base_name == "frequency" else duration,
                 nyquist=nyquist,
             )
         parameters.add(
@@ -5750,64 +5781,19 @@ def _scipy_fit_fallback(
     )
 
 
-def _residual_diagnostics(
-    dataset: MuonDataset,
-    fit_result: FitResult,
-) -> tuple[float, float, float, float]:
-    if fit_result.residuals is None or len(fit_result.residuals) == 0:
-        return float("inf"), 0.0, 0.0, float("inf")
-
-    residuals = np.asarray(fit_result.residuals, dtype=float)
-    observations = dataset_observations(dataset)
-    safe_errors = observations.sigma
-    if residuals.size != safe_errors.size:
-        raise ValueError("Residuals must describe the selected Gaussian observations.")
-    standardized = residuals / safe_errors
-    residual_rms = (
-        float(np.sqrt(np.mean(np.square(standardized)))) if standardized.size else float("inf")
-    )
-
-    runs_z_score = _runs_test_z_score(standardized)
-    if observations.report is not None and observations.report.omitted:
-        message = "Residual autocorrelation and FFT unavailable: Gaussian selection omits acquisition bins."
-        if message not in fit_result.warnings:
-            fit_result.warnings.append(message)
-        return residual_rms, runs_z_score, float("nan"), float("nan")
-    max_abs_autocorrelation = _max_abs_autocorrelation(standardized)
-    if residual_rms <= 0.1 or float(np.max(np.abs(standardized), initial=0.0)) <= 0.25:
-        return residual_rms, runs_z_score, max_abs_autocorrelation, 0.0
-
-    # Internal residual diagnostic: same reasoning as the seeding FFT above.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
-        frequencies, _real, magnitude = fft_arrays(
-            observations.time,
-            residuals,
-            safe_errors,
-            window=_DEFAULT_FFT_WINDOW,
-            padding_factor=_DEFAULT_FFT_PADDING,
-        )
-    _peak_freq, residual_fft_peak_snr = _dominant_peak_metrics(frequencies, magnitude)
-    return residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr
-
-
 def _peaks_within_analysis_band(
     analysis: PeakAnalysis, analysis_dataset: MuonDataset
 ) -> PeakAnalysis:
-    """Drop every detected line the analysed record cannot represent.
+    """Apply a fitted grid's Nyquist band only when that grid is uniform.
 
-    Detection runs on the full record for its bandwidth, but every fit runs on
-    ``analysis_dataset`` — the prepared copy — whose Nyquist frequency is
-    lower. A line above it (a residual-FFT noise spike a few percent below the
-    native Nyquist, say) would be seeded into a template whose frequency bounds
-    then straddle a limit the rebinned record cannot reach, so it is removed
-    here, once, where the analysed record is decided.
+    A nonuniform centre-evaluated fit has no single Nyquist frequency. Its
+    adequacy limits remain separate from the fixed diagnostic's bandwidth.
     """
 
     time = np.asarray(analysis_dataset.time, dtype=float)
-    if time.size < 2:
+    if time.size < 2 or not is_uniform_sampling(time):
         return analysis
-    dt = float(np.median(np.diff(time)))
+    dt = float(time[1] - time[0])
     nyquist_mhz = 0.5 / dt
     kept = tuple(peak for peak in analysis.peaks if abs(float(peak.frequency_mhz)) < nyquist_mhz)
     if len(kept) == len(analysis.peaks):
@@ -5841,6 +5827,10 @@ def analysis_rebin_factor(
       With no eligible peaks and no field there is nothing to protect and only
       the cost constraint applies.
 
+    For uniform fits dt retains the existing spacing. For nonuniform fits the
+    largest centre separation bounds additional cost packing; it is not an FFT
+    interval or a universal aliasing guarantee.
+
     Never returns less than 1. Peak detection and the fingerprint are NOT
     rebinned: they are cheap relative to a Stage-2 fit set and they need the
     full bandwidth to find ``f_max`` in the first place.
@@ -5853,7 +5843,11 @@ def analysis_rebin_factor(
     if n <= budget or n < 2:
         return 1
     time = np.asarray(dataset.time, dtype=float)
-    dt = float(np.median(np.diff(time)))
+    dt = (
+        float(np.median(np.diff(time)))
+        if is_uniform_sampling(time)
+        else float(np.max(np.diff(time)))
+    )
     if not np.isfinite(dt) or dt <= 0.0:
         return 1
 
@@ -5906,17 +5900,16 @@ def _fit_window_duration(dataset: MuonDataset) -> float:
     return float(time.max() - time.min())
 
 
-def effective_window_duration(dataset: MuonDataset) -> float:
-    """Length T_eff of the SNR-truncated informative window (µs), or 0.
+def effective_window_duration(
+    dataset: MuonDataset, *, diagnostic: DiagnosticObservation | None = None
+) -> float:
+    """Duration of the declared spectral view's informative window, in µs.
 
-    Always measured on the record handed in, which for wizard callers is the
-    FULL-RESOLUTION one: rebinning averages the per-bin scatter out of σ and so
-    pushes :func:`effective_analysis_window`'s truncation later, and no verdict
-    about what the data can support may depend on the cost heuristic that chose
-    the rebin factor.
+    Count preparation resolves native support before error-based truncation.
+    Fit cost merging cannot redefine this spectral corroboration window.
     """
-    time = np.asarray(dataset.time, dtype=float)
-    error = np.asarray(dataset.error, dtype=float)
+    view = diagnostic if diagnostic is not None else prepare_diagnostic_observation(dataset)
+    time, error = view.time, view.error
     if time.size < 2:
         return 0.0
     end = effective_analysis_window(time, error)
@@ -5980,14 +5973,11 @@ def _apply_frequency_support_disqualifiers(
     metric rerank of the serialized payload) treats them like every other
     targeted disqualifier.
     """
-    time = np.asarray(dataset.time, dtype=float)
-    error = np.asarray(dataset.error, dtype=float)
-    if time.size < 2:
-        return assessments
-    end = effective_analysis_window(time, error)
-    if end < 2:
-        return assessments
-    t_eff = float(time[end - 1] - time[0])
+    attribution = peak_analysis.diagnostic_attribution if peak_analysis is not None else None
+    if attribution is not None:
+        t_eff = float(attribution["last_time_us"] - attribution["origin_us"])
+    else:
+        t_eff = effective_window_duration(dataset)
     if t_eff <= _EPS:
         return assessments
     resolution_eff = 1.0 / t_eff
@@ -6112,7 +6102,7 @@ def _refine_top_candidates(
         return assessments
 
     progress(f"Refinement: re-fitting {len(targets)} top candidates with the full seed ladder")
-    fit_record = dataset.fit_record()
+    fit_record = diagnostic_fit_record(dataset)
     refined = _run_template_assessments(
         [
             _AssessmentTask(

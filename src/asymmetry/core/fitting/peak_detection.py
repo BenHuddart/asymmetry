@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -31,9 +31,12 @@ from numpy.typing import NDArray
 from scipy.ndimage import median_filter
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.spectral_window import _centered_signal, effective_analysis_window
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.burg import burg_spectrum
+from asymmetry.core.fourier.diagnostic import DiagnosticObservation, prepare_diagnostic_observation
 from asymmetry.core.fourier.fft import fft_arrays
+from asymmetry.core.fourier.sampling import _uniform_sample_interval
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # ``damped_line_scan`` imports ``effective_analysis_window`` from this
@@ -266,6 +269,7 @@ class PeakAnalysis:
     #: ``None`` when the scan did not run.  Additive — old payloads
     #: deserialize to ``None``.
     damped_lines: DampedLineAnalysis | None = None
+    diagnostic_attribution: dict | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -358,6 +362,7 @@ def serialize_peak_analysis(analysis: PeakAnalysis) -> dict[str, object]:
         "burg_order": analysis.burg_order,
         "burg_hit_boundary": bool(analysis.burg_hit_boundary),
         "damped_lines": _serialize_damped_lines(analysis.damped_lines),
+        "diagnostic_attribution": analysis.diagnostic_attribution,
     }
 
 
@@ -382,6 +387,7 @@ def deserialize_peak_analysis(payload: object) -> PeakAnalysis | None:
         burg_order=(int(burg_order) if burg_order is not None else None),
         burg_hit_boundary=bool(payload.get("burg_hit_boundary", False)),
         damped_lines=_deserialize_damped_lines(payload.get("damped_lines")),
+        diagnostic_attribution=payload.get("diagnostic_attribution"),
     )
 
 
@@ -773,70 +779,6 @@ def detect_peaks_in_spectrum(
 # --------------------------------------------------------------------------- #
 
 
-def effective_analysis_window(
-    time: NDArray[np.float64],
-    error: NDArray[np.float64],
-    *,
-    factor: float = _SNR_TRUNCATION_FACTOR,
-    min_points: int = _MIN_WINDOW_POINTS,
-) -> int:
-    """Return the exclusive end index of the noise-truncated analysis window.
-
-    μSR error bars grow roughly exponentially with time (dying-muon statistics)
-    and are capped at 100 %; a full-window FFT is then dominated by the late-time
-    pure-noise tail, whitening the spectrum so even clean lines vanish.  This
-    truncates the record at the first point whose per-point error exceeds
-    ``factor`` times the early-time error — i.e. where the per-point information
-    ``1/σ²`` has fallen below ``1/factor²`` of its early value — keeping the
-    statistically informative early window and shedding the noise tail.
-
-    The criterion is strictly **per-point**, so flat-error records (constant σ,
-    the synthetic/test convention) are never truncated: the returned index is the
-    full length and the reported resolution is unchanged.  Returns the full
-    length for short records (``≤ min_points``) or degenerate error arrays.
-    """
-    err = np.asarray(error, dtype=float)
-    n = err.size
-    if n <= int(min_points) or int(time.size) != n:
-        return n
-    finite = np.isfinite(err) & (err > 0.0)
-    if not np.any(finite):
-        return n
-    early = max(5, n // 20)
-    sigma_early = float(np.median(err[:early][finite[:early]])) if np.any(finite[:early]) else 0.0
-    if not np.isfinite(sigma_early) or sigma_early <= 0.0:
-        return n
-    # First point that is finite and exceeds the SNR-truncation threshold.
-    exceeds = finite & (err > float(factor) * sigma_early)
-    if not np.any(exceeds):
-        return n
-    end = int(np.argmax(exceeds))
-    return max(end, int(min_points))
-
-
-def _centered_signal(
-    dataset: MuonDataset, detrend_curve: NDArray[np.float64] | None
-) -> tuple[NDArray[np.float64], bool]:
-    """Return ``(signal, detrended)`` — the residual to transform.
-
-    With ``detrend_curve`` the residual is ``asymmetry − detrend_curve``;
-    otherwise it is ``asymmetry −`` tail estimate (mean of the last ~20 %),
-    mirroring the fingerprint centering in ``fit_wizard``.
-    """
-    y = np.asarray(dataset.asymmetry, dtype=float)
-    if detrend_curve is not None:
-        curve = np.asarray(detrend_curve, dtype=float)
-        if curve.shape != y.shape:
-            raise ValueError(
-                f"detrend_curve shape {curve.shape} does not match asymmetry {y.shape}"
-            )
-        return y - curve, True
-    n = y.size
-    late = min(n, max(5, n // 5))  # last ~20 %
-    tail = float(np.mean(y[-late:])) if n else 0.0
-    return y - tail, False
-
-
 def early_window_crops(n_points: int) -> tuple[int, ...]:
     """Point counts of the early-window crop ladder for an ``n_points`` record.
 
@@ -1112,6 +1054,11 @@ def analyze_damped_scan_peaks(
     t = np.asarray(time, dtype=float)
     y = np.asarray(signal, dtype=float)
     err = np.asarray(error, dtype=float)
+    dt = (
+        _uniform_sample_interval(t, caller="Damped-line diagnostic", t_min=None, t_max=None)
+        if t.size > 1
+        else 0.0
+    )
     analysis = detect_damped_lines(t, y, err, max_lines=int(max_lines))
 
     scan_peaks = [
@@ -1153,11 +1100,7 @@ def analyze_damped_scan_peaks(
             continue
         peaks.append(peak)
 
-    nyquist = 0.0
-    if t.size > 1:
-        dt = float(np.median(np.diff(t)))
-        if dt > 0.0:
-            nyquist = 0.5 / dt
+    nyquist = 0.5 / dt if dt > 0 else 0.0
     return PeakAnalysis(
         peaks=tuple(peaks),
         noise_floor=0.0,
@@ -1234,10 +1177,13 @@ def analyze_dataset_peaks(
     *,
     detrend_curve: NDArray[np.float64] | None = None,
     detrend_template_key: str | None = None,
+    detrend_model: Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
     max_peaks: int = 6,
     min_snr: float = 2.5,
     burg_check: str = "auto",
     damped_pass: bool = True,
+    diagnostic: DiagnosticObservation | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> PeakAnalysis:
     """Detect oscillation lines in a time-domain dataset via FFT + Burg check.
 
@@ -1269,7 +1215,14 @@ def analyze_dataset_peaks(
     ----------
     detrend_curve
         Optional model curve aligned with ``dataset.time`` to subtract before
-        transforming (the "residual FFT" path).
+        transforming on the same uniform grid (the "residual FFT" path).
+    detrend_model
+        Model callable evaluated on diagnostic times when count preparation
+        changes the grid; sampled detrend arrays cannot supply those values.
+    diagnostic
+        Shared owned diagnostic observation prepared for this input.
+    cancel_check
+        Cooperative cancellation check between numerical passes.
     detrend_template_key
         Provenance label recorded on the analysis when ``detrend_curve`` is used.
     burg_check
@@ -1282,8 +1235,24 @@ def analyze_dataset_peaks(
     damped_pass
         Set ``False`` to run the historical Hann-only detection.
     """
-    t_full = np.asarray(dataset.time, dtype=float)
-    err_full = np.asarray(dataset.error, dtype=float)
+    if cancel_check is not None:
+        cancel_check()
+    view = (
+        diagnostic
+        if diagnostic is not None
+        else prepare_diagnostic_observation(dataset, cancel_check=cancel_check)
+    )
+    if detrend_curve is not None and detrend_model is not None:
+        raise ValueError("Supply a sampled detrend curve or an evaluable model, not both.")
+    if detrend_curve is not None and not np.array_equal(view.time, dataset.time):
+        raise ValueError(
+            "A sampled detrend_curve cannot be evaluated on the fixed diagnostic grid; supply detrend_model(time)."
+        )
+    if detrend_model is not None:
+        detrend_curve = np.asarray(detrend_model(view.time), dtype=float)
+    diagnostic_dataset = MuonDataset(view.time, view.asymmetry, view.error)
+    t_full = view.time
+    err_full = view.error
 
     # SNR-truncate the window before transforming: the late-time error blow-up
     # (capped at 100 %) otherwise whitens the FFT and buries even strong lines.
@@ -1291,14 +1260,16 @@ def analyze_dataset_peaks(
     # reflects the effective window actually used.
     end = effective_analysis_window(t_full, err_full)
     t = t_full[:end]
-    signal_full, detrended = _centered_signal(dataset, detrend_curve)
+    signal_full, detrended = _centered_signal(diagnostic_dataset, detrend_curve)
     signal = signal_full[:end]
     error = err_full[:end]
 
+    if cancel_check is not None:
+        cancel_check()
     n = t.size
     if n > 1:
         duration = float(t[-1] - t[0])
-        dt = float(np.median(np.diff(t)))
+        dt = _uniform_sample_interval(t, caller="Peak diagnostic", t_min=None, t_max=None)
     else:
         duration = 1.0
         dt = 1.0
@@ -1334,10 +1305,13 @@ def analyze_dataset_peaks(
     analysis = replace(
         analysis,
         nyquist_mhz=nyquist_mhz,
+        diagnostic_attribution=view.window_attribution(end, "hann"),
         detrended=detrended,
         detrend_template_key=(detrend_template_key if detrend_curve is not None else None),
     )
 
+    if cancel_check is not None:
+        cancel_check()
     if _should_run_burg(burg_check, n, analysis.peaks, resolution_mhz):
         analysis = _apply_burg_cross_check(analysis, signal, frequencies, dt, resolution_mhz)
 
@@ -1353,7 +1327,11 @@ def analyze_dataset_peaks(
     # Merged AFTER the Burg cross-check so scan peaks never reach it: Burg is
     # unreliable on short damped windows and would veto them (see the
     # ``burg_check`` note above).
+    if cancel_check is not None:
+        cancel_check()
     scan = analyze_damped_scan_peaks(t_full, signal_full, err_full)
+    if cancel_check is not None:
+        cancel_check()
     return merge_damped_scan_peaks(analysis, scan, max_peaks=max_peaks)
 
 

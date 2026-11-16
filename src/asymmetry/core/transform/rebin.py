@@ -173,6 +173,22 @@ class BinningSpec:
         return edges
 
 
+@dataclass(frozen=True, init=False)
+class NativeDiagnosticBinning(BinningSpec):
+    """Fixed native bins covering exactly the source operation's retained edges."""
+
+    source_binning: BinningSpec
+
+    def __init__(self, source_binning: BinningSpec):
+        super().__init__()
+        object.__setattr__(self, "source_binning", source_binning)
+
+    def edges(self, n_bins: int, bin_width_us: float, t_start_us: float) -> NDArray[np.intp]:
+        """Resolve all selections before expanding the retained contiguous support."""
+        edges = self.source_binning.edges(n_bins, bin_width_us, t_start_us)
+        return np.arange(edges[0], edges[-1] + 1, dtype=np.intp) if edges.size > 1 else edges
+
+
 def binning_spec(grouping: dict[str, Any] | None) -> BinningSpec:
     """Parse file/project/user grouping binning, rejecting present invalid values."""
     values = {} if grouping is None else grouping

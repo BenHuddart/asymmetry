@@ -64,6 +64,7 @@ class FitResult:
     observation_report: ObservationReport | None = None
     input_attribution: dict | None = None
     computation_revision: str | None = None
+    spectral_residual_attribution: dict | None = None
 
     def __post_init__(self):
         self.objective = Objective(self.objective)
