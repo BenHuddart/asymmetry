@@ -1281,6 +1281,22 @@ gives the refit without ``--xmax``, rather than advising a held value.
    b          0.099391  0.022419
    flagged but fitted: 102 (large_rel_err); 103 (large_rel_err); ...
 
+For Gaussian-component widths entering a Brandt field fit, explicitly apply the
+same conversion as the GUI Custom Y transform:
+
+.. code-block:: console
+
+   $ asymmetry trend runs --series field-scan --param sigma \
+       --model SC_Brandt_VortexLattice --y-transform 'sqrt(2)*x'
+
+The stored x axis is in gauss for a Brandt field law; ``Bc2`` is in tesla.
+``--y-transform EXPR`` transforms the selected Y values and their errors for the
+new fit. The stored source table and CSV remain raw; the fit records its actual
+transform and its plot uses the transformed coordinates. Known unconverted
+Gaussian sources are refused with the explanation in :ref:`trend-width-inputs`.
+Stored tables without captured source conventions remain usable and unknown;
+loading never invents attribution or changes their numbers.
+
 A trend of fitted trend parameters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

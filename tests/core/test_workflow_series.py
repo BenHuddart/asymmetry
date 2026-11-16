@@ -769,3 +769,26 @@ def test_fit_one_keeps_a_negative_background_the_data_need() -> None:
     result = fit_one(record, recipe)
     assert not result["background_held"]
     assert result["parameters"]["A_bg"] == pytest.approx(-10.0, abs=0.5)
+
+
+def test_single_fit_sources_survive_tabulation_and_later_recipe_edits():
+    from asymmetry.core.workflow.series import build_trend_table
+
+    time = np.linspace(0, 5, 201)
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=0.2 * np.exp(-np.square(0.8 * time)),
+        error=np.full_like(time, 0.001),
+        metadata={"run_number": 1},
+    )
+    recipe = FitRecipe.from_expression("Gaussian", dataset=dataset)
+    result = fit_one(dataset, recipe)
+    assert result["success"]
+    result["x"] = 0.01
+    trend = build_trend_table({"1": result}, ["sigma"], "field")
+    source = trend.rows[0]["parameter_sources"]["sigma"]
+    assert source["component"] == "Gaussian"
+    assert source["widths"] == ["GAUSSIAN_COMPONENT"]
+    changed = FitRecipe.from_expression("Exponential", dataset=dataset)
+    assert changed.expression != recipe.expression
+    assert trend.rows[0]["parameter_sources"]["sigma"] == source

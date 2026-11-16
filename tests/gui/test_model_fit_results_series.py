@@ -31,6 +31,7 @@ from asymmetry.core.fitting.parameter_models import (  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.core.representation import RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
+from tests.gui._trend_panel import forbid_trend_optimization  # noqa: E402
 
 
 @pytest.fixture
@@ -67,7 +68,9 @@ def _groups():
 
 
 def test_records_trendable_results_series(mainwindow: MainWindow) -> None:
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
 
     modelfit = [
@@ -103,7 +106,9 @@ def test_records_trendable_results_series(mainwindow: MainWindow) -> None:
 
 def test_recursion_trend_of_results(mainwindow: MainWindow) -> None:
     """The headline acceptance: trend the outputs of a trend fit."""
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     series = next(
         s
@@ -122,7 +127,9 @@ def test_recursion_trend_of_results(mainwindow: MainWindow) -> None:
 
 
 def test_rerun_replaces_results_series(mainwindow: MainWindow) -> None:
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     first_id = next(
         s.batch_id
@@ -146,7 +153,9 @@ def test_results_series_is_json_safe(mainwindow: MainWindow) -> None:
     coordinate is stored as null, not a non-standard NaN token."""
     import json
 
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     series = next(
         s
@@ -160,7 +169,9 @@ def test_results_series_is_json_safe(mainwindow: MainWindow) -> None:
 def test_results_series_survives_trend_panel_refresh(mainwindow: MainWindow) -> None:
     """The series is first-class in the project model, so a trend-panel refresh
     (the pull path that wipes panel-only series) keeps it."""
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     mainwindow._refresh_trend_panel()
     panel_ids = set(mainwindow._fit_parameters_panel._group_fit_results.keys())
@@ -185,7 +196,9 @@ def test_restore_shows_only_active_representation_chips(
     missing, because the serialized panel cache holds only one representation
     and was restored blindly.
     """
-    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    output = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]), fit_result=_cross_group_result(), x_key="field"
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     mainwindow._refresh_trend_panel()
     active_ids = {s.batch_id for s in mainwindow._project_model.batches.values()}
@@ -260,10 +273,22 @@ def test_global_summary_accumulates_distinct_fits(mainwindow: MainWindow) -> Non
     """Two distinct cross-group fits add two members to the singleton Global
     summary series, each carrying that fit's globals + χ²ᵣ + fit_index."""
     mainwindow._record_model_fit_results_series(
-        "lambda", _groups(), SimpleNamespace(fit_result=_result_with_globals(2.0), x_key="field")
+        "lambda",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(2.0),
+            x_key="field",
+        ),
     )
     mainwindow._record_model_fit_results_series(
-        "nu", _groups(), SimpleNamespace(fit_result=_result_with_globals(5.0), x_key="temperature")
+        "nu",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(5.0),
+            x_key="temperature",
+        ),
     )
 
     accum = _accumulator(mainwindow)
@@ -290,7 +315,11 @@ def test_global_summary_is_trendable_against_fit_index(mainwindow: MainWindow) -
         mainwindow._record_model_fit_results_series(
             f"p{idx}",
             _groups(),
-            SimpleNamespace(fit_result=_result_with_globals(m), x_key="field"),
+            SimpleNamespace(
+                model=ParameterCompositeModel(["Linear"]),
+                fit_result=_result_with_globals(m),
+                x_key="field",
+            ),
         )
     accum = _accumulator(mainwindow)
     rows = mainwindow._build_series_rows(accum)
@@ -309,17 +338,33 @@ def test_global_summary_is_trendable_against_fit_index(mainwindow: MainWindow) -
 def test_global_summary_rerun_replaces_row(mainwindow: MainWindow) -> None:
     """Re-running an existing fit updates its row in place (count unchanged,
     fit_index preserved); a genuinely new fit appends (fit_index = max + 1)."""
-    out_a = SimpleNamespace(fit_result=_result_with_globals(2.0), x_key="field")
+    out_a = SimpleNamespace(
+        model=ParameterCompositeModel(["Linear"]),
+        fit_result=_result_with_globals(2.0),
+        x_key="field",
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), out_a)
     mainwindow._record_model_fit_results_series(
-        "nu", _groups(), SimpleNamespace(fit_result=_result_with_globals(5.0), x_key="field")
+        "nu",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(5.0),
+            x_key="field",
+        ),
     )
     accum = _accumulator(mainwindow)
     assert len(accum.member_run_numbers) == 2
 
     # Re-run fit A with a different global value: same logical key -> same row.
     mainwindow._record_model_fit_results_series(
-        "lambda", _groups(), SimpleNamespace(fit_result=_result_with_globals(2.5), x_key="field")
+        "lambda",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(2.5),
+            x_key="field",
+        ),
     )
     accum = _accumulator(mainwindow)
     assert len(accum.member_run_numbers) == 2  # replaced, not appended
@@ -335,10 +380,22 @@ def test_global_summary_roundtrips_and_is_json_safe(mainwindow: MainWindow) -> N
     import json
 
     mainwindow._record_model_fit_results_series(
-        "lambda", _groups(), SimpleNamespace(fit_result=_result_with_globals(2.0), x_key="field")
+        "lambda",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(2.0),
+            x_key="field",
+        ),
     )
     mainwindow._record_model_fit_results_series(
-        "nu", _groups(), SimpleNamespace(fit_result=_result_with_globals(5.0), x_key="field")
+        "nu",
+        _groups(),
+        SimpleNamespace(
+            model=ParameterCompositeModel(["Linear"]),
+            fit_result=_result_with_globals(5.0),
+            x_key="field",
+        ),
     )
     accum = _accumulator(mainwindow)
     # Strict JSON: off-axis coordinates stored as null, never a NaN token.
@@ -466,3 +523,135 @@ def test_single_fit_results_roundtrip_json_safe(mainwindow: MainWindow) -> None:
     rows = mainwindow._build_series_rows(restored)
     assert len(rows) == 2
     assert sorted(round(r["values"]["range_center"], 6) for r in rows) == [20.0, 80.0]
+
+
+def test_cross_group_width_outputs_local_handoff_and_project_history(
+    mainwindow, qapp, monkeypatch, tmp_path
+):
+    from PySide6.QtWidgets import QDialog
+
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import ParameterGroupData
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+    from asymmetry.core.project.schema import load_project, save_project
+    from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+
+    model = ParameterCompositeModel.from_expression("SC_SWave")
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    contexts = [
+        TrendWidthContext("width", (source,) * 3),
+        TrendWidthContext("width", (source,) * 3, AxisTransform.custom("sqrt(2)*x")),
+    ]
+    groups = [
+        ParameterGroupData(
+            str(i),
+            str(i),
+            np.array([1.0, 5.0, 10.0]),
+            np.ones(3),
+            np.full(3, 0.01),
+            field,
+            width_context=contexts[i],
+        )
+        for i, field in enumerate([0.2, 0.01])
+    ]
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1,
+        reduced_chi_squared=1,
+        global_parameters=ParameterSet([Parameter("sigma_bg", 0.1)]),
+        local_parameters={
+            str(i): ParameterSet([Parameter("sigma_0", value)])
+            for i, value in enumerate([1.2, 1.2 * GaussianWidth.GAUSSIAN_COMPONENT.value])
+        },
+        local_uncertainties={"0": {"sigma_0": 0.01}, "1": {"sigma_0": 0.02}},
+        input_width_contexts={str(i): context.to_dict() for i, context in enumerate(contexts)},
+    )
+    output = SimpleNamespace(model=model, fit_result=result, x_key="temperature")
+    mainwindow._record_model_fit_results_series("width", groups, output)
+    batch_id = mainwindow._cross_group_batch_id("width", "temperature", groups)
+    series = mainwindow._project_model.batch(batch_id)
+    rows = [series.results_by_run[key] for key in series.member_run_numbers]
+    assert rows[0]["parameter_sources"]["sigma_0"]["widths"] == ["GAUSSIAN_COMPONENT"]
+    assert rows[1]["parameter_sources"]["sigma_0"]["widths"] == ["SECOND_MOMENT"]
+    assert rows[0]["parameter_sources"]["sigma_bg"]["widths"] == [
+        "GAUSSIAN_COMPONENT",
+        "SECOND_MOMENT",
+    ]
+    window = GlobalParameterFitWindow()
+    window.set_results(
+        parameter_name="width", x_key="temperature", groups=groups, model=model, result=result
+    )
+    captured = {}
+
+    class CapturingDialog:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.global_parameter_fit_window.ModelFitDialog", CapturingDialog
+    )
+    window._open_local_model_fit_dialog("sigma_0")
+    assert [s.widths for s in captured["width_context"].sources] == [
+        (GaussianWidth.SECOND_MOMENT,),
+        (GaussianWidth.GAUSSIAN_COMPONENT,),
+    ]
+    np.testing.assert_allclose(
+        captured["y_values"], [result.local_parameters["1"]["sigma_0"].value, 1.2]
+    )
+    state = mainwindow.collect_project_state()
+    path = tmp_path / "widths.asymp"
+    save_project(state, path)
+
+    forbid_trend_optimization(monkeypatch)
+    restored = MainWindow()
+    restored.restore_project_state(load_project(path), str(path))
+    loaded = restored._project_model.batch(batch_id)
+    assert loaded.results_by_run == series.results_by_run
+    window.close()
+    restored.close()
+
+
+def test_project_without_new_width_fields_uses_only_captured_source_identity(
+    mainwindow, monkeypatch, tmp_path
+):
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.project.schema import load_project, save_project
+    from asymmetry.core.representation import FitSeries
+
+    summary = {
+        "success": True,
+        "parameters": {"A_1": 0.2, "sigma": 1.0},
+        "uncertainties": {"A_1": 0.01, "sigma": 0.02},
+        "field": 20.0,
+        "temperature": 1.0,
+    }
+    for name, model in [
+        ("captured", CompositeModel.from_expression("Gaussian").to_dict()),
+        ("unknown", None),
+    ]:
+        mainwindow._project_model.add_batch(
+            FitSeries(
+                name,
+                RepresentationType.TIME_FB_ASYMMETRY,
+                member_run_numbers=[1],
+                canonical_model=model,
+                results_by_run={1: dict(summary)},
+            )
+        )
+    path = tmp_path / "no-width-fields.asymp"
+    save_project(mainwindow.collect_project_state(), path)
+
+    forbid_trend_optimization(monkeypatch)
+    restored = MainWindow()
+    restored.restore_project_state(load_project(path), str(path))
+    captured = restored._build_series_rows(restored._project_model.batch("captured"))[0]
+    unknown = restored._build_series_rows(restored._project_model.batch("unknown"))[0]
+    assert captured["parameter_sources"]["sigma"]["widths"] == ["GAUSSIAN_COMPONENT"]
+    assert unknown["parameter_sources"] == {}
+    assert captured["values"] == unknown["values"] == summary["parameters"]
+    assert restored._project_model.batch("captured").results_by_run[1] == summary
+    restored.close()

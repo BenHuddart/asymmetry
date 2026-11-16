@@ -102,3 +102,26 @@ predictions; decoding invokes no optimiser. A peak references the baseline
 execution used for its first-order covariance propagation. Unknown historical
 revisions remain unknown. Explicit refitting creates a new execution; persistence
 does not certify acquisition replay or add uncertainty information.
+
+Captured Gaussian-width inputs
+------------------------------
+
+``fit_parameter_model`` accepts optional ``width_context`` alongside its
+already transformed arrays. It checks selected known Gaussian sources at the
+Brandt second-moment consumers connected to the output by additive, subtractive,
+or quadrature branches, without applying another scale factor. Product and ratio
+branches remain unclassified.
+``ParameterGroupData.width_context`` supplies the same contract per group for
+``global_fit_parameter_model``. Unknown context remains usable; it does not
+certify a convention.
+
+The workflow ``fit_trend`` accepts ``y_transform=AxisTransform.custom("sqrt(2)*x")``
+and applies that existing transform to both values and errors. The GUI supplies
+the actual transformed arrays and captured lens instead. Recorded results retain
+the context of the observations that entered the fit, so later model or lens
+edits do not relabel history. See :ref:`trend-width-inputs` for the refusal and
+legacy-data policy.
+
+.. autoclass:: asymmetry.core.fitting.sc.trend_width.WidthSource
+
+.. autoclass:: asymmetry.core.fitting.sc.trend_width.TrendWidthContext

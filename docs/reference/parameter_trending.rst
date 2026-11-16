@@ -31,6 +31,76 @@ Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
 equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
 broadening directly against field, temperature, or run number.
 
+.. _trend-width-inputs:
+
+Gaussian widths at second-moment consumers
+------------------------------------------
+
+Asymmetry also checks the captured source of widths passed to
+``SC_Brandt_VortexLattice`` and ``SC_Brandt_VortexLattice_Powder``, including
+cross-group fits and composite branches connected to the output by addition,
+subtraction, or quadrature. A bare Brandt term beside a product background is
+still checked. A component inside an arbitrary product or ratio has no declared
+absolute output-width contract, so that branch remains unclassified. A known ``Gaussian`` component uses
+:math:`\exp(-\sigma_G^2t^2)`; these field laws require the second-moment
+width in :math:`\exp(-\sigma_2^2t^2/2)`. An unconverted ``sigma`` column
+therefore produces this explanation:
+
+.. code-block:: text
+
+   Column 'sigma' contains Gaussian-component width in exp(-sigma^2*t^2); SC_Brandt_VortexLattice expects second-moment width in exp(-sigma^2*t^2/2). Apply Custom Y transform sqrt(2)*x to Gaussian-component values and errors before fitting; mixed conventions require separate conversion.
+
+Choose **ƒ** → **Custom…** on that parameter's card, then enter
+``sqrt(2)*x`` in **Custom Y transform**, beside **Expression in x:**.
+The real fit receives transformed values and errors. Parentheses and whitespace
+are immaterial; ``x*sqrt(2)`` is also recognised. A rounded numerical multiplier
+or an arbitrary nonlinear expression does not declare a physical width
+conversion. Known second-moment input uses **None** (or Custom ``x``), and
+must not receive another factor. Mixed known conventions need separate
+conversion before combination.
+
+.. figure:: /_generated/screenshots/trend_gaussian_width_conversion.png
+   :alt: Brandt field fit after explicit Gaussian-width conversion, recovering 220 nm
+   :width: 100%
+
+   Synthetic single-crystal widths after explicit conversion, fitted with
+   ``SC_Brandt_VortexLattice`` at fixed ``Bc2`` and ``sigma_bg``.
+
+Source identity follows each captured component parameter, including repeated
+components and aliases; display labels do not establish it. A literal derived
+copy retains its source; ``sqrt(2)*parameter`` (or reversed operands) records an
+explicit conversion through the existing **Derived parameter…** expression
+boundary. Other derived expressions remain unclassified rather than being
+certified as physical widths.
+
+Temperature-dependent ``SC_*`` laws, and the same-Y-unit ``Constant.c`` and
+``Linear.b`` outputs, inherit the input convention in additive models. Their width outputs retain the known
+conventions of the observations that actually entered the fit. Other derived
+quantities do not acquire a certified width convention. Width outputs from an
+unverified transform of a known width retain that origin; a later factor cannot
+certify it. For example:
+
+.. code-block:: text
+
+   Column 'sigma_0' has an unverified transform of a known width (x*x); a second-moment fit requires an explicitly established width conversion.
+
+For already second-moment input, applying another transform produces:
+
+.. code-block:: text
+
+   Column 'sigma_0' already has second-moment width; use untransformed values and errors for a second-moment model.
+
+A saved Gaussian model supplies captured source identity even when a separate
+convention field is absent. Generic/manual tables and historical records without
+captured source attribution remain usable with convention not recorded. Inspect their provenance and choose the
+conversion explicitly. Unknown provenance is not treated as a known mismatch.
+Unknown convention alone does not prevent a new fit; existing execution and
+source-availability checks still apply. Loading preserves saved numbers and
+never fits or rescales them. Plotting and exporting apply selected transforms
+without rewriting the recorded source values. Saved fit context retains its execution transform; changing the displayed
+Y transform hides an incompatible historical fit overlay and fit export.
+See :ref:`sc-width-convention` for background, covariance, and geometry limits.
+
 .. _trend-panel-layout:
 
 Panel layout

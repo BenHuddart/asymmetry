@@ -414,6 +414,7 @@ def plot_trend(
     order_key: str,
     out_path: str | Path,
     title: str | None = None,
+    y_transform=None,
     model: tuple[Callable[..., np.ndarray], Mapping[str, float], tuple[float, float]] | None = None,
 ) -> Path:
     """Value vs scan coordinate for one free parameter, ordered, with error bars.
@@ -442,6 +443,8 @@ def plot_trend(
     x = np.asarray([row["x"] for row in rows], dtype=np.float64)
     y = np.asarray([row.get(param_name) for row in rows], dtype=np.float64)
     y_err = np.asarray([row.get(f"{param_name}_err") for row in rows], dtype=np.float64)
+    if y_transform is not None:
+        y, y_err = y_transform.apply(y, y_err)
     from asymmetry.core.workflow.series import parameter_quality_flags
 
     flagged = np.asarray(

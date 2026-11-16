@@ -28,8 +28,13 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core import computation
+from asymmetry.core.fitting.axis_transforms import AxisTransform, validate_axis_expression
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.sc.trend_width import (
+    TrendWidthContext,
+    fitted_width_sources,
+)
 from asymmetry.core.fitting.seeding import seed_trend_parameters
 from asymmetry.core.workflow.series import (
     ScanAxis,
@@ -72,11 +77,15 @@ class TrendFitOutcome:
     #: x of an interior extremum the fitted points turn through, or ``None``.
     turning_point: float | None
     computation_revision: str | None = None
+    input_width_context: dict | None = None
+    parameter_sources: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
             "computation_revision": self.computation_revision,
+            "input_width_context": self.input_width_context,
+            "parameter_sources": self.parameter_sources,
             "param": self.param,
             "expression": self.expression,
             "order_key": self.order_key,
@@ -110,6 +119,7 @@ def fit_trend(
     initial: Mapping[str, float] | None = None,
     fixed: Mapping[str, float] | None = None,
     exclude: Iterable[str] = (),
+    y_transform: AxisTransform = AxisTransform(),
 ) -> TrendFitOutcome:
     """Fit *expression* to the *param* column of *trend* against its x.
 
@@ -119,6 +129,10 @@ def fit_trend(
     or parameter name, an excluded key the trend does not hold, or too few
     points left to fit.
     """
+    if y_transform.kind == "custom":
+        valid, message = validate_axis_expression(y_transform.expression_text)
+        if not valid:
+            raise ValueError(message)
     value_columns = [
         column
         for column in trend.columns
@@ -163,6 +177,10 @@ def fit_trend(
     x = np.asarray([rows_by_key[key]["x"] for key in keys], dtype=float)
     y = np.asarray([rows_by_key[key][param] for key in keys], dtype=float)
     y_err = np.asarray([rows_by_key[key][f"{param}_err"] for key in keys], dtype=float)
+    y, y_err = y_transform.apply(y, y_err)
+    width_context = TrendWidthContext.for_column(
+        param, [rows_by_key[key].get("parameter_sources", {}) for key in keys], y_transform
+    )
     seeds = seed_trend_parameters(model, x, y)
     parameters = ParameterSet()
     for name in model.param_names:
@@ -183,7 +201,16 @@ def fit_trend(
             f"{expression!r}; widen the range or readmit points."
         )
 
-    result = fit_parameter_model(x, y, y_err, model, parameters, extra_starts=_EXTRA_STARTS, seed=0)
+    result = fit_parameter_model(
+        x,
+        y,
+        y_err,
+        model,
+        parameters,
+        extra_starts=_EXTRA_STARTS,
+        seed=0,
+        width_context=width_context,
+    )
     return TrendFitOutcome(
         param=param,
         expression=expression,
@@ -205,6 +232,8 @@ def fit_trend(
         units={name: model.param_info[name].unit for name in model.param_names},
         turning_point=turning_point(x, y, y_err),
         computation_revision=computation.COMPUTATION_REVISION,
+        input_width_context=result.input_width_context,
+        parameter_sources=fitted_width_sources(model, result.input_width_context),
     )
 
 
@@ -247,6 +276,7 @@ def fit_trend_table(
         entries[name] = {
             "x": axis.values[name],
             "parameters": {param: fit["parameters"][param]},
+            "parameter_sources": fit.get("parameter_sources") or {},
             # A parameter the law held has no error, and its row no weight.
             "uncertainties": (
                 {param: fit["uncertainties"][param] * error_scale(fit)}

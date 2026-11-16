@@ -213,3 +213,380 @@ def test_generalized_redfield_fit_recovers_positive_physical_parameters(fixed) -
     assert fit.parameters["D"] == pytest.approx(28.0, rel=0.01)
     assert fit.parameters["nu"] == pytest.approx(140.0, rel=0.01)
     assert fit.parameters["m"] == pytest.approx(2.0, rel=0.01)
+
+
+@pytest.fixture
+def gaussian_scan():
+    """Actual Gaussian fits to a synthetic single-crystal Brandt width scan."""
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.models import brandt_field_width_sigma
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.series import ScanAxis, fit_series
+
+    fields = np.array([20.0, 50.0, 100.0, 200.0, 400.0, 800.0, 1200.0, 2000.0])
+    widths = brandt_field_width_sigma(fields, 220.0, 2.0)
+    widths /= GaussianWidth.GAUSSIAN_COMPONENT.value
+    time = np.linspace(0.0, 5.0, 301)
+    datasets = {
+        run: MuonDataset(
+            time=time,
+            asymmetry=0.2 * np.exp(-np.square(width * time)),
+            error=np.full_like(time, 0.0005),
+            metadata={"run_number": run, "field": field},
+        )
+        for run, (field, width) in enumerate(zip(fields, widths, strict=True), 1)
+    }
+    recipe = FitRecipe.from_expression("Gaussian", dataset=datasets[1])
+    outcome = fit_series(
+        datasets, recipe, axis=ScanAxis("field", dict(enumerate(fields, 1))), name="gaussian"
+    )
+    assert all(entry["success"] for entry in outcome.results)
+    return outcome
+
+
+def test_known_gaussian_series_refuses_second_moment_fit(gaussian_scan):
+    with pytest.raises(ValueError, match="Gaussian.*second-moment.*sqrt"):
+        fit_trend(gaussian_scan.trend, "sigma", "SC_Brandt_VortexLattice")
+
+
+def test_cli_refuses_known_gaussian_series(tmp_path, capsys, gaussian_scan):
+    from asymmetry.cli import main
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = WorkDir(tmp_path / "work")
+    workdir.bind(tmp_path, None)
+    workdir.write_series(
+        "gaussian", {"kind": "series", "trend_fits": {}, **gaussian_scan.to_dict()}
+    )
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "trend",
+                str(tmp_path),
+                "--workdir",
+                str(workdir.root),
+                "--series",
+                "gaussian",
+                "--model",
+                "SC_Brandt_VortexLattice",
+                "--param",
+                "sigma",
+                "--json",
+            ]
+        )
+    assert error.value.code == 1
+    assert "second-moment" in capsys.readouterr().err
+
+
+def test_explicit_conversion_recovers_lambda_and_scales_errors(gaussian_scan, monkeypatch):
+    import asymmetry.core.workflow.trend_fit as trend_module
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.sc import GaussianWidth
+
+    original = trend_module.fit_parameter_model
+    captured = {}
+
+    def capture(x, y, errors, *args, **kwargs):
+        captured.update(y=y, errors=errors)
+        return original(x, y, errors, *args, **kwargs)
+
+    monkeypatch.setattr(trend_module, "fit_parameter_model", capture)
+    fit = fit_trend(
+        gaussian_scan.trend,
+        "sigma",
+        "SC_Brandt_VortexLattice",
+        y_transform=AxisTransform.custom("sqrt(2)*x"),
+        initial={"lambda_ab": 220},
+        fixed={"Bc2": 2, "sigma_bg": 0},
+    )
+    assert fit.success
+    assert fit.parameters["lambda_ab"] == pytest.approx(220, rel=1e-5)
+    factor = GaussianWidth.GAUSSIAN_COMPONENT.value
+    np.testing.assert_allclose(
+        captured["y"], [r["sigma"] * factor for r in gaussian_scan.trend.rows]
+    )
+    np.testing.assert_allclose(
+        captured["errors"], [r["sigma_err"] * factor for r in gaussian_scan.trend.rows]
+    )
+    assert fit.input_width_context["transform"]["expression"] == "sqrt(2)*x"
+
+
+def test_old_unknown_table_remains_usable_and_load_does_not_fit(
+    gaussian_scan, tmp_path, monkeypatch
+):
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    legacy = gaussian_scan.trend.to_dict()
+    for row in legacy["rows"]:
+        row.pop("parameter_sources")
+    table = TrendTable(**legacy)
+    fit = fit_trend(table, "sigma", "SC_Brandt_VortexLattice", fixed={"Bc2": 2, "sigma_bg": 0})
+    assert fit.parameters["lambda_ab"] == pytest.approx(
+        220 * GaussianWidth.GAUSSIAN_COMPONENT.value**0.5, rel=1e-5
+    )
+    workdir = WorkDir(tmp_path / "work")
+    payload = {"kind": "series", "trend_fits": {}, **gaussian_scan.to_dict(), "trend": legacy}
+    workdir.write_series("legacy", payload)
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.parameter_models.fit_parameter_model",
+        lambda *a, **k: pytest.fail("load must not fit"),
+    )
+    assert workdir.read_series("legacy")["trend"] == legacy
+
+
+def test_cli_explicit_conversion_is_saved_without_changing_source_table(
+    tmp_path, capsys, gaussian_scan, monkeypatch
+):
+    import json
+
+    from asymmetry.cli import main, plots
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    displayed = {}
+    original_frame = plots._trend_frame
+
+    def capture_frame(y, errors, flagged):
+        displayed.update(values=y, errors=errors)
+        return original_frame(y, errors, flagged)
+
+    monkeypatch.setattr(plots, "_trend_frame", capture_frame)
+    workdir = WorkDir(tmp_path / "work")
+    workdir.bind(tmp_path, None)
+    workdir.write_series(
+        "gaussian", {"kind": "series", "trend_fits": {}, **gaussian_scan.to_dict()}
+    )
+    main(
+        [
+            "trend",
+            str(tmp_path),
+            "--workdir",
+            str(workdir.root),
+            "--series",
+            "gaussian",
+            "--model",
+            "SC_Brandt_VortexLattice",
+            "--param",
+            "sigma",
+            "--y-transform",
+            "sqrt(2)*x",
+            "--fix",
+            "Bc2=2",
+            "--fix",
+            "sigma_bg=0",
+            "--initial",
+            "lambda_ab=220",
+            "--plot",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["fit"]["parameters"]["lambda_ab"] == pytest.approx(220, rel=1e-5)
+    stored = workdir.read_series("gaussian")
+    assert stored["trend"] == gaussian_scan.trend.to_dict()
+    assert (
+        stored["trend_fits"]["sigma:SC_Brandt_VortexLattice"]["input_width_context"]["transform"][
+            "expression"
+        ]
+        == "sqrt(2)*x"
+    )
+
+    factor = GaussianWidth.GAUSSIAN_COMPONENT.value
+    np.testing.assert_allclose(
+        displayed["values"], [r["sigma"] * factor for r in gaussian_scan.trend.rows]
+    )
+    np.testing.assert_allclose(
+        displayed["errors"], [r["sigma_err"] * factor for r in gaussian_scan.trend.rows]
+    )
+    assert workdir.trend_plot_path("gaussian", "sigma").is_file()
+
+
+def test_temperature_law_outputs_inherit_only_selected_widths():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.models import sc_s_wave
+    from asymmetry.core.fitting.sc.trend_width import WidthSource
+    from asymmetry.core.workflow.series import ScanAxis
+    from asymmetry.core.workflow.trend_fit import fit_trend_table
+
+    temperatures = np.linspace(1, 25, 12)
+    values = sc_s_wave(temperatures, 1.2, 20, 1.764, 0.1)
+    source = WidthSource("Gaussian", 1, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,)).to_dict()
+    table = TrendTable(
+        "temperature",
+        ["key", "x", "width", "width_err", "flags"],
+        [
+            {
+                "key": str(i),
+                "x": t,
+                "width": y,
+                "width_err": 0.01,
+                "parameter_sources": {"width": source},
+                "params_at_bound": [],
+                "flags": [],
+            }
+            for i, (t, y) in enumerate(zip(temperatures, values, strict=True))
+        ],
+    )
+    fits = [
+        fit_trend(
+            table,
+            "width",
+            "SC_SWave",
+            fixed={"Tc": 20, "gap_ratio": 1.764, "sigma_bg": bg},
+            y_transform=transform,
+        )
+        for bg, transform in [
+            (0.1, AxisTransform.identity()),
+            (0.1 * GaussianWidth.GAUSSIAN_COMPONENT.value, AxisTransform.custom("sqrt(2)*x")),
+        ]
+    ]
+    assert fits[0].success and fits[1].success
+    assert fits[0].parameters["sigma_0"] == pytest.approx(1.2, rel=1e-4)
+    assert fits[1].parameters["sigma_0"] == pytest.approx(
+        1.2 * GaussianWidth.GAUSSIAN_COMPONENT.value, rel=1e-4
+    )
+    assert fits[0].parameter_sources["sigma_0"]["widths"] == ["GAUSSIAN_COMPONENT"]
+    assert fits[1].parameter_sources["sigma_0"]["widths"] == ["SECOND_MOMENT"]
+    assert fits[0].parameter_sources["Tc"]["widths"] == []
+    selected = table.to_dict()
+    for row in selected["rows"]:
+        row["parameter_sources"]["width"] = {**source, "widths": ["SECOND_MOMENT"]}
+    selected["rows"][0]["parameter_sources"]["width"] = source
+    selected["rows"][0]["x"] = float("nan")
+    fitted = fit_trend(
+        TrendTable(**selected),
+        "width",
+        "SC_SWave",
+        fixed={"Tc": 20, "gap_ratio": 1.764, "sigma_bg": 0.1},
+    )
+    assert fitted.parameter_sources["sigma_0"]["widths"] == ["SECOND_MOMENT"]
+
+    derived = fit_trend_table(
+        {"a": fits[0].to_dict(), "b": fits[1].to_dict()},
+        "sigma_0",
+        ScanAxis("field", {"a": 0.01, "b": 0.02}),
+    )
+    assert [r["parameter_sources"]["sigma_0"]["widths"] for r in derived.rows] == [
+        ["GAUSSIAN_COMPONENT"],
+        ["SECOND_MOMENT"],
+    ]
+    assert ParameterCompositeModel.from_expression("SC_SWave").param_names
+
+
+def test_cross_group_width_check_uses_selected_rows_and_round_trips_context():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import (
+        CrossGroupFitResult,
+        ParameterCompositeModel,
+        ParameterGroupData,
+        global_fit_parameter_model,
+    )
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.models import brandt_field_width_sigma
+    from asymmetry.core.fitting.sc.trend_width import TrendWidthContext, WidthSource
+
+    fields = np.linspace(100.0, 10000.0, 10)
+    values = brandt_field_width_sigma(fields, 220, 2)
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    groups = [
+        ParameterGroupData(
+            str(i),
+            str(i),
+            fields,
+            values,
+            np.full_like(values, 0.01),
+            i,
+            width_context=TrendWidthContext(
+                "width", (source,) * len(fields), AxisTransform.custom("sqrt(2)*x")
+            ),
+        )
+        for i in range(2)
+    ]
+    model = ParameterCompositeModel.from_expression("SC_Brandt_VortexLattice")
+    result = global_fit_parameter_model(
+        groups, model, ["lambda_ab"], [], {"Bc2": 2, "sigma_bg": 0}, {"lambda_ab": 220}
+    )
+    assert result.success
+    assert result.global_parameters["lambda_ab"].value == pytest.approx(220, rel=1e-5)
+    assert (
+        CrossGroupFitResult.from_dict(result.to_dict()).input_width_contexts
+        == result.input_width_contexts
+    )
+    assert (
+        ParameterGroupData.from_dict(groups[0].to_dict()).width_context == groups[0].width_context
+    )
+    groups[1].width_context = TrendWidthContext("width", (None,) * 9 + (source,))
+    with pytest.raises(ValueError, match="Gaussian.*second-moment"):
+        global_fit_parameter_model(groups, model, ["lambda_ab"], [], {"Bc2": 2, "sigma_bg": 0})
+    # A mismatched row outside the authored windows does not poison a different fit.
+    result = global_fit_parameter_model(
+        groups, model, ["lambda_ab"], [], {"Bc2": 2, "sigma_bg": 0}, windows=[(100.0, 8000.0)]
+    )
+    assert result.success
+    assert len(result.input_width_contexts["1"]["sources"]) == 8
+
+
+def test_nonlinear_known_width_origin_survives_temperature_fit_and_derived_trend():
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.fitting.sc import GaussianWidth
+    from asymmetry.core.fitting.sc.trend_width import (
+        TrendWidthContext,
+        WidthSource,
+        fitted_width_sources,
+    )
+    from asymmetry.core.workflow.series import ScanAxis
+    from asymmetry.core.workflow.trend_fit import fit_trend_table
+
+    source = WidthSource("Gaussian", 0, "sigma", (GaussianWidth.GAUSSIAN_COMPONENT,))
+    context = TrendWidthContext("sigma", (source,) * 5, AxisTransform.custom("x*x"))
+    sources = fitted_width_sources(
+        ParameterCompositeModel.from_expression("SC_SWave"), context.to_dict()
+    )
+    assert sources["sigma_0"]["widths"] == ["GAUSSIAN_COMPONENT"]
+    assert sources["sigma_0"]["unverified_transforms"] == ["x*x"]
+    stored = {
+        "parameters": {"sigma_0": 1.0},
+        "uncertainties": {"sigma_0": 0.01},
+        "params_at_bound": [],
+        "success": True,
+        "reduced_chi_squared": 1.0,
+        "parameter_sources": sources,
+    }
+    names = [str(i) for i in range(5)]
+    trend = fit_trend_table(
+        dict.fromkeys(names, stored),
+        "sigma_0",
+        ScanAxis("field", {name: 0.01 * (i + 1) for i, name in enumerate(names)}),
+    )
+    with pytest.raises(ValueError, match="unverified transform.*second-moment"):
+        fit_trend(
+            trend,
+            "sigma_0",
+            "SC_Brandt_VortexLattice",
+            y_transform=AxisTransform.custom("sqrt(2)*x"),
+        )
+
+
+@pytest.mark.parametrize("model,param", [("Constant", "c"), ("Linear", "b")])
+def test_declared_same_width_scalar_outputs_keep_gaussian_convention(gaussian_scan, model, param):
+    from asymmetry.core.workflow.series import ScanAxis
+    from asymmetry.core.workflow.trend_fit import fit_trend_table
+
+    fitted = fit_trend(gaussian_scan.trend, "sigma", model)
+    assert fitted.success
+    assert fitted.parameter_sources[param]["widths"] == ["GAUSSIAN_COMPONENT"]
+    if model == "Linear":
+        assert fitted.parameter_sources["m"]["widths"] == []
+    names = [str(i) for i in range(5)]
+    trend = fit_trend_table(
+        dict.fromkeys(names, fitted.to_dict()),
+        param,
+        ScanAxis("field", {name: 0.01 * (i + 1) for i, name in enumerate(names)}),
+    )
+    with pytest.raises(ValueError, match="Gaussian.*second-moment"):
+        fit_trend(trend, param, "SC_Brandt_VortexLattice")

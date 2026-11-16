@@ -40,7 +40,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument(
         "--from-fits",
-        default=None,
         metavar="SERIES,...",
         help=(
             "Build --series from these stored series: each one's trend-fit parameter "
@@ -49,7 +48,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument(
         "--fit",
-        default=None,
         metavar="PARAM[:EXPR]",
         help=(
             "With --from-fits, the members' trend fit to read, by the column it was "
@@ -74,13 +72,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument(
         "--model",
-        default=None,
         metavar="EXPR",
         help="Fit this parameter-vs-x expression to --param, e.g. 'OrderParameter', 'Redfield'",
     )
     parser.add_argument(
+        "--y-transform",
+        help="Custom Y expression, e.g. sqrt(2)*x; values and errors scale together",
+    )
+    parser.add_argument(
         "--param",
-        default=None,
         help=(
             "The trend column --model is fitted to; with --from-fits, the members' "
             "trend-fit parameter the built series tabulates (and --model fits)"
@@ -88,23 +88,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--xmin", type=float, default=None, help="Fit range start, in x units")
     parser.add_argument("--xmax", type=float, default=None, help="Fit range end, in x units")
-    parser.add_argument(
-        "--initial",
-        action="append",
-        default=[],
-        metavar="NAME=VALUE",
-        help="Model start value (repeatable)",
-    )
-    parser.add_argument(
-        "--fix",
-        action="append",
-        default=[],
-        metavar="NAME=VALUE",
-        help="Hold a model parameter at this value (repeatable)",
-    )
+    for option, help_text in (
+        ("--initial", "Model start value (repeatable)"),
+        ("--fix", "Hold a model parameter at this value (repeatable)"),
+    ):
+        parser.add_argument(option, action="append", metavar="NAME=VALUE", help=help_text)
     parser.add_argument(
         "--exclude",
-        default=None,
         metavar="KEYS",
         help=(
             "Leave these rows out of the fit — runs, or member series for a trend built "
@@ -113,7 +103,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     add_workdir_argument(parser, purpose="read and write")
-    parser.set_defaults(func=run)
+    parser.set_defaults(func=run, initial=[], fix=[])
 
 
 def run(args: argparse.Namespace) -> None:
@@ -136,6 +126,7 @@ def run(args: argparse.Namespace) -> None:
             ("--initial", args.initial or None),
             ("--fix", args.fix or None),
             ("--exclude", args.exclude),
+            ("--y-transform", args.y_transform),
         )
         if value is not None
     ]
@@ -159,6 +150,7 @@ def run(args: argparse.Namespace) -> None:
 
     fit = None
     if args.model is not None:
+        from asymmetry.core.fitting.axis_transforms import AxisTransform
         from asymmetry.core.workflow.trend_fit import fit_trend, trend_fit_key
 
         if args.exclude is None:
@@ -167,6 +159,9 @@ def run(args: argparse.Namespace) -> None:
             exclude = [key.strip() for key in args.exclude.split(",")]
         else:
             exclude = [str(run) for run in parse_run_spec(args.exclude)]
+        transform = AxisTransform.identity()
+        if args.y_transform is not None:
+            transform = AxisTransform.custom(args.y_transform)
         try:
             fit = fit_trend(
                 trend,
@@ -177,6 +172,7 @@ def run(args: argparse.Namespace) -> None:
                 initial=parse_fix(args.initial, flag="--initial"),
                 fixed=parse_fix(args.fix),
                 exclude=exclude,
+                y_transform=transform,
             ).to_dict()
         except ValueError as exc:
             raise UserError(str(exc)) from None
@@ -328,10 +324,15 @@ def _plots(workdir, name: str, series: dict[str, Any], trend, fit: dict | None) 
             )
             for param_name in series["free_params"]
         ]
+    from asymmetry.core.fitting.axis_transforms import AxisTransform
+
     fitted_x = [row["x"] for row in trend.rows if row["key"] in fit["keys"]]
     return [
         plots.plot_trend(
             trend.rows,
+            y_transform=AxisTransform.from_dict(
+                (fit.get("input_width_context") or {}).get("transform")
+            ),
             param_name=fit["param"],
             order_key=trend.order_key,
             out_path=workdir.trend_plot_path(name, fit["param"]),
@@ -654,12 +655,9 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
 
 
 def _component_onsets(trend, free_params: list[str], expression: str) -> list[str]:
-    """A note per line of a several-line model whose amplitude appears or vanishes on cooling.
+    """Report cooling onsets from departure from the warm amplitude level.
 
-    Where one end's level is under :data:`_VANISHED` of the other's, the
-    component switches on or off along the scan, and its onset on cooling is
-    where its amplitude leaves the warm end's level — not where a width it
-    multiplies steps, which means nothing once the amplitude is near zero.
+    The end-level ratio uses _VANISHED; widths cannot locate an onset when amplitude vanishes.
     """
     amplitudes = [p for p in free_params if re.fullmatch(r"A_\d+", p)]
     if (

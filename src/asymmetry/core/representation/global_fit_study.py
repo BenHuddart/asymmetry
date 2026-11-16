@@ -19,6 +19,7 @@ Serialization delegates to the canonical (de)serializers added in Phase 1A:
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -205,6 +206,12 @@ def compute_group_input_digest(groups: list[ParameterGroupData]) -> str:
     """
     hasher = hashlib.sha1()
     for group in sorted(groups, key=lambda g: g.group_id):
+        if group.width_context is not None and group.width_context.known_widths():
+            hasher.update(
+                json.dumps(
+                    group.width_context.to_dict(), sort_keys=True, separators=(",", ":")
+                ).encode()
+            )
         hasher.update(group.group_id.encode("utf-8"))
         hasher.update(b"\0")
         hasher.update(_round_array_bytes(group.x))

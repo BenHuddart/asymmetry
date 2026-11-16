@@ -44,6 +44,7 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.sc import models as sc_models
+from asymmetry.core.fitting.sc.trend_width import TrendWidthContext
 from asymmetry.core.utils.constants import (
     BOLTZMANN_CONSTANT_MEV_PER_K,
     ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
@@ -2930,6 +2931,7 @@ class ParameterModelFitResult:
     #: produced no covariance (e.g. HESSE did not run/converge).
     covariance: tuple[list[str], list[list[float]]] | None = None
     computation_revision: str | None = None
+    input_width_context: dict | None = None
 
 
 @dataclass
@@ -3191,12 +3193,14 @@ class ParameterGroupData:
     #: effective-variance fit when the abscissa is itself a fitted parameter.
     xerr: NDArray[np.float64] | None = None
     input_computation_revisions: tuple[str | None, ...] = ()
+    width_context: TrendWidthContext | None = None
 
     def to_dict(self) -> dict:
         """Canonical, JSON-safe serialization (numpy arrays -> lists)."""
         return {
             "group_id": self.group_id,
             "input_computation_revisions": list(self.input_computation_revisions),
+            "width_context": self.width_context.to_dict() if self.width_context else None,
             "group_name": self.group_name,
             "x": np.asarray(self.x, dtype=float).tolist(),
             "y": np.asarray(self.y, dtype=float).tolist(),
@@ -3213,6 +3217,7 @@ class ParameterGroupData:
         return cls(
             group_id=str(data.get("group_id", "")),
             input_computation_revisions=tuple(data.get("input_computation_revisions", ())),
+            width_context=TrendWidthContext.from_dict(data.get("width_context")),
             group_name=str(data.get("group_name", "")),
             x=np.asarray(data.get("x", []), dtype=float),
             y=np.asarray(data.get("y", []), dtype=float),
@@ -3305,6 +3310,7 @@ class CrossGroupFitResult:
     #: ``None`` when unavailable: fewer than two free global parameters, a
     #: failed fit, or no covariance from Minuit.
     global_correlations: tuple[list[str], list[list[float]]] | None = None
+    input_width_contexts: dict[str, dict] = field(default_factory=dict)
     computation_revision: str | None = None
 
     def to_dict(self) -> dict:
@@ -3315,6 +3321,7 @@ class CrossGroupFitResult:
         shape already used by the GUI's project-state serializers.
         """
         return {
+            "input_width_contexts": dict(self.input_width_contexts),
             "success": bool(self.success),
             "computation_revision": self.computation_revision,
             "chi_squared": float(self.chi_squared),
@@ -3430,6 +3437,7 @@ class CrossGroupFitResult:
             n_points = 0
 
         return cls(
+            input_width_contexts=dict(data.get("input_width_contexts", {})),
             success=success,
             computation_revision=data.get("computation_revision"),
             chi_squared=chi_squared,
@@ -3860,29 +3868,15 @@ def fit_parameter_model(
     extra_starts: int = 0,
     seed: int = 0,
     cancel_check: Callable[[], None] | None = None,
+    width_context: TrendWidthContext | None = None,
 ) -> ParameterModelFitResult:
-    """Fit a parameter-vs-x model using iminuit.
+    """Fit parameter-vs-x observations with optional captured width context.
 
-    ``error_mode``/``error_value`` select the per-point σ assignment (see
-    :class:`ErrorMode`); ``windows`` optionally restricts the fit to a union
-    of (min, max) intervals, overriding ``x_min``/``x_max``.
-
-    ``xerr`` optionally supplies per-point x-uncertainties for an
-    errors-in-variables (Orear/York effective-variance) fit — used for
-    parameter-vs-parameter trending where the abscissa is itself a fitted
-    quantity. When ``xerr`` is ``None`` or all zero/non-finite the fit is
-    ordinary least squares (the abscissa is treated as exact). It is ignored
-    under the ``NONE``/``SCATTER`` error modes, whose unit y-weights have no
-    physical scale to combine with the x-variance term.
-
-    ``extra_starts`` adds multi-start robustness: with ``extra_starts > 0`` the
-    fit additionally tries the generic data-aware seed
-    (:func:`suggest_model_seeds`) and ``extra_starts`` deterministic perturbed
-    starts around the user's parameters, keeping the best converged candidate by
-    the existing success-then-χ² rule. The perturbation is driven solely by
-    ``numpy.random.default_rng(seed)``, so a given ``seed`` is fully
-    reproducible. With ``extra_starts = 0`` no RNG is constructed.
-    """
+    Windows select a union of intervals; otherwise x_min/x_max bound the fit.
+    Supplied x-errors use effective variance with physical y-errors, and are
+    ignored for unit/scatter weights. Extra starts use the recorded seed.
+    Known Gaussian widths require explicit conversion at Brandt consumers;
+    generic observations with unknown provenance retain their existing meaning."""
     if cancel_check is not None:
         cancel_check()
     error_mode = ErrorMode(error_mode)
@@ -3917,6 +3911,9 @@ def fit_parameter_model(
             computation_revision=computation.COMPUTATION_REVISION,
         )
 
+    selected_width = width_context.select(mask) if width_context is not None else None
+    if selected_width is not None:
+        selected_width.validate(model)
     x_fit = xx[mask]
     y_fit = yy[mask]
     e_fit = ee[mask]
@@ -4029,6 +4026,7 @@ def fit_parameter_model(
                     )
     if cancel_check is not None:
         cancel_check()
+    best_result.input_width_context = selected_width.to_dict() if selected_width else None
     return best_result
 
 
@@ -4046,34 +4044,13 @@ def global_fit_parameter_model(
     windows: Sequence[tuple[float, float]] | None = None,
     xerr: Mapping[str, NDArray] | None = None,
 ) -> CrossGroupFitResult:
-    """Jointly fit a parameter model across multiple groups.
+    """Jointly fit groups with global, local, and fixed parameters.
 
-    Parameters are classified as:
-    - global: one shared value across all groups
-    - local: independent value per group
-    - fixed: fixed constant
-
-    ``error_mode``/``error_value`` select the per-point σ assignment for every
-    group (see :class:`ErrorMode`); ``windows`` optionally restricts each
-    group to a union of (min, max) intervals (OR-combined, one model across the
-    union). ``SCATTER`` rescales *all* parameter errors (global and local) by
-    √(χ²/ν) after the fit — the fixed point of WiMDA's Estimate iteration.
-
-    ``xerr`` optionally maps ``group_id`` → per-point x-uncertainties (aligned
-    to that group's stored ``x``) for an errors-in-variables (Orear/York
-    effective-variance) fit, used for parameter-vs-parameter trending where the
-    abscissa is itself a fitted quantity. It uses the same central-difference
-    estimator as the single-series :func:`fit_parameter_model`. A group with no
-    entry, or all-zero/non-finite σ_x, keeps ordinary least squares. Like the
-    single-series path, ``xerr`` is ignored under ``NONE``/``SCATTER``, whose
-    unit y-weights carry no physical scale to combine with the x-variance term.
-    """
+    Each group retains its selected source-width context. Windows select an
+    interval union. Supplied x-errors use effective variance with physical
+    y-errors, and are ignored for unit/scatter weights. SCATTER scales all
+    fitted uncertainties by sqrt(chi_squared / degrees of freedom)."""
     error_mode = ErrorMode(error_mode)
-    # Effective variance combines σ_x with a real per-point σ_y; under unit
-    # weights (NONE) or scatter estimation (SCATTER) the "σ_y" is a placeholder
-    # of arbitrary scale, so the combination would be scale-dependent — ignore
-    # x-errors in those modes (matching the single-series path and the GUI
-    # toggle's enable rule).
     use_xerr = xerr is not None and error_mode not in (ErrorMode.NONE, ErrorMode.SCATTER)
     if len(groups) < 2:
         return CrossGroupFitResult(
@@ -4197,6 +4174,7 @@ def global_fit_parameter_model(
         ]
     ] = []
     total_points = 0
+    input_width_contexts = {}
     for group in groups:
         x = np.asarray(group.x, dtype=float)
         y = np.asarray(group.y, dtype=float)
@@ -4215,6 +4193,10 @@ def global_fit_parameter_model(
                 computation_revision=computation.COMPUTATION_REVISION,
             )
         mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
+        if group.width_context is not None:
+            selected_width = group.width_context.select(mask)
+            selected_width.validate(model)
+            input_width_contexts[group.group_id] = selected_width.to_dict()
         x_masked = x[mask]
         xe2: NDArray[np.float64] | None = None
         xstep: NDArray[np.float64] | None = None
@@ -4384,6 +4366,7 @@ def global_fit_parameter_model(
         per_group_chi_squared=per_group_chi_squared,
         per_group_n_points=per_group_n_points,
         global_correlations=global_correlations,
+        input_width_contexts=input_width_contexts,
         computation_revision=computation.COMPUTATION_REVISION,
     )
 

@@ -19,6 +19,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import (
     get_param_info,
 )
+from asymmetry.core.fitting.sc.trend_width import TrendWidthContext
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.tasks import TaskCancelledError
 from asymmetry.gui.utils import gle_export
@@ -124,6 +125,7 @@ class _FitRow:
     include_in_trend: bool = True
     quality_flags: list[str] = field(default_factory=list)
     computation_revision: str | None = None
+    parameter_sources: dict = field(default_factory=dict)
 
 
 def _x_custom_id(x_key: str) -> str | None:
@@ -669,6 +671,13 @@ class ParameterExportData:
         parameter's lens are identity, so the common path is unchanged — and
         another parameter's lens never touches it; the fit's pill/table stay
         usable, only the curve waits for a re-fit under the current transform."""
+        fit = self._model_fits.get(param_name)
+        for fit_range in fit.ranges if fit is not None else ():
+            context = TrendWidthContext.from_dict(
+                fit_range.result.input_width_context if fit_range.result else None
+            )
+            if context is not None and context.transform != self._y_transform_for(param_name):
+                return True
         if self._x_transform.is_identity and self._y_transform_for(param_name).is_identity:
             return False
         return self._model_fit_transform_sig.get(param_name) != self._transform_signature(

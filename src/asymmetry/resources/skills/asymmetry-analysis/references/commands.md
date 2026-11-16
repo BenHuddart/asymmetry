@@ -519,10 +519,10 @@ options:
 ```
 usage: asymmetry trend [-h] --series SERIES [--from-fits SERIES,...]
                        [--fit PARAM[:EXPR]] [--order QUANTITY] [--x SERIES=VALUE,...]
-                       [--csv CSV] [--plot] [--model EXPR] [--param PARAM]
-                       [--xmin XMIN] [--xmax XMAX] [--initial NAME=VALUE]
-                       [--fix NAME=VALUE] [--exclude KEYS] [--json]
-                       [--workdir WORKDIR] [--instrument NAME]
+                       [--csv CSV] [--plot] [--model EXPR] [--y-transform Y_TRANSFORM]
+                       [--param PARAM] [--xmin XMIN] [--xmax XMAX]
+                       [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude KEYS]
+                       [--json] [--workdir WORKDIR] [--instrument NAME]
                        folder
 
 positional arguments:
@@ -552,6 +552,9 @@ options:
                         curve)
   --model EXPR          Fit this parameter-vs-x expression to --param, e.g.
                         'OrderParameter', 'Redfield'
+  --y-transform Y_TRANSFORM
+                        Custom Y expression, e.g. sqrt(2)*x; values and errors scale
+                        together
   --param PARAM         The trend column --model is fitted to; with --from-fits, the
                         members' trend-fit parameter the built series tabulates (and
                         --model fits)

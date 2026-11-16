@@ -107,6 +107,11 @@ mappings to the ``Gaussian`` component:
        the time signal is its characteristic function, without a Gaussian-width
        substitution. See :ref:`sc-width-convention`.
 
+Known Gaussian-component trend sources require an explicit ``sqrt(2)*x``
+conversion before a Brandt field fit; ordinary temperature laws inherit the
+input convention. Source-unknown tables remain unknown and usable. See
+:ref:`trend-width-inputs` for the request check and historical-data behaviour.
+
 The Gaussian and zero-field KT functions first differ at fourth order:
 :math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`.
 See :ref:`fit-gaussian` and :ref:`fit-static-gkt-zf` for applicability.

@@ -82,6 +82,9 @@ nodes gives a linear-in-:math:`T` decrease at low :math:`T`; a two-gap
    :math:`\sigma_G` is approximately :math:`7.58\times10^4`, consistent with
    the guide's rounded 75780. See :ref:`sc-width-convention` for the API and
    the trend-panel conversion required by the Brandt field models.
+   Known Gaussian sources need that explicit conversion at the field-fit request;
+   temperature laws retain their input convention. See :ref:`trend-width-inputs`.
+
 
 The data
 --------
