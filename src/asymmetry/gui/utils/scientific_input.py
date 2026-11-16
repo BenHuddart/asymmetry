@@ -18,7 +18,7 @@ class ScientificInputDialog(QProgressDialog):
         self._tasks = TaskRunner(self)
         self._outcome = None
 
-    def run(self, task):
+    def run(self, task, *, is_current=None):
         """Return the worker result, or None after cooperative cancellation."""
         self.show()
         self._worker = self._tasks.start(
@@ -36,6 +36,8 @@ class ScientificInputDialog(QProgressDialog):
             self.rejected.disconnect(self._on_cancel)
             self._tasks.shutdown()
             self.close()
+        if is_current is not None and not is_current():
+            return None
         if self._outcome is None:
             return None
         success, result = self._outcome
@@ -53,7 +55,8 @@ class ScientificInputDialog(QProgressDialog):
         self._loop.quit()
 
     def _on_error(self, message):
-        self._outcome = (False, message)
+        if not self._worker.is_cancelled():
+            self._outcome = (False, message)
         self._loop.quit()
 
 

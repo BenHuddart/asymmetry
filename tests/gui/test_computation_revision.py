@@ -235,8 +235,9 @@ def test_live_maxent_adapters_preserve_result_execution_on_conversion(qapp, monk
         )
         assert recon.result_metadata["computation_revision"] == computation.COMPUTATION_REVISION
         assert recon.result_metadata["input_computation_revision"] == revision
+    captured_revision = result.computation_revision
     monkeypatch.setattr(computation, "COMPUTATION_REVISION", "next")
-    assert result.as_dataset(run, config).computation_revision == "1"
+    assert result.as_dataset(run, config).computation_revision == captured_revision
     window._dirty = False
     window.close()
 

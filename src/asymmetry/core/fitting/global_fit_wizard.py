@@ -30,6 +30,9 @@ from asymmetry.core.fitting.composite import (
     CompositeModel,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
+from asymmetry.core.fitting.fingerprint_cache import (
+    _cached_series_fingerprint,
+)
 from asymmetry.core.fitting.fit_wizard import (
     OVERHAUSER_TEMPLATE_KEYS,
     CandidateAssessment,
@@ -127,6 +130,7 @@ from asymmetry.core.fitting.result_payload import (
     _serialize_fit_result,
     _serialize_parameter_set,
 )
+from asymmetry.core.fitting.spectral_residual import RunResidualDiagnostic
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
@@ -142,6 +146,7 @@ from asymmetry.core.fitting.wizard_timing import (
     WizardStageProgress,
     stage_timer,
 )
+from asymmetry.core.fourier.diagnostic import diagnostic_fit_record
 from asymmetry.core.transform.preparation import (
     prepare_wizard_dataset,
     wizard_observation_matches,
@@ -458,21 +463,6 @@ _DECIMATION_MIN_CYCLES_MARGIN = 2.0
 
 
 @dataclass(frozen=True)
-class RunResidualDiagnostic:
-    """Residual diagnostics for one dataset inside a global-fit candidate."""
-
-    run_number: int
-    run_label: str
-    axis_value: float
-    residual_rms: float
-    runs_z_score: float
-    max_abs_autocorrelation: float
-    residual_fft_peak_snr: float
-    gate_passed: bool
-    gate_reasons: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class GlobalParameterRecommendation:
     """Recommended role for one parameter in a global fit."""
 
@@ -599,8 +589,15 @@ class GlobalCandidateAssessment:
 
     @property
     def residual_gate_passed(self) -> bool:
-        """Every run clears its residual gate; a series warning is a caveat, not a veto."""
-        return all(diagnostic.gate_passed for diagnostic in self.run_diagnostics)
+        """Every available run diagnostic clears its existing threshold."""
+        return self.residual_diagnostics_available and all(
+            d.gate_passed for d in self.run_diagnostics
+        )
+
+    @property
+    def residual_diagnostics_available(self) -> bool:
+        """Unavailable residual measurements cannot establish model evidence."""
+        return all(d.available for d in self.run_diagnostics)
 
     @property
     def applied_roles(self) -> dict[str, str]:
@@ -1177,7 +1174,7 @@ def _plan_run_completion(
         dataset, rebin_factor, cancel_check=partial(_cancel_histogram_preparation, cancel_callback)
     )
     # Fan-out shares one prepared observation; task records omit replay inputs.
-    analysis_fit_record = analysis_dataset.fit_record()
+    analysis_fit_record = diagnostic_fit_record(analysis_dataset)
     same_resolution = int(source.rebin_factor) == int(rebin_factor) and wizard_observation_matches(
         dataset, source.build_signature
     )
@@ -1307,7 +1304,7 @@ class GlobalFitWizardCandidatePortfolio:
 
 def _preview_series_templates(
     ordered_datasets: Sequence[MuonDataset],
-    aggregate_fingerprint: SpectrumFingerprint,
+    aggregate_fingerprint: SpectrumFingerprint | None,
     current_model: CompositeModel | None,
     *,
     scope: WizardScope | None = None,
@@ -1335,14 +1332,14 @@ def _preview_series_templates(
         aggregate_fingerprint, current_model, scope_resolution=resolution
     )
 
-    if scope is None:
+    if scope is None and aggregate_fingerprint is not None:
         return tuple(build_candidate_templates(aggregate_fingerprint, current_model=current_model))
 
     templates: list[CandidateTemplate] = []
     known_keys: set[str] = set()
     for family in families:
         chosen = [family.stage1_rep, *family.stage1_extras]
-        if family.priority > 0.0 or family.key == "baseline":
+        if aggregate_fingerprint is None or family.priority > 0.0 or family.key == "baseline":
             chosen.extend(family.stage2_members)
         for template in chosen:
             if template.key not in known_keys:
@@ -1604,6 +1601,29 @@ def single_fit_table_covers_portfolio(
             if recommendation.assessment_for_key(template.key) is None:
                 return False
     return len(factors) == 1
+
+
+def build_global_fit_wizard_setup_portfolio(
+    datasets: list[MuonDataset],
+    current_model: CompositeModel | None = None,
+    *,
+    scope: WizardScope,
+    fit_times: FitTimeEstimates = UNTIMED,
+) -> GlobalFitWizardCandidatePortfolio:
+    """Describe parameter expectations without evaluating data on the GUI thread.
+
+    No spectral evidence exists at setup. Numerical screening builds its measured
+    portfolio on the existing worker, with the existing family/priority rules.
+    """
+    ordered, key, label, warning = _ordered_datasets_with_axis(datasets)
+    templates = _preview_series_templates(
+        ordered,
+        None,
+        current_model,
+        scope=scope,
+        fit_times=fit_times,
+    )
+    return GlobalFitWizardCandidatePortfolio(tuple(ordered), key, label, warning, {}, templates)
 
 
 def build_global_fit_wizard_candidate_portfolio(
@@ -5528,6 +5548,7 @@ def _assemble_assignment_assessment(
     fit_success: bool,
     dense_curves: bool,
     rung: CandidateRung | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalCandidateAssessment:
     """Score one role assignment's per-run results into a candidate assessment.
 
@@ -5571,7 +5592,12 @@ def _assemble_assignment_assessment(
             runs_z_score,
             max_abs_autocorrelation,
             residual_fft_peak_snr,
-        ) = _residual_diagnostics(dataset, result)
+        ) = _residual_diagnostics(
+            dataset,
+            result,
+            template.model.function,
+            cancel_check=partial(_cancel_histogram_preparation, cancel_callback),
+        )
         bound_hits = _bound_hit_names(result.parameters)
         gate_reasons = _filtered_gate_reasons(
             fit_result=result,
@@ -6141,6 +6167,7 @@ def _fit_exact_assignment(
         metric=metric,
         fit_success=fit_success,
         dense_curves=dense_curves,
+        cancel_callback=cancel_callback,
     )
     _record_counter(
         instrumentation,
@@ -6570,7 +6597,7 @@ def _assess_single_fit_candidate_from_attempts(
     n_points = gaussian_selection(dataset).used
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
-        _residual_diagnostics(dataset, best_result)
+        _residual_diagnostics(dataset, best_result, template.model.function)
     )
     bound_hits = _bound_hit_names(best_result.parameters)
     residual_gate_reasons = _residual_gate_reasons(
@@ -7738,49 +7765,6 @@ def _filtered_gate_reasons(
     return reasons
 
 
-def _series_fingerprint_key(dataset: MuonDataset) -> tuple[int, int, float, float, float, float]:
-    """A cheap content key for one record's fingerprint.
-
-    The fingerprint depends only on the record's arrays. Run number, point
-    count, the time span and two asymmetry moments identify a record for the
-    lifetime of a search without hashing 10⁵ points per call.
-    """
-    asymmetry = np.asarray(dataset.asymmetry, dtype=float)
-    time = np.asarray(dataset.time, dtype=float)
-    return (
-        int(dataset.run_number),
-        int(dataset.n_points),
-        float(time[0]),
-        float(time[-1]),
-        float(asymmetry.sum()),
-        float(asymmetry[asymmetry.size // 2]),
-    )
-
-
-#: Fingerprints of the records a coupled search scores, by content key. The
-#: series-consistency caveat recomputes every run's fingerprint for every node
-#: it assembles — a peak pass, a damped-line scan and a residual pass per run —
-#: which on a 12-run phase was 2.4 s of the ~8 s a node costs, for an answer
-#: that never changes within the search. Bounded so a long session does not
-#: accumulate one entry per record ever fitted.
-_SERIES_FINGERPRINT_CACHE: dict[
-    tuple[int, int, float, float, float, float], SpectrumFingerprint
-] = {}
-_SERIES_FINGERPRINT_CACHE_MAX = 256
-
-
-def _cached_series_fingerprint(dataset: MuonDataset) -> SpectrumFingerprint:
-    key = _series_fingerprint_key(dataset)
-    cached = _SERIES_FINGERPRINT_CACHE.get(key)
-    if cached is not None:
-        return cached
-    fingerprint = fingerprint_spectrum(dataset)
-    if len(_SERIES_FINGERPRINT_CACHE) >= _SERIES_FINGERPRINT_CACHE_MAX:
-        _SERIES_FINGERPRINT_CACHE.pop(next(iter(_SERIES_FINGERPRINT_CACHE)))
-    _SERIES_FINGERPRINT_CACHE[key] = fingerprint
-    return fingerprint
-
-
 def _fingerprint_jump_warnings(datasets: list[MuonDataset]) -> list[str]:
     warnings: list[str] = []
     if len(datasets) < 4:
@@ -8416,6 +8400,8 @@ def _decimation_is_nyquist_safe(
     Nyquist limit, so an oscillatory template is never searched against an
     aliased spectrum. A fingerprint with no detected oscillatory content (or no
     fingerprint at all) is always safe to decimate — there is nothing to alias.
+    Nonuniform fits use their largest centre separation as a conservative cost
+    constraint, independently of the fixed diagnostic's actual FFT bandwidth.
     """
     if factor <= 1 or aggregate_fingerprint is None:
         return True
@@ -8428,7 +8414,7 @@ def _decimation_is_nyquist_safe(
         time = np.asarray(dataset.time, dtype=float)
         if time.size < 2 * factor:
             return False
-        dt = float(np.mean(np.diff(time)))
+        dt = float(np.max(np.diff(time)))
         if dt <= 0.0:
             return False
         decimated_dt = dt * factor
@@ -10116,7 +10102,7 @@ def _run_separable_search(
         cancel_callback=cancel_callback,
     )
     # Prepare once before candidate fan-out; tasks carry no histogram replay context.
-    search_fit_records = [dataset.fit_record() for dataset in search_datasets]
+    search_fit_records = [diagnostic_fit_record(dataset) for dataset in search_datasets]
     if search_rebin_factor > 1:
         _progress_log(
             progress_callback,
@@ -10898,7 +10884,7 @@ def _run_exhaustive_wavefront_search(
     # Every assignment task carries the whole series, so the series is pickled
     # once per node of the wavefront. It travels as fit records — arrays and
     # provenance, no raw counts — because no fit in this search reads a count.
-    fit_records = [dataset.fit_record() for dataset in datasets]
+    fit_records = [diagnostic_fit_record(dataset) for dataset in datasets]
 
     states: list[_WavefrontTemplateState] = []
     state_by_key: dict[str, _WavefrontTemplateState] = {}

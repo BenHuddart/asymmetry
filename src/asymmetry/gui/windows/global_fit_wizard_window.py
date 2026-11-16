@@ -41,7 +41,6 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
-    CandidateTemplate,
     ConfidenceTier,
     RecommendationVerdict,
     SelectionMetric,
@@ -49,9 +48,9 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardRecommendation,
-    build_global_fit_wizard_candidate_portfolio,
     build_global_fit_wizard_recommendation,
     build_global_fit_wizard_screening_recommendation,
+    build_global_fit_wizard_setup_portfolio,
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
     format_transition_boundaries,
     merge_global_fit_wizard_recommendations,
@@ -97,6 +96,13 @@ from asymmetry.gui.utils.phase_colors import (
     EXCLUDED_PHASE_HATCH_COLOR,
     format_axis_range,
     phase_color,
+)
+from asymmetry.gui.utils.wizard_expectations import (
+    _default_parameter_bounds,
+    _default_parameter_role,
+    _format_bounds_text,
+    _parse_bounds_text,
+    _portfolio_parameter_usage,
 )
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.key_value_grid import KeyValueGrid
@@ -1627,16 +1633,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
         if not self._datasets:
             self._set_expectations_warning("")
             return
-        try:
-            portfolio = build_global_fit_wizard_candidate_portfolio(
-                self._datasets,
-                current_model=self._current_model,
-                scope=self._picker.scope(),
-                fit_times=self._fit_times(),
-            )
-        except Exception as exc:
-            self._set_expectations_warning(f"Global fit wizard setup failed: {exc}")
-            return
+        portfolio = build_global_fit_wizard_setup_portfolio(
+            self._datasets,
+            current_model=self._current_model,
+            scope=self._picker.scope(),
+            fit_times=self._fit_times(),
+        )
         if portfolio.mixed_axes_warning:
             self._set_expectations_warning(portfolio.mixed_axes_warning)
             return
@@ -2551,7 +2553,13 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._optimised_table.setItem(
                 row,
                 5,
-                QTableWidgetItem("Pass" if assessment.residual_gate_passed else "Warn"),
+                QTableWidgetItem(
+                    "Unavailable"
+                    if not assessment.residual_diagnostics_available
+                    else "Pass"
+                    if assessment.residual_gate_passed
+                    else "Warn"
+                ),
             )
             self._optimised_table.setItem(
                 row, 6, QTableWidgetItem(", ".join(assessment.global_param_names) or "None")
@@ -2731,112 +2739,3 @@ _CONFIDENCE_LABELS = {
 
 def _confidence_label(confidence: ConfidenceTier) -> str:
     return _CONFIDENCE_LABELS.get(confidence, "—")
-
-
-def _portfolio_parameter_usage(
-    templates: tuple[CandidateTemplate, ...],
-) -> tuple[list[str], dict[str, list[str]]]:
-    ordered_names: list[str] = []
-    usage_by_name: dict[str, list[str]] = {}
-    seen: set[str] = set()
-    for template in templates:
-        for name in template.model.param_names:
-            usage_by_name.setdefault(name, [])
-            if template.title not in usage_by_name[name]:
-                usage_by_name[name].append(template.title)
-            if name in seen:
-                continue
-            seen.add(name)
-            ordered_names.append(name)
-    return ordered_names, usage_by_name
-
-
-#: Kinds a series is expected to hold steady, and kinds it is expected to move.
-_GLOBAL_BY_DEFAULT = frozenset({ParameterKind.BACKGROUND, ParameterKind.AMPLITUDE})
-_LOCAL_BY_DEFAULT = frozenset(
-    {
-        ParameterKind.RATE,
-        ParameterKind.FREQUENCY,
-        ParameterKind.STATIC_WIDTH,
-        ParameterKind.SHAPE,
-        ParameterKind.PHASE,
-    }
-)
-#: Kinds that start bounded below at zero, whatever bounds the Fit tab holds.
-_NON_NEGATIVE = (_LOCAL_BY_DEFAULT - {ParameterKind.PHASE}) | {ParameterKind.AMPLITUDE}
-
-
-def _default_parameter_role(
-    name: str,
-    kind: ParameterKind,
-    *,
-    current_parameter_types: dict[str, str],
-) -> str:
-    current = str(current_parameter_types.get(name, "")).strip()
-    if current == "Fixed":
-        return "Fixed"
-    if kind in _GLOBAL_BY_DEFAULT:
-        return "Global"
-    if kind in _LOCAL_BY_DEFAULT:
-        return "Local"
-    if current in {"Global", "Local"}:
-        return current
-    return "Global"
-
-
-def _default_parameter_bounds(
-    name: str,
-    kind: ParameterKind,
-    *,
-    current_parameter_bounds: dict[str, tuple[float, float]],
-) -> tuple[float, float]:
-    if kind is ParameterKind.BACKGROUND:
-        return -float("inf"), float("inf")
-    if kind in _NON_NEGATIVE:
-        return 0.0, float("inf")
-    if name in current_parameter_bounds:
-        return current_parameter_bounds[name]
-    default_min = get_param_info(name).default_min
-    return (
-        (float(default_min), float("inf"))
-        if default_min is not None
-        else (-float("inf"), float("inf"))
-    )
-
-
-def _format_bounds_text(bounds: tuple[float, float]) -> str:
-    return f"{_format_bound_value(bounds[0])}, {_format_bound_value(bounds[1])}"
-
-
-def _format_bound_value(value: float) -> str:
-    if value == float("inf"):
-        return "inf"
-    if value == -float("inf"):
-        return "-inf"
-    return f"{float(value):.6g}"
-
-
-def _parse_bounds_text(text: str) -> tuple[float, float]:
-    parts = [part.strip() for part in str(text).split(",")]
-    if len(parts) != 2:
-        raise ValueError("bounds must be written as 'min, max'")
-    min_val = _parse_bound_value(parts[0])
-    max_val = _parse_bound_value(parts[1])
-    if np.isfinite(min_val) and np.isfinite(max_val) and min_val > max_val:
-        raise ValueError(f"invalid bounds: {min_val} > {max_val}")
-    return min_val, max_val
-
-
-def _parse_bound_value(text: str) -> float:
-    lowered = text.strip().lower()
-    if lowered == "-inf":
-        return -float("inf")
-    if lowered == "inf":
-        return float("inf")
-    try:
-        value = float(lowered)
-    except ValueError as exc:
-        raise ValueError(f"could not parse bound '{text}'") from exc
-    if not np.isfinite(value):
-        raise ValueError(f"bound '{text}' must be finite or +/-inf")
-    return value

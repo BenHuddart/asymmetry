@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import replace
+from functools import partial
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
@@ -59,14 +60,16 @@ from asymmetry.core.fitting.wizard_scope import (
     describe_scope,
     set_user_field_direction,
 )
-from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.core.fourier.diagnostic import prepare_spectral_preview
 from asymmetry.core.transform.preparation import wizard_observation_identity
 from asymmetry.core.transform.rebin import BINNING_POLICY
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
+from asymmetry.gui.tasks import check_task_cancelled
 from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
 from asymmetry.gui.utils.information_criteria import criterion_item
-from asymmetry.gui.utils.plot_decimation import decimate_for_preview
+from asymmetry.gui.utils.scientific_input import ScientificInputDialog
+from asymmetry.gui.utils.wizard_spectrum import populate_fingerprint_plot
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
 from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
@@ -143,17 +146,6 @@ _PICKER_MIN_ROWS = 18
 #: The Compare candidates panel's height on the scrolling Result page, in table rows.
 _COMPARE_ROWS = 22
 
-#: Cap on points drawn in the fingerprint plot's time-domain errorbar. This
-#: plot is a small visual fingerprint (not a precision analysis surface, per
-#: its module docstring) drawn synchronously on the GUI thread from
-#: ``set_analysis_context``. Same disease as the grouping preview pane fixed
-#: in PR #229: matplotlib ``errorbar`` over a long high-resolution run's full
-#: point count freezes the GUI thread for seconds computing the error-bar
-#: collection's data limits. Matches the grouping preview's budget
-#: (``preview_pane._MAX_PREVIEW_POINTS``) since both are advisory previews of
-#: similarly-shaped time-domain curves.
-_MAX_FINGERPRINT_POINTS = 2000
-
 #: Progress-message prefix → trail step key. Matched case-insensitively by
 #: prefix so the core's coarse two-message fallback and any finer emits both
 #: light the right step; an unmatched message only updates the status line.
@@ -205,6 +197,8 @@ class FitWizardWindow(WizardWindowBase):
         """
         # --- Result / analysis state ---
         self._dataset: MuonDataset | None = None
+        self._spectral_preview = None
+        self._preview_dialog: ScientificInputDialog | None = None
         #: The plot panel's active fit range, when the caller supplied one. The
         #: wizard analyses the whole record (``_dataset``), so this is carried
         #: only to warn when applying the result into that range would throw
@@ -555,7 +549,10 @@ class FitWizardWindow(WizardWindowBase):
         detected line is worth saying out loud, which is what ``fit_range`` is
         carried for. Callers that pass neither keep the previous behaviour.
         """
+        if self._preview_dialog is not None:
+            self._preview_dialog.reject()
         self._dataset = full_dataset if full_dataset is not None else dataset
+        self._spectral_preview = None
         self._fit_range = (fit_range[0], fit_range[1]) if fit_range is not None else (None, None)
         self._current_model = current_model
         self._notes_banner.setText("")
@@ -571,8 +568,24 @@ class FitWizardWindow(WizardWindowBase):
         self.set_context_chips(self._context_chip_labels())
         self._reset_result_state()
         self._picker.set_scope(WizardScope())
-        # Render the time/FFT plot and the (user-only) peaks table straight away
-        # so peak seeds can be added before the first analysis run.
+        source = self._dataset
+        request_id = self._analysis_request_id
+        dialog = ScientificInputDialog(self, "Preparing spectral preview…", "Spectral preview")
+        self._preview_dialog = dialog
+        try:
+            preview = dialog.run(
+                lambda worker: prepare_spectral_preview(
+                    source, cancel_check=partial(check_task_cancelled, worker)
+                ),
+                is_current=lambda: request_id == self._analysis_request_id,
+            )
+        finally:
+            if self._preview_dialog is dialog:
+                self._preview_dialog = None
+            dialog.deleteLater()
+        if request_id != self._analysis_request_id:
+            return
+        self._spectral_preview = preview
         self._fingerprint_banner.setText("")
         self._populate_fingerprint_plot()
         self._populate_peaks_table()
@@ -622,6 +635,9 @@ class FitWizardWindow(WizardWindowBase):
         # widgets, so it captures only these plain values plus worker.is_cancelled.
         dataset = self._dataset
         current_model = self._current_model
+        diagnostic = (
+            self._spectral_preview.observation if self._spectral_preview is not None else None
+        )
         scope = self._picker.scope()
         fit_times = self._fit_times()
         user_frequencies_mhz = [float(peak["freq_mhz"]) for peak in self._user_peaks] or None
@@ -633,6 +649,7 @@ class FitWizardWindow(WizardWindowBase):
             # relay (touches only worker.progress.emit — no widgets on-thread).
             return build_fit_wizard_recommendation(
                 dataset,
+                diagnostic=diagnostic,
                 current_model=current_model,
                 metric=SelectionMetric.AICC,
                 scope=scope,
@@ -643,6 +660,12 @@ class FitWizardWindow(WizardWindowBase):
             )
 
         return task
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._analysis_request_id += 1
+        if self._preview_dialog is not None:
+            self._preview_dialog.reject()
+        super().closeEvent(event)
 
     def _runs(self) -> list[MuonDataset]:
         return [] if self._dataset is None else [self._dataset]
@@ -991,6 +1014,8 @@ class FitWizardWindow(WizardWindowBase):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
+        container._figure = None
+        container._canvas = None
         try:
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
             from matplotlib.figure import Figure
@@ -1047,91 +1072,7 @@ class FitWizardWindow(WizardWindowBase):
             self._fingerprint_table.setItem(row, 1, QTableWidgetItem(value))
 
     def _populate_fingerprint_plot(self) -> None:
-        if self._dataset is None:
-            self._fft_ax = None
-            self._user_peak_artists = []
-            self._draw_figure(self._fingerprint_plot_widget, None)
-            return
-        widget = self._fingerprint_plot_widget
-        figure = getattr(widget, "_figure", None)
-        canvas = getattr(widget, "_canvas", None)
-        if figure is None or canvas is None:
-            return
-
-        figure.clear()
-        ax_time = figure.add_subplot(2, 1, 1)
-        ax_fft = figure.add_subplot(2, 1, 2)
-        # Decimate for display only — the errorbar draw is O(points) and is
-        # the GUI-thread stall this plot is prone to on long runs (see
-        # _MAX_FINGERPRINT_POINTS). The FFT below still runs against the full
-        # dataset since its precision matters for the plotted peak positions.
-        plot_time, plot_asymmetry, plot_error = decimate_for_preview(
-            np.asarray(self._dataset.time, dtype=float),
-            np.asarray(self._dataset.asymmetry, dtype=float),
-            np.asarray(self._dataset.error, dtype=float),
-            _MAX_FINGERPRINT_POINTS,
-        )
-        ax_time.errorbar(
-            plot_time,
-            plot_asymmetry,
-            yerr=plot_error,
-            fmt=".",
-            markersize=3,
-            color=tokens.PLOT_DATA,
-        )
-        ax_time.set_xlabel("Time (µs)")
-        ax_time.set_ylabel("Asymmetry")
-        ax_time.set_title("Time Domain")
-
-        centered_dataset = MuonDataset(
-            time=np.asarray(self._dataset.time, dtype=float).copy(),
-            asymmetry=np.asarray(self._dataset.asymmetry, dtype=float).copy()
-            - (self._recommendation.fingerprint.tail_estimate if self._recommendation else 0.0),
-            error=np.asarray(self._dataset.error, dtype=float).copy(),
-            metadata=dict(self._dataset.metadata),
-            run=self._dataset.run,
-        )
-        freq, _real, mag = fft_asymmetry(centered_dataset, window="hann", padding_factor=4)
-        ax_fft.plot(freq, mag, color=tokens.ACCENT)
-        ax_fft.set_xlabel("Frequency (MHz)")
-        ax_fft.set_ylabel("|FFT|")
-        ax_fft.set_title("Windowed FFT")
-
-        self._fft_ax = ax_fft
-        self._user_peak_artists = []
-        analysis = self._recommendation.peak_analysis if self._recommendation else None
-        if analysis is not None:
-            scan_label: str | None = _DAMPED_SCAN_LEGEND_LABEL
-            for peak in analysis.peaks:
-                if peak.source in ("fft", "residual_fft"):
-                    ax_fft.axvline(
-                        peak.frequency_mhz,
-                        color=tokens.ACCENT,
-                        alpha=0.35,
-                        linewidth=1.2,
-                    )
-                elif peak.source in ("early_fft", "damped_scan"):
-                    # This plot is the Hann-windowed transform, which is exactly
-                    # the view a heavily damped line is absent from. Mark it in a
-                    # distinct style so the seed is visible and obviously not a
-                    # feature of the spectrum drawn underneath it: dotted for the
-                    # early-window crop ladder, dashed for the matched-apodisation
-                    # scan, which also names itself in the legend.
-                    is_scan = peak.source == "damped_scan"
-                    ax_fft.axvline(
-                        peak.frequency_mhz,
-                        color=tokens.ACCENT,
-                        alpha=0.55,
-                        linewidth=1.2,
-                        linestyle="--" if is_scan else ":",
-                        label=scan_label if is_scan else None,
-                    )
-                    if is_scan:
-                        scan_label = None  # one legend entry, not one per line
-            if scan_label is None:
-                ax_fft.legend(loc="upper right", fontsize="x-small", framealpha=0.8)
-        self._refresh_peak_overlays()
-        canvas.draw_idle()
+        populate_fingerprint_plot(self, scan_label=_DAMPED_SCAN_LEGEND_LABEL)
 
     def _refresh_peak_overlays(self) -> None:
         """Redraw just the dashed user-peak markers on the FFT subplot."""

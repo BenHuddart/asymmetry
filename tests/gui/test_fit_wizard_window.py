@@ -555,9 +555,7 @@ def test_fit_wizard_window_fingerprint_plot_bounds_point_count(qapp: QApplicatio
     ax_time = window._fingerprint_plot_widget._figure.axes[0]
     # errorbar(fmt=".") draws the markers as a Line2D on the axes.
     (data_line,) = ax_time.lines
-    plotted_points = len(data_line.get_xdata())
-    assert plotted_points <= wizard_window_module._MAX_FINGERPRINT_POINTS
-    assert plotted_points < n
+    assert len(data_line.get_xdata()) <= 2000
 
 
 # ── Scope + user peaks forwarded to the builder ──────────────────────────────
