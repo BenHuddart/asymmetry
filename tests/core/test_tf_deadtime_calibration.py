@@ -10,6 +10,7 @@ from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.likelihood import FitInputError, Objective
 from asymmetry.core.fitting.tf_calibration import TFCalibrationRequest, fit_tf_calibration
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.workflow.calibration import CalibrationOptions, calibrate_source
 from tests.core.test_tf_calibration_fit import _raw_tf
 
 
@@ -76,11 +77,17 @@ def test_corrected_fit_matches_independent_weighted_normalisation_and_curvature(
     ds = _deadtime_tf(factor=factor, supplied=supplied)
     fixed = dict(alpha=1.25, A0=20, frequency=1.3, Lambda=0.15, phase=0.17)
     fixed.update(background=0, background_b=0)
-    request = TFCalibrationRequest(
-        1, 2, parameters=tuple(P(n, v, fixed=True) for n, v in fixed.items())
+    outcome = calibrate_source(
+        ds,
+        CalibrationOptions(
+            "tf_calibration_fit",
+            envelope="exponential",
+            parameters=tuple(P(n, v, fixed=True) for n, v in fixed.items()),
+        ),
     )
-    result = fit_tf_calibration(ds, request)
+    result = outcome.selected
     assert result.ok, result.message
+    assert result.fit.objective is Objective.GAUSSIAN
     times = np.asarray(result.fit.domains[0].time_us)
     wave = 0.2 * np.exp(-0.15 * times) * np.cos(2 * np.pi * 1.3 * times + 0.17)
     shapes = [

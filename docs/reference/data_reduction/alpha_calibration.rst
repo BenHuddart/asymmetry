@@ -275,24 +275,17 @@ background is not inferred from the corrected values alone.
 Count-fit α
 ------------
 
-The three estimators above are *reduction-time* methods on the grouping
-dialog. A fourth route lives in the **Multi-Group Fit** window: the
-forward/backward count fit with the balance free (*Forward + Backward
-(free α)* target) recovers :math:`\alpha` as a parameter of a full count-level
-fit. The model fits the raw forward and backward histograms simultaneously
-with :math:`\alpha` parameterised as :math:`\sqrt{\alpha}`, under the Poisson
-likelihood, and reports the full :math:`(\alpha, \text{amplitude})`
-covariance — so the strong α–amplitude correlation of a TF run is estimated
-*with* the physics rather than before it. This is the WiMDA manual's "most
-accurate way" to determine :math:`\alpha`.
+The grouping dialog's default **TF calibration fit** already fits both count
+histograms with the full fitted-nuisance covariance. It measures alpha together
+with amplitude, backgrounds, and the other free model parameters, and can fit
+beta in the same operation. Its uncertainty remains conditional on the model
+and fixed preparation assumptions.
 
-*When to use this.* The most demanding calibrations, and any case where α and
-the oscillation amplitude are strongly correlated (precessing TF data): the
-joint fit propagates that correlation into the reported uncertainty, which the
-reduction-time estimators cannot. It needs a physics model for the run, so it
-is heavier than the one-click dialog estimators — reach for it when the extra
-rigour matters, and use the diamagnetic estimator for routine T20
-calibrations.
+The **Multi-Group Fit** window also offers *Forward + Backward (free α)* for a
+specified count model. This is a separate modelling workflow; its result is not
+the quick Diamagnetic or Decay balance estimate. Agreement and precision depend
+on the observations, model, and fitted constraints, rather than on a universal
+ranking of these methods.
 
 Once the fit converges, **Promote α** writes the fitted balance into the
 grouping with ``alpha_method="count_fit"`` provenance and a reference-run
@@ -329,10 +322,14 @@ controls this bias need not track frequency. Finite
 windows, packing, and unresolved oscillations can introduce further dependence;
 a field-dependent estimate does not by itself locate an instrumental defect.
 
-For the most demanding work, :math:`\alpha` can instead be treated as a free
-parameter of a count-level fit (the WiMDA manual's "most accurate way"). That
-route is the **Count-fit α** section above; its uncertainty comes from the fit
-covariance, including the α–amplitude correlation.
+A standard error describes a local uncertainty scale. Interpreting estimate
+plus or minus one standard error as an interval uses an approximately normal
+sampling distribution, with an approximately 68.27 % reference probability,
+not an exact confidence guarantee [gum]_. Boundary, weak-contrast, and skewed
+cases can violate that approximation. The standard deviation of repeated
+estimates and half the 15.865–84.135 percentile range are different summaries
+for a skewed distribution; neither automatically defines an interval for a
+particular observed calibration.
 
 Shared core TF calibration fit
 ------------------------------
@@ -484,6 +481,21 @@ MINOS intervals are retained separately. ``fit.success`` describes the fit;
 ``unreliable`` covariance. Missing or unreliable errors are ``None``. Fixed
 beta has no fitted error or alpha–beta correlation.
 
+MINOS stores signed lower and upper offsets from the fitted value at the
+unit-objective profile criterion, separately from HESSE standard errors. Its
+usual approximately 68.27 % interpretation requires regular likelihood
+conditions [minuit-intervals]_; it is not a physical detector-coverage certificate. Missing valid
+MINOS endpoints remain absent even if HESSE is available. Fit success,
+calibration usability, covariance quality, a parameter at a boundary, and
+interval availability answer different questions.
+
+For applied deadtime correction, the retained-variance convention supplies
+conditional weighted curvature. It omits nonlinear variance propagation,
+coefficient/exposure uncertainty, and physical event-loss dependence. A Poisson
+experiment with a rational-loss *mean* is a sensitivity approximation, not a
+physical detector-process coverage study. Fixed-response and packed-bin-centre
+assumptions likewise remain outside the reported fitted errors.
+
 Asymmetry also requires a declared fixed alpha to be finite and positive, and
 checks the existing fitted scale against the observed count
 ratio (factor three) and forward count level (factor 100) to reject spurious
@@ -573,14 +585,97 @@ explicitly supplied finite bounds; omitted endpoints stay unbounded for fixed
 values, independently of the numerical defaults used for free searches. Invalid requests raise ``ValueError``.
 The selected result's ``model`` identifies its effective envelope, such as
 ``gaussian_common_phase`` or ``stretched_common_phase``. Calling
-``fit_tf_calibration`` fits one explicit envelope, exponential by default. Selection is a
-separate core operation; it does not change grouping-dialog choices, apply
-coefficients, or alter saved/manual calibrations.
+``fit_tf_calibration`` fits one explicit envelope, exponential by default. The explicit workflow and grouping dialog use selection when no envelope is
+supplied. Selection itself does not apply coefficients or alter saved/manual
+calibrations.
 
 Reduced-curve errors remain conditional on the applied alpha/beta, even when
 the calibration record carries errors and covariance. Shared correction terms
 in marginal point errors do not make an ordinary fit a correlated likelihood;
 see :ref:`conditional-calibration-errors` and :ref:`asymmetry-counting-errors`.
+
+Validation scope
+~~~~~~~~~~~~~~~~
+
+Independent acquired-Poisson controls exercise the public preparation and
+calibration routes with 16 ns bins, raw bins 4–498, generating alpha 1.25,
+forward normalisation 20000 counts/bin, amplitude 20 %, frequency 1.3 MHz,
+phase 0.17 rad, and separate backgrounds 70/110 counts/bin. Free-beta
+controls have generating beta 0.8; the selected-envelope control has
+exponential truth. Exponential rate
+0.15 μs⁻¹ and Gaussian rate 0.25 μs⁻¹ controls fit all default nuisances.
+The fixed-envelope controls and actual default selector use separate seed
+streams. Each row has 2500 attempts, usable fits, and available HESSE intervals;
+the covering yield over all attempts therefore equals coverage conditional on
+availability in these rows.
+
+.. list-table:: HESSE ±SE hit counts and 95 % Wilson intervals
+   :header-rows: 1
+   :widths: 40 30 30
+
+   * - Fitted operation
+     - Alpha hits
+     - Beta hits
+   * - Exponential, fixed beta
+     - | 1684/2500
+       | (65.50–69.17 %)
+     - Fixed; no fitted interval
+   * - Exponential, free beta
+     - | 1695/2500
+       | (65.94–69.60 %)
+     - | 1691/2500
+       | (65.78–69.45 %)
+   * - Gaussian, free beta
+     - | 1706/2500
+       | (66.39–70.04 %)
+     - | 1678/2500
+       | (65.25–68.93 %)
+   * - Selected, free beta
+     - | 1711/2500
+       | (66.59–70.23 %)
+     - | 1709/2500
+       | (66.51–70.15 %)
+
+Monte Carlo standard errors are about 0.93–0.94 percentage points, distinct
+from fitted calibration errors [simulation]_. In the exponential free-beta
+cell, optional MINOS has 2500 valid intervals for each coefficient and gives
+1695 alpha hits and 1694 beta hits at its unit-deviance criterion. The selector
+chooses stretched in 2486 attempts and exponential in 14; its reported errors
+remain conditional on that selected envelope. These controls do not establish
+selection-adjusted confidence intervals, equivalence between methods, or
+coverage under other signals, count levels, constraints, or fixed responses.
+
+Separate 10000-attempt ratio controls use 60 signal bins and either an
+independent 20-bin measured pedestal, a 30-bin estimation window overlapping
+ten signal bins, or fixed exact subtraction. Their first-order ±SE hit counts
+are 6825, 6857, and 6805, respectively, with all intervals available (Monte Carlo
+SE about 0.47 percentage points). The target is the ratio of expected prepared
+sums; proportional bank signals make it 1.25 in these controls. Shared and
+overlap terms are retained through actual preparation. This does not establish
+inference with unsupported cross-bank dependence or a poorly determined denominator.
+
+Smaller 200-attempt stress controls expose the limits. Weak and absent TF
+contrast give only 13 and five usable free-beta calibrations, respectively;
+96 attempts in each return a covariance-based interval. Those populations
+are different, and the generating beta label is unidentifiable at zero
+amplitude. A short window gives 160 alpha intervals with 110 hits, a covering
+yield of 110/200 rather than conditional coverage 110/160. Deliberately fitting
+an undamped envelope to Gaussian-damped counts gives only one alpha hit in
+200 intervals. Biased background subtraction and nonzero window-average
+polarisation also displace the ratio from efficiency alpha. Such cases do
+not satisfy the correct-model normal reference.
+
+The applied-deadtime rational-loss-mean Poisson sensitivity control gives
+120 alpha and 114 beta hits in 200 available intervals (Monte Carlo SE about
+3.5 percentage points). Its retained measured-count weighting is verified
+independently by closed-form conditional curvature, but the generating noise
+law is an approximation: these hit fractions do not certify physical detector
+coverage or justify altering the accepted variance convention. Quick-method
+point estimates can be biased or unstable under these stress conditions;
+they return no interval and have no interval coverage to report. In particular,
+Decay balance can return a finite positive, diagnostically usable estimate on
+noisy weak/absent contrast; its validity diagnostics do not certify
+identifiability or accuracy.
 
 Compared with other programs
 ----------------------------
@@ -667,6 +762,19 @@ universal default or uncertainty coverage.
 - A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011).
+
+.. [gum] Joint Committee for Guides in Metrology, *Evaluation of measurement
+   data — Guide to the expression of uncertainty in measurement*, JCGM 100:2008,
+   Secs. 5.1–5.2 and Annex G,
+   `doi:10.59161/JCGM100-2008E <https://doi.org/10.59161/JCGM100-2008E>`_.
+
+.. [minuit-intervals] iminuit documentation, `Hesse and Minos
+   <https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_,
+   curvature, profile intervals, and asymptotic coverage.
+
+.. [simulation] T. P. Morris, I. R. White, and M. J. Crowther,
+   Stat. Med. **38**, 2074 (2019),
+   `doi:10.1002/sim.8086 <https://doi.org/10.1002/sim.8086>`_.
 
 .. [roundoff] N. J. Higham, *Accuracy and Stability of Numerical Algorithms*,
    2nd ed. (SIAM, Philadelphia, 2002), Sec. 3.1.

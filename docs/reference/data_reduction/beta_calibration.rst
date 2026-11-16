@@ -84,13 +84,10 @@ polarisation term:
 
 with :math:`P(t)` a damped-cosine precession. :math:`N_0`, :math:`\alpha`,
 :math:`\beta`, the amplitude, and the precession frequency/damping/phase are
-shared free parameters; each side keeps its own background. Because the
-physics is shared between the two histograms, this is the statistically
-strong protocol: it reports :math:`\beta` together with the :math:`\alpha`
-fitted alongside it and their correlation, so the two balances are measured
-*with* their mutual dependence rather than in isolation. It is the
-**endorsed measurement protocol** and the only one of the two that yields an
-:math:`\alpha`–:math:`\beta` correlation.
+shared free parameters; each side keeps its own background. The joint fit
+reports :math:`\beta`, :math:`\alpha`, and their fitted correlation under the
+shared model. This retains their fitted dependence; it does not establish
+universal precision or model adequacy relative to independent histogram fits.
 
 Raw counts use a shared Poisson likelihood. Applied File/manual deadtime
 correction selects weighted count fitting with retained measured or supplied
@@ -133,13 +130,12 @@ physics shared between them — and forms
                   + \left(\frac{\sigma_{A_b}}{\hat A_{0,b}}\right)^2}
 
 by ratio (the fitted :math:`\hat\alpha = \hat N_{0,f}/\hat N_{0,b}` is
-reported the same way). Because the two fits share no physics, this protocol
-is statistically weaker than the count fit — it does not correlate
-:math:`\alpha` and :math:`\beta`, and reports no such correlation (``None``
-in the underlying :class:`~asymmetry.core.fitting.beta_calibration.BetaEstimate`)
-— but it is a useful independent cross-check: two fits that never see each
-other's data landing on compatible :math:`\beta` values is good evidence the
-count-fit result is not an artefact of the shared model.
+reported the same way). This is first-order propagation of fitted amplitude
+errors under the independent-bank assumption. The result reports no
+:math:`\alpha`–:math:`\beta` correlation (``None`` in
+:class:`~asymmetry.core.fitting.beta_calibration.BetaEstimate`); this does not
+assert that the two derived ratios are independent. It provides a model
+cross-check whose precision and bias depend on the fitted assumptions.
 
 Applying the joint result
 -------------------------
@@ -170,9 +166,11 @@ comfortably inside that range.
 Uncertainties
 -------------
 
-Both protocols report symmetric curvature standard errors from the underlying
-count fit(s). The joint operation explicitly evaluates HESSE after minimisation;
-the independent single-histogram cross-check retains its optimiser covariance. For the count fit, :math:`\sigma_\beta` and
+The joint protocol reports symmetric curvature standard errors; the
+single-histogram ratios use first-order propagation of fitted errors. The joint
+operation explicitly evaluates HESSE after minimisation; the independent
+single-histogram cross-check retains its optimiser covariance. For the count
+fit, :math:`\sigma_\beta` and
 :math:`\sigma_\alpha` come directly from the joint fit's covariance, together
 with their correlation; for the single-histogram ratio, they are propagated
 from the two independent fits' amplitude (and :math:`N_0`) errors by the
@@ -191,7 +189,14 @@ unavailable/unreliable covariance supplies no coefficient error. The legacy
 by joint degrees of freedom, counting shared free parameters once: Poisson
 deviance for raw data or weighted chi-square after applied deadtime correction.
 Neither is used to rescale parameter errors; Poisson deviance is not an exact
-chi-square test. See
+chi-square test.
+Estimate plus or minus one standard error has an approximately 68.27 % normal
+reference, without an exact coverage guarantee. Optional MINOS signed offsets
+are separate profile intervals at a unit-objective change, with validity and
+availability distinct from HESSE. Neither incorporates envelope selection,
+uncertain fixed response, or full deadtime-process uncertainty. Weak contrast,
+boundaries, and misspecification require particular care; a successful minimum
+alone establishes none of these inference properties. See
 :doc:`alpha_calibration` for supported observations, fixed-beta error
 state, cancellation, and conditional-error limits.
 

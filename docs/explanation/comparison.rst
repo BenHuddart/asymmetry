@@ -316,6 +316,18 @@ fixed values, range estimates, and automatic-tail estimates do not subtract or
 constrain them. This shares the count model, not musrfit's type-2 asymmetry
 objective.
 
+Independent raw-Poisson calibration controls through the public operation
+support the conditional standard-error scale on the stated informative TF
+cases; their Monte Carlo precision, interval availability, selector outcomes,
+and misspecified/weak-contrast limits are given in
+:doc:`/reference/data_reduction/alpha_calibration`. The normal ±SE reference is
+approximately 68.27 %, without an exact guarantee. Optional MINOS profile
+intervals remain separate from HESSE errors. Neither native agreement nor these
+bounded controls establish physical deadtime coverage, selection-adjusted
+intervals, or a universal precision ranking. Quick Diamagnetic/General supply
+point estimates without intervals; Mantid 6.16.1 AlphaCalc returns scalar alpha
+without a calibration error.
+
 Matched musrfit 1.12.1 type-0 chi-square controls use 16 ns native bins, two
 disjoint detectors, 100000 good frames, deadtime 0.02 μs, zero fixed backgrounds,
 and packing one/four. After matching its corrected-count variance convention,

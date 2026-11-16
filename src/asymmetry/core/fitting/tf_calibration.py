@@ -108,6 +108,9 @@ class TFCalibrationResult:
     Successful minimisation can have unavailable/unreliable covariance. Free
     beta also requires the existing resolved-precession/error safeguards; fixed
     beta does not acquire those beta-identifiability gates or a fitted error.
+    HESSE standard errors and optional MINOS offsets are separate summaries,
+    conditional on fixed response, timing, weights, and this envelope. Neither
+    includes envelope-selection uncertainty or guarantees interval coverage.
     """
 
     request: TFCalibrationRequest
