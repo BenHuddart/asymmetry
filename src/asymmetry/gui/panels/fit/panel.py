@@ -93,16 +93,14 @@ class _CurrentPageTabWidget(CurrentPageSizingMixin, QTabWidget):
 
 
 class FitPanel(QWidget):
-    """Fit setup and results panel with tabbed interface.
-
-    Contains tabs for single dataset fitting and global (multi-dataset) fitting.
-    """
+    """Fit setup and results for single datasets and global multi-dataset fits."""
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
     preview_requested = Signal(
         object, object, object
     )  # (preview_result, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
+    members_changed = Signal()
     global_fit_started = Signal()  # forwarded from GlobalFitTab at worker launch
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
@@ -218,8 +216,8 @@ class FitPanel(QWidget):
         self._single_tab.field_direction_answered.connect(self.field_direction_answered.emit)
         self._tabs.addTab(self._single_tab, "Single")
 
-        # Batch fit tab (a global fit is the special case with shared parameters)
         self._global_tab = GlobalFitTab(member_kind="runs")
+        self._global_tab.members_changed.connect(self.members_changed.emit)
         self._global_tab.global_fit_started.connect(self.global_fit_started.emit)
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.apply_wizard_phases_requested.connect(

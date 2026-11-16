@@ -76,6 +76,7 @@ class _StubFitPanel(QWidget):
     def __init__(self):
         super().__init__()
         self.fit_completed = _DummySignal()
+        self.members_changed = _DummySignal()
         self.global_fit_started = _DummySignal()
         self.global_fit_completed = _DummySignal()
         self.apply_wizard_phases_requested = _DummySignal()

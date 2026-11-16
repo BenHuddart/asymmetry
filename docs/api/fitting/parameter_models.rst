@@ -71,6 +71,17 @@ likelihood. The common fit-input boundary also checks the actual selected
 window's scalar validity and positional source sharing before seeding.
 See :doc:`/reference/alc_mode` for baseline propagation and scan units.
 
+Scalar fit adapters and ``fit_parameter_model`` accept an optional raising
+``cancel_check``. Use an established cancellation exception such as
+``asymmetry.core.fitting.engine.FitCancelledError``; it propagates through
+solver and seed paths rather than returning a failed fit or partial covariance.
+The default leaves successful numerical methods and results unchanged.
+``ScanBaselineResult.evaluate_baseline``, ``baseline_correction_operator``, and
+``baseline_corrected_covariance`` accept the same poll when these derived
+operations are needed independently of a peak fit. Their property counterparts
+retain the ordinary no-callback API. Work-unit limits are described in
+:doc:`/reference/alc_mode`.
+
 .. autofunction:: asymmetry.core.fitting.fit_scan_baseline
 
 .. autoclass:: asymmetry.core.fitting.ScanBaselineResult

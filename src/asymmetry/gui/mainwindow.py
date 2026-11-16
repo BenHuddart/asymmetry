@@ -73,13 +73,9 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
     ScanBaselineResult,
-    as_composite_model,
     build_grouped_time_domain_datasets,
     enrich_summary_provenance,
     fit_result_summary,
-    fit_rf_resonance,
-    fit_scan_baseline,
-    fit_scan_peaks,
     grouped_time_domain_available,
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
@@ -844,6 +840,9 @@ class MainWindow(QMainWindow):
         #: closeEvent shuts it down so no live thread outlasts the window.
         self._tasks = TaskRunner(self)
         self._scan_controller = ScanController(self)
+        from asymmetry.gui.scan.fitting import ScanFitController
+
+        self._scan_fits = ScanFitController(self)
 
         #: Memoises the two uncached time-domain reductions (grouped-count build
         #: and the counts-first rebunch) so dataset switches / view toggles reuse
@@ -2098,6 +2097,12 @@ class MainWindow(QMainWindow):
             _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        self._fit_panel.members_changed.connect(self._scan_fits.stop)
+        self._data_browser.selection_changed.connect(self._scan_fits.stop)
+        self._plot_panel.fit_range_changed.connect(self._scan_fits.stop)
+        self._alc_fit_panel._rf_difference_check.toggled.connect(self._scan_fits.stop)
+        self._alc_scan_view.fit_invalidated.connect(self._scan_fits.invalidate)
+        self._alc_scan_view.fit_controls.button.clicked.connect(self._scan_fits.stop)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
         self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
         self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
@@ -12113,6 +12118,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_requested(self) -> None:
         """Build the current count-integral request through the cancellable controller."""
+        self._scan_fits.invalidate()
         self._scan_controller.build()
 
     # x-axis key → (display label, derivative unit label).
@@ -12128,6 +12134,7 @@ class MainWindow(QMainWindow):
 
         Same-scan click exclusions retain manual zoom when reset_view is False.
         """
+        self._scan_fits.invalidate()
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
         self._alc_baseline = None
@@ -12334,136 +12341,17 @@ class MainWindow(QMainWindow):
         return "Build a scan with at least two points first."
 
     def _on_fit_baseline(self) -> None:
-        """Fit + overlay a baseline over the user-marked non-resonant regions."""
-        if self._alc_scan_view.derivative_enabled():
-            self._alc_notify("Baseline", "Turn off dA/dB to fit a baseline on the scan.")
-            return
-        scan = self._alc_display_scan(self._alc_scan_view.x_key())
-        if scan is None:
-            self._alc_notify("Baseline", self._alc_too_few_points_message())
-            return
-        regions = self._alc_scan_view.baseline_regions()
-        if not regions:
-            self._alc_notify(
-                "Baseline",
-                "Add at least one non-resonant region (start/end) to define the baseline.",
-            )
-            return
-        model = self._alc_scan_view.baseline_model()
-        try:
-            result = fit_scan_baseline(scan, regions, model=model)
-        except ValueError as exc:
-            self._alc_notify("Baseline", str(exc), warning=True)
-            return
-        from asymmetry.gui.scan.fit_history import capture_fit
-
-        capture_fit(self, "baseline", result.scan, result.model, result.fit, result.baseline)
-        self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
+        self._scan_fits.request("baseline")
 
     def _on_alc_baseline_invalidated(self) -> None:
-        """A region edit/drag dropped the baseline: discard the corrected scan.
-
-        Prevents a later peak fit from running against a baseline-corrected scan
-        that no longer matches the regions the user now sees.
-        """
         self._alc_baseline = None
+        self._scan_fits.invalidate("baseline")
 
     def _on_fit_peaks(self) -> None:
-        """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
-        baseline = self._alc_baseline
-        if baseline is None:
-            self._alc_notify(
-                "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
-            )
-            return
-        try:
-            specs = self._alc_scan_view.peak_specs()
-        except ValueError as exc:
-            self._alc_notify("Peaks", str(exc))
-            return
-        if not specs:
-            self._alc_notify("Peaks", "Add at least one peak (+ Gaussian / + Lorentzian).")
-            return
-
-        model = as_composite_model([spec["component"] for spec in specs])
-        # Address each peak's params by name (composite suffixes them _i when >1
-        # peak), not by positional arithmetic over param_names.
-        initial: dict[str, float] = {}
-        for i, spec in enumerate(specs):
-            for local in ("f", "B0", "Bwid"):
-                initial[model.component_param_name(i, local)] = spec[local]
-
-        try:
-            peaks = fit_scan_peaks(baseline, model, initial=initial)
-            fit = peaks.fit
-        except (ValueError, TypeError) as exc:
-            self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
-            return
-        from asymmetry.gui.scan.fit_history import capture_fit
-
-        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
-        curve = baseline.baseline + np.asarray(model.function(baseline.scan.x, **fitted_values))
-        capture_fit(
-            self,
-            "peaks",
-            baseline.scan,
-            model,
-            fit,
-            curve,
-            baseline_index=self._alc_scan_view.fit_history.active["baseline"],
-            covariance=peaks.covariance,
-            effective_dof=peaks.effective_dof,
-        )
-        self._log_panel.log(f"Fitted {len(specs)} peak(s).")
+        self._scan_fits.request("peaks")
 
     def _on_fit_rf(self) -> None:
-        """Fit the RF muon+proton resonance model to the (Green − Red) field scan.
-
-        Fits ``RFResonanceMuP`` directly on the field-axis scan (it carries its own
-        background, so no separate baseline step is needed), with ν_RF held fixed,
-        and reads off the couplings A_µ (mean dip position) and A_p (splitting).
-        """
-        if not self._alc_rf_mode:
-            self._alc_notify(
-                "RF resonance",
-                "Enable 'RF resonance (Green − Red)' and Build Scan first — the RF "
-                "model fits the period-difference observable.",
-            )
-            return
-        if self._alc_scan_view.derivative_enabled():
-            self._alc_notify("RF resonance", "Turn off dA/dB to fit the RF resonance.")
-            return
-        if self._alc_scan_view.x_key() != "field":
-            self._alc_notify(
-                "RF resonance", "Switch the x-axis to B (G) — the RF model fits vs field."
-            )
-            return
-        scan = self._alc_display_scan("field")
-        if scan is None:
-            self._alc_notify("RF resonance", self._alc_too_few_points_message())
-            return
-        try:
-            fit = fit_rf_resonance(
-                scan,
-                nu_rf=self._alc_scan_view.rf_nu(),
-                a_mu=self._alc_scan_view.rf_a_mu_seed(),
-                a_p=self._alc_scan_view.rf_a_p_seed(),
-            )
-        except (ValueError, TypeError) as exc:
-            self._alc_notify("RF resonance", f"Could not fit: {exc}", warning=True)
-            return
-        if not fit.success:
-            self._alc_notify(
-                "RF resonance", f"RF fit did not converge: {fit.message}", warning=True
-            )
-            return
-
-        from asymmetry.gui.scan.fit_history import capture_fit
-
-        model = as_composite_model("RFResonanceMuP")
-        values = {name: fit.parameters[name].value for name in model.param_names}
-        capture_fit(self, "rf", scan, model, fit, model.function(scan.x, **values))
-        self._log_panel.log("Fitted RF resonance.")
+        self._scan_fits.request("rf")
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
@@ -16277,6 +16165,7 @@ class MainWindow(QMainWindow):
             )
             self._log_panel.log("Project open ignored: a file load is in progress.")
             return
+        self._scan_fits.stop()
         source_path, leave_dirty = self._resolve_open_source(path)
         if source_path is None:
             return
@@ -17290,6 +17179,7 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._scan_controller.invalidate()
+        self._scan_fits.reset()
         self._project_source_application = None
         self._background_run_cache.clear()
         self._current_dataset = None
@@ -17517,6 +17407,7 @@ class MainWindow(QMainWindow):
         """
         close_gle_previews(self)
         self._scan_controller.shutdown()
+        self._scan_fits.shutdown()
         # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit
         # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
         if getattr(self, "_tasks", None) is not None:

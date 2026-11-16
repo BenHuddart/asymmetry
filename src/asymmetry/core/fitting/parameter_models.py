@@ -2218,6 +2218,7 @@ def _estimate_constant(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     return {"c": _weighted_median(y, _point_weights(y, yerr))}
 
@@ -2227,6 +2228,7 @@ def _estimate_linear(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     line = _wls_line(x, y, _point_weights(y, yerr))
     if line is None:
@@ -2240,6 +2242,7 @@ def _estimate_polynomial(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed only the constant + linear terms of a polynomial baseline.
 
@@ -2259,6 +2262,7 @@ def _estimate_power_law(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed ``a·|x|^n + c`` via a log-log line on the positive-x subset.
 
@@ -2293,6 +2297,7 @@ def _estimate_exp_decay(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed ``a·exp(−x/τ) + c`` from a semi-log line on the baseline-subtracted trace.
 
@@ -2345,6 +2350,7 @@ def _estimate_arrhenius(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed ``a·exp(−Ea/(k_B·T))`` from a ln y vs 1/T line.
 
@@ -2410,6 +2416,7 @@ def _estimate_lorentzian(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed ``a/(1 + (B/B0)^2) + c`` — a peak *centred at the origin*.
 
@@ -2630,6 +2637,7 @@ def _estimate_rf_resonance(
     y: NDArray[np.float64],
     yerr: NDArray[np.float64] | None,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed ``RFResonanceMuP``: depths, widths, background and, with ``ν_RF`` known, the couplings.
 
@@ -2663,6 +2671,8 @@ def _estimate_rf_resonance(
     dip_fields = np.array(sorted((centre for centre, _height, _width in peaks), reverse=True))
 
     def detuning(couplings: NDArray[np.float64]) -> NDArray[np.float64]:
+        if cancel_check is not None:
+            cancel_check()
         f1, f2 = rf_transition_freqs(dip_fields, couplings[0], couplings[1])
         return np.array([f1[0] - nu_rf, f2[1] - nu_rf])
 
@@ -2733,6 +2743,7 @@ _MODEL_SEED_ESTIMATORS: dict[
             NDArray[np.float64],
             NDArray[np.float64] | None,
             Mapping[str, float],
+            Callable[[], None] | None,
         ],
         dict[str, float],
     ],
@@ -2760,6 +2771,7 @@ def suggest_model_seeds(
     yerr: NDArray | None = None,
     *,
     known: Mapping[str, float],
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Data-aware seed overrides keyed by *unique* param name (``model.param_names``).
 
@@ -2785,6 +2797,8 @@ def suggest_model_seeds(
     untouched. Returns just the known values when the data is unusable (fewer
     than two finite points). Pure and Qt-free.
     """
+    if cancel_check is not None:
+        cancel_check()
     xf, yf, ef = _finite_xy(x, y, yerr)
     if xf.size < 2:
         return dict(known)
@@ -2800,6 +2814,8 @@ def suggest_model_seeds(
         for _component, mapping in components
     ]
     for names, group_seeder in _GROUP_SEEDERS.items():
+        if cancel_check is not None:
+            cancel_check()
         group = [
             index for index, (component, _) in enumerate(components) if component.name in names
         ]
@@ -2807,11 +2823,13 @@ def suggest_model_seeds(
         for index, base_seeds in zip(group, group_seeder(xf, yf, members), strict=False):
             seeds.update({components[index][1][base]: value for base, value in base_seeds.items()})
     for (component, mapping), known_here in zip(components, component_known, strict=True):
+        if cancel_check is not None:
+            cancel_check()
         estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
         if estimator is None:
             continue
         try:
-            base_seeds = estimator(xf, yf, ef, known_here)
+            base_seeds = estimator(xf, yf, ef, known_here, cancel_check)
         except (ValueError, FloatingPointError, ZeroDivisionError):
             continue
         for base_name, value in base_seeds.items():
@@ -2823,6 +2841,8 @@ def suggest_model_seeds(
     # Preserve the existing critical-temperature seeding exactly.
     seeds.update(suggest_trend_seeds(model, x, y))
     seeds.update(known)
+    if cancel_check is not None:
+        cancel_check()
     return seeds
 
 
@@ -3562,6 +3582,7 @@ def _transport_seed_initial_values(
     e_fit: NDArray[np.float64],
     model: ParameterCompositeModel,
     parameters: ParameterSet,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float] | None:
     if not _is_additive_parameter_model(model):
         return None
@@ -3601,6 +3622,8 @@ def _transport_seed_initial_values(
     ]
 
     for rate_choice in product(*rate_grids):
+        if cancel_check is not None:
+            cancel_check()
         seed_values = dict(current_values)
         basis_columns: list[NDArray[np.float64]] = []
 
@@ -3666,6 +3689,7 @@ def _run_parameter_model_minuit(
     method: str,
     initial_values: dict[str, float] | None = None,
     xerr_fit: NDArray[np.float64] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> tuple[ParameterModelFitResult, float]:
     try:
         from iminuit import Minuit
@@ -3685,20 +3709,14 @@ def _run_parameter_model_minuit(
     param_names = [p.name for p in free]
 
     def model_wrapper(x_local: NDArray, *args: float) -> NDArray[np.float64]:
+        if cancel_check is not None:
+            cancel_check()
         kw = {**fixed_kw, **dict(zip(param_names, args, strict=False))}
         return model.function(x_local, **kw)
 
     if xerr_fit is None:
         cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
     else:
-        # Errors-in-variables (Orear/York effective variance): inflate each
-        # point's variance by the x-error propagated through the local slope,
-        # σ²_eff = σ_y² + (∂f/∂x)²·σ_x². The slope is a central finite
-        # difference, so no analytic derivative is needed; iminuit re-evaluates
-        # the cost every step, making the weighting self-consistent at the
-        # minimum with no outer iteration. With σ_x = 0 this reduces exactly to
-        # ordinary least squares (callers route the all-zero case to the
-        # LeastSquares branch above to stay byte-identical).
         x_step = np.maximum(np.abs(x_fit), 1.0) * 1e-6
         e2 = e_fit**2
         xerr2 = np.asarray(xerr_fit, dtype=float) ** 2
@@ -3732,6 +3750,8 @@ def _run_parameter_model_minuit(
     else:
         m.migrad()
 
+    if cancel_check is not None:
+        cancel_check()
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
 
@@ -3784,6 +3804,7 @@ def _perturbed_start_candidates(
     n: int,
     rng: np.random.Generator,
     default_scale: float = 1.0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[dict[str, float]]:
     """Generate ``n`` deterministic perturbed starts around ``base_values``.
 
@@ -3803,17 +3824,16 @@ def _perturbed_start_candidates(
     candidates: list[dict[str, float]] = []
     log_factor = float(np.log(3.0))
     for _ in range(n):
+        if cancel_check is not None:
+            cancel_check()
         candidate = dict(base_values)
         for p in free:
             base = float(candidate.get(p.name, p.value))
             lo, hi = float(p.min), float(p.max)
             if np.isfinite(base) and abs(base) > 1e-12:
-                # Scale-like: multiplicative jitter, log-uniform in [1/3, 3].
                 factor = float(np.exp(rng.uniform(-log_factor, log_factor)))
                 value = base * factor
             else:
-                # Offset-like: additive jitter on the finite bound span, or the
-                # data-derived fallback when a bound is infinite (never inf*0.25).
                 if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
                     scale = 0.25 * (hi - lo)
                 else:
@@ -3839,6 +3859,7 @@ def fit_parameter_model(
     xerr: NDArray | None = None,
     extra_starts: int = 0,
     seed: int = 0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ParameterModelFitResult:
     """Fit a parameter-vs-x model using iminuit.
 
@@ -3860,20 +3881,16 @@ def fit_parameter_model(
     starts around the user's parameters, keeping the best converged candidate by
     the existing success-then-χ² rule. The perturbation is driven solely by
     ``numpy.random.default_rng(seed)``, so a given ``seed`` is fully
-    reproducible. ``extra_starts = 0`` (the default) is byte-identical to the
-    single-start behaviour — no RNG is constructed and the candidate list is
-    unchanged.
+    reproducible. With ``extra_starts = 0`` no RNG is constructed.
     """
+    if cancel_check is not None:
+        cancel_check()
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
     yy = np.asarray(y, dtype=float)
     ee = apply_error_mode(yy, yerr, error_mode, error_value)
     if ee is None:
         ee = np.ones_like(xx)
-    # Effective variance combines σ_x with a real per-point σ_y; under unit
-    # weights (NONE) or scatter estimation (SCATTER) the "σ_y" is a placeholder
-    # of arbitrary scale, so the combination σ_y² + slope²·σ_x² would be
-    # scale-dependent — ignore x-errors in those modes.
     if error_mode in (ErrorMode.NONE, ErrorMode.SCATTER):
         xe = None
     else:
@@ -3882,8 +3899,6 @@ def fit_parameter_model(
     try:
         window_selection = windows_mask(xx, windows, x_min, x_max)
     except ValueError as exc:
-        # Keep the documented failure contract: bad range inputs yield a
-        # failed result, never an exception.
         return ParameterModelFitResult(
             success=False,
             message=str(exc),
@@ -3908,8 +3923,6 @@ def fit_parameter_model(
     if error_mode is ErrorMode.COLUMN:
         e_fit = stabilized_point_errors(e_fit)
 
-    # Effective-variance weighting only when x carries usable uncertainty;
-    # otherwise stay on the ordinary least-squares path (byte-identical).
     xerr_fit: NDArray[np.float64] | None = None
     if xe is not None:
         xe_fit = xe[mask]
@@ -3917,43 +3930,33 @@ def fit_parameter_model(
         if np.any(xe_fit > 0.0):
             xerr_fit = xe_fit
 
-    # Each candidate carries a provenance tag so ``seed_beat_user_start`` can
-    # distinguish a *new-robustness* win from the always-present internals:
-    #   "user"      — the user's provided parameters used as-is (the None start)
-    #   "transport" — the transport heuristic, which has ALWAYS run internally
-    #   "generic"   — the generic data-aware seed (suggest_model_seeds)
-    #   "perturb"   — a deterministic perturbed start
-    # The flag fires only when a "generic"/"perturb" candidate wins; the
-    # transport heuristic winning is not news and must NOT set it.
     initial_candidates: list[tuple[str, dict[str, float] | None]] = [("user", None)]
-    heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
+    heuristic_seed = _transport_seed_initial_values(
+        x_fit, y_fit, e_fit, model, parameters, cancel_check
+    )
     if heuristic_seed is not None:
         initial_candidates.append(("transport", heuristic_seed))
 
     if extra_starts > 0:
         base_values = _parameter_values_by_name(parameters)
-        # A generic data-aware seed, merged over the user's current values; the
-        # fixed values are the ones this fit holds.
         data_seed = suggest_model_seeds(
             model,
             x_fit,
             y_fit,
             e_fit,
             known={p.name: float(p.value) for p in parameters if p.fixed},
+            cancel_check=cancel_check,
         )
         merged = {**base_values, **data_seed}
         if merged != base_values:
             initial_candidates.append(("generic", merged))
-        # Deterministic perturbed starts (RNG constructed only when requested,
-        # so the extra_starts == 0 path never touches the RNG). The y-span is a
-        # finite fallback jitter scale for params with infinite bounds.
         rng = np.random.default_rng(seed)
         y_span = float(np.max(y_fit) - np.min(y_fit))
         default_scale = y_span if np.isfinite(y_span) and y_span > 0.0 else 1.0
         initial_candidates.extend(
             ("perturb", candidate)
             for candidate in _perturbed_start_candidates(
-                base_values, parameters, int(extra_starts), rng, default_scale
+                base_values, parameters, int(extra_starts), rng, default_scale, cancel_check
             )
         )
 
@@ -3962,6 +3965,8 @@ def fit_parameter_model(
     best_provenance = "user"
 
     for provenance, initial_values in initial_candidates:
+        if cancel_check is not None:
+            cancel_check()
         result, fval = _run_parameter_model_minuit(
             x_fit=x_fit,
             y_fit=y_fit,
@@ -3971,6 +3976,7 @@ def fit_parameter_model(
             method=method,
             initial_values=initial_values,
             xerr_fit=xerr_fit,
+            cancel_check=cancel_check,
         )
         if best_result is None:
             best_result = result
@@ -3998,20 +4004,11 @@ def fit_parameter_model(
     best_result.error_mode = error_mode.value
     best_result.n_points = int(len(x_fit))
     best_result.n_starts_tried = len(initial_candidates)
-    # Only a candidate that exists because of the new robustness work counts as
-    # "beating the user start"; the transport heuristic always ran internally.
     best_result.seed_beat_user_start = best_provenance not in {"user", "transport"}
     best_result.params_at_bound = tuple(parameters_at_bound(best_result.parameters))
     if error_mode is ErrorMode.SCATTER and best_result.success:
-        # Estimate errors from the scatter of the points: the unit-weight fit
-        # location is independent of a uniform σ rescale, so multiplying the
-        # parameter errors by √(χ²/ν) is exactly the fixed point of WiMDA's
-        # iterated Estimate mode (σ ← σ·√χ²ᵣ until χ²ᵣ = 1).
         ndof = len(x_fit) - len(parameters.free_parameters)
         if ndof < 1:
-            # An (over)determined interpolation has no residual scatter to
-            # estimate errors from — χ² ≈ 0 would collapse the rescaled
-            # errors to ~0, reporting an indeterminate fit as exact.
             best_result.uncertainties = {}
             best_result.covariance = None
             best_result.message = (
@@ -4030,6 +4027,8 @@ def fit_parameter_model(
                         names,
                         [[value * scale2 for value in row] for row in matrix],
                     )
+    if cancel_check is not None:
+        cancel_check()
     return best_result
 
 

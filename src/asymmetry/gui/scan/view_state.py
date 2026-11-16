@@ -58,7 +58,7 @@ def restore_analysis_state(self, state: dict) -> None:
 
     with QSignalBlocker(self._regions_table):
         self._regions_table.setRowCount(0)
-        for region in self._coerce_rows(state.get("regions"), 2):
+        for region in _coerce_rows(state.get("regions"), 2):
             row = self._regions_table.rowCount()
             self._regions_table.insertRow(row)
             for col, val in enumerate(region):
@@ -71,7 +71,7 @@ def restore_analysis_state(self, state: dict) -> None:
                 continue
             if str(peak[0]) not in self._PEAK_COMPONENTS:
                 continue
-            vals = self._coerce_rows([peak[1:]], 3)
+            vals = _coerce_rows([peak[1:]], 3)
             if not vals:
                 continue
             row = self._peaks_table.rowCount()
@@ -81,3 +81,18 @@ def restore_analysis_state(self, state: dict) -> None:
             self._peaks_table.setItem(row, 0, type_item)
             for col, val in zip((1, 2, 3), vals[0], strict=True):
                 self._peaks_table.setItem(row, col, QTableWidgetItem(repr(val)))
+
+
+def _coerce_rows(rows: object, width: int) -> list[list[float]]:
+    """Coerce *rows* (untrusted on-disk data) to ``width``-float lists, skipping bad ones."""
+    out: list[list[float]] = []
+    if not isinstance(rows, (list, tuple)):
+        return out
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) != width:
+            continue
+        try:
+            out.append([float(v) for v in row])
+        except (TypeError, ValueError):
+            continue
+    return out

@@ -3,7 +3,7 @@
 import numpy as np
 
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
-from asymmetry.core.fitting.scan_history import ScanFitHistory, ScanFitRecord
+from asymmetry.core.fitting.scan_history import ScanFitHistory
 
 MISSING_RESULT = (
     "Saved fit settings have no captured numerical result. "
@@ -76,15 +76,12 @@ def present_fit(window, record):
     view.show_fit_overlay(x, curve)
 
 
-def capture_fit(window, kind, scan, model, fit, prediction, **kwargs):
-    """Record one explicit solve and use that same record for display."""
+def publish_fit(window, record):
+    """Publish a current captured execution, retaining post-fit peak seed applicability."""
     from dataclasses import replace
 
     view = window._alc_scan_view
-    request = fit_settings(view, kind)
-    record = ScanFitRecord.capture(
-        kind, scan, request, model, fit, prediction, request=request, **kwargs
-    )
+    kind = record.kind
     present_fit(window, record)
     # The peak table uses fitted values as the next request's seeds.
     record = replace(record, settings=fit_settings(view, kind))

@@ -12,12 +12,11 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidgetItem, QWidget
 
 from ..data import make_alc_field_scan
-from ._base import Scenario, _process_events_for, register
+from ._base import Scenario, _process_events_for, pump_until, register
 
 
 class AlcFieldScanScenario(Scenario):
@@ -69,7 +68,7 @@ class AlcFieldScanScenario(Scenario):
         view._derivative_check.setChecked(False)
 
         # Baseline: a linear fit over the two non-resonant edges (the dip is
-        # near 3100 G). Both ALC fits are synchronous.
+        # near 3100 G). Await numerical completion before seeding its dependent peak.
         view._baseline_model_combo.setCurrentText("Linear")
         view._add_region()
         view._regions_table.setItem(0, 0, QTableWidgetItem("2000"))
@@ -79,7 +78,8 @@ class AlcFieldScanScenario(Scenario):
         view._regions_table.setItem(1, 1, QTableWidgetItem("5000"))
         _process_events_for(milliseconds=120)
         view.baseline_fit_requested.emit()
-        _process_events_for(milliseconds=250)
+        pump_until(lambda: window._scan_fits.idle)
+        assert window._alc_baseline is not None
 
         # Peak: a Gaussian seeded a little off the resonance so the fit moves.
         view._add_peak("Gaussian")
@@ -88,7 +88,8 @@ class AlcFieldScanScenario(Scenario):
         view._peaks_table.setItem(0, 3, QTableWidgetItem("-5"))
         _process_events_for(milliseconds=120)
         view.peaks_fit_requested.emit()
-        _process_events_for(milliseconds=300)
+        pump_until(lambda: window._scan_fits.idle)
+        assert "peaks" in view.fit_history.active
         summary = view._peaks_results.text()
         assert summary.count("±") == 3
         assert "Uncertainties include the fitted baseline." in summary
@@ -119,8 +120,8 @@ class AlcLegacyFitHistoryScenario(AlcFieldScanScenario):
     size = (440, 560)
 
     def build(self) -> QWidget:
-        from tempfile import TemporaryDirectory
         from pathlib import Path
+        from tempfile import TemporaryDirectory
 
         from asymmetry.core.project import save_project
         from asymmetry.gui.mainwindow import MainWindow
@@ -149,3 +150,61 @@ class AlcLegacyFitHistoryScenario(AlcFieldScanScenario):
 
 
 register(AlcLegacyFitHistoryScenario())
+
+
+class AlcFitProgressScenario(AlcFieldScanScenario):
+    name = "alc_fit_progress"
+    description = "Owned scalar baseline refit with responsive progress and Stop."
+
+    def capture(self, ctx):
+        from contextlib import ExitStack
+        from threading import Event
+
+        self._release = Event()
+        self._window = None
+        with ExitStack() as resources:
+            self._resources = resources
+            try:
+                return super().capture(ctx)
+            finally:
+                self._release.set()
+                if self._window is not None:
+                    self._window._scan_fits.shutdown()
+                    self._window._clear_dirty()
+                    self._window.close()
+                    self._window.deleteLater()
+
+    def build(self):
+        from threading import Event
+        from unittest.mock import patch
+
+        from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+        window = super().build()
+        self._window = window
+        entered = Event()
+        original = ParameterCompositeModel.function
+
+        def held(model, *args, **kwargs):
+            value = original(model, *args, **kwargs)
+            if not entered.is_set():
+                entered.set()
+                if not self._release.wait(30):
+                    raise TimeoutError("Documentation fit capture did not release its worker")
+            return value
+
+        self._resources.enter_context(patch.object(ParameterCompositeModel, "function", held))
+        window._alc_scan_view._fit_baseline_btn.click()
+        pump_until(entered.is_set)
+        assert entered.is_set()
+        assert window._alc_scan_view.fit_controls.button.text() == "Stop"
+        return window
+
+    def teardown(self, widget):
+        self._release.set()
+        pump_until(lambda: widget._scan_fits.idle)
+        assert widget._scan_fits.idle
+        # capture's finally owns window deletion after the worker has exited.
+
+
+register(AlcFitProgressScenario())
