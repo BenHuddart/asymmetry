@@ -37,7 +37,7 @@ from asymmetry.core.transform.grouping import (
     grouping_balances,
     resolve_group_indices,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
+from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry, binning_spec
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 
 #: A per-group asymmetry signal: a callable evaluated on the time axis in
@@ -976,13 +976,7 @@ def _bind_model_signal_percent(
     model: Any,
     params: Mapping[str, float],
 ) -> tuple[Callable[[NDArray[np.float64]], NDArray[np.float64]], str]:
-    """Bind a model + parameters to an ``a(t)``-in-percent callable.
-
-    ``model`` is either a ``CompositeModel`` (its ``function`` bound with
-    ``params``) or a plain callable ``a(t, **params)`` returning the asymmetry
-    in percent — the same convention the fit panel uses. Returns the bound
-    callable and a human-readable expression for provenance.
-    """
+    """Bind a percent-asymmetry model, retaining its expression for provenance."""
     params = dict(params)
     if hasattr(model, "function") and callable(model.function):
         base_fn = model.function
@@ -1822,7 +1816,9 @@ def _reduce_histograms(
     return time, asymmetry * 100.0, error * 100.0
 
 
-def reduce_run_to_dataset(run: Run) -> MuonDataset:
+def reduce_run_to_dataset(
+    run: Run, *, binning: BinningSpec | None = None, cancel_check: Callable[[], None] | None = None
+) -> MuonDataset:
     """Reduce synthetic counts and record their actual uncorrected observation."""
     from asymmetry.core.transform.preparation import (
         histogram_observation,
@@ -1870,14 +1866,16 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         source,
         grouping=dict(source.grouping, deadtime_correction=False, background_correction=False),
     )
-    reduced = prepare_histogram_asymmetry(source, merge=1, facility=None, reference=None)
+    reduced = prepare_histogram_asymmetry(
+        source, merge=1, facility=None, reference=None, binning=binning, cancel_check=cancel_check
+    )
     return MuonDataset(
         reduced.time,
         reduced.asymmetry,
         reduced.error,
         metadata,
         run,
-        histogram_observation(source),
+        histogram_observation(source, binning=binning),
         reduced.ratio_validity,
         effective_recipe=reduced.effective_recipe,
         computation_revision=reduced.computation_revision,
@@ -1912,13 +1910,11 @@ def estimate_background_per_bin(run: Run) -> float:
 
 
 def matched_statistics(run: Run) -> tuple[float, float]:
-    """Signal event budget and flat background for re-simulating a run.
+    """Plug-in signal budget and pre-t0 flat pedestal estimate for simulation.
 
-    Returns ``(total_signal_events, background_per_bin)`` such that feeding them
-    to :func:`simulate_run` reproduces the run's statistics: the flat background
-    (estimated from the pre-t0 bins) is split off the gross count so it is *not*
-    counted as decay signal. For an ideal pulsed run (no background) this is
-    just the gross total and zero.
+    The estimated pedestal is removed from the gross count before supplying a
+    fixed signal budget; neither value propagates estimation uncertainty or
+    guarantees a matched physical acquisition process.
     """
     background_per_bin = estimate_background_per_bin(run)
     total_bins = sum(int(hist.n_bins) for hist in run.histograms)

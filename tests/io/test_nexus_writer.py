@@ -296,11 +296,8 @@ class TestRefitRecovery:
         assert abs(fitted["a0"] - 21.0) < 3.0 * errors["a0"]
         assert abs(fitted["rate"] - 0.6) < 3.0 * errors["rate"]
 
-        # compute_asymmetry uses exact Poisson propagation
-        # (var(A) = (1−A²)/(F+B) at α=1), so against a known truth χ²ᵣ
-        # centres on 1. (The older Mantid-style independent num/den
-        # propagation over-estimated σ_A and biased χ²ᵣ low; see
-        # docs/porting/asymmetry-error-propagation/.)
+        # First-order fixed-alpha ratio errors give the informative Gaussian
+        # limit here; this bounded chi-square check does not establish coverage.
         window = dataset.time_range(t_max=8.0)
         dof = window.n_points - 2
         band = 3.0 * np.sqrt(2.0 / dof)

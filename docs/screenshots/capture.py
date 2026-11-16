@@ -326,6 +326,7 @@ def _import_scenarios() -> None:
         emu_longitudinal_layout,
         fit_asymmetric_errors,
         fit_ratio_omissions,
+        pull_diagnostic,
         fit_wizard_gkt,
         fit_wizard_result,
         fit_wizard_welcome,
