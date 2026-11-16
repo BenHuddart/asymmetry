@@ -2097,7 +2097,7 @@ class MainWindow(QMainWindow):
             _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
-        self._fit_panel._global_tab.members_changed.connect(self._scan_fits.stop)
+        self._fit_panel.members_changed.connect(self._scan_fits.stop)
         self._data_browser.selection_changed.connect(self._scan_fits.stop)
         self._plot_panel.fit_range_changed.connect(self._scan_fits.stop)
         self._alc_fit_panel._rf_difference_check.toggled.connect(self._scan_fits.stop)

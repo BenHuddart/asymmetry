@@ -105,6 +105,8 @@ class ScanFitJob(QObject):
     def progress(self, current, total, message):
         if self.controller.current is self and not self.worker.is_cancelled():
             self.controller.controls.set_progress(current, total, message)
+            if total <= 0:
+                self.controller.controls.set_indeterminate(True)
 
 
 class ScanFitController(QObject):

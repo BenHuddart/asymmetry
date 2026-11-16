@@ -493,3 +493,45 @@ def test_queued_old_terminals_preserve_running_replacement(qapp, monkeypatch):
         window._scan_fits.shutdown()
         window._clear_dirty()
         window.close()
+
+
+@pytest.mark.parametrize("kind", ["baseline", "peaks", "rf"])
+def test_actual_fit_progress_remains_indeterminate(kind, qapp, monkeypatch):
+    import threading
+
+    import asymmetry.gui.scan.fitting as fitting
+
+    window = MainWindow()
+    entered, release, progress_delivered = threading.Event(), threading.Event(), threading.Event()
+    evaluate = ParameterCompositeModel.function
+    progress = fitting.ScanFitJob.progress
+
+    def held(*args, **kwargs):
+        value = evaluate(*args, **kwargs)
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(15)
+        return value
+
+    def deliver(job, *args):
+        assert QThread.currentThread() == qapp.thread()
+        progress(job, *args)
+        progress_delivered.set()
+
+    try:
+        prepare_scan(window, kind)
+        monkeypatch.setattr(ParameterCompositeModel, "function", held)
+        monkeypatch.setattr(fitting.ScanFitJob, "progress", deliver)
+        getattr(
+            window._alc_scan_view,
+            {"baseline": "_fit_baseline_btn", "peaks": "_fit_peaks_btn", "rf": "_fit_rf_btn"}[kind],
+        ).click()
+        wait_until(entered.is_set, "Solver stage not reached")
+        wait_until(progress_delivered.is_set, "Queued worker progress not delivered")
+        bar = window._alc_scan_view.fit_controls.progress_bar
+        assert (bar.minimum(), bar.maximum()) == (0, 0)
+    finally:
+        release.set()
+        window._scan_fits.shutdown()
+        window._clear_dirty()
+        window.close()
