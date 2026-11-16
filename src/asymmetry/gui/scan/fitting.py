@@ -225,7 +225,7 @@ class ScanFitController(QObject):
                 "Fit complete."
                 if current and record
                 else "Fit stopped."
-                if message is None
+                if not current or message is None
                 else "Fit failed."
             )
 

@@ -535,3 +535,42 @@ def test_actual_fit_progress_remains_indeterminate(kind, qapp, monkeypatch):
         window._scan_fits.shutdown()
         window._clear_dirty()
         window.close()
+
+
+@pytest.mark.parametrize("kind", ["baseline", "peaks", "rf"])
+def test_stop_then_indivisible_model_error_reports_stopped(kind, qapp, monkeypatch):
+    import threading
+
+    window = MainWindow()
+    entered, release = threading.Event(), threading.Event()
+    evaluate = ParameterCompositeModel.function
+
+    def held(*args, **kwargs):
+        value = evaluate(*args, **kwargs)
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(15)
+            raise ValueError("Native model failure after Stop")
+        return value
+
+    try:
+        prepare_scan(window, kind)
+        view = window._alc_scan_view
+        records = list(view.fit_history.records)
+        monkeypatch.setattr(ParameterCompositeModel, "function", held)
+        getattr(
+            view,
+            {"baseline": "_fit_baseline_btn", "peaks": "_fit_peaks_btn", "rf": "_fit_rf_btn"}[kind],
+        ).click()
+        wait_until(entered.is_set, "Actual model evaluation not held")
+        view.fit_controls.button.click()
+        release.set()
+        wait_for_fit(window)
+        assert view.fit_controls.progress_label.text() == "Fit stopped."
+        assert view.fit_history.records == records
+        assert "Native model failure after Stop" not in window._log_panel.to_plain_text()
+    finally:
+        release.set()
+        window._scan_fits.shutdown()
+        window._clear_dirty()
+        window.close()
