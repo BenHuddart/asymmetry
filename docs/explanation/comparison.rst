@@ -1812,3 +1812,24 @@ calibration expectations remain intact; historical-only differences do not block
 valid active inputs. API/CLI actions use the same owner-aware core operation.
 These choices do not establish an identical replacement workflow in the other
 programs.
+
+Conditional simulation and supplied-error refits
+------------------------------------------------
+
+Asymmetry's :ref:`pull-diagnostic` records attempted and usable seeds, explicit
+refit failures, and the actual ideal synthetic reduction separately from source
+context. Its descriptive mean/width do not certify acquired-data uncertainty or
+interval coverage. WiMDA's documented **generate test data** and refit workflow
+is the closest operation; an identical automated seeded pull product is not
+established for the checked WiMDA 1.326 environment.
+
+A bounded supplied-error Gaussian constant fit matches the analytic weighted
+normal equations in Mantid 6.16.1 **Fit** (FlatBackground, Least squares,
+Levenberg–Marquardt) and musrfit 1.12.1 (ASCII type 8, MIGRAD/HESSE).
+For values (2, 4, 7) and errors (1, 2, 1), all three selected observations give
+40/9 ± 2/3 and chi-square 113/9; value/error tolerances are absolute 1e-7 for
+Mantid and 1e-5 for musrfit's printed precision. Native settings select all
+three points explicitly. This scalar control uses supplied errors; the separate
+count-likelihood normalisation difference does not apply. No package-wide pull,
+coverage, or acquisition-chain agreement follows. Primary program documentation
+is linked in :doc:`/reference/simulation` and the fitting comparison above.

@@ -155,12 +155,18 @@ that generate badged synthetic runs through the simulate pipeline.
 Pull-distribution diagnostic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Re-simulate-and-refit a completed fit over many seeds to test that the
-analysis chain's error bars are calibrated (pulls ~ :math:`N(0, 1)`).
+Simulate and refit under an explicit ideal-count experiment, retaining seeds,
+outcomes, source/synthetic recipes, and descriptive usable-subset pulls.
 
 .. automodule:: asymmetry.core.pull_diagnostic
    :members:
    :undoc-members:
+
+.. automodule:: asymmetry.core.pull_request
+   :members: PullRequest, make_pull_request
+
+.. automodule:: asymmetry.core.pull_refit
+   :members: EngineRefit, PullFitInput
 
 .. _physical-constants-api:
 

@@ -84,6 +84,21 @@ symmetric error where the analysis propagates it. musrfit, which pioneered
 exposing MINOS in muon fitting, takes the same view: MINOS annotates the
 ``STATISTIC`` block but the fit's working errors remain HESSE.
 
+Conditional pull experiments
+---------------------------
+
+**Diagnostic…** captures the completed Single-tab execution, including fitted
+plug-in truth, constraints, Gaussian fit options, source observation, and selected
+support. Later model, seed, or selection edits do not relabel an open result.
+The **Pull Distribution Diagnostic** uses the symmetric engine error for pulls;
+optional MINOS endpoints remain separate. Source frequency offsets are recorded; synthetic refits optimise
+laboratory parameters with the captured constraints. Fixed-only fits have no free-parameter experiment;
+unsupported generating contracts explain the limitation while ordinary fitting
+remains available. **First seed:** and **Seeds:** make the requested stream
+explicit. **Cancel** retains an explicitly partial attempt record, distinct
+from stopping an ordinary fit. See :ref:`pull-diagnostic` for simulated omissions,
+failures, replay, and statistical interpretation.
+
 .. _chain-from-previous:
 
 Chaining seeds through a scan

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain pull-diagnostic seeds, failed refits, and actual simulated assumptions;
+  replay captured fit settings and report descriptive, explicitly partial summaries.
+
 - Clarify calibration standard errors, separate MINOS intervals, conditional
   assumptions, and the limits of quick-method and comparative precision claims.
 
