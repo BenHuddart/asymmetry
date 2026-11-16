@@ -100,7 +100,11 @@ class JointCountFit:
     """One complete joint solution, including every background and nuisance.
 
     Covariance order contains unique free parameters only. Uncertainty is
-    conditional curvature at unit change in deviance, without residual scaling.
+    conditional curvature at unit change in deviance or weighted chi-square,
+    without residual scaling. All fitted nuisances enter the covariance; fixed
+    inputs and model selection do not. ``minos_intervals`` stores separate signed
+    lower/upper offsets from each fitted value, at the unit-objective criterion.
+    Availability does not certify coverage or model adequacy.
     """
 
     parameters: tuple[CountFitParameter, ...]

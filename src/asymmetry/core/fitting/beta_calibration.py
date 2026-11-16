@@ -15,15 +15,14 @@ primitives in :mod:`asymmetry.core.fitting.count_domain`, offering two protocols
 - ``"count_fit"`` (Protocol A, default) — one simultaneous forward+backward
   TF count fit (Poisson for raw counts, weighted after applied deadtime) that
   shares the physics between the two histograms and floats a single ``beta`` on
-  the backward amplitude. This is the endorsed measurement protocol and the only
-  one that yields an α–β correlation.
+  the backward amplitude, retaining the fitted α–β correlation.
 - ``"single_histogram"`` (Protocol B, cross-check) — two independent
   single-histogram fits (:func:`fit_single_histogram`), one per side, each
   floating its own physics; β̂ = Â₀,b/Â₀,f and α̂ = N̂₀,f/N̂₀,b by ratio, with no
-  cross-parameter correlation available. Statistically weaker (the physics is
-  not shared) but a useful independent check.
+  reported α–β correlation. This is a model cross-check, without a universal
+  precision ranking relative to the shared fit.
 
-β is degenerate without precession, so failure modes — no oscillation found, a
+This weak-TF calibration requires resolved precession. Failure modes — no oscillation found, a
 forward amplitude consistent with zero, or a fit that did not converge — return
 ``ok=False`` with an informative message rather than a garbage number, mirroring
 :class:`~asymmetry.core.transform.asymmetry.AlphaEstimate`.
@@ -64,11 +63,14 @@ _SEED_AMPLITUDE_PERCENT = 20.0
 class BetaEstimate:
     """Result of a backward-amplitude balance (β) estimation.
 
-    ``beta_error`` / ``alpha_error`` are the symmetric (HESSE) standard errors,
-    or ``None`` when unavailable. ``alpha_beta_correlation`` is the Pearson
+    ``beta_error`` / ``alpha_error`` are conditional joint HESSE standard errors
+    for ``count_fit``, or first-order propagated fitted errors for
+    ``single_histogram``; ``None`` means unavailable. No interval coverage is
+    guaranteed. ``alpha_beta_correlation`` is the Pearson
     correlation of the fitted α and β from the joint fit's covariance block for
     the ``"count_fit"`` method, and ``None`` for ``"single_histogram"`` (two
-    independent fits carry no cross-parameter correlation). ``reduced_chi2`` is
+    independent fits do not report covariance between their derived ratios).
+    ``reduced_chi2`` is
     Poisson deviance or weighted chi-square per joint dof for ``count_fit``
     (unique free parameters),
     or pooled per-side deviance/dof for ``single_histogram``.
