@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Run integral-scan baseline, peak, and RF fits in cancellable background tasks,
+  retaining captured requests and rejecting obsolete results without changing fit history.
+
 - Stop alpha calibration during quick estimation, count preparation, and covariance
   scans; cancel observed source edits while preserving current results and history.
 

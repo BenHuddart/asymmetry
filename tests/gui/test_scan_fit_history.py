@@ -6,11 +6,12 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QTableWidgetItem
 
-import asymmetry.gui.mainwindow as mw
+import asymmetry.gui.scan.fitting as scan_fitting
 from asymmetry.core import computation
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.json_values import encode_non_finite
 from asymmetry.gui.mainwindow import MainWindow
+from tests.gui.scan_fit_helpers import wait_for_fit
 from tests.gui.test_integral_scan_gui import _ds, _set_regions
 from tests.gui.test_rf_scan_panel_gui import _rf_datasets
 
@@ -60,20 +61,32 @@ def build_fitted_scan(window, kind, *, source_root=None):
     window._on_scan_requested()
     if kind == "rf":
         window._on_fit_rf()
+        wait_for_fit(window)
         assert window._alc_rf_fitted
     else:
         _set_regions(window._alc_scan_view, [(50.123456, 125.0), (275.0, 350.0)])
         window._on_fit_baseline()
+        wait_for_fit(window)
         if kind == "peaks":
             window._alc_scan_view._add_peak("Gaussian")
             window._on_fit_peaks()
+            wait_for_fit(window)
     window._sync_alc_series_extra()
     return window._project_model.batch(window._alc_scan_series_id)
 
 
 def forbid_optimizers(monkeypatch):
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+    monkeypatch.setattr(
+        ParameterCompositeModel,
+        "function",
+        lambda *a, **kw: pytest.fail("Implicit scan model evaluation"),
+    )
     for name in ("fit_scan_baseline", "fit_scan_peaks", "fit_rf_resonance"):
-        monkeypatch.setattr(mw, name, lambda *a, **kw: pytest.fail("Implicit scan optimizer call"))
+        monkeypatch.setattr(
+            scan_fitting, name, lambda *a, **kw: pytest.fail("Implicit scan optimizer call")
+        )
 
 
 @pytest.mark.parametrize("revision", [None, "pre-current", computation.COMPUTATION_REVISION])
@@ -168,10 +181,13 @@ def test_legacy_settings_require_explicit_fit(kind, tmp_path, qapp, monkeypatch)
     restored._open_project_file(str(project))
     if kind == "rf":
         restored._on_fit_rf()
+        wait_for_fit(restored)
     else:
         restored._on_fit_baseline()
+        wait_for_fit(restored)
         if kind == "peaks":
             restored._on_fit_peaks()
+            wait_for_fit(restored)
     assert kind in restored._alc_scan_view.fit_history.active
     assert not restored._alc_scan_view.fit_history.missing
     assert restored._alc_scan_view.fit_history.legacy_settings == retained
@@ -198,6 +214,7 @@ def test_explicit_refit_appends_execution(kind, tmp_path, qapp, monkeypatch):
         "peaks": restored._on_fit_peaks,
         "rf": restored._on_fit_rf,
     }[kind]()
+    wait_for_fit(restored)
     assert history.to_dict()["records"][:-1] == previous
     assert history.records[-1].result["computation_revision"] == "explicit-refit"
     assert history.records[-1].support["computation_revision"] != "explicit-refit"
@@ -412,6 +429,7 @@ def test_new_project_discards_baseline_dependency(qapp, monkeypatch):
     window._alc_scan_view._add_peak("Gaussian")
     forbid_optimizers(monkeypatch)
     window._on_fit_peaks()
+    wait_for_fit(window)
     assert "Fit a baseline first" in window._log_panel.to_plain_text()
     window._clear_dirty()
     window.close()

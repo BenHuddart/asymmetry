@@ -33,6 +33,7 @@ whatever component is supplied.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -118,6 +119,7 @@ def fit_scan_model(
     x_max: float | None = None,
     method: str = "migrad",
     extra_starts: int = 0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ParameterModelFitResult:
     """Fit a parameter model to a field scan's ``(x, value, error)``.
 
@@ -138,6 +140,8 @@ def fit_scan_model(
     multi-start, which also tries the scan's own data seed.
     """
     scan = scan_fit_input(scan, x_min=x_min, x_max=x_max)
+    if cancel_check is not None:
+        cancel_check()
     composite = as_composite_model(model)
     if parameters is not None and initial is not None:
         raise ValueError("Pass either `parameters` or `initial`, not both.")
@@ -153,6 +157,7 @@ def fit_scan_model(
         x_max=x_max,
         method=method,
         extra_starts=extra_starts,
+        cancel_check=cancel_check,
     )
 
 
@@ -162,6 +167,7 @@ def rf_resonance_seeds(
     nu_rf: float,
     a_mu: float = 515.0,
     a_p: float = 124.0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
     """Seed values for an :data:`RF_RESONANCE_COMPONENT` fit of *scan*.
 
@@ -177,7 +183,9 @@ def rf_resonance_seeds(
     known = {"A_mu": float(a_mu), "A_p": float(a_p), "nu_RF": float(nu_rf)}
     return {
         **composite.param_defaults,
-        **suggest_model_seeds(composite, scan.x, scan.value, scan.error, known=known),
+        **suggest_model_seeds(
+            composite, scan.x, scan.value, scan.error, known=known, cancel_check=cancel_check
+        ),
     }
 
 
@@ -191,6 +199,7 @@ def fit_rf_resonance(
     x_min: float | None = None,
     x_max: float | None = None,
     method: str = "migrad",
+    cancel_check: Callable[[], None] | None = None,
 ) -> ParameterModelFitResult:
     """Fit the RF-µSR muon+proton resonance model to an RF field scan.
 
@@ -204,7 +213,7 @@ def fit_rf_resonance(
     """
     scan = scan_fit_input(scan, x_min=x_min, x_max=x_max)
     composite = as_composite_model(RF_RESONANCE_COMPONENT)
-    seeds = rf_resonance_seeds(scan, nu_rf=nu_rf, a_mu=a_mu, a_p=a_p)
+    seeds = rf_resonance_seeds(scan, nu_rf=nu_rf, a_mu=a_mu, a_p=a_p, cancel_check=cancel_check)
     parameters = ParameterSet()
     for name in composite.param_names:
         parameters.add(
@@ -215,7 +224,13 @@ def fit_rf_resonance(
             )
         )
     return fit_scan_model(
-        scan, composite, parameters=parameters, x_min=x_min, x_max=x_max, method=method
+        scan,
+        composite,
+        parameters=parameters,
+        x_min=x_min,
+        x_max=x_max,
+        method=method,
+        cancel_check=cancel_check,
     )
 
 
@@ -251,25 +266,48 @@ class ScanBaselineResult:
 
     @property
     def baseline(self) -> NDArray[np.float64]:
+        return self.evaluate_baseline()
+
+    def evaluate_baseline(self, cancel_check=None) -> NDArray[np.float64]:
+        """Sample the captured baseline, polling around model evaluation."""
+        if cancel_check is not None:
+            cancel_check()
         if self.captured_baseline is not None:
             return np.asarray(self.captured_baseline, dtype=float)
-        return _evaluate_model(self.model, self.fit.parameters, self.scan.x)
+        return _evaluate_model(self.model, self.fit.parameters, self.scan.x, cancel_check)
 
     @property
     def correction_operator(self) -> NDArray[np.float64]:
+        return self.baseline_correction_operator()
+
+    def baseline_correction_operator(self, cancel_check=None) -> NDArray[np.float64]:
+        """Construct the full baseline influence operator in source coordinates."""
+        if cancel_check is not None:
+            cancel_check()
         names, covariance = _fit_covariance(self.fit)
-        design = _model_jacobian(self.model, self.fit.parameters, self.scan.x, names, covariance)
+        design = _model_jacobian(
+            self.model, self.fit.parameters, self.scan.x, names, covariance, cancel_check
+        )
         mask = self.selection
         weights = stabilized_point_errors(self.scan.error[mask]) ** -2
         operator = np.eye(self.scan.x.size)
         operator[:, mask] -= design @ covariance @ (design[mask].T * weights)
+        if cancel_check is not None:
+            cancel_check()
         return operator
 
     @property
     def corrected_covariance(self) -> NDArray[np.float64]:
+        return self.baseline_corrected_covariance()
+
+    def baseline_corrected_covariance(self, cancel_check=None) -> NDArray[np.float64]:
+        """Propagate independent source errors through the full correction operator."""
         errors = np.where(np.isfinite(self.scan.error), self.scan.error, 0.0)
-        residual = self.correction_operator * errors
-        return residual @ residual.T
+        residual = self.baseline_correction_operator(cancel_check) * errors
+        result = residual @ residual.T
+        if cancel_check is not None:
+            cancel_check()
+        return result
 
     @property
     def corrected(self) -> FieldScan:
@@ -312,6 +350,7 @@ def fit_scan_peaks(
     parameters: ParameterSet | None = None,
     initial: dict[str, float] | None = None,
     extra_starts: int = 0,
+    cancel_check: Callable[[], None] | None = None,
 ) -> ScanPeakFit:
     """Fit peaks after subtraction, propagating the estimated baseline.
 
@@ -320,15 +359,24 @@ def fit_scan_peaks(
     1985), the covariance adds the baseline correction to the conditional
     Minuit covariance. The fixed-baseline limit preserves that covariance.
     """
+    if cancel_check is not None:
+        cancel_check()
     selected = scan_fit_selection(baseline.scan)
     scan = baseline.scan.select(selected)
+    if cancel_check is not None:
+        cancel_check()
     composite = as_composite_model(model)
-    corrected = replace(scan, value=scan.value - baseline.baseline[selected])
+    corrected = replace(scan, value=scan.value - baseline.evaluate_baseline(cancel_check)[selected])
     fit = fit_scan_model(
-        corrected, composite, parameters=parameters, initial=initial, extra_starts=extra_starts
+        corrected,
+        composite,
+        parameters=parameters,
+        initial=initial,
+        extra_starts=extra_starts,
+        cancel_check=cancel_check,
     )
     names, conditional = _fit_covariance(fit)
-    jacobian = _model_jacobian(composite, fit.parameters, scan.x, names, conditional)
+    jacobian = _model_jacobian(composite, fit.parameters, scan.x, names, conditional, cancel_check)
     errors = stabilized_point_errors(scan.error)
     weighted = jacobian / errors[:, None]
     # Column scaling keeps polynomial/peak parameters with different units
@@ -341,17 +389,23 @@ def fit_scan_peaks(
         raise ValueError("Peak Jacobian must have full column rank.")
     influence = np.linalg.solve(normalised.T @ normalised, normalised.T)
     influence = influence / scales[:, None] / errors
-    corrected_covariance = baseline.corrected_covariance[np.ix_(selected, selected)]
+    corrected_covariance = baseline.baseline_corrected_covariance(cancel_check)[
+        np.ix_(selected, selected)
+    ]
     covariance = (
         conditional + influence @ (corrected_covariance - np.diag(scan.error**2)) @ influence.T
     )
     covariance = (covariance + covariance.T) / 2
     if not np.all(np.isfinite(covariance)) or np.linalg.eigvalsh(covariance).min() < 0:
         raise ValueError("Baseline-propagated peak covariance must be positive semidefinite.")
+    if cancel_check is not None:
+        cancel_check()
     residual = np.eye(scan.x.size) - jacobian @ influence
     effective_dof = float(
         np.trace((residual @ corrected_covariance @ residual.T) / errors[:, None] ** 2)
     )
+    if cancel_check is not None:
+        cancel_check()
     return ScanPeakFit(fit, (names, covariance.tolist()), effective_dof)
 
 
@@ -362,6 +416,7 @@ def fit_scan_baseline(
     model: str | list[str] | ParameterCompositeModel = "Linear",
     parameters: ParameterSet | None = None,
     method: str = "migrad",
+    cancel_check: Callable[[], None] | None = None,
 ) -> ScanBaselineResult:
     """Fit a baseline over non-resonant *regions* and subtract it.
 
@@ -392,6 +447,8 @@ def fit_scan_baseline(
         (an underdetermined fit); or if the baseline fit does not converge. A
         failed fit never returns a (silently wrong) corrected scan.
     """
+    if cancel_check is not None:
+        cancel_check()
     composite = as_composite_model(model)
     clean_regions = _validate_regions(regions)
 
@@ -419,7 +476,13 @@ def fit_scan_baseline(
         )
 
     fit = fit_parameter_model(
-        x[mask], value[mask], error[mask], composite, parameters, method=method
+        x[mask],
+        value[mask],
+        error[mask],
+        composite,
+        parameters,
+        method=method,
+        cancel_check=cancel_check,
     )
     if not fit.success:
         raise ValueError(f"Baseline fit did not converge: {fit.message or 'unknown error'}")
@@ -460,12 +523,20 @@ def _evaluate_model(
     model: ParameterCompositeModel,
     parameters: ParameterSet,
     x: NDArray[np.float64],
+    cancel_check=None,
 ) -> NDArray[np.float64]:
+    if cancel_check is not None:
+        cancel_check()
     values = {param.name: float(param.value) for param in parameters}
-    return np.asarray(model.function(x, **values), dtype=np.float64)
+    result = np.asarray(model.function(x, **values), dtype=np.float64)
+    if cancel_check is not None:
+        cancel_check()
+    return result
 
 
-def _model_jacobian(model, parameters, x, names, covariance) -> NDArray[np.float64]:
+def _model_jacobian(
+    model, parameters, x, names, covariance, cancel_check=None
+) -> NDArray[np.float64]:
     """Five-point derivatives in parameter coordinates at the fitted model."""
     values = {param.name: float(param.value) for param in parameters}
     columns = []
@@ -473,10 +544,13 @@ def _model_jacobian(model, parameters, x, names, covariance) -> NDArray[np.float
         value = values[name]
         scale = np.sqrt(variance) if variance > 0 else (abs(value) or 1.0)
         step = max(np.finfo(float).eps ** 0.2 * scale, 10 * np.spacing(abs(value)))
-        samples = [
-            np.asarray(model.function(x, **{**values, name: value + k * step}))
-            for k in (-2, -1, 1, 2)
-        ]
+        samples = []
+        for k in (-2, -1, 1, 2):
+            if cancel_check is not None:
+                cancel_check()
+            samples.append(np.asarray(model.function(x, **{**values, name: value + k * step})))
+        if cancel_check is not None:
+            cancel_check()
         columns.append((samples[0] - 8 * samples[1] + 8 * samples[2] - samples[3]) / (12 * step))
     return np.column_stack(columns)
 

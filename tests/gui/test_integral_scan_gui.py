@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.gui.scan_fit_helpers import wait_for_fit
+
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
@@ -65,11 +67,8 @@ def _ds(
 
 
 def _enter_alc(mw: MainWindow, monkeypatch) -> None:
-    """Enter the integral-scan representation (the old ALC mode toggle)."""
+    """Enter the integral-scan representation."""
     mw._plot_workspace.set_active_view("integral_scan")
-
-
-# --- view + dock swap --------------------------------------------------------
 
 
 def test_alc_view_swaps_docks(mainwindow: MainWindow, monkeypatch):
@@ -131,9 +130,6 @@ def test_integral_scan_is_remembered_as_time_view(mainwindow: MainWindow, monkey
     mw._plot_workspace.set_active_domain("time")
     assert mw._plot_workspace.active_view() == "integral_scan"
     assert mw._alc_mode is True
-
-
-# --- build + render ----------------------------------------------------------
 
 
 def test_alc_build_creates_percent_scan_and_renders(mainwindow: MainWindow, monkeypatch):
@@ -208,9 +204,12 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     notices = []
     monkeypatch.setattr(mw, "_alc_notify", lambda title, text, **kwargs: notices.append(text))
     mw._on_fit_baseline()
+    wait_for_fit(mw)
     mw._alc_rf_mode = True
     mw._on_fit_rf()
+    wait_for_fit(mw)
     mw._on_fit_peaks()
+    wait_for_fit(mw)
     assert notices == [
         "Turn off dA/dB to fit a baseline on the scan.",
         "Turn off dA/dB to fit the RF resonance.",
@@ -298,9 +297,6 @@ def test_deleting_scan_series_clears_only_its_own_overlays(mainwindow: MainWindo
     assert mw._project_model.batch(scan.batch_id) is None
 
 
-# --- scan view widget --------------------------------------------------------
-
-
 def test_alc_fit_panel_range_spinboxes(qapp: QApplication):
     panel = ALCFitPanel()
     # Spinboxes start disabled (no plot fit-range yet).
@@ -373,6 +369,7 @@ def test_alc_baseline_fit_produces_corrected(mainwindow: MainWindow, monkeypatch
     _set_regions(view, [(0.0, 100.0), (200.0, 300.0)])  # non-resonant edges
 
     mw._on_fit_baseline()
+    wait_for_fit(mw)
 
     assert mw._alc_baseline is not None
     corrected = mw._alc_baseline.corrected
@@ -389,6 +386,7 @@ def test_alc_baseline_requires_regions(mainwindow: MainWindow, monkeypatch):
     _synthetic_alc_points(mw)
     monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
     mw._on_fit_baseline()  # no regions set
+    wait_for_fit(mw)
     assert mw._alc_baseline is None
 
 
@@ -425,12 +423,14 @@ def test_alc_peak_fit_recovers_resonance(mainwindow: MainWindow, monkeypatch):
     mw._render_alc_scan()  # populate the view's plot state
     _set_regions(mw._alc_scan_view, [(0.0, 70.0), (230.0, 300.0)])
     mw._on_fit_baseline()
+    wait_for_fit(mw)
 
     view = mw._alc_scan_view
     view._add_peak("Gaussian")  # default guess B0 = mid-range = 150
     view._peaks_table.item(0, 1).setText("140")  # offset so it's a real fit
 
     mw._on_fit_peaks()
+    wait_for_fit(mw)
 
     fitted_b0 = float(view._peaks_table.item(0, 1).text())
     assert abs(fitted_b0 - 150.0) < 5.0
@@ -440,11 +440,8 @@ def test_alc_peak_fit_recovers_resonance(mainwindow: MainWindow, monkeypatch):
     assert view._fit_curve is not None  # overlay drawn
 
 
-# --- staleness / invalidation (review fixes #1-#5) ---------------------------
-
-
 def test_alc_region_edit_invalidates_corrected_scan(mainwindow: MainWindow, monkeypatch):
-    # #1: editing a baseline region after a fit must discard the corrected scan,
+    # editing a baseline region after a fit must discard the corrected scan,
     # so a later peak fit can't run against a baseline that no longer matches.
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
@@ -453,6 +450,7 @@ def test_alc_region_edit_invalidates_corrected_scan(mainwindow: MainWindow, monk
     view = mw._alc_scan_view
     _set_regions(view, [(0.0, 100.0), (200.0, 300.0)])
     mw._on_fit_baseline()
+    wait_for_fit(mw)
     assert mw._alc_baseline is not None
 
     view._regions_table.item(0, 1).setText("120")  # move a region edge
@@ -461,7 +459,7 @@ def test_alc_region_edit_invalidates_corrected_scan(mainwindow: MainWindow, monk
 
 
 def test_alc_peak_specs_rejects_invalid_row(qapp: QApplication):
-    # #2: an unparseable peak row raises (naming the row) instead of being
+    # an unparseable peak row raises (naming the row) instead of being
     # silently skipped, which would misalign fitted values written back by row.
     view = ALCScanView()
     _seed_view_scan(view)
@@ -478,16 +476,18 @@ def test_alc_fit_peaks_aborts_on_invalid_row(mainwindow: MainWindow, monkeypatch
     mw._render_alc_scan()
     _set_regions(mw._alc_scan_view, [(0.0, 100.0), (200.0, 300.0)])
     mw._on_fit_baseline()
+    wait_for_fit(mw)
     monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
     view = mw._alc_scan_view
     view._add_peak("Gaussian")
     view._peaks_table.item(0, 2).setText("")  # blank width
     mw._on_fit_peaks()
+    wait_for_fit(mw)
     assert view._fit_curve is None  # no fit ran
 
 
 def test_alc_clear_empties_analysis_tables(qapp: QApplication):
-    # #3: when the scan goes away, its regions/peaks/results go with it.
+    # when the scan goes away, its regions/peaks/results go with it.
     view = ALCScanView()
     _seed_view_scan(view)
     _set_regions(view, [(0.0, 50.0)])
@@ -500,7 +500,7 @@ def test_alc_clear_empties_analysis_tables(qapp: QApplication):
 
 
 def test_alc_inverted_region_normalises(qapp: QApplication):
-    # #4: dragging an edge past the other reverses the cells; the region is its
+    # dragging an edge past the other reverses the cells; the region is its
     # two edges regardless of order, not silently dropped.
     view = ALCScanView()
     _seed_view_scan(view)
@@ -509,7 +509,7 @@ def test_alc_inverted_region_normalises(qapp: QApplication):
 
 
 def test_alc_peak_edit_clears_stale_fit_overlay(qapp: QApplication):
-    # #5: editing/dragging a peak after a fit drops the now-stale total-fit
+    # editing/dragging a peak after a fit drops the now-stale total-fit
     # overlay (the marker would otherwise diverge from the drawn curve).
     view = ALCScanView()
     _seed_view_scan(view)
@@ -517,9 +517,6 @@ def test_alc_peak_edit_clears_stale_fit_overlay(qapp: QApplication):
     view._fit_curve = np.zeros(4)  # simulate an existing fit overlay
     view._peaks_table.item(0, 1).setText("123")  # move the peak centre
     assert view._fit_curve is None
-
-
-# --- persistence (G4) --------------------------------------------------------
 
 
 def test_alc_scan_view_analysis_state_round_trip(qapp: QApplication):
@@ -556,8 +553,10 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     view = mw._alc_scan_view
     _set_regions(view, [(50.0, 125.0), (275.0, 350.0)])
     mw._on_fit_baseline()
+    wait_for_fit(mw)
     view._add_peak("Gaussian")  # default guess B0 = mid-range = 200 (the dip)
     mw._on_fit_peaks()
+    wait_for_fit(mw)
     assert mw._alc_baseline is not None
     assert view._fit_curve is not None
 
@@ -788,6 +787,7 @@ def test_alc_peaks_require_baseline(mainwindow: MainWindow, monkeypatch):
     mw._alc_baseline = None
     mw._alc_scan_view._add_peak("Gaussian")
     mw._on_fit_peaks()
+    wait_for_fit(mw)
     assert mw._alc_scan_view._fit_curve is None
 
 
@@ -823,9 +823,6 @@ def test_trend_panel_scan_quantity_ylabel_is_drawable(qapp: QApplication):
     ax = figure.add_subplot(111)
     ax.set_ylabel(label)
     canvas.draw()  # raised ValueError (mathtext ParseException) before the fix
-
-
-# --- central panel, exclusions, provenance, and the time strip ----------------
 
 
 def test_alc_point_toggle_excludes_and_restores(mainwindow: MainWindow, monkeypatch):
@@ -912,6 +909,7 @@ def test_alc_baseline_fit_skips_excluded_points(mainwindow: MainWindow, monkeypa
     mw._on_alc_point_toggled(13)
     _set_regions(mw._alc_scan_view, [(50.0, 350.0)])
     mw._on_fit_baseline()
+    wait_for_fit(mw)
     corrected = mw._alc_baseline.corrected
     assert corrected is not None
     assert corrected.run_numbers == [11, 12, 14, 15]
