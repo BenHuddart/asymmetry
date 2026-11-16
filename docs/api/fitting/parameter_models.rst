@@ -73,7 +73,7 @@ See :doc:`/reference/alc_mode` for baseline propagation and scan units.
 
 Scalar fit adapters and ``fit_parameter_model`` accept an optional raising
 ``cancel_check``. Use an established cancellation exception such as
-:class:`~asymmetry.core.fitting.engine.FitCancelledError`; it propagates through
+``asymmetry.core.fitting.engine.FitCancelledError``; it propagates through
 solver and seed paths rather than returning a failed fit or partial covariance.
 The default leaves successful numerical methods and results unchanged.
 ``ScanBaselineResult.evaluate_baseline``, ``baseline_correction_operator``, and
