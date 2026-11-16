@@ -1,9 +1,8 @@
-"""Tests for the WiMDA Model-layer (parameter-trending) parity components.
+"""Analytic parameter-model identities, synthetic round-trips, and regressions.
 
-Verification criteria from docs/porting/model-function-parity/: closed-form
-expected values for WiMDA's trend functions, exact round-trips,
-composite-recipe identities (with each documented divergence asserted as a
-behavioural test), and registry/doc hygiene. Oracle values: test-data.md.
+Closed-form and typed numerical expectations below are authored mathematical
+checks, not outputs from WiMDA. WiMDA names identify parameter conventions only.
+The existing EuO table is an Asymmetry pipeline regression, not an external oracle.
 """
 
 from __future__ import annotations
@@ -52,18 +51,18 @@ VACUUM_MU_A_HF_MHZ = 4463.302765
 
 
 # ---------------------------------------------------------------------------
-# Closed-form expected values for WiMDA's trend functions
+# Independent closed-form and numerical expectations
 # ---------------------------------------------------------------------------
 
 
-def test_polynomial_matches_wimda_func0_oracle() -> None:
+def test_polynomial_matches_polynomial_numeric_values() -> None:
     coeffs = dict(c0=0.5, c1=-1.2, c2=0.8, c3=-0.05, c4=0.002, c5=-0.0001)
     x = np.array([0.0, 1.0, 2.5, 7.0, 10.0])
     expected = [0.5, 0.0519, 1.787109375, 17.2713, 28.5]
     np.testing.assert_allclose(_polynomial(x, **coeffs), expected, rtol=1e-12)
 
 
-def test_power_law_quad_bg_matches_wimda_oracle() -> None:
+def test_power_law_quad_bg_matches_quadrature_numeric_values() -> None:
     x = np.array([0.5, 1.0, 4.0, 9.0])
     expected = [
         3.082207001484488,
@@ -82,20 +81,20 @@ def test_power_law_quad_bg_limits() -> None:
     np.testing.assert_allclose(_power_law_quad_bg(x, 2.0, 1.5, 0.0), 2.0 * x**1.5, rtol=1e-12)
 
 
-def test_mu_repolarisation_matches_wimda_muonrep_oracle() -> None:
+def test_mu_repolarisation_matches_isotropic_repolarisation_identity() -> None:
     # WiMDA muonrep fits B0 directly; identical curve with B0 = A_hf/(γₑ+γ_μ).
     a_mu, a_dia = 15.0, 8.0
     b0 = isotropic_mu_b0_gauss(VACUUM_MU_A_HF_MHZ)
     x = np.array([0.0, 100.0, b0, 5000.0, 20000.0])
     r2 = (x / b0) ** 2
-    wimda = a_mu * (0.5 + r2) / (1.0 + r2) + a_dia  # WiMDA's muonrep form
+    expected = a_mu * (0.5 + r2) / (1.0 + r2) + a_dia  # isotropic spin-1/2 repolarisation identity
     np.testing.assert_allclose(
-        _mu_repolarisation(x, a_mu, VACUUM_MU_A_HF_MHZ, a_dia), wimda, rtol=1e-14
+        _mu_repolarisation(x, a_mu, VACUUM_MU_A_HF_MHZ, a_dia), expected, rtol=1e-14
     )
-    # Spot values from test-data.md
-    np.testing.assert_allclose(wimda[0], 15.5, rtol=1e-12)  # a_Mu/2 + a_Dia
-    np.testing.assert_allclose(wimda[1], 15.529737440954086, rtol=1e-10)
-    np.testing.assert_allclose(wimda[2], 19.25, rtol=1e-12)  # 3/4 point at B0
+    # Independent zero-field, 100 G, and characteristic-field anchors
+    np.testing.assert_allclose(expected[0], 15.5, rtol=1e-12)  # a_Mu/2 + a_Dia
+    np.testing.assert_allclose(expected[1], 15.529737440954086, rtol=1e-10)
+    np.testing.assert_allclose(expected[2], 19.25, rtol=1e-12)  # 3/4 point at B0
 
 
 def test_mu_repolarisation_b0_from_constants() -> None:
@@ -177,7 +176,7 @@ def test_mu_repolarisation_recovers_hyperfine_constant() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Composite recipes (documented divergences asserted, comparison.md D2/D4/D5)
+# Composite recipe identities and parameter conventions
 # ---------------------------------------------------------------------------
 
 
@@ -202,8 +201,8 @@ def test_arrhenius_energy_rescaling_compensates_for_rounded_constants() -> None:
     np.testing.assert_allclose(e_over_k_si / e_over_k_rounded - 1.0, 8.897e-4, rtol=1e-3)
 
 
-def test_order_parameter_plus_constant_matches_wimda_func5() -> None:
-    """D5: on the physical domain (T ≥ 0, positive exponents) the WiMDA form
+def test_order_parameter_plus_constant_identity() -> None:
+    """On the physical domain (T ≥ 0, positive exponents) the WiMDA form
     is identical to OrderParameter + Constant, including the clamp above Tc."""
     b0, tc, alpha, beta, b_bg = 29.9, 69.2, 1.23, 0.417, 3.0
     t = np.array([5.0, 30.0, 60.0, 69.19, 69.2, 80.0])
@@ -217,40 +216,40 @@ def test_order_parameter_plus_constant_matches_wimda_func5() -> None:
     np.testing.assert_allclose(ours[-2:], [b_bg, b_bg], atol=1e-12)
 
 
-def test_lorentzian_lcr_matches_wimda_peak_term() -> None:
+def test_lorentzian_height_width_identity() -> None:
     """The WiMDA '2 Lorentzians + cubic BG' peak Ampl·Wid²/(Wid²+(x−Pos)²) is
     algebraically LorentzianLCR(f=Ampl, B0=Pos, Bwid=Wid)."""
     ampl, pos, wid = 3.5, 1200.0, 80.0
     x = np.linspace(800.0, 1600.0, 81)
-    wimda = ampl * wid**2 / (wid**2 + (x - pos) ** 2)
-    np.testing.assert_allclose(_lcr_lorentzian(x, ampl, pos, wid), wimda, rtol=1e-12)
+    expected = ampl * wid**2 / (wid**2 + (x - pos) ** 2)
+    np.testing.assert_allclose(_lcr_lorentzian(x, ampl, pos, wid), expected, rtol=1e-12)
 
 
 def test_recentred_cubic_background_is_a_polynomial() -> None:
-    """D2: WiMDA's cubic BG in powers of (x − Pos1) equals Polynomial with
+    """WiMDA's cubic BG in powers of (x − Pos1) equals Polynomial with
     re-centred coefficients — same model space, different coefficient values."""
     pos1 = 1200.0
     bg = [0.7, -0.01, 5e-5, -2e-8]  # WiMDA BG_0..BG_3 about Pos 1
     x = np.linspace(800.0, 1600.0, 41)
-    wimda_bg = sum(b * (x - pos1) ** k for k, b in enumerate(bg))
+    centred_bg = sum(b * (x - pos1) ** k for k, b in enumerate(bg))
     # Expand sum_k b_k (x - p)^k into absolute-x coefficients via binomials.
     coeffs = np.zeros(6)
     for k, b in enumerate(bg):
         for j in range(k + 1):
             coeffs[j] += b * comb(k, j) * (-pos1) ** (k - j)
     ours = _polynomial(x, *coeffs)
-    np.testing.assert_allclose(ours, wimda_bg, rtol=1e-9)
+    np.testing.assert_allclose(ours, centred_bg, rtol=1e-9)
     assert not np.allclose(coeffs[:4], bg)  # coefficients do NOT transfer 1:1
 
 
-def test_critical_divergence_matches_widthdiv_off_the_singular_point() -> None:
-    """D6: WiMDA WidthDiv ≡ CriticalDivergence (a=scaling, nu=alpha, c=MinRate)
+def test_critical_divergence_identity_off_the_singular_point() -> None:
+    """WiMDA WidthDiv ≡ CriticalDivergence (a=scaling, nu=alpha, c=MinRate)
     everywhere except exactly at T = Tc."""
     tc, alpha, min_rate, scaling = 69.2, 0.7, 0.05, 2.0
     t = np.array([40.0, 60.0, 68.0, 70.5, 90.0])
-    wimda = min_rate + scaling / np.abs(t - tc) ** alpha
+    expected = min_rate + scaling / np.abs(t - tc) ** alpha
     np.testing.assert_allclose(
-        _critical_divergence(t, a=scaling, Tc=tc, nu=alpha, c=min_rate), wimda, rtol=1e-12
+        _critical_divergence(t, a=scaling, Tc=tc, nu=alpha, c=min_rate), expected, rtol=1e-12
     )
 
 

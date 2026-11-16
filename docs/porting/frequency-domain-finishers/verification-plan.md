@@ -79,7 +79,7 @@ How each study claim and ported behaviour is verified. Ladder:
 
 ## Regression guards (must not break)
 - `tests/test_fourier.py`, `test_fourier_spectrum.py`, `test_fourier_units.py`,
-  `test_fourier_reference_methods.py` — existing FFT behaviour.
+  `test_fourier_analytic_identities.py` — existing FFT behaviour.
 - `tests/test_maxent*.py` — MaxEnt and the pulse oracle (shared `pulse.py`).
 - `tests/test_project_schema.py` — FFT-recipe round-trip; add a case for the
   new keys (save→load→recompute identical).

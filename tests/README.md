@@ -60,7 +60,7 @@ test touches more than one module.
   the session `QApplication`, the autouse Qt-cleanup fixture, and the
   `--shard` option are global and every subpackage depends on them.
 - If a test needs to import from another test module, import it from its full
-  path, e.g. `from tests.core.test_wimda_model_function_parity import
+  path, e.g. `from tests.core.test_parameter_model_identities import
   EUO_NU_T_TREND`, not a bare `tests.test_...` (there is no such module once
   files are organized into subpackages).
 - `Path(__file__)`-relative fixture/source lookups must count parents from the
@@ -81,16 +81,21 @@ literal per-file paths, needed re-pathing).
 ## Optional external comparisons
 
 Set `ASYMMETRY_MUSRFIT_DATA` to musrfit example data to enable PSI file checks.
-Set `ASYMMETRY_MANTID_SOURCE` to a Mantid source checkout to enable the standalone
-MaxEnt pulse-response comparison. These checks skip when their inputs are absent.
+Set `ASYMMETRY_MANTID_SOURCE` to the pinned Mantid source checkout for the
+standalone MaxEnt pulse-response comparison. This executes the external START
+module in a separate candidate Python process, not installed MuonMaxent. The
+checkout/module identity and pulse/origin settings are in
+`tests/fixtures/reference_cases/pulse-source.json`. Unset configuration skips; a
+configured missing/modified module, wrong checkout, broken import, timeout, or
+invalid output fails. Independent analytic pulse checks remain always available.
 
 The synthetic deadtime comparison requires `musrfit` on `PATH`, version 1.12.1
 at revision `708f777b` (reference run: ROOT 6.40.04), with HDF5 NeXus support.
 It loads each generated file through Asymmetry and compares corrected grouped
 and binned counts against musrfit's exported values and error convention.
 Run it with `python tools/harness.py test -- tests/io/test_deadtime_reference_programs.py`;
-it is marked `integration`, so the standard tier excludes it. Cases skip when
-the executable or recorded version is absent. All files, including musrfit's
+it is marked `integration`, so the standard tier excludes it. Uninstalled executables skip; a selected executable with a wrong version/build
+or failed command fails. All files, including musrfit's
 startup settings, are generated in test temporary directories; no external
 measurement data are needed.
 
@@ -99,7 +104,7 @@ The synthetic PSI interval comparisons need musrfit 1.12.1, revision
 ``python tools/harness.py test -- tests/io/test_psi_good_intervals.py tests/io/test_psi_root_reference_program.py``.
 Native cases are marked ``integration``; they compare tagged raw-bin membership,
 explicit and omitted data intervals, counts, timing, and Poisson errors without
-external acquisition files. They skip when that executable/version is absent.
+external acquisition files. They skip when uninstalled; selected version/build mismatches fail.
 
 For acquired modern LEM, FLAME, and HiFi ROOT comparisons, point
 `ASYMMETRY_MUSRFIT_DATA` at the full musrfit revision `708f777b` checkout's
@@ -126,7 +131,43 @@ The synthetic NeXus good-time comparison uses musrfit 1.12.1, revision
 ``python tools/harness.py test -- tests/io/test_nexus_good_time_reference.py``.
 It matches explicit selected raw channels, counts, and Poisson errors, and
 separates integer channel timestamps from exact NeXus time-zero calibration.
-The integration cases skip when that executable/version is absent.
+The integration cases skip when uninstalled; selected version/build mismatches fail.
+
+### Recorded cases and fresh execution
+
+Analytic identities, published numerical anchors, and recorded native outputs are
+separate evidence classes. Default tests replay owned synthetic cases without
+reference installations, network, or private input. Recorded execution is never
+reported as a fresh native run. The small JSON format extends the existing PSI
+fixture: case/evidence identity, actual binary/build, hashed complete input,
+selection and settings, native status/output, convention mapping, independent
+anchor, precision/tolerances, and limits. The fixture reader validates provenance,
+hashes, finite JSON transport, and tolerance bounds; operation tests check actual
+counts, ratio/variance arithmetic, all three fit observations/objective, and all
+native phase bins including the unrotated endpoint.
+
+The musrfit suite locator accepts explicit commands through `ASYMMETRY_MUSRFIT`
+or `ASYMMETRY_MUSRT0`, otherwise PATH. Once selected, exact version/build mismatch,
+command/import/parser failure, timeout, empty output, and numerical disagreement
+fail; they do not become absence skips. Native subprocesses have bounded timeouts
+and use temporary authored settings. Fresh integration cases are excluded from
+the standard tier but run when explicitly selected through the harness:
+
+```sh
+python3 tools/harness.py test -- tests/io/test_psi_root_reference_program.py tests/io/test_constant_reference_program.py -n 4 --dist loadfile
+```
+
+Fresh manual-phase execution requires both `ASYMMETRY_MUSRVIEW` and
+`ASYMMETRY_ROOT` pointing to musrview 1.12.1/root6/708f777b/ROOT6.40.04 and
+ROOT 6.40.04. The exact musrview binary must match the recorded hash. Run
+`python3 tools/harness.py test -- tests/io/test_manual_phase_reference_program.py -n 4 --dist loadfile`.
+It executes complete type-0 requests and extracts observed coefficients through
+ROOT's public canvas interface. It preserves the final-bin discrepancy and does
+not certify full Fourier amplitude/error agreement. It never substitutes a Python
+rotation for the native phased output. See `tests/fixtures/reference_cases/README.md`
+for input/output precision and reproduction. No test installs or activates reference
+software during collection. Keep numerical thread counts at one and run one suite
+at a time; native musrfit fits also declare `--use-no-of-threads 1`.
 
 ## User-state isolation
 

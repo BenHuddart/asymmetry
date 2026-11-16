@@ -15,7 +15,8 @@ the programs below was copied, transcribed, or mechanically translated into this
 repository. Shared elements are unprotectable facts: mathematical formulae,
 physical constants, published algorithms, and documented file-format layouts.
 Where the implementation follows one of these programs, the relevant source file
-or docstring cites it; the study notes live under docs/porting/.
+or docstring cites it. Published comparisons and attribution are at
+https://benhuddart.github.io/asymmetry/explanation/comparison.html.
 
 We gratefully acknowledge the following projects and their authors:
 

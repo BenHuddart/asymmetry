@@ -1,0 +1,116 @@
+{
+  "format_version": 1,
+  "case_id": "supplied-error-constant-v1",
+  "evidence_class": "recorded_native_execution",
+  "operation": "weighted_constant_fit",
+  "identity": {
+    "musrfit": {
+      "version": "1.12.1",
+      "build": "root6/708f777b/ROOT6.40.04",
+      "executable_sha256": "53770f461e565513171756d5a3586d3549f5c8b3ea1c12e1e20db9930e5b25d3"
+    },
+    "Mantid": {
+      "version": "6.16.1",
+      "build": "official Linux Workbench6.16.1; binary hash is mantid/api/_api.so",
+      "executable_sha256": "3999d35b0a4f2142b89377afe83f7b569d92788e6452515231f58e6569d36b16",
+      "distribution_sha256": "0949ef8e5cbe257aa4a9e41d0d79a8c1c0324f1f6e936c1ba5d429850e2ce612"
+    }
+  },
+  "inputs": {
+    "owned.msr": "95f0f1e8624c0920a461ee0a166c4d7fc5aebf497675f9cdaed6606c24dc1dde",
+    "owned.dat": "c4021a87d71eff66638547d75ebda7fe98eeaff20bf9a21eac46d5d5fdaa9e7c",
+    "musrfit_startup.xml": "e8a44d9b9959c1061e91da313636bfdbac1f86ee322b9f40c9647fe1602ffa22"
+  },
+  "settings": {
+    "x": [
+      0,
+      1,
+      2
+    ],
+    "y": [
+      2,
+      4,
+      7
+    ],
+    "sigma": [
+      1,
+      2,
+      1
+    ],
+    "units": "dimensionless",
+    "seed": null,
+    "selected_indices": [
+      0,
+      1,
+      2
+    ],
+    "packing": 1,
+    "objective": "sum(((y-a)/sigma)^2); supplied absolute errors; no residual rescaling",
+    "musrfit": {
+      "type": 8,
+      "fit_range": [
+        -0.5,
+        2.5
+      ],
+      "commands": [
+        "MIGRAD",
+        "HESSE",
+        "SAVE"
+      ],
+      "threads": 1
+    },
+    "Mantid": {
+      "function": "FlatBackground,A0=3",
+      "minimizer": "Levenberg-Marquardt",
+      "cost_function": "Least squares",
+      "StartX": 0,
+      "EndX": 2,
+      "EvaluationType": "CentrePoint",
+      "MaxIterations": 100
+    },
+    "corrections": "none",
+    "grouping": null,
+    "t0": null,
+    "phase": null,
+    "window": null,
+    "padding": null
+  },
+  "native_output": {
+    "musrfit": {
+      "value": 4.44444,
+      "standard_error": 0.666667,
+      "chi_squared": 12.5556,
+      "ndf": 2
+    },
+    "Mantid": {
+      "value": 4.444444444444445,
+      "standard_error": 0.6666666666666666,
+      "chi_squared_per_ndf": 6.277777777777778,
+      "ndf": 2
+    }
+  },
+  "native_status": {
+    "musrfit": "exit 0; converged MIGRAD/HESSE; three points, NDF 2",
+    "Mantid": "exit 0; Changes in function value are too small"
+  },
+  "mapping": {
+    "description": "Constant and SE unchanged; multiply Mantid chi_squared_per_ndf by NDF to recover objective. No percent conversion.",
+    "value_scale": 1,
+    "standard_error_scale": 1,
+    "Mantid_objective": "chi_squared_per_ndf * ndf"
+  },
+  "anchor": "Independent normal equations: weights [1,1/4,1], sum=9/4, weighted sum=10; optimum40/9, SE2/3, chi_squared113/9, NDF2.",
+  "tolerances": {
+    "musrfit": {
+      "atol": 5e-05,
+      "rtol": 0,
+      "reason": "Six-significant-digit text export; chi_squared12.5556 has rounding error4.45e-5."
+    },
+    "Mantid": {
+      "atol": 1e-07,
+      "rtol": 0,
+      "reason": "Double-precision scalar least-squares solve and stationary-status control."
+    }
+  },
+  "limits": "Gaussian supplied-error constant only; no count-error, nonlinear uncertainty, pull coverage, wizard, or general model certification."
+}

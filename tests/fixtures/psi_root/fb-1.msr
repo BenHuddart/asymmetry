@@ -1,0 +1,30 @@
+Synthetic PSI selected observations
+###############################################################
+FITPARAMETER
+1 alpha 1 0 none
+2 norm 1000 0 none
+3 bg 0 0 none
+4 asym 0 0 none
+###############################################################
+THEORY
+asymmetry 4
+###############################################################
+RUN synthetic GPS PSI PSI-BIN
+fittype 2
+alpha 1
+backgr.fix 0 0
+forward 1
+backward 2
+t0 4 7
+data 20 60 23 63
+fit -1 10
+packing 1
+###############################################################
+COMMANDS
+SCALE_N0_BKG FALSE
+MIGRAD
+SAVE
+###############################################################
+PLOT 2
+runs 1
+range -1 10

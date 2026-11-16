@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Distinguish analytic checks, recorded native comparisons, and optional fresh
+  execution; configured reference identity or execution failures now fail clearly.
+
 ### Fixed
 
 - Refuse known unconverted Gaussian-component widths at Brandt trend fits;

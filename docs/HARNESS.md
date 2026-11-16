@@ -140,6 +140,17 @@ numpy 2.2.x and a working iminuit, and numpy ≥ 2.3 breaks fitting.
 A per-test timeout (`--timeout=120`) makes a hung test fail rather than stall
 the run.
 
+### Optional numerical references
+
+Default validation runs analytic checks and regressions against recorded native
+outputs using owned synthetic input. It does not certify fresh reference execution.
+Explicit integration targets enable bounded native comparisons; tests/README.md
+specifies executable/source locators, pinned identities, and reproduction commands.
+Unconfigured or uninstalled optional references skip specifically. A selected
+reference with an incompatible identity, broken command/import/parser, timeout,
+empty output, or numerical disagreement fails. Source-module execution is labelled
+separately from installed algorithms, and neither is inferred from a manual alone.
+
 ## Agent Workflow
 
 1. Read `AGENTS.md`, then open only the docs relevant to the task.

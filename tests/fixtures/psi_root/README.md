@@ -22,7 +22,7 @@ plus a terminal zero, retained by the loader. Legacy files supply no good-bin
 bounds; the tests set an explicit common window rather than inventing them.
 No reference class or implementation source is included.
 
-`reference.json` records input SHA256 hashes and fresh musrfit ASCII exports
+`reference.json` records input SHA256 hashes and recorded musrfit ASCII exports
 of time, observed value, and error; the theory column is excluded. Settings:
 packing 1, t0 4/7, no deadtime, zero fixed background, alpha=beta=1.
 The optional native tests repeat each case with explicit t0 and with file t0
@@ -42,3 +42,11 @@ reader requests `DecayAnaModule`; that file is an Asymmetry compatibility
 fixture, not a musrfit numerical oracle. Encoded directory headers,
 fractional t0, offsets, beam channels and split detectors have separate loader
 regressions. These synthetic files establish no real-facility ROOT coverage.
+
+The same small reference-case format as `../reference_cases/` records the native
+binary/build, settings, output status, unit mapping, analytic anchor, and precision.
+Packing3 summed counts retain13 complete groups; packing4 retains9 and omits the
+last complete group retained by Asymmetry. All exported groups are checked. The
+packed F/B first-point difference is unresolved and is not treated as equivalence;
+F/B agreement here is packing1 only. The optional native selected-observation test
+runs these same bounded cases with an exact version/build gate.

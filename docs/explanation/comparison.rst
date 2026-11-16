@@ -20,6 +20,65 @@ Asymmetry exposes a Python analysis core with a desktop front end. The
 comparison below concerns particular operations rather than a ranking of
 programs or a collective file-format guarantee.
 
+Evidence behind numerical comparisons
+-------------------------------------
+
+An analytic identity checks independently authored mathematics; a published
+numerical value checks a cited calculation or measurement. Neither executes
+another program. A recorded execution case preserves the native input, settings,
+version/build, numerical output, mapping, and justified tolerance. Replaying it
+is a regression against that recorded execution. A fresh comparison actually
+runs the configured external program and checks its identity and output.
+Documentation of a method alone establishes no numerical agreement.
+
+The bounded synthetic controls cover complementary operations:
+
+* **F/B reduction and count binning:** musrfit 1.12.1, revision ``708f777b``,
+  ROOT 6.40.04, uses owned tagged counts, t0 4/7, forward raw bins 20–59,
+  backward raw bins 23–62, alpha one, zero background, and no deadtime.
+  Packing-one ratios and positive-Poisson errors agree after fraction-to-percent
+  conversion within relative :math:`5\times10^{-6}`, set by text precision.
+  Summed-count packing three agrees for thirteen complete groups. Packing four
+  exports nine groups and omits the tenth complete group retained by Asymmetry.
+  The packed F/B path also has a first-point discrepancy; no whole-output packed
+  F/B equivalence is claimed. These differences remain separate from the
+  matched count-sum arithmetic.
+* **Supplied-error constant fit:** Mantid 6.16.1 and musrfit 1.12.1
+  (``708f777b``, ROOT 6.40.04) fit all three values 2, 4, 7 with errors 1, 2, 1.
+  Independent normal equations give :math:`40/9`, standard error :math:`2/3`,
+  and chi-square :math:`113/9` with two degrees of freedom. Supplied absolute
+  errors are not rescaled by residual variance. Mantid's FlatBackground/Least
+  squares/Levenberg–Marquardt result retains the stationary status
+  ``Changes in function value are too small``; its reduced chi-square is
+  multiplied by two for this comparison. musrfit uses type 8, packing one,
+  fit range −0.5 to 2.5, and MIGRAD/HESSE. Absolute tolerances are
+  :math:`10^{-7}` for Mantid and :math:`5\times10^{-5}` for musrfit's rounded
+  text output. This scalar control does not certify nonlinear errors or coverage.
+* **Manual-phase FFT:** musrview 1.12.1 (``708f777b``, ROOT 6.40.04) applies
+  0° and 37° in a complete type-0 request on owned rounded cosine counts,
+  0.01 μs bins, t0 zero, explicit background 200000, packing one,
+  0.03–9.93 μs, no apodisation, and no requested padding. Observed real and
+  imaginary ROOT-canvas coefficients follow :math:`z_{37}=z_0e^{-i37\pi/180}`
+  on native bins 0–493 within a per-bin float32 storage bound. The final native
+  bin 494 remains unrotated at both settings and is retained as a discrepancy.
+  This checks the same-bin phase relation; it does not establish full DFT scale,
+  endpoint, or error agreement. The tested musrFT data-file ASCII and graphic
+  exports remain unchanged when their command-line phase is varied.
+
+These recorded controls use only owned synthetic input and safe numerical
+outputs. Ordinary tests need no reference installation, network, or private
+acquisition data. Fresh execution is optional and fails on a configured identity,
+command, parser, or numerical failure. The standalone Mantid pulse-source check
+has a separate checkout/module identity and scope, described in
+:doc:`/reference/fourier_analysis`; installed Mantid 6.16.1 does not identify
+that source module. None of these controls certifies general MaxEnt, wizard
+behaviour, physical calibration, or statistical coverage.
+
+See the `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_
+for packing, type-8 fitting, and the FOURIER block, and
+`Mantid Fit v1 <https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`_
+for supplied-error least squares.
+
 .. _reviewed-count-reduction:
 
 Reviewed count-reduction conventions

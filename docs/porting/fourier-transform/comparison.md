@@ -526,16 +526,16 @@ musrfit `phase` = WiMDA `Phase Spectrum`; musrfit `real` ≈ WiMDA `Phase`
 
 ## Comparison Tests
 
-The comparison harness lives in `tests/test_fourier_reference_methods.py`.
+The analytic identities live in `tests/core/test_fourier_analytic_identities.py`:
 
-- `test_wimda_manual_phase_projection_matches_asymmetry_rotation`
-- `test_wimda_grouped_fft_source_uses_decay_corrected_counts`
-- `test_musrfit_lifetime_correction_flattens_decay_before_fft`
-- `test_musrfit_linear_phase_profile_is_not_a_single_wimda_phase`
-- `test_mantid_phase_table_recovers_quadratures_lost_by_group_sum`
+- `test_manual_phase_projection_identity`
+- `test_time_origin_phase_projection_identity`
+- `test_grouped_fft_source_uses_decay_corrected_counts`
 
-These tests freeze the reference-method differences with synthetic data so later
-Asymmetry implementation work can target a known contract.
+These independently authored formulas check phase/decay mathematics. They do not
+execute WiMDA, musrfit, or Mantid. Current recorded and optional fresh native
+controls, including their endpoint/scale limits, are described in the owning
+Fourier reference and published comparison page.
 
 Additional tests to add when implementing musrfit features:
 

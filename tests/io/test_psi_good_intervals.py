@@ -1,6 +1,5 @@
 """Tagged observations distinguish file bounds, storage, and aligned selection."""
 
-import shutil
 import struct
 import subprocess
 from dataclasses import replace
@@ -20,6 +19,7 @@ from asymmetry.core.simulate import reduce_run_to_dataset
 from asymmetry.core.transform.grouping import resolve_alignment, sum_aligned_counts
 from tests.io.test_psi_loader import _write_psi_bin
 from tests.io.test_psi_mdu_contract import mdu_bytes, mdu_tag
+from tests.reference_programs import musrfit_executable
 
 pytestmark = pytest.mark.io
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "psi_root"
@@ -255,14 +255,7 @@ def test_modern_root_per_detector_bounds_ignore_spectators(tmp_path, encoded, ex
 @pytest.fixture
 def musrfit_export(tmp_path):
     """Run the versioned public CLI with isolated settings and no corrections."""
-    executable = shutil.which("musrfit")
-    if executable is None:
-        pytest.skip("musrfit executable is not installed")
-    version = subprocess.run(
-        [executable, "--version"], capture_output=True, text=True, check=True, timeout=15
-    ).stdout
-    if "1.12.1" not in version or "708f777b" not in version:
-        pytest.skip("reference requires musrfit 1.12.1, revision 708f777b; ROOT 6.40.04")
+    executable = musrfit_executable()
 
     def export(path, fmt, selection="", forward="1", asymmetry=False, backward="2"):
         (tmp_path / "musrfit_startup.xml").write_text(
@@ -300,7 +293,7 @@ runs 1
 range -1 10
 """)
         result = subprocess.run(
-            [executable, "endpoint.msr", "-c", "--dump", "ascii"],
+            [executable, "endpoint.msr", "-c", "--dump", "ascii", "--use-no-of-threads", "1"],
             cwd=tmp_path,
             capture_output=True,
             text=True,

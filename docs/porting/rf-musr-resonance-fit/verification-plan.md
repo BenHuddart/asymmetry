@@ -73,7 +73,7 @@ physics and exact round-trip are exact).
 - New suite `tests/test_rf_musr_resonance.py`: **19 tests, all green**.
 - Touched existing suites green: `test_parameter_metadata`, `test_fit_function_docs`,
   `test_parameter_models`, `test_field_scan_fitting`,
-  `test_wimda_model_function_parity` (185 tests).
+  `test_parameter_model_identities` (185 tests).
 - `python tools/harness.py structural` / `lint` (Ruff) — see session log.
 
 ## 5. Reproduce
