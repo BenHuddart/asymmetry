@@ -178,8 +178,13 @@ collected tree and recursively lists the executable's PYZ with the pinned
 archive viewer. It records Python module identities separately from native
 libraries, resources, metadata, archive members, and notices. macOS framework
 links remain relative links bounded to the bundle, rather than duplicate files
-with invented content hashes. Windows DLL hashes must match the verified staging
-record. Third-party notices must match the source notices.
+with invented content hashes. Windows DLL hashes must match verified archive members and the staging
+record; packaging selects only these DLLs, preserving unrelated local files. Third-party notices must match the source notices.
+
+Before promotion, index-wheel observations must match hashes from the same
+reviewed-input parser used by replay. Source-wheel filenames/hashes are checked
+against replay files and native OS/SDK/tool observations are queried again.
+Missing or stale observations fail rather than become public claims.
 
 The target-specific `*-build-components.json` includes packaged version, exact
 commit, Python/target, reviewed input hashes, resolved environment distributions,
@@ -191,7 +196,18 @@ frameworks remain external. This is a bounded component record, not a complete
 licence or system-library provenance scanner. Public fields are allowlisted; raw
 pip reports, local origins, environment/configuration, and host TOCs stay private.
 
-After DMG/EXE assembly, `finalize` rechecks bundle bytes and writes
+After DMG/EXE assembly, `finalize` rechecks bundle bytes and inspects the actual
+final payload on its native platform. macOS mounts the DMG read-only, compares
+its application tree, checks the generated background and Applications system
+link, and detaches with checked exit status. Windows runs the existing installer
+silently into a fresh external temporary directory, checks its application tree
+and separate icon, and runs its uninstaller with checked exit status. Setup tasks,
+application closing/restarting, reboot, and app launch are disabled for this
+inspection. Generated uninstaller files are distinguished from bundled app files.
+These bounded inspections establish packaging lineage; they do not run a
+scientific analysis or certify the delivered workflow.
+
+The finalizer then writes
 `<target>-artifact.json` with the actual artifact basename, size, and SHA256,
 linked by hash to the build/component record. Windows records also include the
 verified Inno engine and compiler hashes. `<target>-SHA256SUMS` is derived from

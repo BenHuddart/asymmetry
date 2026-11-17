@@ -430,7 +430,9 @@ runtime mutation, and nonregular/ambiguous DLL members. Ordinary tests use no
 network. `tests/tools/test_release_artifacts.py` exercises actual record
 generation/verification, stale and swapped source/version/target/input identities,
 changed components/notices, nested private metadata, framework links, and corrupt
-final downloads. Workflow tests ensure manual dispatch exercises download
+final downloads. Synthetic native-runner substitutions reject swapped final
+payloads, missing identity/notices, changed assembly resources, and false Python
+module matches outside the PYZ listing. Workflow tests ensure manual dispatch exercises download
 verification and publication rechecks its separate downloaded bytes.
 
 ```bash
@@ -438,6 +440,7 @@ python3 tools/harness.py test -- tests/tools/test_hdf4_archives.py tests/tools/t
 ```
 
 Native rehearsals additionally inspect actual PYZ/collected components, staged
-DLL lineage, retained notices, final DMG/EXE bytes, and transported public records.
+DLL lineage, retained notices, assembled DMG/EXE payloads and extra resources,
+final bytes, and transported public records.
 These checks supplement the existing replay/compiler and waited outside-source
 startup checks; synthetic tests do not substitute for either native platform.

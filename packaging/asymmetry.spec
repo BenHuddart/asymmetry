@@ -12,7 +12,7 @@ from PyInstaller.utils.hooks import collect_dynamic_libs, copy_metadata
 # SPECPATH points to the directory containing this spec file.
 project_root = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(project_root / "tools"))
-from release_artifacts import write_analysis
+from release_artifacts import staged_binaries, write_analysis
 
 src_dir = project_root / "src"
 entry_script = src_dir / "asymmetry" / "gui" / "app.py"
@@ -82,7 +82,7 @@ binaries = collect_dynamic_libs("awkward_cpp")
 binaries += collect_dynamic_libs("pyhdf")
 _hdf4_dll_dir = os.environ.get("ASYMMETRY_HDF4_DLL_DIR")
 if sys.platform == "win32" and _hdf4_dll_dir and Path(_hdf4_dll_dir).is_dir():
-    binaries += [(str(dll), ".") for dll in Path(_hdf4_dll_dir).glob("*.dll")]
+    binaries += staged_binaries(Path(_hdf4_dll_dir))
 
 a = Analysis(
     [str(entry_script)],

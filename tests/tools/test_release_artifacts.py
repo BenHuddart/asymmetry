@@ -1,6 +1,7 @@
 """Production release record generation and verification with synthetic bundles."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,17 @@ def build(tmp_path, monkeypatch):
     replay = tmp_path / "replay"
     (replay / "replay-1").mkdir(parents=True)
     tools = json.loads((inputs / "tools.json").read_text())
+    wheels = {}
+    for name, directory, version in (
+        ("asymmetry", "app-wheel", "0.28.0"),
+        ("gleplot", "gle-wheel", "1.7.0"),
+    ):
+        location = replay / "replay-1" / directory
+        location.mkdir()
+        wheel = location / f"{name}-{version}-py3-none-any.whl"
+        wheel.write_bytes(name.encode())
+        wheels[name] = {"filename": wheel.name, "sha256": release.digest(wheel)}
+    monkeypatch.setattr(release, "native_identity", lambda: {"os_version": "10.0.26100"})
     observation = {
         "source_commit": commit,
         "target": "windows-x64",
@@ -59,11 +71,14 @@ def build(tmp_path, monkeypatch):
             },
         },
         "gle_commit": tools["gle"]["commit"],
-        "wheels": {
-            "asymmetry": {"filename": "asymmetry-0.28.0-py3-none-any.whl", "sha256": "a" * 64},
-            "gleplot": {"filename": "gleplot-1.7.0-py3-none-any.whl", "sha256": "b" * 64},
+        "wheels": wheels,
+        "downloaded_wheels": {
+            name: {
+                "filename": f"{name}-{item['version']}-py3-none-any.whl",
+                "sha256": item["sha256"],
+            }
+            for name, item in release.reviewed_wheels(inputs / "windows-x64.txt").items()
         },
-        "downloaded_wheels": {},
         "native": {"os_version": "10.0.26100"},
     }
     (replay / "replay-1/observed.json").write_text(json.dumps(observation))
@@ -86,12 +101,40 @@ def build(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setattr(artifacts, "inspect_python_archive", lambda executable, modules: None)
+    monkeypatch.setattr(artifacts, "inspect_python_archive", lambda executable, modules: modules)
     # No staged external libraries in this synthetic fixture.
     monkeypatch.setattr(artifacts, "external_archives", lambda bundle: [])
     artifacts.collect(bundle, "windows-x64", commit)
     binary = root / "dist/Asymmetry-0.28.0-windows-x64-setup.exe"
     binary.write_bytes(b"final installer")
+    (root / "build/icons").mkdir()
+    (root / "build/icons/Asymmetry.ico").write_bytes(b"installer icon")
+    original_run = release.run
+
+    def native_runner(command, cwd, **kwargs):
+        if command[0] == str(binary.resolve()):
+            destination = Path(
+                next(arg.removeprefix("/DIR=") for arg in command if arg.startswith("/DIR="))
+            )
+            shutil.copytree(bundle, destination, dirs_exist_ok=True)
+            shutil.copyfile(root / "build/icons/Asymmetry.ico", destination / "asymmetry.ico")
+            (destination / "unins000.exe").write_bytes(b"generated uninstaller")
+            (destination / "unins000.dat").write_bytes(b"generated installation metadata")
+            payload = binary.read_bytes()
+            if payload == b"missing identity":
+                (destination / "_internal/build-identity.json").unlink()
+            elif payload == b"changed notice":
+                (destination / "_internal/THIRD_PARTY_LICENSES.md").write_bytes(b"wrong")
+            elif payload == b"changed icon":
+                (destination / "asymmetry.ico").write_bytes(b"wrong")
+            elif payload == b"stale installer":
+                (destination / "Asymmetry.exe").write_bytes(b"stale executable")
+            return ""
+        if Path(command[0]).name == "unins000.exe":
+            return ""
+        return original_run(command, cwd, **kwargs)
+
+    monkeypatch.setattr(release, "run", native_runner)
     artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
     return root, bundle, binary, commit, observation, replay
 
@@ -253,3 +296,140 @@ def test_compiler_hash_fields_cannot_publish_private_paths(build, private):
     path.write_text(json.dumps(compiler))
     with pytest.raises(ValueError, match="public SHA256 identity"):
         artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
+
+
+@pytest.mark.parametrize("field", ["index_wheels", "native_tools", "source_wheels"])
+def test_preparation_rejects_stale_public_observations(build, field):
+    _, _, _, commit, observation, replay = build
+    if field == "index_wheels":
+        observation["downloaded_wheels"] = {"pip": {"filename": "pip.whl", "sha256": "f" * 64}}
+    elif field == "native_tools":
+        observation["native"]["os_version"] = "stale"
+    else:
+        observation["wheels"]["asymmetry"]["filename"] = "stale.whl"
+    (replay / "replay-1/observed.json").write_text(json.dumps(observation))
+    with pytest.raises(ValueError, match="observation|wheel"):
+        artifacts.prepare(replay, "windows-x64", commit)
+
+
+@pytest.mark.parametrize(
+    "payload", [b"missing identity", b"changed notice", b"changed icon", b"stale installer"]
+)
+def test_finalizer_rejects_wrong_actual_installer_payload(build, payload):
+    _, bundle, binary, commit, _, _ = build
+    binary.write_bytes(payload)
+    with pytest.raises(ValueError, match="payload|resource"):
+        artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
+
+
+@pytest.mark.parametrize("in_pyz", [False, True])
+def test_python_inclusion_requires_actual_pyz_section(monkeypatch, in_pyz):
+    output = "Contents of 'app' (PKG/CArchive):\n 0, 12, 12, 0, 's', 'required_module'\n"
+    output += "Contents of 'PYZ.pyz' (PYZ):\n typecode, position, length, name\n"
+    if in_pyz:
+        output += " 0, 17, 42, 'required_module'\n"
+    monkeypatch.setattr(release, "run", lambda *args, **kwargs: output)
+    if in_pyz:
+        assert artifacts.inspect_python_archive(Path("app"), ["required_module"]) == [
+            "required_module"
+        ]
+    else:
+        with pytest.raises(ValueError, match="missing Analysis modules"):
+            artifacts.inspect_python_archive(Path("app"), ["required_module"])
+
+
+@pytest.mark.parametrize("tamper", [None, "identity", "notice", "background", "link"])
+def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypatch, tamper):
+    root, bundle, _, _, _, _ = build
+    (root / "build/dmg-bg.png").write_bytes(b"background pixels")
+    commands = []
+
+    def native_runner(command, cwd, **kwargs):
+        commands.append(command)
+        if command[1] == "attach":
+            mount = Path(command[command.index("-mountpoint") + 1])
+            shutil.copytree(bundle, mount / "Asymmetry.app")
+            (mount / "Applications").symlink_to("/wrong" if tamper == "link" else "/Applications")
+            (mount / ".background").mkdir()
+            (mount / ".background/picture.png").write_bytes(
+                b"wrong" if tamper == "background" else b"background pixels"
+            )
+            if tamper == "identity":
+                (mount / "Asymmetry.app/_internal/build-identity.json").unlink()
+            elif tamper == "notice":
+                (mount / "Asymmetry.app/_internal/THIRD_PARTY_LICENSES.md").write_bytes(b"wrong")
+        return ""
+
+    monkeypatch.setattr(release, "run", native_runner)
+    if tamper:
+        with pytest.raises(ValueError, match="payload|resource|system link"):
+            artifacts.inspect_assembled_artifact(root / "final.dmg", bundle, "macos-arm64")
+    else:
+        record = artifacts.inspect_assembled_artifact(root / "final.dmg", bundle, "macos-arm64")
+        assert record["additional_resources"][0]["path"] == ".background/picture.png"
+        assert str(root) not in json.dumps(record)
+    assert commands[0][1] == "attach"
+    assert "-readonly" in commands[0] and "-nobrowse" in commands[0]
+    assert commands[-1][1] == "detach"
+
+
+def test_windows_payload_failure_still_checks_uninstaller(build, monkeypatch):
+    _, bundle, binary, _, _, _ = build
+    binary.write_bytes(b"missing identity")
+    commands = []
+    native_runner = release.run
+
+    def recording_runner(command, cwd, **kwargs):
+        commands.append(command)
+        return native_runner(command, cwd, **kwargs)
+
+    monkeypatch.setattr(release, "run", recording_runner)
+    with pytest.raises(ValueError, match="payload"):
+        artifacts.inspect_assembled_artifact(binary, bundle, "windows-x64")
+    assert "/NORESTART" in commands[0] and "/NOCLOSEAPPLICATIONS" in commands[0]
+    assert "/NORESTARTAPPLICATIONS" in commands[0] and "/TASKS=" in commands[0]
+    assert Path(commands[-1][0]).name == "unins000.exe"
+
+
+def test_final_bytes_cannot_change_during_payload_inspection(build, monkeypatch):
+    _, bundle, binary, commit, _, _ = build
+    native_runner = release.run
+
+    def changing_runner(command, cwd, **kwargs):
+        result = native_runner(command, cwd, **kwargs)
+        if command[0] == str(binary.resolve()):
+            binary.write_bytes(b"changed after payload read")
+        return result
+
+    monkeypatch.setattr(release, "run", changing_runner)
+    with pytest.raises(ValueError, match="changed during payload inspection"):
+        artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
+
+
+def test_cleanup_failure_cannot_be_reported_as_finalization_success(build, monkeypatch):
+    _, bundle, binary, commit, _, _ = build
+    native_runner = release.run
+
+    def failing_cleanup(command, cwd, **kwargs):
+        if Path(command[0]).name == "unins000.exe":
+            raise subprocess.CalledProcessError(7, command)
+        return native_runner(command, cwd, **kwargs)
+
+    monkeypatch.setattr(release, "run", failing_cleanup)
+    with pytest.raises(subprocess.CalledProcessError):
+        artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
+
+
+def test_download_requires_final_payload_observation(build):
+    root, _, _, commit, _, _ = build
+    component = root / "dist/windows-x64-build-components.json"
+    record = json.loads(component.read_text())
+    del record["assembly"]
+    artifacts.write_json(component, record)
+    final_path = root / "dist/windows-x64-artifact.json"
+    final = json.loads(final_path.read_text())
+    final["build_components"] = artifacts.file_record(component)
+    artifacts.write_json(final_path, final)
+    (root / "dist/windows-x64-SHA256SUMS").write_text(artifacts.checksum_text(final))
+    with pytest.raises(ValueError, match="payload inspection record"):
+        artifacts.verify_download(root / "dist", "windows-x64", commit)

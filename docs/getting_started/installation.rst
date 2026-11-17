@@ -21,7 +21,8 @@ Desktop download assets include a target-specific build/component record, a fina
 artifact record, and ``SHA256SUMS``. These bind the installer bytes to the packaged
 version, source commit, reviewed inputs, and actual collected components and
 third-party notices. The Windows build verifies its external HDF4 runtime archives
-before extraction. Downloaded installer and record bytes are checked before
+before extraction. The final installer payload is checked against the recorded
+application components. Downloaded installer and record bytes are checked before
 publication. SHA256 establishes byte identity and traceability; it is not a digital
 signature.
 

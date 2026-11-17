@@ -31,7 +31,7 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def reviewed_requirements(path: Path) -> dict[str, str]:
+def reviewed_wheels(path: Path) -> dict[str, dict[str, str]]:
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
@@ -42,10 +42,14 @@ def reviewed_requirements(path: Path) -> dict[str, str]:
         name = normalized(match[1])
         if name in result:
             raise ValueError(f"duplicate release distribution: {name}")
-        result[name] = match[2]
+        result[name] = {"version": match[2], "sha256": match[3]}
     if "pip" not in result:
         raise ValueError("release bootstrap pip is missing")
     return result
+
+
+def reviewed_requirements(path: Path) -> dict[str, str]:
+    return {name: item["version"] for name, item in reviewed_wheels(path).items()}
 
 
 def observe() -> dict:

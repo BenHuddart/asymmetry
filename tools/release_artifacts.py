@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tarfile
+import tempfile
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -119,6 +120,23 @@ def prepare(replay: Path, target: str, commit: str) -> None:
         raise ValueError("unsafe required immutable VCS identity")
     if observed["gle_commit"] != gle["commit"]:
         raise ValueError("build GLE identity differs from reviewed input")
+    reviewed = release.reviewed_wheels(ROOT / f"packaging/release/{target}.txt")
+    index_wheels = public_wheels(observed["downloaded_wheels"])
+    if {name: item["sha256"] for name, item in index_wheels.items()} != {
+        name: item["sha256"] for name, item in reviewed.items()
+    }:
+        raise ValueError("index wheel observations differ from reviewed inputs")
+    if observed["native"] != release.native_identity():
+        raise ValueError("native tool observations changed after replay")
+    for name, directory in (("asymmetry", "app-wheel"), ("gleplot", "gle-wheel")):
+        wheels = list((replay / "replay-1" / directory).glob("*.whl"))
+        if len(wheels) != 1 or {
+            key: observed["wheels"][name][key] for key in ("filename", "sha256")
+        } != {
+            "filename": wheels[0].name,
+            "sha256": release.digest(wheels[0]),
+        }:
+            raise ValueError(f"source wheel observation differs from replay bytes: {name}")
     distributions = observed["environment"]["distributions"]
     environment = {
         "identity": identity,
@@ -142,7 +160,7 @@ def prepare(replay: Path, target: str, commit: str) -> None:
             if name in distributions
         },
         "source_wheels": public_wheels(observed["wheels"]),
-        "index_wheels": public_wheels(observed["downloaded_wheels"]),
+        "index_wheels": index_wheels,
         "direct_sources": {
             "gleplot": {key: gle[key] for key in ("url", "requested_revision", "commit", "version")}
         },
@@ -169,12 +187,21 @@ def write_analysis(pure: list, binaries: list, datas: list) -> None:
     write_json(ROOT / "build/bundle-analysis.json", record)
 
 
-def inspect_python_archive(executable: Path, modules: list[str]) -> None:
-    # The documented recursive archive viewer observes the PYZ inside the actual EXE.
+def inspect_python_archive(executable: Path, modules: list[str]) -> list[str]:
     output = release.run(["pyi-archive_viewer", "-l", "-r", str(executable)], ROOT, display=False)
-    missing = [name for name in modules if repr(name) not in output]
+    observed = set()
+    in_pyz = False
+    for line in output.splitlines():
+        if line.startswith("Contents of "):
+            in_pyz = line.endswith("(PYZ):")
+        elif in_pyz:
+            match = re.fullmatch(r"\s*\d+, \d+, \d+, '([^']+)'", line)
+            if match:
+                observed.add(safe_text(match[1]))
+    missing = set(modules) - observed
     if missing:
-        raise ValueError(f"collected Python archive is missing Analysis modules: {missing}")
+        raise ValueError(f"collected Python archive is missing Analysis modules: {sorted(missing)}")
+    return sorted(observed)
 
 
 def bundle_inventory(bundle: Path) -> list[dict]:
@@ -238,48 +265,57 @@ def bundle_inventory(bundle: Path) -> list[dict]:
     return result
 
 
-def external_archives(bundle: Path) -> list:
-    if not (ROOT / "build/hdf4-dlls/archives.json").exists():
-        raise ValueError("verified external runtime record is missing")
-    archives = read_json(ROOT / "build/hdf4-dlls/archives.json")
+def verified_staged_archives(directory: Path) -> list:
+    archives = read_json(directory / "archives.json")
     reviewed = read_json(ROOT / "packaging/release/windows-archives.json")
     if [{key: item[key] for key in ("filename", "url", "sha256")} for item in archives] != reviewed:
         raise ValueError("external archive identities differ from reviewed inputs")
     result = []
-    for item in archives:
-        archive = ROOT / "build/hdf4-dlls/_download" / item["filename"]
-        if release.digest(archive) != item["sha256"]:
+    for item, pin in zip(archives, reviewed, strict=True):
+        archive = directory / "_download" / pin["filename"]
+        if release.digest(archive) != pin["sha256"]:
             raise ValueError(f"verified archive bytes changed before collection: {archive.name}")
-        with tarfile.open(archive, "r:bz2") as source:
-            members = {
-                member.name: hashlib.sha256(source.extractfile(member).read()).hexdigest()
-                for member in source.getmembers()
-                if member.isfile()
-                and member.name.startswith("Library/bin/")
-                and member.name.lower().endswith(".dll")
-            }
         dlls = []
-        if {dll["member"] for dll in item["dlls"]} != set(members):
-            raise ValueError("staged DLL record differs from verified archive members")
-        for dll in item["dlls"]:
-            name = portable(dll["name"])
-            staged = ROOT / "build/hdf4-dlls" / name
-            included = bundle / "_internal" / name
-            if (
-                members[dll["member"]] != dll["sha256"]
-                or release.digest(staged) != dll["sha256"]
-                or release.digest(included) != dll["sha256"]
-            ):
-                raise ValueError(f"staged/bundled DLL identity differs: {name}")
-            dlls.append(
-                {
-                    "member": portable(dll["member"]),
-                    "path": included.relative_to(bundle).as_posix(),
-                    "sha256": dll["sha256"],
-                }
-            )
-        result.append({**{key: item[key] for key in ("filename", "url", "sha256")}, "dlls": dlls})
+        with tarfile.open(archive, "r:bz2") as source:
+            for member in source.getmembers():
+                if not member.name.startswith("Library/bin/") or not member.name.lower().endswith(
+                    ".dll"
+                ):
+                    continue
+                if not member.isfile() or len(PurePosixPath(member.name).parts) != 3:
+                    raise ValueError("verified DLL must be a regular direct archive member")
+                name = portable(PurePosixPath(member.name).name)
+                sha256 = hashlib.sha256(source.extractfile(member).read()).hexdigest()
+                if release.digest(directory / name) != sha256:
+                    raise ValueError(f"staged DLL identity differs from verified archive: {name}")
+                dlls.append({"member": member.name, "name": name, "sha256": sha256})
+        dlls.sort(key=lambda dll: dll["name"])
+        if item["dlls"] != dlls:
+            raise ValueError("staged DLL record identity differs from verified archive members")
+        result.append({**pin, "dlls": dlls})
     return result
+
+
+def staged_binaries(directory: Path) -> list[tuple[str, str]]:
+    """Select intended DLLs without sweeping unrelated local files into a bundle."""
+    return [
+        (str(directory / dll["name"]), ".")
+        for archive in verified_staged_archives(directory)
+        for dll in archive["dlls"]
+    ]
+
+
+def external_archives(bundle: Path) -> list:
+    records = verified_staged_archives(ROOT / "build/hdf4-dlls")
+    for archive in records:
+        for dll in archive["dlls"]:
+            included = bundle / "_internal" / dll.pop("name")
+            if release.digest(included) != dll["sha256"]:
+                raise ValueError(
+                    f"bundled DLL identity differs from verified archive: {included.name}"
+                )
+            dll["path"] = included.relative_to(bundle).as_posix()
+    return records
 
 
 def collect(bundle: Path, target: str, commit: str) -> None:
@@ -304,7 +340,7 @@ def collect(bundle: Path, target: str, commit: str) -> None:
     executable = bundle / (
         "Asymmetry.exe" if target == "windows-x64" else "Contents/MacOS/Asymmetry"
     )
-    inspect_python_archive(executable, analysis["python_modules"])
+    analysis["python_modules"] = inspect_python_archive(executable, analysis["python_modules"])
     record = {
         "schema": 1,
         **environment,
@@ -321,6 +357,114 @@ def collect(bundle: Path, target: str, commit: str) -> None:
 def verify_bundle(bundle: Path, record: dict) -> None:
     if bundle_inventory(bundle) != record["components"]:
         raise ValueError("collected bundle changed after component inventory")
+
+
+def inspect_assembled_artifact(binary: Path, bundle: Path, target: str) -> dict:
+    expected = bundle_inventory(bundle)
+    with tempfile.TemporaryDirectory(prefix="asymmetry-payload-") as directory:
+        work = Path(directory)
+        if target == "windows-x64":
+            installed = work / "application"
+            uninstaller = installed / "unins000.exe"
+            try:
+                release.run(
+                    [
+                        str(binary.resolve()),
+                        "/SP-",
+                        "/VERYSILENT",
+                        "/SUPPRESSMSGBOXES",
+                        "/NORESTART",
+                        "/NOICONS",
+                        "/TASKS=",
+                        "/NOCLOSEAPPLICATIONS",
+                        "/NORESTARTAPPLICATIONS",
+                        f"/DIR={installed}",
+                    ],
+                    work,
+                )
+                if not uninstaller.is_file():
+                    raise ValueError("final installer payload has no cleanup executable")
+                inventory = bundle_inventory(installed)
+                generated = {"unins000.exe", "unins000.dat", "unins000.msg"}
+                payload = [
+                    item for item in inventory if item["path"] not in generated | {"asymmetry.ico"}
+                ]
+                if payload != expected:
+                    raise ValueError("final installer payload differs from inventoried bundle")
+                icon = installed / "asymmetry.ico"
+                if release.digest(icon) != release.digest(ROOT / "build/icons/Asymmetry.ico"):
+                    raise ValueError("final installer resource differs from compiled icon input")
+                result = {
+                    "method": "silent Inno payload inspection",
+                    "additional_resources": [
+                        {
+                            "path": "asymmetry.ico",
+                            "sha256": release.digest(icon),
+                            "size": icon.stat().st_size,
+                        }
+                    ],
+                    "generated_installer_files": sorted(
+                        item["path"] for item in inventory if item["path"] in generated
+                    ),
+                }
+            finally:
+                if uninstaller.is_file():
+                    release.run(
+                        [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], work
+                    )
+            return result
+        mount = work / "volume"
+        mount.mkdir()
+        release.run(
+            [
+                "hdiutil",
+                "attach",
+                "-readonly",
+                "-nobrowse",
+                "-mountpoint",
+                str(mount),
+                str(binary.resolve()),
+            ],
+            work,
+            display=False,
+        )
+        try:
+            if bundle_inventory(mount / "Asymmetry.app") != expected:
+                raise ValueError("final DMG payload differs from inventoried bundle")
+            applications = mount / "Applications"
+            if not applications.is_symlink() or os.readlink(applications) != "/Applications":
+                raise ValueError("final DMG Applications system link differs")
+            extras = []
+            for path in sorted(mount.rglob("*")):
+                relative = path.relative_to(mount)
+                if relative.parts[0] == "Asymmetry.app" or path == applications:
+                    continue
+                if path.is_symlink():
+                    raise ValueError("unsupported final DMG assembly symlink")
+                if path.is_dir():
+                    continue
+                if not path.is_file():
+                    raise ValueError("unsupported final DMG assembly resource")
+                extras.append(
+                    {
+                        "path": portable(relative.as_posix()),
+                        "sha256": release.digest(path),
+                        "size": path.stat().st_size,
+                    }
+                )
+            background = release.digest(ROOT / "build/dmg-bg.png")
+            if sum(item["sha256"] == background for item in extras) != 1:
+                raise ValueError("final DMG background resource differs from assembly input")
+            return {
+                "method": "read-only mounted DMG payload inspection",
+                "additional_resources": extras,
+                "external_system_link": {
+                    "path": "Applications",
+                    "system_location": "Applications directory",
+                },
+            }
+        finally:
+            release.run(["hdiutil", "detach", str(mount)], work, display=False)
 
 
 def finalize(binary: Path, bundle: Path, target: str, commit: str, label: str) -> None:
@@ -342,15 +486,22 @@ def finalize(binary: Path, bundle: Path, target: str, commit: str, label: str) -
                 for name in ("ISCC.exe", "ISCmplr.dll")
             },
         }
-        write_json(component, record)
     expected_name = artifact_name(target, label)
     if binary.name != expected_name:
         raise ValueError("final artifact name differs from target and label")
+    artifact = file_record(binary)
+    record["assembly"] = inspect_assembled_artifact(binary, bundle, target)
+    if file_record(binary) != artifact:
+        raise ValueError("final artifact changed during payload inspection")
+    print(
+        f"Verified final {target} payload against {len(record['components'])} collected components."
+    )
+    write_json(component, record)
     final = {
         "schema": 1,
         "identity": identity,
         "artifact_label": label,
-        "artifact": file_record(binary),
+        "artifact": artifact,
         "build_components": file_record(component),
     }
     write_json(binary.parent / f"{target}-artifact.json", final)
@@ -396,6 +547,13 @@ def verify_download(directory: Path, target: str, commit: str) -> list[Path]:
     components = read_json(directory / expected_names["build_components"])
     if components.get("schema") != 1 or components.get("identity") != identity:
         raise ValueError("downloaded component identity differs from triggering checkout")
+    method = (
+        "silent Inno payload inspection"
+        if target == "windows-x64"
+        else "read-only mounted DMG payload inspection"
+    )
+    if components.get("assembly", {}).get("method") != method:
+        raise ValueError("downloaded final payload inspection record is missing or swapped")
     notices = [item for item in components["components"] if item["kind"] == "notice"]
     if not notices or any(
         item["sha256"] != release.digest(ROOT / "THIRD_PARTY_LICENSES.md") for item in notices

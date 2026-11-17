@@ -176,3 +176,25 @@ def test_actual_archive_to_bundle_lineage(fetcher, tmp_path, monkeypatch, tamper
         records = artifacts.external_archives(bundle)
         assert records[0]["dlls"][0]["path"] == "_internal/runtime0.dll"
         assert records[0]["dlls"][0]["sha256"] == hashlib.sha256(b"runtime 0").hexdigest()
+
+
+def test_packaging_selects_only_verified_dlls_and_preserves_local_files(
+    fetcher, tmp_path, monkeypatch
+):
+    from tools import release_artifacts as artifacts
+
+    module, _, _ = fetcher
+    monkeypatch.setattr(artifacts, "ROOT", tmp_path)
+    reviewed = tmp_path / "packaging/release/windows-archives.json"
+    reviewed.parent.mkdir(parents=True)
+    reviewed.write_bytes(module.ARCHIVE_INPUT.read_bytes())
+    staged = tmp_path / "runtime"
+    module.main(str(staged))
+    (staged / "old.dll").write_bytes(b"unrelated local runtime")
+    selected = artifacts.staged_binaries(staged)
+    assert sorted(Path(source).name for source, _ in selected) == [
+        "runtime0.dll",
+        "runtime1.dll",
+        "runtime2.dll",
+    ]
+    assert (staged / "old.dll").read_bytes() == b"unrelated local runtime"
