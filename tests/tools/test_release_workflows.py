@@ -266,3 +266,18 @@ def test_docs_modes_share_gate_and_failed_build_cannot_upload() -> None:
             assert any(fnmatch(changed, pattern) for pattern in paths), changed
     filters = str(_workflow("ci.yml")["jobs"]["changes"]["steps"])
     assert "docs/conf.py" in filters and "docs/_ext/**" in filters
+
+
+def test_docs_smoke_installs_qt_import_runtime_before_sphinx() -> None:
+    steps = _workflow("docs-pages.yml")["jobs"]["docs-smoke"]["steps"]
+    gate = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("run") == "python3 tools/harness.py docs --mode source"
+    )
+    install = next(
+        (step for step in steps[:gate] if "apt-get install" in step.get("run", "")), None
+    )
+    assert install is not None, "GUI autodoc imports require Linux Qt runtime libraries"
+    assert "libegl1" in install["run"]
+    assert not install.get("continue-on-error", False)

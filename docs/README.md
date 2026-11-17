@@ -18,6 +18,13 @@ Or install with the dev extras:
 pip install -c constraints.txt -e ".[dev]"
 ```
 
+On Linux, GUI API autodoc also needs Qt runtime libraries, even without a display
+or screenshot capture. On Debian/Ubuntu, install them with:
+
+```bash
+sudo apt-get install --no-install-recommends libegl1 libxkbcommon0 libdbus-1-3
+```
+
 ### Gated HTML builds
 
 Run from the repository root:

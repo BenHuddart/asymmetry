@@ -76,6 +76,12 @@ jobs:
           pip install -c constraints.txt -e .
           pip install -c constraints.txt -r docs/requirements.txt
 
+      - name: Install Qt import runtime libraries
+        # Autodoc imports GUI classes without starting a QApplication.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libxkbcommon0 libdbus-1-3
+
       - name: Check screenshot references
         # Static consistency gate: every `/_generated/screenshots/<name>.png`
         # referenced from the .rst sources must map to a registered scenario,
