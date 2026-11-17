@@ -410,3 +410,43 @@ def test_mutable_observation_cannot_bless_dependency_drift(
     (work / "observed.json").write_text(json.dumps(record), encoding="utf-8")
     with pytest.raises(ValueError, match="input record is incomplete"):
         release.verify_build(tmp_path)
+
+
+def test_reviewed_input_bytes_survive_autocrlf_checkout(tmp_path: Path) -> None:
+    import subprocess
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
+    relative_paths = [path.relative_to(ROOT) for path in (ROOT / "packaging/release").iterdir()]
+    for relative in relative_paths:
+        destination = source / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    for arguments in (
+        ["init"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "inputs",
+        ],
+    ):
+        subprocess.run(["git", *arguments], cwd=source, check=True, capture_output=True)
+    checkout = tmp_path / "checkout"
+    subprocess.run(
+        ["git", "clone", "--no-checkout", str(source), str(checkout)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "core.autocrlf", "true"], cwd=checkout, check=True, capture_output=True
+    )
+    subprocess.run(["git", "checkout", "HEAD"], cwd=checkout, check=True, capture_output=True)
+    for relative in relative_paths:
+        assert release.digest(checkout / relative) == release.digest(ROOT / relative)
+        assert b"\r\n" not in (checkout / relative).read_bytes()
