@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Gate documentation in explicit offline source and publishing modes; reject markup/reference defects while preserving registered optional images and labelled corpus placeholders.
+
 - Distinguish analytic checks, recorded native comparisons, and optional fresh
   execution; configured reference identity or execution failures now fail clearly.
 

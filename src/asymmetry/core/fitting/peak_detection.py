@@ -1,7 +1,7 @@
 """Spectral peak detection and multiplet pattern matching for the fit wizard.
 
 This Qt-free module provides the peak-detection layer beneath the fit wizard's
-model recommendation: given a time-domain :class:`MuonDataset` (or a raw FFT
+model recommendation: given a time-domain :class:`~asymmetry.core.data.dataset.MuonDataset` (or a raw FFT
 magnitude spectrum), it locates oscillation lines with sub-bin frequency
 refinement, local-noise-floor SNR, FWHM widths, and an optional Burg (all-poles)
 cross-check that confirms — but never adds — peaks.
@@ -76,9 +76,8 @@ _MIN_WINDOW_POINTS = 32
 _SIDELOBE_CEILING = 0.05
 _SIDELOBE_ANCHOR_RESOLUTIONS = 3.0
 
-#: Leakage profiles selectable on :func:`detect_peaks_in_spectrum`, as
-#: ``(ceiling, anchor_resolutions, exponent)`` — see :func:`_sidelobe_ceiling`.
-#:
+#: Leakage profiles selectable on :func:`~asymmetry.core.fitting.peak_detection.detect_peaks_in_spectrum`, as
+#: ``(ceiling, anchor_resolutions, exponent)`` — see ``asymmetry.core.fitting.peak_detection._sidelobe_ceiling``.
 #: ``"rect"`` is the unwindowed early-window pass's.  A boxcar's worst sidelobe
 #: is -13.3 dB (~22 % of the main lobe) at ~1.4 resolution elements and decays
 #: at only -6 dB/octave — two orders of magnitude worse than Hann near the line,
@@ -97,13 +96,13 @@ _LEAKAGE_PROFILES: dict[str, tuple[float, float, float]] = {
 
 # --------------------------------------------------------------------------- #
 # Early-window (damped-line) pass — constants settled by the synthetic study
-# documented on :func:`analyze_early_window_peaks`.
+# documented on :func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks`.
 # --------------------------------------------------------------------------- #
 
 #: Crop ladder for the early pass, as divisors of the SNR-truncated record.
 #: Fractions of the record rather than absolute times, so the ladder scales with
 #: the run's duration instead of its binning.  Two rungs: study step 1 on
-#: :func:`analyze_early_window_peaks` records why both longer and shorter rungs
+#: :func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks` records why both longer and shorter rungs
 #: were dropped.
 _EARLY_CROP_DIVISORS = (16, 64)
 
@@ -156,7 +155,7 @@ _EARLY_RESERVED_PEAKS = 2
 
 #: Fraction of Nyquist guarded at the top of every reported band, on top of the
 #: resolution-element guard.  On finely binned records the two differ by orders
-#: of magnitude — see the note in :func:`detect_peaks_in_spectrum`.
+#: of magnitude — see the note in :func:`~asymmetry.core.fitting.peak_detection.detect_peaks_in_spectrum`.
 _NYQUIST_GUARD_FRACTION = 0.02
 
 #: Cap on damped lines the scan pass may contribute, mirroring
@@ -252,7 +251,7 @@ class PeakAnalysis:
     SNR is measured on a short unwindowed crop against a different noise floor,
     so it is not comparable with an ``fft`` SNR from the whole record.  A single
     pass's output is therefore plainly SNR-descending; a merged one is blocks of
-    it (see :func:`merge_early_peaks` and :func:`merge_user_peaks`).
+    it (see :func:`~asymmetry.core.fitting.peak_detection.merge_early_peaks` and :func:`~asymmetry.core.fitting.peak_detection.merge_user_peaks`).
     """
 
     peaks: tuple[DetectedPeak, ...]
@@ -278,7 +277,7 @@ class PeakAnalysis:
 
 
 def serialize_detected_peak(peak: DetectedPeak) -> dict[str, object]:
-    """Return a JSON-safe dict snapshot of a :class:`DetectedPeak`."""
+    """Return a JSON-safe dict snapshot of a :class:`~asymmetry.core.fitting.peak_detection.DetectedPeak`."""
     return {
         "frequency_mhz": float(peak.frequency_mhz),
         "amplitude": float(peak.amplitude),
@@ -329,7 +328,7 @@ def _optional_float(value: object) -> float | None:
 
 
 def deserialize_detected_peak(payload: object) -> DetectedPeak | None:
-    """Rebuild a :class:`DetectedPeak` from a persisted dict, tolerating gaps."""
+    """Rebuild a :class:`~asymmetry.core.fitting.peak_detection.DetectedPeak` from a persisted dict, tolerating gaps."""
     if not isinstance(payload, dict):
         return None
     burg = payload.get("burg_confirmed", None)
@@ -452,7 +451,7 @@ def _local_noise_floor(
     dominate its own median window and suppress its SNR.
 
     The running median is evaluated with reflected padding (see
-    :func:`_running_median`), without which the estimate immediately above DC
+    ``asymmetry.core.fitting.peak_detection._running_median``), without which the estimate immediately above DC
     is biased high by the replicated DC bin and swallows slow lines.
     """
     mags = np.asarray(magnitude, dtype=float)
@@ -576,7 +575,7 @@ def detect_peaks_in_spectrum(
     low_guard_resolutions, high_guard_resolutions
         Widths of the DC and Nyquist guard bands, in resolution elements.  Both
         default to the historical Hann-pass ``0.5``; the early-window pass
-        widens both (see :func:`analyze_early_window_peaks`).  *Low:* an
+        widens both (see :func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks`).  *Low:* an
         unwindowed short crop of a relaxing record leaves residual trend
         curvature in the first few resolution elements, and a line completing
         only a cycle or two inside such a crop is not a resolvable oscillation
@@ -588,13 +587,13 @@ def detect_peaks_in_spectrum(
     global_noise_floor
         Estimate one sigma-clipped median floor over the whole guarded band
         instead of the historical running-median floor — what a short crop needs
-        (see :func:`_global_noise_floor`).
+        (see ``asymmetry.core.fitting.peak_detection._global_noise_floor``).
     leakage_profile
         ``"hann"`` (default) or ``"rect"`` — which window's sidelobe envelope the
-        leakage guard rejects against (see :func:`_sidelobe_ceiling`).  The
+        leakage guard rejects against (see ``asymmetry.core.fitting.peak_detection._sidelobe_ceiling``).  The
         early-window pass transforms unwindowed and must use ``"rect"``.
     crop_us
-        Stamped onto every returned peak's :attr:`DetectedPeak.crop_us` for
+        Stamped onto every returned peak's :attr:`asymmetry.core.fitting.peak_detection.DetectedPeak.crop_us` for
         provenance; the early-window pass passes its crop duration here.
 
     Returns
@@ -816,14 +815,14 @@ def analyze_early_window_peaks(
     exists to flag.  This pass is the seeding-side answer: an **unwindowed**
     (``window="none"``), first-order-detrended transform of a short leading crop
     of the record, repeated over a small ladder of crops
-    (:func:`early_window_crops`), each with its own honest
+    (:func:`~asymmetry.core.fitting.peak_detection.early_window_crops`), each with its own honest
     ``resolution_mhz = 1/T_crop``.
 
     ``time``/``signal``/``error`` are the already-centred, already SNR-truncated
     arrays :func:`analyze_dataset_peaks` transforms; the returned analysis
     carries the peaks from every rung, de-duplicated across rungs, tagged
     ``source="early_fft"`` and stamped with the crop that found them
-    (:attr:`DetectedPeak.crop_us`).  ``resolution_mhz`` is the ladder's finest
+    (:attr:`asymmetry.core.fitting.peak_detection.DetectedPeak.crop_us`).  ``resolution_mhz`` is the ladder's finest
     (longest crop); a peak's own resolution is ``1/peak.crop_us``.
 
     **The synthetic study behind the constants.**  All parameters invented; the
@@ -858,7 +857,7 @@ def analyze_early_window_peaks(
        band ten resolution elements wide the median window sits inside the
        line's own Lorentzian skirt, so the ratio measures line shape, not
        significance — while pure noise reached 6.4.  Nothing separated them.
-       The global clipped floor (:func:`_global_noise_floor`) restores
+       The global clipped floor (``asymmetry.core.fitting.peak_detection._global_noise_floor``) restores
        SNR ∝ amplitude over an 8× amplitude sweep.
     3. *Which threshold* (``_EARLY_MIN_SNR``, re-derived, not inherited).  Three
        null families were drawn through the shipped ladder with the gate open:
@@ -1034,7 +1033,7 @@ def analyze_damped_scan_peaks(
     the envelope rate rather than inferring it from a crop length, and it
     accepts a line on a look-elsewhere-corrected Δχ² test rather than on an SNR
     gate.  Each accepted line becomes one ``source="damped_scan"``
-    :class:`DetectedPeak`, Δχ²-descending, carrying the measured λ, amplitude,
+    :class:`~asymmetry.core.fitting.peak_detection.DetectedPeak`, Δχ²-descending, carrying the measured λ, amplitude,
     phase and Δχ² so the seeding path can use them directly.
 
     ``width_mhz`` is the Lorentzian FWHM ``λ/π`` of the line's own envelope —
@@ -1121,7 +1120,7 @@ def merge_damped_scan_peaks(
 ) -> PeakAnalysis:
     """Fold damped-scan peaks into a Hann-pass analysis.
 
-    The merge policy is :func:`merge_early_peaks`'s, with one addition that only
+    The merge policy is :func:`~asymmetry.core.fitting.peak_detection.merge_early_peaks`'s, with one addition that only
     the scan pass makes possible:
 
     * **The Hann pass still wins a collision on frequency** — for a line it can
@@ -1189,15 +1188,15 @@ def analyze_dataset_peaks(
 
     The residual (``asymmetry − detrend_curve`` when given, else tail-subtracted)
     is transformed with a Hann window and 4× zero-padding, then passed to
-    :func:`detect_peaks_in_spectrum`.  A Burg (all-poles) cross-check may confirm
+    :func:`~asymmetry.core.fitting.peak_detection.detect_peaks_in_spectrum`.  A Burg (all-poles) cross-check may confirm
     but never add peaks — see ``burg_check``.
 
     A second, **matched-apodisation damped-line scan** then runs over the record
-    (:func:`analyze_damped_scan_peaks`) and its peaks are merged in
-    (:func:`merge_damped_scan_peaks`).  That pass is what lets the wizard see an
+    (:func:`~asymmetry.core.fitting.peak_detection.analyze_damped_scan_peaks`) and its peaks are merged in
+    (:func:`~asymmetry.core.fitting.peak_detection.merge_damped_scan_peaks`).  That pass is what lets the wizard see an
     oscillation whose lifetime is a small fraction of the record — the case the
     Hann window structurally deletes — and, unlike the crop ladder it replaced
-    (:func:`analyze_early_window_peaks`, kept importable but no longer wired
+    (:func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks`, kept importable but no longer wired
     here), it *measures* the envelope rate instead of inferring it from a crop
     length.
 
@@ -1205,11 +1204,11 @@ def analyze_dataset_peaks(
     The damped scan deliberately declines a line whose envelope is not fast
     compared with its own period — a conventional transverse-field precession
     at, say, 0.69 MHz with λ ≈ 1.8 µs⁻¹ has ``f/λ ≈ 0.4`` and is rejected by
-    :func:`~asymmetry.core.fitting.damped_line_scan._is_oscillation`, which is
+    ``asymmetry.core.fitting.damped_line_scan._is_oscillation``, which is
     correct: at that ratio the matched-apodisation rung cannot tell a cosine
     from the relaxation it rides on.  Such a line is the **Hann pass's** to
     find, and it is why the local noise floor next to DC has to be estimated
-    honestly (see :func:`_running_median`).
+    honestly (see ``asymmetry.core.fitting.peak_detection._running_median``).
 
     Parameters
     ----------
@@ -1489,7 +1488,7 @@ def merge_user_peaks(
     ``record`` is the optional ``(time, asymmetry, error)`` the frequencies were
     read off.  Given it, a fresh user peak that inherits nothing from a scan
     line has its own envelope measured at the stated frequency
-    (:func:`_measure_fresh_user_peak`) — so a hand-seeded damped line seeds the
+    (``asymmetry.core.fitting.peak_detection._measure_fresh_user_peak``) — so a hand-seeded damped line seeds the
     fit with a λ even where the blind scan declined it.  This is the seam the
     measurement enters by: every caller that already holds the record passes it,
     and one that does not keeps the previous behaviour unchanged.

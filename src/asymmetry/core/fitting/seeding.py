@@ -144,7 +144,7 @@ def record_scale_estimate(
 
 
 def seed_parameters(model: CompositeModel, context: SeedContext) -> dict[str, Seed]:
-    """Return a starting :class:`Seed` for every parameter of *model*.
+    """Return a starting :class:`~asymmetry.core.fitting.seeding.Seed` for every parameter of *model*.
 
     The layers are applied in the order documented at the top of this module;
     each one overrides the values of those before it.
@@ -238,10 +238,10 @@ def line_amplitude_phase_values(
 def seed_trend_parameters(
     model: ParameterCompositeModel, x: NDArray[np.float64], y: NDArray[np.float64]
 ) -> dict[str, Seed]:
-    """Return a starting :class:`Seed` for every parameter of a trend model.
+    """Return a starting :class:`~asymmetry.core.fitting.seeding.Seed` for every parameter of a trend model.
 
     Three layers, as for a fit model: static component defaults, then the
-    series' own scale (:func:`_trend_scale_values` — a baseline at the mean of
+    series' own scale (``asymmetry.core.fitting.seeding._trend_scale_values`` — a baseline at the mean of
     ``y``, a slope/amplitude at its span, a characteristic x at half the fitted
     range), then
     :func:`~asymmetry.core.fitting.parameter_models.suggest_trend_seeds`, which

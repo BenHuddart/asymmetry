@@ -1,5 +1,5 @@
 Global fitting across fields: Li⁺ ionic motion in a garnet electrolyte
-=====================================================================
+======================================================================
 
 This chapter is the flagship worked example of a **global fit** — a single
 simultaneous fit of several runs that share some parameters and differ in

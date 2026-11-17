@@ -10,6 +10,7 @@ Composite models
    :show-inheritance:
 
 .. autoclass:: asymmetry.core.fitting.composite.CompositeModel
+   :exclude-members: __weakref__, missing_component_names
    :members:
    :undoc-members:
    :show-inheritance:
@@ -42,5 +43,36 @@ Fixed time response
    :members:
 
 The optional ``CompositeModel.time_response`` setting round-trips with the
-model. :meth:`CompositeModel.with_time_response` creates a new snapshot. See
+model. :meth:`asymmetry.core.fitting.composite.CompositeModel.with_time_response` creates a new snapshot. See
 :ref:`ordinary-time-response` for normalisation, origin, and conditional errors.
+
+Composite
+---------
+
+.. py:attribute:: CompositeModel.components
+   :module: asymmetry.core.fitting.composite
+
+.. py:attribute:: CompositeModel.param_names
+   :module: asymmetry.core.fitting.composite
+
+.. py:attribute:: CompositeModel.fraction_groups
+   :module: asymmetry.core.fitting.composite
+
+Expression tree
+---------------
+
+.. autofunction:: asymmetry.core.fitting.expression_tree.build_expression_tree
+
+User functions
+--------------
+
+.. py:module:: asymmetry.core.fitting.user_functions
+
+.. autofunction:: asymmetry.core.fitting.user_functions.register_parameter_component
+
+.. autoclass:: asymmetry.core.fitting.user_functions.UserFunctionError
+   :no-members:
+   :no-special-members:
+
+.. py:attribute:: CompositeModel.missing_component_names
+   :module: asymmetry.core.fitting.composite

@@ -1,6 +1,9 @@
 Fit wizards
 ===========
 
+.. py:module:: asymmetry.core.fitting.global_search.trend_search
+
+
 .. currentmodule:: asymmetry.core.fitting
 
 
@@ -69,9 +72,123 @@ Global fit-wizard helpers:
 .. autofunction:: asymmetry.core.fitting.rerank_global_fit_wizard_recommendation
 
 Spectral peak analysis
----------------------
+----------------------
 
 .. autoclass:: asymmetry.core.fitting.peak_detection.PeakAnalysis
    :members:
 
 .. autofunction:: asymmetry.core.fitting.peak_detection.analyze_dataset_peaks
+
+Composite
+---------
+
+.. py:data:: COMPONENTS
+   :module: asymmetry.core.fitting.composite
+
+   Registry of composite-model components.
+
+.. autofunction:: asymmetry.core.fitting.composite.placeholder_component_definition
+
+Damped line scan
+----------------
+
+.. autofunction:: asymmetry.core.fitting.damped_line_scan.detect_damped_lines
+
+.. autoclass:: asymmetry.core.fitting.damped_line_scan.DampedLineAnalysis
+   :no-members:
+   :no-special-members:
+
+.. autoclass:: asymmetry.core.fitting.damped_line_scan.DampedLine
+   :no-members:
+   :no-special-members:
+
+.. py:attribute:: DampedLineAnalysis.threshold_delta_chi_squared
+   :module: asymmetry.core.fitting.damped_line_scan
+
+Fit wizard
+----------
+
+.. autodata:: asymmetry.core.fitting.fit_wizard.MIN_CYCLES_IN_EFFECTIVE_WINDOW
+   :no-value:
+
+.. autofunction:: asymmetry.core.fitting.fit_wizard.analysis_rebin_factor
+
+.. autofunction:: asymmetry.core.fitting.fit_wizard.build_fit_wizard_recommendation
+
+.. autofunction:: asymmetry.core.fitting.fit_wizard.fingerprint_spectrum
+
+.. autofunction:: asymmetry.core.fitting.fit_wizard.single_fit_build_signature
+
+.. py:attribute:: CandidateAssessment.refinement_delta_chi_squared
+   :module: asymmetry.core.fitting.fit_wizard
+
+.. py:attribute:: CandidateAssessment.under_converged
+   :module: asymmetry.core.fitting.fit_wizard
+
+.. py:attribute:: FitWizardRecommendation.rebin_factor
+   :module: asymmetry.core.fitting.fit_wizard
+
+.. py:attribute:: FitWizardRecommendation.analysed_points
+   :module: asymmetry.core.fitting.fit_wizard
+
+Global fit wizard
+-----------------
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.build_global_fit_wizard_screening_recommendation
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.series_template_alphabet
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.alphabet_bound_dropped_keys
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.series_rebin_factor
+
+.. autofunction:: asymmetry.core.fitting.global_fit_wizard.screening_templates_for_effort_tier
+
+Trend objective
+---------------
+
+.. autofunction:: asymmetry.core.fitting.global_search.trend_objective.trend_sort_key
+
+.. autofunction:: asymmetry.core.fitting.global_search.trend_objective.trend_contenders
+
+.. py:data:: TREND_TIE
+   :module: asymmetry.core.fitting.global_search.trend_objective
+
+Peak detection
+--------------
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.analyze_damped_scan_peaks
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.analyze_early_window_peaks
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.detect_peaks_in_spectrum
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.merge_damped_scan_peaks
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.merge_early_peaks
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.merge_user_peaks
+
+.. autoclass:: asymmetry.core.fitting.peak_detection.DetectedPeak
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.fitting.peak_detection.early_window_crops
+
+Process pool
+------------
+
+.. py:module:: asymmetry.core.fitting.process_pool
+
+.. autofunction:: asymmetry.core.fitting.process_pool.terminate_spawn_pool
+
+Wizard timing
+-------------
+
+.. py:module:: asymmetry.core.fitting.wizard_timing
+
+.. autoclass:: asymmetry.core.fitting.wizard_timing.WizardStageProgress
+   :no-members:
+   :no-special-members:

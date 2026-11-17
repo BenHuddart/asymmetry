@@ -198,7 +198,7 @@ class MuonDataset:
     WiMDA-style convention the loaders and the time-domain fit models share —
     a 16 % asymmetry is stored as ``16.0``, not ``0.16``, and the built-in
     models default ``A0`` to ``25``). The low-level
-    :func:`asymmetry.core.transform.compute_asymmetry` primitive instead
+    :func:`asymmetry.core.transform.asymmetry.compute_asymmetry` primitive instead
     returns the dimensionless **fraction**; the loaders
     multiply by 100 to populate these arrays. When a specific scale is needed,
     prefer the explicit :attr:`asymmetry_percent` / :attr:`asymmetry_fraction`
@@ -404,7 +404,7 @@ class MuonDataset:
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
         """Return a copy restricted to [t_min, t_max].
 
-        Like :meth:`merge_curve_bins`, the copy shares this dataset's :class:`Run` and so
+        Like :meth:`merge_curve_bins`, the copy shares this dataset's :class:`~asymmetry.core.data.dataset.Run` and so
         keeps its raw histograms: correct in-process, but it means a windowed
         copy pickles no smaller than the record it came from. Use
         :meth:`fit_record` for anything bound for a worker process.

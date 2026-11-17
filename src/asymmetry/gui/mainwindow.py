@@ -782,7 +782,7 @@ class MainWindow(QMainWindow):
 
     Orchestrates all panels (data browser, plot, fit, Fourier, log) and
     manages the central data flow between them.  Also owns project-file
-    save/load and the recent-projects list stored in :class:`QSettings`.
+    save/load and the recent-projects list stored in :class:`PySide6.QtCore.QSettings`.
 
     Project files (``.asymp``)
     --------------------------
@@ -791,8 +791,7 @@ class MainWindow(QMainWindow):
     Source data files are *referenced* rather than embedded, so each relevant
     data file must remain accessible at its original path (or at the same
     relative path from the ``.asymp`` file) for the project to reopen cleanly.
-    Missing files are skipped with a ``WARNING`` log entry; the rest of the
-    session restores normally.
+    Missing files are skipped with a ``WARNING`` log entry; the rest of the session restores normally.
 
     Saved state includes:
 
@@ -11658,7 +11657,7 @@ class MainWindow(QMainWindow):
         self._next_batch_index = max(self._next_batch_index, highest + 1)
 
     def _runs_by_number_for(self, runs) -> dict[int, object]:
-        """Loaded :class:`Run` objects for *runs*, for member ordering."""
+        """Loaded :class:`~asymmetry.core.data.dataset.Run` objects for *runs*, for member ordering."""
         runs_by_number: dict[int, object] = {}
         if not hasattr(self._data_browser, "get_dataset"):
             return runs_by_number

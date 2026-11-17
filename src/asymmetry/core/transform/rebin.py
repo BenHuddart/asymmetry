@@ -266,13 +266,13 @@ def binned_ratio_observation(
 
     Returns
     -------
-    (time, asymmetry, error, validity)
+    BinnedRatio
         ``validity`` classifies each final ratio before display fallbacks.
         ``time`` in µs relative to t0; ``asymmetry`` and ``error`` **as a
         fraction** — *not* percent, since this delegates
-        to :func:`~asymmetry.core.transform.compute_asymmetry_with_count_errors`. Callers
+        to :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry_with_count_errors`. Callers
         that need the percent scale apply the ×100 themselves;
-        :func:`~asymmetry.core.transform.reduce_grouped_asymmetry` is the
+        :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry` is the
         reduction that does, and its output is percent.
     """
     window = counts.window

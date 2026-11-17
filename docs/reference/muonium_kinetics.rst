@@ -63,7 +63,7 @@ scavenger changes only the rate. So fit the whole series **simultaneously with**
 varying per run: the slow, well-surviving members pin the shared amplitude, which
 then **forces** :math:`\lambda_\mathrm{Mu}` for the truncated fast members. This is
 the muonium-chemistry "fraction" method [1], realised over
-:func:`~asymmetry.core.fitting.fit_global`.
+:func:`~asymmetry.core.fitting.asymmetry_global.fit_global`.
 
 .. important::
 
@@ -76,7 +76,7 @@ the muonium-chemistry "fraction" method [1], realised over
 Step 1 — per-run :math:`\lambda_\mathrm{Mu}` from the shared-amplitude fit
 --------------------------------------------------------------------------
 
-:func:`~asymmetry.core.fitting.fit_mu_relaxation_series` takes a list of 2 G Mu
+:func:`~asymmetry.core.fitting.mu_kinetics.fit_mu_relaxation_series` takes a list of 2 G Mu
 datasets at one temperature, **ordered by concentration**, and returns the
 per-run rate with the muonium frequency held fixed
 (:math:`f_\mathrm{Mu} = \gamma_\mathrm{Mu} B \approx 2.78\,\mathrm{MHz}` at 2 G):
@@ -125,14 +125,14 @@ Repeat Steps 1–2 at each temperature to get :math:`k_\mathrm{Mu}(T)`, then:
    arr = fit_arrhenius(temperatures, k_values, k_errors)   # energy_unit="kJ/mol"
    print(arr.activation_energy, arr.activation_energy_error)   # E_a in kJ/mol
 
-:func:`~asymmetry.core.fitting.fit_arrhenius` linearises the guide's exact form in
+:func:`~asymmetry.core.fitting.mu_kinetics.fit_arrhenius` linearises the guide's exact form in
 :math:`(1/T, \log_{10} k)`; the slope is :math:`-E/(\ln 10 \cdot R)`. Pass
 ``energy_unit="J/mol"`` for joules.
 
 Single-run cross-check
 ----------------------
 
-When the muonium fraction is already known, :func:`~asymmetry.core.fitting.mu_relaxation_from_amplitude`
+When the muonium fraction is already known, :func:`~asymmetry.core.fitting.mu_kinetics.mu_relaxation_from_amplitude`
 recovers :math:`\lambda_\mathrm{Mu}` from a *single* truncated run by holding
 :math:`A_\mathrm{Mu}` **fixed** to that reference — the analytic limit of the
 shared fit, useful as an independent check or a manual fallback:

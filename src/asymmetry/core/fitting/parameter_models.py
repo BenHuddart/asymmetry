@@ -70,8 +70,7 @@ class ParameterModelComponentDefinition:
     #: For centred-peak components, FWHM = ``fwhm_factor * Bwid`` (None otherwise).
     fwhm_factor: float | None = None
     #: ``True`` for components registered through the user-function facade
-    #: (:mod:`asymmetry.core.fitting.user_functions`); see
-    #: ``ComponentDefinition.user``.
+    #: (:mod:`asymmetry.core.fitting.user_functions`); see ``ComponentDefinition.user``.
     user: bool = False
     #: Library-panel grouping (mirrors ``ComponentDefinition.category``).
     #: Assigned in bulk via ``_PARAMETER_MODEL_CATEGORIES`` below rather than
@@ -1575,7 +1574,7 @@ class ParameterCompositeModel:
         For ``["GaussianLCR", "LorentzianLCR"]`` the second component's ``"B0"``
         is ``"B0_2"``; for a single component it is the bare ``"B0"``. Lets callers
         address a component's parameters by name instead of positional arithmetic
-        over :attr:`param_names`.
+        over :attr:`~asymmetry.core.fitting.parameter_models.ParameterCompositeModel.param_names`.
         """
         return self._param_mappings[component_index][local_name]
 
@@ -1997,7 +1996,7 @@ def suggest_trend_seeds(
 ) -> dict[str, float]:
     """Data-aware seed overrides for critical-temperature trend components.
 
-    The :data:`CriticalDivergence` and :data:`OrderParameter` components default
+    The ``CriticalDivergence`` and ``OrderParameter`` components default
     to ``Tc = 10``, which is far from where real datasets transition (spin-glass
     ``T_g ≈ 88 K``, EuO ``T_c ≈ 69 K``), so the trend fit will not converge until
     ``Tc`` is reseeded by hand. This helper derives a starting ``Tc`` from the
@@ -2023,7 +2022,7 @@ def suggest_trend_seeds(
     * ``FermiStep`` (``A2 + (A1 − A2)/(e^{(T−Tc)/dT} + 1)``) has its midpoint
       *inside* the data, so the plateaus are seeded from the coldest and warmest
       fifth of the trace, ``Tc`` from the half-step crossing, and ``dT`` from the
-      10–90 % crossings (see :func:`_fermi_step_seeds`).
+      10–90 % crossings (see ``asymmetry.core.fitting.parameter_models._fermi_step_seeds``).
 
     Exponents (``ν``, ``β``, ``α``) keep their physical defaults.
     """
@@ -2515,7 +2514,7 @@ def _lcr_peaks(
     return peaks
 
 
-#: A component seeded in a group (:data:`_GROUP_SEEDERS`) and the values its
+#: A component seeded in a group (``asymmetry.core.fitting.parameter_models._GROUP_SEEDERS``) and the values its
 #: caller already holds, by base name.
 _GroupMember = tuple[ParameterModelComponentDefinition, Mapping[str, float]]
 
@@ -2734,7 +2733,7 @@ _GROUP_SEEDERS: dict[
 #: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
 #: by :func:`suggest_trend_seeds` (the trend-model seed table reads only that
 #: helper) and are intentionally absent here. ``MuRepolarisation`` is also
-#: absent: several terms are seeded *together* (:data:`_GROUP_SEEDERS`), which a
+#: absent: several terms are seeded *together* (``asymmetry.core.fitting.parameter_models._GROUP_SEEDERS``), which a
 #: per-component estimator cannot do.
 _MODEL_SEED_ESTIMATORS: dict[
     str,
@@ -2783,18 +2782,18 @@ def suggest_model_seeds(
 
     A generic, per-component extension of :func:`suggest_trend_seeds`: for every
     component with a registered closed-form estimator (see
-    :data:`_MODEL_SEED_ESTIMATORS`) the estimator runs on the finite ``(x, y)``
+    ``asymmetry.core.fitting.parameter_models._MODEL_SEED_ESTIMATORS``) the estimator runs on the finite ``(x, y)``
     subset and its *base*-name results are mapped to the model's unique names via
     the same component/mapping idiom the trend seeder uses. The
     critical-temperature components (``CriticalDivergence``/``OrderParameter``)
     are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
-    is preserved exactly. The components of :data:`_GROUP_SEEDERS` are each
+    is preserved exactly. The components of ``asymmetry.core.fitting.parameter_models._GROUP_SEEDERS`` are each
     seeded as a group instead, so several resonances/half-rises start on
     successive features rather than all on the same one.
 
     Only parameters the estimators are confident about, and the known values,
     are returned; the caller merges these over
-    :attr:`ParameterCompositeModel.param_defaults` and leaves everything else
+    :attr:`~asymmetry.core.fitting.parameter_models.ParameterCompositeModel.param_defaults` and leaves everything else
     untouched. Returns just the known values when the data is unusable (fewer
     than two finite points). Pure and Qt-free.
     """
@@ -3228,7 +3227,7 @@ class ParameterGroupData:
 
 
 def _parameter_set_to_dicts(parameters: ParameterSet) -> list[dict]:
-    """Serialize a :class:`ParameterSet` as a list of plain dicts.
+    """Serialize a :class:`~asymmetry.core.fitting.parameters.ParameterSet` as a list of plain dicts.
 
     Matches the ``{name, value, min, max, fixed}`` shape used throughout the
     GUI's project-state serialization (e.g.
@@ -3249,7 +3248,7 @@ def _parameter_set_to_dicts(parameters: ParameterSet) -> list[dict]:
 
 
 def _parameter_set_from_dicts(entries: object) -> ParameterSet:
-    """Tolerant inverse of :func:`_parameter_set_to_dicts`.
+    """Tolerant inverse of ``asymmetry.core.fitting.parameter_models._parameter_set_to_dicts``.
 
     Skips malformed entries (missing name, non-numeric value/min/max) rather
     than raising, so a legacy or hand-edited payload never crashes project
@@ -3317,7 +3316,7 @@ class CrossGroupFitResult:
         """Canonical, JSON-safe serialization.
 
         ``ParameterSet``\\ s serialize as lists of ``{name, value, min, max,
-        fixed}`` dicts (see :func:`_parameter_set_to_dicts`), matching the
+        fixed}`` dicts (see ``asymmetry.core.fitting.parameter_models._parameter_set_to_dicts``), matching the
         shape already used by the GUI's project-state serializers.
         """
         return {

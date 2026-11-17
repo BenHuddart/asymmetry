@@ -125,3 +125,28 @@ legacy-data policy.
 .. autoclass:: asymmetry.core.fitting.sc.trend_width.WidthSource
 
 .. autoclass:: asymmetry.core.fitting.sc.trend_width.TrendWidthContext
+
+Parameter models
+----------------
+
+.. autofunction:: asymmetry.core.fitting.parameter_models.suggest_trend_seeds
+
+.. autofunction:: asymmetry.core.fitting.parameter_models.suggest_model_seeds
+
+.. py:attribute:: ParameterCompositeModel.param_names
+   :module: asymmetry.core.fitting.parameter_models
+
+.. py:attribute:: ParameterCompositeModel.param_defaults
+   :module: asymmetry.core.fitting.parameter_models
+
+   Default values keyed by the composite model's parameter names.
+
+Parameter models
+----------------
+
+.. py:module:: asymmetry.core.fitting.parameter_models
+
+.. py:data:: PARAMETER_MODEL_COMPONENTS
+   :module: asymmetry.core.fitting.parameter_models
+
+   Registry of parameter-model components.

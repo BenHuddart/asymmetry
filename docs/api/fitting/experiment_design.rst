@@ -15,4 +15,3 @@ candidate's components are unlabelled.
    :members:
    :undoc-members:
    :show-inheritance:
-

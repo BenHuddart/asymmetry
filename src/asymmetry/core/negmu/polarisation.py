@@ -134,7 +134,7 @@ def build_capture_count_model_with_polarisation(
     Parameters
     ----------
     components:
-        Capture components (same as :func:`build_capture_count_model`).
+        Capture components (same as :func:`~asymmetry.core.negmu.model.build_capture_count_model`).
     polarisation:
         ``None`` (no polarisation), ``"lorgau"``, or ``"diamagnetic"``.
     """

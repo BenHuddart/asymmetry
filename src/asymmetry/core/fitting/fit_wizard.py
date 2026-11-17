@@ -327,7 +327,7 @@ class CandidateAssessment:
     fitted_curve: NDArray[np.float64]
     component_curves: tuple[tuple[str, NDArray[np.float64]], ...]
     repair_attempted: bool = False
-    #: Screening stage that produced this assessment: 1 = Stage-1 family
+    #: Screening stage that produced this assessment — 1 = Stage-1 family
     #: representative (cheap first-pass fit), 2 = full assessment.
     stage: int = 2
     #: Targeted-disqualifier reasons that make this candidate unfit to recommend
@@ -350,7 +350,7 @@ class CandidateAssessment:
     #: measured statement that this candidate's ranking is search-limited, and
     #: that any family compared against it at the shallower budget was too.
     under_converged: bool = False
-    #: How long the fit that produced this row took (:func:`_execute_assessment_task`).
+    #: How long the fit that produced this row took (``asymmetry.core.fitting.fit_wizard._execute_assessment_task``).
     #: ``None`` on a row restored from a cache: it is never persisted, so a past
     #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
     timing: FitTiming | None = None
@@ -1587,7 +1587,7 @@ _UNDER_CONVERGENCE_CHI2_TOLERANCE = 1.0
 
 #: χ² within which a warm attempt and the base seed count as the *same* minimum,
 #: so the rest of the seed ladder buys nothing and is skipped (see
-#: :func:`_assess_candidate_template`). Two converged fits of one basin agree to
+#: ``asymmetry.core.fitting.fit_wizard._assess_candidate_template``). Two converged fits of one basin agree to
 #: far better than a χ² unit — the same scale as
 #: ``_UNDER_CONVERGENCE_CHI2_TOLERANCE`` — while two different basins of the same
 #: model differ by tens to thousands, so the test separates cleanly and the
@@ -1701,8 +1701,7 @@ def _multiplet_seed_peaks(
     only ranking available: "the strongest k peaks" is not a well-defined
     selection across passes whose SNRs are measured against different noise
     floors.  ``max_components`` is what bounds the cost, and every seed past the
-    first two costs a whole damped cosine: three components is a 13-parameter
-    fit.
+    first two costs a whole damped cosine: three components is a 13-parameter fit.
     """
     if analysis is None:
         return ()
@@ -1859,7 +1858,7 @@ def build_oscillatory_multiplet_templates(
 
     The order is bounded by ``max_components`` (default
     ``_MULTIPLET_MAX_COMPONENTS``) and each seed set is pruned per detection
-    pass — see :func:`_multiplet_seed_peaks`.
+    pass — see ``asymmetry.core.fitting.fit_wizard._multiplet_seed_peaks``.
     """
     cap = min(int(max_components), _MULTIPLET_MAX_COMPONENTS)
     templates: list[CandidateTemplate] = []
@@ -2068,7 +2067,7 @@ def is_oscillatory_admissible(
 
 
 def fit_result_is_oscillatory_admissible(template: CandidateTemplate, result: FitResult) -> bool:
-    """:func:`is_oscillatory_admissible` for one run's :class:`FitResult`."""
+    """:func:`is_oscillatory_admissible` for one run's :class:`~asymmetry.core.fitting.results.FitResult`."""
     return is_oscillatory_admissible(
         template,
         {name: result.parameters[name].value for name in result.parameters.names},
@@ -2427,7 +2426,7 @@ def _execute_assessment_task(
     """Run one :class:`_AssessmentTask` to a :class:`CandidateAssessment`.
 
     Module-level (not a closure) so it can be pickled and sent to a worker
-    process. Builds its own :class:`FitEngine` per call — engines carry no
+    process. Builds its own :class:`~asymmetry.core.fitting.engine.FitEngine` per call — engines carry no
     state worth sharing, and a fresh one keeps each task fully self-contained.
     The returned row carries the task's wall time and fitted point count.
     """
@@ -2467,7 +2466,7 @@ def _run_template_assessments(
     Worker count: ``max_workers`` wins when given; otherwise
     ``min(len(tasks), max(1, cpu_count - 2))``. A resolved width ``<= 1`` (or
     at most one task) runs a plain serial loop calling
-    :func:`_execute_assessment_task` with ``cancel_callback`` — this is the
+    ``asymmetry.core.fitting.fit_wizard._execute_assessment_task`` with ``cancel_callback`` — this is the
     deterministic test path and it is also the only path that can honour an
     *in-fit* cancellation (a cancel_callback cannot cross a process boundary).
 
@@ -2482,9 +2481,9 @@ def _run_template_assessments(
     iteration, so a cancel is noticed within one poll interval rather than one
     in-flight fit's duration (the fit already running in a worker still cannot be
     interrupted). On cancellation the *locally opened* pool is torn down via
-    :func:`terminate_spawn_pool` (non-blocking drop of queued work plus a
+    :func:`~asymmetry.core.fitting.process_pool.terminate_spawn_pool` (non-blocking drop of queued work plus a
     force-kill-and-reap of the workers, so nothing is orphaned) and
-    :class:`FitCancelledError` is raised (never swallowed); a caller-supplied
+    :class:`~asymmetry.core.fitting.engine.FitCancelledError` is raised (never swallowed); a caller-supplied
     pool is left for the caller to terminate. A pool that could not start
     (``open_spawn_pool`` returns ``None``) falls back to the historical
     thread-pool path, which keeps in-fit cancellation working.
@@ -2492,7 +2491,7 @@ def _run_template_assessments(
     Per-task resilience: if a submitted future raises (a pickling failure or a
     worker crash), that one task is retried serially in-parent with
     ``cancel_callback``; only if the retry also raises does the exception
-    propagate. :class:`FitCancelledError` is never treated as a per-task
+    propagate. :class:`~asymmetry.core.fitting.engine.FitCancelledError` is never treated as a per-task
     failure — it always propagates immediately.
     """
     task_list = list(tasks)
@@ -2625,7 +2624,7 @@ def build_fit_wizard_recommendation(
     in-fit abort); when the resolved worker count allows a shared *process*
     pool, cancellation instead takes effect only between fits (a
     cancel_callback cannot cross a process boundary) — either way,
-    cancellation raises :class:`FitCancelledError`.
+    cancellation raises :class:`~asymmetry.core.fitting.engine.FitCancelledError`.
 
     ``executor`` supplies a **caller-owned** process pool. Given one, this build
     opens no pool of its own and every fan-out — Stage 1, Stage 2, the null
@@ -2642,15 +2641,15 @@ def build_fit_wizard_recommendation(
     the same models fitted on a *neighbouring run* of a series, which a series
     analysis has by the time it reaches this run. They are handed to the Stage-1
     and Stage-2 assessments as an **additional first variant**, ahead of the seed
-    ladder and never in place of it (see :func:`_assess_candidate_template`), so
+    ladder and never in place of it (see ``asymmetry.core.fitting.fit_wizard._assess_candidate_template``), so
     the answer for a template can only improve or stay the same: the assessment
     keeps the best attempt, and one more starting point cannot make that worse.
     A key naming no screened template is simply unused.
 
     ``refine_top_candidates`` re-fits that many top-ranked candidates with the
     full seed ladder and records the χ² gained
-    (:attr:`CandidateAssessment.refinement_delta_chi_squared` /
-    :attr:`~CandidateAssessment.under_converged`); ``0`` disables the pass.
+    (:attr:`asymmetry.core.fitting.fit_wizard.CandidateAssessment.refinement_delta_chi_squared` /
+    :attr:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment.under_converged`); ``0`` disables the pass.
 
     ``instrumentation`` receives the standard timing block and ``stage_callback``
     the structured per-stage progress events described in
@@ -2665,10 +2664,10 @@ def build_fit_wizard_recommendation(
     10⁵-point run.
 
     On a record above ``_FIT_SAMPLE_BUDGET`` points every candidate is fitted on
-    a prepared observation (:func:`analysis_rebin_factor`); peak detection and
+    a prepared observation (:func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`); peak detection and
     the fingerprint still run on the full record. The result records the factor
-    and the point count it used in :attr:`FitWizardRecommendation.rebin_factor`
-    and :attr:`~FitWizardRecommendation.analysed_points`, and every information
+    and the point count it used in :attr:`asymmetry.core.fitting.fit_wizard.FitWizardRecommendation.rebin_factor`
+    and :attr:`~asymmetry.core.fitting.fit_wizard.FitWizardRecommendation.analysed_points`, and every information
     criterion in it refers to that analysed record.
     """
 
@@ -5817,7 +5816,7 @@ def analysis_rebin_factor(
     * **Bandwidth.** ``⌊1 / (_FIT_SAMPLES_PER_CYCLE · f_max · dt)⌋``, where
       ``f_max`` is the highest frequency anything will be *seeded* at — the
       peaks eligible to seed an oscillatory component
-      (:func:`_multiplet_seed_peaks`: a user, early-window or damped-scan line,
+      (``asymmetry.core.fitting.fit_wizard._multiplet_seed_peaks``: a user, early-window or damped-scan line,
       or a Hann/residual peak above ``_MULTIPLET_MIN_SNR``), or the Larmor
       frequency of the applied field when there are none. Rebinning past this
       point aliases the very line the seeds name, so the cost constraint is not
@@ -5884,7 +5883,7 @@ def analysis_rebin_factor(
 def screening_points(dataset: MuonDataset) -> int:
     """Points the wizard fits this run on at least: its length after the cost rebin.
 
-    :func:`analysis_rebin_factor`'s bandwidth protection needs the peak analysis
+    :func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`'s bandwidth protection needs the peak analysis
     and can only keep more points, so this is exact unless a fast line blocks
     the rebin.
     """
@@ -5962,7 +5961,7 @@ def _apply_frequency_support_disqualifiers(
 
     ``dataset`` must be the **full-resolution** record — the one peak detection
     and the fingerprint ran on — even when the candidates were fitted on a
-    prepared copy (:func:`analysis_rebin_factor`). Merging combines the
+    prepared copy (:func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`). Merging combines the
     per-bin scatter out of σ and so lengthens
     :func:`effective_analysis_window`'s verdict; anchoring the cycle floor and
     the tolerance to the analysed copy would let a cost heuristic decide whether
@@ -6072,7 +6071,7 @@ def _refine_top_candidates(
     that does not leaves it untouched, still unsuccessful.
 
     The cold ladder here is also what makes the warm-aware cap in
-    :func:`_assess_candidate_template` safe: a warm-started screening fit that
+    ``asymmetry.core.fitting.fit_wizard._assess_candidate_template`` safe: a warm-started screening fit that
     stopped at warm + base is re-fitted from the full ladder if it is one of the
     candidates the recommendation rests on.
 

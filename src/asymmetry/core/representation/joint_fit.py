@@ -94,9 +94,9 @@ def _shared_row_from_dict(entry: object) -> dict[str, Any] | None:
 class JointFit:
     """A named, persisted joint fit over two or more member series.
 
-    ``joint_id`` is caller-supplied (mirroring :class:`GlobalFitStudy`, this
+    ``joint_id`` is caller-supplied (mirroring :class:`~asymmetry.core.representation.global_fit_study.GlobalFitStudy`, this
     module never mints one). ``member_batch_ids`` is ordered — the order the
-    member series were ticked in, which is also the seed order D6 uses to pick
+    member series were ticked in, which also defines the seed order used to pick
     a shared row's initial value/bounds from "the first contributing series".
     ``shared`` is a plain list of dicts rather than a dataclass: it is exactly
     what the window's shared-parameter table edits, and a fourth column type

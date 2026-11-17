@@ -303,7 +303,7 @@ def mu_relaxation_from_amplitude(
     reference_amplitude
         Amplitude to pin ``A_Mu`` at, **in percent (0–100)** — the same scale as
         ``dataset.asymmetry`` and as
-        :attr:`MuRelaxationSeriesResult.shared_amplitude`, which is what this
+        :attr:`~asymmetry.core.fitting.mu_kinetics.MuRelaxationSeriesResult.shared_amplitude`, which is what this
         normally receives. (Earlier wording called it the muonium "fraction",
         which reads as the 0–1 scale; the code has always treated it as percent.)
     """

@@ -2,10 +2,10 @@
 
 The one rule this module exists to enforce: a scripted reduction and the
 desktop application must produce the *same numbers*. So it goes through the
-same path a freshly opened project does — a :class:`GroupingProfile` built
+same path a freshly opened project does — a :class:`~asymmetry.core.project.profiles.GroupingProfile` built
 from the loader's own grouping payload, policies applied by
-:func:`resolve_effective_grouping`, then the
-:func:`reduce_grouped_asymmetry` chokepoint — rather than re-deriving the
+:func:`~asymmetry.core.project.profiles.resolve_effective_grouping`, then the
+:func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry` chokepoint — rather than re-deriving the
 grouping or the corrections here.
 """
 
@@ -330,7 +330,7 @@ def load_reduction_source(paths: Sequence[str | Path], period: str | None) -> Mu
     """The dataset :func:`reduce_run` starts from for one run file, or the co-add of several.
 
     Several files are summed at the count level exactly as the GUI's data
-    browser co-adds (:func:`combine_runs`), each member first narrowed to
+    browser co-adds (:func:`~asymmetry.core.data.combine.combine_runs`), each member first narrowed to
     *period*. The sum is identified as its first member — it keeps that run's
     number, master condition labels, and instrument metadata, together with
     constituent values and active ranges in its ``combination`` provenance. Raises
@@ -449,7 +449,7 @@ def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> Muo
 
 
 def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
-    """Reduce *run* to a :class:`MuonDataset` under *settings*.
+    """Reduce *run* to a :class:`~asymmetry.core.data.dataset.MuonDataset` under *settings*.
 
     With default settings the result is identical to the loader's own
     reduction of the same file: the profile is built from the loader's

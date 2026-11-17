@@ -189,3 +189,12 @@ are classified using the actual instrument and histogram count through the norma
 loader on the cancellable verification worker. Authoritative per-run overrides
 leave their base profiles historical. Unused or disabled reference settings do not
 request replacement. Capture disagreement aborts before project application.
+
+Profiles
+--------
+
+.. autoclass:: asymmetry.core.project.profiles.GroupingProfile
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.project.profiles.resolve_effective_grouping

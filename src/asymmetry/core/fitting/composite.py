@@ -486,8 +486,7 @@ def _invalid_trial_penalty(t: NDArray) -> NDArray[np.float64]:
     """Flat penalty curve returned for invalid trial geometries.
 
     Keeps minimization alive when the optimiser probes an unphysical point
-    (e.g. a distance at its inclusive zero bound) instead of aborting the fit
-    with an exception.
+    (e.g. a distance at its inclusive zero bound) instead of aborting the fit with an exception.
     """
     return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
 
@@ -2086,8 +2085,8 @@ class CompositeModel:
     """A flat composite model built from baseline-free components.
 
     ``allow_missing`` lets a model materialise even when some component names
-    are not registered (see :func:`placeholder_component_definition`); callers
-    that fit or edit the model must check :attr:`missing_component_names`.
+    are not registered (see :func:`~asymmetry.core.fitting.composite.placeholder_component_definition`); callers
+    that fit or edit the model must check :attr:`~asymmetry.core.fitting.composite.CompositeModel.missing_component_names`.
     """
 
     def __init__(
@@ -2226,7 +2225,7 @@ class CompositeModel:
         )
 
     def expression_tree(self) -> ExpressionNode:
-        """Return the model's expression tree (see :func:`build_expression_tree`).
+        """Return the model's expression tree (see :func:`~asymmetry.core.fitting.expression_tree.build_expression_tree`).
 
         The nodes are frozen dataclasses addressing components by index, so a
         caller can walk the products and sums the expression denotes.
@@ -2236,7 +2235,7 @@ class CompositeModel:
     def parameter_mapping(self) -> list[dict[str, str]]:
         """Return per-component maps of local parameter name → unique fit name.
 
-        One dict per entry of :attr:`components`, in the same order.  Copies
+        One dict per entry of :attr:`~asymmetry.core.fitting.composite.CompositeModel.components`, in the same order.  Copies
         are returned so callers (e.g. the RRF frequency-offset wrapper) cannot
         mutate the model's internal mapping.
         """
@@ -2250,7 +2249,7 @@ class CompositeModel:
         model gave it, so parameter state can follow the component across a
         model edit (see :mod:`asymmetry.core.fitting.parameter_carry`).
         Suppressed unit amplitudes are not parameters and are excluded; the
-        keys are :attr:`param_names`, in the same order.
+        keys are :attr:`~asymmetry.core.fitting.composite.CompositeModel.param_names`, in the same order.
         """
         identities: dict[str, ParameterIdentity] = {}
         for idx, (mapping, component) in enumerate(
@@ -2277,8 +2276,8 @@ class CompositeModel:
         """Map every unique parameter name to the kind its component declares.
 
         A fraction group's total is an ``AMPLITUDE`` (told from a component's
-        own amplitude by its :class:`GroupAmplitude` identity) and its free
-        weights are ``FRACTION``. The keys are :attr:`param_names`, in order.
+        own amplitude by its :class:`~asymmetry.core.fitting.parameter_carry.GroupAmplitude` identity) and its free
+        weights are ``FRACTION``. The keys are :attr:`~asymmetry.core.fitting.composite.CompositeModel.param_names`, in order.
         """
         kinds: dict[str, ParameterKind] = {}
         for name, identity in self.parameter_identities().items():
@@ -2300,7 +2299,7 @@ class CompositeModel:
         fraction group, the group amplitude — carries that product's single
         scale. So walking a product's leaves through this method yields exactly
         the one name that scales the product (see
-        :meth:`_suppressed_scaling_parameters`).
+        ``CompositeModel._suppressed_scaling_parameters``).
         """
         mapping = self._param_mappings[component_index]
         for pname in self.components[component_index].param_names:
@@ -2597,7 +2596,7 @@ class CompositeModel:
 
         These are the ``f_<Component>`` labels of each group's last additive
         term — display-only names (no fitted parameter) that never collide with
-        a real parameter name. Ordered to match :attr:`fraction_groups`.
+        a real parameter name. Ordered to match :attr:`~asymmetry.core.fitting.composite.CompositeModel.fraction_groups`.
         """
         return [self._derived_fraction_name_by_group[group] for group in self.fraction_groups]
 
@@ -2655,7 +2654,7 @@ class CompositeModel:
 
         Missing-component placeholders are skipped: their domain is unknowable,
         and the missing-ness itself is surfaced separately (fit blocking via
-        :attr:`missing_component_names`).
+        :attr:`~asymmetry.core.fitting.composite.CompositeModel.missing_component_names`).
         """
         return {component.domain for component in self.components if not component.missing}
 
@@ -2767,7 +2766,7 @@ class CompositeModel:
         t_arr: NDArray[np.float64],
         kwargs: dict[str, float],
     ) -> NDArray[np.float64]:
-        """Evaluate one expression-tree node (see :func:`build_expression_tree`)."""
+        """Evaluate one expression-tree node (see :func:`~asymmetry.core.fitting.expression_tree.build_expression_tree`)."""
         if isinstance(node, ExprLeaf):
             component = self.components[node.index]
             component_kwargs = self._extract_component_kwargs(

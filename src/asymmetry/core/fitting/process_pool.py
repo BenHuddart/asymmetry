@@ -218,7 +218,7 @@ def terminate_spawn_pool(pool: ProcessPoolExecutor) -> None:
     following ``join()`` leaves the killed child unreaped until someone
     ``waitpid``s it). Use this on the cancellation path where a blocking
     ``shutdown(wait=True)`` would stall the UI for one in-flight fit's duration;
-    the normal completion path still calls plain :meth:`shutdown`.
+    the normal completion path still calls plain ``concurrent.futures.ProcessPoolExecutor.shutdown``.
 
     Best-effort on the private ``_processes`` map — a missing/renamed attribute
     (or a non-real pool, e.g. a test fake) degrades to the plain non-blocking

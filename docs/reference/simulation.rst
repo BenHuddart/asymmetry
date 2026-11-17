@@ -154,14 +154,14 @@ high-transverse-field ring instead of a plain F/B pair: 8 detector groups (one
 detector each) at 45° azimuthal spacing, the same fine 1 ns binning and flat
 background as the continuous F/B template. Each group's azimuth (0° at 90°/top,
 numbering clockwise) is recorded on the template's grouping and carried
-through to every synthetic run built from it — see :func:`group_azimuths_deg`
+through to every synthetic run built from it — see :func:`~asymmetry.core.simulate.group_azimuths_deg`
 and `Arbitrary per-group signals`_ below. The default forward/backward pair
 (group 1 vs. its 180°-opposite group 5) makes the plain **Generate Synthetic
 Run…** dialog work on it too, exactly like a loaded run; the ring's own value
 is the per-group azimuths a multi-group or arbitrary-signal simulation needs.
 Any built-in template's binning can be resized from a script with
-:func:`build_builtin_template`'s ``n_bins``/``bin_width_us``/``t0_bin``
-keywords, without hand-building a new :class:`InstrumentTemplate`.
+:func:`~asymmetry.core.simulate.build_builtin_template`'s ``n_bins``/``bin_width_us``/``t0_bin``
+keywords, without hand-building a new :class:`~asymmetry.core.simulate.InstrumentTemplate`.
 
 The archetype gallery
 ---------------------

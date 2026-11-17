@@ -155,7 +155,7 @@ file can never crash a fit (or the application) later:
 
 Parameter-trend components — functions of temperature or field for the
 parameter-trending builder, including the ⊕ quadrature grammar — register
-through the sibling :func:`asymmetry.register_parameter_component`, whose
+through the sibling :func:`asymmetry.core.fitting.user_functions.register_parameter_component`, whose
 ``scopes`` argument (``"temperature"``, ``"field"``, ``"common"``)
 controls where the component is offered.
 

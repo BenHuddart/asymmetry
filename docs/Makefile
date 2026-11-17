@@ -14,17 +14,21 @@ SCREENSHOTCMD  = cd $(REPOROOT) && QT_QPA_PLATFORM=offscreen python -m docs.scre
 help:
 	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) $(O)
 
-.PHONY: help Makefile screenshots html
+.PHONY: help Makefile screenshots html publish
 
 # Regenerate GUI screenshots into docs/_generated/screenshots.
 # These are not committed; the Sphinx build embeds them via _generated/.
 screenshots:
 	$(SCREENSHOTCMD)
 
-# Ensure screenshots exist before the html build so image references resolve.
-html: screenshots
-	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" -d "$(BUILDDIR)/doctrees" $(SPHINXOPTS) $(O)
+# HTML gates do not start captures implicitly; prepare publishing assets separately.
+html:
+	@cd $(REPOROOT) && python3 tools/harness.py docs --mode source
 
+publish:
+	@cd $(REPOROOT) && python3 tools/harness.py docs --mode publish
+
+# Other formats are non-gating development builds.
 # Catch-all target: route unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile

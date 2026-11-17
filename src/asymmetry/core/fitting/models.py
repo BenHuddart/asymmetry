@@ -1,7 +1,7 @@
 """Built-in μSR fit functions.
 
 Each model is a callable ``f(t, **params) -> array`` plus metadata describing
-its parameters.  Models are collected in the :data:`MODELS` registry.
+its parameters.  Models are collected in the :data:`~asymmetry.core.fitting.models.MODELS` registry.
 
 Scale
 -----
@@ -9,11 +9,11 @@ Every asymmetry-valued parameter of every model here — the amplitudes ``A0`` /
 ``A`` and the additive ``baseline`` — is **in percent (0–100)**, and so is the
 curve each model returns.  That is the WiMDA-style convention
 :attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry` uses, which is why the
-seeds in :data:`MODELS` default ``A0`` to ``25`` rather than ``0.25``, and why
+seeds in :data:`~asymmetry.core.fitting.models.MODELS` default ``A0`` to ``25`` rather than ``0.25``, and why
 ``PARAM_INFO_REGISTRY`` gives ``A``/``A0``/``A_bg`` the unit string ``"%"``.
 Fitting these models against fraction-scale data (what
-:func:`asymmetry.core.transform.compute_asymmetry` and
-:func:`asymmetry.core.transform.binned_fb_asymmetry` return) converges to the
+:func:`asymmetry.core.transform.asymmetry.compute_asymmetry` and
+:func:`asymmetry.core.transform.rebin.binned_fb_asymmetry` return) converges to the
 wrong minimum and trips
 :class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning`; scale the data with
 :func:`asymmetry.core.transform.units.to_percent` first.  The polarization-shape
@@ -526,7 +526,7 @@ def _lorentzian_lf_lineshape_reference(
     """Static Lorentzian-LF line shape by direct angular-average quadrature.
 
     This is the original implementation, kept as the validation reference for
-    :func:`_lorentzian_lf_uniform` (``tests/core/test_dynamic_relaxation.py``).
+    ``asymmetry.core.fitting.models._lorentzian_lf_uniform`` (``tests/core/test_dynamic_relaxation.py``).
     The stochastic field average (eqn 5.3 of Blundell et al. 2022) over an
     isotropic Lorentzian local-field distribution reduces, after doing the
     angular average and the precession integral analytically, to a single
@@ -649,14 +649,14 @@ def static_lorentzian_kt_lf(
     [and] must be computed numerically".  This evaluates the stochastic field
     average (eqn 5.3) over an isotropic Lorentzian local-field distribution of
     half-width ``a_L`` (us^-1) with applied longitudinal field ``B_L`` (Gauss),
-    via the closed-form spectral density of :func:`_lorentzian_lf_uniform`.
+    via the closed-form spectral density of ``asymmetry.core.fitting.models._lorentzian_lf_uniform``.
 
     - ``B_L -> 0``   : reduces to the zero-field Lorentzian KT (eqn 5.47),
       1/3 + 2/3 (1 - a_L t) e^{-a_L t}.
     - ``B_L -> inf`` : decoupling, G -> 1.
 
     The line shape is evaluated by the closed-form spectral density of
-    :func:`_lorentzian_lf_uniform` (accurate to ~1e-6 at any field) on a grid
+    ``asymmetry.core.fitting.models._lorentzian_lf_uniform`` (accurate to ~1e-6 at any field) on a grid
     that resolves the Larmor oscillation, linearly interpolated onto the
     requested times, and cached per (a_L, B_L, tmax); very small fields
     (omega0 < 0.05 a_L) are treated as zero field, where the eqn 5.47 form is
@@ -924,8 +924,7 @@ def _strong_collision_modes(
     well conditioned at ``nu = 1e-9``, see the tests).  Callers therefore
     evaluate the static ``nu = 0`` limit themselves rather than through this
     helper, as :func:`dynamic_lorentzian_kt` and
-    :func:`~asymmetry.core.fitting.muon_fluorine.polarization.dynamic_fmuf_polarization`
-    do.
+    :func:`~asymmetry.core.fitting.muon_fluorine.polarization.dynamic_fmuf_polarization` do.
     """
     a_mat = np.asarray(A, dtype=float)
     b = np.asarray(b, dtype=float)
@@ -965,7 +964,7 @@ def _lorentzian_kt_zf_realisation(a_L: float) -> tuple[NDArray, NDArray, NDArray
 # matches a converged solver to < 0.5 % for nu >~ 6*Delta, which is satisfied at
 # this crossover for any physical width.  (The zero-field Lorentzian case never
 # reaches the solver: it has the exact closed form of
-# :func:`_strong_collision_modes` at every rate.)
+# ``asymmetry.core.fitting.models._strong_collision_modes`` at every rate.)
 _DYN_KT_NU_SWITCH = 12.0
 
 
@@ -1069,10 +1068,10 @@ def dynamic_lorentzian_kt(
     In zero field (``omega0 < 0.05 a_L``) the solution is **exact and closed
     form**: the static function is a three-state linear system, so the
     strong-collision integral equation reduces to a 3x3 eigenproblem and
-    ``G_d`` is a sum of three exponentials (:func:`_strong_collision_modes`),
+    ``G_d`` is a sum of three exponentials (``asymmetry.core.fitting.models._strong_collision_modes``),
     valid at every rate with no grid, cache or fast-fluctuation switch.  In a
     longitudinal field the static line shape has no finite realisation, and the
-    Volterra equation is solved on a grid (:func:`_dynamic_kt_grid`).
+    Volterra equation is solved on a grid (``asymmetry.core.fitting.models._dynamic_kt_grid``).
 
     - ``nu -> 0``    : recovers the static Lorentzian KT (zero-field analytic
       eqn 5.47; longitudinal field computed numerically per Blundell et al. 2022).

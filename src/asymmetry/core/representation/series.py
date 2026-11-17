@@ -109,10 +109,10 @@ def normalise_recipe(recipe: dict | None) -> dict[str, Any]:
 class FitSeries:
     """An ordered series of members fit with one canonical model.
 
-    Members are keyed by integer in :attr:`member_run_numbers`.  For
+    Members are keyed by integer in :attr:`~asymmetry.core.representation.series.FitSeries.member_run_numbers`.  For
     ``member_kind == "runs"`` the key *is* the run number; for
     ``member_kind == "groups"`` it is the synthetic negative group key, and
-    :attr:`member_source_run` maps each key back to its physical source run
+    :attr:`~asymmetry.core.representation.series.FitSeries.member_source_run` maps each key back to its physical source run
     (used for field/temperature ordering and metadata).
     """
 
@@ -180,7 +180,7 @@ class FitSeries:
         #: from the series (D4). Series-level, so a run trended in one series
         #: and excluded from another keeps both answers. Sorted, de-duplicated,
         #: and expressed in member keys (synthetic group keys for a group
-        #: series), mirroring :attr:`member_run_numbers`.
+        #: series), mirroring :attr:`~asymmetry.core.representation.series.FitSeries.member_run_numbers`.
         self.trend_excluded_runs: list[int] = sorted({int(r) for r in (trend_excluded_runs or [])})
         #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
         #: baseline regions / peaks / view options). Empty for ordinary fits.
@@ -333,7 +333,7 @@ class FitSeries:
         preserving the group's ordering. For a **frozen** series
         (``group_id is None``), a detector-group series
         (``member_kind == "groups"``, D8), or when *group* is ``None``, the
-        series' own :attr:`member_run_numbers` are returned unchanged (frozen
+        series' own :attr:`~asymmetry.core.representation.series.FitSeries.member_run_numbers` are returned unchanged (frozen
         semantics — the snapshot is authoritative).
         """
         group_members = getattr(group, "member_run_numbers", None)
@@ -378,7 +378,7 @@ class FitSeries:
         """Return the physical source run for *member_key*.
 
         For run series the key is the run number; for group series it is mapped
-        through :attr:`member_source_run`, falling back to decoding the synthetic
+        through :attr:`~asymmetry.core.representation.series.FitSeries.member_source_run`, falling back to decoding the synthetic
         key (``|key| // 1000``) when the map is incomplete.
         """
         member_key = int(member_key)

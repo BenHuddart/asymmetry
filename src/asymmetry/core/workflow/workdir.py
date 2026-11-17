@@ -185,7 +185,7 @@ class WorkDirMismatchError(Exception):
     """A work directory was asked to serve runs that are not the ones it holds.
 
     Carries the directory and both selections so a caller can phrase the
-    message in its own vocabulary; :meth:`str` is already a complete sentence
+    message in its own vocabulary; :class:`str` is already a complete sentence
     naming them.
     """
 
@@ -484,7 +484,7 @@ class WorkDir:
         answer is the narrower selection of the two: a session holding every
         run in its folder takes on the instrument a command names, and a
         command naming none reads the instrument the session holds. Raises
-        :class:`WorkDirMismatchError` when the manifest names a different
+        :class:`~asymmetry.core.workflow.workdir.WorkDirMismatchError` when the manifest names a different
         folder or a different instrument.
         """
         requested = RunSelection(Path(folder).resolve(), instrument)

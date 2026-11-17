@@ -77,7 +77,7 @@ class CandidateRung(RungVerdict):
     #: through (plan D12). A finding of the whole climb, so every rung of one
     #: ladder carries the same runs; empty when the climb found none.
     amplitude_unshareable_runs: tuple[int, ...]
-    #: The template's all-local series χ²ᵣ: what the band compares (plan D9).
+    #: The template's all-local series χ²ᵣ — what the band compares (plan D9).
     #: The same on every rung of one ladder.
     all_local_chi2r: float
 
@@ -366,7 +366,7 @@ def trend_contenders(
     ``assessments``: a template climbed because the data identified it, or
     because the user ticked it, is listed with its rungs but contends only when
     it fits about as well as the best of them. Rungs whose worst trend quality
-    is within :data:`TREND_TIE` of the leader's trend equally well: among them
+    is within :data:`~asymmetry.core.fitting.global_search.trend_objective.TREND_TIE` of the leader's trend equally well: among them
     the rung that is not hard to justify leads, then the template that fits
     best all-local. A rung with no local parameter orders
     below every rung that has one, so it leads only when nothing else is
@@ -409,7 +409,7 @@ def trend_sort_key(
     """A key that orders ladder rungs for display, smaller first.
 
     Template by template: the contending templates in the order of
-    :func:`trend_contenders`, so the recommended rung leads, then the templates
+    :func:`~asymmetry.core.fitting.global_search.trend_objective.trend_contenders`, so the recommended rung leads, then the templates
     outside the band by how well they fit. Within a template the pre-selected
     rung, then the other adequate rungs by trend quality, then the rungs that
     cost too much by their cost.
@@ -440,7 +440,7 @@ def trend_recommendation(
 ) -> tuple[str | None, tuple[str, ...], str]:
     """``(recommended_key, comparable_keys, summary)`` under the trend objective.
 
-    The first of :func:`trend_contenders` is recommended. The second, the best
+    The first of :func:`~asymmetry.core.fitting.global_search.trend_objective.trend_contenders` is recommended. The second, the best
     pre-selected rung of another template, is the comparable alternative: its
     template is inside the band, so it fits about as well.
 

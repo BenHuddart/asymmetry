@@ -236,7 +236,7 @@ def fit_capture_histogram(
 
     The array-level entry: testable without a dataset. ``variance`` (if given)
     is used by the Gaussian cost; Poisson (Cash) ignores it. Returns a
-    :class:`FitResult` with ``dof`` set so
+    :class:`~asymmetry.core.fitting.results.FitResult` with ``dof`` set so
     :func:`~asymmetry.core.fitting.fit_quality.assess_fit_quality` applies.
 
     Parameters
@@ -442,7 +442,7 @@ def fit_capture_fb_alpha(
 
     mirroring ``build_count_groups`` geometry and the √α detector-balance split.
     Both banks built in ONE context (``build_count_groups``) for a common t0.
-    Returns a :class:`GroupedTimeDomainFitResult`: ``group_results`` keyed by
+    Returns a :class:`~asymmetry.core.fitting.grouped_time_domain.GroupedTimeDomainFitResult`: ``group_results`` keyed by
     ``forward_group`` / ``backward_group``; ``shared_parameters`` holds α,
     amplitudes, and τ.
 

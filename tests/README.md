@@ -185,3 +185,14 @@ organisation/application names. App-data users call
 Core-only harness runs do not import Qt through autouse fixtures. GUI teardown
 asserts that no top-level widget survives after closing and deferred deletion;
 close errors fail the test that caused them.
+
+## Documentation-gate regressions
+
+Run `python3 tools/harness.py test -- tests/tools/test_docs_build.py tests/tools/test_docs_screenshot_refs.py tests/tools/test_release_workflows.py -n 4 --dist loadfile`.
+The gate tests invoke real Sphinx on bounded synthetic trees with the shared
+policy. They cover authored/autodoc markup and references, native unknown and
+multiline warnings, exact registered image omissions, complete publishing assets,
+permitted corpus placeholders, cold offline inventory handling, process failures,
+fresh mode switching, page budgets, and actual workflow publication dependencies.
+No corpus, screenshot capture, or network access is required. Existing screenshot
+registry/completeness and watchdog fixtures retain their own focused coverage.

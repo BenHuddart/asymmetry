@@ -320,13 +320,13 @@ def reduce_combined_run(run: Run, *, reference=None, cancel_check=None) -> MuonD
 def runs_with_dataset_metadata(datasets: Sequence[MuonDataset]) -> list[Run]:
     """Shallow run copies whose scalar metadata reflects each dataset's overrides.
 
-    A :class:`MuonDataset`'s metadata is the display source of truth for scalars
+    A :class:`~asymmetry.core.data.dataset.MuonDataset`'s metadata is the display source of truth for scalars
     like temperature/field (it may carry browser or from-log overrides that the
     underlying :attr:`MuonDataset.run` metadata does not). Combining the raw runs
     directly would retain stale master labels, so this merges the
     dataset's :data:`_DATASET_SCALAR_KEYS` onto a shallow run copy (sharing
-    histograms/grouping, which :func:`combine_runs` never mutates). Datasets
-    without a backing run are skipped. Use this to feed :func:`combine_runs` from
+    histograms/grouping, which :func:`~asymmetry.core.data.combine.combine_runs` never mutates). Datasets
+    without a backing run are skipped. Use this to feed :func:`~asymmetry.core.data.combine.combine_runs` from
     GUI datasets so the combined run's scalars match what the user sees.
     """
     from dataclasses import replace

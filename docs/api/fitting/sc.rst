@@ -1,6 +1,9 @@
 Superconductivity models
 ========================
 
+.. py:module:: asymmetry.core.fitting.sc
+
+
 .. currentmodule:: asymmetry.core.fitting
 
 
@@ -138,3 +141,7 @@ lambda and sigma conversion helpers:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.lambda_from_model
 
+Models
+------
+
+.. autofunction:: asymmetry.core.fitting.sc.models.brandt_field_factor
