@@ -174,8 +174,10 @@ Windows setup, previews, and releases.
 `prepare` with the verified replay, target, and triggering commit; a minimal
 `build-identity.json` is embedded before freezing. The spec exports only names
 from PyInstaller's documented Analysis lists. `collect` inspects the actual
-collected tree and recursively lists the executable's PYZ with the pinned
-archive viewer. It records Python module identities separately from native
+collected tree and recursively lists the executable's Python archives with the
+pinned archive viewer. Bootstrap modules in CArchive, PYZ modules, and embedded
+scripts are recorded separately; a script name cannot satisfy a required Python
+module. It records these identities separately from native
 libraries, resources, metadata, archive members, and notices. macOS framework
 links remain relative links bounded to the bundle, rather than duplicate files
 with invented content hashes. Windows DLL hashes must match verified archive members and the staging

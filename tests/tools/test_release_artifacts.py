@@ -10,6 +10,7 @@ import pytest
 from tools import release_artifacts as artifacts
 
 release = artifacts.release
+INSPECT_ARCHIVE = artifacts.inspect_python_archive
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -114,7 +115,15 @@ def build(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setattr(artifacts, "inspect_python_archive", lambda executable, modules: modules)
+    monkeypatch.setattr(
+        artifacts,
+        "inspect_python_archive",
+        lambda executable, modules: {
+            "PYZ": modules,
+            "CArchive_modules": [],
+            "CArchive_scripts": [],
+        },
+    )
     # No staged external libraries in this synthetic fixture.
     monkeypatch.setattr(artifacts, "external_archives", lambda bundle: [])
     artifacts.collect(bundle, "windows-x64", commit)
@@ -336,14 +345,14 @@ def test_finalizer_rejects_wrong_actual_installer_payload(build, payload):
 
 
 @pytest.mark.parametrize("in_pyz", [False, True])
-def test_python_inclusion_requires_actual_pyz_section(monkeypatch, in_pyz):
+def test_script_name_does_not_substitute_for_collected_module(monkeypatch, in_pyz):
     output = "Contents of 'app' (PKG/CArchive):\n 0, 12, 12, 0, 's', 'required_module'\n"
     output += "Contents of 'PYZ.pyz' (PYZ):\n typecode, position, length, name\n"
     if in_pyz:
         output += " 0, 17, 42, 'required_module'\n"
     monkeypatch.setattr(release, "run", lambda *args, **kwargs: output)
     if in_pyz:
-        assert artifacts.inspect_python_archive(Path("app"), ["required_module"]) == [
+        assert artifacts.inspect_python_archive(Path("app"), ["required_module"])["PYZ"] == [
             "required_module"
         ]
     else:
@@ -502,3 +511,24 @@ def test_required_identity_in_mutable_snapshot_is_rejected(build):
     artifacts.write_json(path, record)
     with pytest.raises(ValueError, match="immutable.*identity"):
         artifacts.collect(bundle, "windows-x64", commit)
+
+
+def test_collector_records_real_carchive_bootstrap_modules(build, monkeypatch):
+    root, bundle, _, commit, _, _ = build
+    artifacts.write_analysis([("struct", "ignored-host-origin", "PYMODULE")], [], [])
+    monkeypatch.setattr(artifacts, "inspect_python_archive", INSPECT_ARCHIVE)
+    native_runner = release.run
+
+    def archive_runner(command, cwd, **kwargs):
+        if command[0] == "pyi-archive_viewer":
+            return "Contents of 'app' (PKG/CArchive):\n 0, 233, 289, 1, 'm', 'struct'\n 233, 100, 200, 1, 's', 'entry'\nContents of 'PYZ.pyz' (PYZ):\n 0, 17, 42, 'fractions'\n"
+        return native_runner(command, cwd, **kwargs)
+
+    monkeypatch.setattr(release, "run", archive_runner)
+    artifacts.collect(bundle, "windows-x64", commit)
+    record = json.loads((root / "dist/windows-x64-build-components.json").read_text())
+    assert record["analysis"]["python_archives"] == {
+        "PYZ": ["fractions"],
+        "CArchive_modules": ["struct"],
+        "CArchive_scripts": ["entry"],
+    }

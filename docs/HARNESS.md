@@ -432,7 +432,8 @@ generation/verification, stale and swapped source/version/target/input identitie
 changed components/notices, nested private metadata, framework links, and corrupt
 final downloads. Synthetic native-runner substitutions reject swapped final
 payloads, missing identity/notices, changed assembly resources, and false Python
-module matches outside the PYZ listing. Workflow tests ensure manual dispatch exercises download
+module matches from embedded script names. Real CArchive bootstrap modules and
+PYZ modules retain separate container identities. Workflow tests ensure manual dispatch exercises download
 verification and publication rechecks its separate downloaded bytes.
 
 ```bash

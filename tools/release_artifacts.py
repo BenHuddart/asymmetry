@@ -40,6 +40,7 @@ NATIVE_FIELDS = (
     "xcode",
     "sdk",
 )
+PYTHON_CONTAINERS = ("PYZ", "CArchive_modules", "CArchive_scripts")
 SYSTEM_COMPONENTS = [
     "Operating-system loader, APIs, drivers, and system frameworks remain external; this inventory covers the collected application tree."
 ]
@@ -207,11 +208,27 @@ def public_environment(record: dict, identity: dict) -> dict:
     }
 
 
+def public_collection_names(record: dict) -> dict:
+    return {
+        key: sorted({portable(name) for name in record[key]})
+        for key in ("native_libraries", "data")
+    }
+
+
 def public_analysis(record: dict) -> dict:
     return {
+        **public_collection_names(record),
         "python_modules": sorted({safe_text(name) for name in record["python_modules"]}),
-        "native_libraries": sorted({portable(name) for name in record["native_libraries"]}),
-        "data": sorted({portable(name) for name in record["data"]}),
+    }
+
+
+def public_collected_analysis(record: dict) -> dict:
+    return {
+        **public_collection_names(record),
+        "python_archives": {
+            kind: sorted({safe_text(name) for name in record["python_archives"][kind]})
+            for kind in PYTHON_CONTAINERS
+        },
     }
 
 
@@ -231,7 +248,7 @@ def public_components(record: dict, identity: dict) -> dict:
     return {
         "schema": 1,
         **public_environment(record, identity),
-        "analysis": public_analysis(record["analysis"]),
+        "analysis": public_collected_analysis(record["analysis"]),
         "components": record["components"],
         "external_archives": [
             {
@@ -263,21 +280,34 @@ def write_analysis(pure: list, binaries: list, datas: list) -> None:
     write_json(ROOT / "build/bundle-analysis.json", public_analysis(record))
 
 
-def inspect_python_archive(executable: Path, modules: list[str]) -> list[str]:
+def inspect_python_archive(executable: Path, modules: list[str]) -> dict:
     output = release.run(["pyi-archive_viewer", "-l", "-r", str(executable)], ROOT, display=False)
-    observed = set()
-    in_pyz = False
+    observed = {kind: set() for kind in PYTHON_CONTAINERS}
+    section = ""
     for line in output.splitlines():
         if line.startswith("Contents of "):
-            in_pyz = line.endswith("(PYZ):")
-        elif in_pyz:
-            match = re.fullmatch(r"\s*\d+, \d+, \d+, '([^']+)'", line)
+            section = (
+                "PYZ"
+                if line.endswith("(PYZ):")
+                else "CArchive"
+                if line.endswith("(PKG/CArchive):")
+                else ""
+            )
+        elif section == "PYZ":
+            match = re.fullmatch(r"\s*\d+,\s*\d+,\s*\d+, '([^']+)'", line)
             if match:
-                observed.add(safe_text(match[1]))
-    missing = set(modules) - observed
+                observed["PYZ"].add(safe_text(match[1]))
+        elif section == "CArchive":
+            match = re.fullmatch(r"\s*\d+,\s*\d+,\s*\d+,\s*[01], '([mMs])', '([^']+)'", line)
+            if match:
+                kind = "CArchive_scripts" if match[1] == "s" else "CArchive_modules"
+                observed[kind].add(safe_text(match[2]))
+    missing = set(modules) - observed["PYZ"] - observed["CArchive_modules"]
     if missing:
-        raise ValueError(f"collected Python archive is missing Analysis modules: {sorted(missing)}")
-    return sorted(observed)
+        raise ValueError(
+            f"collected Python archives are missing Analysis modules: {sorted(missing)}"
+        )
+    return {kind: sorted(names) for kind, names in observed.items()}
 
 
 def bundle_inventory(bundle: Path) -> list[dict]:
@@ -416,7 +446,8 @@ def collect(bundle: Path, target: str, commit: str) -> None:
     executable = bundle / (
         "Asymmetry.exe" if target == "windows-x64" else "Contents/MacOS/Asymmetry"
     )
-    analysis["python_modules"] = inspect_python_archive(executable, analysis["python_modules"])
+    containers = inspect_python_archive(executable, analysis["python_modules"])
+    analysis = {**public_collection_names(analysis), "python_archives": containers}
     record = {
         "schema": 1,
         **environment,
