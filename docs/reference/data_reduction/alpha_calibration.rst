@@ -149,9 +149,9 @@ precision depends on its amplitude, window, corrections, and count statistics.
 Avoid it on magnetically ordered samples (spontaneous fields shift the
 oscillation) and on data where the diamagnetic fraction is small.
 
-This is WiMDA's diamagnetic estimate with the grid search replaced by a
-bounded continuous minimisation, run on internally packed equal-statistics
-bins so the result does not depend on the display bunching factor.
+Asymmetry uses bounded continuous minimisation on internally packed
+equal-statistics bins, independently of the display bunching factor. The
+matched quick-estimate outputs below do not identify WiMDA's internal search.
 
 General method
 --------------
@@ -180,10 +180,10 @@ no uncertainty or confidence test is supplied by this quick method.
 Background and deadtime corrections should be applied first. A residual flat
 background grows after lifetime correction and can bias the late window.
 
-WiMDA's **General** minimises relative scatter of the lifetime-corrected
-balanced counts. Asymmetry uses the two-window condition above. These are
-different numerical objectives; neither a universal absence of an interior
-minimum nor universal agreement is implied.
+The `WiMDA original manual, Appendix A
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes a general
+balance estimate. That method description and the native point controls below
+do not establish equivalence to Asymmetry's two-window objective.
 
 Asymmetry also checks for numerical degeneracy before dividing the window
 differences. Differences no larger than a floating-point accumulation bound
@@ -680,7 +680,9 @@ identifiability or accuracy.
 Compared with other programs
 ----------------------------
 
-WiMDA 1.326 quick **Diamagnetic** and **General** return alpha without an error.
+WiMDA 1.326 quick **Diamagnetic** and **General** controls compare displayed
+point estimates, without establishing calibration uncertainty. Asymmetry's quick
+methods return point estimates without intervals.
 On matched rounded synthetic beta = 1 histograms (16 ns bins, raw bins 4–498,
 F/B channels 1/2, background and deadtime off, bunch one), its displayed TF
 Diamagnetic alpha is 1.237, compared with 1.236610 in Asymmetry. General gives
@@ -702,14 +704,13 @@ independently checked conventional standard-error scale.
 For applied deadtime correction, matched musrfit 1.12.1 type-0 weighted
 histogram controls agree within 0.0001 absolute alpha/beta only after matching
 the error convention. Its compared export rebuilds errors from corrected counts;
-Asymmetry retains measured/supplied variance, consistent with Mantid's muon
-correction and WiMDA's ordinary counting-error basis. These are distinct weights,
+Asymmetry retains measured/supplied variance, consistent with the compared
+Mantid muon correction. The WiMDA FileBG export is a different error control. These are distinct weights,
 not full propagation through deadtime correction. Conditions and limits are in
 :ref:`comparison-count-calibration`.
 
-WiMDA 1.326 **Double Pulse** F/B/alpha fitting is the beta-one precedent,
-with supplied separation and equal incident populations. Beta calibration is
-not verified WiMDA functionality. Mantid's `DoublePulseFit v1
+No matched native WiMDA pulse-calibration or beta-calibration result is
+established here. Mantid's `DoublePulseFit v1
 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
 uses supplied shifted functions and weights, a forward-model analogue rather
 than the same TF count estimator or covariance calculation. musrfit's authored
@@ -733,14 +734,8 @@ Mantid numerical stretched-fit comparison is claimed.
 
 On an owned rounded beta-one TF control, TF alpha is 1.249995 against generating
 1.25, while the quick values above are about 1.237. The mean reduced asymmetry
-changes by about −0.53 percentage points on those same counts. On the original
-Ag calibration example, matched raw support gives quick alpha 0.974 in WiMDA
-1.326 and 0.974190 in Asymmetry, versus TF beta-one 0.966447 (zero backgrounds,
-no deadtime or pulse response). The mean reduced asymmetry changes by about
-+0.39 percentage points; deviance/dof is about 1.30. No independent physical
-alpha truth is asserted for that acquisition, and pulse/phase/model suitability
-remains a limitation. These are bounded method comparisons, not evidence for a
-universal default or uncertainty coverage.
+changes by about −0.53 percentage points on those same counts. These owned synthetic controls compare estimators, without establishing
+acquired physical alpha truth, a universal default, or uncertainty coverage.
 
 **References**
 

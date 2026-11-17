@@ -399,13 +399,11 @@ WiMDA 1.326 environment does not establish an identical automated seeded pull
 workflow; the public manual describes the closest operation [wimda-pulls]_.
 `Mantid 6.16.1 Fit <https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`_
 and `musrfit 1.12.1 Gaussian fitting <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#non-musr-fit>`_ provide independent
-supplied-error controls, rather than equivalent pull products. On owned scalar
-observations (2, 4, 7) with errors (1, 2, 1), the constant weighted-fit oracle
-is 40/9 with symmetric error 2/3 and chi-square 113/9. Mantid agrees within
-absolute 1e-7; musrfit's ASCII type-8 MIGRAD/HESSE control agrees in value/error
-within 1e-5, with all three observations explicitly selected. These checks do
-not validate acquisition physics, fit-selection coverage, or arbitrary
-likelihood conventions. See :doc:`/explanation/comparison`.
+supplied-error controls, rather than equivalent pull products. The :ref:`recorded three-point constant control <comparison-evidence>` retains
+all selected observations, absolute supplied errors, native statuses, objective
+conversion, and precision/tolerances. Value/error agreement is separate from
+rounded objective precision. These checks do not validate acquisition physics,
+fit-selection coverage, or arbitrary likelihood conventions.
 
 Scripting
 ---------

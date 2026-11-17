@@ -213,10 +213,9 @@ including zero, before rotating pooled G+R. Unequal baselines show
 Use Lab, Red, Green, or G minus R." The derived baseline fields are empty and
 read-only. Lab G+R, rotating Red, Green, and G−R remain available.
 
-WiMDA 1.326 and musrfit 1.12.1 demodulate formed scalar asymmetries; Mantid's
-``RRFMuon`` rotates a prepared real/imaginary pair. These checked workflows do
-not define automatic pooling of unequal period baselines. The equality check
-is an additional Asymmetry safeguard, not a restriction imposed by those programs.
+musrfit's scalar RRF and Mantid's two-component ``RRFMuon`` are different
+observation workflows. These comparisons do not establish a native policy for
+pooling unequal period baselines. The equality check is an Asymmetry safeguard.
 
 Read a difference with care. A period with the RF off carries no transverse
 signal, so when the RF is on in red and off in green, **G minus R** holds
@@ -347,8 +346,8 @@ The comparison uses the v1 documentation
 associated with the 6.16 development snapshot; no native Mantid RRFMuon execution
 or shared-detector uncertainty agreement is established here.
 
-WiMDA 1.326 and musrfit 1.12.1 use scalar rotating-frame workflows with different
-observations and smoothing or packing. Those operations do not supply a verified
+musrfit 1.12.1's scalar rotating-frame workflow uses different observations
+and packing. Those operations do not supply a verified
 drop-in covariance contract for overlapping EMU ratios. Asymmetry's additional
 counting-noise accounting follows the retained observations and the derivatives
 above. Independent analytic and seeded-count checks establish the propagation;

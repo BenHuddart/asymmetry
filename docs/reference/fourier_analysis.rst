@@ -273,8 +273,7 @@ Baseline removal: mean or trend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``subtract_average_signal`` removes a **constant** — the inverse-standard-error
-(:math:`1/\sigma`) weighted average of the cropped signal, as in WiMDA's
-grouped Fourier preparation. A signal that *relaxes* across the record does
+(:math:`1/\sigma`) weighted average of the cropped signal. A signal that *relaxes* across the record does
 not ride on a constant, and the trend the mean leaves behind dumps power into
 the low-frequency bins, where it can swamp a genuine line. ``detrend=`` removes
 a trend instead, on both the dataset and the array front doors:
@@ -334,18 +333,13 @@ apodisation or phase-mode controls below are applied:
   forward−backward asymmetry curve from the recorded grouping, α, and binning.
   This source requires a uniform retained time grid. Binning **Fixed** supplies
   one; unequal bins from **Variable** or **Constant error** are refused.
-  Deadtime correction is **not** applied on this path (the grouped-average
-  path does apply it to each group's count signal before the transform), so
-  it can differ from a corrected time-domain display.
+  The shared F/B preparation applies requested deadtime and background
+  corrections before forming the ratio. This differs from transforming
+  each group's lifetime-corrected count signal.
 
-For a run with just one forward/backward detector pair, ``F−B asymmetry``
-gives markedly better peak-to-floor contrast than ``Grouped average``: on a
-real GPS zero-field run, switching to F−B asymmetry raised the contrast by
-roughly a factor of five, where averaging every detector group's own FFT
-buried the line under the other groups' baselines. With several detector
-groups, though, ``Grouped average`` remains the workflow to use — averaging
-genuinely independent group spectra is what suppresses their uncorrelated
-noise.
+The sources transform different observations, with different baselines and
+noise. Choose the source for the intended observable; no universal contrast
+improvement or independence of overlapping detector groups follows.
 
 Switching source flags the displayed spectrum out of date, and the ``Groups``
 include/phase table becomes inert (and is disabled, not hidden, so the values
@@ -367,9 +361,10 @@ status; it does not publish a partial suggestion.
 Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
 
-The main Fourier workflow now follows WiMDA's filter model rather than the
-older whole-trace window presets. The FFT panel exposes three apodisation
-modes:
+The FFT panel exposes three apodisation modes. WiMDA's original manual,
+Sec. 9, documents the same broad filter choices and a delayed start [4]_; it
+does not establish identical filter equations or preprocessing defaults:
+
 
 * ``None``
 * ``Lorentzian``
@@ -380,7 +375,7 @@ along with:
 * ``Filter start (µs)``
 * ``Filter τ (µs)`` — the filter time constant
 
-For a Lorentzian filter, Asymmetry follows WiMDA's two cases:
+For a Lorentzian filter, Asymmetry uses two cases:
 
 .. math::
 
@@ -391,9 +386,8 @@ For a Lorentzian filter, Asymmetry follows WiMDA's two cases:
    A_f(t) = \frac{1 + e^{-t_\mathrm{start}/\tau}}{1 + e^{(t - t_\mathrm{start})/\tau}} A(t)
    \qquad \text{when } t_\mathrm{start} > 0
 
-The Gaussian mode uses the same WiMDA-style softened start with squared
-arguments. ``Subtract average signal`` is applied before the filter, matching
-WiMDA's default preprocessing path (see `Baseline removal: mean or trend`_ for
+The Gaussian mode uses the same softened start with squared arguments.
+``Subtract average signal`` is applied before the filter (see `Baseline removal: mean or trend`_ for
 the alternative when the signal relaxes).
 
 .. _fft-early-time-apodisation:
@@ -853,10 +847,9 @@ file's identity and modification metadata; edits to an unused loaded copy do not
 contract cannot detect rewrites preserving all recorded metadata. Resumed
 MaxEnt state also identifies its actual prepared observations.
 
-WiMDA traverses requested group/bin observations; Mantid 6.16.1 standard
-``MuonPreProcess`` corrects before cropping, and the compared musrfit 1.12.1 path
-visits selected raw arrays. These differences do not imply matching FFT or
-MaxEnt preparation or solvers. See :ref:`comparison-deadtime-scope`.
+The requested domain is described in :ref:`comparison-deadtime-scope`;
+identical solver inputs or correction/selection order across reference programs
+are not established here.
 
 Normalisation
 ~~~~~~~~~~~~~
@@ -915,28 +908,20 @@ and moment interpretation retain the limits in :doc:`spectral_moments` and
 Compared with other programs
 ++++++++++++++++++++++++++++
 
-WiMDA 1.326 lifetime-corrects grouped Fourier counts, optionally removes a
-:math:`1/\sigma` mean, and scales its grouped spectrum by total events. Its
-F/B Fourier input is a separate observable. Asymmetry retains fractional group
-normalisation instead of adopting that event scale. See the
-`WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_ and [4]_.
+WiMDA's original manual, Sec. 9, describes grouped Fourier averaging, filters,
+and padding [4]_. The musrfit FOURIER block describes MSR transform settings.
+The musrFT CLI's ``-lc``/``--lifetimecorrection`` option supplies the scale
+control used by the recorded 1.12.1 case. That result establishes its response
+on the named inputs, without identifying an arithmetic-mean level estimator
+or all Fourier paths. Mantid's `RemoveExpDecay v1
+<https://docs.mantidproject.org/nightly/algorithms/RemoveExpDecay-v1.html>`_
+(6.16 development documentation snapshot) divides lifetime-corrected data by a
+fitted constant and subtracts one. Its documented formula does not establish
+that fit's weights or a universal FFT amplitude convention.
 
-musrfit 1.12.1 (revision ``708f777b``, ROOT 6.40.04) uses an arithmetic-mean
-level of the lifetime-corrected observations and a supplied scale factor in
-its theory-free single-histogram Fourier preparation. This does not describe
-every musrfit fit or Fourier path; see the `musrfit manual
-<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_. In Mantid's
-`RemoveExpDecay v1 <https://docs.mantidproject.org/nightly/algorithms/RemoveExpDecay-v1.html>`_
-(checked 6.16 development snapshot), lifetime-corrected observations are divided
-by a fitted constant and one is subtracted. With supplied errors this is an
-inverse-variance least-squares constant fit, rather than a universal Mantid FFT
-amplitude convention. An analogous starting level does not equate Asymmetry's
-MaxEnt reconstruction with Mantid
-`MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_.
-
-The three window-level estimates need not agree even without random noise.
-These operation descriptions do not establish matched native FFT errors,
-absolute polarisation, or reconstruction equivalence. A bounded native Mantid
+Asymmetry's level equations above describe its own conventions. These method
+pointers do not establish matched native FFT errors, absolute polarisation,
+or MaxEnt reconstruction equivalence. A bounded native Mantid
 6.16.1 point-data FFT control agrees with a direct DFT after matching its interval scaling and full-modulus output; this does not
 verify PhaseQuad or MaxEnt. The standalone pulse-kernel
 comparison below has its own narrower scope. See
@@ -1515,11 +1500,10 @@ offset, half-width 0.05 μs, separation 0.324 μs, and one or two pulses. Its
 source lifetimes are 0.026 μs (pion) and 2.19704 μs (muon); the origin conversion
 is explicit. This source identity is separate from installed Mantid 6.16.1. See
 `MuonMaxent v1 <https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_.
-WiMDA 1.326 provides **Single Pulse** and **Double Pulse** choices for MaxEnt and
-**Apply Frequency Response Compensation** for Fourier analysis. Its Gaussian
-Fourier compensation differs from Asymmetry's parabolic-plus-pion response;
-no matched native Fourier agreement is claimed. See F. L. Pratt, Physica B
-**289–290**, 710 (2000), `WiMDA paper <https://www.isis.stfc.ac.uk/Pages/wimda-paper.pdf>`_.
+WiMDA's original manual, version 1.2, Sec. 9, describes Gaussian Fourier
+frequency-response compensation. That documented model differs from Asymmetry's
+parabolic-plus-pion response; no matched native compensation result is claimed.
+See :ref:`comparison-maxent` for the separate reconstruction methods and limits.
 
 Excluding a time window
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1839,8 +1823,7 @@ own baseline stands in for the time-domain hairline).
 
 The first view is also **framed to where the physics is**. A narrow line at
 high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
-*around* (the line centred, the window a few dozen linewidths wide: WiMDA's
-reference-field ± offsets view, derived from the data), because on a from-zero
+*around* (the line centred, the window a few dozen linewidths wide), because on a from-zero
 axis it would be sub-pixel. Otherwise the plot frames from the data's lower
 edge up to the highest-frequency line that clears the local noise baseline,
 and — when the run carries an applied field — at least the expected Larmor
@@ -1849,19 +1832,14 @@ satellites, muonium triplet lines, muoniated-radical pairs) is never framed
 out, and a weak or low-field line that the peak detection cannot see still
 gets a sensible window instead of the full Nyquist span. Spectra also default
 to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
-than 2–3 bins wide; this deliberately diverges from WiMDA's no-padding default
-because the spectrum is now shown unbidden, and it changes nothing
-quantitative — zero padding adds no information, only smoother rendering.
-Padded points are strongly correlated (only 1/*n* of them are statistically
-independent for a zero-pad factor *n*), so frequency-domain fits and moment
-uncertainties apply the **effective-sample-size correction** automatically:
-degrees of freedom count the independent samples, χ² is scaled to match, and
-parameter/moment uncertainties grow by √*n*. Fit results state the applied
-correction in their advisory row. (WiMDA applies the degrees-of-freedom part
-of this correction, dividing the point count by the zero-pad factor; Asymmetry
-additionally corrects χ² and the uncertainties for full consistency.) With the statistics handled,
-the zero-pad factor is purely a display-density knob; the factor now goes up
-to 64. All of these are first-paint seeds only: your own zoom and settings
+than 2–3 bins wide. Zero padding adds no observations and can change the
+sampled maximum. Padded spectral points are correlated. Frequency-domain fits
+and moment uncertainties apply a conditional effective-sample-size approximation:
+degrees of freedom count the unpadded samples, chi-square is scaled, and
+parameter/moment uncertainties receive the corresponding square-root factor.
+Fit results state this correction in their advisory row. This approximation
+does not recover full spectral covariance or establish coverage. The zero-pad
+factor goes up to 64. All of these are first-paint seeds only: your own zoom and settings
 are never overridden.
 
 Auto-compute needs detector groups to work from. A run with no groups (or with
@@ -1894,17 +1872,16 @@ computed for run <n>`` — check the run's detector grouping (and the log for a
 failed transform), or click ``Compute FFT`` to retry.
 
 Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
-WiMDA-first FFT workflow directly:
+grouped FFT workflow directly:
 
 * choose an ``FFT Phase Mode`` first. The ``Info`` button beside it opens an
   in-app explanation of the formulas and interpretation of each mode
-* keep ``Subtract average signal`` enabled to remove the WiMDA-style pre-FFT
+* keep ``Subtract average signal`` enabled to remove the weighted pre-FFT
   baseline term before filtering and transformation; this is on by default
 * grouped Fourier inputs are also corrected for the muon decay envelope before
-  the later mean-subtraction and apodisation steps, matching WiMDA's grouped
-  ``Freq`` preprocessing more closely
+  the later mean-subtraction and apodisation steps
 * choose ``None``, ``Lorentzian``, or ``Gaussian`` apodisation, then tune the
-  filter start and tau values to match WiMDA-style FFT shaping
+  filter start and tau values for the intended time weighting
 * include or exclude detector groups in the ``Groups`` table before computing
   the transform
 * in ``Phase`` mode, either type a single manual phase or enable
@@ -1912,7 +1889,7 @@ WiMDA-first FFT workflow directly:
 * choose ``Auto method`` (``Peak`` or ``Average``), then press
   ``Fill Phase Estimates`` to estimate one phase per detector group for the
   current dataset
-* for averaged grouped spectra, optionally estimate WiMDA-style error bars from
+* for averaged grouped spectra, optionally estimate error bars from
   the spread across the selected group spectra
 
 Out-of-date indicator

@@ -585,9 +585,8 @@ Time-zero (t0) modes
 
 The **t0 Bin** row carries a mode selector (**From file** / **Manual** /
 **Auto-detect**) that decides where each run's analysis time-zero comes
-from. This mirrors WiMDA's *FileValues* checkbox on the grouping panel: with
-it ticked the header t0 and good-bin values are used and the manual controls
-are disabled; unticked, your own values apply. In every mode, a read-only
+from. The documented WiMDA timing controls provide a related workflow;
+they do not establish equal file/manual endpoint membership. In every mode, a read-only
 line beneath the row shows the file value beside what Asymmetry's own search
 finds for the selected run, and a ``⚠`` button appears beside it when there
 is a verdict to read — see :doc:`data_reduction/t0_search` for the line's
@@ -875,8 +874,7 @@ available:
 
 * ``Off`` disables the correction.
 * ``File`` uses per-detector deadtime values already present in a run file.
-  This stays the default starting point for raw histogram formats, matching
-  WiMDA's file-first assumption, even when the currently selected run does not
+  This stays the default starting point for raw histogram formats, even when the currently selected run does not
   itself provide file deadtime values.
 * ``Manual`` shows a per-detector value table, editable directly, and is
   also where calibrated values are stored.
@@ -888,8 +886,7 @@ File coefficients are stored internally in μs. The NeXus-v2 loader converts
 explicit supported μs/ns declarations once, so 20 ns and 0.02 μs produce the
 same correction. Missing or other declarations and legacy v1/HDF4 retain their
 stored-value-as-μs convention; project coefficients are not reconverted.
-Asymmetry follows WiMDA for this explicit v2 convention and intentionally
-differs from the compared musrfit 1.12.1 path; see
+This intentionally differs from the compared musrfit 1.12.1 path; see
 :ref:`comparison-deadtime-units`.
 
 A requested ``File`` correction uses the run's own coefficients for the required detectors,
@@ -1173,7 +1170,7 @@ Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Missing File deadtimes give a warned whole-operation uncorrected result,
-closest to WiMDA's missing-calibration result. musrfit 1.12.1 can correct
+under Asymmetry's availability policy. musrfit 1.12.1 can correct
 histograms with supplied coefficients while leaving others unchanged; Mantid
 6.16.1 distinguishes its numerical algorithm, GUI validation, and loader paths.
 Asymmetry also skips the whole operation for incomplete tables, including
@@ -1189,21 +1186,21 @@ a subset cannot serve another group or a larger cohort. Standalone
 ``prepare_histograms_with_deadtime`` still corrects every supplied observation.
 
 Asymmetry uses unique acquired-channel membership and requires disjoint,
-nonempty effective F/B pairs for its independent-count model. WiMDA and musrfit
-permit repeated and overlapping selections in the compared paths; Mantid rejects
+nonempty effective F/B pairs for its independent-count model. musrfit permits
+repeated and overlapping selections in the compared paths; Mantid rejects
 identical pairs but accepts partial overlap. Reuse across separate projections
 remains supported. See :ref:`comparison-membership` for versions, matched count
 comparisons, and uncertainty limits.
 
-Whole-bin alignment is closest to WiMDA/musrfit's fixed-bin workflows; Mantid
+The executed musrfit comparison covers whole-bin alignment; Mantid
 also offers coordinate-preserving and common-grid operations. The selected exact
 origin, residuals, common observed support, and inclusive window contract are
 defined above; :ref:`comparison-timing` and :ref:`comparison-psi-intervals`
 state the versioned comparisons and explain the different defaults.
 
 For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
-1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
-interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+1.12.1 explicit-channel checks, fractional-timing difference, and documented WiMDA timing
+controls are described in :ref:`comparison-nexus-good-times`. Equal defaults
 are not implied by agreement on matched raw observations.
 
 Stored and one-shot coefficients remain fixed; enabled automatic policies use
