@@ -63,15 +63,8 @@ jobs:
 
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
-        shell: pwsh
-        run: |
-          [Environment]::SetEnvironmentVariable("PYTHONPATH", $null)
-          [Environment]::SetEnvironmentVariable("PYTHONHOME", $null)
-          if (-not (Test-Path "$env:GITHUB_WORKSPACE\dist\Asymmetry\Asymmetry.exe")) {
-            throw "Packaged executable not found at dist\\Asymmetry\\Asymmetry.exe"
-          }
-          & "$env:GITHUB_WORKSPACE\dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
-          if ($LASTEXITCODE -ne 0) { throw "Packaged smoke failed" }
+        shell: bash
+        run: python -I "$GITHUB_WORKSPACE/tools/release_environment.py" --smoke "$GITHUB_WORKSPACE/dist/Asymmetry/Asymmetry.exe" --smoke-test --smoke-test-root
 
       - name: Build EXE installer
         shell: pwsh

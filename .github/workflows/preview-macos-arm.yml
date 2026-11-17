@@ -56,9 +56,7 @@ jobs:
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
         shell: bash
-        run: |
-          test -x "$GITHUB_WORKSPACE/dist/Asymmetry.app/Contents/MacOS/Asymmetry"
-          env -u PYTHONPATH -u PYTHONHOME "$GITHUB_WORKSPACE/dist/Asymmetry.app/Contents/MacOS/Asymmetry" --smoke-test --smoke-test-root
+        run: python -I "$GITHUB_WORKSPACE/tools/release_environment.py" --smoke "$GITHUB_WORKSPACE/dist/Asymmetry.app/Contents/MacOS/Asymmetry" --smoke-test --smoke-test-root
 
       - name: Generate DMG background
         shell: bash

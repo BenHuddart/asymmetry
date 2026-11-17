@@ -450,3 +450,44 @@ def test_reviewed_input_bytes_survive_autocrlf_checkout(tmp_path: Path) -> None:
     for relative in relative_paths:
         assert release.digest(checkout / relative) == release.digest(ROOT / relative)
         assert b"\r\n" not in (checkout / relative).read_bytes()
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_packaged_smoke_cli_waits_and_propagates_failure(tmp_path: Path, exit_code: int) -> None:
+    import os
+    import subprocess
+    import sys
+
+    marker = tmp_path / "finished"
+    script = tmp_path / "delayed.py"
+    script.write_text(
+        "import os, pathlib, sys, time\n"
+        "assert 'PYTHONPATH' not in os.environ\n"
+        "assert 'PYTHONHOME' not in os.environ\n"
+        "assert pathlib.Path.cwd() == pathlib.Path(sys.argv[1])\n"
+        "time.sleep(0.2)\n"
+        "pathlib.Path(sys.argv[2]).write_text('finished')\n"
+        "sys.exit(int(sys.argv[3]))\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(ROOT / "tools/release_environment.py"),
+            "--smoke",
+            sys.executable,
+            "-I",
+            str(script),
+            str(tmp_path),
+            str(marker),
+            str(exit_code),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": "unreviewed", "PYTHONHOME": "unreviewed"},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert marker.read_text() == "finished"
+    assert (result.returncode == 0) is (exit_code == 0)

@@ -408,7 +408,8 @@ artifact checks and release dependency reproduction have separate owners.
 
 `tests/tools/test_release_environment.py` exercises dependency/interpreter drift,
 selected-extra completeness, immutable wheel origins, strict hashed input parsing,
-compiler-engine identity, replay equality, and allowlisted download observations.
+compiler-engine identity, replay equality, allowlisted download observations, and
+waited packaged-smoke success/failure with Python path injection removed.
 Run it with the existing native workflow and installer tests:
 
 ```bash

@@ -93,7 +93,9 @@ python tools/release_environment.py --target macos-arm64 --output <new-external-
 
 The output must be new and outside the source checkout. Run from a clean committed
 candidate. Activate `replay-1/environment` for local packaging; CI adds its scripts
-directory to subsequent steps automatically. Before freezing, run with that
+directory to subsequent steps automatically. Packaged smoke runs outside source
+through the shared Python process runner, which clears Python path injection,
+waits for the frozen process, and rejects a nonzero exit status on either platform. Before freezing, run with that
 verified environment's Python:
 
 ```bash

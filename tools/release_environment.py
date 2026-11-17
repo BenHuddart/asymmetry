@@ -437,8 +437,14 @@ def main() -> None:
     parser.add_argument("--observe", action="store_true")
     parser.add_argument("--extras", action="store_true")
     parser.add_argument("--inno", nargs=argparse.REMAINDER)
+    parser.add_argument("--smoke", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.verify:
+    if args.smoke:
+        if Path.cwd().is_relative_to(ROOT):
+            raise ValueError("packaged smoke must run outside source")
+        run(args.smoke, Path.cwd())
+        print("Packaged smoke completed with exit status 0.")
+    elif args.verify:
         verify_build(args.verify)
     elif args.observe:
         print(json.dumps(observe()))
@@ -451,7 +457,7 @@ def main() -> None:
     elif args.target and args.output:
         replay(args.target, args.output)
     else:
-        parser.error("select --target and --output, --observe, --extras, or --inno")
+        parser.error("select --target and --output, --observe, --extras, --inno, or --smoke")
 
 
 if __name__ == "__main__":
