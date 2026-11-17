@@ -4,4 +4,7 @@
 
 # Reviewed release input SHA256 values use the same bytes on every checkout.
 packaging/release/*.txt text eol=lf
-packaging/release/tools.json text eol=lf
+packaging/release/*.json text eol=lf
+
+# Public notice hashes must agree across native and download-verification jobs.
+THIRD_PARTY_LICENSES.md text eol=lf

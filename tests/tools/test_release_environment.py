@@ -249,12 +249,17 @@ def test_pre_freeze_verification_rejects_stale_inputs_and_commit(
     inputs.mkdir()
     tools = {"gle": {"commit": "a" * 40}, "targets": {"windows-x64": {}}}
     (inputs / "tools.json").write_text(json.dumps(tools), encoding="utf-8")
+    (inputs / "windows-archives.json").write_text("[]", encoding="utf-8")
     replay = tmp_path / "replay-1"
     replay.mkdir()
     record = {
         "source_commit": "b" * 40,
         "target": "windows-x64",
-        "input_hashes": {"tools.json": "c" * 64, "windows-x64.txt": "d" * 64},
+        "input_hashes": {
+            "tools.json": "c" * 64,
+            "windows-x64.txt": "d" * 64,
+            "windows-archives.json": "e" * 64,
+        },
     }
     (replay / "observed.json").write_text(json.dumps(record), encoding="utf-8")
     monkeypatch.setattr(release, "INPUTS", inputs)
@@ -384,6 +389,7 @@ def test_mutable_observation_cannot_bless_dependency_drift(
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     (inputs / "tools.json").write_text(json.dumps(tools), encoding="utf-8")
+    (inputs / "windows-archives.json").write_text("[]", encoding="utf-8")
     requirements = inputs / "windows-x64.txt"
     requirements.write_text("pip==25.3 --hash=sha256:" + "a" * 64 + "\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text('[project]\nversion="0.28.0"\n', encoding="utf-8")
@@ -419,6 +425,7 @@ def test_reviewed_input_bytes_survive_autocrlf_checkout(tmp_path: Path) -> None:
     source.mkdir()
     (source / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
     relative_paths = [path.relative_to(ROOT) for path in (ROOT / "packaging/release").iterdir()]
+    relative_paths.append(Path("THIRD_PARTY_LICENSES.md"))
     for relative in relative_paths:
         destination = source / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

@@ -31,7 +31,7 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def reviewed_requirements(path: Path) -> dict[str, str]:
+def reviewed_wheels(path: Path) -> dict[str, dict[str, str]]:
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
@@ -42,10 +42,14 @@ def reviewed_requirements(path: Path) -> dict[str, str]:
         name = normalized(match[1])
         if name in result:
             raise ValueError(f"duplicate release distribution: {name}")
-        result[name] = match[2]
+        result[name] = {"version": match[2], "sha256": match[3]}
     if "pip" not in result:
         raise ValueError("release bootstrap pip is missing")
     return result
+
+
+def reviewed_requirements(path: Path) -> dict[str, str]:
+    return {name: item["version"] for name, item in reviewed_wheels(path).items()}
 
 
 def observe() -> dict:
@@ -313,7 +317,8 @@ def replay(target: str, output: Path) -> None:
                 for name, wheel in wheels.items()
             },
             "input_hashes": {
-                path.name: digest(path) for path in (requirements, INPUTS / "tools.json")
+                path.name: digest(path)
+                for path in (requirements, INPUTS / "tools.json", INPUTS / "windows-archives.json")
             },
             "downloaded_wheels": downloaded_wheels(work),
             "native": native_identity(),
@@ -381,7 +386,7 @@ def verify_build(output: Path) -> None:
     if record["target"] not in tools["targets"]:
         raise ValueError("unreviewed release target")
     requirements = INPUTS / f"{record['target']}.txt"
-    if set(record["input_hashes"]) != {requirements.name, "tools.json"}:
+    if set(record["input_hashes"]) != {requirements.name, "tools.json", "windows-archives.json"}:
         raise ValueError("release input record is incomplete")
     for name, sha256 in record["input_hashes"].items():
         if digest(INPUTS / name) != sha256:

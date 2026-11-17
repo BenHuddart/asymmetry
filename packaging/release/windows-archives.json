@@ -1,0 +1,17 @@
+[
+  {
+    "filename": "hdf4-4.2.15-h1b1b6ef_5.tar.bz2",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/hdf4-4.2.15-h1b1b6ef_5.tar.bz2",
+    "sha256": "24842165790df11a664a9b9d8bc90c239427232ef2365d4b475f29101efd687f"
+  },
+  {
+    "filename": "libjpeg-turbo-2.1.4-hcfcfb64_0.tar.bz2",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/libjpeg-turbo-2.1.4-hcfcfb64_0.tar.bz2",
+    "sha256": "ed081ab5e51b516723f30b49a84f1b5bb201d46d6da58de0ab435df3f01d4eb0"
+  },
+  {
+    "filename": "zlib-1.2.13-hcfcfb64_4.tar.bz2",
+    "url": "https://conda.anaconda.org/conda-forge/win-64/zlib-1.2.13-hcfcfb64_4.tar.bz2",
+    "sha256": "28e9fe3ca91ccc50080d777cb1642c64e385dbb8843162d7cadad418a12ef35d"
+  }
+]

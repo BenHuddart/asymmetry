@@ -1,62 +1,83 @@
-"""Fetch the HDF4 C runtime DLLs (conda-forge ``hdf4``) for Windows.
+"""Verify conda-forge HDF4 runtime archives and stage their regular DLLs.
 
-pyhdf's Windows PyPI wheel ships only the ``_hdfext`` extension module; it
-links against external ``hdf.dll`` / ``mfhdf.dll`` (the HDF4 C library), which
-the wheel does not bundle. This mirrors how Mantid sources HDF4 on Windows
-(conda-forge ``hdf4`` + its dependency DLLs). The script downloads the
-conda-forge ``hdf4`` package (and the transitive runtime deps it links), and
-extracts every ``Library/bin/*.dll`` into a target directory so that
-``os.add_dll_directory(target)`` makes ``import pyhdf`` work.
-
-Usage:
-    python packaging/windows/fetch_hdf4_dlls.py <target_dir>
-
-Used both for local development/test runs and (in CI) to stage the DLLs the
-PyInstaller Windows build bundles into the frozen app.
+Usage: python packaging/windows/fetch_hdf4_dlls.py <target_dir>
+Local development, previews, and release builds share these reviewed inputs.
+Cached archives are rechecked before any extraction or runtime mutation.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 import sys
 import tarfile
+import tempfile
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-CHANNEL = "https://conda.anaconda.org/conda-forge/win-64"
-
-# hdf4 + the runtime libraries its DLLs link against. Pinned to known-good
-# conda-forge builds; bz2 form so Python's stdlib tarfile can extract them
-# (the newer .conda form needs zstd, absent from the 3.12 stdlib).
-PACKAGES = [
-    "hdf4-4.2.15-h1b1b6ef_5.tar.bz2",
-    "libjpeg-turbo-2.1.4-hcfcfb64_0.tar.bz2",
-    "zlib-1.2.13-hcfcfb64_4.tar.bz2",
-]
+ARCHIVE_INPUT = Path(__file__).resolve().parents[1] / "release/windows-archives.json"
 
 
 def main(target: str) -> int:
     target_dir = Path(target).resolve()
-    target_dir.mkdir(parents=True, exist_ok=True)
     work = target_dir / "_download"
-    work.mkdir(exist_ok=True)
+    work.mkdir(parents=True, exist_ok=True)
+    packages = json.loads(ARCHIVE_INPUT.read_text(encoding="utf-8"))
+    for package in packages:
+        archive = work / package["filename"]
+        if not archive.exists():
+            print(f"downloading {package['url']}")
+            urllib.request.urlretrieve(package["url"], archive)  # noqa: S310 - reviewed input
+        with archive.open("rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        if actual != package["sha256"]:
+            raise ValueError(
+                f"{archive.name}: expected SHA256 {package['sha256']}, actual SHA256 {actual}"
+            )
+        print(f"verified {archive.name}: {actual}")
 
-    extracted: list[str] = []
-    for pkg in PACKAGES:
-        url = f"{CHANNEL}/{pkg}"
-        archive = work / pkg
-        print(f"downloading {url}")
-        urllib.request.urlretrieve(url, archive)  # noqa: S310 - trusted channel
-        with tarfile.open(archive, "r:bz2") as tar:
-            for member in tar.getmembers():
-                name = member.name.replace("\\", "/")
-                if name.startswith("Library/bin/") and name.lower().endswith(".dll"):
-                    member.name = Path(name).name
-                    tar.extract(member, target_dir)
-                    extracted.append(member.name)
-
-    print(f"\nextracted {len(extracted)} DLLs into {target_dir}:")
-    for dll in sorted(extracted):
-        print(f"  {dll}")
+    # All archive hashes and members must pass before replacing any runtime DLL.
+    destinations = set()
+    records = []
+    with tempfile.TemporaryDirectory(prefix="asymmetry-hdf4-") as directory:
+        staged = Path(directory)
+        for package in packages:
+            dlls = []
+            with tarfile.open(work / package["filename"], "r:bz2") as archive:
+                for member in archive.getmembers():
+                    name = member.name.replace("\\", "/")
+                    if not name.startswith("Library/bin/") or not name.lower().endswith(".dll"):
+                        continue
+                    parts = PurePosixPath(name).parts
+                    if len(parts) != 3 or not member.isfile():
+                        raise ValueError(
+                            f"{package['filename']}: DLL must be a regular direct member: {name}"
+                        )
+                    destination = parts[-1]
+                    if destination.casefold() in destinations:
+                        raise ValueError(f"ambiguous DLL destination: {destination}")
+                    destinations.add(destination.casefold())
+                    content = archive.extractfile(member).read()
+                    (staged / destination).write_bytes(content)
+                    dlls.append(
+                        {
+                            "name": destination,
+                            "member": name,
+                            "sha256": hashlib.sha256(content).hexdigest(),
+                        }
+                    )
+            records.append({**package, "dlls": sorted(dlls, key=lambda item: item["name"])})
+        for path in staged.iterdir():
+            destination = target_dir / path.name
+            if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+                raise ValueError(f"DLL destination must be a regular file: {path.name}")
+        for path in staged.iterdir():
+            shutil.copyfile(path, target_dir / path.name)
+    (target_dir / "archives.json").write_text(
+        json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(f"staged {len(destinations)} verified DLLs")
     return 0
 
 

@@ -50,9 +50,9 @@ jobs:
         shell: pwsh
         run: python packaging/windows/fetch_hdf4_dlls.py "$env:GITHUB_WORKSPACE\build\hdf4-dlls"
 
-      - name: Verify observed environment before freezing
+      - name: Prepare packaged build identity
         shell: bash
-        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
+        run: python -I tools/release_artifacts.py prepare --target windows-x64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
       - name: Build application with PyInstaller
         env:
@@ -60,6 +60,10 @@ jobs:
           ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}\build\hdf4-dlls
         shell: pwsh
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Inventory actual bundle and notices
+        shell: bash
+        run: python -I tools/release_artifacts.py collect --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry
 
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
@@ -82,11 +86,19 @@ jobs:
             "/DOutputName=$outputName" `
             packaging\windows\asymmetry.iss
 
+      - name: Record final artifact bytes
+        shell: bash
+        run: python -I tools/release_artifacts.py finalize --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry --artifact "dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe" --label "${{ steps.meta.outputs.version }}"
+
       - name: Upload Windows preview artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-windows-x64-preview
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
+          path: |
+            dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
+            dist/windows-x64-build-components.json
+            dist/windows-x64-artifact.json
+            dist/windows-x64-SHA256SUMS
           if-no-files-found: error
           # Preview builds are downloaded manually from the workflow run; a short
           # retention keeps Actions storage use low (default is 90 days).
