@@ -9,6 +9,11 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      structural_base:
+        description: Immutable 40-character comparison commit SHA
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -52,6 +57,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fetch structural event base
+        run: |
+          base=$(python3 tools/harness_maintenance.py)
+          git fetch --no-tags origin "$base"
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -63,7 +74,7 @@ jobs:
       - name: Install dependencies
         run: uv pip install -c constraints.txt -e ".[dev]"
       - name: Structural checks
-        run: python tools/harness.py structural
+        run: python3 tools/harness.py structural --ci
       - name: Lint
         run: python tools/harness.py lint
 
