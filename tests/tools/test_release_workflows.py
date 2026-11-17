@@ -297,6 +297,13 @@ def test_core_wheel_job_is_always_required_and_separate_from_editable_tests() ->
     ]
     assert "install-smoke" in workflow["jobs"]["ci-success"]["needs"]
     assert workflow["jobs"]["ci-success"]["if"] == "always()"
+    upload = next(
+        step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert upload["with"]["path"].splitlines() == [
+        "${{ runner.temp }}/distribution-smoke/*.log",
+        "${{ runner.temp }}/distribution-smoke/manifest.json",
+    ]
     assert job["timeout-minutes"] <= 15
 
 

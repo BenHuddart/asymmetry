@@ -237,6 +237,38 @@ def run_logged(command: list[str], cwd: Path, env: dict, log: Path) -> subproces
     return result
 
 
+def reject_below_minimum(wheel: Path, output: Path, env: dict, python: str) -> dict:
+    """Require target-resolution rejection, including with bootstrap pip versions."""
+    rejection_command = [
+        python,
+        "-m",
+        "pip",
+        "download",
+        "--dest",
+        str(output / "below-minimum-download"),
+        "--no-deps",
+        "--no-index",
+        "--python-version",
+        "3.10",
+        "--only-binary=:all:",
+        str(wheel),
+    ]
+    rejection = subprocess.run(
+        rejection_command, cwd=output, env=env, capture_output=True, text=True, timeout=60
+    )
+    (output / "below-minimum.log").write_text(
+        json.dumps(rejection_command) + "\n" + rejection.stdout + rejection.stderr
+    )
+    assert rejection.returncode != 0 and "requires a different Python" in rejection.stderr, (
+        "candidate must reject Python 3.10 resolution"
+    )
+    return {
+        "kind": "pip target-resolution only; no Python 3.10 execution",
+        "target": "3.10",
+        "exit": rejection.returncode,
+    }
+
+
 def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
     """Build once and reuse the exact wheel across independently created targets."""
     source = source.resolve()
@@ -313,33 +345,7 @@ def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
             path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (sdist, wheel)
         },
     )
-    rejection_command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--dry-run",
-        "--no-deps",
-        "--no-index",
-        "--python-version",
-        "3.10",
-        "--only-binary=:all:",
-        str(wheel),
-    ]
-    rejection = subprocess.run(
-        rejection_command, cwd=output, env=env, capture_output=True, text=True, timeout=60
-    )
-    (output / "below-minimum.log").write_text(
-        json.dumps(rejection_command) + "\n" + rejection.stdout + rejection.stderr
-    )
-    assert rejection.returncode != 0 and "requires a different Python" in rejection.stderr, (
-        "candidate must reject Python 3.10 resolution"
-    )
-    manifest["below_minimum"] = {
-        "kind": "pip target-resolution only; no Python 3.10 execution",
-        "target": "3.10",
-        "exit": rejection.returncode,
-    }
+    manifest["below_minimum"] = reject_below_minimum(wheel, output, env, sys.executable)
     forbidden = [str(source)]
     common = subprocess.run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],

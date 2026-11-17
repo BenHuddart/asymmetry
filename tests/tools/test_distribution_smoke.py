@@ -21,6 +21,7 @@ from tools.distribution_smoke import (
     artifact_contract,
     clean_environment,
     installed_probe,
+    reject_below_minimum,
     run_logged,
 )
 
@@ -52,6 +53,7 @@ def artifact(tmp_path: Path) -> tuple[Path, Path, Path]:
     )
     metadata = b"Name: asymmetry\nVersion: 1.0\nRequires-Python: >=3.11\nClassifier: Programming Language :: Python :: 3.11\nSummary: \xce\xbcSR\n"
     members = {
+        "asymmetry-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         "asymmetry-1.0.dist-info/METADATA": metadata,
         "asymmetry-1.0.dist-info/entry_points.txt": b"[console_scripts]\nasymmetry = asymmetry.cli:main\n[gui_scripts]\nasymmetry-gui = asymmetry.gui.app:main\n",
         **{name: b"fixture resource" for name in RESOURCE_PATHS},
@@ -205,3 +207,29 @@ def test_clean_environment_discards_source_and_settings(monkeypatch, tmp_path) -
     env = clean_environment(tmp_path)
     assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & env.keys()
     assert Path(env["HOME"]).is_relative_to(tmp_path)
+
+
+@pytest.mark.parametrize("requires_python", [">=3.11", ">=3.10"])
+def test_bootstrap_pip_checks_only_candidate_wheel_target(
+    artifact, tmp_path, requires_python
+) -> None:
+    _, _, wheel = artifact
+    with zipfile.ZipFile(wheel) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    path = "asymmetry-1.0.dist-info/METADATA"
+    members[path] = members[path].replace(b">=3.11", requires_python.encode())
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    venv = tmp_path / "resolver"
+    subprocess.run([sys.executable, "-I", "-m", "venv", str(venv)], check=True, timeout=30)
+    python = str(venv / "bin/python")
+    env = clean_environment(tmp_path)
+    if requires_python == ">=3.11":
+        report = reject_below_minimum(wheel, tmp_path, env, python)
+        assert report["exit"] != 0
+        assert not list((tmp_path / "below-minimum-download").glob("*.whl"))
+    else:
+        with pytest.raises(AssertionError, match="candidate must reject Python 3.10"):
+            reject_below_minimum(wheel, tmp_path, env, python)
+        assert (tmp_path / "below-minimum-download" / wheel.name).is_file()

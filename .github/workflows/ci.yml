@@ -148,7 +148,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: core-wheel-${{ matrix.python }}
-          path: ${{ runner.temp }}/distribution-smoke
+          path: |
+            ${{ runner.temp }}/distribution-smoke/*.log
+            ${{ runner.temp }}/distribution-smoke/manifest.json
           retention-days: 7
 
   # Single required status check that aggregates the checks + test jobs, so the
