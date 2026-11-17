@@ -139,8 +139,8 @@ class PeriodBaseline:
 class RotatingFrame:
     """One run's rotating frame: setup fields, gain, per-period baselines, provenance.
 
-    Build a new one with :meth:`typed_frequency`; change scalar fields with
-    :meth:`with_values` and a period's baselines with :meth:`with_baseline`,
+    Build a new one with :meth:`~asymmetry.core.transform.rotating_frame.RotatingFrame.typed_frequency`; change scalar fields with
+    :meth:`~asymmetry.core.transform.rotating_frame.RotatingFrame.with_values` and a period's baselines with :meth:`~asymmetry.core.transform.rotating_frame.RotatingFrame.with_baseline`,
     which record where the new values came from.
     """
 

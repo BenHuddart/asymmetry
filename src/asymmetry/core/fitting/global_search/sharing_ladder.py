@@ -628,7 +628,7 @@ def climb_sharing_ladder(
     stage 3 inherits its foothold's. A shared amplitude or total is not a local
     parameter, exempt runs or not, so it has no trace and no trend quality.
 
-    Raises :class:`FitCancelledError` when ``cancel_callback`` returns true
+    Raises :class:`~asymmetry.core.fitting.engine.FitCancelledError` when ``cancel_callback`` returns true
     before a rung, or inside its fit.
     """
     ordered = sorted(

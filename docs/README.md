@@ -18,29 +18,94 @@ Or install with the dev extras:
 pip install -c constraints.txt -e ".[dev]"
 ```
 
-### Build HTML Documentation
+### Gated HTML builds
+
+Run from the repository root:
+
+```bash
+python3 tools/harness.py docs --mode source
+python3 tools/harness.py docs --mode publish
+```
+
+`source` is the contributor default (`docs` without `--mode` also selects it).
+It requires installed documentation dependencies, but no private corpus, native
+comparison programs, network access, warm inventory caches, or screenshot capture.
+Only missing images with exact names in the screenshot scenario registry become
+visible **Optional generated screenshot** notices. Existing captures are preserved.
+This limited output is suitable for reviewing text; it is not ready to publish.
+
+`publish` applies the same defect gate and additionally requires every ordinary
+GUI screenshot under the existing `capture --check-complete` contract. Every
+embedded corpus image must also exist; the established labelled placeholders
+remain permitted when acquired captures are unavailable. A placeholder is not an
+acquired-data capture. The hosted publishing workflow retains its capture,
+`--stubs-missing`, and fallback-disclosure steps. For a local publishing check,
+prepare ordinary assets separately and fill permitted corpus holes with:
+
+```bash
+python3 -m docs.screenshots.capture_corpus --stubs-missing
+python3 tools/harness.py docs --mode publish
+```
+
+Neither mode generates GUI screenshots by default. `--screenshots` explicitly
+requests ordinary capture before the gate and propagates capture failures.
+`--stubs-missing` never overwrites an existing real render. Unknown mode names fail
+before capture or Sphinx starts. Generated HTML is in `docs/_build/html/`.
+
+Both modes check scenario references, use a fresh Sphinx environment (`-E -a`),
+reject Sphinx warnings (`-W --keep-going`), preserve process/extension failure
+exits, and check every output HTML page against the 600 KB budget. Missing
+logos, static images, downloads, unknown generated names, malformed RST,
+ambiguous or broken authored local/API references, and unknown/untyped warnings
+are errors. No warning category or historical warning count is exempted.
+
+### Offline references and API rendering
+
+Both modes set the intersphinx mapping to an empty dictionary before inventory
+loading. They make no inventory requests, even with empty caches. A small exact
+set of external objects remains readable without hyperlinks:
+
+| External scope | Objects without inventory links |
+| --- | --- |
+| NumPy | `numpy.random.Generator`, `numpy.ndarray`, `numpy.typing.NDArray`, `numpy.fft.rfft`, `numpy.linalg.eigvalsh` |
+| SciPy | `scipy.optimize.least_squares` |
+| Python standard library | `enum.Enum`, `abc.ABC`, `pathlib.Path`, `warnings` |
+| Qt | `PySide6.QtWidgets.QWidget`, `PySide6.QtWidgets.QDialog`, `PySide6.QtWidgets.QMainWindow`, `PySide6.QtCore.QSettings` |
+| iminuit | `iminuit` |
+
+The shared policy owns these exact `(domain role, target)` exceptions. New
+external targets require a deliberate documented decision; misspellings and
+internal targets are not covered. The build prints the declared external
+limitations and each page's registered image omissions. Other diagnostics retain
+Sphinx's original locations and messages; Sphinx 7.3 and newer also display warning
+classes. Older supported versions still reject warnings without parsing their text.
+
+Generated Python type annotations are omitted from signatures rather than turned
+into hyperlinks (`autodoc_typehints='none'`). Authored NumPy/Google parameter and
+return descriptions, including their types and units, render as readable fields
+rather than generated type-link lists. Authored cross-reference roles remain strict.
+The gate checks authored references, not the completeness of annotation targets.
+An offline HTML build does not bundle the browser-side MathJax CDN resource.
+
+### Development builds and other formats
+
+`cd docs && make html` runs the source gate. `make publish` runs the publishing
+gate with prepared assets. Direct `sphinx-build` and the other make targets are
+non-gating development builds: they load the same Sphinx policy, but do not promise
+a fresh environment, warning failure exits, or the HTML page-budget check.
 
 ```bash
 cd docs
-make html
-```
-
-The generated HTML will be in `docs/_build/html/`. Open `index.html` in your browser.
-
-### Other Formats
-
-```bash
 make latexpdf    # PDF via LaTeX
 make epub        # EPUB ebook
 make man         # Unix man pages
 ```
 
-### Clean Build
-
-```bash
-make clean
-make html
-```
+The native warning and fresh-environment options are described in the
+[Sphinx build documentation](https://www.sphinx-doc.org/en/master/man/sphinx-build.html);
+[warning control](https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-warning-control)
+and [intersphinx configuration](https://www.sphinx-doc.org/en/master/usage/extensions/intersphinx.html)
+describe the supported diagnostic and inventory mechanisms.
 
 ## Documentation Structure
 
@@ -144,13 +209,14 @@ should be split into subpages or generated differently — that is how the 1.6 M
 ```bash
 python -m docs.screenshots.capture --check-refs   # refs + size budget
 python tools/harness.py structural                # includes the check above
-python tools/harness.py docs                      # Sphinx build + page size budget
+python3 tools/harness.py docs --mode source       # offline source gate + page budget
 pip install -c constraints.txt -e ".[hdf4,hdf5,root]" # screenshot file loaders
-python tools/harness.py docs --screenshots        # full local build
+python3 tools/harness.py docs --mode publish --screenshots # ordinary capture + publishing gate
 ```
 
 A docs-only PR gets the cheap CI smoke; the published site rebuilds (with
-fresh screenshots) on every merge to main that touches `docs/**` or `src/**`.
+fresh screenshots) on merges to main that touch documentation, source, the shared
+gate, or its dependency/workflow configuration.
 
 ## Writing Documentation
 
@@ -227,9 +293,13 @@ python -m http.server 8000
 Then open http://localhost:8000 in your browser.
 
 The site is built and deployed to GitHub Pages on release tags (`v*`) and on
-pushes to `main` that touch `docs/**`, `src/**` or the docs workflow, because
-screenshots are captured from the live GUI and `src/**` changes can alter them.
-PRs that touch `docs/**` get a cheap build-only smoke with no screenshots.
+pushes to `main` that affect docs, source, the shared gate/harness, relevant tooling
+tests, dependency configuration, or the docs workflow. Source changes can alter
+both autodoc output and the captured GUI images.
+PRs touching documentation, source, tooling, tooling tests, dependency configuration,
+or the docs workflow run the source gate without captures or corpus secrets.
+Both CI jobs use the same harness gate; a failed publishing gate prevents artifact
+upload and deployment.
 
 If screenshot capture, completeness, or Sphinx fails, repair the build before rerunning.
 A Pages deployment failure after a successful build is separate: rerun the failed

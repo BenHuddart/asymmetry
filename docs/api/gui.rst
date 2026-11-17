@@ -1,6 +1,11 @@
 GUI components
 ==============
 
+.. py:module:: asymmetry.gui.windows.global_parameter_fit_window
+
+.. py:module:: asymmetry.gui.windows.grouping.profile_bridge
+
+
 .. currentmodule:: asymmetry.gui
 
 The GUI is a PySide6 application organised around a
@@ -104,3 +109,15 @@ Detector schematic
    :members:
    :undoc-members:
    :show-inheritance:
+
+Alc panel
+---------
+
+.. automethod:: asymmetry.gui.panels.alc_panel.ALCScanView.clear
+
+Timing section
+--------------
+
+.. autoclass:: asymmetry.gui.windows.grouping.timing_section.TimingControls
+   :no-members:
+   :no-special-members:

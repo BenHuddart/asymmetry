@@ -27,16 +27,16 @@ The short version
 -----------------
 
 * **Counts in, fraction out.** Anything that forms an asymmetry *from
-  histograms* — :func:`~asymmetry.core.transform.compute_asymmetry`,
-  :func:`~asymmetry.core.transform.binned_fb_asymmetry`,
-  :func:`~asymmetry.core.transform.integrate_asymmetry` — returns a fraction.
+  histograms* — :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
+  :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`,
+  :func:`~asymmetry.core.transform.integral.integrate_asymmetry` — returns a fraction.
 * **Anything that hands you a dataset or a reduction is percent.**
   :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry`,
-  :func:`~asymmetry.core.transform.reduce_grouped_asymmetry`, every loader.
+  :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`, every loader.
 * **Fit amplitudes follow the data.** The engine never rescales, and the
   built-in models seed ``A0`` at ``25`` because they expect percent.
 * **The field-scan / ALC surface is the exception**: a
-  :class:`~asymmetry.core.transform.FieldScan` is fraction-scale, and so are the
+  :class:`~asymmetry.core.transform.integral.FieldScan` is fraction-scale, and so are the
   amplitudes fitted to it.
 
 The binned primitive accepts a
@@ -92,7 +92,7 @@ None of this changes any existing return value. The two result containers that s
 on opposite sides of the divide now *record* their scale —
 ``GroupedAsymmetryReduction.units`` is always ``ASYMMETRY_PERCENT`` and
 ``FieldScan.units`` always ``ASYMMETRY_FRACTION`` for a scan built by
-:func:`~asymmetry.core.transform.build_field_scan` — so downstream code can assert
+:func:`~asymmetry.core.transform.integral.build_field_scan` — so downstream code can assert
 the convention it assumed instead of trusting a comment.
 
 The table
@@ -108,49 +108,49 @@ scale it was given: it is safe on either, and never converts.
    * - Function or attribute
      - Scale
      - Notes
-   * - :func:`~asymmetry.core.transform.compute_asymmetry`
+   * - :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`
      - fraction
      - The textbook primitive; the error is on the same scale.
-   * - :func:`~asymmetry.core.transform.compute_asymmetry_with_count_errors`
+   * - :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry_with_count_errors`
      - fraction
      - As above, with supplied count uncertainties.
-   * - :func:`~asymmetry.core.transform.binned_fb_asymmetry`
+   * - :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`
      - fraction
      - Accepts validated grouped counts; bins counts before forming the ratio.
-   * - :func:`~asymmetry.core.transform.reduce_grouped_asymmetry`
+   * - :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
      - **percent**
      - The one step on the reduction path that applies the ``×100``;
        ``units`` records it.
-   * - :func:`~asymmetry.core.transform.integrate_asymmetry`
+   * - :func:`~asymmetry.core.transform.integral.integrate_asymmetry`
      - fraction
      - Integral (ALC) observable, both reduction methods.
-   * - :func:`~asymmetry.core.transform.integrate_run`
+   * - :func:`~asymmetry.core.transform.integral.integrate_run`
      - fraction
      - Reduces the run's *counts*, so a ``MuonDataset`` argument's own
        percent-scale curve is never involved.
-   * - :func:`~asymmetry.core.transform.integrate_curve`
+   * - :func:`~asymmetry.core.transform.integral.integrate_curve`
      - preserves
      - Averages a curve you supply; percent in, percent out.
-   * - :func:`~asymmetry.core.transform.build_field_scan`,
-       :class:`~asymmetry.core.transform.FieldScan`,
-       :class:`~asymmetry.core.transform.FieldScanPoint`
+   * - :func:`~asymmetry.core.transform.integral.build_field_scan`,
+       :class:`~asymmetry.core.transform.integral.FieldScan`,
+       :class:`~asymmetry.core.transform.integral.FieldScanPoint`
      - fraction
      - ``units`` records it; the ALC parameter models expect this scale.
-   * - :func:`~asymmetry.core.transform.differentiate_scan`
+   * - :func:`~asymmetry.core.transform.integral.differentiate_scan`
      - preserves
      - Dividing by :math:`\Delta x` leaves the asymmetry scale alone.
    * - :func:`~asymmetry.core.transform.rebin`,
        :meth:`~asymmetry.core.data.dataset.MuonDataset.merge_curve_bins`
      - preserves
      - A mean of values with errors in quadrature.
-   * - :func:`~asymmetry.core.transform.rrf_demodulate`,
-       :func:`~asymmetry.core.transform.rrf_demodulate_values`,
-       :class:`~asymmetry.core.transform.RRFCurve`
+   * - :func:`~asymmetry.core.transform.rrf.rrf_demodulate`,
+       :func:`~asymmetry.core.transform.rrf.rrf_demodulate_values`,
+       :class:`~asymmetry.core.transform.rrf.RRFCurve`
      - preserves
      - Demodulation is linear, so the components carry the input's scale.
-   * - :func:`~asymmetry.core.transform.estimate_alpha`,
-       :func:`~asymmetry.core.transform.estimate_alpha_detailed`,
-       :func:`~asymmetry.core.transform.corrected_grouped_counts`, the background
+   * - :func:`~asymmetry.core.transform.asymmetry.estimate_alpha`,
+       :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed`,
+       :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts`, the background
        and deadtime corrections
      - n/a
      - Count domain, or dimensionless ratios — no asymmetry scale.
@@ -174,16 +174,16 @@ scale it was given: it is safe on either, and never converts.
        :attr:`~asymmetry.core.data.dataset.MuonDataset.error_fraction`
      - fraction
      - As above, on the other scale.
-   * - :meth:`~asymmetry.core.fitting.FitEngine.fit`,
-       :meth:`~asymmetry.core.fitting.FitEngine.global_fit`
+   * - :meth:`~asymmetry.core.fitting.engine.FitEngine.fit`,
+       :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit`
      - **percent**
      - Take a ``MuonDataset``, so percent by its convention. A global fit's
        datasets must all be on one scale.
-   * - :meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`
+   * - :meth:`~asymmetry.core.fitting.engine.FitEngine.fit_arrays`
      - **percent** expected
      - Takes bare arrays and rescales nothing, so the scale is the caller's to
        state; percent matches the built-in models' seeds.
-   * - :class:`~asymmetry.core.fitting.FitResult` — ``residuals``, and the
+   * - :class:`~asymmetry.core.fitting.results.FitResult` — ``residuals``, and the
        amplitude entries of ``parameters`` / ``uncertainties``
      - follows the data
      - Percent for a normal time-domain fit. Fit fraction-scale arrays and the
@@ -199,9 +199,9 @@ scale it was given: it is safe on either, and never converts.
      - **percent** parameters
      - The data is raw counts; the physics amplitude is still percent, divided
        down internally.
-   * - :func:`~asymmetry.core.fitting.fit_mu_relaxation_series`,
+   * - :func:`~asymmetry.core.fitting.mu_kinetics.fit_mu_relaxation_series`,
        ``MuRelaxationSeriesResult.shared_amplitude``,
-       :func:`~asymmetry.core.fitting.mu_relaxation_from_amplitude`
+       :func:`~asymmetry.core.fitting.mu_kinetics.mu_relaxation_from_amplitude`
      - **percent**
      - Including ``reference_amplitude``.
    * - :func:`~asymmetry.core.fitting.field_scan.fit_scan_model`,
@@ -222,13 +222,13 @@ When it bites, and how it is caught
 
 The two scales meet most often at the boundary between a custom reduction and a
 fit. Forming an asymmetry from a non-default detector pairing gives a fraction;
-handing it to :meth:`~asymmetry.core.fitting.FitEngine.fit_arrays` with the
+handing it to :meth:`~asymmetry.core.fitting.engine.FitEngine.fit_arrays` with the
 models' default seeds fits percent-scale amplitudes against it.
 
 Asymmetry guards that specific case at run time. When the data and the seeded
 model curve straddle the fraction/percent boundary — one peak at or below 1.5,
 a heuristic fraction-scale region, and the other above that region — the engine
-emits an :class:`~asymmetry.core.fitting.AsymmetryScaleWarning` before minimising.
+emits an :class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning` before minimising.
 This magnitude heuristic does not establish a physical range or prove a scale
 mismatch. It is advisory only: it never raises and never changes the fit, and the message is
 carried on ``FitResult.warnings`` and shown in the GUI fit panel's result box (see

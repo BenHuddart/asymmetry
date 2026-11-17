@@ -100,8 +100,8 @@ _RG_LABEL_INDEX: dict[str, int] = {
 def period_count(data: MuonDataset | list[MuonDataset] | Run) -> int:
     """Return the number of periods reachable from ``data``.
 
-    Accepts a loaded :class:`MuonDataset`, a ``list`` of datasets (as returned
-    for 3+ period files), or a :class:`Run`.
+    Accepts a loaded :class:`~asymmetry.core.data.dataset.MuonDataset`, a ``list`` of datasets (as returned
+    for 3+ period files), or a :class:`~asymmetry.core.data.dataset.Run`.
     """
     if isinstance(data, list):
         return len(data)
@@ -139,7 +139,7 @@ def resolve_period_index(period: int | str | PeriodMode, count: int) -> int:
     """Translate a user-supplied period selector to a 0-based index.
 
     ``period`` may be a 1-based integer period number, a numeric string, or —
-    when ``count == 2`` — a ``"red"``/``"green"`` label (or :class:`PeriodMode`
+    when ``count == 2`` — a ``"red"``/``"green"`` label (or :class:`~asymmetry.core.utils.constants.PeriodMode`
     member). Raises :class:`ValueError` for unknown labels or out-of-range
     numbers and :class:`TypeError` for unsupported types.
     """
@@ -175,12 +175,12 @@ def select_period(
     data: MuonDataset | list[MuonDataset],
     period: int | str | PeriodMode,
 ) -> MuonDataset:
-    """Return a reduced :class:`MuonDataset` for a single period.
+    """Return a reduced :class:`~asymmetry.core.data.dataset.MuonDataset` for a single period.
 
     Parameters
     ----------
     data
-        A loaded run: either a single :class:`MuonDataset` (single-period file,
+        A loaded run: either a single :class:`~asymmetry.core.data.dataset.MuonDataset` (single-period file,
         or a combined two-period file) or the ``list`` returned for 3+ period
         files.
     period

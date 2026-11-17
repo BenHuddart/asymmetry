@@ -48,7 +48,7 @@ class GlobalFitStudy:
     module never generates one.
 
     ``input_digest`` is a caller-computed hash of the snapshot ``groups``
-    arrays (see :func:`compute_group_input_digest`); it lets a GUI detect that
+    arrays (see :func:`~asymmetry.core.representation.global_fit_study.compute_group_input_digest`); it lets a GUI detect that
     a study's inputs have drifted from the live trend data ("stale") without
     this dataclass storing a ``stale`` flag itself — staleness is a runtime
     property recomputed by comparing the stored digest against a freshly

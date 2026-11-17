@@ -59,6 +59,12 @@ def _write_stub_png(path: Path, name: str) -> None:
         fill=STUB_TEXT_COLOUR,
         anchor="mm",
     )
+    draw.text(
+        (width / 2, height / 2 + 24),
+        "Placeholder: capture unavailable",
+        fill=STUB_TEXT_COLOUR,
+        anchor="mm",
+    )
     image.save(str(path), "PNG")
 
 
@@ -91,7 +97,9 @@ def _module_of(scenario) -> str:
 CORPUS_SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios" / "corpus"
 
 
-def _static_scenarios_by_module() -> dict[str, list[str]]:
+def _static_scenarios_by_module(
+    scenarios_dir: Path = CORPUS_SCENARIOS_DIR,
+) -> dict[str, list[str]]:
     """Map each corpus scenario module to its declared scenario names.
 
     Static AST scan (same approach as ``capture.scenario_names_from_source``,
@@ -102,7 +110,7 @@ def _static_scenarios_by_module() -> dict[str, list[str]]:
     import ast
 
     by_module: dict[str, list[str]] = {}
-    for path in sorted(CORPUS_SCENARIOS_DIR.glob("*.py")):
+    for path in sorted(scenarios_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue
         names: list[str] = []

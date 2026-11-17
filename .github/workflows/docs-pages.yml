@@ -12,14 +12,29 @@ on:
       - main
     paths:
       - "docs/**"
+      - "tools/harness.py"
+      - "tools/docs_*.py"
+      - "tests/tools/test_docs*.py"
+      - "tests/tools/test_harness*.py"
+      - "tests/tools/test_release_workflows.py"
       - "src/**"
+      - "constraints.txt"
+      - "pyproject.toml"
       - ".github/workflows/docs-pages.yml"
   # On pull requests we run a cheap build-only smoke (no screenshots, no deploy)
   # so a Sphinx-breaking docs change is still caught before merge. Scoped to
-  # docs-affecting paths so ordinary code PRs don't pay any docs cost.
+  # docs-affecting paths, including source because autodoc parses its docstrings.
   pull_request:
     paths:
       - "docs/**"
+      - "tools/harness.py"
+      - "tools/docs_*.py"
+      - "tests/tools/test_docs*.py"
+      - "tests/tools/test_harness*.py"
+      - "tests/tools/test_release_workflows.py"
+      - "src/**"
+      - "constraints.txt"
+      - "pyproject.toml"
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
 
@@ -39,7 +54,7 @@ concurrency:
 
 jobs:
   # Cheap PR gate: confirm the docs still build. No screenshot capture (the slow,
-  # offscreen-Qt part) and no Pages artifact/deploy — just `sphinx-build`.
+  # offscreen-Qt part) and no Pages artifact/deploy — the shared source documentation gate.
   docs-smoke:
     name: Docs build smoke (PR)
     if: github.event_name == 'pull_request'
@@ -72,17 +87,15 @@ jobs:
         # The PR smoke never has the muon-school corpus; labelled placeholder
         # PNGs stand in for the corpus-driven renders so pages that embed them
         # build image-complete (PIL only — no Qt, no corpus, seconds).
-        run: python -m docs.screenshots.capture_corpus --stubs
+        run: python -m docs.screenshots.capture_corpus --stubs-missing
 
       - name: Build HTML docs (no screenshots)
-        # Screenshots are not generated here; pages that embed generated images
-        # tolerate their absence. -W would turn missing-image warnings into
-        # errors, so we keep the smoke as a plain build (broken rST/refs still
-        # fail the build).
-        run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
+        # Source mode permits only registered optional image omissions and uses
+        # no remote inventories; all remaining Sphinx warnings fail the gate.
+        run: python3 tools/harness.py docs --mode source
 
   # Full build: regenerate GUI screenshots, build HTML, and (below) deploy to
-  # Pages. Runs on a version tag push, a docs/src push to main, or a manual
+  # Pages. Runs on a version tag, a docs-affecting push to main, or a manual
   # dispatch.
   build-docs:
     name: Build Sphinx docs
@@ -131,8 +144,9 @@ jobs:
       - name: Download muon-school corpus
         # The corpus lives as a release asset on a separate (private) repo.
         # CORPUS_REPO_TOKEN is a fine-grained PAT with read access to that
-        # repo's releases; when it is absent (e.g. a fork), the step is
-        # skipped and the stubs fallback below keeps the build green.
+        # repo's releases; when it is absent (e.g. a fork), the step
+        # returns without downloading; permitted corpus placeholders below fill
+        # missing renders. A download failure still fails the job.
         if: steps.corpus-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ secrets.CORPUS_REPO_TOKEN }}
@@ -168,7 +182,7 @@ jobs:
         # inside the in-process watchdog; a wedged module loses only its own
         # renders (the stubs pass below fills any hole). Skipped modules are
         # visible in the log. Falls back to stubs-only when the corpus was not
-        # provisioned (no token / failed download).
+        # provisioned because no token was available.
         timeout-minutes: 45
         env:
           QT_QPA_PLATFORM: offscreen
@@ -201,24 +215,10 @@ jobs:
           fi
 
       - name: Verify GUI screenshot completeness
-        # Deliberately NOT continue-on-error: both capture steps above tolerate
-        # failure (continue-on-error / step timeout) so a single wedged or
-        # crashing scenario never hard-blocks the docs build — which means
-        # their own exit codes are never checked, and the Sphinx build below
-        # only emits a WARNING for a missing image, not an error. That gap is
-        # exactly how a modal-dialog hang in "Generate GUI screenshots" (fixed
-        # in a sibling PR, not here) shipped ~50 broken figure references to
-        # the published site for two weeks, unnoticed. This step is the one
-        # place that turns "capture was incomplete" into a failed job: a
-        # failed deploy leaves the previous, image-complete Pages build live,
-        # which beats publishing a site with 404 images. Corpus screenshots
-        # are intentionally out of scope — "Generate corpus screenshots"
-        # above already runs `capture_corpus.py --stubs-missing`, which
-        # guarantees a PNG for every registered corpus scenario (a stub
-        # placeholder when the real render failed or the corpus wasn't
-        # provisioned), so a corpus render can never be *missing* by this
-        # point, only stubbed — and that step already surfaces stubbing via
-        # its own ::warning:: + step summary.
+        # Capture steps tolerate individual failures. Ordinary GUI assets must
+        # be complete before building or uploading; corpus assets may use the
+        # labelled fallback written above. The shared publishing gate repeats
+        # this same static completeness contract for local callers.
         run: |
           if ! OUTPUT=$(python -m docs.screenshots.capture --check-complete --out docs/_generated/screenshots 2>&1); then
             echo "$OUTPUT"
@@ -229,7 +229,7 @@ jobs:
           echo "$OUTPUT"
 
       - name: Build HTML docs
-        run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
+        run: python3 tools/harness.py docs --mode publish
 
       - name: Disable Jekyll processing
         run: touch docs/_build/html/.nojekyll

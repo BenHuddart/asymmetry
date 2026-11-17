@@ -332,7 +332,7 @@ def fit_assigned_angular_curves(
     the runners-up whose assignment differs from the winner (and each other) and
     whose ``total_chi_squared`` lies within ``alternative_delta_chi2`` of the
     winner are exposed, χ²-ordered and capped at ``keep_alternatives``, on
-    :attr:`AngularAssignmentResult.alternatives` (canonicalised like the winner).
+    :attr:`asymmetry.core.fitting.angular_assignment.AngularAssignmentResult.alternatives` (canonicalised like the winner).
     The default (``keep_alternatives = 0``) leaves behaviour unchanged.
     """
     if model_name not in ANGULAR_MODELS:

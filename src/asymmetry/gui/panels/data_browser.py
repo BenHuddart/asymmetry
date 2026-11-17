@@ -174,8 +174,7 @@ def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: fl
     """Return True when finite values vary only within tolerance.
 
     Uses a combined absolute/relative tolerance so low-value groups (e.g.
-    0.1 K) and higher-value groups (e.g. 20 K with small drift) are both
-    handled robustly.
+    0.1 K) and higher-value groups (e.g. 20 K with small drift) are both handled robustly.
     """
     if not values:
         return False
@@ -2926,8 +2925,8 @@ class DataBrowserPanel(QWidget):
         """The ``field``/``temperature`` the browser currently *displays* for a run.
 
         Honours the log toggles and per-dataset overrides — the same resolution
-        as the fixed B/T columns (:meth:`_field_for_display`,
-        :meth:`_temperature_for_display`) — so a batch trend and its CSV export
+        as the fixed B/T columns (``asymmetry.gui.panels.data_browser.DataBrowserPanel._field_for_display``,
+        ``asymmetry.gui.panels.data_browser.DataBrowserPanel._temperature_for_display``) — so a batch trend and its CSV export
         plot each run at the abscissa the user sees in the table, not the parked
         header setpoint. When the browser shows a logged value it replaces the
         scalar; an axis with no recorded value is ``None`` (off that axis), never

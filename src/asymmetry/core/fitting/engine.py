@@ -164,8 +164,7 @@ def _warn_on_fixed_frequency_far_from_field(
     metadata, and zero-/stray-field runs whose reference frequency falls below
     :data:`_MIN_REFERENCE_MHZ` (which also covers genuine ZF/LF relaxation models,
     as those carry no frequency parameter at all). Advisory only: it never raises
-    and never blocks the fit; any failure is swallowed so the guard cannot change
-    fit outcomes.
+    and never blocks the fit; any failure is swallowed so the guard cannot change fit outcomes.
     """
     try:
         from asymmetry.core.fourier.units import gauss_to_mhz
@@ -208,7 +207,7 @@ class FitCancelledError(RuntimeError):
 
     Mirrors :class:`~asymmetry.core.maxent.engine.MaxEntCancelledError`. A cancelled
     fit records **no** result: the partially-minimised state is discarded entirely,
-    so callers must let this propagate and not pack a :class:`FitResult` from it.
+    so callers must let this propagate and not pack a :class:`~asymmetry.core.fitting.engine.FitResult` from it.
     """
 
 
@@ -221,7 +220,7 @@ _CANCEL_POLL_INTERVAL = 8
 
 
 def _make_cancel_guard(cancel_callback: Callable[[], bool] | None) -> Callable[[], None]:
-    """Return a guard that raises :class:`FitCancelledError` when cancellation is set.
+    """Return a guard that raises :class:`~asymmetry.core.fitting.engine.FitCancelledError` when cancellation is set.
 
     The returned callable is invoked inside the cost function; it polls
     ``cancel_callback`` every :data:`_CANCEL_POLL_INTERVAL` calls (in-fit abort
@@ -1025,7 +1024,7 @@ _LEAST_SQUARES_GTOL = 1e-8
 class _CoupledMinimizationError(RuntimeError):
     """The coupled minimiser itself raised; the caller turns this into failed results.
 
-    Kept distinct from :class:`FitCancelledError` (which must propagate untouched,
+    Kept distinct from :class:`~asymmetry.core.fitting.engine.FitCancelledError` (which must propagate untouched,
     so a cancelled run records nothing) and from a programming error in problem
     construction (which should surface as itself).
     """
@@ -1577,7 +1576,7 @@ class FitEngine:
             convention, so parameter seeds must be percent-scale too (the
             built-in models default ``A0`` to ``25``); a fraction-scale seed
             against percent data converges to the wrong minimum and trips
-            :class:`AsymmetryScaleWarning`. See "Asymmetry units across the API"
+            :class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning`. See "Asymmetry units across the API"
             in the docs.
         model_fn : callable
             ``f(t, **params) -> array``.
@@ -1589,11 +1588,11 @@ class FitEngine:
             Minimization method (``"migrad"`` for gradient-based,
             ``"simplex"`` for Nelder-Mead).
         cost_factory : CostFactory, optional
-            Gaussian least squares by default. :data:`POISSON_COST` requires raw
+            Gaussian least squares by default. :data:`~asymmetry.core.fitting.engine.POISSON_COST` requires raw
             counts and an expected-count model; its reported statistic is Cash.
         migrad_kwargs : dict, optional
             Forwarded to ``m.migrad``/``m.simplex`` via the shared
-            :func:`drive_minuit` seam (e.g. ``ncall`` to cap iterations for a
+            :func:`~asymmetry.core.fitting.engine.drive_minuit` seam (e.g. ``ncall`` to cap iterations for a
             cheap screening fit). ``None`` keeps the historical unbounded drive.
         frequency_offsets : dict[str, float], optional
             Rotating-reference-frame offsets ``{param: ν₀}`` resolved by
@@ -1666,12 +1665,12 @@ class FitEngine:
         share the caller's scale; built-in μSR model seeds use percent (0–100).
         Arrays must be one-dimensional, non-empty and equally sized, with finite
         times/values and finite positive errors. ``t_min`` and ``t_max`` select
-        an inclusive fit window. Invalid observations raise :class:`FitInputError`.
+        an inclusive fit window. Invalid observations raise :class:`~asymmetry.core.fitting.likelihood.FitInputError`.
 
         ``run_number`` supplies error-message context. Bare arrays carry no
         field metadata, so the fixed-frequency advisory is omitted. All remaining
         options and returned diagnostics follow :meth:`fit`. Poisson fits take
-        :class:`PoissonCounts` through :meth:`fit_observations`.
+        :class:`~asymmetry.core.fitting.likelihood.PoissonCounts` through :meth:`fit_observations`.
         """
         if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
             raise FitInputError("fit_arrays requires Gaussian observations; use PoissonCounts")
@@ -2155,7 +2154,7 @@ class FitEngine:
             :func:`scipy.optimize.least_squares` (bounded trust-region reflective)
             over the *residual* vector rather than to Minuit over a scalar cost,
             declaring the problem's block-sparse Jacobian pattern
-            (:func:`_coupled_jacobian_sparsity`). The coupled Jacobian is
+            (``asymmetry.core.fitting.engine._coupled_jacobian_sparsity``). The coupled Jacobian is
             arrow-shaped — every residual depends on the globals and on exactly
             one run's locals — so a finite-difference Jacobian costs about
             ``n_global + n_local`` residual evaluations rather than one per
@@ -2484,7 +2483,7 @@ class FitEngine:
         assembles — the same free globals, grouped/per-run locals, limits and
         per-dataset pinning as the joint Minuit path — but over the concatenated
         residual vector ``(y − model)/σ`` with the arrow-shaped Jacobian pattern
-        declared (:func:`_coupled_jacobian_sparsity`). Results are packed per run
+        declared (``asymmetry.core.fitting.engine._coupled_jacobian_sparsity``). Results are packed per run
         by the same packer the joint path uses, so the two are interchangeable to
         every caller. See :meth:`global_fit`'s ``strategy`` section for what the
         Minuit-only controls mean here.
@@ -2521,7 +2520,7 @@ class FitEngine:
         so propagates the constraint into every uncertainty.
 
         Each block brings its own model, global/local partition, fit window and
-        seeds; :class:`SharedColumn` names the one fitted column two or more of
+        seeds; :class:`~asymmetry.core.fitting.engine.SharedColumn` names the one fitted column two or more of
         them resolve a parameter from. A block that *pins* a shared member on a
         given dataset uses its own pinned value there, exactly as a global fit
         does for a metadata-pinned global — the constraint never overrides a
@@ -2533,7 +2532,7 @@ class FitEngine:
         the whole vector). ``"profiled"`` has no joint counterpart — it profiles
         *the* set of globals over datasets that all share one model — and raises.
 
-        Raises :class:`FitCancelledError` through ``cancel_callback`` exactly as
+        Raises :class:`~asymmetry.core.fitting.engine.FitCancelledError` through ``cancel_callback`` exactly as
         :meth:`global_fit` does, so a cancelled joint run records nothing.
         """
 

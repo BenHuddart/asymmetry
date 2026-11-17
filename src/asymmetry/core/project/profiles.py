@@ -191,8 +191,7 @@ def _sanitize_beta(value: Any) -> float:
     """Lenient beta read: unparseable, non-finite or non-positive → 1.0.
 
     Mirrors the clamp ``group_forward_backward`` applies when reading the
-    grouping payload, so a degenerate stored value can never re-enter the
-    reduction through a profile.
+    grouping payload, so a degenerate stored value can never re-enter the reduction through a profile.
     """
     beta = _as_float(value, 1.0)
     if not math.isfinite(beta) or beta <= 0.0:
@@ -767,7 +766,7 @@ class GroupingProfile:
 
     Holds only the *shareable* settings (see the module docstring's
     classification table). It is applied to a run via
-    :func:`resolve_effective_grouping`, which merges these settings with the
+    :func:`~asymmetry.core.project.profiles.resolve_effective_grouping`, which merges these settings with the
     run's file-derived facts to produce a full ``run.grouping`` payload.
     The binning spec records base bins (merge=1); CLI and display merges are
     applied to those bins as separate operations.
@@ -1072,7 +1071,7 @@ def _beta_policy_from_payload(payload: dict[str, Any]) -> BetaPolicy:
     two v1 estimator method ids (``count_fit``, ``single_histogram``) and no
     legacy method vocabulary to filter out.
 
-    Also used to reconstruct ``beta_policy`` from a :class:`GroupingProfile`'s
+    Also used to reconstruct ``beta_policy`` from a :class:`~asymmetry.core.project.profiles.GroupingProfile`'s
     own serialized dict (:meth:`GroupingProfile.from_dict`) — the profile-dict
     shape is identical to the grouping-payload shape for these keys.
     """

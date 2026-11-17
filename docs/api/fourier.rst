@@ -1,6 +1,11 @@
 Fourier analysis
 ================
 
+.. py:module:: asymmetry.core.fourier
+
+.. py:module:: asymmetry.core.maxent
+
+
 .. currentmodule:: asymmetry.core.fourier
 
 The Fourier subsystem exposes :mod:`asymmetry.core.fourier.fft` for
@@ -98,7 +103,7 @@ retained bins before returning a dataset. Errors remain conditional on the
 supplied response and existing estimator; no response uncertainty is added.
 
 Internal diagnostic observations
--------------------------------
+--------------------------------
 
 These Qt-free helpers preserve uniform curves or prepare fixed native count
 bins over a captured nonuniform observation's retained native support. They do
@@ -106,3 +111,35 @@ not change the fitted observation or the direct FFT sampling requirements.
 
 .. automodule:: asymmetry.core.fourier.diagnostic
    :members: DiagnosticObservation, prepare_diagnostic_observation
+
+Units
+-----
+
+.. autofunction:: asymmetry.core.fourier.units.gauss_to_mhz
+
+.. py:module:: asymmetry.core.fourier.units
+
+Engine
+------
+
+.. autoclass:: asymmetry.core.maxent.engine.MaxEntConfig
+   :no-members:
+   :no-special-members:
+
+.. autoclass:: asymmetry.core.maxent.engine.MaxEntInput
+   :no-members:
+   :no-special-members:
+
+.. autoclass:: asymmetry.core.maxent.engine.MaxEntResult
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.maxent.engine.maxent_from_counts
+
+.. autofunction:: asymmetry.core.maxent.engine.run_cycles
+
+.. autofunction:: asymmetry.core.maxent.engine.maxent
+
+.. autoclass:: asymmetry.core.maxent.engine.MaxEntCancelledError
+   :no-members:
+   :no-special-members:

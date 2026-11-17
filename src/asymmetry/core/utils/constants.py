@@ -35,7 +35,7 @@ class PeriodMode(StrEnum):
 
 #: Allowed ordering keys for run series and field scans — the per-run variable
 #: an x-axis is sorted by. Shared by :class:`asymmetry.core.representation.series.FitSeries`
-#: and :func:`asymmetry.core.transform.build_field_scan` so the two cannot drift.
+#: and :func:`asymmetry.core.transform.integral.build_field_scan` so the two cannot drift.
 ORDER_KEYS = ("field", "temperature", "run")
 
 

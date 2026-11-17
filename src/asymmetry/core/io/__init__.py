@@ -42,7 +42,7 @@ def load(
     checkpoint=None,
     progress=None,
 ) -> LoadResult:
-    """Load a μSR data file and return a :class:`MuonDataset`.
+    """Load a μSR data file and return a :class:`~asymmetry.core.data.dataset.MuonDataset`.
 
     Parameters
     ----------
@@ -53,10 +53,10 @@ def load(
         is auto-detected from the file extension.
     period : int or str or PeriodMode, optional
         For period-mode (multi-period) files, select a single period and
-        return just that :class:`MuonDataset`. Accepts a 1-based period number
+        return just that :class:`~asymmetry.core.data.dataset.MuonDataset`. Accepts a 1-based period number
         or, for two-period files, a ``"red"``/``"green"`` label. When *None*
         (default) the historical behaviour is preserved: single/two-period
-        files return one :class:`MuonDataset` and 3+ period files a ``list``.
+        files return one :class:`~asymmetry.core.data.dataset.MuonDataset` and 3+ period files a ``list``.
         See :mod:`asymmetry.core.io.periods`.
 
     checkpoint : callable, optional

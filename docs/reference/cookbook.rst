@@ -24,7 +24,7 @@ workflow and skill built on this same API, with no Python to write.
      ``ExponentialRelaxation`` (those are the standalone names in
      :data:`~asymmetry.core.fitting.models.MODELS`). The parser now raises a
      pointing error if you mix them up — see :ref:`components-vs-models`.
-   * **MaxEnt wants a** :class:`~asymmetry.core.data.Run`. Pass ``ds.run``, not
+   * **MaxEnt wants a** :class:`~asymmetry.core.data.dataset.Run`. Pass ``ds.run``, not
      the :class:`~asymmetry.core.data.dataset.MuonDataset`.
    * **Seed parameters by the model's own** ``param_names``. A composite mangles
      names (the first amplitude becomes ``A_1``, the background ``A_bg``); call
@@ -173,7 +173,7 @@ calibration compatibility, and layout validation.
 Recompute the asymmetry with a custom α
 ---------------------------------------
 
-:func:`~asymmetry.core.transform.compute_asymmetry` is the one knob — pass any
+:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry` is the one knob — pass any
 ``alpha`` to re-form ``(asymmetry, error)`` from the same grouped counts:
 
 .. code-block:: python
@@ -223,7 +223,7 @@ MaxEnt spectrum
 ---------------
 
 MaxEnt is a grouped raw-count algorithm — hand it ``ds.run``, not the dataset,
-and construct :class:`~asymmetry.core.maxent.MaxEntConfig` with **keyword**
+and construct :class:`~asymmetry.core.maxent.engine.MaxEntConfig` with **keyword**
 arguments (its first positional field is ``n_spectrum_points``):
 
 .. code-block:: python
@@ -248,7 +248,7 @@ see :ref:`maxent-gpu-acceleration`.
 Field scan with a period filter
 -------------------------------
 
-:func:`~asymmetry.core.transform.build_field_scan` reduces a series of runs to a
+:func:`~asymmetry.core.transform.integral.build_field_scan` reduces a series of runs to a
 sorted scan. Select a period *upstream* with
 :func:`~asymmetry.core.io.periods.select_period` for multi-period files, or pass
 a ``filter`` predicate to keep one subset when the periods are separate runs:
@@ -339,7 +339,7 @@ Asymmetry-domain global (shared-parameter) fit
 
 Fit one model across many asymmetry datasets, sharing some parameters globally
 and keeping others local, with
-:func:`~asymmetry.core.fitting.fit_global`:
+:func:`~asymmetry.core.fitting.asymmetry_global.fit_global`:
 
 .. code-block:: python
 
@@ -400,8 +400,8 @@ RF-resonance fit (muon–proton)
 
 The ``RFResonanceMuP`` parameter-domain model fits a field-swept RF resonance
 (two Lorentzians at the exact-diagonalisation resonance fields). Reduce the RF
-observable to a :class:`~asymmetry.core.transform.FieldScan`, then fit it with
-:func:`~asymmetry.core.fitting.fit_scan_model`:
+observable to a :class:`~asymmetry.core.transform.integral.FieldScan`, then fit it with
+:func:`~asymmetry.core.fitting.field_scan.fit_scan_model`:
 
 .. code-block:: python
 
@@ -423,7 +423,7 @@ Penetration depth (incl. Brandt vortex lattice)
 -----------------------------------------------
 
 Superconducting depolarisation-rate models live in
-:data:`~asymmetry.core.fitting.PARAMETER_MODEL_COMPONENTS` (``SC_SWave``,
+:data:`~asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` (``SC_SWave``,
 ``SC_DWave``, ``SC_TwoGap_SS``, the field-dependent ``SC_Brandt_VortexLattice``
 / ``SC_Brandt_VortexLattice_Powder``, …). Fit a σ(B) or σ(T) trend with
 :func:`~asymmetry.core.fitting.parameter_models.fit_parameter_model`:
@@ -485,7 +485,7 @@ real BiSCCO run). Let the frequency float:
 
 If you do fix ``frequency`` and the seed sits more than ~2% from
 :math:`\gamma_\mu B` implied by the run's ``field`` metadata, the engine emits a
-:class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` pointing you
+:class:`~asymmetry.core.fitting.engine.FixedFrequencyFieldMismatchWarning` pointing you
 back here. The guard stays silent for free frequencies and for zero-/low-field
 runs (where :math:`\gamma_\mu B` is not the relevant line). The message is carried
 on ``result.warnings`` and, **in the GUI, shown in the fit panel's result box**
@@ -522,7 +522,7 @@ to match the data you are fitting:
 
 When the seeded model curve and the data straddle the fraction/percent boundary
 (one peak ``≤ 1.5``, the other clearly percent) the engine emits an
-:class:`~asymmetry.core.fitting.AsymmetryScaleWarning`. Like the fixed-frequency
+:class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning`. Like the fixed-frequency
 guard it is advisory only — it never raises or changes the fit — and its message
 is carried on ``result.warnings`` and **surfaced in the GUI fit panel's result
 box** (see :ref:`fit-advisory-warnings`). Use
@@ -542,8 +542,8 @@ Fit a curve that is not a dataset's reduction
 
 A custom detector pairing, a background-corrected export, or any other
 :math:`(t, A, \sigma)` triple goes straight into
-:meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`, which shares its whole
-implementation with :meth:`~asymmetry.core.fitting.FitEngine.fit` and takes the
+:meth:`~asymmetry.core.fitting.engine.FitEngine.fit_arrays`, which shares its whole
+implementation with :meth:`~asymmetry.core.fitting.engine.FitEngine.fit` and takes the
 same keyword arguments:
 
 .. code-block:: python
@@ -595,5 +595,5 @@ or frequency) with the same
 
 ``parameter_set_for_model`` (also exported from
 :mod:`asymmetry.core.fitting`) returns a default-seeded
-:class:`~asymmetry.core.fitting.ParameterSet` for any parameter model. See
+:class:`~asymmetry.core.fitting.parameters.ParameterSet` for any parameter model. See
 :doc:`parameter_trending` and :doc:`diffusion_ballistic_lf`.

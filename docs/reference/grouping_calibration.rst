@@ -261,12 +261,12 @@ pieces live in a few modules; this section is the map.
 Where each function lives
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* :func:`~asymmetry.core.transform.estimate_alpha` /
-  :func:`~asymmetry.core.transform.estimate_alpha_detailed`
+* :func:`~asymmetry.core.transform.asymmetry.estimate_alpha` /
+  :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed`
   (``asymmetry.core.transform``) — estimate :math:`\alpha` from grouped counts.
   The simple form is a count-ratio (:math:`\sum F / \sum B`, Mantid
   ``AlphaCalc``); the **detailed** form (``method="diamagnetic"`` by default)
-  returns an :class:`~asymmetry.core.transform.AlphaEstimate` and is the one
+  returns an :class:`~asymmetry.core.transform.asymmetry.AlphaEstimate` and is the one
   to use for the diamagnetic (TF balance) method. Diamagnetic and General
   return no added uncertainty; the ratio reports first-order propagation.
   The simple form raises ``CorrectionUnavailableError`` for empty inputs,
@@ -276,7 +276,7 @@ Where each function lives
   ``asymmetry.core.transform``) — sums the listed detector histograms into one
   grouped counts array. ``group_indices`` are **0-based** indices into the
   run's histogram list.
-* :func:`~asymmetry.core.transform.compute_asymmetry`
+* :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`
   (``asymmetry.core.transform``) — the standard fixed-width pair asymmetry
   :math:`(F - \alpha B)/(F + \alpha B)` with a chosen :math:`\alpha`; returns
   ``(asymmetry, error)``.
@@ -393,7 +393,7 @@ Shared calibration controls
 
 
 Fixed supplied TF calibration response
--------------------------------------
+--------------------------------------
 
 The shared TF calibration section offers **Time response**, default **Off**.
 **Fixed double pulse** consumes the supplied **Pulse separation** in µs for

@@ -368,19 +368,19 @@ Fitting a scan from the API: single *and* multiple resonances
 
 The GUI peak fitter above fits centred Gaussian/Lorentzian peaks on a
 baseline-corrected scan. The same scan can also be fit programmatically with
-:func:`~asymmetry.core.fitting.fit_scan_model`, which fits a model *and* its
+:func:`~asymmetry.core.fitting.field_scan.fit_scan_model`, which fits a model *and* its
 background to the raw scan in a single call. The ``model`` argument is flexible::
 
    fit_scan_model(scan, model, *, parameters=None, initial=None,
                   x_min=None, x_max=None, method="migrad")
 
 * ``model`` accepts a ``str``, a ``list[str]``, or a
-  :class:`~asymmetry.core.fitting.ParameterCompositeModel` — so it is **not**
+  :class:`~asymmetry.core.fitting.parameter_models.ParameterCompositeModel` — so it is **not**
   limited to one resonance. Several resonances plus a polynomial background can
   be fit *simultaneously*; fitting overlapping peaks one at a time is neither
   necessary nor reliable.
 * ``initial`` is an override dict (``{name: value}``) layered on the model's
-  defaults; ``parameters`` is a full :class:`~asymmetry.core.fitting.ParameterSet`.
+  defaults; ``parameters`` is a full :class:`~asymmetry.core.fitting.parameters.ParameterSet`.
   The two are mutually exclusive — pass one or the other, not both.
 
 The ``integral-scan --baseline`` CLI workflow uses the same propagation. Its
@@ -578,7 +578,7 @@ constants are biased. Two cases are common:
   reference runs (for example a 100 G α-calibration) repeated through the sweep;
   they sit at a different asymmetry level and pollute the scan.
 
-:func:`~asymmetry.core.transform.build_field_scan` takes a ``filter`` predicate
+:func:`~asymmetry.core.transform.integral.build_field_scan` takes a ``filter`` predicate
 ``run -> bool`` for exactly this. It is called with each resolved run before
 reduction; runs for which it returns false are dropped and listed in
 ``scan.excluded`` (reason ``"excluded by filter"``) so nothing is silently lost.
@@ -609,7 +609,7 @@ It has first-class support on the integral-scan path:
 
 The same two steps from a script use
 :func:`~asymmetry.core.io.periods.build_rf_difference_scan` (the Green − Red
-scan builder) and :func:`~asymmetry.core.fitting.fit_rf_resonance` (which seeds
+scan builder) and :func:`~asymmetry.core.fitting.field_scan.fit_rf_resonance` (which seeds
 the amplitudes/widths/background from the data and holds ν_RF fixed) — worked
 example: the benzene scan, DEVA runs 56426–56462:
 

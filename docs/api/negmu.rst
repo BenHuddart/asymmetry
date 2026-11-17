@@ -1,6 +1,9 @@
 Negative-muon analysis API (experimental)
 ==========================================
 
+.. py:module:: asymmetry.core.negmu
+
+
 .. warning::
 
    **Experimental — work in progress.** The :mod:`asymmetry.core.negmu`

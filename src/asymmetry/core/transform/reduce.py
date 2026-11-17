@@ -83,7 +83,7 @@ class GroupedAsymmetryReduction:
     binning: BinningSpec
     alignment: AlignmentCrop
     ratio_validity: RatioValidity
-    #: Scale of :attr:`asymmetry` and :attr:`error`. Always
+    #: Scale of :attr:`~asymmetry` and :attr:`error`. Always
     #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
     #: has no other mode; the field exists so a consumer can assert the scale it
     #: assumed instead of trusting a comment, and so a future fraction-scale
@@ -101,7 +101,7 @@ class CorrectionFlags:
 
     ``deadtime_mode`` uses the core's canonical request names, including
     ``from_file`` and the authored ``manual`` aliases, for :func:`corrected_grouped_counts` /
-    :func:`reduce_grouped_asymmetry`.
+    :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`.
     """
 
     use_deadtime: bool
@@ -308,8 +308,8 @@ def prepare_grouped_corrections(
     Applies the detector-first reduction order: deadtime correction
     (per-detector, on raw histograms), forward/backward grouping onto a common
     t0, then optional background subtraction on the grouped counts. The returned
-    forward/backward counts are exactly what :func:`reduce_grouped_asymmetry`
-    feeds to :func:`binned_fb_asymmetry`, and what the alpha estimate must
+    forward/backward counts are exactly what :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
+    feeds to :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`, and what the alpha estimate must
     consume so ``alpha`` balances the corrected spectra rather than the raw
     totals (see ``docs/porting/correction-order-alpha-estimation``).
 
@@ -478,7 +478,7 @@ def reduce_grouped_asymmetry(
 
     The correction stages (deadtime → grouping → background) are shared with the
     alpha estimate via :func:`corrected_grouped_counts`; this function adds only
-    the final :func:`binned_fb_asymmetry` step. The returned arrays are final —
+    the final :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry` step. The returned arrays are final —
     the good window is applied, the binning (fixed bunching included) is applied,
     and no further slicing or bunching is left for the caller.
 
@@ -495,8 +495,8 @@ def reduce_grouped_asymmetry(
         one step on the reduction path that applies the ×100, so its output drops
         straight into a :class:`~asymmetry.core.data.dataset.MuonDataset` and the
         percent-scale fit models, unlike the **fraction** returned by
-        :func:`binned_fb_asymmetry` and
-        :func:`~asymmetry.core.transform.compute_asymmetry` underneath it. See
+        :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry` and
+        :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry` underneath it. See
         "Asymmetry units across the API" in the documentation.
     """
     with perf_timer(

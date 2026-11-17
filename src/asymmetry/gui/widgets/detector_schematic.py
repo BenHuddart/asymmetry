@@ -98,7 +98,7 @@ class DetectorSchematicWidget(QWidget):
     """
 
     detector_toggled: Signal = Signal(int, bool)
-    #: Emitted in exclude mode: (1-based detector id, now_excluded).
+    #: Emitted in exclude mode — (1-based detector id, now_excluded).
     detector_exclusion_toggled: Signal = Signal(int, bool)
 
     def __init__(
@@ -727,8 +727,7 @@ class DetectorSchematicWidget(QWidget):
         """Temporarily emphasise *group_id*'s detectors (edge highlight).
 
         Used by the layout dialog to highlight a group's detectors in the
-        schematic when the user hovers that group's row. Pass ``None`` to
-        clear the highlight.
+        schematic when the user hovers that group's row. Pass ``None`` to clear the highlight.
         """
         self._highlighted_groups = {group_id} if group_id is not None else set()
         self._refresh_colours()

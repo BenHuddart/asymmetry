@@ -208,7 +208,7 @@ projections with them in mind:
   cross-checked against the facility detector numbering before quantitative use.
 
 Compared with other programs
----------------------------
+----------------------------
 
 Mantid RRFMuon v1 rotates two supplied transverse spectra after matching axis,
 phase, and unit conventions. WiMDA 1.326 and musrfit 1.12.1 scalar rotating-frame

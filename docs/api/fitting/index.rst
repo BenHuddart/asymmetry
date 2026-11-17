@@ -1,6 +1,9 @@
 Fitting
 =======
 
+.. py:module:: asymmetry.core.fitting
+
+
 .. currentmodule:: asymmetry.core.fitting
 
 The fitting subsystem is split into four parts: the iminuit-backed
@@ -42,3 +45,6 @@ MHz/G conversion, and derived field parameters for trend tables.
    sc
    parameters
    wizards
+   count_domain
+   grouped_time_domain
+   joint

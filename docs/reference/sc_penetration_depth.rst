@@ -254,10 +254,10 @@ Use when low-T behaviour is exponentially activated and no nodal signatures are
 required [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_s_wave
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_wave
-   :no-index:
+   :noindex:
 
 d_{x^2-y^2} d-wave
 ^^^^^^^^^^^^^^^^^^
@@ -270,10 +270,10 @@ Use when line nodes are physically expected (for example cuprate-like systems)
 and low-T data are inconsistent with activated behaviour [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_d_wave
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_d_wave
-   :no-index:
+   :noindex:
 
 Anisotropic s-wave (cos4)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -289,10 +289,10 @@ temperature dependence; if ``shape_factor_a > 0``, it switches to the
 generalised weak-coupling reduced-gap law with that value.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_anisotropic_s_cos4
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_anisotropic_s_cos4
-   :no-index:
+   :noindex:
 
 s+g anisotropic singlet
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -305,10 +305,10 @@ Use when strong anisotropy is indicated but pure
 :math:`d_{x^2-y^2}` does not capture the observed shape [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_s_plus_g
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g
-   :no-index:
+   :noindex:
 
 Nonmonotonic d-wave
 ^^^^^^^^^^^^^^^^^^^
@@ -321,10 +321,10 @@ Use when monotonic d-wave cannot reproduce curvature and an electron-doped
 cuprate-like nonmonotonic form is physically plausible [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_nonmonotonic_d
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_nonmonotonic_d
-   :no-index:
+   :noindex:
 
 Extended s-wave
 ^^^^^^^^^^^^^^^
@@ -335,10 +335,10 @@ weak-coupling reduced-gap form with :math:`a=4/3`, consistent with the same
 angular basis used for the d-wave tabulation in Ref. [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_extended_s
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_extended_s
-   :no-index:
+   :noindex:
 
 p-wave examples
 ^^^^^^^^^^^^^^^
@@ -350,13 +350,13 @@ left at ``0``, the model uses the Carrington-Manzano temperature dependence; if
 reduced-gap law with that value.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_axial
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_p_wave_axial
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_polar_3d
-   :no-index:
+   :noindex:
 
 MgB2-style two-gap weighted sums
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -371,10 +371,10 @@ For ``SC_TwoGap_SS`` both channels are isotropic s-wave. For ``SC_TwoGap_SD``
 one channel is isotropic s-wave and one is d-wave.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_two_gap_ss
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_two_gap_sd
-   :no-index:
+   :noindex:
 
 Alpha-model and quadrature conventions
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -393,16 +393,16 @@ best represented as an independent Gaussian channel that combines at the
 second-moment level rather than by direct addition.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_alpha_model
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_wave_q
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_d_wave_q
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g_q
-   :no-index:
+   :noindex:
 
 Field-dependent vortex-lattice line width (Brandt)
 --------------------------------------------------
@@ -453,10 +453,10 @@ parameter in **tesla**; ``lambda_ab`` is in **nm**.
    factor :math:`3^{1/4}=1.316`.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.brandt_field_width_sigma
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.brandt_field_factor
-   :no-index:
+   :noindex:
 
 Worked example: extract lambda from sigma(B0)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -538,14 +538,14 @@ Info helpers for trend components
 Each model component shown in parameter-trend fitting (for example
 ``SC_SWave``, ``SC_DWave``, ``SC_SPlusG``, ``SC_TwoGap_SS``) has a concise
 physics summary in
-:mod:`asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` via
+:data:`asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` via
 the ``description`` field. Parameter-level helper text is provided by
-:func:`asymmetry.core.fitting.get_param_info`.
+:func:`asymmetry.core.fitting.parameters.get_param_info`.
 
 .. _sc-kernel-accuracy:
 
 Numerical evaluation of the thermal kernel
------------------------------------------
+------------------------------------------
 
 The thermal response in Prozorov and Giannetta [1], Eq. (16), can be evaluated
 without the density-of-states endpoint singularity. With
@@ -637,16 +637,16 @@ The same :math:`\rho_s(T)` can be mapped to penetration-depth observables:
    \lambda(T)=\frac{\lambda(0)}{\sqrt{\rho_s(T)}}.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_to_lambda_inv_sq
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_to_lambda
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.lambda_inv_sq_from_model
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.lambda_from_model
-   :no-index:
+   :noindex:
 
 Example: Fit sigma(T) with an s-wave model
 ------------------------------------------

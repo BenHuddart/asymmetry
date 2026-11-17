@@ -372,8 +372,7 @@ class ScreeningEffortProfile:
     its cost is (templates x datasets x per-fit cost) and the only levers that
     matter are which templates are offered and how many. A tier that trims the
     portfolio returns a coarser ranking over a smaller candidate set — a real,
-    honest trade, and the one a caller reaches for when the exhaustive answer
-    will not finish.
+    honest trade, and the one a caller reaches for when the exhaustive answer will not finish.
     """
 
     #: Hard cap on screened templates, or ``None`` for "no cap". Retained
@@ -513,7 +512,7 @@ class GlobalCandidateAssessment:
 
     @property
     def exempt_runs(self) -> tuple[int, ...]:
-        """Runs that keep their own amplitude: left out of the coupled series on apply (plan D17).
+        """Runs that keep their own amplitude are left out of the coupled series on apply.
 
         Empty for a role-search node and a screening row, which exempt nothing.
         """
@@ -654,7 +653,7 @@ class GlobalFitWizardRecommendation:
     ) -> Callable[[GlobalCandidateAssessment], tuple[int, tuple]]:
         """Display order, smaller first: ladder rungs by trend, anything else by ``metric``.
 
-        Under the trend objective the rungs lead in :func:`trend_sort_key`'s
+        Under the trend objective the rungs lead in :func:`~asymmetry.core.fitting.global_search.trend_objective.trend_sort_key`'s
         order — the recommended one first — and screening rows follow by the
         criterion. Under the statistical one every row is ordered by the
         criterion.
@@ -1316,7 +1315,7 @@ def _preview_series_templates(
     scope and the median fingerprint alone, so the Setup page can size the job
     without paying for a single fit. The portfolio that is actually screened is
     the series alphabet — the union of what the per-run single-fit wizard
-    assessed (:func:`series_template_alphabet`) — which no aggregate can
+    assessed (:func:`~asymmetry.core.fitting.global_fit_wizard.series_template_alphabet`) — which no aggregate can
     anticipate, because a template that describes a minority phase of the series
     is invisible in the median.
 
@@ -1398,7 +1397,7 @@ def alphabet_bound_dropped_keys(
     relation transitive, and their minimal elements are never dropped.
 
     The caller applies the result to the *capped* alphabet
-    (:func:`series_template_alphabet`), so what the bound saves is completion
+    (:func:`~asymmetry.core.fitting.global_fit_wizard.series_template_alphabet`), so what the bound saves is completion
     fits rather than slots handed to the next-ranked candidate.
     """
     run_numbers = sorted(recommendations_by_run)
@@ -1639,7 +1638,7 @@ def build_global_fit_wizard_candidate_portfolio(
     With ``single_fit_recommendations_by_run`` the portfolio is the **series
     alphabet**: the union of the templates those per-run single-fit wizard
     recommendations assessed, scope-filtered and capped
-    (:func:`series_template_alphabet`). Without them it is the cheap
+    (:func:`~asymmetry.core.fitting.global_fit_wizard.series_template_alphabet`). Without them it is the cheap
     **preview** list the Setup page quotes before phase 1 has run — the scope's
     families around the median fingerprint, no fits, and no claim to be the set
     that will actually be screened.
@@ -1992,10 +1991,10 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        refinement. That is what finds the heavily damped pair describing only the
        low-temperature half of a series; a portfolio built from the *median*
        fingerprint cannot. A few runs are analysed at once
-       (:func:`_phase_one_concurrency`, overridable with ``phase1_concurrency``),
+       (``asymmetry.core.fitting.global_fit_wizard._phase_one_concurrency``, overridable with ``phase1_concurrency``),
        all submitting to phase 1's single shared pool, and each warm-started from
        the nearest already-finished run along the sweep axis
-       (:func:`_run_single_run_analyses`). An existing
+       (``asymmetry.core.fitting.global_fit_wizard._run_single_run_analyses``). An existing
        recommendation is reused when it answers the same question — same scope,
        same user-declared frequencies, encoded by
        :func:`~asymmetry.core.fitting.fit_wizard.single_fit_build_signature` —
@@ -2003,14 +2002,14 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        portfolio carries no signature and is never reused.
 
     2. **Completion.** The series alphabet is the union of what those runs
-       assessed (:func:`series_template_alphabet`), minus the candidates
-       :func:`alphabet_bound_dropped_keys` proves cannot win any segment
+       assessed (:func:`~asymmetry.core.fitting.global_fit_wizard.series_template_alphabet`), minus the candidates
+       :func:`~asymmetry.core.fitting.global_fit_wizard.alphabet_bound_dropped_keys` proves cannot win any segment
        (``apply_alphabet_bound=False`` keeps them, which is what the benchmark
        harness compares against), narrowed by the effort tier;
        the series search resolution is the smallest per-run rebin factor
-       (:func:`series_rebin_factor`). Every (run, template) cell the run's own
+       (:func:`~asymmetry.core.fitting.global_fit_wizard.series_rebin_factor`). Every (run, template) cell the run's own
        table does not already hold *at that factor* is fitted, warm-started and
-       peak-seeded — one task per **cell** (:func:`_plan_run_completion`), not
+       peak-seeded — one task per **cell** (``asymmetry.core.fitting.global_fit_wizard._plan_run_completion``), not
        one per run. The result is a rectangular table whose information criteria
        are mutually comparable.
 
@@ -2025,8 +2024,8 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     ``_PHASE_ONE_CANCEL_POLL_SECONDS`` timeout re-checks it each iteration, so a
     cancel is honoured within one poll interval instead of one in-flight table's
     duration (a fit already running in a worker still cannot be interrupted). A
-    truthy callback raises :class:`FitCancelledError` and tears the pool down
-    with :func:`terminate_spawn_pool` — non-blocking, and force-killing the
+    truthy callback raises :class:`~asymmetry.core.fitting.engine.FitCancelledError` and tears the pool down
+    with :func:`~asymmetry.core.fitting.process_pool.terminate_spawn_pool` — non-blocking, and force-killing the
     workers so nothing is orphaned. This matters because phase 1 is a
     *minutes*-long job: a drain that only blocks on completion, followed by a
     ``shutdown(wait=True)``, is indistinguishable from a deadlock from the
@@ -2367,7 +2366,7 @@ def build_global_fit_wizard_screening_recommendation(
     work; anything less and phase 1 runs here.
 
     ``effort_tier`` narrows the alphabet before the completion fits (see
-    :func:`screening_templates_for_effort_tier`): Low and Balanced score a
+    :func:`~asymmetry.core.fitting.global_fit_wizard.screening_templates_for_effort_tier`): Low and Balanced score a
     trimmed candidate set, while Thorough and Exhaustive — the default — score
     all of it. Templates a run's peak search positively identified are never
     trimmed. The skipped candidates are announced through ``progress_callback``
@@ -2824,7 +2823,7 @@ def _partition_inputs_from_prescreen(
 
     Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution, with
     ``n_run`` the points that run was actually fitted over
-    (:attr:`FitWizardRecommendation.analysed_points`), so tier 1's sums and tier
+    (:attr:`asymmetry.core.fitting.fit_wizard.FitWizardRecommendation.analysed_points`), so tier 1's sums and tier
     2's segment scores are on one scale.
     """
 
@@ -3151,7 +3150,7 @@ def build_global_fit_wizard_recommendation(
     ``objective`` is what the recommendation is for (plan D1). ``TREND``, the
     default, climbs a sharing ladder for every template that fits about as well
     as the best one and recommends the rung whose local parameters trend best
-    among those that fit adequately (:mod:`.global_search.trend_search`); the
+    among those that fit adequately (:mod:`asymmetry.core.fitting.global_search.trend_search`); the
     engine and effort arguments below do not apply to it. ``STATISTICAL`` runs
     the role search they describe and recommends the best ``metric``. One call
     computes one objective.
@@ -3822,7 +3821,7 @@ def rerank_global_fit_wizard_recommendation(
     an optimised solution — keeps that partition and summarises its transitions
     instead of the series-wide winner. The partition itself is not re-selected:
     breaks are scored with BIC whatever ranking metric the user picked (see
-    :func:`build_global_fit_wizard_screening_recommendation`), so changing the
+    :func:`~asymmetry.core.fitting.global_fit_wizard.build_global_fit_wizard_screening_recommendation`), so changing the
     metric changes which candidate wins *within* a phase, never where the phases
     are.
     """

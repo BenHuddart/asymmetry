@@ -7,7 +7,7 @@ response with their existing parameter roles, selected observations, and
 conditional errors. Separation is not a Global or Local fit parameter.
 
 
-:func:`asymmetry.core.fitting.fit_global` fits **one model across several
+:func:`asymmetry.core.fitting.asymmetry_global.fit_global` fits **one model across several
 asymmetry traces at once**, sharing chosen *global* parameters across all
 datasets while letting other *local* parameters vary per dataset. It works
 directly on each dataset's :attr:`~asymmetry.core.data.dataset.MuonDataset.time`,
@@ -27,7 +27,7 @@ for each local parameter.
 
    This is the scriptable, core-API counterpart to the GUI Global Fit Wizard.
    It is the **asymmetry-domain, least-squares** sibling of the count-domain
-   :func:`~asymmetry.core.fitting.fit_grouped_series` family. For the difference
+   :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series` family. For the difference
    between the two — and which to reach for — see
    :ref:`asymmetry-vs-count-domain` below.
 
@@ -162,7 +162,7 @@ Inputs and keying
   **mapping** (keyed by your own labels, e.g. field values). Results in
   ``GlobalFitResult.dataset_results`` use the same keys. The datasets need
   **not** carry unique run numbers — keying is handled for you.
-* ``initial_params`` may be a single :class:`~asymmetry.core.fitting.ParameterSet`
+* ``initial_params`` may be a single :class:`~asymmetry.core.fitting.parameters.ParameterSet`
   broadcast to every dataset, or a mapping ``key -> ParameterSet`` for per-dataset
   seeds. Each set must contain every name referenced by ``global_params`` and
   ``local_params``. Global seed values and bounds are taken from the first
@@ -174,12 +174,12 @@ Inputs and keying
 The result
 ----------
 
-:class:`~asymmetry.core.fitting.GlobalFitResult` carries:
+:class:`~asymmetry.core.fitting.asymmetry_global.GlobalFitResult` carries:
 
 * ``global_parameters`` — the shared fitted globals (a ``ParameterSet``);
 * ``global_uncertainties`` — ``{name: sigma}`` 1σ HESSE errors on the free globals;
 * ``dataset_results`` — per-dataset
-  :class:`~asymmetry.core.fitting.FitResult` (each holding that dataset's globals
+  :class:`~asymmetry.core.fitting.results.FitResult` (each holding that dataset's globals
   *and* locals, with uncertainties and its own χ²/dof), keyed by your dataset key;
 * ``chi_squared`` / ``dof`` / ``reduced_chi_squared`` — the **combined** statistic
   over all datasets, with
@@ -200,8 +200,8 @@ fitted and with which statistic:
   ``.asymmetry`` traces you already hold, with their per-point :math:`\sigma_A`.
   This is the convenient default and matches the rest of the asymmetry-domain
   workflow.
-* **Count-domain** (:func:`~asymmetry.core.fitting.fit_grouped_series`,
-  :func:`~asymmetry.core.fitting.fit_grouped_time_domain`) — the Cash/Poisson
+* **Count-domain** (:func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`,
+  :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_time_domain`) — the Cash/Poisson
   statistic on lifetime-corrected grouped detector counts. This is the
   statistically faithful choice when counts are low, where the √N-Gaussian weight
   used in the asymmetry domain biases the fit. It requires the detector

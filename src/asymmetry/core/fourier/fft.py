@@ -434,8 +434,7 @@ def prepare_fft_time_signal(
     advisory: nothing about the returned value changes.
 
     To preprocess a bare ``(t, A, σ)`` triple with no dataset in hand, use
-    :func:`prepare_fft_arrays`, which shares this function's entire
-    implementation.
+    :func:`prepare_fft_arrays`, which shares this function's entire implementation.
 
     With ``fractional``, signal and errors are divided by a finite-window
     1/σ-weighted level (an arithmetic mean without usable error weights).
@@ -504,7 +503,7 @@ def prepare_fft_arrays(
     fractional: bool = False,
     detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> PreparedFFTSignal:
-    """Preprocess a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+    """Preprocess a bare ``(t, A, σ)`` triple — no :class:`~asymmetry.core.data.dataset.MuonDataset` required.
 
     The array-taking front door onto the same preprocessing as
     :func:`prepare_fft_time_signal`: both crop through one seam and then run one
@@ -766,7 +765,7 @@ def fft_complex_arrays(
     diagnostics: dict | None = None,
     detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
-    """Complex FFT of a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+    """Complex FFT of a bare ``(t, A, σ)`` triple — no :class:`~asymmetry.core.data.dataset.MuonDataset` required.
 
     The array-taking front door onto the same transform as
     :func:`fft_complex_asymmetry`: both preprocess through one shared core and
@@ -972,7 +971,7 @@ def fft_arrays(
     amplitude_calibration: bool = False,
     detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """FFT a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+    """FFT a bare ``(t, A, σ)`` triple — no :class:`~asymmetry.core.data.dataset.MuonDataset` required.
 
     The array-taking front door matching :func:`fft_asymmetry` kwarg for kwarg,
     running the same complex transform as :func:`fft_complex_arrays` and

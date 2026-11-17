@@ -2,7 +2,7 @@
 
 A vector-polarisation grouping (EMU's P_x/P_y/P_z) declares several
 forward/backward pairs; each projection is the same counts reduced through
-:func:`reduce_grouped_asymmetry` with its own pair and alpha.  This is the
+:func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry` with its own pair and alpha.  This is the
 Qt-free path scripted analyses and the GUI's stacked
 subplots share (pinned by ``tests/gui/test_core_projections.py``).
 """

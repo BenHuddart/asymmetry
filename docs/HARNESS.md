@@ -36,8 +36,46 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py test --tier fast` | Inner-loop suite: non-GUI tests only (~25s). |
 | `python tools/harness.py test` | Standard tier (default): everything except `slow`/`integration` (~2 min locally). |
 | `python tools/harness.py gui-smoke` | Headless GUI startup check using the app's `--smoke-test` path. |
-| `python tools/harness.py docs` | Sphinx documentation build. |
+| `python3 tools/harness.py docs --mode source` | Fresh offline source documentation gate. |
+| `python3 tools/harness.py docs --mode publish` | Same defect gate plus ordinary screenshot completeness. |
 | `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
+
+### Documentation modes
+
+`tools/docs_build.py` owns the fresh HTML invocation, subprocess exit handling,
+and 600,000-byte page budget; the harness delegates to it. `tools/docs_policy.py`
+owns the Sphinx mode, strict authored-reference checks, exact external-reference
+limitations, and static screenshot contract used by both local and CI builds.
+Sphinx is a documentation dependency, not an application dependency.
+
+Use `python3 tools/harness.py docs --mode source` for a public checkout with
+optional data locators unset. It runs no capture and requests no inventories.
+Only exact registered missing generated images become visible notices; static,
+logo, download, unknown-image, local/API-reference, markup, and unknown/untyped
+warning defects still fail. The contributor default is `source`; unknown modes
+are rejected before generation. `--screenshots` is an explicit capture request.
+
+Use `python3 tools/harness.py docs --mode publish` with prepared ordinary GUI
+assets. The existing registry/reference/completeness checks remain authoritative.
+Corpus figures require existing PNGs, which may be the explicitly permitted
+labelled placeholders produced by `capture_corpus --stubs-missing`; these do not
+establish acquired-data capture. The hosted capture/fallback disclosure, timeout,
+permissions, concurrency, retention, and deploy dependencies remain in force.
+
+Every gate rereads all sources (`-E -a`), including repeated builds and mode
+switches sharing output/doctree paths. It never relies on cached warnings or
+subtracts parsed warnings from a failed Sphinx exit. Native `-W --keep-going`
+rejects all remaining diagnostics, including multiline and untyped warnings;
+config/import/extension/process failures retain their exits. Page budgets apply
+after Sphinx succeeds. Failed builds cannot reach Pages artifact upload.
+
+The exact fifteen external-object exceptions and annotation-rendering limits
+are documented in `docs/README.md`. There is no category-wide warning exemption.
+`show_warning_types` improves display on Sphinx 7.3+; it is not a gate dependency.
+A successful limited source build does not certify publishing readiness or
+external-reference completeness. Direct Sphinx and non-HTML make targets are
+non-gating development commands. `make html` and `make publish` delegate to the
+same harness gate.
 
 ### Grouped-count boundaries
 

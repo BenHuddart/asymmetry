@@ -220,3 +220,49 @@ def test_pages_uses_supported_timeout_and_preserves_failed_artifacts() -> None:
         if step.get("uses", "").startswith("actions/upload-pages-artifact@")
     )
     assert 1 <= upload["with"]["retention-days"] <= 7
+
+
+def test_docs_modes_share_gate_and_failed_build_cannot_upload() -> None:
+    workflow = _workflow("docs-pages.yml")
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "docs-pages-${{ github.ref }}",
+        "cancel-in-progress": True,
+    }
+    smoke = workflow["jobs"]["docs-smoke"]
+    assert "permissions" not in smoke
+    assert "secrets." not in str(smoke)
+    smoke_runs = [step.get("run", "") for step in smoke["steps"]]
+    assert "python3 tools/harness.py docs --mode source" in smoke_runs
+    assert all("--out docs/_generated/screenshots" not in run for run in smoke_runs)
+    steps = workflow["jobs"]["build-docs"]["steps"]
+    gate_index = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("run") == "python3 tools/harness.py docs --mode publish"
+    )
+    upload_index = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert gate_index < upload_index
+    assert not steps[gate_index].get("continue-on-error", False)
+    assert "if" not in steps[upload_index]  # GitHub's default success() applies.
+    assert "continue-on-error" not in steps[upload_index]
+    assert workflow["jobs"]["deploy-pages"]["needs"] == "build-docs"
+    for event in ("push", "pull_request"):
+        paths = _triggers(workflow)[event]["paths"]
+        for changed in (
+            "tools/docs_build.py",
+            "tools/docs_policy.py",
+            "tools/harness.py",
+            "docs/conf.py",
+            "tests/tools/test_docs_build.py",
+            "src/asymmetry/core/transform/asymmetry.py",
+        ):
+            from fnmatch import fnmatch
+
+            assert any(fnmatch(changed, pattern) for pattern in paths), changed
+    filters = str(_workflow("ci.yml")["jobs"]["changes"]["steps"])
+    assert "docs/conf.py" in filters and "docs/_ext/**" in filters

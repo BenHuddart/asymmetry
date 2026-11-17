@@ -40,7 +40,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry, binning_spec
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 
-#: A per-group asymmetry signal: a callable evaluated on the time axis in
+#: A per-group asymmetry signal — a callable evaluated on the time axis in
 #: microseconds (returning the *fractional* asymmetry), or an array on the
 #: detector's post-t0 bin grid (short arrays are zero-padded).
 GroupSignal = Callable[[NDArray[np.float64]], NDArray[np.float64]] | NDArray[np.float64]
@@ -104,7 +104,7 @@ class InstrumentTemplate:
     group_names: Mapping[int, str] | None = None
     #: Group id -> azimuthal angle in degrees, for a ring-style
     #: :attr:`groups` layout. Carried into ``grouping["group_azimuths_deg"]``
-    #: (see :func:`group_azimuths_deg`) so downstream code — a multi-group
+    #: (see :func:`~asymmetry.core.simulate.group_azimuths_deg`) so downstream code — a multi-group
     #: fit seed, a phase-vs-geometry plot — can read each group's detector
     #: phase without re-deriving the instrument's numbering convention.
     group_azimuths: Mapping[int, float] | None = None
@@ -117,7 +117,7 @@ class InstrumentTemplate:
     default_backward_group: int | None = None
 
     def build(self) -> Run:
-        """Materialise an empty-histogram :class:`Run` with this geometry."""
+        """Materialise an empty-histogram :class:`~asymmetry.core.data.dataset.Run` with this geometry."""
         first_good = self.t0_bin if self.good_bin_start is None else self.good_bin_start
         last_good = self.n_bins - 1 if self.good_bin_end is None else self.good_bin_end
         histograms = [
@@ -286,12 +286,12 @@ def build_builtin_template(
     bin_width_us: float | None = None,
     t0_bin: int | None = None,
 ) -> Run:
-    """Build an empty-histogram :class:`Run` for a named built-in instrument.
+    """Build an empty-histogram :class:`~asymmetry.core.data.dataset.Run` for a named built-in instrument.
 
     ``n_bins``, ``bin_width_us`` and ``t0_bin`` override the template's own
     values (e.g. a finer or coarser ring binning than
     :data:`BUILTIN_TEMPLATES`'s defaults) without needing a bespoke
-    :class:`InstrumentTemplate`; the good-bin window follows the (possibly
+    :class:`~asymmetry.core.simulate.InstrumentTemplate`; the good-bin window follows the (possibly
     overridden) ``n_bins``/``t0_bin`` exactly as :meth:`InstrumentTemplate.build`
     computes it. Omitted arguments keep the template's own value.
 
@@ -323,7 +323,7 @@ def group_azimuths_deg(run: Run) -> dict[int, float]:
     :meth:`InstrumentTemplate.build` for a ring-style built-in template (e.g.
     ``"ideal_continuous_ring8"``) and carried through unchanged by every
     synthetic-run builder in this module (it is not one of the period keys
-    stripped by :func:`_synthetic_run_grouping`). Returns an empty dict for a
+    stripped by ``asymmetry.core.simulate._synthetic_run_grouping``). Returns an empty dict for a
     template with no azimuthal ring structure.
     """
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
@@ -353,8 +353,7 @@ def poisson_asymmetry_errors(
     The asymmetry σ for a two-detector experiment scales as
     ``sqrt((1 - A^2) / N)``. Picking a counts-per-bin gives a realistic noise
     envelope without doing a histogram round-trip; use the full
-    :func:`simulate_run` pipeline when the errors must come from actual
-    Poisson histograms.
+    :func:`simulate_run` pipeline when the errors must come from actual Poisson histograms.
     """
     variance = np.clip(1.0 - (np.asarray(asymmetry) / 100.0) ** 2, 1e-3, 1.0) / counts_per_bin
     return np.sqrt(variance) * 100.0
@@ -374,7 +373,7 @@ def build_run_from_detector_asymmetries(
     lifetime_us: float = MUON_LIFETIME_US,
     rng: np.random.Generator | None = None,
 ) -> tuple[Run, NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Synthesise a full :class:`Run` from per-detector asymmetry signals.
+    """Synthesise a full :class:`~asymmetry.core.data.dataset.Run` from per-detector asymmetry signals.
 
     Each detector histogram is built as
 
@@ -385,7 +384,7 @@ def build_run_from_detector_asymmetries(
     detector per group so the GUI's *Individual Groups* domain view shows a
     trace per detector. The function also returns the F–B asymmetry trace
     (using the first two groups) and a per-bin error estimate so a wrapper
-    :class:`MuonDataset` carries a defensible time-domain view.
+    :class:`~asymmetry.core.data.dataset.MuonDataset` carries a defensible time-domain view.
 
     This is the screenshot-archetype builder promoted into core: the flat
     pre-t0 plateau at N₀ is its historical convention (kept for byte-stable
@@ -681,7 +680,7 @@ def simulate_run_from_group_signals(
     ``background_per_bin`` accepts a single flat rate or a per-group
     ``group_id -> counts/bin`` mapping (see :func:`expected_counts`).
 
-    The returned :class:`Run` carries ``metadata["synthetic"] = True`` and a
+    The returned :class:`~asymmetry.core.data.dataset.Run` carries ``metadata["synthetic"] = True`` and a
     ``metadata["simulation"]`` provenance dict; deadtimes are zeroed in the
     grouping (the synthetic counts contain no deadtime distortion, so zero is
     the true instrument description). See :func:`simulate_signal_run` for the
@@ -778,7 +777,7 @@ def simulate_signal_run(
     (a(t) = 0).
 
     This is a thin, validating front end over the same
-    :func:`expected_counts` / :func:`_sample_and_build_run` machinery as
+    :func:`expected_counts` / ``asymmetry.core.simulate._sample_and_build_run`` machinery as
     :func:`simulate_run_from_group_signals` (which already accepts arbitrary
     per-group signals for the fit-model entry points) — it adds the checks a
     hand-authored signal needs and the model-driven entry points do not:
@@ -790,7 +789,7 @@ def simulate_signal_run(
     ----------
     template
         Instrument template — bin structure, t0, grouping. Counts are
-        ignored (see :func:`build_builtin_template` when no run is loaded,
+        ignored (see :func:`~asymmetry.core.simulate.build_builtin_template` when no run is loaded,
         e.g. the ``"ideal_continuous_ring8"`` octant-ring template).
     signals
         Group id -> :data:`GroupSignal`. Values may be negative and exceed
@@ -934,7 +933,7 @@ def _sample_and_build_run(
     Shared by :func:`simulate_run_from_group_signals` and
     :func:`simulate_double_pulse_run` so both carry the same provenance and
     metadata (template run/source, detector orientation, deadtime zeroing) via
-    the shared :func:`_synthetic_run_grouping` / :func:`_synthetic_run_metadata`
+    the shared ``asymmetry.core.simulate._synthetic_run_grouping`` / :func:`_synthetic_run_metadata`
     contract. The seeded sampling draws ``poisson(expected)`` per detector in
     detector order.
     """
@@ -1322,7 +1321,7 @@ def simulate_two_period_run(
     one independent draw per period from a single seeded generator (a fixed seed
     reproduces both periods bit-for-bit).
 
-    The returned :class:`Run` carries the loader's two-period payload
+    The returned :class:`~asymmetry.core.data.dataset.Run` carries the loader's two-period payload
     (``period_histograms``, ``period_reduced``, ``period_good_frames``,
     ``period_dead_time_us``, ``period_mode``) with ``run.histograms`` cloned from
     the red period, so :func:`asymmetry.core.io.periods.select_period`, the
@@ -1685,7 +1684,7 @@ def degrade_run(
     over-dispersed relative to a genuinely longer measurement (variance
     ``λf(1+f)`` rather than ``λf``).
 
-    Returns a **new** :class:`Run` (the source run is untouched) with
+    Returns a **new** :class:`~asymmetry.core.data.dataset.Run` (the source run is untouched) with
     ``metadata["degraded"]`` provenance. A fixed seed reproduces the
     resampling bit-for-bit. ``grouping["good_frames"]`` (and the per-period
     frame counts) are scaled by ``factor`` — thinning by f *is* a measurement
@@ -1957,7 +1956,7 @@ def simulate_capture_run(
     so the post-t0 window sum ≈ ``total_events``. Detectors in ``group_id``
     (or all detectors if ``None``) carry the signal; ``background_per_bin`` is
     added in addition to the event budget. Poisson-sampled with ``seed`` and
-    assembled (provenance, deadtime-zeroing) via :func:`_sample_and_build_run`.
+    assembled (provenance, deadtime-zeroing) via ``asymmetry.core.simulate._sample_and_build_run``.
     Provenance records ``capture_mode=True``, the components/τ and weights,
     and the seed.
 
@@ -1984,7 +1983,7 @@ def simulate_capture_run(
         Flat background counts per bin added to every detector (signal and
         non-signal alike).
     run_number, title
-        Provenance metadata for the returned :class:`Run`.
+        Provenance metadata for the returned :class:`~asymmetry.core.data.dataset.Run`.
     """
     if not np.isfinite(total_events) or total_events <= 0:
         raise ValueError("total_events must be a positive, finite event budget.")

@@ -6,7 +6,7 @@ first-class **synthetic run** — Poisson count histograms drawn through the sam
 reduction chain as beamline data, badged with provenance — rather than a curve
 with Gaussian noise bolted on. The parameter values are the canonical
 textbook/literature numbers also used by the documentation screenshots
-(:mod:`docs.screenshots.data.archetypes`); here they drive the full simulate
+(``docs.screenshots.data.archetypes``); here they drive the full simulate
 pipeline so the runs are fittable and recover their generating physics.
 
 Reference for all archetypes: S. J. Blundell, R. De Renzi, T. Lancaster, and

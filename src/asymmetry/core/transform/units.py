@@ -3,11 +3,11 @@ r"""Explicit asymmetry units — the fraction/percent divide, named.
 Two conventions coexist across the API and both are internally consistent:
 
 * the dimensionless **fraction**, what the low-level
-  primitives (:func:`~asymmetry.core.transform.compute_asymmetry`,
-  :func:`~asymmetry.core.transform.binned_fb_asymmetry`,
-  :func:`~asymmetry.core.transform.integrate_asymmetry`) return; and
+  primitives (:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
+  :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`,
+  :func:`~asymmetry.core.transform.integral.integrate_asymmetry`) return; and
 * **percent** (fraction × 100), what the loaders, the reductions
-  (:func:`~asymmetry.core.transform.reduce_grouped_asymmetry`),
+  (:func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`),
   :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` and every built-in
   fit model's amplitude use (``A0`` defaults to ``25``).
 
@@ -16,7 +16,7 @@ a 20 % amplitude fitted as 0.2 %, or a fit that converges to a degenerate
 minimum. This module gives that distinction a name so a call site can *state*
 the scale instead of a reader inferring it. Nothing here changes any existing
 return value — see "Asymmetry units across the API" in the documentation for
-the per-function table, and :class:`asymmetry.core.fitting.AsymmetryScaleWarning`
+the per-function table, and :class:`asymmetry.core.fitting.engine.AsymmetryScaleWarning`
 for the runtime guard that catches the mismatch during a fit.
 """
 
@@ -77,12 +77,12 @@ class AsymmetryUnit(Enum):
 
 
 #: The dimensionless fraction. Module-level alias for
-#: :attr:`AsymmetryUnit.FRACTION`, so a keyword argument or a docstring can name
+#: :attr:`asymmetry.core.transform.units.AsymmetryUnit.FRACTION`, so a keyword argument or a docstring can name
 #: the scale without importing the enum.
 ASYMMETRY_FRACTION = AsymmetryUnit.FRACTION
 
 #: Percent, fraction × 100. Module-level alias for
-#: :attr:`AsymmetryUnit.PERCENT`.
+#: :attr:`asymmetry.core.transform.units.AsymmetryUnit.PERCENT`.
 ASYMMETRY_PERCENT = AsymmetryUnit.PERCENT
 
 
