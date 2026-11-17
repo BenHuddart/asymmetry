@@ -381,7 +381,7 @@ dependencies remain separate from the target environments.
 Run it with an outer virtual environment containing `build` and `pip`:
 
 ```bash
-python3 tools/distribution_smoke.py --output /tmp/asymmetry-wheel-evidence
+python3 tools/distribution_smoke.py
 ```
 
 The output directory must be new and outside the checkout. `--python PATH` may
