@@ -7,6 +7,21 @@ the `GitHub Releases <https://github.com/BenHuddart/asymmetry/releases/latest>`_
 page (Windows ``.exe`` installer; macOS ``.dmg``). **Intel Mac** and **Linux**
 users should install from the Git repository as described below.
 
+Desktop build dependencies
+--------------------------
+
+The Windows x64 and Apple Silicon macOS build pipelines use reviewed,
+platform-specific dependency wheels and build-tool versions. Release rehearsals
+and previews replay these inputs in two fresh environments and check the observed
+versions before packaging. The Python library retains the flexible dependency
+ranges described below; its minimum Python version is independent of the selected
+desktop build interpreter.
+
+These checks reproduce dependency versions and the selected GLE source commit.
+Hosted operating-system tools and native packaging timestamps can change, so
+identical installer bytes are not guaranteed. The existing packaged startup and
+import smoke checks do not certify a complete scientific analysis workflow.
+
 Requirements
 ------------
 

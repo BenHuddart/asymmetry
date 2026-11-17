@@ -43,6 +43,8 @@ jobs:
               - 'src/**'
               - 'tests/**'
               - 'tools/**'
+              - 'packaging/**'
+              - '.github/actions/**'
               - 'docs/conf.py'
               - 'docs/_ext/**'
               - 'docs/screenshots/**'

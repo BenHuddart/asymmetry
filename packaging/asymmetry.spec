@@ -52,7 +52,6 @@ hiddenimports = [
     "PySide6.QtPdf",
     "PySide6.QtPdfWidgets",
     "matplotlib.backends.backend_qtagg",
-    "scipy.special._cdflib",
     # pyhdf is imported lazily inside asymmetry.core.io.hdf4._require_pyhdf, so
     # PyInstaller's static analysis misses it; list its submodules explicitly.
     "pyhdf",

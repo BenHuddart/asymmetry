@@ -403,3 +403,21 @@ interpreter identities, and module origins, including failures.
 This is a Linux core-install smoke, not certification of minimum dependency
 versions, every extra, newer interpreters, or all desktop platforms. Native desktop
 artifact checks and release dependency reproduction have separate owners.
+
+## Desktop release environment checks
+
+`tests/tools/test_release_environment.py` exercises dependency/interpreter drift,
+selected-extra completeness, immutable wheel origins, strict hashed input parsing,
+compiler-engine identity, replay equality, allowlisted download observations, and
+waited packaged-smoke success/failure with Python path injection removed.
+Run it with the existing native workflow and installer tests:
+
+```bash
+python3 tools/harness.py test -- tests/tools/test_release_environment.py tests/tools/test_release_workflows.py tests/tools/test_windows_packaging.py -n 4 --dist loadfile
+```
+
+These deterministic checks use synthetic metadata without network or native GUI
+execution. Native release rehearsals separately install the reviewed platform
+inputs twice, check observed versions/tools, build each supported desktop artifact,
+and execute existing packaged smoke checks. RELEASING.md describes input updates
+and replay commands. The Linux core-wheel gate remains required and independent.

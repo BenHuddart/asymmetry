@@ -1,0 +1,26 @@
+name: Replay desktop release environment
+description: Install reviewed inputs twice and expose the verified build environment
+inputs:
+  target:
+    required: true
+    description: Reviewed desktop target
+runs:
+  using: composite
+  steps:
+    - name: Read reviewed tool selection
+      id: tools
+      shell: bash
+      run: |
+        python -c "import json,os; t=json.load(open('packaging/release/tools.json')); f=open(os.environ['GITHUB_OUTPUT'],'a'); print('python='+t['python'],file=f); print('inno='+t['inno'],file=f)"
+    - name: Set up reviewed Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ steps.tools.outputs.python }}
+        architecture: ${{ inputs.target == 'windows-x64' && 'x64' || 'arm64' }}
+    - name: Replay reviewed desktop inputs twice
+      shell: bash
+      run: python tools/release_environment.py --target ${{ inputs.target }} --output "$RUNNER_TEMP/release-replay"
+    - name: Install reviewed Inno Setup
+      if: inputs.target == 'windows-x64'
+      shell: pwsh
+      run: choco install innosetup --version=${{ steps.tools.outputs.inno }} --allow-downgrade --force -y

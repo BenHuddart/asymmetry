@@ -1,3 +1,7 @@
 # Shell hooks must stay LF-only: Git's bundled `sh` on Windows fails to parse a
 # script with CRLF line endings ("bad interpreter" / `\r` errors).
 .githooks/* text eol=lf
+
+# Reviewed release input SHA256 values use the same bytes on every checkout.
+packaging/release/*.txt text eol=lf
+packaging/release/tools.json text eol=lf
