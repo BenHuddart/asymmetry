@@ -82,11 +82,22 @@ def current_sources(root: Path) -> dict[str, bytes]:
 
 def git(root: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
     result = subprocess.run(
-        ["git", "-C", str(root), *args], input=input_bytes, capture_output=True, check=False
+        [
+            "git",
+            "--no-lazy-fetch",
+            "--no-replace-objects",
+            "--no-optional-locks",
+            "-C",
+            str(root),
+            *args,
+        ],
+        input=input_bytes,
+        capture_output=True,
+        check=False,
     )
     if result.returncode:
         raise ValueError(
-            f"Git base check failed: {result.stderr.decode('utf-8', errors='replace').strip()}; provide an available immutable --base commit (no automatic fetch)."
+            f"Git base check failed: {result.stderr.decode('utf-8', errors='replace').strip()}; use Git 2.45+ and provide an available immutable --base commit (no automatic fetch)."
         )
     return result.stdout
 
@@ -121,7 +132,14 @@ def base_tree(root: Path, requested: str) -> tuple[str, dict[str, bytes], bytes 
     offset = 0
     for oid in objects:
         end = output.index(b"\n", offset)
-        actual_oid, kind, size = output[offset:end].split()
+        header = output[offset:end].split()
+        if header == [oid, b"missing"]:
+            raise ValueError(
+                f"Missing base blob {oid.decode()}; make the complete base available manually (automatic lazy fetching is disabled)."
+            )
+        if len(header) != 3:
+            raise ValueError("Git base check returned an invalid blob frame.")
+        actual_oid, kind, size = header
         length = int(size)
         if (
             actual_oid != oid
@@ -352,9 +370,17 @@ def find_maintenance_violations(
                     "Defined base contains stale maintenance allowances; select a valid reviewed base: "
                     + old_errors[0].message
                 )
-        touched = staged | {
-            p for p in sources.keys() | old_sources.keys() if sources.get(p) != old_sources.get(p)
-        }
+        # Git's touch sets retain real line-ending/mode edits. The byte fallback
+        # covers local files without treating an autocrlf checkout as an edit.
+        touched = (
+            staged
+            | (sources.keys() ^ old_sources.keys())
+            | {
+                p
+                for p in sources.keys() & old_sources.keys()
+                if sources[p].replace(b"\r\n", b"\n") != old_sources[p].replace(b"\r\n", b"\n")
+            }
+        )
         return compare_debt(
             root,
             current,

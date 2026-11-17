@@ -492,3 +492,58 @@ def test_hidden_roots_have_identical_base_and_current_scope(tmp_path: Path) -> N
     write(tmp_path, ".claude/hooks/check.py", "# smaller\n" * 1000)
     freeze(tmp_path)
     assert check(tmp_path, base) == []
+
+
+def test_replacement_refs_cannot_launder_base_allowances(repo, monkeypatch) -> None:
+    root, base = repo
+    write(root, "src/old module.py", "# growth\n" * 1005)
+    freeze(root)
+    candidate = commit(root)
+    git(root, "replace", base, candidate)
+    monkeypatch.delenv("GIT_NO_REPLACE_OBJECTS", raising=False)
+    failures = check(root, base)
+    assert any("added/raised/restored" in f.message for f in failures)
+    assert any("must shrink" in f.message for f in failures)
+
+
+def test_missing_promised_blob_fails_without_invoking_transport(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os
+    import shlex
+
+    if os.name == "nt":
+        pytest.skip("The local transport marker proof uses a POSIX shell")
+    root = tmp_path / "repo"
+    root.mkdir()
+    git(root, "init", "-q")
+    write(root, "src/old.py", "# promised source\n")
+    baseline(root)
+    base = commit(root)
+    blob = git(root, "rev-parse", "HEAD:src/old.py")
+    marker = tmp_path / "fetch-invoked"
+    transport = tmp_path / "transport.sh"
+    transport.write_text("#!/bin/sh\nprintf invoked > " + shlex.quote(str(marker)) + "\nexit 1\n")
+    transport.chmod(0o755)
+    git(root, "config", "remote.origin.url", "ext::" + str(transport))
+    git(root, "config", "remote.origin.promisor", "true")
+    git(root, "config", "protocol.ext.allow", "always")
+    (root / ".git/objects" / blob[:2] / blob[2:]).unlink()
+    monkeypatch.setenv("GIT_NO_LAZY_FETCH", "0")
+    failures = check(root, base)
+    assert any("Missing base blob" in f.message for f in failures)
+    assert not marker.exists()
+
+
+def test_clean_autocrlf_checkout_preserves_unchanged_old_debt(repo) -> None:
+    root, base = repo
+    git(root, "config", "core.autocrlf", "true")
+    path = root / "src/old module.py"
+    path.unlink()
+    git(root, "checkout", "--", "src/old module.py")
+    assert path.read_bytes() == b"# old\r\n" * 1004
+    assert git(root, "diff", "--name-only") == ""
+    assert git(root, "status", "--porcelain") == ""
+    assert check(root, base) == []
+    path.write_bytes(b"# edit\r\n" * 1004)
+    assert any("must shrink" in f.message for f in check(root, base))

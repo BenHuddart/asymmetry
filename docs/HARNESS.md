@@ -150,7 +150,9 @@ python3 tools/harness.py validate --base <commit-sha> -- -n 4 --dist loadfile
 `ASYMMETRY_STRUCTURAL_BASE` supplies the same base to both commands; `--base`
 takes precedence. The gate checks final worktree contents, including committed,
 staged, unstaged, and new local files. Index and worktree Git changes (including executable-mode edits) also mark files touched,
-even if unstaged edits restore their base bytes. Intermediate index contents
+even if unstaged edits restore their base bytes. CRLF conversion in a clean
+`core.autocrlf` checkout is not a touch; Git still identifies actual line-ending
+and mode edits. Intermediate index contents
 are not a separate candidate: run the gate again after staging the final tree.
 A touched oversized base file must shrink, including comment-only and same-size
 edits. Unchanged debt may remain. Allowances cannot be added, raised, or restored
@@ -171,7 +173,10 @@ Without a base, the command prints **snapshot only**: it checks exact current
 debt but cannot prove touched-file shrinkage, baseline monotonicity, or
 non-resurrection. `--snapshot` explicitly chooses this limited mode and ignores
 the environment base. Missing requested commits and Git errors fail, including
-shallow clones lacking the base. Local commands never fetch, checkout, or reset;
+shallow clones lacking the base. History-aware checks require Git 2.45 or newer
+to disable automatic promisor lazy fetching; local replacement refs are also
+disabled so the named immutable object owns the comparison. Missing promised
+objects fail with an actionable base-object error. Local commands never fetch, checkout, or reset;
 make the required commit available yourself. Source bytes and NUL-delimited
 index paths are read with structured Git arguments, once per tree rather than
 per occurrence.
