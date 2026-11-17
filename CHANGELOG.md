@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enforce shrinking module-size and proven owned-attribute probe allowances, with
+  explicit Git-base checks locally and immutable event-base enforcement in CI.
+
 - Gate documentation in explicit offline source and publishing modes; reject markup/reference defects while preserving registered optional images and labelled corpus placeholders.
 
 - Distinguish analytic checks, recorded native comparisons, and optional fresh

@@ -350,7 +350,14 @@ def test_harness_production_entry_and_invalid_mode_before_capture(site):
     root = site.parent
     tools = root / "tools"
     tools.mkdir()
-    for name in ("harness.py", "harness_checks.py", "docs_build.py"):
+    for name in (
+        "harness.py",
+        "harness_checks.py",
+        "owned_probes.py",
+        "harness_maintenance.py",
+        "harness_retired_docs.py",
+        "docs_build.py",
+    ):
         shutil.copyfile(ROOT / "tools" / name, tools / name)
     command = [sys.executable, str(tools / "harness.py"), "docs"]
     invalid = subprocess.run(

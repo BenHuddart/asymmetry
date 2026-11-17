@@ -236,26 +236,24 @@ AGENTS_MD_MAX_LINES = 150
 SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
 SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
-# Each retired file must stay listed until deletion; removed entries cannot return.
-RETIRED_DOC_PATHS = (
-    "docs/plans",
-    "docs/porting",
-    "docs/studies",
-    "docs/audit",
-    "docs/investigations",
-    "docs/PLANS.md",
-)
-RETIRED_DOCS_BASELINE = Path("tools/baselines/retired_docs.txt")
 
 
-# Load the stdlib-only rule module for both the script and import-by-path callers.
-_CHECKS_SPEC = importlib.util.spec_from_file_location(
-    "asymmetry_harness_checks", ROOT / "tools" / "harness_checks.py"
-)
-assert _CHECKS_SPEC is not None and _CHECKS_SPEC.loader is not None
-_numeric_checks = importlib.util.module_from_spec(_CHECKS_SPEC)
-sys.modules[_CHECKS_SPEC.name] = _numeric_checks
-_CHECKS_SPEC.loader.exec_module(_numeric_checks)
+# Import-by-path callers and the CLI share the same stdlib-only rule modules.
+def _load_rule_module(name: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_numeric_checks = _load_rule_module("harness_checks")
+_owned_probes = _load_rule_module("owned_probes")
+_retired_docs = _load_rule_module("harness_retired_docs")
+find_retired_doc_violations = _retired_docs.find_retired_doc_violations
+_maintenance = _load_rule_module("harness_maintenance")
+find_maintenance_violations = _maintenance.find_maintenance_violations
 HarnessFailure = _numeric_checks.HarnessFailure
 find_physical_constant_duplicate_violations = (
     _numeric_checks.find_physical_constant_duplicate_violations
@@ -925,63 +923,6 @@ def find_skill_growth_violations(
     ]
 
 
-def find_retired_doc_violations(root: Path = ROOT) -> list[HarnessFailure]:
-    """Reject new historical plans and require deletions to shrink their baseline."""
-
-    baseline = root / RETIRED_DOCS_BASELINE
-    if not baseline.is_file():
-        return [HarnessFailure(baseline, 0, "Missing retired-docs baseline.")]
-    failures: list[HarnessFailure] = []
-    entries: set[str] = set()
-    previous = ""
-    for line, relative in enumerate(baseline.read_text(encoding="utf-8").splitlines(), 1):
-        path = Path(relative)
-        if (
-            not relative
-            or relative != relative.strip()
-            or path.is_absolute()
-            or "\\" in relative
-            or ".." in path.parts
-            or path.as_posix() != relative
-            or not any(relative == p or relative.startswith(f"{p}/") for p in RETIRED_DOC_PATHS)
-            or relative <= previous
-        ):
-            failures.append(
-                HarnessFailure(
-                    baseline,
-                    line,
-                    "Malformed retired-docs baseline entry; use strictly sorted, unique repo-relative POSIX file paths in retired locations.",
-                )
-            )
-        else:
-            entries.add(relative)
-            if not (root / relative).is_file():
-                failures.append(
-                    HarnessFailure(
-                        baseline,
-                        line,
-                        f"Retired file {relative} is gone; delete line {line} from {RETIRED_DOCS_BASELINE} so it cannot return.",
-                    )
-                )
-        previous = relative
-    for relative in RETIRED_DOC_PATHS:
-        location = root / relative
-        paths = [location] if location.is_file() else sorted(location.rglob("*"))
-        for path in paths:
-            parts = path.relative_to(root).parts
-            if not path.is_file() or any(p.startswith(".") or p == "__pycache__" for p in parts):
-                continue
-            if path.relative_to(root).as_posix() not in entries:
-                failures.append(
-                    HarnessFailure(
-                        path,
-                        0,
-                        "New file in a retired planning location; plans go in a GitHub issue, lasting content in the owning Sphinx page, a regression test, or an invariant comment.",
-                    )
-                )
-    return failures
-
-
 def _load_screenshot_capture_module():
     """Load the stdlib-only screenshot checks without importing the docs package."""
     capture_path = ROOT / "docs" / "screenshots" / "capture.py"
@@ -1014,10 +955,17 @@ def find_screenshot_reference_violations(root: Path = ROOT) -> list[HarnessFailu
     return [HarnessFailure(root / "docs", 0, problem) for problem in problems]
 
 
-def run_structural_checks() -> int:
+def run_structural_checks(
+    *, base: str | None = None, ci: bool = False, snapshot: bool = False
+) -> int:
     """Run fast structural checks that do not require third-party packages."""
 
+    if not ci and (snapshot or base is None and "ASYMMETRY_STRUCTURAL_BASE" not in os.environ):
+        print(
+            "maintenance: snapshot only; touched-file shrinkage and allowance non-resurrection require --base COMMIT (or --ci)."
+        )
     failures = [
+        *find_maintenance_violations(base=base, ci=ci, snapshot=snapshot),
         *find_knowledge_base_violations(),
         *find_agent_guide_violations(),
         *find_skill_growth_violations(),
@@ -1302,8 +1250,8 @@ def cmd_gui_smoke(_args: argparse.Namespace) -> int:
     return _run_command([sys.executable, "-m", "asymmetry.gui.app", "--smoke-test"])
 
 
-def cmd_structural(_args: argparse.Namespace) -> int:
-    return run_structural_checks()
+def cmd_structural(args: argparse.Namespace) -> int:
+    return run_structural_checks(base=args.base, ci=args.ci, snapshot=args.snapshot)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -1329,6 +1277,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     structural_parser = subparsers.add_parser("structural", help="Run fast repository-shape checks")
+    structural_parser.add_argument(
+        "--base", help="Immutable comparison commit; otherwise ASYMMETRY_STRUCTURAL_BASE"
+    )
+    structural_parser.add_argument(
+        "--ci", action="store_true", help="Require the GitHub event base"
+    )
+    structural_parser.add_argument(
+        "--snapshot", action="store_true", help="Explicit snapshot only; no change guarantees"
+    )
     structural_parser.set_defaults(func=cmd_structural)
 
     lint_parser = subparsers.add_parser("lint", help="Run Ruff checks")
@@ -1387,6 +1344,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser(
         "validate",
         help="Run structural checks, lint, and tests (standard tier by default)",
+    )
+    validate_parser.add_argument(
+        "--base", help="Immutable comparison commit; otherwise ASYMMETRY_STRUCTURAL_BASE"
+    )
+    validate_parser.add_argument("--ci", action="store_true", help="Require the GitHub event base")
+    validate_parser.add_argument(
+        "--snapshot", action="store_true", help="Explicit snapshot only; no change guarantees"
     )
     validate_parser.add_argument(
         "--tier",

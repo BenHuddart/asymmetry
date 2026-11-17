@@ -77,6 +77,118 @@ external-reference completeness. Direct Sphinx and non-HTML make targets are
 non-gating development commands. `make html` and `make publish` delegate to the
 same harness gate.
 
+### Module size and owned attributes
+
+`structural` and `validate` enforce the maintained Python scope: regular `.py`
+files at the repository root and below `src`, `tests`, `tools`, `docs`, `examples`,
+`packaging`, `scripts`, `.github`, and `.claude/hooks`, including new local files.
+Other agent configuration and `.claude/worktrees` are excluded. Other hidden directories,
+`__pycache__`, build/generated output (`build`, `dist`, `_build`, `_generated`),
+virtual environments (`venv`, `env`, or directories containing `pyvenv.cfg`),
+`site-packages`, `node_modules`, `vendor`, `vendored`, and egg metadata are excluded.
+File and directory symlinks are never followed, including dependency checkouts.
+Other roots are outside maintained scope; tracked repository tooling under the
+explicit hidden roots remains covered.
+
+Physical lines are LF-delimited byte lines, including blank, comment, and
+docstring lines and a final nonempty unterminated line. CRLF counts once;
+a bare CR does not start a new physical line. Empty files have zero lines.
+**999 lines passes for a new module; 1000 and 1001 fail.** This implements
+AGENTS.md's “under 1,000” rule. Existing files of 1000 or more lines have exact
+frozen ceilings in `tools/baselines/maintenance.json`. Resolved debt requires
+lowering its ceiling to the actual count in the same change, or removing the
+entry below 1000 lines or on deletion. Stale, malformed, duplicate, and
+out-of-scope entries fail. Checks never edit files or regenerate allowances.
+
+The same baseline records proven built-in `hasattr(receiver, "literal")` and
+`getattr(receiver, "literal", None)` occurrences. Proof uses top-level project
+class definitions, their assigned/annotated instance and class members, slots,
+properties and methods, plus resolvable project inheritance. Direct instance
+receivers (including a renamed first method argument), annotated arguments,
+simple instance aliases, construction, and proven child declarations can establish
+ownership. Project imports and relative re-exports are resolved statically,
+without importing application, scientific, or Qt code. A child receiver alone
+establishes no ownership of its members. Conflicting/unresolved child assignments
+lose the child type. Built-in imports, qualified builtins and simple aliases are
+recognised; parameter/local shadowing and reassignment invalidate bindings.
+Methods use module globals, while bases bind at class definition. Closures lose
+captured names that the enclosing function may rebind.
+Compound statements conservatively discard rebound aliases at control-flow joins.
+
+Qt/C-extension inherited APIs, unresolved plugin objects, Protocol interfaces
+(including all classes derived from `typing.Protocol`), external
+children, dynamic attribute names, and defaults other than literal `None` remain
+outside this rule. These are receiver/member boundaries, with no file wildcard
+exceptions. Protocol-derived classes remain unresolved even when a concrete
+subclass declares additional own state. Static proof is deliberately incomplete: factories, arbitrary
+container elements, dynamically assigned members, nested/local class definitions,
+comprehensions/lambdas, descriptor return types, and general type inference are
+unresolved. An unresolved probe is not certified safe. This is no general
+`getattr` or `try/except` prohibition; manual ownership review still applies.
+
+Each allowance identifies the path, lexical class/function scope, proven owner,
+and complete normalized call AST (without line/column positions, preserving empty
+fields consistently across Python versions), with its exact
+multiplicity. Unrelated line shifts preserve an occurrence. A different literal,
+receiver spelling, call, or scope cannot spend its allowance. Moving an identical
+call within the same scope is indistinguishable; arbitrary monkeypatching and
+interprocedural mutation are outside the proof. Remove resolved identities or
+lower their multiplicity; do not replace one with a different probe of equal count.
+Prefer direct access to construction-guaranteed state, or model optional state
+explicitly. Review lifecycle assumptions before changing application code.
+
+### Defined-base maintenance gate
+
+A snapshot ceiling cannot establish touched-file shrinkage or prevent baseline
+restoration. For a branch, choose the immutable reviewed base explicitly:
+
+```sh
+python3 tools/harness.py structural --base <commit-sha>
+python3 tools/harness.py validate --base <commit-sha> -- -n 4 --dist loadfile
+```
+
+`ASYMMETRY_STRUCTURAL_BASE` supplies the same base to both commands; `--base`
+takes precedence. The gate checks final worktree contents, including committed,
+staged, unstaged, and new local files. Index and worktree Git changes (including executable-mode edits) also mark files touched,
+even if unstaged edits restore their base bytes. CRLF conversion in a clean
+`core.autocrlf` checkout is not a touch; Git still identifies actual line-ending
+and mode edits. Intermediate index contents
+are not a separate candidate: run the gate again after staging the final tree.
+A touched oversized base file must shrink, including comment-only and same-size
+edits. Unchanged debt may remain. Allowances cannot be added, raised, or restored
+against the base, even by editing or deleting/recreating the baseline.
+
+Paths are identities: deletion removes debt; renames and copies are new paths
+and receive no allowance from the old path. Reduce a renamed/copied oversized
+file below 1000 lines and remove its owned probes. This conservative rule avoids
+rename-similarity heuristics and transferable looser ceilings.
+
+Initial bootstrap is limited to the single reviewed pre-rollout commit
+`606992f5a4f6de2a3781f60c3e5444ffbaae6069`. Only its actual source debt can
+supply initial allowances; candidate additions/growth cannot. Other bases without
+a baseline fail. After rollout, use a reviewed base containing the ratchet;
+selecting an older base does not prove monotonicity since a newer one.
+
+Without a base, the command prints **snapshot only**: it checks exact current
+debt but cannot prove touched-file shrinkage, baseline monotonicity, or
+non-resurrection. `--snapshot` explicitly chooses this limited mode and ignores
+the environment base. Missing requested commits and Git errors fail, including
+shallow clones lacking the base. History-aware checks require Git 2.45 or newer
+to disable automatic promisor lazy fetching; local replacement refs are also
+disabled so the named immutable object owns the comparison. Missing promised
+objects fail with an actionable base-object error. Local commands never fetch, checkout, or reset;
+make the required commit available yourself. Source bytes and NUL-delimited
+index paths are read with structured Git arguments, once per tree rather than
+per occurrence.
+
+The always-run read-only CI checks job obtains full checkout history and fetches
+the validated immutable event base before `structural --ci`. PRs compare the
+checked candidate (including GitHub's merge checkout) against the event's
+`pull_request.base.sha`; pushes compare against `before`; manual dispatch requires
+an explicit 40-character `structural_base` input. Missing/zero/unsupported bases
+fail. Neither HEAD versus itself, an inferred parent, nor a moving remote branch
+is used as the CI base. The gate itself does no network operations.
+
 ### Grouped-count boundaries
 
 Structural checks reject `min` calls that truncate multiple array lengths in

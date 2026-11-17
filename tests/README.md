@@ -196,3 +196,15 @@ permitted corpus placeholders, cold offline inventory handling, process failures
 fresh mode switching, page budgets, and actual workflow publication dependencies.
 No corpus, screenshot capture, or network access is required. Existing screenshot
 registry/completeness and watchdog fixtures retain their own focused coverage.
+
+## Maintenance-ratchet regressions
+
+Run `python3 tools/harness.py test -- tests/tools/test_harness_maintenance.py tests/tools/test_owned_probes.py tests/tools/test_structural_ci.py -n 4 --dist loadfile`.
+Synthetic source trees and real temporary Git repositories exercise the production
+harness entry, exact 999/1000/1001 boundary, LF/CRLF counting, same-size edits,
+new/deleted/renamed/copied files, staged/unstaged/committed changes, baseline
+lowering and restoration across commits, bootstrap integrity, missing/shallow
+bases, merge checkouts, semantic probe substitutions, alias/shadowing proofs,
+external boundaries, actual CI configuration, and read-only behavior. Scope and
+proof limits, baseline remediation, and explicit base selection are described in
+`docs/HARNESS.md`. Snapshot success does not establish the change gate.
