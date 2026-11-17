@@ -281,14 +281,15 @@ def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
     import importlib.metadata
 
     tracked = (
-        subprocess.check_output(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=source
-        )
+        subprocess.check_output(["git", "ls-files", "-z", "--cached"], cwd=source)
         .decode()
         .split("\0")
     )
     manifest = {
         "source": str(source),
+        "source_head": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=source, text=True
+        ).strip(),
         "driver": sys.executable,
         "driver_version": sys.version,
         "build_tools": {
