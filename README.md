@@ -2,7 +2,7 @@
 
 A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and visualization.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 [![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
@@ -97,7 +97,7 @@ library and GUI run on all three platforms when built locally.
 ### Install from source (Python users and contributors)
 
 For scripting against the library, or for development, install from the Git repository.
-Asymmetry requires Python 3.10 or later.
+Asymmetry requires Python 3.11 or later.
 
 #### Clone the repository
 
@@ -118,7 +118,7 @@ development dependencies.
 #### Other install options from the checked-out repository
 
 ```bash
-# Core library only
+# Core library and CLI help (NumPy, SciPy, iminuit; no GUI or plotting)
 python -m pip install -c constraints.txt .
 
 # With GUI support

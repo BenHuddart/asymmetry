@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Require Python 3.11 or later and verify core-only sdist/wheel installation, CLI
+  help, and bundled skill resources on Python 3.11 and 3.12.
+
 - Enforce shrinking module-size and proven owned-attribute probe allowances, with
   explicit Git-base checks locally and immutable event-base enforcement in CI.
 

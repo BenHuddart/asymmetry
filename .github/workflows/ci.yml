@@ -123,13 +123,43 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python tools/harness.py test --tier standard --shard ${{ matrix.shard }}/6 -- --durations=15 -o faulthandler_timeout=600
 
+  # Always run: README/license/package-data changes can alter a distribution even
+  # when the editable test selection reports no code change.
+  install-smoke:
+    name: Core wheel (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          activate-environment: true
+      - name: Install outer build tooling
+        run: uv pip install build pip
+      - name: Build via sdist and probe fresh core install
+        run: python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke"
+      - name: Retain distribution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-wheel-${{ matrix.python }}
+          path: |
+            ${{ runner.temp }}/distribution-smoke/*.log
+            ${{ runner.temp }}/distribution-smoke/manifest.json
+          retention-days: 7
+
   # Single required status check that aggregates the checks + test jobs, so the
   # branch ruleset only needs to require this one status. Passes when checks
   # succeeded and tests succeeded (or were skipped for a non-code change).
   ci-success:
     name: CI success
     if: always()
-    needs: [changes, checks, test]
+    needs: [changes, checks, test, install-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
@@ -137,6 +167,11 @@ jobs:
           echo "changes: ${{ needs.changes.result }}"
           echo "checks:  ${{ needs.checks.result }}"
           echo "test:    ${{ needs.test.result }}"
+          echo "install-smoke: ${{ needs.install-smoke.result }}"
+          if [ "${{ needs.install-smoke.result }}" != "success" ]; then
+            echo "::error::Core wheel installation smoke failed"
+            exit 1
+          fi
           # changes must succeed, otherwise 'test' may have been skipped due to an
           # infrastructure failure rather than a legitimate no-code-change PR.
           if [ "${{ needs.changes.result }}" != "success" ]; then

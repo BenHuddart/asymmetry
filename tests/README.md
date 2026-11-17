@@ -208,3 +208,11 @@ bases, merge checkouts, semantic probe substitutions, alias/shadowing proofs,
 external boundaries, actual CI configuration, and read-only behavior. Scope and
 proof limits, baseline remediation, and explicit base selection are described in
 `docs/HARNESS.md`. Snapshot success does not establish the change gate.
+
+## Distribution checks
+
+`tests/tools/test_distribution_smoke.py` uses small synthetic archives and fresh
+stdlib-only fixture venvs to reject inconsistent metadata, missing resources,
+broken imports/entrypoints, altered artifact bytes, and source-path leakage.
+The real build/install smoke runs separately in CI on Python 3.11 and 3.12;
+see `docs/HARNESS.md`. These targets install only declared core requirements.

@@ -1008,8 +1008,8 @@ Current limitations:
 
 | ID | Requirement |
 |---|---|
-| NF-1 | **Python ≥ 3.10** (leverage modern typing, pattern matching). |
-| NF-2 | Core dependencies: `numpy`, `scipy`, `h5py`, `lmfit`. Optional: `uproot` (ROOT I/O), `iminuit`, `matplotlib`. |
+| NF-1 | **Python ≥ 3.11** (core uses `enum.StrEnum`); core wheel smoke on 3.11 and CI Python 3.12. |
+| NF-2 | Core dependencies: `numpy`, `scipy`, `iminuit`. Optional: `h5py`, `pyhdf`, `uproot` (file formats), `matplotlib` (plotting). |
 | NF-3 | GUI dependencies: `PySide6`, `matplotlib` (for embedded plots). |
 | NF-4 | Cross-platform: Linux, macOS, Windows. |
 | NF-5 | Installable from the Git repository via pip, with optional extras for GUI and I/O/export features. |
@@ -1020,17 +1020,15 @@ Current limitations:
 
 ---
 
-## 6. Dependencies (initial)
+## 6. Runtime dependencies
 
 ### Core
 | Package | Purpose |
 |---|---|
 | `numpy` | Array operations |
 | `scipy` | FFT, optimization, special functions (e.g. Kubo-Toyabe) |
-| `h5py` | NeXus / HDF5 I/O |
-| `lmfit` | High-level fitting with parameter objects |
-| `uproot` | ROOT file I/O (optional) |
-| `iminuit` | Minuit minimizer (optional) |
+| `iminuit` | Minuit minimizer |
+| `h5py`, `pyhdf`, `uproot` | Optional HDF5, HDF4, and ROOT file I/O |
 
 ### GUI
 | Package | Purpose |

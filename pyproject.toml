@@ -7,7 +7,7 @@ name = "asymmetry"
 version = "0.28.0"
 description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Ben Huddart", email = "benjamin.huddart@physics.ox.ac.uk" },
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -105,12 +104,14 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP"]
-ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings are intentional.
+# Preserve str/Enum formatting and the equivalent timezone.utc spelling.
+# Interpreter support does not require migrating existing runtime objects.
+ignore = ["E501", "UP017", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/asymmetry/core/fitting/ballistic.py" = ["N802", "N803"]  # Physics notation (nD, B_LF, D_hop, lambda_0D)
