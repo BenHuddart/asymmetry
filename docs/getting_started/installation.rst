@@ -10,13 +10,22 @@ users should install from the Git repository as described below.
 Requirements
 ------------
 
-Asymmetry requires Python 3.10 or later, and is fully compatible with Python 3.13.
+Asymmetry requires Python 3.11 or later. CI checks core-only wheel installs on
+Python 3.11 and 3.12, including public core imports, CLI help, and bundled skill
+resources. These checks do not certify every optional extra or platform on newer
+Python versions; optional packages also have their own interpreter requirements.
 
 Core dependencies
 ~~~~~~~~~~~~~~~~~
 
-* numpy >= 1.24
-* iminuit >= 2.0 (for fitting without scipy dependency)
+* numpy >= 1.24, < 2.3
+* scipy >= 1.10, < 1.18
+* iminuit >= 2.0, < 3
+
+The core library and CLI help need only these dependencies and their transitive
+requirements. GUI, plotting, and format-specific libraries are optional. The
+``constraints.txt`` file restricts versions of requested dependencies; it does
+not install every package it lists.
 
 Optional dependencies
 ~~~~~~~~~~~~~~~~~~~~~
@@ -48,8 +57,8 @@ For ROOT file support:
 
 * uproot >= 5.0
 
-For the command-line workflow and AI-agent skill (headless plots and NeXus
-loading):
+For headless plots and NeXus loading in the command-line workflow and AI-agent
+skill:
 
 * matplotlib >= 3.7, h5py >= 3.8 — installed together as the ``agent`` extra
   (``pip install "asymmetry[agent]"``). See :doc:`/reference/agent_workflow`.
@@ -127,7 +136,7 @@ For development work:
    python -m pip install -c constraints.txt -e ".[all]"
 
    # Run tests
-   python -m pytest
+   python3 tools/harness.py test
 
 Verifying installation
 ----------------------
@@ -137,6 +146,17 @@ Verifying installation
    import asymmetry
    print(asymmetry.__version__)
    
-   # Test GUI availability
-   from asymmetry.gui.app import main
-   # main()  # Uncomment to launch GUI
+   # Exercise core imports, including the public workflow used by the CLI.
+   from asymmetry.core import workflow
+   from asymmetry.core.fitting.models import exponential_relaxation
+   print(exponential_relaxation(0.0, A0=0.25, Lambda=0.7, baseline=0.05))
+   # 0.3
+
+The core install also provides CLI help:
+
+.. code-block:: bash
+
+   asymmetry --help
+   python -m asymmetry fit --help
+
+After installing the ``gui`` extra, ``asymmetry-gui`` launches the application.

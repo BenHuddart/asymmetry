@@ -281,3 +281,38 @@ def test_docs_smoke_installs_qt_import_runtime_before_sphinx() -> None:
     assert install is not None, "GUI autodoc imports require Linux Qt runtime libraries"
     assert "libegl1" in install["run"]
     assert not install.get("continue-on-error", False)
+
+
+def test_core_wheel_job_is_always_required_and_separate_from_editable_tests() -> None:
+    workflow = _workflow("ci.yml")
+    assert workflow["permissions"] == {"contents": "read", "pull-requests": "read"}
+    job = workflow["jobs"]["install-smoke"]
+    assert "if" not in job
+    assert job["strategy"]["matrix"]["python"] == ["3.11", "3.12"]
+    assert not job.get("continue-on-error", False)
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    assert runs == [
+        "uv pip install build pip",
+        'python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke"',
+    ]
+    assert "install-smoke" in workflow["jobs"]["ci-success"]["needs"]
+    assert workflow["jobs"]["ci-success"]["if"] == "always()"
+    assert job["timeout-minutes"] <= 15
+
+
+@pytest.mark.parametrize("smoke_result", ["success", "failure", "cancelled", "skipped"])
+def test_required_ci_rejects_missing_core_wheel_success(tmp_path: Path, smoke_result: str) -> None:
+    job = _workflow("ci.yml")["jobs"]["ci-success"]
+    script = job["steps"][0]["run"]
+    for name, result in {
+        "changes": "success",
+        "checks": "success",
+        "test": "skipped",
+        "install-smoke": smoke_result,
+    }.items():
+        script = script.replace("${{ needs." + name + ".result }}", result)
+    assert "${{" not in script
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True, timeout=10
+    )
+    assert (result.returncode == 0) is (smoke_result == "success"), result.stdout + result.stderr

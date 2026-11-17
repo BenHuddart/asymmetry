@@ -370,3 +370,36 @@ imports blocked. On Linux it also runs a GUI case with its subprocess home
 pointing at a regular file, which makes real user-config paths unwritable even
 for a privileged test process. Reproduce both checks with
 `python tools/harness.py test -- tests/tools/test_test_isolation.py`.
+
+## Installed core distribution smoke
+
+CI always runs a separate core wheel job on Python 3.11 and 3.12. Its failure,
+cancellation, or skip fails `CI success`, including changes to metadata, resources,
+entrypoints, build tooling, and workflows. Editable test shards and their optional
+dependencies remain separate from the target environments.
+
+Run it with an outer virtual environment containing `build` and `pip`:
+
+```bash
+python3 tools/distribution_smoke.py --output /tmp/asymmetry-wheel-evidence
+```
+
+The output directory must be new and outside the checkout. `--python PATH` may
+be repeated to use the same artifact with several interpreters. The driver builds
+an sdist in backend isolation, unpacks it, and builds the wheel from that unpacked
+source in a second isolated build. This explicit sequence differs from requesting
+`build --sdist --wheel` against the checkout. It installs only the wheel and its
+declared core requirements into fresh venvs, using `constraints.txt` to restrict
+versions. Build tooling stays in the outer environment.
+
+Child probes run outside the checkout with interpreter path injection removed,
+user sites disabled, and temporary home/config/data/plugin locations. They check
+artifact bytes and metadata, installed module origins, public workflow/fitting/data
+imports, an analytic exponential value, console/module/subcommand help, and bundled
+skill resources. GUI, plotting, optional-format, and development tools must be
+absent. Logs and the JSON manifest retain artifact hashes, target dependencies,
+interpreter identities, and module origins, including failures.
+
+This is a Linux core-install smoke, not certification of minimum dependency
+versions, every extra, newer interpreters, or all desktop platforms. Native desktop
+artifact checks and release dependency reproduction have separate owners.
