@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clarify sourced methods comparisons, evidence limits, and current file-loading support; add topic navigation for fitting, Fourier/MaxEnt, and integral scans.
+
 - Refuse known unconverted Gaussian-component widths at Brandt trend fits;
   preserve explicit value/error conversion, captured fit context, and unknown legacy data.
 

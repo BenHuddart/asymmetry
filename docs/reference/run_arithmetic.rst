@@ -225,18 +225,18 @@ label edit authorises an automatic numerical refit.
 Compared with other programs
 -----------------------------
 
-WiMDA 1.326 pools raw counts before correction and provides unit signed **Co-sub**; its **FileBG**
-reference subtraction uses a frame ratio. These are count operations, not
-asymmetry contrasts. WiMDA retains the master field and temperature, as does
-Asymmetry; the latter also records active constituent ranges. The `WiMDA manual/homepage
-<https://shadow.nd.rl.ac.uk/wimda/>`_ describes the application; these checked
-features do not establish identical uncertainty conventions.
+WiMDA's original manual describes count co-addition, while the recorded
+WiMDA 1.326 **FileBG** control checks a frame-ratio reference subtraction.
+Neither establishes its general correction order or master-metadata policy.
+Asymmetry retains the first ordered input's conditions and records active
+constituent ranges. See :doc:`/explanation/comparison` for the matched
+count/variance controls and their limits.
 
 musrfit 1.12.1 distinguishes standalone ``addRun`` from fit-time ``ADDRUN``.
 The `musrfit manual
 <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html>`_ documents histogram
-addition and whole-bin timing shifts. Standalone addRun retains master raw-run
-metadata; this is distinct from the fit-time ADDRUN correction context. Matched correction-off fit-time ADDRUN
+addition and whole-bin timing shifts. Standalone file addition is distinct from the fit-time ADDRUN correction
+context; identical master-metadata policies are not established here. Matched correction-off fit-time ADDRUN
 controls agree on unit-addition values and interior asymmetry values formed
 from structured count inputs, to a tolerance of :math:`5\times10^{-6}` in fractional asymmetry. That does not
 establish endpoint, error, arbitrary signed-weight, or likelihood equivalence.

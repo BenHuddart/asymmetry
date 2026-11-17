@@ -14,8 +14,8 @@ Unlike the time-domain fitting workflows, the Integral scan mode does **not**
 fit a model to each spectrum. It reduces every run to one number — the asymmetry integrated
 over a time window — and then lets you fit a baseline and resonance peaks to the
 resulting scan. Ordinary and RF scans use the same count-integral estimator.
-Mantid's single-period Integral is the closest count-first reference; program
-comparisons depend on the selected observations, windows, and error conventions.
+Mantid's documented asymmetry-versus-log workflow is a related scan analysis;
+matched observations, windows, and errors must be established separately.
 
 Every integral reduction uses the independent F/B pair contract in
 :doc:`detector_grouping`: effective sides must be nonempty and disjoint after
@@ -768,10 +768,12 @@ References
 .. [Stefanski2002] L. A. Stefanski and D. D. Boos, Am. Stat. **56**, 29 (2002),
    https://doi.org/10.1198/000313002753631330.
 
-* F. L. Pratt, WiMDA: a muon data analysis program for the Windows PC,
-  Physica B **289–290**, 710 (2000). — the count-integral ALC this mode follows.
-* The Mantid ``PlotAsymmetryByLogValue`` algorithm — the alpha-aware
-  integral/differential field-scan reference.
+* F. L. Pratt, Physica B **289–290**, 710 (2000).
+* `WiMDA original manual, version 1.2, Sec. 11.1
+  <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_, time-window LCR scans.
+* `Mantid PlotAsymmetryByLogValue v1, version 6.11.0 documentation
+  <https://docs.mantidproject.org/v6.11.0/algorithms/PlotAsymmetryByLogValue-v1.html>`_,
+  asymmetry versus sample log.
 
 Compared with other programs
 ----------------------------
@@ -795,17 +797,14 @@ Captured scan-fit history and no-refit reopening are Asymmetry project safeguard
 They do not assert identical project-restoration behaviour in WiMDA, Mantid, or
 musrfit, and introduce no new estimator comparison.
 
-Mantid's single-period ``Integral`` integrates counts before forming asymmetry.
-Its dual-period contrast is detector-wise and differs from :math:`A_G-A_R`;
-its ``Differential`` integrates a pointwise curve rather than taking Asymmetry's
-equal-time-bin mean. Mantid's histogram integration uses edge-based windows,
-whereas Asymmetry selects whole native bins by their centres.
-
-WiMDA 1.326's dedicated ALC route starts from acquisition-integrated columns;
-it does not establish exact arbitrary histogram-window or error agreement.
-Its **Differential ALC** differences adjacent table entries with its own gap
-cutoff and per-kG scale. Asymmetry uses positive steps, explicit optional
-``max_gap``, and the selected axis unit. Neither is Mantid's time reduction.
+Mantid's documented ``PlotAsymmetryByLogValue`` provides a related asymmetry
+versus sample-log workflow. No matched native execution establishes identical
+integral/dual-period observables, endpoints, or errors here. WiMDA's original
+manual, Sec. 11.1, describes time-window LCR scans using histogram bunching,
+cursor selection, and batch fit tables. That is a documented method, rather
+than a native WiMDA 1.326 ALC/RF comparison or a specification of its dedicated
+ALC-column/derivative operations. Asymmetry's table derivative uses positive
+steps, optional ``max_gap``, and selected-axis units.
 musrfit 1.12.1 packs counts before its fitting ratio. Checked packed controls
 agree only on 22 interior points per case at export precision; first/endpoint
 differences remain unresolved. No complete packed-output, fresh native WiMDA

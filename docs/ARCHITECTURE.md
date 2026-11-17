@@ -57,9 +57,7 @@ asymmetry/
 │   │   ├── base.py           # Abstract loader interface
 │   │   ├── nexus.py          # NeXus / HDF5 loader
 │   │   ├── psi.py            # PSI BIN/MDU raw histogram loader
-│   │   ├── root.py           # ROOT file loader
-│   │   ├── ascii.py          # Column-delimited ASCII / CSV
-│   │   └── mud.py            # TRIUMF MUD format
+│   │   └── root.py           # ROOT file loader
 │   ├── transform/      # Data transformations
 │   │   ├── __init__.py
 │   │   ├── asymmetry.py      # Asymmetry calculation from raw histograms
@@ -770,20 +768,17 @@ collision, so it stays short even for a joint fit of several members.
 
 ### 4.1 Data I/O
 
-> **Implementation note:** ISIS muon NeXus, PSI BIN/MDU, and MusrRoot/LEM ROOT
-> loaders are implemented in the shared loader registry.
-> ASCII/CSV and TRIUMF MUD remain planned extension points.
+The built-in registry serves `asymmetry.core.io.load`, workflow/CLI loading,
+and the GUI file picker. It registers ISIS muon NeXus V1/V2 (`.nxs`, `.nexus`),
+PSI BIN/MDU, and MusrRoot/LEM ROOT. HDF5 NeXus requires `h5py`, HDF4 requires
+`pyhdf`, and ROOT requires `uproot`. Layout and metadata limits are described in
+[Loading data](reference/loading_data.rst); an extension does not certify every
+writer or detector geometry. There is no built-in TRIUMF MUD or generic
+ASCII/CSV raw-run loader. Array fitting and processed-data export are separate
+entry points.
 
-| ID | Requirement |
-|---|---|
-| IO-1 | Load μSR histogram data from **NeXus/HDF5** files (ISIS, PSI, J-PARC NeXus conventions). *(Deferred — pending format confirmation.)* |
-| IO-2 | Load **MusrRoot/LEM ROOT** files with `RunHeader` metadata and `hDecay` histograms, following musrfit's `PRunDataHandler::ReadRootFile`. |
-| IO-3 | Load column-delimited **ASCII/CSV** files with user-defined column mappings. |
-| IO-4 | Load **PSI binary** (`.bin`) and **PSI MDU** (`.mdu`) raw histogram formats. |
-| IO-5 | Load **TRIUMF MUD** format. |
-| IO-7 | Auto-detect file format where possible; fall back to manual selection. |
-| IO-8 | Provide a **plugin interface** so third-party loaders can be registered without modifying the core. |
-| IO-9 | Export processed asymmetry data and fit results to ASCII, HDF5, and JSON. |
+`LoaderRegistry` dispatches by extension or explicit `fmt` and permits additional
+`BaseLoader` implementations. The registry supplies the file-dialog filter.
 
 ### 4.2 Data Model
 
@@ -840,14 +835,12 @@ deadtime correction retain distinct purposes and outcomes.
 
 Binning follows the same counts-first order in every mode (fixed bunching
 included): counts are summed onto the output bins and the asymmetry formed
-per output bin (`core/transform/rebin.py::binned_fb_asymmetry`) — the
-counts-then-ratio convention WiMDA, musrfit, and Mantid all use. Rebinning
-an already-formed asymmetry curve (`rebin()`) is reserved for data without
-raw histograms; on sparse data it lets one-sided raw bins' σ = 1
-no-information sentinels inflate merged error bars. The audited
-cross-program conventions are recorded in
-[docs/porting/comparison-matrix.md](porting/comparison-matrix.md)
-("Reduction numerics").
+per output bin (`core/transform/rebin.py::binned_fb_asymmetry`). Curve-bin
+means are reserved for observations without resolved raw-count replay. Shared
+counting responses are retained where available; plain curve arrays use the
+independent-noise assumption. The matched observations, errors, and endpoint
+differences are described in
+[the methods comparison](explanation/comparison.rst#comparison-binning).
 
 ### 4.2.3 ROOT Provenance
 
@@ -1052,13 +1045,13 @@ Current limitations:
 | Phase | Deliverable |
 |---|---|
 | **M0 — Skeleton** | Project scaffolding, packaging (`pyproject.toml`), CI, empty module structure. |
-| **M1 — Data I/O** | NeXus and ASCII loaders; `MuonDataset` data model; asymmetry calculation; basic tests. |
+| **M1 — Data I/O** | Registered NeXus, PSI BIN/MDU, and ROOT loaders; `MuonDataset` data model; asymmetry calculation; basic tests. |
 | **M2 — Fitting** | Single-run fitting with built-in models; parameter management; result reporting. |
 | **M3 — Fourier** | FFT and MaxEnt transforms; apodization; frequency-domain plotting. |
 | **M4 — GUI shell** | Main window, data browser, plot panel, fit panel wired to the core. |
 | **M5 — Global fitting** | Simultaneous multi-run fits with shared parameters. |
 | **M6 — Logbook** | Logbook panel with persistence, filtering, and batch operations. |
-| **M7 — Polish** | ROOT loader, MUD loader, export workflows, documentation, packaging. |
+| **M7 — Polish** | Export workflows, documentation, packaging. |
 
 ---
 

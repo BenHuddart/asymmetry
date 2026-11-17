@@ -64,15 +64,12 @@ that constituent's observations are separately available.
 Compared with other programs
 ----------------------------
 
-WiMDA's **Group Table Edit** selects numbered histogram channels
-[wimda_grouping]_. Its exclusions can remove physical-detector contributions
-while rebuilding mapped histograms. Asymmetry's exclusions act on acquired
-histogram channels and preserve the loaded raw data. With one channel per
-detector, corresponding selections remove the same observations. If a channel
-combines detectors, excluding it removes that whole observation; neither program can recover
-constituents absent from the file. Shared channels between groups remain
-permitted in WiMDA, whereas Asymmetry requires disjoint effective F/B channels
-for independent analysis.
+WiMDA's original manual, Sec. 5.1, describes numbered histogram grouping and
+pregrouped acquisitions [wimda_grouping]_. Asymmetry's exclusions act on acquired
+histogram channels and preserve loaded raw data. If a channel combines physical
+detectors, excluding it removes the whole observation; regrouping cannot recover
+constituents absent from the file. The manual does not establish WiMDA 1.326's
+physical-detector exclusion or overlapping-pair policy.
 Mantid detector selection and musrfit histogram lists explicitly select the
 observations to sum; their recorded grouping checks and conventions are
 summarised in :doc:`/reference/detector_grouping` and :doc:`/explanation/comparison`.
@@ -80,4 +77,5 @@ summarised in :doc:`/reference/detector_grouping` and :doc:`/explanation/compari
 **References**
 
 .. [wimda_grouping] F. L. Pratt, Physica B **289–290**, 710 (2000).
-   `WiMDA <https://shadow.nd.rl.ac.uk/wimda/>`_.
+   `WiMDA original manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_,
+   Sec. 5.1 (version 1.2, February 2005).
