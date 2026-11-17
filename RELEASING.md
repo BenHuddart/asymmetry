@@ -113,7 +113,7 @@ It records the compiler executable and engine DLL hashes. The platform replay
 records runner image, OS, and, on macOS, Xcode/SDK identities. The hosted OS image,
 system frameworks/tools, fonts, and native timestamps are observed rather than
 fully pinned. Neither previews nor releases promise byte-identical DMGs or EXEs;
-the macOS preview uses its own runner-image version.
+the macOS preview uses the same macOS 15 arm64 runner selection as releases.
 
 ### Intentional input updates
 

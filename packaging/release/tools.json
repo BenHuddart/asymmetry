@@ -1,5 +1,5 @@
 {
-  "python": "3.12.16",
+  "python": "3.12.10",
   "implementation": "CPython",
   "gle": {
     "url": "https://github.com/BenHuddart/gleplot.git",
@@ -7,9 +7,15 @@
     "commit": "6a270dfa5f49c907fdfe9e4d9ec2ae5e1000172c",
     "version": "1.7.0"
   },
-  "inno": "6.4.3",
+  "inno": "6.7.1",
   "targets": {
-    "windows-x64": {"platform": "win32", "machine": "AMD64"},
-    "macos-arm64": {"platform": "darwin", "machine": "arm64"}
+    "windows-x64": {
+      "platform": "win32",
+      "machine": "AMD64"
+    },
+    "macos-arm64": {
+      "platform": "darwin",
+      "machine": "arm64"
+    }
   }
 }

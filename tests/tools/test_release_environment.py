@@ -20,7 +20,7 @@ def observation() -> dict:
     return {
         "python": {
             "implementation": "CPython",
-            "version": "3.12.16",
+            "version": "3.12.10",
             "platform": "win32",
             "machine": "AMD64",
         },
@@ -43,7 +43,7 @@ def verify(actual: dict) -> dict:
         actual,
         {
             "implementation": "CPython",
-            "version": "3.12.16",
+            "version": "3.12.10",
             "platform": "win32",
             "machine": "AMD64",
         },

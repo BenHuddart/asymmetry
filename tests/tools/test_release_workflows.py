@@ -345,6 +345,12 @@ def test_native_consumers_share_replay_and_verify_before_freezing(filename: str)
             if step.get("name") == "Build application with PyInstaller"
         )
         assert verification < freeze
+        smoke = next(step for step in steps if step.get("name") == "Smoke-test packaged app")
+        assert smoke["working-directory"] == "${{ runner.temp }}"
+        assert "GITHUB_WORKSPACE" in smoke["run"]
+        assert {"PYTHONPATH", "PYTHONHOME"} <= set(re.findall(r"PYTHON[A-Z]+", smoke["run"]))
+        if "macos" in name:
+            assert job["runs-on"] == "macos-15"
         assert not any("pip install" in step.get("run", "") for step in steps)
         assert not any("python-version" in step.get("with", {}) for step in steps)
 
