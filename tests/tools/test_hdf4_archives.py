@@ -198,3 +198,23 @@ def test_packaging_selects_only_verified_dlls_and_preserves_local_files(
         "runtime2.dll",
     ]
     assert (staged / "old.dll").read_bytes() == b"unrelated local runtime"
+
+
+def test_packaging_trace_verifies_all_archives_before_member_reads(fetcher, tmp_path, monkeypatch):
+    from tools import release_artifacts as artifacts
+
+    module, _, records = fetcher
+    monkeypatch.setattr(artifacts, "ROOT", tmp_path)
+    reviewed = tmp_path / "packaging/release/windows-archives.json"
+    reviewed.parent.mkdir(parents=True)
+    reviewed.write_bytes(module.ARCHIVE_INPUT.read_bytes())
+    staged = tmp_path / "runtime"
+    module.main(str(staged))
+    (staged / "_download" / records[2]["filename"]).write_bytes(b"later cache tamper")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("opened an archive before checking all hashes")
+
+    monkeypatch.setattr(artifacts.tarfile, "open", forbidden)
+    with pytest.raises(ValueError, match="archive bytes changed"):
+        artifacts.staged_binaries(staged)

@@ -20,6 +20,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_environment as release  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD_TOOLS = (
+    "pip",
+    "setuptools",
+    "setuptools-scm",
+    "wheel",
+    "packaging",
+    "pyinstaller",
+    "pyinstaller-hooks-contrib",
+    "pillow",
+    "dmgbuild",
+)
+NATIVE_FIELDS = (
+    "ImageOS",
+    "ImageVersion",
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "os_version",
+    "xcode",
+    "sdk",
+)
+SYSTEM_COMPONENTS = [
+    "Operating-system loader, APIs, drivers, and system frameworks remain external; this inventory covers the collected application tree."
+]
 
 
 def write_json(path: Path, value: dict | list) -> None:
@@ -107,17 +130,6 @@ def prepare(replay: Path, target: str, commit: str) -> None:
         raise ValueError("build observation identity differs from checkout")
     tools = read_json(ROOT / "packaging/release/tools.json")
     gle = tools["gle"]
-    url = urlsplit(gle["url"])
-    if (
-        url.scheme != "https"
-        or url.hostname != "github.com"
-        or url.username
-        or url.password
-        or url.query
-        or url.fragment
-        or not re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", url.path)
-    ):
-        raise ValueError("unsafe required immutable VCS identity")
     if observed["gle_commit"] != gle["commit"]:
         raise ValueError("build GLE identity differs from reviewed input")
     reviewed = release.reviewed_wheels(ROOT / f"packaging/release/{target}.txt")
@@ -126,6 +138,8 @@ def prepare(replay: Path, target: str, commit: str) -> None:
         name: item["sha256"] for name, item in reviewed.items()
     }:
         raise ValueError("index wheel observations differ from reviewed inputs")
+    if index_wheels != release.downloaded_wheels(replay / "replay-1"):
+        raise ValueError("index wheel observations differ from allowlisted download reports")
     if observed["native"] != release.native_identity():
         raise ValueError("native tool observations changed after replay")
     for name, directory in (("asymmetry", "app-wheel"), ("gleplot", "gle-wheel")):
@@ -137,42 +151,104 @@ def prepare(replay: Path, target: str, commit: str) -> None:
             "sha256": release.digest(wheels[0]),
         }:
             raise ValueError(f"source wheel observation differs from replay bytes: {name}")
-    distributions = observed["environment"]["distributions"]
     environment = {
         "identity": identity,
-        "distributions": {
-            safe_text(name): safe_text(version)
-            for name, version in sorted(observed["environment"]["distributions"].items())
-        },
-        "build_tool_versions": {
-            name: safe_text(distributions[name])
-            for name in (
-                "pip",
-                "setuptools",
-                "setuptools-scm",
-                "wheel",
-                "packaging",
-                "pyinstaller",
-                "pyinstaller-hooks-contrib",
-                "pillow",
-                "dmgbuild",
-            )
-            if name in distributions
-        },
-        "source_wheels": public_wheels(observed["wheels"]),
+        "distributions": observed["environment"]["distributions"],
+        "source_wheels": observed["wheels"],
         "index_wheels": index_wheels,
-        "direct_sources": {
-            "gleplot": {key: gle[key] for key in ("url", "requested_revision", "commit", "version")}
-        },
-        "native_tools": {
-            key: safe_text(value)
-            for key, value in observed["native"].items()
-            if key
-            in ("ImageOS", "ImageVersion", "RUNNER_OS", "RUNNER_ARCH", "os_version", "xcode", "sdk")
-        },
+        "direct_sources": {"gleplot": gle},
+        "native_tools": observed["native"],
     }
     write_json(ROOT / "build/build-identity.json", identity)
-    write_json(ROOT / "build/build-environment.json", environment)
+    write_json(ROOT / "build/build-environment.json", public_environment(environment, identity))
+
+
+def public_environment(record: dict, identity: dict) -> dict:
+    if record.get("identity") != identity:
+        raise ValueError("public build identity differs from expected checkout")
+    gle = record["direct_sources"]["gleplot"]
+    url = urlsplit(gle["url"])
+    if (
+        url.scheme != "https"
+        or url.hostname != "github.com"
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+        or not re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", url.path)
+        or not re.fullmatch(r"[a-f0-9]{40}", gle["commit"])
+    ):
+        raise ValueError("unsafe required immutable VCS identity")
+    source = {
+        "url": gle["url"],
+        "commit": gle["commit"],
+        "version": safe_text(gle["version"]),
+        "requested_revision": safe_text(gle["requested_revision"]),
+    }
+    expected = read_json(ROOT / "packaging/release/tools.json")["gle"]
+    if source != {key: expected[key] for key in source}:
+        raise ValueError("required immutable VCS identity differs from reviewed inputs")
+    distributions = {
+        safe_text(name): safe_text(version)
+        for name, version in sorted(record["distributions"].items())
+    }
+    return {
+        "identity": identity,
+        "distributions": distributions,
+        "build_tool_distributions": [name for name in BUILD_TOOLS if name in distributions],
+        "source_wheels": public_wheels(record["source_wheels"]),
+        "index_wheels": public_wheels(record["index_wheels"]),
+        "direct_sources": {"gleplot": source},
+        "native_tools": {
+            key: safe_text(value)
+            for key, value in record["native_tools"].items()
+            if key in NATIVE_FIELDS
+        },
+    }
+
+
+def public_analysis(record: dict) -> dict:
+    return {
+        "python_modules": sorted({safe_text(name) for name in record["python_modules"]}),
+        "native_libraries": sorted({portable(name) for name in record["native_libraries"]}),
+        "data": sorted({portable(name) for name in record["data"]}),
+    }
+
+
+def public_components(record: dict, identity: dict) -> dict:
+    if record["schema"] != 1:
+        raise ValueError("unsupported public component record")
+    pins = (
+        read_json(ROOT / "packaging/release/windows-archives.json")
+        if identity["target"] == "windows-x64"
+        else []
+    )
+    archives = record["external_archives"]
+    if [
+        {key: archive[key] for key in ("filename", "url", "sha256")} for archive in archives
+    ] != pins:
+        raise ValueError("public archive identities differ from reviewed inputs")
+    return {
+        "schema": 1,
+        **public_environment(record, identity),
+        "analysis": public_analysis(record["analysis"]),
+        "components": record["components"],
+        "external_archives": [
+            {
+                **pin,
+                "dlls": [
+                    {
+                        "member": portable(dll["member"]),
+                        "path": portable(dll["path"]),
+                        "sha256": public_digest(dll["sha256"]),
+                    }
+                    for dll in archive["dlls"]
+                ],
+            }
+            for pin, archive in zip(pins, archives, strict=True)
+        ],
+        "external_system_components": SYSTEM_COMPONENTS,
+    }
 
 
 def write_analysis(pure: list, binaries: list, datas: list) -> None:
@@ -184,7 +260,7 @@ def write_analysis(pure: list, binaries: list, datas: list) -> None:
         ),
         "data": sorted({portable(name.replace("\\", "/")) for name, _origin, _type in datas}),
     }
-    write_json(ROOT / "build/bundle-analysis.json", record)
+    write_json(ROOT / "build/bundle-analysis.json", public_analysis(record))
 
 
 def inspect_python_archive(executable: Path, modules: list[str]) -> list[str]:
@@ -270,11 +346,13 @@ def verified_staged_archives(directory: Path) -> list:
     reviewed = read_json(ROOT / "packaging/release/windows-archives.json")
     if [{key: item[key] for key in ("filename", "url", "sha256")} for item in archives] != reviewed:
         raise ValueError("external archive identities differ from reviewed inputs")
-    result = []
-    for item, pin in zip(archives, reviewed, strict=True):
+    for pin in reviewed:
         archive = directory / "_download" / pin["filename"]
         if release.digest(archive) != pin["sha256"]:
             raise ValueError(f"verified archive bytes changed before collection: {archive.name}")
+    result = []
+    for item, pin in zip(archives, reviewed, strict=True):
+        archive = directory / "_download" / pin["filename"]
         dlls = []
         with tarfile.open(archive, "r:bz2") as source:
             for member in source.getmembers():
@@ -320,9 +398,7 @@ def external_archives(bundle: Path) -> list:
 
 def collect(bundle: Path, target: str, commit: str) -> None:
     identity = expected_identity(target, commit)
-    environment = read_json(ROOT / "build/build-environment.json")
-    if environment["identity"] != identity:
-        raise ValueError("prepared build identity is stale")
+    environment = public_environment(read_json(ROOT / "build/build-environment.json"), identity)
     inventory = bundle_inventory(bundle)
     embedded = [
         item
@@ -336,7 +412,7 @@ def collect(bundle: Path, target: str, commit: str) -> None:
         item["sha256"] != release.digest(ROOT / "THIRD_PARTY_LICENSES.md") for item in notices
     ):
         raise ValueError("bundled third-party notices are missing or changed")
-    analysis = read_json(ROOT / "build/bundle-analysis.json")
+    analysis = public_analysis(read_json(ROOT / "build/bundle-analysis.json"))
     executable = bundle / (
         "Asymmetry.exe" if target == "windows-x64" else "Contents/MacOS/Asymmetry"
     )
@@ -347,11 +423,9 @@ def collect(bundle: Path, target: str, commit: str) -> None:
         "analysis": analysis,
         "components": inventory,
         "external_archives": external_archives(bundle) if target == "windows-x64" else [],
-        "external_system_components": [
-            "Operating-system loader, APIs, drivers, and system frameworks remain external; this inventory covers the collected application tree."
-        ],
+        "external_system_components": SYSTEM_COMPONENTS,
     }
-    write_json(ROOT / f"dist/{target}-build-components.json", record)
+    write_json(ROOT / f"dist/{target}-build-components.json", public_components(record, identity))
 
 
 def verify_bundle(bundle: Path, record: dict) -> None:
@@ -474,6 +548,7 @@ def finalize(binary: Path, bundle: Path, target: str, commit: str, label: str) -
     if record["identity"] != identity:
         raise ValueError("component identity differs from expected checkout")
     verify_bundle(bundle, record)
+    record = public_components(record, identity)
     if target == "windows-x64":
         compiler = read_json(ROOT / "build/inno-observed.json")
         tools = read_json(ROOT / "packaging/release/tools.json")

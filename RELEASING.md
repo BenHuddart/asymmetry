@@ -184,7 +184,8 @@ record; packaging selects only these DLLs, preserving unrelated local files. Thi
 Before promotion, index-wheel observations must match hashes from the same
 reviewed-input parser used by replay. Source-wheel filenames/hashes are checked
 against replay files and native OS/SDK/tool observations are queried again.
-Missing or stale observations fail rather than become public claims.
+The allowlisted existing pip-report reader also checks displayed wheel filenames
+and origins. Missing or stale observations fail rather than become public claims.
 
 The target-specific `*-build-components.json` includes packaged version, exact
 commit, Python/target, reviewed input hashes, resolved environment distributions,
@@ -195,6 +196,10 @@ the collected file inventory describe inclusion. System APIs, drivers, and syste
 frameworks remain external. This is a bounded component record, not a complete
 licence or system-library provenance scanner. Public fields are allowlisted; raw
 pip reports, local origins, environment/configuration, and host TOCs stay private.
+Preparation, collection, and finalization share a fixed field projection, so
+unknown nested metadata in intermediate JSON cannot become a public record.
+Build-tool role names refer to the resolved distribution versions without
+maintaining a second version list.
 
 After DMG/EXE assembly, `finalize` rechecks bundle bytes and inspects the actual
 final payload on its native platform. macOS mounts the DMG read-only, compares

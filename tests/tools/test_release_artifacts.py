@@ -24,6 +24,7 @@ def build(tmp_path, monkeypatch):
     (root / ".gitignore").write_text("build/\ndist/\n")
     (root / "pyproject.toml").write_text('[project]\nversion="0.28.0"\n')
     (root / "THIRD_PARTY_LICENSES.md").write_bytes(b"synthetic notices")
+    (inputs / "windows-archives.json").write_text("[]")
     for args in (
         ["init"],
         ["add", "."],
@@ -81,6 +82,18 @@ def build(tmp_path, monkeypatch):
         },
         "native": {"os_version": "10.0.26100"},
     }
+    reports = [
+        {
+            "metadata": {"name": name},
+            "download_info": {
+                "url": "https://files.pythonhosted.org/packages/" + item["filename"],
+                "archive_info": {"hashes": {"sha256": item["sha256"]}},
+            },
+        }
+        for name, item in observation["downloaded_wheels"].items()
+    ]
+    (replay / "replay-1/bootstrap-report.json").write_text(json.dumps({"install": []}))
+    (replay / "replay-1/install-report.json").write_text(json.dumps({"install": reports}))
     (replay / "replay-1/observed.json").write_text(json.dumps(observation))
     output = root / "build"
     output.mkdir()
@@ -209,7 +222,7 @@ def test_allowlisted_observation_drops_nested_private_metadata(build, private):
     (replay / "replay-1/observed.json").write_text(json.dumps(observation))
     artifacts.prepare(replay, "windows-x64", commit)
     public = (root / "build/build-environment.json").read_text()
-    assert private not in public
+    assert json.dumps(private) not in public
     assert "6a270dfa5f49c907fdfe9e4d9ec2ae5e1000172c" in public
     assert "https://github.com/BenHuddart/gleplot.git" in public
 
@@ -433,3 +446,59 @@ def test_download_requires_final_payload_observation(build):
     (root / "dist/windows-x64-SHA256SUMS").write_text(artifacts.checksum_text(final))
     with pytest.raises(ValueError, match="payload inspection record"):
         artifacts.verify_download(root / "dist", "windows-x64", commit)
+
+
+def test_public_wheel_filename_must_match_allowlisted_download_report(build):
+    _, _, _, commit, observation, replay = build
+    observation["downloaded_wheels"]["pip"]["filename"] = "stale.whl"
+    (replay / "replay-1/observed.json").write_text(json.dumps(observation))
+    with pytest.raises(ValueError, match="wheel observation"):
+        artifacts.prepare(replay, "windows-x64", commit)
+
+
+@pytest.mark.parametrize("stage", ["collect", "finalize"])
+@pytest.mark.parametrize(
+    "private",
+    [
+        "/home/user/private",
+        "C:\\Users\\user\\secret",
+        "https://user:password@example.org/a?token=secret",
+    ],
+)
+def test_every_public_write_projects_mutable_build_metadata(build, stage, private):
+    root, bundle, binary, commit, _, _ = build
+    source = root / (
+        "build/build-environment.json"
+        if stage == "collect"
+        else "dist/windows-x64-build-components.json"
+    )
+    record = json.loads(source.read_text())
+    record["extra"] = {"url": private, "nested": [{"path": private}]}
+    record["source_wheels"]["asymmetry"]["origin"] = {"url": private}
+    record["direct_sources"]["gleplot"]["metadata"] = {"url": private}
+    record["native_tools"]["extra"] = {"path": private}
+    artifacts.write_json(source, record)
+    analysis = root / "build/bundle-analysis.json"
+    value = json.loads(analysis.read_text())
+    value["extra"] = {"origin": private}
+    artifacts.write_json(analysis, value)
+    if stage == "collect":
+        artifacts.collect(bundle, "windows-x64", commit)
+    else:
+        record["analysis"]["extra"] = {"origin": private}
+        artifacts.write_json(source, record)
+        artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
+    public = (root / "dist/windows-x64-build-components.json").read_text()
+    assert json.dumps(private) not in public
+    assert "6a270dfa5f49c907fdfe9e4d9ec2ae5e1000172c" in public
+    assert "https://github.com/BenHuddart/gleplot.git" in public
+
+
+def test_required_identity_in_mutable_snapshot_is_rejected(build):
+    root, bundle, _, commit, _, _ = build
+    path = root / "build/build-environment.json"
+    record = json.loads(path.read_text())
+    record["direct_sources"]["gleplot"]["url"] = "file:///home/user/private"
+    artifacts.write_json(path, record)
+    with pytest.raises(ValueError, match="immutable.*identity"):
+        artifacts.collect(bundle, "windows-x64", commit)

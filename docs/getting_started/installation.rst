@@ -18,7 +18,7 @@ ranges described below; its minimum Python version is independent of the selecte
 desktop build interpreter.
 
 Desktop download assets include a target-specific build/component record, a final
-artifact record, and ``SHA256SUMS``. These bind the installer bytes to the packaged
+artifact record, and ``<target>-SHA256SUMS``. These bind the installer bytes to the packaged
 version, source commit, reviewed inputs, and actual collected components and
 third-party notices. The Windows build verifies its external HDF4 runtime archives
 before extraction. The final installer payload is checked against the recorded
