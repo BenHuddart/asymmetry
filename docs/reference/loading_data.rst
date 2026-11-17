@@ -349,10 +349,11 @@ On **Linux** the ``pyhdf`` wheel bundles the HDF4 C library. On **macOS
 (Apple Silicon)** the PyPI wheel does too (Intel Macs: use conda-forge
 ``pyhdf`` or build from source). On **Windows**, ``pyhdf``'s wheel does *not*
 bundle the HDF4 runtime: it also needs ``hdf.dll`` / ``mfhdf.dll`` (for
-example from the conda-forge ``hdf4`` package, as Mantid uses, or via
-``packaging/windows/fetch_hdf4_dlls.py``). Point the ``ASYMMETRY_HDF4_DLL_DIR``
+example from the conda-forge ``hdf4`` package). Point the ``ASYMMETRY_HDF4_DLL_DIR``
 environment variable at the directory holding those DLLs. The pre-built Windows
-and Apple Silicon macOS desktop releases bundle HDF4. When ``pyhdf`` (or the
+and Apple Silicon macOS desktop releases bundle HDF4. Windows build archives are
+SHA256-verified before extraction, with runtime DLL identities retained in the
+download's component record. When ``pyhdf`` (or the
 Windows runtime) is absent, opening an HDF4 ``.nxs`` raises a clear error
 naming the ``hdf4`` extra; HDF5 ``.nxs`` loading is unaffected.
 

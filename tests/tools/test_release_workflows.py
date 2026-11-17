@@ -338,7 +338,11 @@ def test_native_consumers_share_replay_and_verify_before_freezing(filename: str)
             step for step in steps if step.get("uses") == "./.github/actions/release-environment"
         )
         assert replay["with"]["target"] == ("windows-x64" if "windows" in name else "macos-arm64")
-        verification = next(i for i, step in enumerate(steps) if "--verify" in step.get("run", ""))
+        verification = next(
+            i
+            for i, step in enumerate(steps)
+            if "release_artifacts.py prepare" in step.get("run", "")
+        )
         freeze = next(
             i
             for i, step in enumerate(steps)
@@ -366,3 +370,66 @@ def test_shared_bootstrap_selects_reviewed_python_and_compiler() -> None:
     install = next(step for step in steps if step.get("name") == "Install reviewed Inno Setup")
     assert "--version=${{ steps.tools.outputs.inno }}" in install["run"]
     assert install["if"] == "inputs.target == 'windows-x64'"
+
+
+def test_downloaded_artifacts_are_verified_on_dispatch_and_before_publication() -> None:
+    jobs = _workflow("release.yml")["jobs"]
+    verifier = jobs["verify-artifacts"]
+    assert "if" not in verifier
+    assert set(verifier["needs"]) == {"verify-version", "build-windows", "build-macos-arm"}
+    assert verifier["permissions"] == {"contents": "read", "actions": "read"}
+    assert "verify-artifacts" in jobs["release"]["needs"]
+    for job in (verifier, jobs["release"]):
+        steps = job["steps"]
+        downloads = [s for s in steps if s.get("uses", "").startswith("actions/download-artifact@")]
+        assert len(downloads) == 1
+        assert downloads[0]["with"]["pattern"] == "asymmetry-*"
+        verify = next(s for s in steps if s.get("name") == "Verify downloaded publication assets")
+        assert "tools/release_artifacts.py verify" in verify["run"]
+        assert '--commit "$GITHUB_SHA"' in verify["run"]
+        assert "macos-arm64 windows-x64" in verify["run"]
+        assert steps.index(downloads[0]) < steps.index(verify)
+    release_steps = jobs["release"]["steps"]
+    upload = next(s for s in release_steps if s.get("uses", "").startswith("softprops/"))
+    verify = next(
+        s for s in release_steps if s.get("name") == "Verify downloaded publication assets"
+    )
+    assert release_steps.index(verify) < release_steps.index(upload)
+    assert "**/*" not in upload["with"]["files"]
+    assert "build-components.json" in upload["with"]["files"]
+    assert "artifact.json" in upload["with"]["files"]
+
+
+@pytest.mark.parametrize(
+    "filename", ["release.yml", "preview-macos-arm.yml", "preview-windows.yml"]
+)
+def test_native_records_follow_assembly_and_share_packaging_owner(filename: str) -> None:
+    for name, job in _workflow(filename)["jobs"].items():
+        if not name.startswith("build-"):
+            continue
+        steps = job["steps"]
+        commands = [s.get("run", "") for s in steps]
+        prepare = next(
+            i for i, command in enumerate(commands) if "release_artifacts.py prepare" in command
+        )
+        collect = next(
+            i for i, command in enumerate(commands) if "release_artifacts.py collect" in command
+        )
+        finalize = next(
+            i for i, command in enumerate(commands) if "release_artifacts.py finalize" in command
+        )
+        freeze = next(
+            i for i, s in enumerate(steps) if s.get("name") == "Build application with PyInstaller"
+        )
+        assembly = next(
+            i for i, s in enumerate(steps) if s.get("name") in ("Build DMG", "Build EXE installer")
+        )
+        upload = next(
+            i
+            for i, s in enumerate(steps)
+            if s.get("uses", "").startswith("actions/upload-artifact@")
+        )
+        assert prepare < freeze < collect < assembly < finalize < upload
+        assert "build-components.json" in steps[upload]["with"]["path"]
+        assert "artifact.json" in steps[upload]["with"]["path"]
+        assert "SHA256SUMS" in steps[upload]["with"]["path"]

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop builds verify external runtime archives and publish component records,
+  final artifact manifests, and checksums checked against downloaded installer bytes.
+
 - Desktop builds replay reviewed platform dependencies and build tools in fresh
   environments, reject version or source drift, and wait for packaged startup smoke.
 
