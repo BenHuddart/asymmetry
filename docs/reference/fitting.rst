@@ -325,10 +325,10 @@ traps most likely to produce a converged-but-wrong fit, and carries their
 messages on ``result.warnings`` (they are also emitted through the Python
 :mod:`warnings` system). The guards never raise and never change the outcome:
 
-- :class:`~asymmetry.core.fitting.AsymmetryScaleWarning` — the data and the
+- :class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning` — the data and the
   seeded model sit on different asymmetry scales (the percent-vs-fraction
   mix-up; a loaded ``MuonDataset.asymmetry`` is on the **percent** scale).
-- :class:`~asymmetry.core.fitting.FixedFrequencyFieldMismatchWarning` — a
+- :class:`~asymmetry.core.fitting.engine.FixedFrequencyFieldMismatchWarning` — a
   precession ``frequency`` held **fixed** more than ~2 % from :math:`\gamma_\mu B`
   implied by the run's ``field``; the misfit then leaks into the damping term and
   inflates the fitted Gaussian ``sigma`` (the vortex-state transverse-field trap).

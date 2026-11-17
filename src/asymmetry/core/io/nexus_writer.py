@@ -5,7 +5,7 @@ Writes a fresh HDF5 file containing exactly the layout
 files (see ``docs/porting/simulate-mode/implementation-options.md`` for the
 field table), plus a ``/run/simulation`` provenance group that the loader
 surfaces through ``metadata["nexus_fields"]``. Unlike WiMDA's template-copy
-save, the file is built from the :class:`Run` alone, so any loaded run — PSI
+save, the file is built from the :class:`~asymmetry.core.data.dataset.Run` alone, so any loaded run — PSI
 ``.bin``/``.mdu`` included — can act as the instrument template, and no stale
 sample logs leak into the synthetic file.
 

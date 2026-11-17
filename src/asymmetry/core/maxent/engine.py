@@ -553,8 +553,7 @@ def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | No
     """Return the raw-bin good-window time axis, bin width (µs), and base bunching.
 
     ``None`` when the run has no histograms.  Shared by the workload estimate
-    and the auto-steering resolver so both size the same time grid the input
-    builder will produce.
+    and the auto-steering resolver so both size the same time grid the input builder will produce.
     """
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
     histograms = list(run.histograms)
@@ -630,7 +629,7 @@ def resolve_maxent_auto_steering(
     A no-op unless ``config.auto_steer`` is on, and each rule only fills a
     knob the user left at its default — an explicit binning, end time, or
     spectrum length always wins.  Idempotent, so the entry points
-    (:func:`maxent`, :func:`build_maxent_input`,
+    (:func:`~asymmetry.core.maxent.engine.maxent`, :func:`build_maxent_input`,
     :func:`estimate_maxent_workload`) can each resolve it independently and
     agree on the same effective configuration.
 
@@ -976,11 +975,11 @@ def _estimate_group_phase_seeds(
 
 
 def _require_run(obj: object) -> Run:
-    """Return *obj* if it is a :class:`Run`, else raise a pointing TypeError.
+    """Return *obj* if it is a :class:`~asymmetry.core.data.dataset.Run`, else raise a pointing TypeError.
 
     MaxEnt is a grouped raw-count algorithm: it needs the raw detector
-    histograms held by a :class:`Run`, not the reduced asymmetry curve held by a
-    :class:`MuonDataset`. Passing the dataset is the single most-repeated
+    histograms held by a :class:`~asymmetry.core.data.dataset.Run`, not the reduced asymmetry curve held by a
+    :class:`~asymmetry.core.data.dataset.MuonDataset`. Passing the dataset is the single most-repeated
     discoverability miss, and previously failed with a bare
     ``AttributeError: 'MuonDataset' object has no attribute 'grouping'``.
     """
@@ -1111,7 +1110,7 @@ def build_maxent_input(
 class GroupCountSignal:
     """One detector group's lifetime-corrected count signal, before normalisation.
 
-    The seam between "where the counts came from" (a :class:`Run`'s histograms,
+    The seam between "where the counts came from" (a :class:`~asymmetry.core.data.dataset.Run`'s histograms,
     or arrays handed straight in) and the MaxEnt input builder proper.
     """
 
@@ -2062,7 +2061,7 @@ def maxent(
     the normalisations and destroyed exactly those statistics. If what you have
     is an asymmetry curve, use
     :func:`asymmetry.core.fourier.fft.fft_arrays` (or a frequency-domain fit)
-    instead. If you have counts but no :class:`Run` to carry them, use
+    instead. If you have counts but no :class:`~asymmetry.core.data.dataset.Run` to carry them, use
     :func:`maxent_from_counts`, which shares this function's implementation.
     """
     run = _require_run(run)
@@ -2165,7 +2164,7 @@ def _count_group_signal(
 
     Reproduces exactly what
     :func:`~asymmetry.core.fourier.grouped.build_group_signal_dataset` produces
-    for the :class:`Run` path: the time axis measured from ``t0_bin``, optional
+    for the :class:`~asymmetry.core.data.dataset.Run` path: the time axis measured from ``t0_bin``, optional
     bunching that *sums* counts, the ``e^{t/τ_μ}`` lifetime correction, and the
     Poisson ``σ = √N`` (floored at one count) carried through the same factor.
     """
@@ -2193,12 +2192,12 @@ def build_maxent_input_from_counts(
     alpha: float | None = None,
     run_number: int = 0,
 ) -> MaxEntInput:
-    """Build MaxEnt input from per-group raw counts — no :class:`Run` required.
+    """Build MaxEnt input from per-group raw counts — no :class:`~asymmetry.core.data.dataset.Run` required.
 
     The array-taking counterpart to :func:`build_maxent_input`. Both convert
     their per-group count signals through one shared core
     (:func:`_maxent_input_from_group_signals`), so the resulting
-    :class:`MaxEntInput` is identical when the counts are.
+    :class:`~asymmetry.core.maxent.engine.MaxEntInput` is identical when the counts are.
 
     See :func:`maxent_from_counts` for the full argument documentation.
     """
@@ -2277,7 +2276,7 @@ def maxent_from_counts(
     progress_callback: MaxEntProgressCallback | None = None,
     cancel_callback: MaxEntCancelCallback | None = None,
 ) -> MaxEntResult:
-    """Reconstruct a MaxEnt spectrum from per-group raw counts — no :class:`Run`.
+    """Reconstruct a MaxEnt spectrum from per-group raw counts — no :class:`~asymmetry.core.data.dataset.Run`.
 
     **There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt
     reconstructs P(B) by fitting a forward model of the *counts*, weighting every
@@ -2291,10 +2290,10 @@ def maxent_from_counts(
     domain.
 
     This entry point exists for the case where you *do* have counts but no
-    :class:`Run` to carry them: a re-grouped detector sum, a simulation, counts
+    :class:`~asymmetry.core.data.dataset.Run` to carry them: a re-grouped detector sum, a simulation, counts
     reconstructed from an export. It shares its whole implementation with
-    :func:`maxent` — both build a :class:`MaxEntInput` through one core and run
-    the same :func:`run_cycles` — so the same counts give the same result.
+    :func:`~asymmetry.core.maxent.engine.maxent` — both build a :class:`~asymmetry.core.maxent.engine.MaxEntInput` through one core and run
+    the same :func:`~asymmetry.core.maxent.engine.run_cycles` — so the same counts give the same result.
 
     Parameters
     ----------
@@ -2307,7 +2306,7 @@ def maxent_from_counts(
         is deliberately no way to override it, because a supplied σ that is not
         the counting error breaks the algorithm's premise.
     config
-        The usual :class:`MaxEntConfig` (or dict). Everything the algorithm
+        The usual :class:`~asymmetry.core.maxent.engine.MaxEntConfig` (or dict). Everything the algorithm
         needs that is *not* count-domain calibration lives here: spectrum
         points, frequency window, time window and exclusions, cycles and inner
         iterations, prior level, mode, pulse shape, binning, backend.
@@ -2323,7 +2322,7 @@ def maxent_from_counts(
     field_gauss
         Applied field in gauss, used only for the field-centred automatic
         frequency window (``config.auto_window``) and the binning auto-steer —
-        exactly what ``run.metadata["field"]`` supplies on the :class:`Run`
+        exactly what ``run.metadata["field"]`` supplies on the :class:`~asymmetry.core.data.dataset.Run`
         path. ``None`` behaves as a run with no recorded field: the window falls
         back to the data-aware or explicit bounds.
     alpha
@@ -2332,14 +2331,14 @@ def maxent_from_counts(
         **order of** ``counts`` **decides**: the first group is forward (pinned
         to 0°), the second backward (180°).
     run_number
-        Label carried into :attr:`MaxEntResult` and the reconstruction output.
+        Label carried into :class:`~asymmetry.core.maxent.engine.MaxEntResult` and the reconstruction output.
     cycles, state, early_stop, progress_callback, cancel_callback
-        Exactly as documented on :func:`maxent`.
+        Exactly as documented on :func:`~asymmetry.core.maxent.engine.maxent`.
 
     Returns
     -------
     MaxEntResult
-        As :func:`maxent`.
+        As :func:`~asymmetry.core.maxent.engine.maxent`.
 
     Raises
     ------
@@ -2361,7 +2360,7 @@ def maxent_from_counts(
     # The cycle loop's state signature reads the config's binning/time-window
     # fields, so give it the steered configuration, while the builder above
     # received the *original* so its metadata records which knobs steering
-    # filled — mirroring :func:`maxent` exactly (the resolver is idempotent, so
+    # filled — mirroring :func:`~asymmetry.core.maxent.engine.maxent` exactly (the resolver is idempotent, so
     # both see the same effective values).
     resolved_config = _resolve_auto_steering_core(
         _counts_steering_axis(_counts_bin_count(counts), bin_width_us, t0_bin),

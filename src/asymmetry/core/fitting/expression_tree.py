@@ -172,7 +172,7 @@ def build_expression_tree(
     The caller has already validated the parenthesis balance, and the fraction
     groups are the ones *requested*: a group is tagged onto the sum of the
     parenthesis whose span it names, and
-    :meth:`CompositeModel._validate_fraction_groups` then reads the tagged sums
+    ``asymmetry.core.fitting.composite.CompositeModel._validate_fraction_groups`` then reads the tagged sums
     back to accept or reject the request.
     """
     # ``(`` and ``)`` tokens both carry the parenthesis they delimit, so an

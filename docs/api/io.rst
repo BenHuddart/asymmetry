@@ -1,6 +1,9 @@
 Input/output
 =============
 
+.. py:module:: asymmetry.core.io
+
+
 .. currentmodule:: asymmetry.core.io
 
 The I/O subsystem is a small registry of format-specific loaders
@@ -208,3 +211,15 @@ hash chunks and around decoding. A filepath-only external loader remains usable;
 its opaque decode is polled immediately before and after it returns, and cannot
 be cancelled internally through this interface. Unknown
 capture remains unverified and is not replaced by the verifier's candidate digest.
+
+Periods
+-------
+
+.. py:module:: asymmetry.core.io.periods
+
+.. autofunction:: asymmetry.core.io.periods.build_rf_difference_scan
+
+Run range
+---------
+
+.. autofunction:: asymmetry.core.io.run_range.resolve_run_range

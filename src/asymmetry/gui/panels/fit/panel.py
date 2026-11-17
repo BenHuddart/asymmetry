@@ -115,7 +115,7 @@ class FitPanel(QWidget):
     saved_fit_rename_requested = Signal(str, str)
     saved_fit_delete_requested = Signal(str)
     saved_fit_compare_requested = Signal()
-    #: A record was bound to the Single tab: the host draws its saved fits.
+    #: A record was bound to the Single tab — the host draws its saved fits.
     single_dataset_bound = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
     # Forwarded from the Batch tab's series row (D1/D7): open a recorded series,
@@ -291,8 +291,7 @@ class FitPanel(QWidget):
         the plot FB→FFT while Batch is active re-establishes the same run
         number, and without the domain check the stale time-domain snapshot
         would replay into the frequency form on the next visit to Single. The
-        mismatched snapshot is kept (not dropped) so it still restores after a
-        domain round trip back.
+        mismatched snapshot is kept (not dropped) so it still restores after a domain round trip back.
         """
         single_index = self._tabs.indexOf(self._single_tab)
         if index == single_index:

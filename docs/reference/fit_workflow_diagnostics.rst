@@ -85,7 +85,7 @@ exposing MINOS in muon fitting, takes the same view: MINOS annotates the
 ``STATISTIC`` block but the fit's working errors remain HESSE.
 
 Conditional pull experiments
----------------------------
+----------------------------
 
 **Diagnostic…** captures the completed Single-tab execution, including fitted
 plug-in truth, constraints, Gaussian fit options, source observation, and selected

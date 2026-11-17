@@ -168,7 +168,7 @@ sum-normalisation, so the fitted free values are directly interpretable as the
 physical fractional weights.
 
 Carrying parameter state across a model edit
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Because collision-driven naming renumbers parameters when a model changes
 shape, a script that edits a model and wants to keep the values it already
@@ -233,7 +233,7 @@ applied field, and, in the frequency domain, the displayed spectrum's peak:
    print({name: round(seed.value, 3) for name, seed in seeds.items()})
    # {'A_1': 0.158, 'Lambda': 0.5, 'A_bg': 0.02}
 
-Feed them to a fit by building each :class:`~asymmetry.core.fitting.Parameter`
+Feed them to a fit by building each :class:`~asymmetry.core.fitting.parameters.Parameter`
 from its seed's ``value``, ``fixed`` and bounds.
 :func:`~asymmetry.core.fitting.seeding.seed_trend_parameters` is the same
 answer for a parameter-trend model, seeded from the series' ``x``/``y``.
@@ -276,7 +276,7 @@ its suffix is that component's index, which can *skip* numbers. Add a second
    # the second Oscillatory is component #3 → frequency_3 / phase_3, NOT _2
 
 ``model.param_names`` and ``model.to_model_definition().param_names`` return the
-same list. Build your :class:`~asymmetry.core.fitting.ParameterSet` from that
+same list. Build your :class:`~asymmetry.core.fitting.parameters.ParameterSet` from that
 list rather than from guessed names — guessing ``Lambda_1`` or ``frequency_2``
 here would silently fail to bind.
 

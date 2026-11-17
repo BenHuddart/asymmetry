@@ -390,7 +390,7 @@ Assumptions and limitations
   constrained.
 
 References
----------
+----------
 
 .. rubric:: References
 

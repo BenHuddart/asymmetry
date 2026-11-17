@@ -643,7 +643,7 @@ def brandt_field_width_sigma(
     where :math:`\sigma_0(\lambda)=\gamma_\mu\,C_B\,\Phi_0/\lambda^2` is the
     field-independent London limit (the :math:`b\to 0` maximum, supplied by
     :func:`asymmetry.core.fitting.sc.constants.lambda_nm_to_sigma_us`) and
-    :math:`g(b)` is the normalised Brandt factor (:func:`brandt_field_factor`).
+    :math:`g(b)` is the normalised Brandt factor (:func:`~asymmetry.core.fitting.sc.models.brandt_field_factor`).
     Equivalently, in the commonly cited single-crystal form,
 
     .. math::

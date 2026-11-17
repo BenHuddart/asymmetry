@@ -145,7 +145,7 @@ class KnightAnalysisResult:
     scale: float
     branches: tuple[KnightBranch, ...]
     crossings: tuple[CrossingEvent, ...]
-    #: Points dropped from every branch: non-finite abscissa or missing component.
+    #: Points dropped from every branch — non-finite abscissa or missing component.
     skipped_points: int = 0
 
     def branch(self, name: str) -> KnightBranch | None:
@@ -277,8 +277,7 @@ def selected_components(
     designated-component reference, restricts to components of the *same kind*
     as the reference — dividing a frequency (MHz) by a field (Gauss) is
     meaningless — excluding the reference itself. Returns an empty tuple when
-    the designated reference is not among the snapshot's components (emit
-    nothing rather than guess).
+    the designated reference is not among the snapshot's components (emit nothing rather than guess).
     """
     components = [
         (name, kind)
@@ -442,7 +441,7 @@ class KnightJointCurve:
     ``branch_name`` is the ``K[...]`` trace this curve occupies after
     realignment. ``parameters`` are ``(name, value, error)`` triples in the fit
     unit (see :attr:`KnightJointFitState.unit`). ``covariance`` mirrors
-    :attr:`ParameterModelFitResult.covariance` — ``(names, matrix)`` for the
+    :attr:`asymmetry.core.fitting.parameter_models.ParameterModelFitResult.covariance` — ``(names, matrix)`` for the
     curve's free parameters, in the same order as ``names``. It is already in
     the display unit: :func:`run_joint_fit` scales the values into the display
     unit *before* fitting, so the Minuit covariance it reads back is already
@@ -629,7 +628,7 @@ def run_joint_fit_outcome(
     returns; the second element is the raw
     :class:`~asymmetry.core.fitting.angular_assignment.AngularAssignmentResult`
     from the classification-EM fit. The outcome carries the near-degenerate
-    runner-up labellings on :attr:`AngularAssignmentResult.alternatives` when
+    runner-up labellings on :attr:`~asymmetry.core.fitting.angular_assignment.AngularAssignmentResult.alternatives` when
     ``keep_alternatives > 0`` — the input the assignment-discrimination bridge
     (:func:`suggest_assignment_discriminating_angle`) needs. It is deliberately
     *not* folded into the state: the state is persisted, but the alternatives are
@@ -708,8 +707,7 @@ def run_joint_fit(
 ) -> KnightJointFitState:
     """Jointly fit all branches' K(θ) with per-angle component assignment.
 
-    A thin bridge to :func:`asymmetry.core.fitting.angular_assignment.
-    fit_assigned_angular_curves`: builds the aligned matrices in the result's
+    A thin bridge to :func:`~asymmetry.core.fitting.angular_assignment.fit_assigned_angular_curves`: builds the aligned matrices in the result's
     display unit (so curve parameters read in the plotted unit), runs the
     classification-EM fit, and re-keys the assignment by run number. Delegates to
     :func:`run_joint_fit_outcome` and returns only the persisted state, so its

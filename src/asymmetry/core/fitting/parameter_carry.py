@@ -262,7 +262,7 @@ def carry_parameter_set(
     origins: Sequence[int | None],
     parameters: ParameterSet,
 ) -> ParameterSet:
-    """Carry a :class:`ParameterSet` onto ``new_model``'s parameter names.
+    """Carry a :class:`~asymmetry.core.fitting.parameters.ParameterSet` onto ``new_model``'s parameter names.
 
     Value, bounds, ``fixed`` and ``link_group`` follow the component instance.
     Ties and expression constraints have their referenced names re-targeted

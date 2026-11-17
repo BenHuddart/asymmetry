@@ -93,7 +93,7 @@ class SharedParameter:
     ``members`` maps a series key to the parameter name *that series* spells the
     quantity with, because two models may perfectly well call the same physics
     ``A_bg`` and ``baseline``. The seed and bounds belong to the shared row, not
-    to either series: the shared value is a new fitted quantity (D6 seeds it from
+    to either series: the shared value is a new fitted quantity (the default workflow seeds it from
     the first contributing series, but that is the caller's choice to make).
     """
 
@@ -109,7 +109,7 @@ class JointFitResult:
     """Result bundle for a joint fit.
 
     ``series_results`` is what every existing consumer reads: each run's
-    :class:`FitResult` carries the shared value *and its uncertainty* under that
+    :class:`~asymmetry.core.fitting.results.FitResult` carries the shared value *and its uncertainty* under that
     series' own parameter name, so a trend plot, an export or a results table
     needs to know nothing about joint fitting to render a jointly fitted series.
     The shared table itself — values, σ, and the covariance block that says how
@@ -195,7 +195,7 @@ def fit_joint(
     minos
         Asymmetric MINOS intervals; ``"joint"`` strategy only.
     fit_engine
-        Optional :class:`FitEngine` to reuse; a fresh one is created otherwise.
+        Optional :class:`~asymmetry.core.fitting.engine.FitEngine` to reuse; a fresh one is created otherwise.
     cancel_callback
         Cooperative cancel probe polled inside the cost function; a truthy return
         raises :class:`~asymmetry.core.fitting.engine.FitCancelledError`, and the

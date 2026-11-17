@@ -279,8 +279,7 @@ class InstrumentLayout:
     banks:
         Ordered tuple of :class:`BankLayout` objects.
     presets:
-        Ordered dict of preset names to :class:`PresetGrouping`.
-        The first entry is the default preset.
+        Ordered dict of preset names to :class:`PresetGrouping`. The first entry is the default preset.
     view:
         Schematic rendering mode, either ``"radial"`` or ``"plan"``.
     reference_arrows:
@@ -500,7 +499,7 @@ def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
 #: (15-detector ROOT export carrying the combined counters *and* the
 #: sub-detectors) are three variants of the one physical GPS instrument; they
 #: share the display name "GPS" and are collapsed to a single dropdown entry by
-#: :func:`instrument_choices_for`.
+#: :func:`~asymmetry.core.instrument.instrument_choices_for`.
 INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
     "HiFi",
     "MuSR",
@@ -1696,7 +1695,7 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
     Parameters
     ----------
     name:
-        One of the names in :data:`INSTRUMENT_NAMES` (case-sensitive).
+        One of the names in :data:`~asymmetry.core.instrument.INSTRUMENT_NAMES` (case-sensitive).
 
     Raises
     ------

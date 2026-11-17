@@ -1,6 +1,11 @@
 Core data structures
 ====================
 
+.. py:module:: asymmetry.core
+
+.. py:module:: asymmetry.core.workflow
+
+
 .. currentmodule:: asymmetry.core.data
 
 The core data layer carries μSR measurements through the fit and
@@ -199,3 +204,90 @@ Core weighted Runs are transient in-memory results; saved reduced results and re
 do not supply histogram reconstruction. A project/browser definition that cannot
 reproduce its saved coefficients or selected periods retains its observations or
 unavailable state and history, including after a later source rebuild.
+
+Calibration
+-----------
+
+.. autodata:: asymmetry.core.data.calibration.WEAK_TF_FIELD_RANGE_GAUSS
+   :no-value:
+
+.. autofunction:: asymmetry.core.data.calibration.classify_tf_calibration_run
+
+Run combination
+---------------
+
+.. autoclass:: asymmetry.core.data.combine.CombineError
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.data.combine.combine_runs
+
+Ratio validity
+--------------
+
+.. autoclass:: asymmetry.core.data.ratio_validity.RatioValidity
+   :no-members:
+   :no-special-members:
+
+Instrument
+----------
+
+.. autodata:: asymmetry.core.instrument.INSTRUMENT_NAMES
+   :no-value:
+
+.. autofunction:: asymmetry.core.instrument.instrument_choices_for
+
+Global fit studies
+------------------
+
+.. autoclass:: asymmetry.core.representation.global_fit_study.GlobalFitStudy
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.representation.global_fit_study.compute_group_input_digest
+
+Joint fit records
+-----------------
+
+.. autoclass:: asymmetry.core.representation.joint_fit.JointFit
+   :no-members:
+   :no-special-members:
+
+Fit series
+----------
+
+.. autoclass:: asymmetry.core.representation.series.FitSeries
+   :no-members:
+   :no-special-members:
+
+.. py:attribute:: FitSeries.member_run_numbers
+   :module: asymmetry.core.representation.series
+
+   Ordered integer member keys: run numbers or synthetic detector-group keys.
+
+.. py:attribute:: FitSeries.member_source_run
+   :module: asymmetry.core.representation.series
+
+   Source acquisition for each member key in a detector-group series.
+
+Run surveys
+-----------
+
+.. autodata:: asymmetry.core.workflow.survey.LARMOR_FREQUENCY_TOLERANCE
+   :no-value:
+
+.. autodata:: asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR
+   :no-value:
+
+.. autoclass:: asymmetry.core.workflow.survey.ScanGroup
+   :no-members:
+   :no-special-members:
+
+Work directories
+----------------
+
+.. automethod:: asymmetry.core.workflow.workdir.WorkDir.bind
+
+.. autoclass:: asymmetry.core.workflow.workdir.WorkDirMismatchError
+   :no-members:
+   :no-special-members:

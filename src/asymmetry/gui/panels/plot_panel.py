@@ -290,7 +290,7 @@ class PlotPanel(QWidget):
     # x, y (snapped where possible), err, snr, peak (x,y)|None,
     # window (mean,err,n)|None. See _build_cursor_readout.
     cursor_coords_changed = Signal(object)
-    #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
+    #: Spectral-moments overlay drags (frequency panel) — window in canonical MHz.
     moments_window_changed = Signal(float, float)
     moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
     #: A moments-handle drag has ended (mouse released after an actual move):
@@ -303,7 +303,7 @@ class PlotPanel(QWidget):
     #: The user dismissed the grouping-hint bar (the ✕ button); the host records
     #: the dismissal so the nudge stays hidden for that run.
     grouping_hint_dismissed = Signal()
-    #: The projection chips switched frame: ``True`` for rotating, ``False`` for Lab.
+    #: The projection chips switched frame — ``True`` for rotating, ``False`` for Lab.
     frame_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
@@ -4978,10 +4978,9 @@ class PlotPanel(QWidget):
     def set_fit_range_guide(self, x_min: float | None, x_max: float | None) -> None:
         """Draw (and drag) the range guides over a window other than the project's.
 
-        The Batch tab's series window while that tab is visible (D8); either
-        bound left ``None`` falls back to the project range's, and two ``None``s
-        hand the guides back to the project range. The stored range — what a
-        single fit crops to — never moves.
+        The Batch tab's series window applies while that tab is visible. Either
+        bound left ``None`` falls back to the project range, and two ``None`` bounds
+        hand the guides back to the project range. The stored single-fit range never moves.
         """
         if not self._has_mpl:
             return
@@ -7456,7 +7455,7 @@ class PlotPanel(QWidget):
 
         When *message* is given, draw it as a centred grey placeholder over the
         (axis-off) plot area — the empty-state pattern used by
-        :meth:`asymmetry.gui.panels.alc_panel.AlcPanel.clear`. The frequency
+        :meth:`asymmetry.gui.panels.alc_panel.ALCScanView.clear`. The frequency
         panel passes a message to prompt the user to compute a spectrum (an FFT
         is computed on demand, never automatically); every other caller leaves
         *message* ``None`` and gets an unchanged blank plot.

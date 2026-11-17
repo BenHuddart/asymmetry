@@ -60,7 +60,7 @@ COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
 #: Optional count-loss (deadtime) parameters, applied when present in the fit set.
 DEADTIME_PARAMS: tuple[str, ...] = ("DT0",)
 
-#: Seed sentinel: give this as a parameter's ``value`` and the count-fit driver
+#: Seed sentinel — give this as a parameter's ``value`` and the count-fit driver
 #: computes the seed from the data instead. Supported for ``N0``, whose right
 #: scale is a per-run count level no caller can know in advance — a generic seed
 #: drops the forward/backward fit into a spurious minimum (see
@@ -127,8 +127,7 @@ def _guard_beta_collision(model_fn: Callable[..., NDArray]) -> None:
     polarization amplitude. ``beta`` is deliberately **not** in
     :data:`RESERVED_COUNT_PARAMS` (the stretched-exponential model's stretch
     exponent is legitimately named ``beta``, and must stay usable on the ordinary
-    count-fit paths), so the clash is caught here — scoped to the β path only —
-    rather than globally.
+    count-fit paths), so the clash is caught here — scoped to the β path only — rather than globally.
     """
     parameters = list(inspect.signature(model_fn).parameters.values())
     named = {
@@ -353,7 +352,7 @@ def fit_single_histogram(
 
     Scale: the physics model's asymmetry parameters (``A``/``A0``, ``baseline``)
     are **in percent (0–100)**, as everywhere else in the fitting layer —
-    :func:`_percent_to_fraction` divides the 100 out internally so ``1 + a``
+    ``asymmetry.core.fitting.count_domain._percent_to_fraction`` divides the 100 out internally so ``1 + a``
     combines a true fraction with the counts. Seed and read ``A`` in percent. The
     *data* here is raw counts, so the percent/fraction question touches only the
     parameters, not the arrays.

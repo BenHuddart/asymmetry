@@ -284,8 +284,7 @@ def suggest_next_point(
     factor N/N_ref needed at the best x — a rank-one planning figure that
     should be calibrated with :func:`calibrate_suggestion` before display.
 
-    Never raises on degenerate inputs: returns an empty suggestion with an
-    explanatory warning instead.
+    Never raises on degenerate inputs: returns an empty suggestion with an explanatory warning instead.
     """
     warnings: list[str] = []
 
@@ -507,7 +506,7 @@ def suggest_next_point_multi(
     update assumes the new datum attaches to the right curve, so candidates near
     a predicted crossing are flagged.
 
-    A series whose covariance is invalid (:func:`_validated_covariance`)
+    A series whose covariance is invalid (``asymmetry.core.fitting.experiment_design._validated_covariance``)
     contributes nothing to the utility and adds a warning naming it (by
     ``labels`` when supplied, else by index); the suggestion still succeeds if at
     least one series is usable. All-unusable inputs degrade to an empty
@@ -955,7 +954,7 @@ def aic_weights(chi_squareds: Sequence[float], n_free_params: Sequence[int]) -> 
     """Akaike-weight a set of candidate models from their fit chi-squareds.
 
     ``AIC_i = chi2_i + 2 p_i``, weighted by
-    :func:`~asymmetry.core.fitting.model_comparison.information_weights` (a
+    :func:`~asymmetry.core.fitting.information_criteria.information_weights` (a
     non-finite AIC gets weight ``0.0``). BIC is deliberately not used here — its
     ``p * ln(n)`` penalty drifts under the sequential-n growth of an in-progress
     trend series (§4 of the study). Raises ``ValueError`` if the two input lists

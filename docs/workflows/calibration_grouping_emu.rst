@@ -194,9 +194,9 @@ commits the draft values and their captured context. The result reads
 
 The quick estimate reports no added uncertainty. The same calculation is
 available from the Python API. The diamagnetic fit
-lives in :func:`~asymmetry.core.transform.estimate_alpha_detailed`; the
+lives in :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed`; the
 simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
-:func:`~asymmetry.core.transform.estimate_alpha`:
+:func:`~asymmetry.core.transform.asymmetry.estimate_alpha`:
 
 .. code-block:: python
 

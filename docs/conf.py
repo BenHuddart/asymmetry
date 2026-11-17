@@ -7,6 +7,7 @@ import re
 import sys
 sys.path.insert(0, os.path.abspath('../src'))
 sys.path.insert(0, os.path.abspath('_ext'))
+sys.path.insert(0, os.path.abspath('..'))
 
 # Imported as a module (not `from asymmetry import __version__`) because
 # `linkcode_resolve` below also needs `asymmetry.__file__` to anchor source paths.
@@ -28,6 +29,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx_design',
     'lazy_images',
+    'tools.docs_policy',
 ]
 
 templates_path = ['_templates']
@@ -153,12 +155,5 @@ def linkcode_resolve(domain, info):
     )
 
 
-# intersphinx
-intersphinx_timeout = 10  # seconds; prevents a stalled CDN from blocking sphinx-build forever
-intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', None),
-    'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy/', None),
-    'matplotlib': ('https://matplotlib.org/stable/', None),
-    'lmfit': ('https://lmfit.github.io/lmfit-py/', None),
-}
+# Inventory lookups are disabled by tools.docs_policy in both gated modes.
+intersphinx_mapping = {}

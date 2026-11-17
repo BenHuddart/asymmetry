@@ -7,7 +7,6 @@ and the ``--check-refs`` CLI mode.
 
 from __future__ import annotations
 
-import functools
 import importlib.util
 import sys
 from pathlib import Path
@@ -157,17 +156,9 @@ def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch, tmp_
         return 0
 
     monkeypatch.setattr(harness, "_run_command", _fake_run)
-    # The build is faked, so the size check scans an empty build, not whatever
-    # docs/_build/html a past local build left behind.
-    monkeypatch.setattr(
-        harness,
-        "_report_oversized_docs_pages",
-        functools.partial(harness._report_oversized_docs_pages, tmp_path),
-    )
-
     from types import SimpleNamespace
 
-    assert harness.cmd_docs(SimpleNamespace(screenshots=True)) == 0
+    assert harness.cmd_docs(SimpleNamespace(screenshots=True, mode="publish")) == 0
     assert len(recorded) == 2
     assert recorded[0][1:] == [
         "-m",
@@ -175,12 +166,12 @@ def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch, tmp_
         "--out",
         "docs/_generated/screenshots",
     ]
-    assert "sphinx" in recorded[1]
+    assert recorded[1][1:] == [str(ROOT / "tools/docs_build.py"), "--mode", "publish"]
 
     recorded.clear()
-    assert harness.cmd_docs(SimpleNamespace(screenshots=False)) == 0
+    assert harness.cmd_docs(SimpleNamespace(screenshots=False, mode="source")) == 0
     assert len(recorded) == 1
-    assert "sphinx" in recorded[0]
+    assert recorded[0][1:] == [str(ROOT / "tools/docs_build.py"), "--mode", "source"]
 
 
 def test_oversized_paths_flags_only_files_over_budget(tmp_path: Path) -> None:

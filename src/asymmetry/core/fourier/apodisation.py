@@ -26,8 +26,7 @@ factor ``sqrt(3)`` wider than the absorption shape (the first implementation
 measured magnitude and recovered relaxation rates ~1.7x too large). On the
 power spectrum both shapes have closed-form half-widths.
 
-The window parameterisation matches :func:`asymmetry.core.fourier.window.
-apply_fft_filter` (``start_time_us=0``); with the power-spectrum FWHM
+The window parameterisation matches :func:`~asymmetry.core.fourier.window.apply_fft_filter` (``start_time_us=0``); with the power-spectrum FWHM
 ``Gamma`` in MHz and time constants in µs:
 
 * Lorentzian weight ``exp(-t/tau)``. The one-sided transform of
@@ -42,13 +41,13 @@ apply_fft_filter` (``start_time_us=0``); with the power-spectrum FWHM
   ``sigma = pi Gamma / u*`` and the matched
   ``tau = sqrt(2) / sigma = sqrt(2) u* / (pi Gamma)``.
 
-Detection is two-stage. The fast path (:func:`_prominence_line`) tests the
+Detection is two-stage. The fast path (``asymmetry.core.fourier.apodisation._prominence_line``) tests the
 raw, unsmoothed peak against the window's median power — cheap, and correct
 whenever the line already towers over the noise. A line that is genuinely
 present but sits below that raw threshold (e.g. an un-windowed,
 lifetime-corrected record whose late-time noise is amplified by the
 ``e^{t/tau}`` correction) needs the power concentrated before it is visible:
-the fallback (:func:`_matched_scan_fallback`) convolves the windowed power
+the fallback (``asymmetry.core.fourier.apodisation._matched_scan_fallback``) convolves the windowed power
 spectrum with a family of normalised kernels (Lorentzian or Gaussian,
 matching the requested filter kind) spanning roughly 10 geometrically-spaced
 widths, and keeps the width whose robust SNR — median/MAD floor, with the
@@ -251,7 +250,7 @@ class EarlySignalApodisationLoss:
     early_power_fraction: float
     #: Share of *that* power the window keeps (1.0 = untouched, 0.0 = deleted).
     early_retained_fraction: float
-    #: Which pass the reported numbers come from: ``"signal"`` for the signal's
+    #: Which pass the reported numbers come from — ``"signal"`` for the signal's
     #: own power, ``"oscillatory"`` for the power left after the slow baseline
     #: is removed (see :func:`early_signal_apodisation_loss`).
     measured_on: str
@@ -353,7 +352,7 @@ def _fitted_edge_intercept(edge: np.ndarray) -> float:
 
     ``edge`` runs outward from the record's end, so the intercept is the fitted
     value *at* that end. Averaging the edge kernel this way keeps the odd-padding
-    anchor from carrying one sample's full noise (see :func:`_slow_baseline`).
+    anchor from carrying one sample's full noise (see ``asymmetry.core.fourier.apodisation._slow_baseline``).
     """
     m = edge.size
     if m < 2:
@@ -460,7 +459,7 @@ def early_signal_apodisation_loss(
         The signal's own power, as measured.
     ``"oscillatory"``
         The power left after an error-weighted moving mean
-        (:func:`_slow_baseline`, kernel ``_EARLY_WINDOW_FRACTION`` of the record)
+        (``asymmetry.core.fourier.apodisation._slow_baseline``, kernel ``_EARLY_WINDOW_FRACTION`` of the record)
         is subtracted — a high-pass that removes the slow component and leaves
         the oscillation.
 
@@ -716,7 +715,7 @@ def _matched_scan_fallback(
     """Matched-filter detection: smooth the spectrum at candidate linewidths.
 
     See the module docstring's "Detection is two-stage" paragraph. Called by
-    :func:`suggest_matched_apodisation` only after :func:`_prominence_line`
+    :func:`suggest_matched_apodisation` only after ``asymmetry.core.fourier.apodisation._prominence_line``
     fails. Scans a family of kernel widths, keeps the one with the highest
     robust SNR, and — if it clears ``_MATCHED_SCAN_SNR_THRESHOLD`` —
     deconvolves the kernel's own width from the measured FWHM before
@@ -805,7 +804,7 @@ def suggest_matched_apodisation(
     (``1 / (t_max - t_min)``); callers that zero-pad should pass it so the
     matched-scan fallback's kernels are anchored to real resolution elements
     rather than the padded grid (module docstring). When omitted, it is
-    estimated from the spectrum itself (:func:`_estimate_intrinsic_resolution`);
+    estimated from the spectrum itself (``asymmetry.core.fourier.apodisation._estimate_intrinsic_resolution``);
     when even that is not possible the fallback scan is skipped. Detection
     is two-stage (module docstring): a cheap raw-prominence fast path, then
     a matched-filter scan for lines buried below it. Returns ``None`` —

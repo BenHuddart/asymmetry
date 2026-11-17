@@ -242,7 +242,7 @@ def seed_peak_parameters_from_dataset(
     the unguarded global argmax if the guard would empty the search array.
 
     When the model declares two or more peak components, seeding delegates to
-    :func:`_seed_multiple_peaks`, which assigns the strongest detected peaks to
+    ``asymmetry.core.fitting.spectral._seed_multiple_peaks``, which assigns the strongest detected peaks to
     each component (see there for the under-detection fallback).
     """
     x = np.asarray(getattr(dataset, "time", []), dtype=float)

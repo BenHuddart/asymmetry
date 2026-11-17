@@ -93,7 +93,7 @@ def _resolve_initial_params(
 ) -> dict[Hashable, ParameterSet]:
     """Map every caller key to a ``ParameterSet``.
 
-    A single :class:`ParameterSet` is broadcast to every dataset (the common case
+    A single :class:`~asymmetry.core.fitting.parameters.ParameterSet` is broadcast to every dataset (the common case
     — one seed structure shared across the series); a mapping must provide a set
     for every dataset key.
     """
@@ -197,7 +197,7 @@ def fit_global(
     local_params
         Names estimated independently for each dataset.
     initial_params
-        Either a single :class:`ParameterSet` broadcast to every dataset, or a
+        Either a single :class:`~asymmetry.core.fitting.parameters.ParameterSet` broadcast to every dataset, or a
         mapping ``dataset key -> ParameterSet``. Each set must contain every name
         referenced by ``global_params`` and ``local_params`` (plus any fixed
         parameters the model needs). Global seed values and bounds are taken from
@@ -228,7 +228,7 @@ def fit_global(
         deferred (constant-factor-only once the profiled strategy separates the
         per-dataset locals, and marginal-error matching needs a final full Hessian).
     fit_engine
-        Optional :class:`FitEngine` to reuse; a fresh one is created otherwise.
+        Optional :class:`~asymmetry.core.fitting.engine.FitEngine` to reuse; a fresh one is created otherwise.
     cancel_callback
         Cooperative cancel probe polled inside the cost function; a truthy return
         raises :class:`~asymmetry.core.fitting.engine.FitCancelledError`.

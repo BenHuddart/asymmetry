@@ -235,10 +235,10 @@ with it, since a joint fit of one series composes nothing.
 Scripting
 ---------
 
-The GUI sits on :func:`asymmetry.core.fitting.fit_joint`, which takes one
+The GUI sits on :func:`asymmetry.core.fitting.joint.fit_joint`, which takes one
 :class:`~asymmetry.core.fitting.joint.JointSeriesProblem` per series (its
 datasets, model function, global/local parameter names, and one
-:class:`~asymmetry.core.fitting.ParameterSet` of seeds per run) and a list of
+:class:`~asymmetry.core.fitting.parameters.ParameterSet` of seeds per run) and a list of
 :class:`~asymmetry.core.fitting.joint.SharedParameter` rows naming, for each
 series, which of *that* series' Global parameters the row maps to:
 
@@ -307,10 +307,10 @@ series, which of *that* series' Global parameters the row maps to:
 Every run of every member carries the shared value, and its one shared
 uncertainty, under that series' own parameter name in
 ``result.series_results[key][run_number]`` — a downstream consumer that only
-knows about ordinary :class:`~asymmetry.core.fitting.FitResult` objects needs
+knows about ordinary :class:`~asymmetry.core.fitting.results.FitResult` objects needs
 to know nothing about joint fitting to read a jointly fitted run.
 
-:func:`asymmetry.core.fitting.suggest_shared_parameters` is the autodetection
+:func:`asymmetry.core.fitting.joint.suggest_shared_parameters` is the autodetection
 behind the window's **Suggest** button: pass it the member models (in series
 order) and, for each, a ``{parameter name: role}`` mapping, and it returns a
 list of :class:`~asymmetry.core.fitting.joint.SharedSuggestion`, each with a

@@ -321,7 +321,7 @@ an independent-bin quadrature sum.
 
 This is first-order uncertainty propagation for correlated inputs, following
 `JCGM 100:2008, section 5.2
-<https://www.bipm.org/documents/20126/2071204/JCGM_100_2008_E.pdf>`_. Errors remain
+<https://www.bipm.org/documents/20126/2071204/JCGM_100_2008_E.pdf>`__. Errors remain
 conditional on alpha, beta, baseline, gain, and the selected correction values.
 They do not include calibration or geometry uncertainty, certify a full cross-bin
 likelihood, or turn several correlated projections into independent fit data.
@@ -335,10 +335,10 @@ Caller-supplied curves without retained counting observations require the explic
 API argument ``assume_independent=True``.
 
 Compared with other programs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In Mantid, `RRFMuon v1
-<https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`_ rotates two
+<https://docs.mantidproject.org/nightly/algorithms/RRFMuon-v1.html>`__ rotates two
 supplied transverse spectra. Signs, phase, and units must be matched before
 comparing that coordinate operation: set its real input to :math:`x`, imaginary
 input to :math:`sy`, and negate its imaginary output to obtain :math:`P'_y`.
@@ -493,9 +493,9 @@ References
 
 .. [4] F. Bloch and A. Siegert, Phys. Rev. **57**, 522 (1940).
 
-- `WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`_ (1.326).
-- musrfit, `Asymmetry RRF fit <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#asymmetry-rrf-fit-fit-type-3>`_ (1.12.1).
-- Mantid, `RRFMuon v1 <https://docs.mantidproject.org/v3.9.0/algorithms/RRFMuon-v1.html>`_.
+- `WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`__ (1.326).
+- musrfit, `Asymmetry RRF fit <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#asymmetry-rrf-fit-fit-type-3>`__ (1.12.1).
+- Mantid, `RRFMuon v1 <https://docs.mantidproject.org/v3.9.0/algorithms/RRFMuon-v1.html>`__.
 
 Related topics
 --------------

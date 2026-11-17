@@ -31,7 +31,7 @@ reintroduce the WiMDA trap.  Envelope components pass through untouched.
 Migrated (study, implementation-options §B, 2026-06-13): the engine-level
 ``frequency_offsets`` argument is now live —
 :meth:`asymmetry.core.fitting.engine.FitEngine.fit` accepts the resolved
-``{param: ν₀}`` dict and applies the same :func:`offset_model_function`
+``{param: ν₀}`` dict and applies the same :func:`~asymmetry.core.fitting.rrf_offset.offset_model_function`
 shift, so the GUI fit path resolves :func:`rrf_frequency_offsets` once and
 passes it straight to the engine rather than building a callable wrapper.
 The thin :func:`rrf_offset_model` wrapper is retained for standalone
@@ -165,7 +165,7 @@ def rrf_offset_model(
     values are rotating-frame offsets.  The offsets used are attached as
     ``rrf_offsets`` (with ``rrf_frequency_mhz``) for reporting.
 
-    The shift itself is :func:`offset_model_function`; the GUI fit path instead
+    The shift itself is :func:`~asymmetry.core.fitting.rrf_offset.offset_model_function`; the GUI fit path instead
     resolves :func:`rrf_frequency_offsets` once and passes them straight to the
     engine's ``frequency_offsets`` argument, which applies the same seam.
     """

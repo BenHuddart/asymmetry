@@ -16,7 +16,7 @@ name registered here identifies its registry and domain unambiguously.
 
 Every function is validated at registration — signature arity, vectorised
 evaluation, and finite output on a probe grid at the default parameter values
-— so a broken plugin fails with a clear :class:`UserFunctionError` at load
+— so a broken plugin fails with a clear :class:`~asymmetry.core.fitting.user_functions.UserFunctionError` at load
 time, never mid-fit. Validation happens before any registry mutation, so a
 failed registration leaves all registries untouched.
 
@@ -265,7 +265,7 @@ def register_component(
     values), and ``cost`` (``"cheap"``/``"moderate"``/``"expensive"``) tag the
     component for fit-wizard scoping; they default to all geometries, the
     ``"custom"`` sentinel class, and ``"moderate"`` cost. Invalid tokens raise
-    :class:`UserFunctionError`.
+    :class:`~asymmetry.core.fitting.user_functions.UserFunctionError`.
 
     ``param_kinds`` says what each parameter measures (see
     :class:`~asymmetry.core.fitting.component_tags.ParameterKind` values, e.g.
@@ -275,7 +275,7 @@ def register_component(
     ``"background"`` and ``phase`` a ``"phase"``.
 
     Returns the registered :class:`ComponentDefinition` (flagged ``user=True``).
-    Raises :class:`UserFunctionError` on any validation failure, in which case
+    Raises :class:`~asymmetry.core.fitting.user_functions.UserFunctionError` on any validation failure, in which case
     no registry is modified.
     """
     _check_name(name)
@@ -368,8 +368,8 @@ def register_parameter_component(
     of ``param_names``. ``scopes`` restricts where the component is offered
     (subset of ``{"common", "field", "temperature"}``).
 
-    Returns the registered :class:`ParameterModelComponentDefinition`
-    (flagged ``user=True``). Raises :class:`UserFunctionError` on any
+    Returns the registered :class:`~asymmetry.core.fitting.parameter_models.ParameterModelComponentDefinition`
+    (flagged ``user=True``). Raises :class:`~asymmetry.core.fitting.user_functions.UserFunctionError` on any
     validation failure, in which case no registry is modified.
     """
     _check_name(name)

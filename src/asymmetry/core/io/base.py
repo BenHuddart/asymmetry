@@ -76,7 +76,7 @@ class BaseLoader(ABC):
 
     @abstractmethod
     def load(self, filepath: str) -> LoadResult:
-        """Read *filepath* and return one or more :class:`MuonDataset` objects.
+        """Read *filepath* and return one or more :class:`~asymmetry.core.data.dataset.MuonDataset` objects.
 
         Most formats return a single dataset. Multi-period NeXus files may
         return multiple datasets (one per period).

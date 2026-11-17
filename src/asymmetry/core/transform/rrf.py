@@ -73,7 +73,7 @@ class RRFCurve:
     units. Unknown input temporal correlations cannot be recovered from marginal errors alone.
 
     Scale: every value here — ``real``, ``imag``, their errors,
-    :attr:`magnitude` and :attr:`magnitude_error` — is **on the same asymmetry
+    :attr:`~asymmetry.core.transform.rrf.RRFCurve.magnitude` and :attr:`~asymmetry.core.transform.rrf.RRFCurve.magnitude_error` — is **on the same asymmetry
     scale as the input curve**.  Demodulation is linear (a ×2 carrier product and
     a DC-normalised filter), so it neither introduces nor removes the ×100:
     demodulate ``ds.asymmetry`` and the components are percent; demodulate
@@ -101,7 +101,7 @@ class RRFCurve:
 
     @property
     def magnitude(self) -> NDArray[np.float64]:
-        """The phase-free envelope |z|; noise-biased where |z| ≲ σ."""
+        r"""The phase-free envelope :math:`|z|`; noise-biased where :math:`|z| \lesssim \sigma`."""
         return np.hypot(self.real, self.imag)
 
     def _magnitude_error_for(self, mag: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -131,7 +131,7 @@ class RRFCurve:
 
     @property
     def magnitude_error(self) -> NDArray[np.float64]:
-        """First-order error on |z|; unreliable where |z| ≲ σ (magnitude bias)."""
+        r"""First-order error on :math:`|z|`; unreliable where :math:`|z| \lesssim \sigma` (magnitude bias)."""
         return self._magnitude_error_for(self.magnitude)
 
     def component(self, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -275,7 +275,7 @@ def rrf_demodulate(
     phase_deg : float
         Frame phase φ in degrees; the carrier is e^{−i(2πν₀t + φ)}.
     bandwidth_mhz : float, optional
-        Single-sided FIR cutoff; defaults to :func:`default_bandwidth_mhz`.
+        Single-sided FIR cutoff; defaults to :func:`~asymmetry.core.transform.rrf.default_bandwidth_mhz`.
         Ignored by the WiMDA mode.
     method : str
         ``"fir"`` (complex demodulation, the display method) or ``"wimda"``

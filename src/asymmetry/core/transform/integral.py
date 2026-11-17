@@ -194,7 +194,7 @@ def integrate_curve(
 
     Returns
     -------
-    (value, error)
+    tuple of float
         **On the same scale as the input** ``asymmetry`` — a mean is
         unit-preserving. Pass ``ds.asymmetry`` and the result is percent; pass
         ``ds.asymmetry_fraction`` and it is a fraction, matching
@@ -268,8 +268,8 @@ def reduce_integral_run(
     Parameters
     ----------
     data
-        A :class:`MuonDataset` with a verified histogram observation, or an
-        explicitly supplied raw :class:`Run`. Curve-only datasets support the
+        A :class:`~asymmetry.core.data.dataset.MuonDataset` with a verified histogram observation, or an
+        explicitly supplied raw :class:`~asymmetry.core.data.dataset.Run`. Curve-only datasets support the
         explicit ``differential`` mean without count-setting overrides. For
         multi-period runs, select the period first with
         :func:`asymmetry.core.io.periods.select_period`.
@@ -292,14 +292,14 @@ def reduce_integral_run(
 
     Returns
     -------
-    (value, error)
-        **As a fraction**, from :func:`integrate_asymmetry` —
-        *not* the percent scale of ``data.asymmetry`` when ``data`` is a
-        :class:`MuonDataset`. This function reduces the run's **counts**, so the
-        dataset's own percent-scale curve is not used for count-backed reductions.
-        A curve-only ``differential`` mean uses that stored curve, converted to
-        fractions, and returns ``corrections=None`` because count preparation
-        is not evidenced.
+    IntegralReduction
+        ``value`` and ``error`` are fractional, following :func:`integrate_asymmetry`,
+        rather than the percent scale of ``data.asymmetry`` for a
+        :class:`~asymmetry.core.data.dataset.MuonDataset`. The record retains correction
+        outcomes, scalar observation classification, and the effective recipe.
+        Count-backed reductions use the run's **counts**, not the dataset's percent curve.
+        A curve-only ``differential`` mean uses that curve converted to fractions and
+        sets ``corrections=None`` because count preparation is not evidenced.
     """
     mode = None
     if not isinstance(data, MuonDataset) or data.histogram_observation is not None:
@@ -505,7 +505,7 @@ class FieldScanPoint:
 
     ``value``/``error`` are the integral asymmetry **as a fraction**
     carried straight from the owning
-    :class:`FieldScan` — see its ``units`` field.
+    :class:`~asymmetry.core.transform.integral.FieldScan` — see its ``units`` field.
     """
 
     run_number: int
@@ -528,7 +528,7 @@ class FieldScan:
     missing field log — Mantid skips such runs rather than failing the scan).
 
     Scale note: ``value``/``error`` are the integral asymmetry **as a fraction**
-    (from :func:`compute_asymmetry` on summed counts) — the
+    (from :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry` on summed counts) — the
     scale the field-scan / ALC parameter models expect (e.g. ``GaussianLCR``
     seeds ``f`` near 0.1), and the one the ``units`` field records. This differs
     from a loaded :class:`~asymmetry.core.data.dataset.MuonDataset`, whose
@@ -635,7 +635,7 @@ def build_field_scan(
     Parameters
     ----------
     runs
-        Iterable of loaded objects — each a :class:`MuonDataset` or :class:`Run`.
+        Iterable of loaded objects — each a :class:`~asymmetry.core.data.dataset.MuonDataset` or :class:`~asymmetry.core.data.dataset.Run`.
         For multi-period runs, select the period upstream and pass the per-period
         datasets in.
     t_min, t_max, method, alpha, grouping_ref, reference
@@ -643,12 +643,12 @@ def build_field_scan(
         scan — the grouping/alpha is normally common across a scan).
     order_key
         ``"field"``, ``"temperature"``, or ``"run"`` — the x-axis variable the
-        points are ordered by (the same :data:`ORDER_KEYS` ``FitSeries`` uses).
+        points are ordered by (the same :data:`~asymmetry.core.utils.constants.ORDER_KEYS` ``FitSeries`` uses).
     filter
         Optional predicate ``run -> bool`` used to keep a *subset* of the runs in
         a single scan, so distinct measurement periods or run types taken at the
         same field are not mixed into one curve. It is called with each resolved
-        :class:`Run` (giving its ``run_number`` and ``metadata``) **before**
+        :class:`~asymmetry.core.data.dataset.Run` (giving its ``run_number`` and ``metadata``) **before**
         reduction; runs for which it returns a falsy value are dropped and listed
         in ``excluded`` with the reason ``"excluded by filter"``. Use it to keep
         one period (``run.metadata.get("period_label") == "red"``), one run type,

@@ -1,6 +1,9 @@
 Data transforms
 ===============
 
+.. py:module:: asymmetry.core.transform
+
+
 .. currentmodule:: asymmetry.core.transform
 
 The transform layer is the sequence of operations applied to raw
@@ -71,10 +74,10 @@ Asymmetry calculation
    :undoc-members:
 
 .. autofunction:: asymmetry.core.transform.asymmetry.compute_asymmetry
-   :no-index:
+   :noindex:
 
 .. autofunction:: asymmetry.core.transform.asymmetry.estimate_alpha
-   :no-index:
+   :noindex:
 
 Grouping
 --------
@@ -84,7 +87,7 @@ Grouping
    :undoc-members:
 
 .. autofunction:: asymmetry.core.transform.grouping.align_forward_backward
-   :no-index:
+   :noindex:
 
 Background
 ----------
@@ -148,7 +151,7 @@ period policies, including an implicit acquired-window policy when used.
    :undoc-members:
 
 .. autofunction:: asymmetry.core.transform.rebin.merge_curve_bins
-   :no-index:
+   :noindex:
 
 Integrated observation status
 -----------------------------
@@ -192,3 +195,106 @@ serialized as null. The original scan retains source classifications and
 positional ``correlated_pairs``. Derivative identity survives ``select`` and
 workflow payload restoration. The shared fit-input boundary rejects derivative
 scans: fit original observations, since adjacent differences share inputs.
+
+Corrections
+-----------
+
+.. autoexception:: asymmetry.core.transform.corrections.CorrectionUnavailableError
+   :no-members:
+   :no-special-members:
+
+Integral scans
+--------------
+
+.. autoclass:: asymmetry.core.transform.integral.IntegralReduction
+   :no-members:
+   :no-special-members:
+
+.. autoclass:: asymmetry.core.transform.integral.FieldScan
+   :no-members:
+   :no-special-members:
+
+.. autoclass:: asymmetry.core.transform.integral.FieldScanPoint
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.transform.integral.build_field_scan
+
+.. autofunction:: asymmetry.core.transform.integral.integrate_asymmetry
+
+.. autofunction:: asymmetry.core.transform.integral.integrate_curve
+
+.. autofunction:: asymmetry.core.transform.integral.integrate_run
+
+.. autofunction:: asymmetry.core.transform.integral.reduce_period_integral
+
+Vector projections
+------------------
+
+.. autofunction:: asymmetry.core.transform.projections.reduce_selected_projections
+
+Count reduction
+---------------
+
+.. autofunction:: asymmetry.core.transform.reduce.corrected_grouped_counts
+
+.. autofunction:: asymmetry.core.transform.reduce.reduce_grouped_asymmetry
+
+.. autofunction:: asymmetry.core.transform.reduce.reduce_period_asymmetry
+
+Rotating-frame provenance
+-------------------------
+
+.. autoclass:: asymmetry.core.transform.rotating_frame.RotatingFrame
+   :no-members:
+   :no-special-members:
+
+.. automethod:: asymmetry.core.transform.rotating_frame.RotatingFrame.typed_frequency
+
+.. automethod:: asymmetry.core.transform.rotating_frame.RotatingFrame.with_values
+
+.. automethod:: asymmetry.core.transform.rotating_frame.RotatingFrame.with_baseline
+
+Rotating reference frames
+-------------------------
+
+.. autoclass:: asymmetry.core.transform.rrf.RRFCurve
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.transform.rrf.rrf_demodulate
+
+.. autofunction:: asymmetry.core.transform.rrf.rrf_demodulate_values
+
+.. autofunction:: asymmetry.core.transform.rrf.default_bandwidth_mhz
+
+.. autoattribute:: asymmetry.core.transform.rrf.RRFCurve.magnitude
+
+.. autoattribute:: asymmetry.core.transform.rrf.RRFCurve.magnitude_error
+
+Units
+-----
+
+.. py:module:: asymmetry.core.transform.units
+
+.. autodata:: asymmetry.core.transform.units.ASYMMETRY_FRACTION
+   :no-value:
+
+.. autodata:: asymmetry.core.transform.units.ASYMMETRY_PERCENT
+   :no-value:
+
+.. autoclass:: asymmetry.core.transform.units.AsymmetryUnit
+   :no-members:
+   :no-special-members:
+
+.. autofunction:: asymmetry.core.transform.units.convert_asymmetry
+
+.. autofunction:: asymmetry.core.transform.units.to_fraction
+
+.. autofunction:: asymmetry.core.transform.units.to_percent
+
+.. py:attribute:: AsymmetryUnit.FRACTION
+   :module: asymmetry.core.transform.units
+
+.. py:attribute:: AsymmetryUnit.PERCENT
+   :module: asymmetry.core.transform.units

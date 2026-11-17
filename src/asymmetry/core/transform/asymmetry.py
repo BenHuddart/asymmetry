@@ -74,13 +74,13 @@ def compute_asymmetry(
 
     Returns
     -------
-    asymmetry, error
+    tuple of numpy.ndarray
         **As a fraction**, with the error on the same scale —
         *not* percent. Arrays of the same length as the inputs. Scale by 100 (or
         :func:`asymmetry.core.transform.units.to_percent`) before handing these to
         anything percent-scale: a
         :class:`~asymmetry.core.data.dataset.MuonDataset`, a fit model's ``A0``,
-        :meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`.
+        :meth:`~asymmetry.core.fitting.engine.FitEngine.fit_arrays`.
     """
     f, b = validated_count_arrays(forward, backward)
 
@@ -140,13 +140,13 @@ def compute_asymmetry_with_count_errors(
         Counts and their 1σ count uncertainties (count domain — no asymmetry
         scale involved on the way in).
     alpha, beta
-        As in :func:`compute_asymmetry`.
+        As in :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`.
 
     Returns
     -------
-    asymmetry, error
+    tuple of numpy.ndarray
         **As a fraction**, exactly as
-        :func:`compute_asymmetry` — *not* percent.
+        :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry` — *not* percent.
     """
     asymmetry, error, _ = ratio_with_count_errors(
         forward, backward, forward_error, backward_error, alpha, beta
@@ -235,7 +235,7 @@ def estimate_alpha(
 
     Raises
     ------
-    CorrectionUnavailableError
+    asymmetry.core.transform.corrections.CorrectionUnavailableError
         No bins are available, either integral is nonpositive, or their ratio
         is not finite and positive. A failed estimate has no default coefficient.
     """

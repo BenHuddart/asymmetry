@@ -43,7 +43,7 @@ scan only shortlists, the Δχ² test below decides.
 Peeling one line at a time has a bias of its own — the first line is fitted
 while its neighbours are still in the residual — so once no further line can be
 accepted, each line is re-fitted with all the others held in the nuisance basis
-(:func:`_polish_lines`).
+(``asymmetry.core.fitting.damped_line_scan._polish_lines``).
 
 Significance
 ------------
@@ -198,7 +198,7 @@ _SCAN_MIN_SNR = 5.0
 _FLOOR_WINDOW_FWHMS = 64
 
 #: Places the running median is evaluated per window; between them the floor is
-#: interpolated (see :func:`_running_median`).
+#: interpolated (see ``asymmetry.core.fitting.damped_line_scan._running_median``).
 _FLOOR_MEDIAN_STRIDES_PER_WINDOW = 4
 
 #: Lifetimes of record retained per rung before rebinning (see module docstring).
@@ -289,7 +289,7 @@ _MIN_CYCLES_PER_LIFETIME = 3.0
 _FAST_LINE_RATE_FACTOR = 2.0
 
 #: Coordinate-ascent sweeps over the accepted lines once the last one is in
-#: (:func:`_polish_lines`).  Two is enough for the sweep to stop changing
+#: (``asymmetry.core.fitting.damped_line_scan._polish_lines``).  Two is enough for the sweep to stop changing
 #: anything on every synthetic record here; the loop exits early when a sweep
 #: moves nothing.
 _POLISH_SWEEPS = 2
@@ -451,9 +451,8 @@ class DampedLine:
         Weighted χ² improvement from adding this line to a nuisance basis that
         already contains the slow-decay dictionary **and every other accepted
         line**, measured on the full informative record.  Leave-one-out and on
-        one common record, so two lines' values mean the same thing and both
-        can be compared with
-        :attr:`DampedLineAnalysis.threshold_delta_chi_squared`.
+        one common record, so two lines' values mean the same thing and both can be compared with
+        :attr:`~asymmetry.core.fitting.damped_line_scan.DampedLineAnalysis.threshold_delta_chi_squared`.
     tau_us
         Matched apodisation lifetime of the rung that found the line.  Note it
         is an estimate of ``1/λ`` only for an isolated line: inside a cluster
@@ -1170,7 +1169,7 @@ class _Accepted:
     """An accepted line together with the scan seed it came from.
 
     The seed is kept because every refinement of that line — the first one and
-    every polish sweep — is anchored on it (see :func:`_polish_lines`).  Its
+    every polish sweep — is anchored on it (see ``asymmetry.core.fitting.damped_line_scan._polish_lines``).  Its
     damping half is ``1 / line.tau_us``, which the line already carries.
     """
 
@@ -1359,7 +1358,7 @@ def detect_damped_lines(
     """Find heavily damped oscillations in an asymmetry record.
 
     The record is truncated to its statistically informative window
-    (:func:`~asymmetry.core.fitting.peak_detection.effective_analysis_window`)
+    (:func:`~asymmetry.core.fitting.spectral_window.effective_analysis_window`)
     and scanned over a matched apodisation ladder.  Clustered scan peaks are
     shortlisted, strongest first, and each is verified by a
     look-elsewhere-corrected Δχ² test; the first candidate to pass is accepted,
@@ -1371,12 +1370,12 @@ def detect_damped_lines(
     ladder replaces it.
 
     When no further line can be accepted, every line is re-fitted with all the
-    others in the nuisance basis (:func:`_polish_lines`), and the Δχ², amplitude
+    others in the nuisance basis (``asymmetry.core.fitting.damped_line_scan._polish_lines``), and the Δχ², amplitude
     and phase each one reports come from that fit — on the full informative
     record, leave-one-out — so two lines' numbers are comparable and the
     threshold means the same thing for each.  The (f, λ) search itself runs on a
     short per-candidate record purely for speed
-    (:func:`_verification_record`).
+    (``asymmetry.core.fitting.damped_line_scan._verification_record``).
 
     ``asymmetry`` and ``error`` may be on either asymmetry scale; every
     amplitude in the result is on the scale supplied (percent, by the library's
@@ -1554,7 +1553,7 @@ def measure_line_at_frequency(
 
     Unlike the scan's per-candidate record, the λ sweep runs on **one** record —
     the whole informative window, rebinned only as far as ``frequency_mhz``
-    allows (:func:`_verification_record`) — so Δχ² is comparable across the
+    allows (``asymmetry.core.fitting.damped_line_scan._verification_record``) — so Δχ² is comparable across the
     ladder.  The reported Δχ², amplitude and phase are then re-measured on the
     full informative record, so they mean what a :class:`DampedLine` from
     :func:`detect_damped_lines` means; ``snr`` is 0, since no scan rung found

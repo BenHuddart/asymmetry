@@ -96,7 +96,7 @@ def dynamic_fmuf_polarization(
     coupling) at rate ``nu`` (µs⁻¹).  Because ``G_s`` is a constant plus three
     cosines, the equation has an **exact closed-form solution**: a sum of seven
     exponentials whose rates and weights come from a 7x7 eigenproblem
-    (:func:`asymmetry.core.fitting.models._strong_collision_modes`).  It is
+    (``asymmetry.core.fitting.models._strong_collision_modes``).  It is
     evaluated directly at the requested times -- no integration grid, cache,
     call-count-dependent accuracy or fast-fluctuation crossover -- and is valid
     at every rate: ``nu = 0`` reduces exactly to the static

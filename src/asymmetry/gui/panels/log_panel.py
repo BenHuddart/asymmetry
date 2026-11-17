@@ -34,7 +34,7 @@ _MAX_LOG_BLOCKS = 5000
 class LogPanel(QWidget):
     """Scrollable log with per-category tag colouring.
 
-    Capped to the most recent :data:`_MAX_LOG_BLOCKS` entries via
+    Capped to the most recent ``asymmetry.gui.panels.log_panel._MAX_LOG_BLOCKS`` entries via
     ``QTextDocument.setMaximumBlockCount`` so a long-running session's log
     cannot grow the widget (and the app's memory footprint) without bound.
     """

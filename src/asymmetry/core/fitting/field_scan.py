@@ -1,7 +1,7 @@
 r"""Fit baseline + peak models to an ALC / integral-asymmetry field scan.
 
 The field scan (integral asymmetry vs a run variable) produced by
-:func:`asymmetry.core.transform.build_field_scan` is fitted with the **existing**
+:func:`asymmetry.core.transform.integral.build_field_scan` is fitted with the **existing**
 parameter-model machinery — the same `fit_parameter_model` /
 `ParameterCompositeModel` engine the trending panel uses — so no new fitter is
 introduced.
@@ -9,7 +9,7 @@ introduced.
 The baseline-first workflow fits non-resonant regions, subtracts the fitted
 baseline, and propagates its uncertainty into subsequent peak inference.
 
-Scale: a :class:`FieldScan`'s ``value``/``error`` are the integral asymmetry **as
+Scale: a :class:`~asymmetry.core.transform.integral.FieldScan`'s ``value``/``error`` are the integral asymmetry **as
 a fraction** (``A ∈ [-1, 1]`` — see its ``units`` field), *not* the percent of a
 :class:`~asymmetry.core.data.dataset.MuonDataset`. So every amplitude fitted here,
 and every amplitude seed in the ALC / LCR parameter models (``GaussianLCR`` seeds
@@ -20,7 +20,7 @@ layer whose asymmetry convention is *not* percent — see "Asymmetry units acros
 the API" in the documentation.
 
 Layering: this lives in the fitting package because it depends on both
-:mod:`asymmetry.core.transform` (the :class:`FieldScan`) and
+:mod:`asymmetry.core.transform` (the :class:`~asymmetry.core.transform.integral.FieldScan`) and
 :mod:`asymmetry.core.fitting.parameter_models`. It must stay free of Qt /
 matplotlib / ``asymmetry.gui`` imports.
 
@@ -90,7 +90,7 @@ def parameter_set_for_model(
     model: ParameterCompositeModel,
     overrides: dict[str, float] | None = None,
 ) -> ParameterSet:
-    """Build a :class:`ParameterSet` seeded from the model's defaults.
+    """Build a :class:`~asymmetry.core.fitting.parameters.ParameterSet` seeded from the model's defaults.
 
     ``overrides`` replaces individual starting values (the GUI passes the user's
     edited guesses). Mirrors how the trending panel seeds parameters.
@@ -125,12 +125,12 @@ def fit_scan_model(
 
     Amplitude parameters come back on the **scan's own asymmetry scale** — a
     fraction (``A ∈ [-1, 1]``) for a scan straight out of
-    :func:`~asymmetry.core.transform.build_field_scan`, per the module docstring.
+    :func:`~asymmetry.core.transform.integral.build_field_scan`, per the module docstring.
 
-    The thin adapter that lets a :class:`FieldScan` flow into the existing
+    The thin adapter that lets a :class:`~asymmetry.core.transform.integral.FieldScan` flow into the existing
     ``fit_parameter_model``. Used for the peak-fit step on a (typically
     baseline-corrected) scan; **check ``result.success`` before** reading the
-    resonance field and width from :attr:`ParameterModelFitResult.parameters`
+    resonance field and width from :attr:`~asymmetry.core.fitting.parameter_models.ParameterModelFitResult.parameters`
     (e.g. ``B0`` / ``Bwid`` for ``GaussianLCR``) — on a failed fit the parameter
     set may be empty.
 
@@ -169,7 +169,7 @@ def rf_resonance_seeds(
     a_p: float = 124.0,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, float]:
-    """Seed values for an :data:`RF_RESONANCE_COMPONENT` fit of *scan*.
+    """Seed values for an :data:`~asymmetry.core.fitting.field_scan.RF_RESONANCE_COMPONENT` fit of *scan*.
 
     The two resonance fields ``B1, B2`` are derived inside the model from
     ``A_µ``/``A_p``/``ν_RF``, so those three seed the *position* and *splitting*
@@ -203,7 +203,7 @@ def fit_rf_resonance(
 ) -> ParameterModelFitResult:
     """Fit the RF-µSR muon+proton resonance model to an RF field scan.
 
-    Wraps :func:`fit_scan_model` for the :data:`RF_RESONANCE_COMPONENT` model so
+    Wraps :func:`fit_scan_model` for the :data:`~asymmetry.core.fitting.field_scan.RF_RESONANCE_COMPONENT` model so
     the GUI and scripts share one seeding + fixing rule. The scan is the
     **(Green − Red)** integral asymmetry vs field built by
     :func:`asymmetry.core.io.periods.build_rf_difference_scan`. ``ν_RF`` is a
@@ -431,13 +431,13 @@ def fit_scan_baseline(
         Baseline model — ``"Linear"`` (default), ``"Constant"``, or any
         component/expression.
     parameters
-        Optional starting :class:`ParameterSet`; defaults are used otherwise.
+        Optional starting :class:`~asymmetry.core.fitting.parameters.ParameterSet`; defaults are used otherwise.
 
     Returns
     -------
     ScanBaselineResult
         The fitted baseline sampled over **all** scan points, a corrected
-        :class:`FieldScan` (``value − baseline``, marginal propagated errors), and the fit.
+        :class:`~asymmetry.core.transform.integral.FieldScan` (``value − baseline``, marginal propagated errors), and the fit.
 
     Raises
     ------

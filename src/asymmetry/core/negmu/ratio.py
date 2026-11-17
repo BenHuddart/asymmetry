@@ -165,7 +165,7 @@ def fb_capture_ratio_report(
     *,
     reference: str,
 ) -> dict[str, CaptureRatioReport]:
-    """Per-side capture-ratio reports from a :func:`~fit.fit_capture_fb_alpha` result.
+    """Per-side capture-ratio reports from a :func:`~asymmetry.core.negmu.fit.fit_capture_fb_alpha` result.
 
     Returns ``{'forward': CaptureRatioReport, 'backward': CaptureRatioReport}``.
     Since amplitudes are shared in the F+B fit, the two reports will have identical

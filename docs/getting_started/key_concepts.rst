@@ -95,7 +95,7 @@ Trends and series
 Fitting the same model across a series of runs — a temperature scan, a field
 sweep, an angular rotation — produces a **trend**: a fitted parameter followed as
 a function of an external variable and recorded as a
-:class:`~asymmetry.core.fitting.FitSeries`. A trend is itself fittable, so the
+:class:`~asymmetry.core.representation.series.FitSeries`. A trend is itself fittable, so the
 order parameter of a magnetic transition or the penetration depth of a
 superconductor is extracted by fitting a model to the trend rather than to any
 single spectrum. See :doc:`/reference/parameter_trending`.

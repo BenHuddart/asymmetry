@@ -260,8 +260,8 @@ new claim of calibrated spectral uncertainty or coverage.
    whatever asymmetry scale the curve did — the percent (0–100) convention
    :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` uses, or the
    dimensionless fraction :math:`A \in [-1, 1]` that
-   :func:`~asymmetry.core.transform.compute_asymmetry` and
-   :func:`~asymmetry.core.transform.binned_fb_asymmetry` return. The two differ
+   :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry` and
+   :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry` return. The two differ
    by a factor of 100 in every amplitude and area you read off the result. See
    :doc:`asymmetry_units`. (``amplitude_calibration=True`` is the one place a
    scale is *asserted*: it targets the percent convention, so feed it a
@@ -1021,7 +1021,7 @@ Engine API
 .. warning::
 
    **Pass** ``dataset.run``\ **, not the dataset.** ``maxent()`` operates on a
-   :class:`~asymmetry.core.data.Run` — the raw-histogram object — *not* on the
+   :class:`~asymmetry.core.data.dataset.Run` — the raw-histogram object — *not* on the
    :class:`~asymmetry.core.data.dataset.MuonDataset` that ``load()`` returns.
    The dataset exposes the required ``Run`` as its ``.run`` attribute, so the
    call is ``maxent(dataset.run, config)``. Passing the ``MuonDataset`` itself
@@ -1043,7 +1043,7 @@ Engine API
 
    If you have **counts but no** ``Run`` to carry them — a re-grouped detector
    sum, a simulation, counts reconstructed from an export — use
-   :func:`~asymmetry.core.maxent.maxent_from_counts`
+   :func:`~asymmetry.core.maxent.engine.maxent_from_counts`
    (`Reconstructing from count arrays`_), which shares ``maxent``'s entire
    implementation.
 

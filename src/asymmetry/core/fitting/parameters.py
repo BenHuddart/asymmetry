@@ -915,7 +915,7 @@ class ParameterSet:
     # --- affine ties (offset / equal-spacing) --------------------------------
 
     def tie_followers(self) -> dict[str, AffineTie]:
-        """Map each affinely-tied parameter name to its :class:`AffineTie`.
+        """Map each affinely-tied parameter name to its :class:`~asymmetry.core.fitting.parameters.AffineTie`.
 
         These followers are derived from other parameters at fit time and so
         drop out of the free set (via :attr:`Parameter.is_constrained`).

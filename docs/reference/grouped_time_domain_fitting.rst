@@ -297,7 +297,7 @@ The returned ``GroupedSeriesFitResult`` carries the cross-run
    **This API shares parameters in the count domain.** Its Poisson likelihood
    requires raw grouped counts. To share parameters across several
    ``.asymmetry`` traces in a single call instead, use the asymmetry-domain
-   :func:`~asymmetry.core.fitting.fit_global` (Gaussian weighted least squares);
+   :func:`~asymmetry.core.fitting.asymmetry_global.fit_global` (Gaussian weighted least squares);
    see :doc:`asymmetry_domain_global_fit`. In the GUI, the asymmetry-domain
    shared-parameter workflow is the interactive :doc:`global_fit_wizard`.
 

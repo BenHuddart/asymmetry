@@ -175,7 +175,7 @@ conditional errors, and onset limitations.
 
 
 Fixed supplied TF calibration response
--------------------------------------
+--------------------------------------
 
 TF requests and workflow ``CalibrationOptions`` accept ``pulse_separation_us``:
 ``None`` means Off, while finite nonnegative values supply a fixed equal-incident
@@ -186,3 +186,10 @@ applied again to these count models. Counts are evaluated at packed-bin centres,
 without rate integration. Backgrounds occur once; birthless predictions may be
 background-only. See :ref:`alpha-calibration` for the equations and conditional
 error/approximation limits.
+
+Beta calibration
+----------------
+
+.. autoclass:: asymmetry.core.fitting.beta_calibration.BetaEstimate
+   :no-members:
+   :no-special-members:

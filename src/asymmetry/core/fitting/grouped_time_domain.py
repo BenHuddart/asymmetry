@@ -329,8 +329,7 @@ def fit_grouped_time_domain(
     - local parameters may only come from the group nuisance block
     - the observed signal is assumed to be lifetime-corrected grouped counts
 
-    ``cost`` selects the fit objective, matching the count-domain modes'
-    convention:
+    ``cost`` selects the fit objective, matching the count-domain modes' convention:
 
     - ``"poisson"`` (default) — the Cash statistic on the **raw** Poisson
       counts (built without a lifetime correction; the model is multiplied
@@ -353,8 +352,7 @@ def fit_grouped_time_domain(
         Shared free parameters across all groups. These may include both
         physical model parameters and nuisance parameters selected as global.
     local_params
-        Per-group free parameters. These are restricted to
-        ``GROUP_NUISANCE_PARAMS``.
+        Per-group free parameters. These are restricted to ``GROUP_NUISANCE_PARAMS``.
     initial_params
         Parameter sets keyed by ``group_id``. Every set must include the group
         nuisance parameters and any model parameters referenced by
@@ -732,19 +730,21 @@ def fit_grouped_series(
     * ``"global"`` – the physics parameters are shared across *all* runs and
       groups via a single simultaneous fit.
 
-    The per-group nuisance block (``local_params`` ⊆ :data:`GROUP_NUISANCE_PARAMS`)
+    The per-group nuisance block (``local_params`` ⊆ :data:`~asymmetry.core.fitting.grouped_time_domain.GROUP_NUISANCE_PARAMS`)
     is always estimated separately for each ``(run, group)``.
 
     Parameters
     ----------
     members
         Mapping of run number → that run's included
-        :class:`GroupedTimeDomainGroup` list (group order is the trend order).
+        :class:`~asymmetry.core.fitting.grouped_time_domain.GroupedTimeDomainGroup` list (group order is the trend order).
     initial_params
         Nested mapping ``run -> {group_id -> ParameterSet}``.  Every set must
         include the nuisance block plus the model parameters referenced by
         ``global_params`` / ``local_params``.
 
+    Notes
+    -----
     A *mixed* fit (some physics shared across runs, others fitted per run) is
     expressed by routing through ``"global"`` and listing the per-run physics in
     ``cross_run_local_params``: those become engine local parameters grouped by
@@ -1003,7 +1003,7 @@ def _resolve_grouped_series_workers(max_workers: int | None, n_runs: int) -> int
 def _grouped_series_payload_picklable(model_fn) -> bool:
     """Whether the per-run payload can cross a process boundary.
 
-    The group arrays and :class:`ParameterSet` seeds are always picklable; the one
+    The group arrays and :class:`~asymmetry.core.fitting.parameters.ParameterSet` seeds are always picklable; the one
     real risk is the polarization model function (e.g. a user-defined Python model
     captured as a closure). If it cannot be pickled the caller falls back to the
     in-process sequential path rather than crashing on dispatch.
@@ -1021,7 +1021,7 @@ def _grouped_member_worker(payload, cancel_callback=None):
     """Fit one run's groups and return ``(run, result)``, in-process or in a pool worker.
 
     Module-level (so it survives the ``spawn`` start method) and engine-free — each
-    call builds its own :class:`FitEngine`. Only an in-process call gets a cancel
+    call builds its own :class:`~asymmetry.core.fitting.engine.FitEngine`. Only an in-process call gets a cancel
     callback; a pool worker's cancel is handled in the parent.
     """
     (
@@ -1077,7 +1077,7 @@ def _fit_members_parallel(
 
     :func:`map_when_a_pool_pays` fits members in-process until their measured cost
     warrants a spawn pool for the rest. Results are bit-identical to the sequential
-    path wherever each member is fit; raises :class:`FitCancelledError` on a
+    path wherever each member is fit; raises :class:`~asymmetry.core.fitting.engine.FitCancelledError` on a
     cooperative cancel.
     """
     payloads = [
@@ -1409,8 +1409,7 @@ def _blockwise_inner_fit_runs(
     self-contained grouped fit. When ``executor`` is supplied the per-run fits are
     submitted to that persistent pool (created once for the whole solve, not per
     round, so the spawn cost is paid only at start-up); otherwise they run in a
-    sequential loop. A broken pool raises :class:`BrokenExecutor` for the caller to
-    handle.
+    sequential loop. A broken pool raises :class:`BrokenExecutor` for the caller to handle.
     """
     if executor is not None:
         futures = {

@@ -51,7 +51,7 @@ See :ref:`comparison-file-manual-windows`.
 .. _logged-temperature-selection:
 
 Explicit temperature channels in scripts
----------------------------------------
+----------------------------------------
 
 A script can choose a thermometer explicitly with
 :func:`~asymmetry.core.workflow.select_logged_temperature`. Supply the exact full
@@ -980,7 +980,7 @@ by hand if runs are missing."* — and the prefilled first/last numbers may
 cover only part of the folder; type the range you want and the load proceeds
 normally.
 
-**In scripts.** :func:`~asymmetry.core.io.resolve_run_range` is the pure,
+**In scripts.** :func:`~asymmetry.core.io.run_range.resolve_run_range` is the pure,
 GUI-free resolver behind the dialog. It scans a folder and returns the existing
 files for an inclusive run range, sorted by run number:
 
