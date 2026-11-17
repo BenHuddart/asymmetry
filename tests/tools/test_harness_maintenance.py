@@ -313,7 +313,17 @@ def test_one_time_bootstrap_uses_base_debt_not_candidate_growth(tmp_path: Path) 
 
 def test_scope_covers_new_local_files_and_ignores_external_symlinks(tmp_path: Path) -> None:
     baseline(tmp_path)
-    for root in ("src", "tools", "tests", "docs", "examples", "scripts", "packaging"):
+    for root in (
+        "src",
+        "tools",
+        "tests",
+        "docs",
+        "examples",
+        "scripts",
+        "packaging",
+        ".github",
+        ".claude/hooks",
+    ):
         write(tmp_path, f"{root}/new.py", "# new\n" * 1000)
     write(tmp_path, "new.py", "# new\n" * 1000)
     external = write(tmp_path, "external/lib.py", "# external\n" * 1200)
@@ -321,7 +331,7 @@ def test_scope_covers_new_local_files_and_ignores_external_symlinks(tmp_path: Pa
         write(tmp_path, path, "# external\n" * 1200)
     (tmp_path / "src/dependency").symlink_to(external.parent, target_is_directory=True)
     (tmp_path / "src/linked.py").symlink_to(external)
-    assert len(check(tmp_path)) == 8
+    assert len(check(tmp_path)) == 10
 
 
 def test_shallow_clone_missing_base_then_available_base(tmp_path: Path, repo) -> None:
@@ -453,3 +463,32 @@ def test_probe_allowance_does_not_transfer_to_a_new_path(tmp_path: Path, operati
         old.unlink()
     freeze(tmp_path)
     assert any("added/raised/restored" in f.message for f in check(tmp_path, base))
+
+
+def test_maintained_hidden_tools_exclude_local_config_and_nested_worktrees(tmp_path: Path) -> None:
+    baseline(tmp_path)
+    for path in (".claude/hooks/check.py", ".github/scripts/check.py"):
+        write(tmp_path, path, "# maintained\n" * 1000)
+    for path in (
+        ".claude/worktrees/other/src/private.py",
+        ".claude/local.py",
+        ".github/build/generated.py",
+    ):
+        write(tmp_path, path, "# excluded\n" * 2000)
+    assert {f.path.relative_to(tmp_path).as_posix() for f in check(tmp_path)} == {
+        ".claude/hooks/check.py",
+        ".github/scripts/check.py",
+    }
+
+
+def test_hidden_roots_have_identical_base_and_current_scope(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    for path in (".claude/hooks/check.py", ".github/scripts/check.py"):
+        write(tmp_path, path, "# maintained\n" * 1001)
+    write(tmp_path, ".claude/worktrees/other/private.py", "# excluded\n" * 2000)
+    freeze(tmp_path)
+    base = commit(tmp_path)
+    assert check(tmp_path, base) == []
+    write(tmp_path, ".claude/hooks/check.py", "# smaller\n" * 1000)
+    freeze(tmp_path)
+    assert check(tmp_path, base) == []

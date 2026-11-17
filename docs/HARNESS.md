@@ -81,12 +81,14 @@ same harness gate.
 
 `structural` and `validate` enforce the maintained Python scope: regular `.py`
 files at the repository root and below `src`, `tests`, `tools`, `docs`, `examples`,
-`packaging`, and `scripts`, including new local files. Hidden directories,
+`packaging`, `scripts`, `.github`, and `.claude/hooks`, including new local files.
+Other agent configuration and `.claude/worktrees` are excluded. Other hidden directories,
 `__pycache__`, build/generated output (`build`, `dist`, `_build`, `_generated`),
 virtual environments (`venv`, `env`, or directories containing `pyvenv.cfg`),
 `site-packages`, `node_modules`, `vendor`, `vendored`, and egg metadata are excluded.
 File and directory symlinks are never followed, including dependency checkouts.
-Other roots, such as local agent configuration, are outside maintained scope.
+Other roots are outside maintained scope; tracked repository tooling under the
+explicit hidden roots remains covered.
 
 Physical lines are LF-delimited byte lines, including blank, comment, and
 docstring lines and a final nonempty unterminated line. CRLF counts once;

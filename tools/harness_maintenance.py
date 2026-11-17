@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "tools/baselines/maintenance.json"
 # Only this immutable pre-rollout commit may supply an absent initial baseline.
 BOOTSTRAP_BASE = "606992f5a4f6de2a3781f60c3e5444ffbaae6069"
-OWNED_ROOTS = frozenset({"src", "tests", "tools", "docs", "examples", "packaging", "scripts"})
+OWNED_ROOTS = frozenset(
+    {"src", "tests", "tools", "docs", "examples", "packaging", "scripts", ".github"}
+)
 EXCLUDED = frozenset(
     {
         "build",
@@ -41,10 +43,11 @@ def owned_path(path: str) -> bool:
         and ".." not in parts
         and not path.startswith("/")
         and path.endswith(".py")
-        and (len(parts) == 1 or parts[0] in OWNED_ROOTS)
+        and (len(parts) == 1 or parts[0] in OWNED_ROOTS or parts[:2] == (".claude", "hooks"))
         and not any(
             p.startswith(".") or p in EXCLUDED or p in {"venv", "env"} or p.endswith(".egg-info")
-            for p in parts
+            for index, p in enumerate(parts)
+            if index != 0 or p not in {".github", ".claude"}
         )
     )
 
@@ -62,11 +65,12 @@ def current_sources(root: Path) -> dict[str, bytes]:
             d
             for d in dirs
             if not (here / d).is_symlink()
-            and not d.startswith(".")
+            and (not d.startswith(".") or here == root and d in {".github", ".claude"})
             and d not in EXCLUDED | {"venv", "env"}
             and not d.endswith(".egg-info")
             and not (here / d / "pyvenv.cfg").is_file()
-            and (here != root or d in OWNED_ROOTS)
+            and (here != root or d in OWNED_ROOTS or d == ".claude")
+            and (here != root / ".claude" or d == "hooks")
         )
         for name in sorted(files):
             path = here / name
