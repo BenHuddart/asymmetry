@@ -20,6 +20,92 @@ Asymmetry exposes a Python analysis core with a desktop front end. The
 comparison below concerns particular operations rather than a ranking of
 programs or a collective file-format guarantee.
 
+Choose a comparison by topic
+----------------------------
+
+Start with the observation to be analysed. Loading a file, forming a count
+ratio, fitting that ratio, and reconstructing a field distribution are separate
+operations, even when one program presents them in the same window.
+
+.. list-table:: Methods and owning references
+   :class: reduction-conventions
+   :header-rows: 1
+   :widths: 24 40 36
+
+   * - Topic
+     - Comparison on this page
+     - Asymmetry reference
+   * - Files and available observations
+     - :ref:`comparison-formats`
+     - :doc:`/reference/loading_data`
+   * - Groups, t0, and good bins
+     - :ref:`reviewed-count-reduction`, :ref:`comparison-timing`
+     - :doc:`/reference/detector_grouping`
+   * - Alpha, beta, backgrounds, and deadtime
+     - :ref:`comparison-calibration-policies`, :ref:`comparison-count-backgrounds`,
+       :ref:`comparison-deadtime-calibration`
+     - :doc:`/reference/data_reduction/alpha_calibration`,
+       :doc:`/reference/data_reduction/beta_calibration`,
+       :doc:`/reference/data_reduction/backgrounds`
+   * - Binning and errors
+     - :ref:`comparison-binning`, :ref:`comparison-asymmetry-errors`
+     - :doc:`/reference/data_reduction/binning`
+   * - Fit objectives and constraints
+     - :ref:`comparison-fitting`
+     - :doc:`/reference/fitting`, :doc:`/reference/count_domain_fitting`
+   * - Fourier phase, scale, and MaxEnt
+     - :ref:`comparison-spectral-conventions`, :ref:`comparison-maxent`
+     - :doc:`/reference/fourier_analysis`
+   * - Integral and RF scans
+     - :ref:`comparison-integral-scans`
+     - :doc:`/reference/alc_mode`
+
+Program and documentation identities have different scopes. The executed cases
+name the actual release/build. A numbered Mantid algorithm revision (such as
+``Fit v1``) is separate from the documentation edition and installed release.
+The consulted musrfit manual identifies its edition as V1.10.0 and uses an
+unversioned address; it does not certify every installed build. WiMDA's original
+manual is version 1.2 (February 2005); its author identifies it as older than
+the current program. Manual sections below describe that edition's
+methods; only the named native cases establish release-specific observations.
+See the `WiMDA author’s documentation notice <https://shadow.nd.rl.ac.uk/wimda/>`_.
+
+.. _comparison-formats:
+
+Files and available observations
+--------------------------------
+
+Asymmetry's :func:`~asymmetry.core.io.load`, CLI loading, and desktop file picker
+use the same registered loaders: ISIS muon NeXus V1/V2 (``.nxs``, ``.nexus``),
+PSI BIN/MDU, and MusrRoot/LEM ROOT. HDF5 NeXus needs ``h5py``; legacy HDF4
+needs ``pyhdf``; ROOT needs ``uproot``. Generic column files and TRIUMF MUD
+have no built-in raw-run loader. Curve-array fitting is a separate entry point,
+not evidence of a raw-file importer. The :doc:`loading reference
+</reference/loading_data>` describes supported layouts, period selection,
+metadata precedence, and unavailable-calibration limits.
+
+For comparison, the `WiMDA author's format list
+<https://shadow.nd.rl.ac.uk/wimda/>`_ names ISIS NeXus, PSI BIN/MDU, J-PARC
+NeXus, and TRIUMF TRI, and describes LEM access via conversion to BIN.
+That list is not a claim that TRI and MUD are interchangeable. The
+`musrfit file-format manual
+<https://lmu.pages.psi.ch/musrfit-docu/file-formats.html>`_ distinguishes its
+PSI, ROOT, NeXus, MUD, and ASCII inputs. Mantid's version 6.16.1
+`LoadMuonNexus v1 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_
+and `LoadPSIMuonBin v1 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadPSIMuonBin-v1.html>`_
+describe particular acquisition loaders. These documented entry points are
+not an exhaustive cross-program format matrix or numerical loading comparison.
+
+A suffix does not establish layout support, usable time calibration, detector
+geometry, or an independent-count model. The executed PSI/ROOT cases in
+:ref:`comparison-root` and :ref:`comparison-psi-intervals` identify matched
+observations separately from loading coverage. The compared musrfit build has
+HDF4 support disabled; conversion would test a different input, rather than
+establish original-file support in that build. Unsupported or untested layouts
+here do not imply that another program cannot analyse them.
+
+.. _comparison-evidence:
+
 Evidence behind numerical comparisons
 -------------------------------------
 
@@ -107,14 +193,14 @@ below; different defaults must be matched before judging numerical agreement.
      - Enabled automatic policies use current inputs; fixed and one-shot values
        stay fixed. See :ref:`comparison-calibration-policies`.
    * - Alignment and NeXus width
-     - Whole-bin alignment and declared-resolution fixed-bin counts, closest
-       to WiMDA/musrfit
+     - Whole-bin alignment and declared-resolution fixed-bin counts, compared
+       with musrfit
      - Selected exact origin and residuals are retained; Mantid also preserves
        coordinates and offers common-grid rebinning. See :ref:`comparison-timing`.
    * - PSI intervals
      - Selected file-good intersection; musrfit is the primary PSI comparator
-     - Explicit musrfit endpoints and omitted defaults differ; WiMDA uses a
-       shared interval. See :ref:`comparison-psi-intervals`.
+     - Explicit musrfit endpoints and omitted defaults differ; WiMDA endpoint membership is
+       not established here. See :ref:`comparison-psi-intervals`.
    * - ROOT calibration and coverage
      - Legacy v4/v5 and modern layouts use common reduction; closest to musrfit
      - Stored bank selection, PPC uncertainty, and the directory-case limit
@@ -143,13 +229,10 @@ signed-count example, and Gaussian omission policy.
 Dataset values and errors are percent; count-to-ratio primitives are fractions.
 Neither scale imposes universal estimator bounds.
 
-WiMDA 1.326 ordinary F/B uses the beta-one ratio with a small positive-count
-variance adjustment. Its positive-count errors approach the derivative limit
-at high counts but are not identical. Its ordinary F/B fitting excludes
-nonpositive corrected groups, distinct from plotted fallback points and other
-count-fitting workflows. The versioned binning comparisons below check values;
-they do not establish identical error bars. The `WiMDA homepage/manual
-<https://shadow.nd.rl.ac.uk/wimda/>`_ provides workflow context.
+The `WiMDA original manual, Sec. 5.2
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ defines the ordinary
+beta-one F/B balance. The versioned binning controls below compare values,
+without establishing identical positive-count or sparse-bin errors.
 
 In Mantid's `AsymmetryCalc v1 documentation
 <https://docs.mantidproject.org/nightly/algorithms/AsymmetryCalc-v1.html>`_
@@ -189,20 +272,20 @@ establish identical Gaussian objectives for arbitrary residuals or identical
 model recovery. musrfit's empty-native-bin variance treatment also differs from
 Asymmetry's Gaussian omission policy: musrfit supplies nonzero empty-native-bin
 variance, while Asymmetry omits exactly undefined or zero-first-order-variance
-histogram ratios. WiMDA omits nonpositive corrected groups; Asymmetry retains
-usable signed values and corrected zeros with positive variance. In Mantid,
+histogram ratios. Asymmetry retains usable signed values and corrected zeros with positive
+variance. WiMDA's sparse/signed fit-selection policy is not established by the
+value-only controls here. In Mantid,
 AsymmetryCalc uses the distinct error approximation above. These are deliberate
 method differences, not identical sparse-bin likelihoods. Asymmetry also checks
 final ratio usability after requested binning and period composition, reports
 omission reasons, and leaves raw/count-fitting access available. Native packing
 is not a statistical coverage or wizard-ranking test.
 
-In these reviewed standard F/B workflows, none passes an external alpha/beta
-calibration covariance through a full reduced-bin/run covariance to the
-subsequent fit. Fitting coefficients within a model, as in musrfit, is a separate
-treatment. This statement does not restrict custom analyses in extensible
-platforms. Asymmetry's ordinary errors are conditional on the selected
-coefficients; see :ref:`conditional-calibration-errors`.
+Asymmetry's ordinary errors are conditional on the selected alpha/beta
+coefficients. A fitted calibration covariance is not propagated into a full
+reduced-bin/run covariance by that operation; see
+:ref:`conditional-calibration-errors`. This does not establish the covariance
+capabilities of other programs or of custom analyses built with them.
 
 .. _comparison-binning:
 
@@ -231,13 +314,15 @@ with matching interior sums and mean native timestamps under matched support
 and integer timing. It does not establish the same nonuniform controls.
 Mantid histogram-centre conventions offer a coordinate comparison; histogram
 Rebunch retains a partial group, while Rebin can redistribute fractional bins.
-The Mantid comparison is documented behaviour, with no native binning execution.
+This Mantid method comparison does not establish matched Variable or Constant
+error controls. The recorded fixed-packing/history control below has a different
+scope.
 See :doc:`/reference/data_reduction/binning` for algorithm references, terminal
 qualifications, and uncertainty assumptions.
 
-Ordinary binning honours authored merges without a spectral peak veto, as in
-the compared WiMDA 1.326 grouping, musrfit 1.12.1 packing, and documented Mantid
-Rebin/Rebunch operations. Actual FFT requests still require a uniform grid.
+Asymmetry honours authored merges without a spectral peak veto. The controls
+above establish the particular compared bin membership, rather than a universal
+reference-program validation policy. Actual FFT requests still require a uniform grid.
 Asymmetry also checks that an authored count-fit factor and selection leave
 usable complete fit bins, before resolving unused corrections. The factor is
 never silently reduced to one. Raw inspection and request repair remain
@@ -293,23 +378,16 @@ pairs. These observations describe request acceptance, not a covariance-aware
 error guarantee. Asymmetry retains EMU vector channel reuse across projections
 and overlapping auxiliary groups, and never infers identity from equal counts.
 
-WiMDA's **Group Table Edit** forms groups from numbered histogram channels.
-A repeated entry contributes again, and a histogram can contribute to both
-forward and backward groups. WiMDA can regenerate group membership when the
-requested histogram range is unavailable. Asymmetry also checks structured
-membership for repeated or missing requested
-channels, and requires nonempty disjoint effective channels for independent
-F/B analysis. These checks preserve an unweighted authored selection and the
-independent-count uncertainty model. Failure concerns the requested reduction:
-raw histograms and saved requests remain available for inspection and repair.
-See :doc:`/reference/detector_grouping` for the membership contract.
-
-WiMDA can exclude physical-detector contributions before combining them into
-mapped histograms. Asymmetry excludes acquired histogram channels without
-rewriting the loaded data. When an acquired channel combines several physical
-detectors, excluding it removes the whole channel. Neither program can recover
-hidden constituent observations from a file that already aggregates them.
-See :doc:`/reference/data_reduction/detector_exclusion` for that distinction.
+The `WiMDA original manual, Secs. 5.1 and 5.10
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes numbered
+grouping tables and per-group timing. It also describes pregrouped acquisition
+channels: an acquired histogram may already combine physical detectors.
+Asymmetry's exclusions select acquired histogram channels without rewriting
+the loaded data. Excluding such an aggregate removes the whole channel;
+hidden constituent observations cannot be recovered by regrouping. The
+manual alone does not establish WiMDA 1.326's repeated-member, overlapping-pair,
+or unavailable-channel policies. See :doc:`/reference/detector_grouping` and
+:doc:`/reference/data_reduction/detector_exclusion`.
 
 .. _comparison-calibration-policies:
 
@@ -324,9 +402,9 @@ policies, without that automatic ratio policy. See
 :doc:`/reference/data_reduction/alpha_calibration` and
 :doc:`/reference/data_reduction/beta_calibration` for the contracts.
 
-WiMDA keeps α stored during ordinary regrouping; **Estimate** is a separate
-action, while enabled background processing is evaluated when groups are
-rebuilt. Mantid's `AlphaCalc v1
+The `WiMDA original manual, Secs. 5.2–5.3
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes stored grouping
+alpha and a separate estimate action. Mantid's `AlphaCalc v1
 <https://docs.mantidproject.org/v6.13.1/algorithms/AlphaCalc-v1.html>`_
 computes the integral efficiency ratio as a separate operation; it is the
 closest convention for Asymmetry's automatic ratio, rather than a claim that
@@ -337,10 +415,11 @@ These policy distinctions do not establish numerical equivalence between
 calibration estimators. The cited Mantid documentation version is distinct
 from the 6.16.1 executable used in the numerical comparisons below.
 
-WiMDA 1.326 quick **Diamagnetic** and **General** estimates return alpha
-without an uncertainty; Asymmetry follows that error policy. Its Diamagnetic
-uses continuous minimisation and internal packing, and its General uses a
-two-window decay balance rather than relative-scatter minimisation. Matched
+WiMDA 1.326 quick **Diamagnetic** and **General** controls compare displayed
+alpha point estimates; they do not establish calibration uncertainty.
+Asymmetry's quick methods return point estimates without an interval. Asymmetry's Diamagnetic uses continuous minimisation and internal packing;
+its General uses a two-window decay balance. Native point agreement does not
+identify the internal algorithm of WiMDA's quick estimates. Matched
 16 ns synthetic beta = 1 controls over raw bins 4–498, background/deadtime off
 and bunch one agree within 0.001 absolute alpha: TF Diamagnetic 1.237 versus
 1.236610, TF General 1.250 versus 1.249827, and relaxing General 1.250 versus
@@ -394,9 +473,9 @@ fixed/free-beta points agree within 0.0001 absolute and alpha errors within
 0.1%. Asymmetry's retained measured-count weights differ: one beta-one control
 gives alpha 1.249554 versus native 1.249574, and errors 0.001102 versus 0.001162.
 This is a weighting difference, not an uncertainty correction to copy.
-Mantid's muon ``ApplyDeadTimeCorr`` preserves supplied errors; WiMDA's ordinary
-grouping uses measured counts as its counting-error basis. Those correction
-conventions do not establish equivalent native TF calibration objectives or
+Mantid's muon ``ApplyDeadTimeCorr`` preserves supplied errors. The recorded
+WiMDA FileBG control retains its sample-only export error; that is a separate
+operation. Those correction conventions do not establish equivalent native TF calibration objectives or
 complete deadtime uncertainty propagation. The comparisons are conditional
 weighted fits, not uncertainty coverage or a new detector-response likelihood.
 
@@ -426,12 +505,7 @@ uncertainties.
 WiMDA 1.326 quick Diamagnetic and Asymmetry's quick method give about 1.237 on
 an owned beta-one TF control with generating alpha 1.25; the model fit gives
 1.249995, changing mean reduced asymmetry by about −0.53 percentage points.
-On a matched original Ag TF example (zero-based raw bins 19–884, 16 ns, full F/B banks,
-bunch one, background/deadtime off), native quick alpha is 0.974 and Asymmetry
-quick alpha 0.974190, versus TF beta-one 0.966447. The associated mean asymmetry
-shift is about +0.39 percentage points. Its deviance/dof is about 1.30, with
-phase/model adequacy unresolved and no physical alpha truth asserted. These
-results describe different estimators, not a universal accuracy ranking.
+These results describe different estimators, not a universal accuracy ranking.
 WiMDA's separate paired/all-group model-fit errors remain unverified here;
 Mantid AlphaCalc is a ratio comparator, not a shared-TF likelihood comparison.
 
@@ -484,14 +558,14 @@ above concerns a different estimator and does not enter fit-cost ranking.
 Integer timing alignment
 ------------------------
 
-WiMDA aligns whole raw bins. Asymmetry also retains integer shifts, but resolves
+Asymmetry retains integer shifts and resolves
 its exact reference and common observed support from the effective selected
 channels after exclusions. The maximum selected anchor defines the reference;
 acquired-channel ordinal breaks ties. Fractional residuals and their range are
 recorded in μs, without interpolating counts or assigning timing uncertainties.
 
-WiMDA and musrfit use declared resolution for fixed-bin NeXus count analysis.
-Asymmetry follows that interpretation, retaining its exact origins and
+Asymmetry uses declared resolution for fixed-bin NeXus count analysis,
+retaining its exact origins and
 bin-centre convention. Supplied auxiliary coordinates remain inspectable and
 do not override a usable resolution or infer an extra acquisition-start shift.
 musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports identical arrays for regular,
@@ -564,15 +638,13 @@ Moving both raw crop endpoints by five bins selects 16–19 instead of 11–14.
 Centres agree within 10⁻¹⁵ μs. These constructed workspaces test the selected
 operation, not NeXus loader defaults or Mantid's GUI policy.
 
-WiMDA's **Use File values** controls timing and a shared interval together.
-The interval uses the first histogram's file limits, with a zero-end fallback.
-Its editable start is a t0 offset and its end is an absolute last bin.
-Asymmetry's independent timing/window selectors and two stored relative
-endpoints therefore express a different policy. No WiMDA executable comparison
-is claimed; the `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_
-describes the grouping workflow. No numerical disagreement remains in the
-matched native synthetic operations above; automatic-default equivalence and
-WiMDA numerical agreement remain unverified.
+The `WiMDA original manual, Secs. 5.5–5.6 and 5.10
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes t0, a good-time
+offset, and per-group controls. It does not establish identical raw-bin
+membership under Asymmetry's independent timing/window selectors and two
+relative endpoints. No WiMDA numerical agreement is claimed for this operation.
+The matched musrfit/Mantid synthetic operations above have no unexplained
+count disagreement; automatic-default equivalence remains unverified.
 
 Asymmetry also checks that explicit manual endpoints are ordered and within
 common acquired support. This protects authored selection without inventing
@@ -616,15 +688,11 @@ timing-convention difference, not a count-selection disagreement. Physical
 fit-time limits and omitted data defaults are separate controls; no native
 HDF4 agreement is claimed for the build with HDF4 support disabled.
 
-WiMDA's **Use File values** uses a shared first-histogram interval and a
-zero-end fallback. Its NeXus physical-time conversion uses channel rounding
-and t0-related defaults, rather than Asymmetry's per-detector inclusive-centre
-intersection. The common choice is to retain whole observations on the raw
-acquisition grid; sub-bin thresholds and omitted endpoints need not select the
-same bins. No WiMDA executable numerical comparison is claimed. See the
-`WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_ for the workflow and
-the `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_
-for channel and fit-time controls.
+WiMDA's documented t0 and good-time controls do not establish identical
+sub-bin rounding or selected observations for these NeXus fields. The
+`original manual, Secs. 5.5–5.6
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes those controls;
+no native WiMDA numerical comparison is claimed here.
 
 Asymmetry also checks that the selected file-good intervals have nonempty
 common acquired support before reducing independent counts. An unavailable
@@ -735,16 +803,13 @@ supplies count-dependent finite errors. This is selected
 numerical coverage of three acquired examples, not agreement for every example
 file or every ROOT layout.
 
-WiMDA's **Use File values** uses the first histogram's good interval as the
-grouping reference, with zero last-good requesting histogram length. Its
-one-based histogram coordinates and shared end differ from Asymmetry's
-selected per-detector intersection. No WiMDA executable numerical agreement
-is claimed for these PSI boundaries. Mantid 6.16.1 ``LoadPSIMuonBin`` retains
-all 128 tagged BIN counts, exposes good-data limits in time units, and does
-not crop the raw workspace to those limits. This loading result does not
-establish Mantid's default analysis selection. MDU and ROOT interval reductions
-in Mantid, WiMDA ROOT, and native musrfit numerical reduction of the generated
-lower-case-directory representation remain unverified here.
+WiMDA's original manual describes good-time controls, without establishing
+matching PSI endpoint membership in WiMDA 1.326. Mantid 6.16.1
+``LoadPSIMuonBin`` retains all 128 tagged BIN counts, exposes good-data limits
+in time units, and does not crop the raw workspace to those limits. This loading
+result does not establish Mantid's default analysis selection. MDU and ROOT
+interval reductions in Mantid, WiMDA ROOT, and native musrfit numerical reduction
+of the generated lower-case-directory representation remain unverified here.
 
 Asymmetry also checks that the selected channels have common acquired support
 and a nonempty intersection for a file-good reduction of independent counts.
@@ -762,14 +827,12 @@ and the `WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/>`_.
 NeXus deadtime units
 --------------------
 
-WiMDA converts explicitly declared microsecond and nanosecond deadtimes to
-its internal nanosecond scale in its NeXus-v2 path. Asymmetry follows this
-physical interpretation, converting once to its canonical μs coefficients at
-loading. Thus 20 ns and 0.02 μs give identical corrected counts, including
-signed coefficients. WiMDA's legacy v1 path uses a fixed μs convention;
-Asymmetry retains that interpretation for v1/HDF4. Missing and other unit
-declarations retain Asymmetry's stored-value-as-μs behaviour. This limited
-choice does not assert agreement on missing-unit defaults.
+Asymmetry converts explicitly declared NeXus-v2 microsecond and nanosecond
+deadtimes once to its canonical μs coefficients at loading. Thus 20 ns and
+0.02 μs give identical corrected counts, including signed coefficients.
+Legacy v1/HDF4 uses fixed μs coefficients. Missing and other unit declarations
+retain the stored-value-as-μs behaviour. This choice does not establish
+WiMDA's loader conversion or agreement on missing-unit defaults.
 
 The compared **musrfit 1.12.1** (``708f777b``, ROOT 6.40.04) NeXus-v2 path
 uses stored coefficient values as μs regardless of the tested ns declaration.
@@ -791,19 +854,19 @@ correction formula or retained measured/supplied counting variance.
 Optional file deadtime calibration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-WiMDA searches for an external calibration when internal coefficients are
-absent, then informs the user and turns correction off if none is found.
-Asymmetry follows that whole-operation uncorrected result with an explicit
-warning, preserving requested File versus actual ``skipped`` and making no
-automatic calibration-file search. It applies the same policy to incomplete
-required tables, avoiding a mixture of corrected and uncorrected histograms.
-A genuinely supplied complete zero table is an available identity.
+The `WiMDA original manual, Sec. 5.9
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes file/manual
+correction and calibration-file loading. The absent-table fallback in current
+WiMDA is not established here. Asymmetry leaves the whole requested operation
+uncorrected with a warning when required File calibration is absent or
+incomplete, recording requested File versus actual ``skipped``. It makes no
+automatic calibration-file search. A supplied complete zero table is an
+available identity.
 
 musrfit 1.12.1 warns and leaves histograms without coefficients uncorrected;
 other histograms can still be corrected. Mantid 6.16.1 ``ApplyDeadTimeCorr``
-accepts partial tables, its Muon Analysis GUI requires matching table row
-counts, and requested legacy-loader table paths can reject short tables.
-These are different workflows, rather than a universal missing-table policy.
+accepts the tested partial table in its numerical API. This does not establish
+the same policy in its Muon GUI or every loader path.
 The musrfit missing, zero, and short-table count exports agree with these
 statements; Asymmetry deliberately skips the whole operation for a short table.
 Public context is provided by the `WiMDA documentation <https://shadow.nd.rl.ac.uk/wimda/>`_,
@@ -821,11 +884,9 @@ not prevent raw loading or other valid enabled operations.
 Required F/B deadtime observations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-WiMDA traverses requested groups and bins when grouping with deadtime
-correction. Mantid 6.16.1's standard ``MuonPreProcess`` corrects before cropping;
-its numerical algorithms also permit callers to crop before ``ApplyDeadTimeCorr``.
-The compared musrfit 1.12.1 path corrects selected histograms but visits their
-raw arrays. These workflows do not share a universal observation domain.
+Correction and selection are distinct operations. A caller that crops before
+correction supplies a different domain from a full-array correction followed
+by cropping. No universal reference-program domain is assumed here.
 
 Asymmetry deliberately uses the exact required observations for F/B reduction,
 grouped raw-count fits, grouped Fourier inputs, and MaxEnt: the requested
@@ -876,12 +937,10 @@ Calibration noise and model mismatch can
 produce negative fitted coefficients; the sign does not diagnose an individual
 calibration's quality.
 
-**WiMDA** preserves signed coefficients in its standard ISIS loading,
-manual-input, and correction paths, as do its calibration fit results. No
-binary numerical agreement or behaviour of the optional extended models is
-established here. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
-<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
-workflows.
+The `WiMDA original manual, Sec. 5.9 and Appendix B
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes correction
+and calibration workflows. It does not establish signed-coefficient acceptance
+or numerical agreement in WiMDA 1.326.
 
 .. _comparison-deadtime-calibration:
 
@@ -900,12 +959,12 @@ windows also matter; :doc:`/reference/detector_grouping` distinguishes the
 Grouping buttons, scripted API, and MaxEnt caller.
 
 **Cal** retains per-detector coefficients. **Estimate** averages those fitted
-coefficients arithmetically and broadcasts the mean. **WiMDA** pools early-time
-detector observations for its uniform estimate and also offers individual
-detector calibration. Its dedicated fitting mean differs from Asymmetry's
-rational forward mean. The `WiMDA manual, v1.2, section 5.9 and Appendix B
-<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ gives workflow context;
-no executed numerical WiMDA agreement is established here.
+coefficients arithmetically and broadcasts the mean. The
+`WiMDA original manual, Sec. 5.9 and Appendix B
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes estimate and
+individual calibration workflows; their detailed objective and pooling rules
+are not established by that description. No numerical WiMDA calibration
+agreement is claimed here.
 
 For an independent illustration using Asymmetry's rational model, two detectors
 with the same 0.02 µs coefficient and equal rates give 0.02 µs both by averaging
@@ -1154,9 +1213,10 @@ Fourier analysis or a starting scale for a reconstruction. The
 :doc:`reduction_pipeline` diagram shows these branches, and
 :doc:`/reference/fourier_analysis` specifies the actual weights and scale limits.
 
-The spectral descriptions below refer to WiMDA 1.326, musrfit 1.12.1
-(revision ``708f777b``, ROOT 6.40.04), and Mantid algorithm-v1 documentation
-with the 6.16 development snapshot (revision ``1967ccb4``). Formula and
+The native spectral cases name WiMDA 1.326 and musrfit 1.12.1
+(revision ``708f777b``, ROOT 6.40.04). The method descriptions identify the
+older WiMDA manual separately from Mantid algorithm-v1 documentation at the
+6.16 development snapshot (revision ``1967ccb4``). Formula and
 manual behaviour are distinct from executed numerical agreement. The bounded
 Mantid point-data FFT control above does not verify a complete muon-input
 Fourier workflow, PhaseQuad or MaxEnt; the separate standalone pulse-kernel
@@ -1173,20 +1233,18 @@ comparison does not establish them either.
    * - Grouped Fourier counts
      - Lifetime correction, fractional level estimated with :math:`1/\sigma`,
        optional :math:`1/\sigma` mean removal, and coherent-gain amplitude scale
-     - WiMDA lifetime-corrects grouped counts, optionally removes a
-       :math:`1/\sigma` mean, and scales the grouped spectrum by total events.
-       Its F/B transform is a separate input.
+     - WiMDA's original manual Sec. 9 describes grouped Fourier averaging.
+       Its exact level/scale convention is not established by that manual.
    * - Theory-free single-histogram Fourier preparation
      - The grouped FFT uses the weighted level above
-     - musrfit uses a lifetime-corrected arithmetic-mean level and supplied scale
-       factor. This does not describe all musrfit fits or Fourier options.
+     - The musrFT 1.12.1 CLI ``--lifetimecorrection`` supplies a scale control;
+       its recorded response does not identify the level estimator.
    * - Lifetime removal and fitted constant
      - MaxEnt starts from an inverse-variance level and fits its own grouped
        phase/amplitude reconstruction model
      - In Mantid, RemoveExpDecay divides by a fitted constant after lifetime
-       correction and subtracts one. With supplied errors the constant fit uses
-       inverse-variance least squares; this is not a universal FFT convention
-       or equivalence of MaxEnt reconstruction algorithms.
+       correction and subtracts one. This documented normalisation does not
+       establish its fitting weights or equivalence of reconstruction algorithms.
    * - Two measured transverse projections
      - Pointwise baseline/gain/sense rotation with retained shared counting noise
      - Mantid RRFMuon rotates two supplied components after explicit coordinate,
@@ -1195,9 +1253,9 @@ comparison does not establish them either.
    * - One scalar F/B ratio
      - Complex carrier plus FIR low-pass display; fits retain original laboratory
        observations
-     - WiMDA uses real demodulation and box smoothing; musrfit scalar RRF paths
-       have their own packing, theory, and error conventions. Neither establishes
-       four-program vector covariance agreement.
+     - musrfit's documented scalar RRF path uses its own packing and theory
+       settings. Scalar-input processing does not establish vector covariance
+       agreement.
 
 The level estimators can differ even for noiseless oscillations when the window
 contains a nonzero oscillatory mean. Coherent-gain correction alone does not
@@ -1206,8 +1264,9 @@ sampled transform grid; it supplies no new observations. Neither peak height nor
 magnitude area is universally invariant to window, damping, phase, or apodisation.
 
 The `WiMDA homepage/manual <https://shadow.nd.rl.ac.uk/wimda/>`_ and
-F. L. Pratt, Physica B **289–290**, 710 (2000), describe the grouped Fourier
-and MaxEnt workflows. The `musrfit manual
+F. L. Pratt, Physica B **289–290**, 710 (2000), describe grouped spectral
+analysis. The original manual's all-poles discussion is distinguished from
+iterative reconstruction in :ref:`comparison-maxent`. The `musrfit manual
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_ distinguishes
 single-histogram, asymmetry, and RRF analysis. In Mantid, see
 `RemoveExpDecay v1 <https://docs.mantidproject.org/nightly/algorithms/RemoveExpDecay-v1.html>`_,
@@ -1232,13 +1291,16 @@ using degree/radian conversion. They do not synchronise the FFT table. See
 :ref:`fourier-phase-estimation` and
 :doc:`/reference/grouped_time_domain_fitting` for the supported models and inputs.
 
-WiMDA 1.326 provides manual degree-valued Fourier group phases and fitted
-MaxEnt group phases. Their use belongs to those respective workflows; native
-numerical transfer to Asymmetry's FFT phase is unverified here. musrfit's
+The WiMDA author's overview lists Fourier phase correction, including automatic
+options. It does not establish numerical phase transfer to Asymmetry's FFT or
+MaxEnt phase stores. musrfit's
 ``TFieldCos`` model uses :math:`\cos(2\pi\nu t+\pi\phi/180)`, with phase
 in degrees, according to the `musrfit model manual
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_. This names one model
-convention, not every component or a verified manual Fourier-display exchange.
+convention, not every component or full Fourier-display exchange. The
+:ref:`recorded musrview manual-phase control <comparison-evidence>` separately
+checks the same-bin rotation on bins 0–493, with unrotated final bin 494; it
+does not validate phase transfer through the musrFT command-line exports.
 
 In Mantid, `CalMuonDetectorPhases v1
 <https://docs.mantidproject.org/nightly/algorithms/CalMuonDetectorPhases-v1.html>`_
@@ -1278,6 +1340,42 @@ joint likelihood; see :ref:`scalar-rrf-magnitude-errors` and
 :ref:`vector-rotation-counting-errors`. The laboratory observations remain the scalar fit inputs;
 grouped count fits retain the separate :ref:`grouped-count-model`.
 
+.. _comparison-fitting:
+
+Fit observations, objectives, and constraints
+---------------------------------------------
+
+Asymmetry fits percent asymmetry with independent supplied-error Gaussian
+objectives through ``FitEngine.fit``/``fit_arrays``; ``fit_observations`` also
+accepts eligible raw Poisson counts. Count-domain and grouped fits retain their
+own observation models. Fixed values, bounds, equality links, and single-run
+affine ties constrain parameters; affine ties are unavailable in global,
+count-domain, and grouped/series fits. Shared parameters across runs and across
+differently modelled series are described in :doc:`/reference/fitting`,
+:doc:`/reference/grouped_time_domain_fitting`, and :doc:`/reference/joint_fit`.
+A secondary parameter-model fit consumes fitted values/errors rather than the
+original counts; see :doc:`/reference/parameter_trending`.
+
+The closest executed supplied-error objective comparison is the
+:ref:`three-point constant fit <comparison-evidence>`. The closest raw-count TF
+comparison is :ref:`musrfit global histogram fitting <comparison-count-calibration>`,
+which retains the installed likelihood error-scale discrepancy. Agreement for
+one objective does not establish agreement for another. Nonlinear parameter
+errors, model selection, and coverage retain their own assumptions.
+
+For documented workflows, the `WiMDA original manual, Secs. 7.1–7.9
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes F/B,
+single/all-group fitting, fixed parameters, parameter linking, and batch fits.
+The `musrfit manual, FITPARAMETER, THEORY, and RUN blocks
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_ describes authored
+parameters/models and chi-square or maximum-likelihood fitting. Mantid's
+`Fit v1, version 6.16.1 documentation
+<https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`_ exposes cost
+function, minimiser, ties, constraints, and evaluation type as separate choices.
+These descriptions do not establish identical constraint languages, defaults,
+parameter errors, or automatic model selection. Match observation membership,
+units, bounds, objective, and fixed nuisances before comparing results.
+
 Other analysis entry points
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1294,6 +1392,8 @@ cover the separate scan, synthetic-data, plugin, and negative-muon workflows.
 :doc:`/reference/project_files` describes saved analysis state and compatibility.
 These are method pointers, without a claim that another program lacks an
 analogous or extensible workflow.
+
+.. _comparison-auto-phase:
 
 Automatic FFT phase estimation
 ------------------------------
@@ -1313,20 +1413,37 @@ automatic phase estimate depends on its objective, sampling conventions, band,
 and preprocessing. A comparison of mathematical formulations alone does not
 establish release-specific numerical agreement.
 
-References
-----------
+.. _comparison-maxent:
 
-Software references:
+Maximum-entropy reconstruction
+------------------------------
 
-* **WiMDA:** F. L. Pratt, Physica B **289–290**, 710 (2000).
-* **musrfit:** A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
-  Source: https://bitbucket.org/muonspin/musrfit
-* **Mantid:** O. Arnold *et al.*, Nucl. Instrum. Methods A **764**, 156
-  (2014). Source: https://github.com/mantidproject/mantid
+Asymmetry's grouped-count MaxEnt prepares lifetime-corrected observations and
+an inverse-variance starting level, then fits a nonnegative spectrum through
+its response model with group amplitudes/phases and an entropy constraint.
+Its fitted phases belong to that reconstruction, separately from manual FFT
+rotation, sampled **Auto Phase**, and detector timing calibration. The
+:ref:`MaxEnt reference <maxent-from-counts>` describes preparation, errors,
+source assumptions, de-weighted windows, and reconstruction limitations.
 
-For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
-and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
-Press, Oxford, 2022).
+Mantid's `MuonMaxent v1 documentation
+<https://docs.mantidproject.org/nightly/algorithms/MuonMaxent-v1.html>`_
+(6.16 development documentation snapshot) describes an iterative muon spectrum
+reconstruction with detector phases, deadtimes, and a forward response. This
+is a relevant workflow comparison, not an executed full reconstruction match.
+The :doc:`Fourier reference </reference/fourier_analysis>` gives the separately
+pinned standalone pulse-kernel control and its clock conversion; that control
+does not compare the fitted spectrum, objective, or covariance.
+
+The `WiMDA original manual, Sec. 9
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ explicitly distinguishes
+its maximum-entropy/all-poles transform from iterative entropy reconstruction.
+F. L. Pratt, Physica B **289–290**, 710 (2000), also describes muon spectral
+analysis; these older method descriptions do not identify all reconstruction
+options in WiMDA 1.326. No matched native MaxEnt spectrum/error comparison is
+claimed for WiMDA or musrfit. A similar method name or a sharper peak does not
+establish algorithm equivalence, absolute polarisation, or additional measured
+information.
 
 .. _comparison-selected-timing:
 
@@ -1334,13 +1451,14 @@ Selected automatic timing
 -------------------------
 
 Asymmetry retains the continuous maximum and pulsed leading half-height feature
-conventions. WiMDA's **Search for T0** uses a grouped maximum; musrfit 1.12.1
+conventions. WiMDA's original manual, Sec. 10, describes **Search for T0**,
+without specifying an identical estimator. musrfit 1.12.1
 ``musrt0 -g`` writes per-detector prompt maxima. With two unique synthetic
 prompt features at raw bins 20 and 31, musrt0 and Asymmetry's continuous search
 agree exactly (integer-bin tolerance zero). Grouped and detector maxima need
 not agree when channels have different delays. Pulsed maximum and leading
 half-height features also differ by construction; neither certifies physical
-time zero. WiMDA executable/version coverage is unavailable for this comparison.
+time zero. No native WiMDA timing-estimator comparison is recorded here.
 
 Mantid 6.16.1 ``MuonPreProcess`` applies supplied time-zero calibration and
 retains shifted spectrum coordinates. Explicit-table checks establish timing
@@ -1374,10 +1492,14 @@ return the same flat level and likelihood. Output bin merging does not refit
 this native-bin estimator. On deadtime-corrected or supplied-variance counts,
 the objective is an estimating convention, not a claim of raw Poisson statistics.
 
-WiMDA 1.326 **Auto BG** uses count-error weighting on grouped output points,
-with negligible weight for observations at or below four counts. In Mantid
-6.16.1, the Muon automatic correction fits ``FlatBackground + ExpDecayMuon``
-by default weighted least squares without nonnegative parameter constraints.
+The `WiMDA original manual, Sec. 5.8
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes automatic
+muon-decay-plus-background fitting, separately from manual/file/region options.
+Mantid's `Corrections tab documentation, version 6.11.0
+<https://mantidproject.github.io/docs-versioned/v6.11.0/interfaces/muon/muon_corrections_tab.html>`_
+describes ``FlatBackground + ExpDecayMuon`` with fixed lifetime. These
+method descriptions do not establish the current implementations' exact weights,
+constraints, or sparse-count policies.
 A matched Mantid executable check on an independently generated dense exact
 exponential-plus-flat mean agrees with Asymmetry. Separate noisy-data checks
 with WiMDA and Mantid show different estimates and sensitivity to grouping,
@@ -1395,28 +1517,25 @@ In musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), asymmetry preparation uses an
 arithmetic region mean. A jointly fitted single-histogram background is a
 different operation. See the `musrfit RUN settings
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-run-block>`_.
-Asymmetry's aligned grouped-region mean can differ from WiMDA's configured
-original-detector region when detector timing or corrections differ.
+Asymmetry estimates its region mean on aligned grouped counts. Equal numeric
+bounds alone do not establish equal observations under another timing policy.
 
-Asymmetry selects the late half of resolved good-data support on native bins,
-closest to Mantid's declared selection. For inclusive ``[a,b]`` it starts at
-``a + (b-a+1)//2``. WiMDA selects the late half of grouped output points, so
-output merging can also change the observations. Asymmetry honours explicit
-shared/separate intervals exactly, including values equal to defaults, following
-WiMDA/Mantid interval control. musrfit's compared region selection can shorten
-explicit intervals and depend on requested packing. Asymmetry applies its
-musrfit-inspired period convention only to automatic defaults using native width;
+Asymmetry selects the late half of resolved good-data support on native bins:
+for inclusive ``[a,b]`` it starts at ``a + (b-a+1)//2``. Output merging does not
+change these observations. Explicit shared/separate intervals are honoured
+exactly, including values equal to defaults. In the compared musrfit 1.12.1
+region controls, selected intervals can shorten and depend on packing.
+Asymmetry confines its period convention to automatic defaults at native width;
 shorter-than-period defaults remain intact. Integer rounding and inclusive
-endpoints do not establish exact whole-cycle exposure. Facility labels provide
-advice and defaults, without vetoing supported explicit selections.
+endpoints do not establish exact whole-cycle exposure. WiMDA's manual describes
+region selection, without establishing equal membership in these controls.
 
 Asymmetry propagates a shared estimated level and count-estimator covariance
 through merged counts. WiMDA's compared background subtraction leaves exported
-count errors unchanged; Mantid adds the fitted level error to each bin without
-retaining the full shared covariance in the count workspace. musrfit's compared
-region-error propagation adds level-estimation variance but does not retain the
-full shared/overlap covariance. These differences are deliberate uncertainty
-conventions. Supplied variances in Asymmetry enter the fitted estimator's
+count errors unchanged. The compared Mantid and musrfit marginal-error
+controls add fitted/estimated-level variance to individual points. Those
+controls do not establish shared or cross-bin covariance agreement. These are
+separate uncertainty conventions. Supplied variances in Asymmetry enter the fitted estimator's
 linearised influence; they do not change its central estimating objective.
 
 Asymmetry also checks sufficient fit support, expected-information rank, and
@@ -1429,15 +1548,14 @@ result background-unsubtracted with a warning and recorded reason. A genuine
 zero-background optimum remains successful. Valid deadtime correction and
 supplied variance are retained; loading remains independent of estimability.
 
-Mantid's Muon caller skips per run/group when reduced chi-squared exceeds 10
-or the status contains ``Failed to converge``; literal ``success`` is not
-required. Asymmetry adds result-wide F/B and contributing-period consistency
-without adopting that threshold. WiMDA's automatic path uses its returned level
-without an equivalent fit-status skip check. Its negligible low-count weights
-also attenuate negative observations. musrfit's region and joint-count operations
-do not supply an equivalent automatic-tail failure policy. Finite uncertainty
-and information checks in Asymmetry protect downstream covariance even when a
-solver might claim success; none establishes physical model adequacy.
+The Mantid Corrections tab's documented Status rule skips a correction when
+fit chi-square exceeds 10 (version 6.11.0 documentation, separately from the
+6.16.1 numerical controls). Asymmetry does not adopt that threshold: its
+information/finite-uncertainty checks protect its covariance calculation, and
+it coordinates the whole requested F/B/period result. This does not establish
+WiMDA's current failure policy or identical native Mantid status handling.
+None of these checks establishes physical model adequacy.
+
 See :doc:`/reference/data_reduction/backgrounds` for the model, current window,
 and covariance equations.
 
@@ -1499,8 +1617,7 @@ mapping supports ordinary histogram preparation and period-1 selection.
 Stored data indices remain distinct from evidenced DAE sequence slots and
 dwell declarations. See :doc:`/reference/data_reduction/period_mapping`.
 
-WiMDA 1.326 maps acquired periods into red/green count sets and displays
-declared dwell slots. Mantid's 6.16 development documentation describes
+WiMDA 1.326's recorded controls map acquired periods into red/green count sets. Mantid's 6.16 development documentation describes
 separate period workspaces in `MuonPreProcess v1
 <https://docs.mantidproject.org/nightly/algorithms/MuonPreProcess-v1.html>`_.
 musrfit 1.12.1 selects period histogram families explicitly in its
@@ -1514,15 +1631,16 @@ of 20% and 80% give Red/Green 20%/80%, G−R 60%, and G+R 50% in WiMDA 1.326
 under Wine 10. musrfit 1.12.1 (708f777b, ROOT 6.40.04) selected/grouped
 controls give 20%/80%/50%. Asymmetry gives the same pooled G+R 50%, and its
 independent G−R is 60%. Unequal-total pooled results are not generally an
-arithmetic mean. The value controls do not establish matching error conventions.
+arithmetic mean. The WiMDA value tolerance is 0.00051 percentage points,
+set by text precision. These controls do not establish matching error conventions.
 
 Asymmetry corrects each acquired constituent before mapped pooling, with its
 own applicable detector coefficients and supported exposure. It then aligns
 whole bins using each resolved t0 on common observed support, retains supplied
 count variances, and applies group-background preparation once to the requested
-set. WiMDA 1.326 pools raw mapped counts before correction; this is a deliberate
-ordering difference. In Mantid, standard ``MuonPreProcess`` prepares individual
-period workspaces before grouping and pairing pool selected spectra.
+set. The unity-correction controls above do not establish WiMDA's correction order
+for nonzero coefficients. Mantid's documented ``MuonPreProcess`` prepares
+period workspaces; no native period-error comparison is asserted here.
 
 For synthetic F/B counts (80000, 20000) and (10000, 90000), 0.1 μs native bins,
 100000 frames per acquisition, and 0.05 μs coefficients, constituent correction
@@ -1544,14 +1662,12 @@ error contract; integrated scalars retain supported shared counting responses.
 For G+R, group-background subtraction acts once on the pooled observation;
 Manual levels retain their requested-observation count units. Automatic reference
 scaling uses summed evidenced sample exposure, while Manual scale applies once.
-WiMDA's ordinary grouped Auto/Man/region background subtraction and its F/B G−R
-path are distinct; FileBG acts earlier. Asymmetry applies the requested group
+Asymmetry applies the requested group
 background to each independently reduced G−R set.
 
-WiMDA 1.326 and musrfit 1.12.1 demodulate a formed scalar asymmetry in their
-checked RRF workflows. Mantid ``RRFMuon`` rotates a prepared transverse pair.
-Those interfaces do not define automatic synthesis of a pooled baseline from
-unequal per-period transverse baselines. Asymmetry also checks that Red and Green
+musrfit 1.12.1 provides a scalar RRF workflow. Mantid ``RRFMuon`` rotates a
+prepared transverse pair. These comparisons do not establish a native pooled
+baseline policy for unequal per-period baselines. Asymmetry also checks that Red and Green
 transverse baselines agree for pooled G+R rotation, removing the common pair
 once. Unequal baselines make that rotation unavailable; Lab G+R and rotating
 Red, Green, and G−R remain available. This is an Asymmetry safeguard. See
@@ -1581,8 +1697,8 @@ unavailable, while inspection, export, and independent subsets remain available.
 Unknown identity retains an explicit distinct-observation assumption. This is
 a bounded safeguard, not a general joint likelihood or calibration covariance.
 
-WiMDA 1.326's dedicated ALC-column route and Mantid's ``AsymmetryCalc`` have
-different error and sparse-count conventions. The checked musrfit 1.12.1
+The documented Mantid ``AsymmetryCalc`` error approximation differs from
+Asymmetry's derivative propagation. The checked musrfit 1.12.1
 (708f777b, ROOT 6.40.04) positive-count packing comparison concerns 22 interior
 points per case within 5×10⁻⁷ export tolerance; first/endpoints remain qualified.
 These workflows do not establish a common reused-observation covariance
@@ -1606,8 +1722,7 @@ In Mantid, `RRFMuon v1
 comparable two-spectrum coordinate rotation after matching signs, phase, and
 units. The v1 documentation associated with the 6.16 development snapshot is a
 formula comparison, not native execution or shared-detector error agreement.
-WiMDA 1.326 and musrfit 1.12.1 scalar RRF workflows use different inputs and
-smoothing or packing; no equivalent covariance contract for these overlapping
+The documented scalar RRF workflows use different inputs from this rotation; no equivalent covariance contract for these overlapping
 ratios is established. Independent analytic and seeded Poisson controls support
 Asymmetry's propagation. Acquired ISIS and PSI file execution, including musrfit
 example ROOT files, checks the changed operation with authored groupings; it does
@@ -1626,10 +1741,10 @@ The errors assume independent supplied scalar input noise; unknown input tempora
 correlations, low-signal magnitude bias, and filtered-bin correlations remain.
 Fits continue to use laboratory observations.
 
-WiMDA 1.326 uses real demodulation, box smoothing, and a linear-error convention;
-Asymmetry retains a separate core comparison mode for that convention.
-musrfit 1.12.1 scalar RRF preparation and packing differ from this FIR, while
-Mantid RRFMuon v1 rotates two supplied components. No new native-program magnitude
+Asymmetry retains a separate linear-error core comparison mode. That mode
+alone does not execute WiMDA. musrfit 1.12.1 scalar RRF preparation and packing
+differ from this FIR, while Mantid RRFMuon v1 rotates two supplied components.
+No new native-program magnitude
 error agreement is established. Execution on unchanged ISIS HDF4/HDF5, PSI
 BIN/MDU, and musrfit 1.12.1 example ROOT inputs checks the scalar operation with
 authored pair/frame settings, not acquired physical truth or reference agreement.
@@ -1648,24 +1763,24 @@ weighting and pooling on whole-bin common observed good support. The raw pooled
 histograms remain inspection views. Group background and a selected reference
 act once on the pooled observation.
 
-WiMDA 1.326 co-add/Co-sub and musrfit 1.12.1 addRun/ADDRUN provide the ordinary
-count-addition comparison. Matched correction-off fit-time ADDRUN controls
+WiMDA's original manual, Secs. 2.1 and 3.5, describes count co-addition and
+subtraction. musrfit 1.12.1 addRun/ADDRUN provides the executed count-addition
+comparison. Matched correction-off fit-time ADDRUN controls
 agree on unit-addition and interior asymmetry values from whole-bin-aligned
 counts within 5e-6 fractional asymmetry;
 this establishes neither uncertainty nor endpoint equivalence. The tested
 unequal-fact ADDRUN applies the primary RUN correction context to added data.
 Asymmetry deliberately retains each input's correction facts and is invariant
-under primary-run reversal for shared authored intent. WiMDA pools raw inputs
-before correction. In Mantid, individual MuonPreProcess workspaces can be
-prepared before merging; generic merging does not determine correction order.
+under primary-run reversal for shared authored intent. The correction order
+of WiMDA co-addition is not established by these controls. In Mantid, individual
+MuonPreProcess workspaces can be prepared before merging; generic merging does not determine correction order.
 Mantid 6.16.1 Scale/Plus/Minus provide the explicit independent
 weighted-arithmetic analogue: matched count/error controls reproduce 50/90,
 supplied 30/74, and signed 190/405. Separate MuonPreProcess deadtime preparation
 retains each input's correction context before addition. These operations do not
 certify raw-Poisson eligibility or acquired-period identity. The owning
 page links the public manuals and algorithms and distinguishes each operation.
-WiMDA and standalone musrfit addRun retain master condition metadata. Asymmetry
-also retains the first ordered input's displayed conditions and identity, with
+Asymmetry retains the first ordered input's displayed conditions and identity, with
 finite active constituent ranges; missing master conditions remain unknown.
 Mantid MergeRuns checks instrument names, spectrum counts, and units and offers
 configured sample-log merging. Asymmetry uses complete recognised orientation
@@ -1687,16 +1802,14 @@ response with equal incident strengths, survival weighting, and midpoint origin.
 The complete source expression is evaluated only at live ages and normalised;
 point evaluation does not claim integrated-bin or finite-width onset accuracy.
 The setting follows models through wizard candidates and saved/replayed fits.
-WiMDA 1.326's **Simulate Data** workflow accounts for **Double Pulse** and
-reduces the pre-second-arrival count population. Its early-population
-approximation is not established as numerically equivalent to a matched
-two-birth count generator here. Asymmetry's ordinary response does not supply
+The WiMDA author's overview lists data simulation; its current double-pulse
+population and fit conventions are not numerically established here.
+Asymmetry's ordinary response does not supply
 that generator to the count-based pull diagnostic, which is unavailable for
 positive separation. Mantid DoublePulseFit's fitting/error facilities and the
 musrfit authored-model check do not establish repeated-simulation pull coverage.
 
-WiMDA 1.326's **Double Pulse** and Mantid's supplied ``PulseOffset`` configure
-separation. Asymmetry likewise requires fixed supplied separation for its
+Mantid's documented ``PulseOffset`` configures separation. Asymmetry likewise requires fixed supplied separation for its
 instantaneous count model; single-line post-arrival TF data cannot generally
 identify it separately from amplitude, phase, and count scale. Source uncertainty
 is not included in conditional fitted errors. Ordinary asymmetry fitting and
@@ -1715,10 +1828,11 @@ or infer accelerator response from facility names or detector timing fields.
 
 
 For Fourier compensation, Asymmetry retains the parabolic-plus-pion response
-shared with its MaxEnt forward model. WiMDA 1.326's **Apply Frequency Response
-Compensation** uses a Gaussian Fourier response; these are deliberately different
-models (see the `WiMDA paper <https://www.isis.stfc.ac.uk/Pages/wimda-paper.pdf>`_
-and :doc:`/reference/fourier_analysis`). The Mantid standalone MaxEnt kernel
+shared with its MaxEnt forward model. WiMDA's original manual, version 1.2,
+Sec. 9, describes Gaussian Fourier response compensation; these are different
+models (see the `WiMDA original manual, Sec. 9
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ and
+:doc:`/reference/fourier_analysis`). The Mantid standalone MaxEnt kernel
 comparison establishes the shared response after an explicit origin conversion,
 not full native Fourier or MaxEnt reconstruction agreement. musrfit 1.12.1's
 authored post-arrival TF composition does not test Fourier Power or its errors;
@@ -1744,8 +1858,8 @@ objective; minimum summed F+B cost selects a usable candidate. Counts are
 predicted at packed-bin centres, without rate integration. Errors include all
 fitted nuisances and are conditional on fixed source and selection assumptions.
 
-WiMDA 1.326 **Double Pulse** F/B/alpha fitting is the beta-one precedent;
-beta calibration is not verified WiMDA functionality. Mantid `DoublePulseFit v1
+WiMDA's native pulse-calibration equivalence is not established here.
+Mantid `DoublePulseFit v1
 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
 provides supplied shifted functions and weights, a forward-model analogue,
 without establishing the same count calibration or covariance. musrfit 1.12.1
@@ -1766,6 +1880,8 @@ after both births; it does not test native onset, bin integration, or error
 equivalence. Independent count and full-nuisance information controls provide
 the separate scientific targets.
 
+
+.. _comparison-integral-scans:
 
 Count-integral condition scans
 ------------------------------
@@ -1799,27 +1915,22 @@ the ratio. The explicit ``differential`` method is an equal-time-bin mean,
 distinct from a field derivative. Windows include whole bins by native centres;
 errors remain conditional on calibration. See :doc:`/reference/alc_mode`.
 
-In Mantid's `PlotAsymmetryByLogValue
-<https://docs.mantidproject.org/v6.11.0/algorithms/PlotAsymmetryByLogValue-v1.html>`_,
-single-period Integral uses count-first ordering (algorithm v1, 6.11.0
-documentation). Its dual-period detector-wise
-contrast and Differential operation are different observables. For dual periods,
-define :math:`c_F=(F_G-F_R)/(F_G+F_R)` and
-:math:`c_B=(B_G-B_R)/(B_G+B_R)`; its Integral contrast is :math:`c_B-c_F`,
-not :math:`A_G-A_R`. Its single-period Differential integrates pointwise
-asymmetry along time rather than taking Asymmetry's equal-time-bin mean.
-Integration's histogram-edge bounds also differ from Asymmetry's centre
-selection. The scalar ``Fit`` control above does not establish agreement for
-these count-integral algorithm conventions.
+Mantid's `PlotAsymmetryByLogValue v1 documentation, version 6.11.0
+<https://docs.mantidproject.org/v6.11.0/algorithms/PlotAsymmetryByLogValue-v1.html>`_
+describes asymmetry versus a sample log, including period outputs. It is a
+related scan workflow, without a matched native count-integral execution here.
+That description alone does not establish identical dual-period observables,
+window membership, or errors. The scalar ``Fit`` control above compares fitted
+scan points, not the algorithm that constructs them.
 
-WiMDA 1.326's dedicated ALC route starts from integrated acquisition columns;
-arbitrary histogram-window and uncertainty equivalence is not established. Its
-`public overview <https://shadow.nd.rl.ac.uk/wimda/>`_ describes the program;
-no fresh native ALC/RF numeric replay supports this comparison. WiMDA's
-**Differential ALC** differences adjacent table entries with its own gap cutoff
-and per-kG scale. Asymmetry uses pair midpoints, positive spacing, an explicit
-optional ``max_gap``, and fractional or percent units per selected G/K/run unit.
-These field-table operations differ from Mantid's time Differential.
+The `WiMDA original manual, Sec. 11.1
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes LCR scans made
+with histogram bunching, cursor selection, and batch fit tables. This is a
+useful time-window workflow comparison; it does not establish the dedicated
+ALC-column or Differential ALC algorithms in WiMDA 1.326. No native WiMDA
+ALC/RF numerical replay is claimed here. Asymmetry's adjacent field-table
+derivative uses pair midpoints, positive spacing, an explicit optional
+``max_gap``, and fractional or percent units per selected G/K/run unit.
 
 musrfit 1.12.1 (revision 708f777b, ROOT 6.40.04) packs counts before forming its
 fitting ratio, as described in its `user manual
@@ -1863,7 +1974,11 @@ does not establish acquisition hashing or general reduction equivalence. Mantid'
 public `workspace-history script generation
 <https://docs.mantidproject.org/nightly/algorithms/GeneratePythonScript-v1.html>`_
 describes applied operations separately from saved data and external replay inputs.
-This comparison has no matched native Mantid run. WiMDA 1.326 saves and restores
+A recorded Mantid 6.16.1 control saves and reloads an owned processed-NeXus
+workspace across processes, retains its Scale/Rebin history, and generates the
+applied operations as a script. This does not establish full Workbench
+``.mantidproj`` restoration, matched Asymmetry project replay, or identical
+canonical analysis identity. WiMDA 1.326 saves and restores
 grouping settings and annotates reduced exports with grouping and corrections;
 its `overview/manual <https://shadow.nd.rl.ac.uk/wimda/>`_ supplies workflow
 context. These workflows do not establish identical canonical identity safeguards.
@@ -1913,13 +2028,24 @@ interval coverage. WiMDA's documented **generate test data** and refit workflow
 is the closest operation; an identical automated seeded pull product is not
 established for the checked WiMDA 1.326 environment.
 
-A bounded supplied-error Gaussian constant fit matches the analytic weighted
-normal equations in Mantid 6.16.1 **Fit** (FlatBackground, Least squares,
-Levenberg–Marquardt) and musrfit 1.12.1 (ASCII type 8, MIGRAD/HESSE).
-For values (2, 4, 7) and errors (1, 2, 1), all three selected observations give
-40/9 ± 2/3 and chi-square 113/9; value/error tolerances are absolute 1e-7 for
-Mantid and 1e-5 for musrfit's printed precision. Native settings select all
-three points explicitly. This scalar control uses supplied errors; the separate
-count-likelihood normalisation difference does not apply. No package-wide pull,
-coverage, or acquisition-chain agreement follows. Primary program documentation
-is linked in :doc:`/reference/simulation` and the fitting comparison above.
+The :ref:`supplied-error constant control <comparison-evidence>` retains all
+three observations, native stationary status, objective scaling, and recorded
+precision. Its absolute tolerances are :math:`10^{-7}` for Mantid and
+:math:`5\times10^{-5}` for musrfit. It concerns supplied Gaussian errors;
+the separate count-likelihood error-scale difference does not apply. No
+package-wide pull, coverage, or acquisition-chain agreement follows.
+
+References
+----------
+
+Software references:
+
+* **WiMDA:** F. L. Pratt, Physica B **289–290**, 710 (2000).
+* **musrfit:** A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+  Source: https://bitbucket.org/muonspin/musrfit
+* **Mantid:** O. Arnold *et al.*, Nucl. Instrum. Methods A **764**, 156
+  (2014). Source: https://github.com/mantidproject/mantid
+
+For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
+and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
+Press, Oxford, 2022).

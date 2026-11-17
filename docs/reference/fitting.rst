@@ -109,11 +109,9 @@ prediction.
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-WiMDA 1.326's **Double Pulse** asymmetry fit uses supplied separation and a
-normalised surviving-population mixture. WiMDA's **Simulate Data** also
-accounts for double-pulse count populations; Asymmetry's count-based
-**Diagnostic…** retains the single-source limit described above. A numerical
-match between those generators is not claimed. In Mantid 6.16 development,
+The WiMDA author's overview lists simulation, without establishing a native
+match to Asymmetry's double-pulse fitting or count generator here. In Mantid
+6.16 development,
 `DoublePulseFit v1 <https://docs.mantidproject.org/nightly/algorithms/DoublePulseFit-v1.html>`_
 uses supplied shifted functions and weights. Matching the late normalised model
 requires the same origin and survival weights; arbitrary equal observed weights
@@ -448,7 +446,7 @@ parameter to track another. Asymmetry offers two constraint kinds, both set on
 the :class:`~asymmetry.core.fitting.parameters.Parameter` and both removing the
 follower from the free-fit set:
 
-**Equality link groups** (WiMDA "Ties") force ``follower == main``. Tag the
+**Equality link groups** force ``follower == main``. Tag the
 members of a group with the same ``link_group`` id; the group's main is fitted
 and every follower inherits its value (and propagated uncertainty). Use these
 to share an amplitude, phase, or relaxation rate across lines::
@@ -495,9 +493,8 @@ shallow-donor ionisation energy extractable:
 A constant offset (no auxiliary parameter) pins a *known* splitting:
 ``AffineTie(main="frequency_1", const=+0.12)``. Tie references must be free,
 fixed, or link-group parameters — ties may not chain to other ties, and a
-parameter cannot be both link-grouped and affinely tied. Affine ties are a
-deliberate capability beyond WiMDA (whose links are equality-only); see
-``docs/porting/link-groups/`` for the design rationale. General *nonlinear*
+parameter cannot be both link-grouped and affinely tied. The relation is explicit
+in the saved parameter definition. General *nonlinear*
 expression constraints (``Parameter.expr``) remain reserved and are not yet
 evaluated by the engine.
 

@@ -305,12 +305,11 @@ point values within 0.0005 percentage points (ASCII export precision).
 This is a bounded membership comparison, not universal output equality or a
 measurement of WiMDA's tie policy.
 
-WiMDA's nominal requested/clipped interval timestamps can differ from actual
-contributing-bin midpoints. Its tested terminal support also differs by mode;
-Asymmetry retains the inclusive nonuniform tail. Asymmetry uses the literal
-10 μs Variable law above, while WiMDA's growth uses a slightly different
-scaling approximation. Its positive-count F/B error adjustment is also distinct
-from Asymmetry's supplied-variance and shared-background propagation.
+The recorded WiMDA timestamps and terminal support differ from Asymmetry's
+actual contributing-bin midpoints and inclusive nonuniform tail. Asymmetry
+uses the literal 10 μs Variable law above. The value-only control does not
+identify WiMDA's internal growth approximation or establish the same positive-,
+sparse-, or corrected-count error treatment.
 
 musrfit 1.12.1 (revision ``708f777b``, ROOT 6.40.04) uses integer packing for
 ordinary count/asymmetry fits; this is not the same two-knob nonuniform law.
@@ -327,14 +326,15 @@ whole bins and retains a partial final group; `Rebin
 fractional overlaps and offers ``FullBinsOnly``. Histogram-centre coordinates
 identify the actual retained edges. These are distinct operations, not the
 same Variable/Constant error controls. This comparison uses the documented
-algorithms (reviewed Mantid 6.16 development); no native Mantid binning run is
-claimed. `Fit
+algorithms (reviewed Mantid 6.16 development); no matched native Variable or
+Constant error comparison is claimed. The recorded fixed-packing/history control
+in :doc:`/explanation/comparison` has a different scope. `Fit
 <https://docs.mantidproject.org/nightly/algorithms/Fit-v1.html>`_ defaults to
 ``CentrePoint`` and separately offers histogram evaluation for supported models.
 
-The compared WiMDA grouping, musrfit packing, and Mantid Rebin/Rebunch
-operations accept authored binning without an automatic spectral peak veto.
-This does not establish identical no-bin diagnostics across these programs.
+The controls establish their stated count/bin membership, rather than identical
+spectral or no-bin diagnostics across these programs. Asymmetry honours authored
+binning without a spectral veto, retaining sampling guards on actual FFT requests.
 
 Asymmetry also checks positive finite native widths, compatible count/variance
 arrays, and valid selected windows at their input boundaries. A malformed

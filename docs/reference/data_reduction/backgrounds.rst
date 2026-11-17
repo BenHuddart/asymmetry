@@ -275,30 +275,19 @@ interval coverage at a parameter boundary.
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Asymmetry's selected-good-window tail follows Mantid's declared late-half
-selection. Exact explicit intervals follow WiMDA/Mantid interval control.
-Asymmetry retains aligned grouped arithmetic, closest to musrfit, whereas WiMDA's
-region uses original detector bins. musrfit 1.12.1 can shorten explicit intervals
-and its selection can depend on requested packing; Asymmetry confines that
-convention to automatic defaults at native width. Different selected observations
-can produce different means even with identical arithmetic.
-
-WiMDA 1.326 **Auto BG** fits a fixed-lifetime exponential plus flat rate to
-the late half of grouped output points, using count-error weighting and
-negligible weight for observations with at most four counts. In Mantid 6.16.1,
-the Muon automatic correction uses ``FlatBackground + ExpDecayMuon`` with a
-fixed lifetime and default weighted least squares; its caller does not impose
-nonnegative parameters. These objectives and selected observations can differ
-from Asymmetry's native-bin constrained Poisson estimate. Noisy-data results
-need not agree, even when exact exponential-plus-flat means do.
-
-Mantid's Muon caller skips an automatic fit when its reduced chi-squared exceeds
-10 or its status contains ``Failed to converge``; it does not demand a literal
-``success`` status. This is a per-run/group policy. Asymmetry retains its own
-Poisson objective without that chi-squared threshold and coordinates the whole
-requested result. WiMDA's automatic path uses the returned weighted-fit level
-without an equivalent fit-status skip check; its low-count weighting also
-attenuates signed observations. These are distinct statistical conventions.
+Asymmetry selects the late half of resolved native good-data support and
+honours authored shared/separate intervals exactly. The `WiMDA original
+manual, Sec. 5.8 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_
+describes decay-plus-background fitting and manual/file/region options;
+that description does not establish identical observations or weights.
+Mantid's `Corrections tab, version 6.11.0 documentation
+<https://mantidproject.github.io/docs-versioned/v6.11.0/interfaces/muon/muon_corrections_tab.html>`_
+describes a fixed-lifetime ``FlatBackground + ExpDecayMuon`` fit and a
+chi-square threshold of 10 for skipping a correction. This documentation
+edition is separate from the native 6.16.1 controls. Exact current sparse-bin,
+constraint, and fit-status policies are not established by those method
+pointers. Asymmetry retains its native-bin constrained Poisson estimating
+objective and information checks, without adopting that chi-square threshold.
 
 musrfit 1.12.1 (``708f777b``) averages a selected region in its asymmetry
 preparation. A fitted background in a single-histogram count fit is part of a
@@ -339,8 +328,8 @@ sample ``Run``. Without it, the preview reports
 and cannot be accepted. Run-based reduction and calibration paths use the run's
 source and number even when optional metadata omits those fields.
 
-WiMDA 1.326 disables same-run **FileBG**. That behaviour does not establish
-an equivalent external-reference operation or error policy in Mantid or musrfit.
+The reference controls do not establish identical same-acquisition validation
+in WiMDA, Mantid, or musrfit.
 
 A declared count reference is subtracted using a fixed coefficient :math:`s`:
 

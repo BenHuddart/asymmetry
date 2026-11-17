@@ -134,9 +134,10 @@ pair before the frame rotation [2]_) is not yet implemented.
 Compared with other programs
 ----------------------------
 
-WiMDA 1.326 uses real-cosine demodulation and running box smoothing, with
-linearly averaged scaled standard errors. The core comparison API
-(``method="wimda"``) retains this distinct convention. The FIR display instead
+The core comparison API (``method="wimda"``) uses real-cosine demodulation,
+running box smoothing, and linearly averaged scaled standard errors. Its name
+alone does not establish numerical agreement with WiMDA 1.326.
+The FIR display instead
 retains both quadratures and their shared-noise covariance. Independent identity
 and measured linear-response checks establish its uncertainty propagation;
 they do not establish numerical agreement with another program's estimator.

@@ -304,9 +304,8 @@ header conflicts, alongside its histograms and default reduced arrays.
 Compared with other programs
 """"""""""""""""""""""""""""
 
-WiMDA and musrfit use declared resolution for their fixed-bin NeXus count
-analysis. Asymmetry follows that interpretation while retaining its exact t0
-and bin-centre stamps. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports
+Asymmetry uses declared resolution for fixed-bin NeXus count analysis while
+retaining its exact t0 and bin-centre stamps. musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) exports
 identical arrays for synthetic regular, cumulative-float32, and shortened-terminal
 coordinate variants with the same counts and resolution. Mantid 6.16.1's legacy
 loader retains coordinate variations: the compared HDF4 inputs
@@ -316,12 +315,12 @@ and the `Mantid legacy loader reference
 <https://docs.mantidproject.org/v6.16.1/algorithms/LoadMuonNexus-v1.html>`_.
 
 For NeXus physical good times, the matched Mantid 6.16.1 crop and musrfit
-1.12.1 explicit-channel checks, fractional-timing difference, and WiMDA's shared
-interval are described in :ref:`comparison-nexus-good-times`. Equal defaults
+1.12.1 explicit-channel checks, fractional-timing difference, and documented WiMDA timing
+controls are described in :ref:`comparison-nexus-good-times`. Equal defaults
 are not implied by agreement on matched raw observations.
 
-For explicit NeXus-v2 deadtime units, Asymmetry follows WiMDA's μs/ns
-conversion. This intentionally differs from musrfit 1.12.1's compared
+For explicit NeXus-v2 deadtime units, Asymmetry converts supported μs/ns
+declarations to μs. This intentionally differs from musrfit 1.12.1's compared
 stored-value-as-μs convention. Missing units and legacy v1 remain outside
 this conversion; see :ref:`comparison-deadtime-units` for the comparison limits.
 
@@ -545,8 +544,8 @@ The header sensors and the logged sample temperature
 """"""""""""""""""""""""""""""""""""""""""""""""""""
 
 Independently of any ``.mon`` sidecar, every PSI-BIN header carries four
-unlabelled temperature sensor means (and their deviations over the run) —
-readings musrfit's own reader exposes but does not interpret. Asymmetry
+unlabelled temperature sensor means (and their deviations over the run).
+Asymmetry
 records all four as ``psi_sensor_temperatures`` and
 ``psi_sensor_temperature_deviations`` (in header order), and additionally
 promotes sensor 1 to ``sample_temperature_logged`` — with
@@ -606,8 +605,7 @@ and musrfit's legacy ROOT calibration conventions:
   SiPM``). The ``NNN`` prefix is a single counter shared across every
   subfolder, so numbering within one subfolder is not contiguous; Asymmetry
   parses these entries by label, never by number. The free-text
-  ``RunSummary`` block — which musrfit itself does not read — is attached
-  verbatim to the loaded run as
+  ``RunSummary`` block is attached verbatim to the loaded run as
   ``metadata["musrroot_run_summary"]``, so it is preserved as provenance
   rather than discarded.
 * PSI GPS MusrRoot exports split each transverse plate into an upstream
@@ -673,8 +671,7 @@ ns versus BIN float32 width accounts for a relative timing difference below
 :math:`3\times10^{-8}`. The generated ``TDirectory`` form uses a lower-case
 ``decayAnaModule`` name that this musrfit reader does not accept; Asymmetry
 reads it. No numerical agreement is claimed for that musrfit path, or for
-WiMDA or Mantid reading this legacy class. This cross-format analytic comparison
-uses synthetic files.
+WiMDA or Mantid reading this legacy class. This recorded cross-format native comparison uses synthetic files.
 
 Selected-bin reductions are also tested on three acquired musrfit 1.12.1
 example ROOT files (revision ``708f777b``): modern LEM terminal bounds and
@@ -786,12 +783,12 @@ does not invent format rules:
   its selected source run, averages the fitted coefficients arithmetically,
   and broadcasts the result to runs following the profile. Cal uses the preview
   reference source and persists its individual coefficients through the manual
-  editor. WiMDA pools observations for its uniform estimate; the workflows do
-  not imply equivalent estimators. See :ref:`comparison-deadtime-calibration`.
-* Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
-  table with zeros. Asymmetry preserves the actual file-table availability;
-  a supplied complete zero table is identity, while an absent table is not
-  manufactured from zeros. Short tables never cycle or borrow coefficients
+  editor. The documented WiMDA calibration workflow does not establish an
+  identical pooling rule or estimator. See :ref:`comparison-deadtime-calibration`.
+* Asymmetry preserves actual file-table availability: a supplied complete zero
+  table is identity, while an absent table is not manufactured from zeros.
+  The Mantid BIN loading control does not establish an identical deadtime-table
+  policy. Short tables never cycle or borrow coefficients
   from another detector or period. Missing optional calibration does not block
   raw loading.
 * PSI ``.mon`` temperature sidecars share channel naming and provenance
