@@ -421,3 +421,23 @@ execution. Native release rehearsals separately install the reviewed platform
 inputs twice, check observed versions/tools, build each supported desktop artifact,
 and execute existing packaged smoke checks. RELEASING.md describes input updates
 and replay commands. The Linux core-wheel gate remains required and independent.
+
+## Desktop artifact lineage checks
+
+`tests/tools/test_hdf4_archives.py` substitutes tiny archives at the real fetcher
+entry point: correct/cache bytes, early/later mismatches before extraction or
+runtime mutation, and nonregular/ambiguous DLL members. Ordinary tests use no
+network. `tests/tools/test_release_artifacts.py` exercises actual record
+generation/verification, stale and swapped source/version/target/input identities,
+changed components/notices, nested private metadata, framework links, and corrupt
+final downloads. Workflow tests ensure manual dispatch exercises download
+verification and publication rechecks its separate downloaded bytes.
+
+```bash
+python3 tools/harness.py test -- tests/tools/test_hdf4_archives.py tests/tools/test_release_artifacts.py tests/tools/test_release_environment.py tests/tools/test_release_workflows.py tests/tools/test_windows_packaging.py -n 4 --dist loadfile
+```
+
+Native rehearsals additionally inspect actual PYZ/collected components, staged
+DLL lineage, retained notices, final DMG/EXE bytes, and transported public records.
+These checks supplement the existing replay/compiler and waited outside-source
+startup checks; synthetic tests do not substitute for either native platform.

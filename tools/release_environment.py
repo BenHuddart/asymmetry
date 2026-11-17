@@ -313,7 +313,8 @@ def replay(target: str, output: Path) -> None:
                 for name, wheel in wheels.items()
             },
             "input_hashes": {
-                path.name: digest(path) for path in (requirements, INPUTS / "tools.json")
+                path.name: digest(path)
+                for path in (requirements, INPUTS / "tools.json", INPUTS / "windows-archives.json")
             },
             "downloaded_wheels": downloaded_wheels(work),
             "native": native_identity(),
@@ -381,7 +382,7 @@ def verify_build(output: Path) -> None:
     if record["target"] not in tools["targets"]:
         raise ValueError("unreviewed release target")
     requirements = INPUTS / f"{record['target']}.txt"
-    if set(record["input_hashes"]) != {requirements.name, "tools.json"}:
+    if set(record["input_hashes"]) != {requirements.name, "tools.json", "windows-archives.json"}:
         raise ValueError("release input record is incomplete")
     for name, sha256 in record["input_hashes"].items():
         if digest(INPUTS / name) != sha256:

@@ -152,6 +152,74 @@ See pip's [repeatable installs](https://pip.pypa.io/en/stable/topics/repeatable-
 [VCS support](https://pip.pypa.io/en/stable/topics/vcs-support/) contracts. Exact
 constraints alone are neither an installation nor proof of a complete replay.
 
+## Bundle and final artifact records
+
+`packaging/release/windows-archives.json` owns the exact existing conda-forge
+win-64 archive URLs and SHA256 values. Obtain proposed hashes from the channel's
+[repodata](https://conda.anaconda.org/conda-forge/win-64/repodata.json.bz2), match
+package version/build/filename, and independently hash downloads before reviewing
+an input update. Never accept a fresh download's hash as its own expected pin.
+These input bytes participate in replay identity checks and use LF on Windows.
+
+`packaging/windows/fetch_hdf4_dlls.py <target-directory>` verifies every archive,
+including reused `_download` cache bytes, before opening any archive or changing
+runtime DLLs. A mismatch names the archive and expected/actual SHA256. Resolve
+its origin before replacing a damaged cache entry; the fetcher never silently
+upgrades inputs. Only regular direct `Library/bin/*.dll` members with unique
+case-insensitive destinations are staged. Its `archives.json` records archive
+identities and DLL member/content hashes. The same operation supports local
+Windows setup, previews, and releases.
+
+`tools/release_artifacts.py` owns the public records. Native workflows first run
+`prepare` with the verified replay, target, and triggering commit; a minimal
+`build-identity.json` is embedded before freezing. The spec exports only names
+from PyInstaller's documented Analysis lists. `collect` inspects the actual
+collected tree and recursively lists the executable's PYZ with the pinned
+archive viewer. It records Python module identities separately from native
+libraries, resources, metadata, archive members, and notices. macOS framework
+links remain relative links bounded to the bundle, rather than duplicate files
+with invented content hashes. Windows DLL hashes must match the verified staging
+record. Third-party notices must match the source notices.
+
+The target-specific `*-build-components.json` includes packaged version, exact
+commit, Python/target, reviewed input hashes, resolved environment distributions,
+source/index wheel identities, immutable GLE source, and observed native tools.
+The installed environment includes build dependencies; its distribution list
+alone is not evidence that those packages are bundled. Analysis module names and
+the collected file inventory describe inclusion. System APIs, drivers, and system
+frameworks remain external. This is a bounded component record, not a complete
+licence or system-library provenance scanner. Public fields are allowlisted; raw
+pip reports, local origins, environment/configuration, and host TOCs stay private.
+
+After DMG/EXE assembly, `finalize` rechecks bundle bytes and writes
+`<target>-artifact.json` with the actual artifact basename, size, and SHA256,
+linked by hash to the build/component record. Windows records also include the
+verified Inno engine and compiler hashes. `<target>-SHA256SUMS` is derived from
+that final record. The embedded identity has no installer hash; the final
+sidecar has no self-hash, avoiding circular digests. Preview artifact labels may
+include the preview suffix while the embedded package version stays unchanged.
+
+Recheck downloaded release/rehearsal assets against the triggering checkout:
+
+```bash
+python3 -I tools/release_artifacts.py verify --target windows-x64 --commit <expected-commit> --directory <download-directory>
+python3 -I tools/release_artifacts.py verify --target macos-arm64 --commit <expected-commit> --directory <download-directory>
+```
+
+The expected version/target/Python/input hashes come from that checkout, not the
+manifest's assertions. Missing, swapped, stale, or corrupted records/binaries
+fail. A read-only job runs this verifier for both dispatch and tag events;
+tag publication waits for it, full validation, and both builds. The publishing
+job rechecks its separate download with the same verifier, then selects only the
+two binaries and their six public sidecars. Replay observations remain separate
+Actions evidence. Retention and non-publishing dispatch behaviour are unchanged.
+Save all required native records/logs/artifacts before expiry.
+
+Checksums establish byte identity and traceability, not signatures or byte-identical
+rebuilds. Startup/import smoke and component inventories do not certify delivered
+load/reduce/fit/export/project workflows. See the pinned
+[PyInstaller spec and archive documentation](https://pyinstaller.org/en/v6.16.0/spec-files.html).
+
 ## Guidelines for agents
 
 Agents maintain the changelog and propose releases; they never cut one

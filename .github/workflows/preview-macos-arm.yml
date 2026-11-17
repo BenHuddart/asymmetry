@@ -43,15 +43,19 @@ jobs:
         shell: bash
         run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
 
-      - name: Verify observed environment before freezing
+      - name: Prepare packaged build identity
         shell: bash
-        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
+        run: python -I tools/release_artifacts.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
         shell: bash
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Inventory actual bundle and notices
+        shell: bash
+        run: python -I tools/release_artifacts.py collect --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app
 
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
@@ -76,11 +80,19 @@ jobs:
           rm -f "$DMG_PATH"
           dmgbuild -s packaging/macos/dmg_settings.py "Asymmetry" "$DMG_PATH"
 
+      - name: Record final artifact bytes
+        shell: bash
+        run: python -I tools/release_artifacts.py finalize --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app --artifact "dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg" --label "${{ steps.meta.outputs.version }}"
+
       - name: Upload macOS arm64 preview artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-macos-arm64-preview
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg
+          path: |
+            dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg
+            dist/macos-arm64-build-components.json
+            dist/macos-arm64-artifact.json
+            dist/macos-arm64-SHA256SUMS
           if-no-files-found: error
           # Preview builds are downloaded manually from the workflow run; a short
           # retention keeps Actions storage use low (default is 90 days).

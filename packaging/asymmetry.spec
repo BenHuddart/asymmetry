@@ -11,6 +11,9 @@ from PyInstaller.utils.hooks import collect_dynamic_libs, copy_metadata
 
 # SPECPATH points to the directory containing this spec file.
 project_root = Path(SPECPATH).resolve().parent
+sys.path.insert(0, str(project_root / "tools"))
+from release_artifacts import write_analysis
+
 src_dir = project_root / "src"
 entry_script = src_dir / "asymmetry" / "gui" / "app.py"
 resources_dir = src_dir / "asymmetry" / "resources"
@@ -44,6 +47,10 @@ third_party_licenses = project_root / "THIRD_PARTY_LICENSES.md"
 if third_party_licenses.is_file():
     datas += [(str(third_party_licenses), ".")]
 
+build_identity = project_root / "build/build-identity.json"
+if build_identity.is_file():
+    datas += [(str(build_identity), ".")]
+
 hiddenimports = [
     "h5py",
     "h5py._errors",
@@ -72,10 +79,7 @@ binaries = collect_dynamic_libs("awkward_cpp")
 # fetch_hdf4_dlls.py) and bundled here so the frozen app reads HDF4 .nxs files
 # out of the box. The loader registers the bundle dir via os.add_dll_directory
 # (see asymmetry.core.io.hdf4._register_hdf4_runtime).
-try:
-    binaries += collect_dynamic_libs("pyhdf")
-except Exception:  # pyhdf not installed in this build environment
-    pass
+binaries += collect_dynamic_libs("pyhdf")
 _hdf4_dll_dir = os.environ.get("ASYMMETRY_HDF4_DLL_DIR")
 if sys.platform == "win32" and _hdf4_dll_dir and Path(_hdf4_dll_dir).is_dir():
     binaries += [(str(dll), ".") for dll in Path(_hdf4_dll_dir).glob("*.dll")]
@@ -94,6 +98,8 @@ a = Analysis(
     win_private_assemblies=False,
     noarchive=False,
 )
+
+write_analysis(a.pure, a.binaries, a.datas)
 
 pyz = PYZ(a.pure)
 

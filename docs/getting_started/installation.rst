@@ -17,6 +17,14 @@ versions before packaging. The Python library retains the flexible dependency
 ranges described below; its minimum Python version is independent of the selected
 desktop build interpreter.
 
+Desktop download assets include a target-specific build/component record, a final
+artifact record, and ``SHA256SUMS``. These bind the installer bytes to the packaged
+version, source commit, reviewed inputs, and actual collected components and
+third-party notices. The Windows build verifies its external HDF4 runtime archives
+before extraction. Downloaded installer and record bytes are checked before
+publication. SHA256 establishes byte identity and traceability; it is not a digital
+signature.
+
 These checks reproduce dependency versions and the selected GLE source commit.
 Hosted operating-system tools and native packaging timestamps can change, so
 identical installer bytes are not guaranteed. The existing packaged startup and
@@ -63,7 +71,7 @@ For HDF4 support (reading legacy ISIS muon NeXus V1 ``.nxs`` files):
   PyPI wheel — use conda-forge ``pyhdf`` or build from source. On
   **Windows** the wheel does not bundle the HDF4 runtime: ``pyhdf`` also
   needs ``hdf.dll`` / ``mfhdf.dll`` (e.g. from the conda-forge ``hdf4``
-  package or ``packaging/windows/fetch_hdf4_dlls.py``), with
+  package), with
   ``ASYMMETRY_HDF4_DLL_DIR`` pointed at the directory holding them. The
   pre-built **Windows and Apple Silicon macOS** desktop releases bundle HDF4;
   no extra setup is needed there. See :doc:`/reference/loading_data`.

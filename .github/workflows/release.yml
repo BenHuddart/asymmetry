@@ -73,15 +73,19 @@ jobs:
         shell: bash
         run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
 
-      - name: Verify observed environment before freezing
+      - name: Prepare packaged build identity
         shell: bash
-        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
+        run: python -I tools/release_artifacts.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
         shell: bash
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Inventory actual bundle and notices
+        shell: bash
+        run: python -I tools/release_artifacts.py collect --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app
 
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
@@ -106,11 +110,19 @@ jobs:
           rm -f "$DMG_PATH"
           dmgbuild -s packaging/macos/dmg_settings.py "Asymmetry" "$DMG_PATH"
 
+      - name: Record final artifact bytes
+        shell: bash
+        run: python -I tools/release_artifacts.py finalize --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg" --label "${{ needs.verify-version.outputs.version }}"
+
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-macos-arm64
-          path: dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg
+          path: |
+            dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg
+            dist/macos-arm64-build-components.json
+            dist/macos-arm64-artifact.json
+            dist/macos-arm64-SHA256SUMS
           if-no-files-found: error
           # Build artifacts are only needed long enough for the release job to
           # download them; the "Delete workflow artifacts" step removes them on
@@ -150,9 +162,9 @@ jobs:
         shell: pwsh
         run: python packaging/windows/fetch_hdf4_dlls.py "$env:GITHUB_WORKSPACE\build\hdf4-dlls"
 
-      - name: Verify observed environment before freezing
+      - name: Prepare packaged build identity
         shell: bash
-        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
+        run: python -I tools/release_artifacts.py prepare --target windows-x64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
       - name: Build application with PyInstaller
         env:
@@ -160,6 +172,10 @@ jobs:
           ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}\build\hdf4-dlls
         shell: pwsh
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Inventory actual bundle and notices
+        shell: bash
+        run: python -I tools/release_artifacts.py collect --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry
 
       - name: Smoke-test packaged app
         working-directory: ${{ runner.temp }}
@@ -180,11 +196,19 @@ jobs:
             "/DOutputDir=$outputDir" `
             packaging\windows\asymmetry.iss
 
+      - name: Record final artifact bytes
+        shell: bash
+        run: python -I tools/release_artifacts.py finalize --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe" --label "${{ needs.verify-version.outputs.version }}"
+
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-windows-x64
-          path: dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe
+          path: |
+            dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe
+            dist/windows-x64-build-components.json
+            dist/windows-x64-artifact.json
+            dist/windows-x64-SHA256SUMS
           if-no-files-found: error
           # Build artifacts are only needed long enough for the release job to
           # download them; the "Delete workflow artifacts" step removes them on
@@ -205,22 +229,58 @@ jobs:
   validate:
     uses: ./.github/workflows/full-suite.yml
 
+  verify-artifacts:
+    name: Verify downloaded native artifacts
+    runs-on: ubuntu-latest
+    needs: [verify-version, build-macos-arm, build-windows]
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: asymmetry-*
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Verify downloaded publication assets
+        shell: bash
+        run: |
+          for target in macos-arm64 windows-x64; do
+            python3 -I tools/release_artifacts.py verify --target "$target" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/release-assets/asymmetry-$target"
+          done
+
   release:
     if: github.event_name == 'push'
     name: Create GitHub release
     runs-on: ubuntu-latest
     needs:
+      - verify-version
       - validate
       - build-macos-arm
       - build-windows
+      - verify-artifacts
     permissions:
       actions: write
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
-          path: release-assets
+          pattern: asymmetry-*
+          path: ${{ runner.temp }}/release-assets
+
+      - name: Verify downloaded publication assets
+        shell: bash
+        run: |
+          for target in macos-arm64 windows-x64; do
+            python3 -I tools/release_artifacts.py verify --target "$target" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/release-assets/asymmetry-$target"
+          done
 
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
@@ -229,8 +289,14 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            release-assets/**/*.dmg
-            release-assets/**/*.exe
+            ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg
+            ${{ runner.temp }}/release-assets/asymmetry-windows-x64/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe
+            ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/macos-arm64-build-components.json
+            ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/macos-arm64-artifact.json
+            ${{ runner.temp }}/release-assets/asymmetry-macos-arm64/macos-arm64-SHA256SUMS
+            ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-build-components.json
+            ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-artifact.json
+            ${{ runner.temp }}/release-assets/asymmetry-windows-x64/windows-x64-SHA256SUMS
 
       - name: Delete workflow artifacts
         uses: actions/github-script@v8
