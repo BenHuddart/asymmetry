@@ -60,22 +60,26 @@ def test_owned_probe_is_rejected_at_harness_entry(tmp_path: Path) -> None:
 
 
 def git(root: Path, *args: str) -> str:
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=True)
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-C",
+            str(root),
+            *args,
+        ],
+        capture_output=True,
+        check=True,
+    )
     return result.stdout.decode().strip()
 
 
 def commit(root: Path) -> str:
     git(root, "add", "--all")
-    git(
-        root,
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "-qm",
-        "fixture",
-    )
+    git(root, "commit", "-qm", "fixture")
     return git(root, "rev-parse", "HEAD")
 
 
@@ -345,8 +349,11 @@ def test_shallow_clone_missing_base_then_available_base(tmp_path: Path, repo) ->
     assert check(clone, base) == []
 
 
-def test_merge_checkout_compares_event_base_not_head_parent(repo) -> None:
+def test_merge_checkout_compares_event_base_not_head_parent(repo, monkeypatch) -> None:
     root, base = repo
+    config = write(root, ".git/empty-global-config", "")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     git(root, "checkout", "-qb", "topic")
     write(root, "src/old module.py", "# topic\n" * 1004)
     topic = commit(root)
