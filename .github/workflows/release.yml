@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+env:
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -52,26 +58,24 @@ jobs:
   build-macos-arm:
     name: Build macOS DMG (arm64)
     runs-on: macos-15
+    timeout-minutes: 45
     needs: verify-version
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Replay reviewed build dependencies
+        uses: ./.github/actions/release-environment
         with:
-          python-version: "3.12"
-
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
-          pip install -c constraints.txt pyinstaller Pillow dmgbuild
+          target: macos-arm64
 
       - name: Generate macOS icon (.icns)
         shell: bash
         run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
+
+      - name: Verify observed environment before freezing
+        shell: bash
+        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
 
       - name: Build application with PyInstaller
         env:
@@ -80,10 +84,11 @@ jobs:
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
 
       - name: Smoke-test packaged app
+        working-directory: ${{ runner.temp }}
         shell: bash
         run: |
-          test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
-          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test --smoke-test-root
+          test -x "$GITHUB_WORKSPACE/dist/Asymmetry.app/Contents/MacOS/Asymmetry"
+          env -u PYTHONPATH -u PYTHONHOME "$GITHUB_WORKSPACE/dist/Asymmetry.app/Contents/MacOS/Asymmetry" --smoke-test --smoke-test-root
 
       - name: Generate DMG background
         shell: bash
@@ -115,25 +120,27 @@ jobs:
           # the release job never runs) instead of the 90-day default.
           retention-days: 1
 
+      - name: Retain macos-arm64 replay observations
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-replay-macos-arm64
+          path: ${{ runner.temp }}/release-replay/replay-*/observed.json
+          if-no-files-found: error
+          retention-days: 1
+
   build-windows:
     name: Build Windows installer (x64)
     runs-on: windows-2025
+    timeout-minutes: 45
     needs: verify-version
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Replay reviewed build dependencies
+        uses: ./.github/actions/release-environment
         with:
-          python-version: "3.12"
-
-      - name: Install build dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[gui,gle,hdf5,hdf4,root]"
-          pip install -c constraints.txt pyinstaller Pillow
+          target: windows-x64
 
       - name: Generate Windows icon (.ico)
         shell: pwsh
@@ -145,6 +152,10 @@ jobs:
         shell: pwsh
         run: python packaging/windows/fetch_hdf4_dlls.py "$env:GITHUB_WORKSPACE\build\hdf4-dlls"
 
+      - name: Verify observed environment before freezing
+        shell: bash
+        run: python -I tools/release_environment.py --verify "$RUNNER_TEMP/release-replay"
+
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}\build\icons\Asymmetry.ico
@@ -153,16 +164,16 @@ jobs:
         run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
 
       - name: Smoke-test packaged app
+        working-directory: ${{ runner.temp }}
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist\Asymmetry\Asymmetry.exe")) {
+          [Environment]::SetEnvironmentVariable("PYTHONPATH", $null)
+          [Environment]::SetEnvironmentVariable("PYTHONHOME", $null)
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE\dist\Asymmetry\Asymmetry.exe")) {
             throw "Packaged executable not found at dist\\Asymmetry\\Asymmetry.exe"
           }
-          & "dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y
+          & "$env:GITHUB_WORKSPACE\dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
+          if ($LASTEXITCODE -ne 0) { throw "Packaged smoke failed" }
 
       - name: Build EXE installer
         shell: pwsh
@@ -171,7 +182,7 @@ jobs:
           $appDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
           $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
           $outputDir = "$env:GITHUB_WORKSPACE\dist"
-          iscc `
+          python tools/release_environment.py --inno `
             "/DAppVersion=$version" `
             "/DAppDir=$appDir" `
             "/DIconFile=$iconFile" `
@@ -188,6 +199,16 @@ jobs:
           # download them; the "Delete workflow artifacts" step removes them on
           # success, and this caps lingering ones (e.g. if a build succeeds but
           # the release job never runs) instead of the 90-day default.
+          retention-days: 1
+
+      - name: Retain windows-x64 replay observations
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-replay-windows-x64
+          path: |
+            ${{ runner.temp }}/release-replay/replay-*/observed.json
+            build/inno-observed.json
+          if-no-files-found: error
           retention-days: 1
 
   validate:

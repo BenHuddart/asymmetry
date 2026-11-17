@@ -32,7 +32,8 @@ def test_windows_workflows_use_inno_setup_installer() -> None:
     preview_text = _read(".github/workflows/preview-windows.yml")
 
     for workflow_text in (release_text, preview_text):
-        assert "choco install innosetup -y" in workflow_text
+        assert "uses: ./.github/actions/release-environment" in workflow_text
+        assert "python tools/release_environment.py --inno" in workflow_text
         assert "packaging\\windows\\asymmetry.iss" in workflow_text
         assert ".exe" in workflow_text
         assert "installer.wxs" not in workflow_text

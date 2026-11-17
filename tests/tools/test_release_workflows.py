@@ -108,7 +108,7 @@ def test_workflow_edits_run_standard_ci() -> None:
     filters = yaml.safe_load(
         next(step for step in steps if step.get("id") == "filter")["with"]["filters"]
     )
-    assert ".github/workflows/**" in filters["code"]
+    assert {".github/workflows/**", ".github/actions/**", "packaging/**"} <= set(filters["code"])
 
 
 def test_cut_release_tag_push_triggers_release() -> None:
@@ -323,3 +323,39 @@ def test_required_ci_rejects_missing_core_wheel_success(tmp_path: Path, smoke_re
         ["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True, timeout=10
     )
     assert (result.returncode == 0) is (smoke_result == "success"), result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "filename", ["release.yml", "preview-windows.yml", "preview-macos-arm.yml"]
+)
+def test_native_consumers_share_replay_and_verify_before_freezing(filename: str) -> None:
+    jobs = _workflow(filename)["jobs"]
+    for name, job in jobs.items():
+        if not name.startswith("build-"):
+            continue
+        steps = job["steps"]
+        replay = next(
+            step for step in steps if step.get("uses") == "./.github/actions/release-environment"
+        )
+        assert replay["with"]["target"] == ("windows-x64" if "windows" in name else "macos-arm64")
+        verification = next(i for i, step in enumerate(steps) if "--verify" in step.get("run", ""))
+        freeze = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Build application with PyInstaller"
+        )
+        assert verification < freeze
+        assert not any("pip install" in step.get("run", "") for step in steps)
+        assert not any("python-version" in step.get("with", {}) for step in steps)
+
+
+def test_shared_bootstrap_selects_reviewed_python_and_compiler() -> None:
+    action = yaml.safe_load(
+        (ROOT / ".github/actions/release-environment/action.yml").read_text(encoding="utf-8")
+    )
+    steps = action["runs"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("actions/setup-python@"))
+    assert setup["with"]["python-version"] == "${{ steps.tools.outputs.python }}"
+    install = next(step for step in steps if step.get("name") == "Install reviewed Inno Setup")
+    assert "--version=${{ steps.tools.outputs.inno }}" in install["run"]
+    assert install["if"] == "inputs.target == 'windows-x64'"
