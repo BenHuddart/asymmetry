@@ -243,6 +243,64 @@ rebuilds. Startup/import smoke and component inventories do not certify delivere
 load/reduce/fit/export/project workflows. See the pinned
 [PyInstaller spec and archive documentation](https://pyinstaller.org/en/v6.16.0/spec-files.html).
 
+## Bounded scientific diagnostic
+
+The desktop entry accepts `--scientific-acceptance` before ordinary startup.
+It requires `--acceptance-inputs`, `--acceptance-root`, `--acceptance-identity`
+(JSON), and `--acceptance-token`. The root must be new. This explicit diagnostic
+bypasses user-directory and installed-entry-point plugin discovery, redirects
+both Qt INI settings scopes and the shared application-data owner, and keeps
+inputs, caches, preferences, exports, and projects below that root. It does not
+change HOME. Normal interactive startup remains a separate smoke check.
+
+Generate the original synthetic containers with the selected desktop dependencies:
+
+```bash
+python3 tools/acceptance_fixtures.py <new-input-directory>
+python3 -I tools/desktop_acceptance.py --executable <app-launcher> --inputs <input-directory> --identity <build-identity.json> --output <new-report.json>
+```
+
+The input writer uses uproot and native pyhdf, separately from the application.
+The application copies the two files, checks their declared SHA256 values, and
+reads ROOT and actual HDF4 through the production registry. No tests or source
+writers are imported in a frozen invocation. It decodes the packaged logo, checks
+the existing embedded version/source-commit/target identity, and verifies frozen
+scientific import origins within the payload.
+
+Both fixtures contain twenty raw integer-count bins per detector. Explicit groups
+1/2 select raw bins 3–18 inclusive with 0.125 µs width and exact t0 0.3125 µs;
+format-specific headers encode that same selection. Alpha is 1, background and
+deadtime corrections are off, and binning is fixed at factor 1. Counts
+F=120(i+1), B=80(i+1) give fraction asymmetry 0.2 (20 percent), with independent
+Poisson ratio error `sqrt(4FB/(F+B)^3)`. A free Constant `A_bg`, seeded at 10 percent,
+must fit 20 percent within 0.00001 percent; its standard error must match the
+known-error weighted mean within relative 0.0001. Array comparisons use absolute
+and relative 1e-12. Parsed desktop text-export values use relative 1e-9 for the
+writer's ten-significant-digit output.
+
+The saved current project includes source content identity, grouping overrides,
+representation recipe, and fit state. Reload prepares the project, verifies the
+source, checks its captured identity, recomputes the representation, and checks
+both the fraction/percent conversion and reconstructed fitted curve. No storage
+schema or scientific computation revision changes are involved.
+
+The parent waits up to 60 seconds, terminates and reaps the owned process tree on
+timeout, and requires exit zero plus a fresh matching invocation report. Reports
+record stages, fixture hashes, settings, tolerances, numerical results, and import
+origins without temporary absolute paths. A failed child, missing or stale report,
+missing input/resource/reader, numerical mismatch, export failure, or replay failure
+cannot pass. The command retains an outcome report even when analysis fails and
+cleans its temporary working directory. It removes developer Python/native search
+overrides and uses an OS-only PATH; environment cleaning alone does not prove the
+checkout is inaccessible.
+
+Source and locally available frozen checks establish this bounded scenario contract.
+They do not establish final installed Windows x64 or mounted macOS arm64 scientific
+acceptance. That native integration and actual omission controls belong to the final
+payload lifecycle above and remain a separate required implementation step. The
+Linux core-wheel check remains independent. This diagnostic is a wiring anchor,
+not instrument, correction, uncertainty-coverage, or full numerical certification.
+
 ## Guidelines for agents
 
 Agents maintain the changelog and propose releases; they never cut one

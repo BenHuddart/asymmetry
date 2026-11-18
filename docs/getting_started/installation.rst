@@ -31,6 +31,26 @@ Hosted operating-system tools and native packaging timestamps can change, so
 identical installer bytes are not guaranteed. The existing packaged startup and
 import smoke checks do not certify a complete scientific analysis workflow.
 
+Desktop scientific diagnostic
+-----------------------------
+
+The application provides an explicit ``--scientific-acceptance`` diagnostic for
+build verification. It reads tiny original ROOT and native HDF4 inputs, reduces
+an explicitly selected correction-free count ratio to 20 percent asymmetry, fits
+a free constant, checks the exported text values, and saves and replays a project
+with its source identity, grouping, recipe, and fit state. The diagnostic uses a
+fresh temporary state directory and bypasses user plugin discovery. Required
+resource, reader, identity, numerical, export, or reload failures return nonzero.
+A parent runner checks completion and a fresh report within a finite time budget.
+
+This bounded scenario checks packaging and scientific wiring. It does not certify
+instrument defaults, corrections, uncertainty coverage, or all model families.
+Source and locally available frozen checks are distinct from native scientific
+acceptance of the final Windows x64 installer and Apple Silicon macOS DMG. Final
+payload and download-provenance checks retain their separate scope; a successful
+startup/import smoke alone does not establish this scientific journey. The
+core-only Linux wheel gate also remains separate.
+
 Requirements
 ------------
 
