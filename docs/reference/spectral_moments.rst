@@ -16,6 +16,14 @@ and under the reconstruction in the MaxEnt panel. Pick a unit, drag a range over
 the line, and the readout updates live; **Send to trend** records the moments of
 every selected run as a trendable series.
 
+The current point estimates remain visible while **Calculating approximate
+errors…** is shown. Approximate error calculation runs in the background;
+changing the range, cutoff, unit or active spectrum supersedes pending results.
+During a drag, the readout updates without uncertainties; releasing the handle
+requests the approximate errors for the final range and cutoff. If uncertainty
+calculation fails, the readout retains the current point estimates without
+errors and the status reports the failure; another edit or request can retry.
+
 .. image:: /_generated/screenshots/spectral_moments_readout.png
    :alt: The Spectral moments readout in the Fourier panel, computed on the
          phase-corrected FFT of a YBCO vortex-lattice line, with the moments
@@ -163,7 +171,11 @@ the phase-corrected real mode or the MaxEnt reconstruction to take moments.
 Trending the moments
 --------------------
 
-**Send to trend** computes the moments of every **selected** run's spectrum, with
+**Send to trend** computes the moments of every **selected** run's spectrum in
+the background. It records the complete eligible selection together; changing
+selection, source, project or moment controls cancels pending publication.
+Each run uses its own recorded FFT padding factor for the heuristic error
+rescaling. The extraction uses
 the current range/cutoff/unit, and records them as one computed series — one point
 per run, indexed by field and temperature — that fits like any parameter series.
 Re-sending the same selection replaces it rather than duplicating it. Fit

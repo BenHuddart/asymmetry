@@ -21,6 +21,7 @@ See the spectral-moments reference for definitions, sources and limits.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +36,10 @@ _PARABOLA_POINTS = 5
 
 #: Uncertainty methods accepted by :func:`spectrum_moments`.
 UNCERTAINTY_METHODS = ("bootstrap", "propagate", "none")
+
+
+class MomentsCancelledError(Exception):
+    """A spectral-moment calculation was cooperatively cancelled."""
 
 
 @dataclass(frozen=True)
@@ -227,6 +232,7 @@ def _bootstrap_errors(
     cutoff_fraction: float,
     n_bootstrap: int,
     seed: int,
+    cancel_callback: Callable[[], bool] | None,
 ) -> dict[str, float]:
     """Std of each moment over noise realisations ``amp + N(0, σ)``.
 
@@ -236,6 +242,8 @@ def _bootstrap_errors(
     rng = np.random.default_rng(seed)
     draws: dict[str, list[float]] = {k: [] for k in _BOOTSTRAP_KEYS}
     for _ in range(int(n_bootstrap)):
+        if cancel_callback is not None and cancel_callback():
+            raise MomentsCancelledError("Spectral moments cancelled.")
         noisy = amp + rng.normal(0.0, sigma)
         res = _moment_scalars(x, noisy, cutoff_fraction)
         if res is None:
@@ -325,6 +333,7 @@ def spectrum_moments(
     unit: str | None = None,
     mode: str | None = None,
     error_oversampling: float = 1.0,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> SpectrumMoments:
     """Return the moment set of a spectrum over a window above an amplitude cutoff.
 
@@ -355,6 +364,9 @@ def spectrum_moments(
         reproducibility).
     unit, mode:
         Provenance only — the display unit and spectrum mode, stored in ``recipe``.
+    cancel_callback:
+        Optional cooperative cancellation predicate, polled before calculation,
+        between bootstrap draws and before returning. Raises ``MomentsCancelledError``.
     error_oversampling:
         Scalar heuristic: finite output errors are multiplied by
         ``sqrt(error_oversampling)`` when greater than one; central values stay
@@ -362,6 +374,8 @@ def spectrum_moments(
         covariance and can understate or overstate errors. Neither this scaling
         nor independent-bin perturbations establish nominal coverage.
     """
+    if cancel_callback is not None and cancel_callback():
+        raise MomentsCancelledError("Spectral moments cancelled.")
     if uncertainty not in UNCERTAINTY_METHODS:
         raise ValueError(f"uncertainty must be one of {UNCERTAINTY_METHODS}, got {uncertainty!r}")
     cutoff_fraction = float(cutoff_fraction)
@@ -419,7 +433,9 @@ def spectrum_moments(
         recipe["uncertainty_scope"] = MOMENT_UNCERTAINTY_SCOPE
         recipe["error_oversampling"] = max(float(error_oversampling), 1.0)
         if uncertainty == "bootstrap":
-            errs = _bootstrap_errors(xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed)
+            errs = _bootstrap_errors(
+                xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed, cancel_callback
+            )
         else:
             for key, row in _moment_jacobian(xa, ya, cutoff_fraction, base).items():
                 errs[key] = float(np.linalg.norm(row * sig_safe))
@@ -431,6 +447,8 @@ def spectrum_moments(
             key: (value * scale if np.isfinite(value) else value) for key, value in errs.items()
         }
 
+    if cancel_callback is not None and cancel_callback():
+        raise MomentsCancelledError("Spectral moments cancelled.")
     return SpectrumMoments(
         b_pk=base["b_pk"],
         b_ave=base["b_ave"],

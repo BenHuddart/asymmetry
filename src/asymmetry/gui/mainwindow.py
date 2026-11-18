@@ -117,14 +117,12 @@ from asymmetry.core.fourier import (
     suggest_matched_apodisation,
 )
 from asymmetry.core.fourier.fft import fourier_mode_uses_phase_fit
-from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.phase_fit import (
     PHASE_FIT_METHOD,
     PhaseFitCancelled,
     PhaseFitRejectedError,
 )
 from asymmetry.core.fourier.spectrum import precompute_group_fourier_inputs
-from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     PROJECTION_TINTS,
@@ -264,6 +262,7 @@ from asymmetry.gui.fit_settings import (
     set_fit_quality_confidence,
 )
 from asymmetry.gui.gle_settings import GleSetupDialog
+from asymmetry.gui.moment_tasks import MomentBatch, MomentInput, MomentReadout, MomentRecipe
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
 from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -843,6 +842,8 @@ class MainWindow(QMainWindow):
         #: All background work goes through this runner (see gui/tasks.py);
         #: closeEvent shuts it down so no live thread outlasts the window.
         self._tasks = TaskRunner(self)
+        self._moment_readout = MomentReadout(self, self._tasks)
+        self._moment_batch = MomentBatch(self, self._tasks)
         self._scan_controller = ScanController(self)
         from asymmetry.gui.scan.fitting import ScanFitController
 
@@ -7680,16 +7681,22 @@ class MainWindow(QMainWindow):
             if widget is not active:
                 widget.set_eligible(False, "Switch to this representation to take its moments.")
         if active is None:
+            self._moment_readout.invalidate()
+            self._moment_batch.invalidate()
             self._frequency_plot_panel.clear_moments_overlay()
             return
         accessor = self._frequency_plot_panel.active_spectrum_for_moments()
         dataset = self._frequency_plot_panel.current_frequency_dataset()
         if accessor is None or dataset is None:
+            self._moment_readout.invalidate()
+            self._moment_batch.invalidate()
             active.set_eligible(False, "No lineshape-faithful spectrum is active.")
             self._frequency_plot_panel.clear_moments_overlay()
             return
         eligible, reason = self._moment_eligibility(self._active_frequency_rep_type(), dataset)
         if not eligible:
+            self._moment_readout.invalidate()
+            self._moment_batch.invalidate()
             active.set_eligible(False, reason)
             self._frequency_plot_panel.clear_moments_overlay()
             return
@@ -7724,78 +7731,47 @@ class MainWindow(QMainWindow):
             "include the filter's broadening."
         )
 
-    def _compute_moments_for(self, widget, freq_mhz, amplitude, errors, *, cheap: bool = False):
-        """Run the core on one spectrum using *widget*'s recipe; return moments.
-
-        *cheap*, when ``True``, forces the point-estimate path (no bootstrap)
-        regardless of whether *errors* is available — used for the live
-        mid-drag readout (C1), where a 256-resample bootstrap per mouse-move
-        would make dragging a moments handle jank.
-        """
-        unit = widget.unit()
-        x = np.asarray(convert(freq_mhz, FieldUnit.MHZ, unit), dtype=float)
-        range_mhz = widget.range_mhz()
-        x_range = None
-        if range_mhz is not None:
-            lo = float(convert(range_mhz[0], FieldUnit.MHZ, unit))
-            hi = float(convert(range_mhz[1], FieldUnit.MHZ, unit))
-            x_range = (lo, hi)
-        method = "none" if cheap else ("bootstrap" if errors is not None else "none")
-        return spectrum_moments(
-            x,
-            amplitude,
-            x_range=x_range,
-            cutoff_fraction=widget.cutoff_fraction(),
-            errors=errors,
-            uncertainty=method,
-            unit=unit.value,
-            mode=self._active_frequency_rep_type().value,
-            error_oversampling=self._active_spectrum_error_oversampling(),
-        )
-
-    def _active_spectrum_error_oversampling(self) -> float:
-        """The recorded padding factor used for heuristic error rescaling."""
-        dataset = None
-        if hasattr(self._frequency_plot_panel, "current_frequency_dataset"):
-            dataset = self._frequency_plot_panel.current_frequency_dataset()
-        metadata = getattr(dataset, "metadata", None)
-        if not isinstance(metadata, dict):
-            return 1.0
-        try:
-            padding = float(metadata.get("fourier_padding", 1) or 1)
-        except (TypeError, ValueError):
-            return 1.0
-        return padding if padding > 1.0 else 1.0
-
     def _compute_and_show_moments(self, widget, accessor=None, *, cheap: bool = False) -> None:
-        """Compute moments for the active spectrum and refresh readout + overlay.
-
-        *accessor* (the W15 ``(x, amplitude, errors, unit)`` tuple) is reused when
-        the caller already fetched it, avoiding a second full-spectrum copy.
-        *cheap* forces the no-bootstrap point-estimate path (see
-        :meth:`_compute_moments_for`) for the live mid-drag readout.
-        """
+        """Snapshot the displayed spectrum; full uncertainty work runs off-thread."""
         if accessor is None:
-            if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
-                return
             accessor = self._frequency_plot_panel.active_spectrum_for_moments()
-        if accessor is None:
+        dataset = self._frequency_plot_panel.current_frequency_dataset()
+        if accessor is None or dataset is None:
             return
-        freq_mhz, amplitude, errors, _unit = accessor
-        moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors, cheap=cheap)
-        widget.show_moments(moments)
-        # The cutoff line sits at peak·fraction; reuse the kernel's window peak so
-        # the drawn line cannot drift from the computed cutoff (NaN → no line).
+        recipe = MomentRecipe.from_widget(widget, self._active_frequency_rep_type())
+        request = MomentInput.capture(dataset, accessor, recipe)
+        if cheap:
+            self._moment_readout.invalidate()
+            self._show_moment_result(request, request.compute(cheap=True))
+        elif self._moment_readout.request(request):
+            self._show_moment_result(
+                request,
+                request.compute(cheap=True),
+                pending=request.errors is not None,
+            )
+
+    def _show_moment_result(self, request, moments, *, pending=False) -> None:
+        widget = self._active_moments_widget()
+        dataset = self._frequency_plot_panel.current_frequency_dataset()
+        if widget is None or dataset is None or id(dataset) != request.source[0]:
+            return
+        recipe = MomentRecipe.from_widget(widget, self._active_frequency_rep_type())
+        if not request.matches(dataset, recipe) or not widget.is_eligible():
+            return
+        if pending:
+            widget.show_pending_moments(moments)
+        else:
+            widget.show_moments(moments)
         peak = moments.window_peak_amplitude
-        peak = float(peak) if np.isfinite(peak) else None
         self._frequency_plot_panel.set_moments_overlay(
-            window_mhz=widget.range_mhz(),
-            cutoff_fraction=widget.cutoff_fraction(),
-            peak_amplitude=peak,
+            window_mhz=recipe.range_mhz,
+            cutoff_fraction=recipe.cutoff_fraction,
+            peak_amplitude=float(peak) if np.isfinite(peak) else None,
             visible=True,
         )
 
     def _on_moments_settings_changed(self, widget) -> None:
+        self._moment_batch.invalidate()
         if widget is self._active_moments_widget() and widget.is_eligible():
             self._compute_and_show_moments(widget)
 
@@ -7804,6 +7780,9 @@ class MainWindow(QMainWindow):
         if widget is None or not widget.is_eligible():
             return
         # Cheap: just updates the widget's spin boxes, no recompute.
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
+        widget.clear_readout()
         widget.set_range_mhz(lo_mhz, hi_mhz)
         self._moments_drag_timer.start()
 
@@ -7812,6 +7791,9 @@ class MainWindow(QMainWindow):
         if widget is None or not widget.is_eligible():
             return
         # Cheap: just updates the widget's cutoff spinner, no recompute.
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
+        widget.clear_readout()
         widget.set_cutoff_fraction(fraction)
         self._moments_drag_timer.start()
 
@@ -7864,72 +7846,67 @@ class MainWindow(QMainWindow):
         return f"moments-{digest}"
 
     def _on_moments_send_to_trend(self, widget) -> None:
-        """Record moments for the selected runs as a computed trend series (F10)."""
+        """Prepare selected spectra, retaining the originating recipe and intent."""
         if not widget.is_eligible():
             return
         rep_type = self._active_frequency_rep_type()
         selected = [int(ds.run_number) for ds in self._data_browser.get_selected_datasets()]
-        active_ds = (
-            self._frequency_plot_panel.current_frequency_dataset()
-            if hasattr(self._frequency_plot_panel, "current_frequency_dataset")
-            else None
-        )
+        active_ds = self._frequency_plot_panel.current_frequency_dataset()
         if not selected and active_ds is not None:
-            selected = [int(getattr(active_ds, "run_number", 0))]
-        # Recompute any uncached spectra off-thread first, then extract moments
-        # in the continuation (where every recomputable run is a cache hit) — so
-        # sending many runs' moments never blocks the GUI.
+            selected = [int(active_ds.run_number)]
+        recipe = MomentRecipe.from_widget(widget, rep_type)
+        intent = self._moment_batch.begin(selected, recipe, self._project_model)
+        if intent is None:
+            return
         self._ensure_frequency_spectra_for_runs_async(
             selected,
             rep_type,
-            on_ready=lambda: self._finish_moments_send_to_trend(widget, selected, rep_type),
+            on_ready=lambda: self._finish_moments_send_to_trend(intent),
         )
 
-    def _finish_moments_send_to_trend(self, widget, selected, rep_type) -> None:
-        """Extract moments for *selected* and record them as a computed series."""
-        member_runs: list[int] = []
-        results_by_run: dict[int, dict] = {}
-        skipped: list[int] = []
-        for run_number in selected:
-            spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
+    def _finish_moments_send_to_trend(self, intent) -> None:
+        """Snapshot prepared spectra before extracting all moments off-thread."""
+        if not self._moment_batch.is_current(intent):
+            return
+        rep_type = RepresentationType(intent.recipe.mode)
+        inputs, skipped = [], []
+        for run_number in intent.runs:
+            spectra = self._frequency_spectra_from_cache(run_number, rep_type)
             dataset = spectra[0] if spectra else None
-            if dataset is None:
+            if dataset is None or not self._moment_eligibility(rep_type, dataset)[0]:
                 skipped.append(run_number)
                 continue
-            eligible, _reason = self._moment_eligibility(rep_type, dataset)
-            if not eligible:
+            frequency, amplitude = dataset.time, dataset.asymmetry
+            if frequency.size == 0 or frequency.shape != amplitude.shape:
                 skipped.append(run_number)
                 continue
-            freq_mhz = np.asarray(getattr(dataset, "time", []), dtype=float)
-            amplitude = np.asarray(getattr(dataset, "asymmetry", []), dtype=float)
-            if freq_mhz.size == 0 or freq_mhz.shape != amplitude.shape:
-                skipped.append(run_number)
-                continue
-            err = getattr(dataset, "error", None)
-            errors = None if err is None else np.asarray(err, dtype=float)
-            if errors is not None and errors.shape != freq_mhz.shape:
+            errors = dataset.error
+            if errors is not None and errors.shape != frequency.shape:
                 errors = None
-            moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors)
-            if moments.n_sample == 0:
-                skipped.append(run_number)
-                continue
-            meta = getattr(dataset, "metadata", {}) or {}
-            row = moments_trend_row(
-                moments,
-                run_number=int(run_number),
-                run_label=str(meta.get("run_label") or run_number),
-                field=getattr(dataset, "field", None),
-                temperature=getattr(dataset, "temperature", None),
+            inputs.append(
+                MomentInput.capture(
+                    dataset,
+                    (frequency, amplitude, errors),
+                    intent.recipe,
+                )
             )
-            member_runs.append(int(run_number))
-            results_by_run[int(run_number)] = row
+        self._moment_batch.prepared(intent, inputs, skipped)
+
+    def _publish_moment_batch(self, intent, inputs, results_by_run, skipped) -> None:
+        """Publish one complete result series for the still-current selection."""
+        rep_type = RepresentationType(intent.recipe.mode)
+        for request in inputs:
+            spectra = self._frequency_spectra_from_cache(request.run_number, rep_type)
+            if not spectra or not request.matches(spectra[0], intent.recipe):
+                self._set_fourier_status("Spectral moments cancelled: source spectrum changed.")
+                return
+        member_runs = list(results_by_run)
         if not member_runs:
             self._set_fourier_status(
                 "Spectral moments: no eligible spectrum in the selection to send."
             )
             return
-        recipe = widget.recipe()
-        recipe = {**recipe, "rep_type": rep_type.value}
+        recipe = intent.recipe.as_dict()
         batch_id = self._spectral_moments_batch_id(rep_type, recipe, member_runs)
         existing = self._project_model.batch(batch_id)
         extra = dict(existing.extra) if existing is not None else {}
@@ -8419,6 +8396,8 @@ class MainWindow(QMainWindow):
 
     def _on_compute_fourier(self) -> None:
         """Compute FFTs for every Data-Browser-selected run from the LIVE panel settings."""
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         if self._fourier_compute_active:
             # Clear the summary only when we actually start a fresh compute;
             # blanking it here would wipe the in-flight compute's S/N readout.
@@ -9585,6 +9564,8 @@ class MainWindow(QMainWindow):
 
     def _on_compute_maxent(self, cycles: int) -> None:
         """Compute or resume a MaxEnt spectrum for the active run."""
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         if self._maxent_active:
             self._set_fourier_status("A MaxEnt calculation is already running.")
             return
@@ -9932,6 +9913,9 @@ class MainWindow(QMainWindow):
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
+        self._moments_drag_timer.stop()
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         started_at = time.perf_counter()
         dataset = None
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
@@ -10088,6 +10072,8 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         # RRF controls show only on the FB-asymmetry representation (W16).
         if getattr(self._plot_panel, "_rrf_controls", None) is not None:
             self._plot_panel._rrf_controls.set_active_view_token(view)
@@ -15147,6 +15133,7 @@ class MainWindow(QMainWindow):
 
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
+        self._moment_batch.invalidate()
         selected = self._data_browser.get_selected_datasets()
         # Reduce the selection to the projection a fit will run on — the active
         # single axis, or the fit-target subplot in the stacked (ALL) view.
@@ -17152,6 +17139,9 @@ class MainWindow(QMainWindow):
 
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
+        self._moments_drag_timer.stop()
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         self._scan_controller.invalidate()
         self._scan_fits.reset()
         self._project_source_application = None
@@ -17379,6 +17369,9 @@ class MainWindow(QMainWindow):
         Split out of :meth:`closeEvent` so a hosting ProjectShell can run it
         for each tab once the whole quit sequence has been approved.
         """
+        self._moments_drag_timer.stop()
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         close_gle_previews(self)
         self._scan_controller.shutdown()
         self._scan_fits.shutdown()

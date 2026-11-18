@@ -18,7 +18,8 @@ The scenario:
    absorption line the moments require; the magnitude and power channels
    do not preserve the same signed line shape.
 3. Computes the FFT, drags a **range** over the line and sets a **cutoff**, and
-   opens the **Spectral moments** section so its live readout is on screen: the
+   waits for background approximate errors and opens the **Spectral moments**
+   section so its live readout is on screen: the
    peak field B_pk ≈ 1987 G (≈ 26.9 MHz, γ_μ = 0.01355 MHz/G), the mean B_ave
    sitting above the peak, the RMS width, and the positive skewness/asymmetry
    (β > 0, γ₁ > 0) that are the vortex distribution's expected signature.
@@ -125,7 +126,12 @@ class SpectralMomentsReadoutScenario(Scenario):
         moments.set_range_mhz(26.0, 30.0)
         moments.set_cutoff_fraction(0.05)
         window._refresh_spectral_moments()
-        _process_events_for(milliseconds=80)
+        for _ in range(100):
+            _process_events_for(milliseconds=50)
+            if not moments._uncertainty_label.isHidden():
+                break
+        else:
+            raise RuntimeError("Spectral moment errors did not finish within 5 s")
 
         # Frame the plot on the line so the shaded range and dotted cutoff are
         # recognisable rather than lost in a wide near-empty axis.
