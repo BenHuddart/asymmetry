@@ -107,7 +107,7 @@ jobs:
     name: Build Sphinx docs
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Outer guard: the in-process screenshot watchdog (faulthandler, ~8 min per
+    # Outer guard: the in-process screenshot watchdog (faulthandler, 10 min per
     # capture process) and the step timeouts below should all fire first; this
     # bounds the whole job in case anything upstream/downstream wedges too.
     # Corpus capture runs one process per scenario module, so no single process
