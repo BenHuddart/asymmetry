@@ -1,9 +1,7 @@
 """Survey run metadata and measured precession evidence in one folder.
 
-Metadata describes instruments, logged conditions, and scan membership.
 ``precession_evidence`` independently measures whether a non-zero logged field
-matches a Larmor line; metadata geometry alone cannot establish precession.
-``FolderSurvey.to_dict`` retains the executed survey's diagnostics."""
+matches a Larmor line; metadata geometry alone cannot establish precession."""
 
 from __future__ import annotations
 
