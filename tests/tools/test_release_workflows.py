@@ -473,7 +473,22 @@ def test_clean_native_science_jobs_gate_dispatch_and_publication_without_checkou
     assert "tools/native_acceptance.py verify" in verification
     for name in ("build-macos-arm", "build-windows"):
         steps = jobs[name]["steps"]
-        assert any("tools/native_acceptance.py prepare" in step.get("run", "") for step in steps)
+        source = next(
+            i
+            for i, step in enumerate(steps)
+            if "tools/native_acceptance.py prepare" in step.get("run", "")
+        )
+        identity = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Prepare packaged build identity"
+        )
+        freeze = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Build application with PyInstaller"
+        )
+        assert identity < source < freeze
         packet = next(step for step in steps if step["name"] == "Retain native scientific inputs")
         assert packet["with"]["name"].startswith("release-science-inputs-")
         assert packet["with"]["retention-days"] == 1

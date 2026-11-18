@@ -1,5 +1,7 @@
 """Delivered native acceptance shares the existing final-media lifecycle."""
 
+import json
+import os
 import plistlib
 import shutil
 import subprocess
@@ -415,3 +417,54 @@ def test_payload_copy_keeps_primary_failure_and_cleanup_disposition(tmp_path, mo
         assert (application / "reader.bin").read_bytes() == b"original delivered bytes"
     finally:
         original(work)
+
+
+@pytest.fixture
+def source_preparation(monkeypatch):
+    pytest.importorskip("pyhdf.SD", exc_type=ImportError)
+    pytest.importorskip("uproot")
+    from asymmetry.gui.scientific_acceptance import runtime_identity
+
+    identity = {**runtime_identity(), "target": "macos-arm64"}
+    monkeypatch.setattr(native.artifacts, "expected_identity", lambda *args: identity)
+    return identity
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX executable shim; native workflow checks Windows Git"
+)
+def test_source_packet_executes_parent_selected_git_before_artifact_isolation(
+    tmp_path, monkeypatch, source_preparation
+):
+    selected = tmp_path / "selected-git"
+    selected.mkdir()
+    executable = shutil.which("git")
+    marker = tmp_path / "source-git-observed"
+    git = selected / "git"
+    git.write_text(
+        f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('source authoring only')\n"
+        f"os.execv({executable!r},[{executable!r},*sys.argv[1:]])\n"
+    )
+    git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(selected) + os.pathsep + os.environ["PATH"])
+    directory = tmp_path / "packet"
+    native.prepare_packet(directory, "macos-arm64", source_preparation["source_commit"])
+    assert marker.read_text() == "source authoring only"
+    report = native.artifacts.read_json(directory / "source-result.json")
+    assert report["success"] and report["identity"] == native.source_identity(source_preparation)
+    assert str(selected) not in native.desktop.payload_environment()["PATH"]
+
+
+def test_source_packet_failure_retains_sanitized_real_entry_outcome_before_cleanup(
+    tmp_path, source_preparation, capsys
+):
+    source_preparation["source_commit"] = "0" * 40
+    with pytest.raises(RuntimeError):
+        native.prepare_packet(tmp_path / "packet", "macos-arm64", "0" * 40)
+    output = capsys.readouterr().out
+    outcome = json.loads(output)
+    assert not outcome["success"]
+    assert outcome["report"]["failure"]["stage"] == "identity"
+    assert outcome["report"]["failure"]["type"] == "ValueError"
+    assert str(tmp_path) not in output

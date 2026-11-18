@@ -56,16 +56,26 @@ def prepare_packet(packet: Path, target: str, commit: str) -> None:
     )
     environment = desktop.payload_environment()
     environment["PYTHONPATH"] = str(artifacts.ROOT / "src")
+    git = shutil.which("git")
+    if git is None:
+        raise ValueError("source comparison requires the authoring Git executable")
+    environment["PATH"] = os.pathsep.join((str(Path(git).parent), environment["PATH"]))
     if target == "windows-x64":
         environment["ASYMMETRY_HDF4_DLL_DIR"] = str(artifacts.ROOT / "build/hdf4-dlls")
     with tempfile.TemporaryDirectory(prefix="asymmetry-source-anchor-") as temporary:
-        outcome = desktop.run_acceptance(
-            [sys.executable, "-B", "-m", "asymmetry.gui.app"],
-            packet / "inputs",
-            source_identity(identity),
-            Path(temporary) / "invocation",
-            environment=environment,
-        )
+        work = Path(temporary) / "invocation"
+        try:
+            outcome = desktop.run_acceptance(
+                [sys.executable, "-B", "-m", "asymmetry.gui.app"],
+                packet / "inputs",
+                source_identity(identity),
+                work,
+                environment=environment,
+            )
+        except RuntimeError:
+            if (work / "outcome.json").is_file():
+                print(json.dumps(artifacts.read_json(work / "outcome.json"), allow_nan=False))
+            raise
     artifacts.write_json(packet / "source-result.json", outcome["report"])
 
 

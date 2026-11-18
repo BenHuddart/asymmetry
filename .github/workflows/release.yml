@@ -83,6 +83,10 @@ jobs:
         shell: bash
         run: python -I tools/release_artifacts.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
+      - name: Prepare bounded native scientific inputs
+        shell: bash
+        run: python -I tools/native_acceptance.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-macos-arm64"
+
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
@@ -119,10 +123,6 @@ jobs:
       - name: Record final artifact bytes
         shell: bash
         run: python -I tools/release_artifacts.py finalize --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg" --label "${{ needs.verify-version.outputs.version }}"
-
-      - name: Prepare bounded native scientific inputs
-        shell: bash
-        run: python -I tools/native_acceptance.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-macos-arm64"
 
       - name: Retain native scientific inputs
         uses: actions/upload-artifact@v7
@@ -184,6 +184,12 @@ jobs:
         shell: bash
         run: python -I tools/release_artifacts.py prepare --target windows-x64 --commit "$GITHUB_SHA" --replay "$RUNNER_TEMP/release-replay"
 
+      - name: Prepare bounded native scientific inputs
+        env:
+          ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}/build/hdf4-dlls
+        shell: bash
+        run: python -I tools/native_acceptance.py prepare --target windows-x64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-windows-x64"
+
       - name: Build application with PyInstaller
         env:
           PYI_ICON_PATH: ${{ github.workspace }}\build\icons\Asymmetry.ico
@@ -217,12 +223,6 @@ jobs:
       - name: Record final artifact bytes
         shell: bash
         run: python -I tools/release_artifacts.py finalize --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe" --label "${{ needs.verify-version.outputs.version }}"
-
-      - name: Prepare bounded native scientific inputs
-        env:
-          ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}/build/hdf4-dlls
-        shell: bash
-        run: python -I tools/native_acceptance.py prepare --target windows-x64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-windows-x64"
 
       - name: Retain native scientific inputs
         uses: actions/upload-artifact@v7
