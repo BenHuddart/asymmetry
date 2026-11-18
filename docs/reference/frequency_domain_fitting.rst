@@ -3,7 +3,7 @@ Frequency-domain fitting
 
 Frequency-domain fitting extends the same single-fit, global-fit, and
 parameter-trending workflow used in the time domain to displayed Fourier
-spectra.  The V1 workflow fits the real-valued spectrum currently shown in the
+spectra.  The workflow fits the real-valued spectrum currently shown in the
 Frequency view.  It does not fit the complex FFT directly.
 
 The spectrum you fit can come from either quantitative estimator — the FFT or
@@ -86,6 +86,38 @@ Successful global frequency fits are sent to the **Parameters** dock under the
 ``Frequency Domain`` group.  The parameter-trending tools can then fit
 ``nu0(T)``, ``fwhm(B)``, ``B0(T)``, or ``Bwid(B)`` using the usual trend-model
 workflow.
+
+Errors and fit statistics
+-------------------------
+
+.. image:: /_generated/screenshots/spectral_fit_errors.png
+   :alt: Frequency-fit result with the approximate spectral fit errors/statistics warning
+   :width: 100%
+
+
+The result warning starts **Approximate spectral fit errors/statistics**. Fits use
+diagonal spectral-bin weights. FFT cross-bin correlations, estimated phase,
+upstream calibration/background, and MaxEnt reconstruction uncertainty are not
+fully propagated. Scalar padding rescaling changes reported errors, covariance,
+MINOS intervals, chi-square, and effective degrees of freedom while leaving the
+objective and fitted values unchanged. It is a heuristic, not a general covariance
+correction: errors can be too small or too large, even with no padding.
+
+Chi-square verdicts, MINOS intervals, model rankings, and subsequent weighted
+trends retain these limitations; a converged fit or green verdict does not certify
+a spectral likelihood or interval coverage. The warning travels with newly
+computed results and their recorded summaries. No scope is invented for historical
+results that did not record it. The selected displayed-spectrum peak parameters
+also retain the conditioning assumptions described below.
+
+Compared with other programs
+----------------------------
+
+Fourier output errors and repeated-spectrum scatter are different quantities.
+Neither a nonzero error column nor a padding factor establishes spectral
+covariance propagation. See :ref:`spectral-error-comparison` for the bounded
+WiMDA, Mantid, and musrfit comparison; no numerical agreement of propagated
+spectral fit errors is claimed.
 
 Project files
 -------------

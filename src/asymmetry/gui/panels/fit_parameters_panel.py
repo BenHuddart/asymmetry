@@ -134,6 +134,7 @@ from asymmetry.gui.utils.parameter_export_data import (
     _normalize_x_key,
     _x_custom_id,
     _x_param_name,
+    recorded_warning_comments,
 )
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.elided_label import ElidedLabel
@@ -966,6 +967,7 @@ class FitParametersPanel(QWidget):
                 "run_number": int(row.run_number),
                 "computation_revision": row.computation_revision,
                 "parameter_sources": dict(row.parameter_sources),
+                "warnings": list(row.warnings),
                 "run_label": str(row.run_label),
                 "field": float(row.field),
                 "temperature": float(row.temperature),
@@ -1145,8 +1147,6 @@ class FitParametersPanel(QWidget):
             state.get("composite_parameters", [])
         )
         self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
-        # Restore the axis transforms early so the log-scale guard applies to the
-        # Y checkboxes when they are rebuilt below.
         self._x_transform = AxisTransform.from_dict(state.get("x_transform"))
         self._y_transforms = self._deserialize_y_transforms(state)
         raw_custom_memory = state.get("axis_transform_custom_memory")
@@ -1166,6 +1166,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(entry.get("run_number", 0)),
                             computation_revision=entry.get("computation_revision"),
                             parameter_sources=dict(entry.get("parameter_sources", {})),
+                            warnings=list(entry.get("warnings", [])),
                             run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
                             temperature=float(entry.get("temperature", 0.0)),
@@ -1364,6 +1365,7 @@ class FitParametersPanel(QWidget):
                 _FitRow(
                     run_number=run_number,
                     computation_revision=fit_result.computation_revision,
+                    warnings=list(fit_result.warnings),
                     run_label=str(dataset.metadata.get("run_label") or run_number),
                     field=float(meta.get("field", 0.0)),
                     temperature=float(meta.get("temperature", 0.0)),
@@ -1517,8 +1519,6 @@ class FitParametersPanel(QWidget):
             else None
         )
 
-        # Preserve any model-fit / composite-param / annotation state for
-        # series that survive this reload.
         preserved: dict[str, dict] = {}
         for gid, gdata in self._group_fit_results.items():
             preserved[gid] = {
@@ -1539,6 +1539,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(rd["run_number"]),
                             computation_revision=rd.get("computation_revision"),
                             parameter_sources=dict(rd.get("parameter_sources", {})),
+                            warnings=list(rd.get("warnings", [])),
                             run_label=str(rd.get("run_label") or rd["run_number"]),
                             field=float(rd.get("field", 0.0)),
                             temperature=float(rd.get("temperature", 0.0)),
@@ -2312,6 +2313,7 @@ class FitParametersPanel(QWidget):
                         "run_number": int(row.run_number),
                         "computation_revision": row.computation_revision,
                         "parameter_sources": dict(row.parameter_sources),
+                        "warnings": list(row.warnings),
                         "run_label": str(row.run_label),
                         "field": float(row.field),
                         "temperature": float(row.temperature),
@@ -2371,6 +2373,7 @@ class FitParametersPanel(QWidget):
                             run_number=int(row_entry.get("run_number", 0)),
                             computation_revision=row_entry.get("computation_revision"),
                             parameter_sources=dict(row_entry.get("parameter_sources", {})),
+                            warnings=list(row_entry.get("warnings", [])),
                             run_label=str(
                                 row_entry.get("run_label", row_entry.get("run_number", ""))
                             ),
@@ -5598,10 +5601,13 @@ class FitParametersPanel(QWidget):
         total = len(rows)
         excluded = [r for r in rows if not r.include_in_trend]
         flagged = [r for r in rows if r.include_in_trend and r.quality_flags]
-        if not excluded and not flagged and not transform_dropped:
+        warnings = list(dict.fromkeys(w for row in rows for w in row.warnings))
+        if not excluded and not flagged and not transform_dropped and not warnings:
             label.hide()
             return
         parts = [f"{total - len(excluded)}/{total} members in trend"]
+        if warnings:
+            parts.append("Recorded warnings")
         if excluded:
             names = ", ".join(str(r.run_label) for r in excluded)
             parts.append(f"{len(excluded)} excluded ({names})")
@@ -5610,14 +5616,12 @@ class FitParametersPanel(QWidget):
         if transform_dropped:
             parts.append(f"⚠ {transform_dropped} dropped by transform")
         label.setText(" · ".join(parts))
-        # An explanation, not the squeezed-out text, so it stands whether or not
-        # the line is elided.
         label.set_hover_text(
             "Excluded points are ringed in grey and drop out of the trend model "
             "fit; flagged points (warning diamonds) still contribute. Points "
             "'dropped by transform' fall where the transform is undefined "
             "(1/0, ln of ≤0). Right-click a point or use the table's Trend column "
-            "to change inclusion."
+            "to change inclusion." + ("\n\n" + "\n".join(warnings) if warnings else "")
         )
         label.show()
 
@@ -5683,7 +5687,7 @@ class FitParametersPanel(QWidget):
 
         y_params = self._selected_y_parameters()
         if not self._rows or not y_params:
-            self._update_trend_provenance([])
+            self._update_trend_provenance(self._rows)
             self._figure.clear()
             ax = self._figure.add_subplot(111)
             ax.set_title("No varying fit parameters")
@@ -6489,9 +6493,6 @@ class FitParametersPanel(QWidget):
         x_active = not self._x_transform.is_identity
         transformed_y = self._transformed_y_params()
 
-        # Raw columns stay verbatim (the durable provenance record); a Series
-        # column leads only when >1 series is overlaid, and transformed columns
-        # (matching the on-screen axes) are *appended* so nothing existing shifts.
         headers: list[str] = ["Series"] if multi else []
         headers += ["Run", "B (G)", "T (K)"]
         for name in y_params:
@@ -6512,14 +6513,10 @@ class FitParametersPanel(QWidget):
         model_label = self._export_model_label()
 
         with open(path, "w", newline="", encoding="utf-8") as tsvfile:
-            # Provenance header (comment lines) so the TSV is self-describing and
-            # at parity with the GLE .dat export: the originating fit model and
-            # the shared global-parameter values with uncertainties.
             if model_label:
                 tsvfile.write(f"# Model: {model_label}\n")
-            # Record the active transforms (re-executable expressions in x) so the
-            # transformed columns are self-describing; the y lens is per parameter,
-            # so it is named alongside its expression.
+            for plot_series in series:
+                tsvfile.writelines(recorded_warning_comments(plot_series.rows, "#"))
             if x_active:
                 tsvfile.write(f"# X transform: {self._x_transform.expression_text}\n")
             for name in transformed_y:

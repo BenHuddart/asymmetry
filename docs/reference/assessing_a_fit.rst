@@ -55,6 +55,14 @@ is labelled "Fit objective was not recorded." Known Gaussian producers retain
 their objective when loaded. A likelihood cannot be inferred from a numeric
 field named ``chi_squared`` alone. See :doc:`project_files` for saved results.
 
+For displayed frequency spectra, **Approximate spectral fit errors/statistics**
+qualifies the numeric errors and verdicts. Diagonal spectral-bin weights and
+scalar padding rescaling do not recover FFT covariance or the uncertainty in
+same-data phase estimation, calibration/background, or MaxEnt reconstruction.
+A small statistic, model ranking, or MINOS interval does not establish coverage
+under those omissions. Central fits and trend weights retain their existing
+numerical definitions; see :doc:`frequency_domain_fitting`.
+
 3. What does a conditional pull experiment show?
 ------------------------------------------------
 
