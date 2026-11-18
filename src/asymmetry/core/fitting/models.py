@@ -31,13 +31,13 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy import integrate
 from scipy.linalg import solve_triangular, toeplitz
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.phi_functions import phi2
 from asymmetry.core.fitting.registration import insert_definition
+from asymmetry.core.fitting.static_gaussian_kt import static_gaussian_polarisation
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 #: Groundwork for the deferred variable-projection (VarPro) follow-up. VarPro is
@@ -127,10 +127,7 @@ class ModelDefinition:
 # Model functions
 # ---------------------------------------------------------------------------
 
-# When the Larmor rate of the applied longitudinal field is below this fraction of
-# the local-field width (omega0 < ratio * width) the field is negligible and the
-# Kubo-Toyabe functions use their exact zero-field form, avoiding the
-# ill-conditioned 1/omega0 prefactors of the longitudinal-field expressions.
+# The Lorentzian evaluator uses its zero-field branch below this field/width ratio.
 _FIELD_DECOUPLING_RATIO = 0.05
 
 #: Muon Larmor angular frequency per Gauss of applied field, in rad/µs — the
@@ -143,17 +140,12 @@ LARMOR_RAD_PER_US_PER_GAUSS: float = (
 
 
 def field_decoupling_threshold_gauss(width_per_us: float) -> float:
-    """Smallest ``|B_L|`` (Gauss) that still moves a Kubo-Toyabe line shape.
+    """Lorentzian zero-field shortcut threshold, also a useful Gaussian seed scale.
 
-    Below ``omega0 < 0.05 * width`` the longitudinal-field Kubo-Toyabe
-    functions fall back to their exact zero-field form (see
-    ``_FIELD_DECOUPLING_RATIO``), so the objective is *exactly flat* in ``B_L``
-    there: a fit seeded inside this window has no gradient to follow.  Callers
-    that must leave ``B_L`` free — the fit wizard's unknown-field case — seed it
-    clear of the returned threshold.
-
-    ``width_per_us`` is the model's local-field width in µs⁻¹ (``Delta`` for
-    the Gaussian shapes, ``a_L`` for the Lorentzian one).
+    The Lorentzian shapes use their zero-field form for ``omega0 < 0.05*width``.
+    Gaussian KT has smooth field dependence down to zero; a positive seed on
+    this scale still avoids its symmetry-enforced zero derivative at B_L=0.
+    Width is ``a_L`` or ``Delta`` in µs⁻¹, and the returned field is in Gauss.
     """
     return _FIELD_DECOUPLING_RATIO * max(float(width_per_us), 0.0) / LARMOR_RAD_PER_US_PER_GAUSS
 
@@ -262,8 +254,9 @@ def longitudinal_field_kubo_toyabe(
 
     Notes
     -----
-    The integral uses cumulative trapezoidal integration on a shared fine grid
-    whose step is sized from ``omega0`` and ``Delta``.
+    Evaluation uses dimensionless time and field, integrating a cancellation-free
+    derivative in weak fields and the analytic Gaussian sine integral otherwise.
+    No interpolation or finite-width zero-field shortcut is used.
 
     References
     ----------
@@ -271,43 +264,15 @@ def longitudinal_field_kubo_toyabe(
     "Zero- and low-field spin relaxation studied by positive muons",
     Phys. Rev. B 20, 850 (1979).
     """
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
-
     t = np.asarray(t, dtype=float)
-    scalar_input = t.ndim == 0
-    tt = np.atleast_1d(np.abs(t))  # depolarisation is even in t
-    delta = float(Delta)
-    dt2 = (delta * tt) ** 2
-    exp_term = np.exp(np.clip(-dt2 / 2.0, -700, 0))
-
-    # When the applied field is negligible compared with the local-field width
-    # (omega0 << Delta) the longitudinal correction is sub-percent, and the Hayano
-    # expression becomes ill-conditioned (the 2*Delta^2/omega0^2 prefactor amplifies
-    # floating-point cancellation).  Use the exact zero-field limit there.
-    if abs(omega0) < max(1e-10, _FIELD_DECOUPLING_RATIO * delta) or delta <= 0.0 or tt.size == 0:
-        # Zero-field (or zero-width / empty) limit: exact analytic Gaussian KT.
-        gz = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2) * exp_term
+    delta = abs(float(Delta))
+    if delta == 0.0:
+        gz = np.ones_like(t)
     else:
-        tmax = float(tt.max())
-        if tmax <= 0.0:
-            gz = np.ones_like(tt)
-        else:
-            # Step resolves the faster of the omega0 oscillation and the Gaussian
-            # envelope; point count capped to bound cost at very high field (where
-            # the 1/omega0^3 integral term is negligible anyway).
-            h = min(0.01, 0.25 / max(abs(omega0), 1e-9), 0.1 / max(delta, 1e-9))
-            n = int(min(max(round(tmax / h) + 1, 64), 200000))
-            tau = np.linspace(0.0, tmax, n)
-            integrand = np.exp(-0.5 * (delta * tau) ** 2) * np.sin(omega0 * tau)
-            integral = integrate.cumulative_trapezoid(integrand, tau, initial=0.0)
-            i_t = np.interp(tt, tau, integral)
-            factor1 = 2.0 * delta**2 / omega0**2
-            factor2 = 2.0 * delta**4 / omega0**3
-            gz = 1.0 - factor1 * (1.0 - exp_term * np.cos(omega0 * tt)) + factor2 * i_t
-
+        ratio = abs(LARMOR_RAD_PER_US_PER_GAUSS * float(B_L)) / delta
+        gz = static_gaussian_polarisation(np.abs(delta * t), ratio)
     output = A0 * gz + baseline
-    return float(output[0]) if scalar_input else output
+    return float(output) if t.ndim == 0 else output
 
 
 # ---------------------------------------------------------------------------
@@ -744,8 +709,7 @@ def gaussian_broadened_kt(
     Evaluated by Gauss-Hermite quadrature (21 nodes) over the Delta
     distribution, with negative quadrature widths reflected to ``|Delta'|`` (as
     in WiMDA).  The quadrature is evaluated **directly at the requested times**
-    (vectorised over the nodes, with the Hayano longitudinal-field integral
-    computed once on a shared fine grid for all nodes), so the model is smooth
+    using the same dimensionless static Gaussian kernel at every node, so the model is smooth
     in ``w_rel`` and ``w_rel = 0`` reduces exactly and continuously to the
     static (LF) Kubo-Toyabe.
 
@@ -764,42 +728,11 @@ def gaussian_broadened_kt(
         out = np.asarray(gz, dtype=float)
         return float(out[0]) if scalar else out
 
-    deltas = np.abs(delta * (1.0 + np.sqrt(2.0) * width * _GBKT_X))  # (nodes,)
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
-
-    dt2 = (deltas[:, None] * tt[None, :]) ** 2  # (nodes, n_t)
-    exp_term = np.exp(np.clip(-dt2 / 2.0, -700, 0))
-
-    # Per node, use the exact zero-field form when the applied field is
-    # negligible against that node's width (same rule as the single-Delta
-    # function); otherwise the Hayano longitudinal-field expression with the
-    # oscillatory integral evaluated once on a grid shared by all LF nodes.
-    zf_mask = np.abs(omega0) < np.maximum(1e-10, _FIELD_DECOUPLING_RATIO * deltas)
-    gz_nodes = np.empty_like(dt2)
-    gz_nodes[zf_mask] = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2[zf_mask]) * exp_term[zf_mask]
-
-    lf_idx = np.nonzero(~zf_mask)[0]
-    if lf_idx.size:
-        tmax = float(max(tt.max(), 1e-6))
-        delta_max = float(deltas[lf_idx].max())
-        h = min(0.01, 0.25 / max(abs(omega0), 1e-9), 0.1 / max(delta_max, 1e-9))
-        n = int(min(max(round(tmax / h) + 1, 64), 200000))
-        tau = np.linspace(0.0, tmax, n)
-        integrand = (
-            np.exp(np.clip(-0.5 * (deltas[lf_idx, None] * tau[None, :]) ** 2, -700, 0))
-            * np.sin(omega0 * tau)[None, :]
-        )
-        integral = integrate.cumulative_trapezoid(integrand, tau, axis=1, initial=0.0)
-        cos_term = np.cos(omega0 * tt)
-        for row, k in enumerate(lf_idx):
-            d_k = deltas[k]
-            i_t = np.interp(tt, tau, integral[row])
-            factor1 = 2.0 * d_k**2 / omega0**2
-            factor2 = 2.0 * d_k**4 / omega0**3
-            gz_nodes[k] = 1.0 - factor1 * (1.0 - exp_term[k] * cos_term) + factor2 * i_t
-
-    out = np.asarray(_GBKT_WN @ gz_nodes, dtype=float)
+    deltas = np.abs(delta * (1.0 + np.sqrt(2.0) * width * _GBKT_X))
+    gz_nodes = np.asarray(
+        [longitudinal_field_kubo_toyabe(tt, 1.0, node_delta, B_L) for node_delta in deltas]
+    )
+    out = np.tensordot(_GBKT_WN, gz_nodes, axes=(0, 0))
     return float(out[0]) if scalar else out
 
 

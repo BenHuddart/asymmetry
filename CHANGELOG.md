@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Accelerate weak-field static Gaussian Kubo–Toyabe evaluation and its
+  broadened-width fits with a stable Gaussian-moment series.
+
 - Gate desktop publication on isolated scientific journeys through the installed
   Windows and mounted macOS apps, including component omissions and cleanup.
 
@@ -35,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execution; configured reference identity or execution failures now fail clearly.
 
 ### Fixed
+
+- Stabilise static Gaussian longitudinal-field Kubo–Toyabe at weak fields and
+  all width scales, including the shared Gaussian-broadened kernel.
 
 - Verify unchanged Windows acquisition files consistently after writing or copying,
   while retaining concurrent-change and path-replacement checks.

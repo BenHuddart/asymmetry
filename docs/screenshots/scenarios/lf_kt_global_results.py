@@ -1,16 +1,8 @@
-"""Global fit results for the Ag LF Kubo–Toyabe decoupling series.
+"""Member readout from a global Ag LF-KT fit, with shared Δ and its uncertainty.
 
-Companion screenshot to
-:doc:`/workflows/lf_decoupling_dynamics`. The setup is the same
-as ``global_fit_lfkt`` (four-field Ag LF series, ``LongitudinalFieldKT +
-Constant`` model, Δ shared globally, B_L fixed per run), but here the fit
-is actually run synchronously and the screenshot captures the converged
-state: the parameter table shows the fitted global Δ with its Hessian
-uncertainty, the result text reports the average reduced χ², and the
-central plot overlays the per-run fit curves on the data.
-
-Marked ``requires_fit = True`` because the iminuit fit trips on
-numpy ≥ 2.3 in dev environments; CI keeps numpy < 2.3.
+The classification is authored as Global for amplitude, Δ, and background,
+and File for each run's fixed applied field. The captured Results window
+shows the actual fitted values and Hessian errors, rather than seed values.
 """
 
 from __future__ import annotations
@@ -24,11 +16,8 @@ from ._base import Scenario, _process_events_for, register
 
 class LfKtGlobalResultsScenario(Scenario):
     name = "lf_kt_global_results"
-    description = (
-        "Global fit completed on the Ag LF-KT decoupling series, "
-        "showing the fitted global Δ with Hessian uncertainty."
-    )
-    size = (1500, 920)
+    description = "Member results from a global Ag LF-KT fit, including shared Δ and Hessian error."
+    size = (950, 290)
     requires_fit = True
 
     def build(self) -> QWidget:
@@ -55,7 +44,14 @@ class LfKtGlobalResultsScenario(Scenario):
         fit_panel.set_datasets(datasets)
         global_tab = fit_panel._global_tab
         model = CompositeModel(["LongitudinalFieldKT", "Constant"])
-        global_tab._set_composite_model(model)
+        global_tab._set_composite_model(
+            model,
+            seed_values={"A_1": "24", "Delta": "0.4", "B_L": "0", "A_bg": "0.3"},
+        )
+        for row, name in enumerate(model.param_names):
+            global_tab._param_table.cellWidget(row, 2).setCurrentText(
+                "File" if name == "B_L" else "Global"
+            )
         _process_events_for(milliseconds=80)
 
         # Build the initial parameter sets directly and run the fit synchronously
@@ -98,11 +94,11 @@ class LfKtGlobalResultsScenario(Scenario):
         )
         _process_events_for(milliseconds=120)
 
-        # Select the lowest-field run so the central plot focuses on the most
-        # depolarised trace and the fit overlay reads clearly.
+        # The Seed table is recipe input; the member readout owns fitted values/errors.
         window._on_dataset_selected(run_numbers[0])
+        global_tab._show_member_results_window(run_numbers[0])
         _process_events_for(milliseconds=40)
-        return window
+        return global_tab._member_windows[run_numbers[0]]
 
 
 register(LfKtGlobalResultsScenario())

@@ -133,10 +133,57 @@ it pins ``B_L`` from the recorded geometry and setpoint (at 0 on a zero-field
 run) and leaves it ticked **Fix** in the parameter table when you apply the
 candidate. :math:`\Delta` is partially degenerate with the amplitude in a
 single run — pin it with a decoupling field sweep, or a global fit sharing
-:math:`\Delta` across runs (:doc:`../global_fit_wizard`). The oscillatory
-integral is evaluated for all requested times at once by cumulative
-trapezoidal integration on a shared fine grid (accurate to better than
-10⁻⁶); for zero-field-only data use the cheaper ``StaticGKT_ZF`` directly.
+:math:`\Delta` across runs (:doc:`../global_fit_wizard`). Evaluation uses
+:math:`u=|\Delta t|` and :math:`r=|\omega_0/\Delta|`. Weak fields retain
+smooth field dependence all the way to zero; they do not select a finite
+zero-field plateau. The zero-width limit is constant polarisation. For
+zero-field-only data use the cheaper ``StaticGKT_ZF`` directly.
+
+The normalised static Gaussian kernel targets absolute numerical error
+:math:`\leq10^{-5}` before amplitude and baseline
+(:doc:`/explanation/numerical_accuracy`). Independent three-dimensional
+Gaussian field averages cover :math:`0\leq u\leq5` at
+:math:`r=0,0.001,0.01,0.049,0.05,0.051,0.06,0.1,1`, including scaled
+widths 0.05, 0.4, 1, and 5 μs⁻¹ and both field signs. Adaptive integration
+of the published expression checks representative times through
+:math:`u=20` at :math:`r=0.05,0.06,1,10,100`, including the numerical
+transition near :math:`r=1`. These are numerical checks of the selected
+static model, not evidence that a sample is static.
+
+.. dropdown:: Stable evaluation of the static Gaussian expression
+
+   Differentiating the expression above in dimensionless time gives
+
+   .. math::
+
+      \frac{dG}{du}=2e^{-u^2/2}
+      \left[u^3\frac{j_1(ru)}{ru}-u\operatorname{sinc}(ru)\right],
+
+   where :math:`\operatorname{sinc}(z)=\sin(z)/z` and
+   :math:`j_1(z)/z\to1/3`. For :math:`r<1`, termwise integration of
+   the Bessel series gives
+
+   .. math::
+
+      G(u,r)=1-\sum_{k=0}^{\infty}
+      \frac{2(-r^2)^k}{(2k+1)!(2k+3)}
+      \left[M_k(u)+u^{2k+2}e^{-u^2/2}\right],
+      \qquad M_k(u)=\int_0^u x^{2k+1}e^{-x^2/2}\,dx.
+
+   The moments follow :math:`M_0=1-e^{-u^2/2}` and
+   :math:`M_k=2kM_{k-1}-u^{2k}e^{-u^2/2}`. Evaluation retains
+   :math:`k=0,\ldots,15`. Each omitted term is bounded in magnitude by
+   :math:`2^{k+1}k!/(2k+1)!`, whose sum for :math:`k\geq16`
+   is below :math:`4\times10^{-19}` for :math:`0\leq r\leq1`, before
+   floating-point rounding. The Gaussian envelope bounds the omitted
+   derivative beyond :math:`u=12` by less than :math:`10^{-28}`.
+   This finite series avoids inverse-field cancellation and evaluates
+   smooth field dependence through zero with storage proportional to the
+   number of requested times. For :math:`r\geq1`, the Gaussian sine
+   integral is evaluated analytically with the complex scaled complementary
+   error function. Both branches evaluate the same physical field average
+   directly at the requested times, without interpolation.
+
 A standalone ``LFKuboToyabe`` model is available in the ``MODELS`` registry.
 
 **References**
@@ -268,7 +315,8 @@ dilute magnetic alloys, or several inequivalent muon sites. The fractional
 standard deviation :math:`w_\Delta` is the broadening parameter
 (:math:`w_\Delta = 0` reduces exactly and continuously to
 ``LongitudinalFieldKT``); the average is evaluated by Gauss–Hermite
-quadrature directly at the requested times, vectorised over the nodes.
+quadrature with 21 nodes directly at the requested times. Every node uses
+the same static Gaussian kernel as ``LongitudinalFieldKT``.
 WiMDA's ``Gau broad KT`` "rel width" equals :math:`w_\Delta\sqrt{2}`.
 
 =========  =================  =====  =========================================
@@ -285,6 +333,41 @@ the dip and soften the tail, and a single spectrum rarely distinguishes them
 — vary temperature or field before preferring this model over
 ``DynamicGaussianKT``.
 
+The retained 21-node width quadrature has a separate accuracy limitation;
+the static kernel's :math:`10^{-5}` target does not certify the continuous
+width average at every broadening or time. Against the exact zero-field
+Gaussian-width average, its largest absolute normalised error on
+:math:`0\leq\Delta t\leq5` is below :math:`10^{-6}` for
+:math:`w_\Delta=0.1,0.2,0.3`, but reaches :math:`1.7\times10^{-4}` at
+:math:`w_\Delta=0.4` and :math:`2.3\times10^{-3}` at
+:math:`w_\Delta=0.5`. At :math:`w_\Delta=0.3`, extending the window to
+:math:`\Delta t=20` gives :math:`6.4\times10^{-4}`; at
+:math:`w_\Delta=1` on that window the error reaches 0.095. This retained
+finite-quadrature limitation preserves the width-distribution definition.
+Broad or long-window fits require a converged width average before
+interpreting precision at this level. It does not authorise a different physical model.
+
+Compared with other programs
+----------------------------
+
+The musrfit manual documents ``statGssKTLF`` with cyclic frequency
+:math:`f=\omega_0/(2\pi)` in MHz and Gaussian width :math:`\sigma=\Delta`
+in μs⁻¹. Asymmetry's ``B_L`` is instead in Gauss. The documented static
+Gaussian formula is the same after this conversion; the independent
+mathematical checks above provide the accuracy oracle. In musrfit 1.12.1
+(revision ``708f777b``, ROOT 6.40.04), fixed-parameter type-8 evaluations on
+41 independent integral values over :math:`0\leq\Delta t\leq5`, with
+unit supplied errors and packing one, give summed squared residuals of
+:math:`1.20\times10^{-5}`, :math:`1.25\times10^{-12}`, and
+:math:`2.09\times10^{-10}` at :math:`r=0.06,1,10`, respectively.
+The weak-field discrepancy is retained; it does not validate either
+implementation. The independent Gaussian spin average supports Asymmetry's
+weak-field result.
+WiMDA's ``Gau broad KT`` uses the relative-width convention described above;
+no native broadening comparison is asserted here.
+
 **References**
 
+- `musrfit user manual, THEORY block
+  <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_.
 - D. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).
