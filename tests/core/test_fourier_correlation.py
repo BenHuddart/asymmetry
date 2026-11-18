@@ -1,8 +1,8 @@
 """Tests for the muoniated-radical correlation spectrum.
 
 Covers the pure-core combiner and forward map (`corr_fn`, `breit_rabi_pair`,
-`correlation_spectrum`), the exact reconciliation with WiMDA's approximate
-`rmatch` inverse, and the end-to-end `compute_average_group_spectrum`
+`correlation_spectrum`), an independent two-spin Hamiltonian, and the
+end-to-end `compute_average_group_spectrum`
 `correlation` display mode on a synthetic muoniated-radical TF run.
 
 Worked example: the cyclohexadienyl radical (Mu + benzene), A_µ = 514.4 MHz
@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fourier.correlation import (
     DEFAULT_CORR_ORDER,
     _pair_frequencies,
@@ -127,17 +128,36 @@ def test_vectorised_pair_matches_scalar_reference() -> None:
         np.testing.assert_allclose(nu34, [r[1] for r in ref], rtol=1e-12, atol=1e-12)
 
 
-def test_breit_rabi_pair_matches_wimda_estimate_within_approximation() -> None:
-    """The exact forward map agrees with WiMDA's approximate partner-line estimate.
+@pytest.mark.parametrize(
+    ("field", "a_mhz", "sum_is_coupling"),
+    [(1.0, 500.0, True), (1000.0, 500.0, True), (1000.0, 20.0, False), (15000.0, 200.0, False)],
+)
+def test_positive_pair_matches_independent_spin_hamiltonian(
+    field: float, a_mhz: float, sum_is_coupling: bool
+) -> None:
+    """Absolute line positions obey both branches of the signed Breit--Rabi map.
 
-    WiMDA's rounded constants and high-field expansion drift the lower line by up
-    to about 0.03 MHz, while the forward-map sum is A to machine precision. Each
-    reference is WiMDA's lower-line estimate given the exact upper line.
+    H/h = A S_e·S_mu + ν_e S_e,z − ν_mu S_mu,z, with dimensionless spin-1/2
+    matrices; Kadono and Ito, J. Phys. Soc. Jpn. 94, 064601 (2025), eq. (4),
+    with anisotropic and nuclear couplings set to zero.
     """
-    for field, a_mhz, wimda_nu12 in [(1000.0, 500.0, 214.42418), (5000.0, 1200.0, 506.73658)]:
-        nu12, nu34 = breit_rabi_pair(field, a_mhz)
-        assert nu12 + nu34 == pytest.approx(a_mhz, rel=1e-9)
-        assert nu12 == pytest.approx(wimda_nu12, abs=0.05)
+    spin = np.array([[[0, 1], [1, 0]], [[0, -1j], [1j, 0]], [[1, 0], [0, -1]]], dtype=complex) / 2.0
+    identity = np.eye(2)
+    hamiltonian = a_mhz * sum(np.kron(axis, axis) for axis in spin)
+    hamiltonian += field * (
+        G_E_MHZ_PER_G * np.kron(spin[2], identity) - G_MU_MHZ_PER_G * np.kron(identity, spin[2])
+    )
+    levels, states = np.linalg.eigh(hamiltonian)
+    aligned_up = int(np.argmax(np.abs(states[0]) ** 2))
+    aligned_down = int(np.argmax(np.abs(states[3]) ** 2))
+    mixed = [i for i in range(4) if i not in (aligned_up, aligned_down)]
+    e1, e3 = levels[aligned_up], levels[aligned_down]
+    e4, e2 = levels[mixed]
+    expected = (abs(e1 - e2), abs(e3 - e4))
+    pair = breit_rabi_pair(field, a_mhz)
+    np.testing.assert_allclose(pair, expected, rtol=1e-11, atol=1e-10)
+    observed_coupling = sum(pair) if sum_is_coupling else pair[1] - pair[0]
+    assert observed_coupling == pytest.approx(a_mhz, abs=1e-10)
 
 
 # ── correlation_spectrum (pure core) ────────────────────────────────────────

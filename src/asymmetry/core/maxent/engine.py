@@ -2054,15 +2054,12 @@ def maxent(
     *cycles* is an upper bound: the run stops early at the χ² plateau unless
     *early_stop* is ``False``.
 
-    **There is no asymmetry-domain MaxEnt, and there cannot be one.** This
-    algorithm fits a forward model of the raw *counts*, weighting every bin by
-    its own Poisson error and carrying per-group phases, amplitudes and
-    backgrounds; an asymmetry curve has already combined detectors, divided out
-    the normalisations and destroyed exactly those statistics. If what you have
-    is an asymmetry curve, use
-    :func:`asymmetry.core.fourier.fft.fft_arrays` (or a frequency-domain fit)
-    instead. If you have counts but no :class:`~asymmetry.core.data.dataset.Run` to carry them, use
-    :func:`maxent_from_counts`, which shares this function's implementation.
+    This grouped-count implementation fits a shared spectrum with per-group
+    phases, amplitudes, backgrounds and count-domain errors. A reduced
+    asymmetry curve does not retain those separate signals. Use
+    :func:`asymmetry.core.fourier.fft.fft_arrays` or a frequency-domain fit for
+    a curve, or :func:`maxent_from_counts` for counts without a
+    :class:`~asymmetry.core.data.dataset.Run`.
     """
     run = _require_run(run)
     # The cycle loop's state signature reads the config's binning/time-window
@@ -2278,16 +2275,11 @@ def maxent_from_counts(
 ) -> MaxEntResult:
     """Reconstruct a MaxEnt spectrum from per-group raw counts — no :class:`~asymmetry.core.data.dataset.Run`.
 
-    **There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt
-    reconstructs P(B) by fitting a forward model of the *counts*, weighting every
-    bin by its own Poisson error and carrying per-group phases, amplitudes and
-    backgrounds. An asymmetry curve has already combined detectors, divided out
-    the normalisations and destroyed exactly the per-group statistics the
-    algorithm needs, so there is nothing to hand it. If what you have is an
-    asymmetry curve — a custom pairing, a derived or exported trace — use
-    :func:`asymmetry.core.fourier.fft.fft_arrays` (or a frequency-domain fit)
-    instead; that is the array-based frequency estimator for the asymmetry
-    domain.
+    This grouped-count implementation fits a shared spectrum with per-group
+    phases, amplitudes, backgrounds and count-domain errors. A reduced
+    asymmetry curve does not retain those separate signals. Use
+    :func:`asymmetry.core.fourier.fft.fft_arrays` or a frequency-domain fit for
+    a curve.
 
     This entry point exists for the case where you *do* have counts but no
     :class:`~asymmetry.core.data.dataset.Run` to carry them: a re-grouped detector sum, a simulation, counts

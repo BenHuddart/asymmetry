@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarify built-in fit-model sources, amplitude conventions and approximation
   limits, including muonium, compressed relaxation and vortex-lattice shapes.
 
+- Clarify grouped-count MaxEnt inputs and radical-correlation line conventions,
+  keeping spectral-method guidance in the maintained reference pages.
+
 - Keep unidentified 64- and 96-detector runs on a generic layout and preserve
   stored grouping choices when instrument recognition is inconclusive.
 

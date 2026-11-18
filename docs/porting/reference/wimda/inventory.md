@@ -99,8 +99,8 @@ this comparison.
      Flagship: `src/MaxEnt.pas`, `src/Fourier.pas` (`CosFT`, `Four1`).
      A different statistical method that merely shares the name.
   **Notable:** WiMDA and Mantid both ship the MULTIMAX-lineage MaxEnt
-  (Mantid as `MuonMaxent`); musrfit has none. Asymmetry's is a stub.
-  Full study: `docs/porting/maxent/`.
+  (Mantid as `MuonMaxent`); musrfit has none. Asymmetry implements grouped-count reconstruction; see
+  [Fourier analysis](../../../reference/fourier_analysis.rst).
 
 - **`spectrum background subtraction`** — Interactive tool for local
   background removal in frequency-domain plots.  

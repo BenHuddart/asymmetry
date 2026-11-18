@@ -973,7 +973,9 @@ backgrounds through a forward model of the counts. The numerical kernel is a
 deterministic entropy-regularised projected-gradient **V1** engine that shares
 the forward/adjoint contract of the full three-direction Skilling–Bryan search
 [2]_ but does not yet implement that search itself; it is available from both
-the core Python API and the desktop GUI.
+the core Python API and the desktop GUI. A reduced asymmetry curve is not an
+input to this implementation: it does not retain the separate detector-group
+signals and count-domain errors required by the forward model.
 
 .. _maxent-caution:
 
@@ -1030,15 +1032,11 @@ Engine API
 
 .. warning::
 
-   **There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt
-   reconstructs :math:`P(B)` by fitting a forward model of the raw detector
-   *counts*: it weights every time bin by its own Poisson error and carries a
-   phase, an amplitude and a background for each detector group. An asymmetry
-   curve has already combined the detectors, divided out the normalisations and
-   discarded exactly those per-group statistics, so there is nothing left to
-   hand the algorithm — no amount of API would make it work. If what you have
-   is an asymmetry curve, the frequency-domain estimators for it are the FFT
-   (:ref:`fft-arrays-without-a-dataset`) and a frequency-domain fit
+   **This implementation requires grouped detector counts.** Its forward
+   model carries a phase, amplitude, background and count-domain errors for
+   each detector group. A reduced asymmetry curve does not retain those
+   separate signals. For an asymmetry curve, use the FFT
+   (:ref:`fft-arrays-without-a-dataset`) or a frequency-domain fit
    (:doc:`frequency_domain_fitting`).
 
    If you have **counts but no** ``Run`` to carry them — a re-grouped detector

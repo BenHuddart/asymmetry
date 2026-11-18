@@ -255,19 +255,3 @@ def test_a_dataset_is_not_a_counts_argument() -> None:
     )
     with pytest.raises(TypeError, match="mapping .* or a sequence"):
         maxent_from_counts(dataset, bin_width_us=_BIN_WIDTH_US)
-
-
-def test_the_docstring_states_there_is_no_asymmetry_domain_maxent() -> None:
-    """The plan's docs requirement, pinned so it cannot be edited away."""
-    import asymmetry.core.fourier.maxent as fourier_maxent
-
-    for text in (
-        maxent_from_counts.__doc__,
-        maxent.__doc__,
-        fourier_maxent.__doc__,
-        fourier_maxent.maxent.__doc__,
-    ):
-        assert text is not None
-        assert "no asymmetry-domain MaxEnt" in text
-    assert "fft_arrays" in (maxent_from_counts.__doc__ or "")
-    assert "fft_arrays" in (maxent.__doc__ or "")

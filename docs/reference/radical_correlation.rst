@@ -31,26 +31,26 @@ which detects a mixture of products, cannot.
 Why a radical gives a line pair
 -------------------------------
 
-The muon and the radical's unpaired electron form a coupled two-spin system —
-the same Breit–Rabi physics as muonium. In a high transverse field the muon
-precession is not one line at the diamagnetic Larmor frequency
-:math:`\nu_\mathrm{d} = (\gamma_\mu/2\pi)B` but a **pair** of lines,
-:math:`\nu_{12}` and :math:`\nu_{34}`, straddling it. The two frequencies are
-fixed by the field and the coupling, and their **sum is the coupling itself**:
+The muon and the radical's unpaired electron form an isotropic two-spin
+system [2]_. Its Breit–Rabi levels determine two muon-spin transition frequencies
+at high transverse field. The reduced field is
+:math:`x=(\nu_e+\nu_\mu)/A_\mu`, where :math:`\nu_e` and :math:`\nu_\mu`
+are the positive electron and muon Larmor frequencies. The electron high-field
+limit is :math:`x\gg1`.
 
-.. math::
+The signed transitions satisfy :math:`u_{12}+u_{34}=A_\mu` [1]_. An ordinary
+positive-frequency FFT contains their absolute positions
+:math:`\nu_{12}=|u_{12}|` and :math:`\nu_{34}=|u_{34}|`. Their **sum** equals
+:math:`A_\mu` while both signed transitions are positive; after
+:math:`u_{12}` crosses zero their **difference** equals :math:`A_\mu`.
+High electron field alone does not select which relation applies.
 
-   A_\mu = \nu_{12} + \nu_{34}.
-
-Equivalently, the splitting between the two lines *is* :math:`A_\mu` (one of the
-pair is often a negative frequency, so the measured spacing equals the sum). At
-the kilogauss fields where radicals are measured the system is deep in the
-high-field (Paschen–Back) regime, where this simple relation is exact and the
-two lines carry equal weight.
-
-So a radical's transverse-field FFT shows the diamagnetic line plus a symmetric
-pair about it. Read the two line positions, add them, and you have
-:math:`A_\mu` — that is the whole method.
+For example, the exact isotropic map at 1,000 G gives positive lines at
+214.424119 and 285.575881 MHz for :math:`A_\mu=500` MHz (sum 500 MHz), but
+3.589391 and 23.589391 MHz for :math:`A_\mu=20` MHz (difference 20 MHz).
+The correlation scan computes both line positions from the full levels for
+each candidate coupling, so it does not infer the coupling by assuming a
+sum rule.
 
 How the correlation spectrum works
 ----------------------------------
@@ -82,8 +82,11 @@ observable pair and the coupling relation differ, and the method does not apply.
 It needs a **continuous muon source** (PSI, TRIUMF) — the radical spectrum runs
 to hundreds of MHz, beyond a pulsed source's time resolution — and a **promptly
 formed** radical, since a slowly forming one dephases in the transverse field
-before it can be labelled. The diamagnetic line is skipped, and a single strong
-line with no partner is suppressed rather than reported.
+before it can be labelled. The scan requires the lower positive line to lie
+at least two FFT bins above the diamagnetic frequency and the upper line
+within the sampled spectrum.
+Pairs outside that band are suppressed, including weak-coupling pairs near
+the diamagnetic line; a single strong line with no partner is also suppressed.
 
 Using it in Asymmetry
 ---------------------
@@ -96,8 +99,8 @@ in the Fourier panel's display-mode list. Two controls appear:
   set it to nudge the matching field if the header value is missing or slightly
   off.
 - **Correlation order** — how aggressively unequal-amplitude (spurious) pairs
-  are penalised. The default of 2 follows WiMDA; raise it to sharpen against
-  noise, set 0 for a plain product.
+  are penalised. Raise the order above its default of 2 to penalise unequal
+  lines more strongly; set 0 for a plain product.
 
 From a script or an agent, ``asymmetry fourier --run N --correlation``
 (:doc:`agent_workflow`) builds the same spectrum on the command line, with
@@ -117,7 +120,7 @@ Worked example: the cyclohexadienyl radical
 
 The textbook muoniated radical is **cyclohexadienyl**, formed when a muon adds
 to benzene. Its transverse-field spectrum at a few kilogauss shows the
-diamagnetic line and a pair straddling it; their sum gives a muon hyperfine
+diamagnetic line and a radical pair; their sum gives a muon hyperfine
 coupling of :math:`A_\mu = 514.4(1)` MHz. Feed such a spectrum to the
 correlation mode and a single peak appears at 514 MHz — the radical's signature.
 A radical with two inequivalent muon environments would show two peaks, one per
@@ -165,6 +168,13 @@ its resonance fitting.
 
 References
 ----------
+
+.. [1] M. I. Eides, Phys. Lett. B **795**, 113 (2019), eq. (2).
+   `doi:10.1016/j.physletb.2019.06.011 <https://doi.org/10.1016/j.physletb.2019.06.011>`_.
+
+.. [2] R. Kadono and T. U. Ito, J. Phys. Soc. Jpn. **94**, 064601 (2025),
+   eq. (4) with anisotropic and nuclear couplings set to zero.
+   `doi:10.7566/JPSJ.94.064601 <https://doi.org/10.7566/JPSJ.94.064601>`_.
 
 - I. McKenzie, Annu. Rep. Prog. Chem. Sect. C **109**, 65 (2013).
 - I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,

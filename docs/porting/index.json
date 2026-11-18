@@ -207,28 +207,6 @@
       "updated": "2026-05-14"
     },
     {
-      "slug": "fourier-transform",
-      "feature_name": "Fourier transform",
-      "status": "study",
-      "path": "docs/porting/fourier-transform",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/fourier-transform/README.md",
-        "comparison": "docs/porting/fourier-transform/comparison.md",
-        "implementation_options": "docs/porting/fourier-transform/implementation-options.md",
-        "test_data": "docs/porting/fourier-transform/test-data.md",
-        "verification_plan": "docs/porting/fourier-transform/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-05-15",
-      "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit \u2018phase\u2019 = WiMDA \u2018Phase Spectrum\u2019; musrfit \u2018real\u2019 = WiMDA \u2018Phase\u2019; musrfit \u2018power\u2019 = |F|^2 != WiMDA \u2018(Power)^1/2\u2019 = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
-    },
-    {
       "slug": "multi-group-time-domain-fitting",
       "feature_name": "Multi-group time-domain fitting",
       "status": "study",
@@ -248,49 +226,6 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-05-18"
-    },
-    {
-      "slug": "frequency-domain-fitting",
-      "feature_name": "Frequency-domain fitting",
-      "status": "study",
-      "path": "docs/porting/frequency-domain-fitting",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/frequency-domain-fitting/README.md",
-        "comparison": "docs/porting/frequency-domain-fitting/comparison.md",
-        "implementation_options": "docs/porting/frequency-domain-fitting/implementation-options.md",
-        "test_data": "docs/porting/frequency-domain-fitting/test-data.md",
-        "verification_plan": "docs/porting/frequency-domain-fitting/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-05-30"
-    },
-    {
-      "slug": "maxent",
-      "feature_name": "Maximum entropy spectral estimation",
-      "status": "study",
-      "path": "docs/porting/maxent",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/maxent/README.md",
-        "comparison": "docs/porting/maxent/comparison.md",
-        "implementation_options": "docs/porting/maxent/implementation-options.md",
-        "test_data": "docs/porting/maxent/test-data.md",
-        "verification_plan": "docs/porting/maxent/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-06-05",
-      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical \u2014 implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images \u2014 genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt \u2014 excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely \u2014 do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
     },
     {
       "slug": "minos-error-analysis",
@@ -368,44 +303,6 @@
       "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation \u2014 chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
     },
     {
-      "slug": "maxent-spectrum",
-      "feature_name": "MaxEnt frequency reconstruction",
-      "status": "candidate",
-      "tier": "next",
-      "score": 12,
-      "path": "docs/porting/candidates/maxent-spectrum",
-      "references": [
-        "WiMDA",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/maxent-spectrum/README.md",
-        "comparison": "docs/porting/candidates/maxent-spectrum/comparison.md",
-        "scoring": "docs/porting/candidates/maxent-spectrum/scoring.md"
-      },
-      "updated": "2026-06-05",
-      "notes": "Promoted to full study: see slug 'maxent' (docs/porting/maxent). Candidate docs retained for scoring history; the study supersedes their technical content."
-    },
-    {
-      "slug": "rrf-transform",
-      "feature_name": "Rotating Reference Frame transform",
-      "status": "candidate",
-      "tier": "next",
-      "score": 12,
-      "path": "docs/porting/candidates/rrf-transform",
-      "references": [
-        "Mantid",
-        "musrfit"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/rrf-transform/README.md",
-        "comparison": "docs/porting/candidates/rrf-transform/comparison.md",
-        "scoring": "docs/porting/candidates/rrf-transform/scoring.md"
-      },
-      "updated": "2026-06-12",
-      "notes": "Promoted to full study: see slug 'rrf' (docs/porting/rrf). Candidate docs retained for scoring history; the study supersedes their technical content."
-    },
-    {
       "slug": "python-user-functions",
       "feature_name": "Python user functions (registration facade + discovery, replacing WiMDA plugin DLLs)",
       "status": "implemented",
@@ -426,43 +323,6 @@
       "tests_path": "tests/test_user_functions.py",
       "src_path": "src/asymmetry/core/fitting/user_functions.py",
       "notes": "Wave B project of wimda-parity-gap; promoted from candidate (python-user-functions-candidate retained for scoring history). IMPLEMENTED 2026-06-12, 5 milestones. Facade core/fitting/user_functions.py (register_component + register_parameter_component; MODELS internal-only, models._register aligned onto shared core/fitting/registration.py); N4 naming = grammar-atom names + required domain + cross-registry uniqueness (W17 user flag exempts docs tests); discovery core/plugins.py (~/.asymmetry/user_functions + asymmetry.user_functions entry points, explicit load_user_functions(), structured report, never crashes); W1 named zero-valued placeholder degrade replaces fit_panel silent fallback; GUI: startup hook, log lines, Setup dialog, picker/info badges; Keren example plugin bit-for-bit + exact-fit parity, doubles as docs/user_guide/user_functions.rst tutorial. Design-only: getresults derived-quantities hook, sandboxing (WiMDA trust model documented), hot reload."
-    },
-    {
-      "slug": "moments-analysis",
-      "feature_name": "Spectral moments analysis",
-      "status": "candidate",
-      "tier": "later",
-      "score": 10,
-      "path": "docs/porting/candidates/moments-analysis",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/moments-analysis/README.md",
-        "comparison": "docs/porting/candidates/moments-analysis/comparison.md",
-        "scoring": "docs/porting/candidates/moments-analysis/scoring.md"
-      },
-      "updated": "2026-06-12",
-      "superseded_by": "spectral-moments"
-    },
-    {
-      "slug": "spectral-moments",
-      "feature_name": "Spectral moments",
-      "status": "study",
-      "path": "docs/porting/spectral-moments",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/spectral-moments/README.md",
-        "comparison": "docs/porting/spectral-moments/comparison.md",
-        "implementation_options": "docs/porting/spectral-moments/implementation-options.md",
-        "test_data": "docs/porting/spectral-moments/test-data.md",
-        "verification_plan": "docs/porting/spectral-moments/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": "src/asymmetry/core/fourier/moments.py",
-      "updated": "2026-06-12"
     },
     {
       "slug": "phase-auto-calibration",
@@ -821,77 +681,6 @@
       "notes": "Wave A project 3 of wimda-parity-gap. IMPLEMENTED 2026-06-10, all 3 phases validate-green (P1 2126 / P2 2135 / P3 2145). Raw-count fits with selectable Poisson(Cash, default)/Gaussian cost. P1: build_fb_count_model (sqrt(alpha) F/B tie) + count_domain.py driver; single-histogram = one-group degenerate case of build_grouped_count_model; raw model = e^(-t/tau)x existing builder; engine.py untouched. P2: interior exclude window, fittable t0, baseline drift (all no-op-when-off). P3: count-loss DT0(+C2/C3/C4 polynomial) + promote_deadtime_to_grouping (Send-to-Group, additive/replace) + double-pulse single-histogram (simulate_double_pulse_run round-trips dpsep; dpsep FIXED from metadata - non-smooth gate defeats migrad). GUI: fit-target selector in MultiGroupFitWindow + minimal fit_panel.py routing. Follow-ons: unify fgAll onto Poisson, free tau, DT1/power-law deadtime, robust dpsep scan, FB double-pulse, plot overlay, MINOS-on-alpha. NOT pushed."
     },
     {
-      "slug": "maxent-completion",
-      "feature_name": "MaxEnt completion: reconstruction overlay, ISIS pulse shape, ZF/LF+SpecBG, deadtime/phase calibration",
-      "status": "implemented",
-      "path": "docs/porting/maxent-completion",
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/maxent-completion/README.md",
-        "comparison": "docs/porting/maxent-completion/comparison.md",
-        "implementation_options": "docs/porting/maxent-completion/implementation-options.md",
-        "test_data": "docs/porting/maxent-completion/test-data.md",
-        "verification_plan": "docs/porting/maxent-completion/verification-plan.md"
-      },
-      "tests_path": "tests/test_maxent.py",
-      "src_path": "src/asymmetry/core/maxent/engine.py",
-      "updated": "2026-06-10",
-      "notes": "Wave A project 6 of wimda-parity-gap umbrella; EXTENDS docs/porting/maxent/ (the implemented-engine study) without re-litigating it. Implements that study's deferred Phase1/2/follow-on items: (1) time-domain reconstruction overlay (opus already computes it); (2) ISIS pulse-shape response in the forward model (single+double, parabolic proton FT x pion Lorentzian); (3) ZF/LF 2-group F/B mode + SpecBG zero-freq pseudo-Voigt subtraction; (4) deadtime fitting (DEADFIT) + editable phase/amp/deadtime tables + fitted-phase exchange with grouped time-domain fits (absorbs phase-auto-calibration WiMDA slice). KEY FINDING: shipped engine is a projected-gradient V1 with REAL cosine/sine forward-adjoint, NOT WiMDA's complex-FFT Skilling-Bryan kernel -> all new physics folds into that contract via the existing cos/sin component split, no rewrite. Scope decisions with Ben 2026-06-10: synthetic-only pulse validation (single+double); suggest-only deadtime promotion; strict 2-group ZF/LF parity; overlay as plot-workspace view token; core/fourier/units.py simple converters (shared w/ frequency-domain-finishers, API recorded); ZF/LF mode selector hard-constrains group table; NO schema bump (from_dict defaults; signature-only). Looseness/phase-accel knobs verdict OUT (target WiMDA's SB kernel V1 doesn't run). Sconv deferred (numerical hazard). Mantid not importable; MaxentTools pure-numpy kernels = optional skipif oracle, copy nothing. IMPLEMENTED in 3 phases (validate green each): P1 reconstruction overlay (TIME_MAXENT_RECON rep + reconstruction view token + residuals renderer); P2 ISIS pulse-shape response folded into the real cos/sin kernel as R(nu)cos(theta-delta) + interior exclusion sigma-inflation + core/fourier/units.py MHz/Gauss/Tesla helper (shared w/ frequency-domain-finishers); P3 ZF/LF 2-group alpha-tie + SpecBG display subtraction + spectrum/log export + phase exchange (rad/deg by group id, via fit_panel grouped seed bridge) + deadtime fit reusing calibrate_deadtime_from_histograms (suggest-only promotion). Divergences in comparison.md."
-    },
-    {
-      "slug": "frequency-domain-finishers",
-      "feature_name": "Frequency-domain finishers: field-axis units, exclusion ranges, pulse-rolloff compensation, robust baseline, S/N readouts, real+imag, Burg pole scan, diamagnetic removal",
-      "status": "implemented",
-      "path": "docs/porting/frequency-domain-finishers",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/frequency-domain-finishers/README.md",
-        "comparison": "docs/porting/frequency-domain-finishers/comparison.md",
-        "implementation_options": "docs/porting/frequency-domain-finishers/implementation-options.md",
-        "test_data": "docs/porting/frequency-domain-finishers/test-data.md",
-        "verification_plan": "docs/porting/frequency-domain-finishers/verification-plan.md"
-      },
-      "tests_path": "tests/test_fourier_finishers.py",
-      "src_path": "src/asymmetry/core/fourier/conditioning.py",
-      "updated": "2026-06-11",
-      "notes": "Wave A project 5 of wimda-parity-gap umbrella. IMPLEMENTED (both phases, validate green). Phase 1: post-FFT conditioning in core/fourier/conditioning.py (pulse comp = 1/R(nu) from maxent/pulse.py capped+node-cutoff, NOT WiMDA unbounded Gaussian; iterative sigma-clip baseline, WiMDA single-pass=1 iter; exclusions wire exclude_frequency_ranges + diamag slot + PSI preset; Real+Imag overlay; S/N readout). Phase 2: core/fourier/burg.py all-poles diagnostic (memcof/evlmem/FPE, display mode 'Resolution (Burg)') + core/fourier/diamag.py time-domain fit-and-subtract (field write-back + time overlay). Field-axis verify-only (plot_panel FieldUnit). Deferred: radical correlation spectrum, N0 single-histogram."
-    },
-    {
-      "slug": "radical-correlation-spectrum",
-      "feature_name": "Muoniated-radical correlation spectrum (WiMDA Corr/AvCorr + rmatch Breit\u2013Rabi pair-matching)",
-      "status": "implemented",
-      "path": "docs/porting/radical-correlation-spectrum",
-      "references": [
-        "WiMDA",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)",
-        "McKenzie, Annu. Rep. Prog. Chem. Sect. C 109, 65 (2013)",
-        "Pratt, Physica B 289-290, 710 (2000)",
-        "Blundell et al., Nat. Rev. Methods Primers 1, 89 (2021)"
-      ],
-      "docs": {
-        "readme": "docs/porting/radical-correlation-spectrum/README.md",
-        "comparison": "docs/porting/radical-correlation-spectrum/comparison.md",
-        "implementation_options": "docs/porting/radical-correlation-spectrum/implementation-options.md",
-        "test_data": "docs/porting/radical-correlation-spectrum/test-data.md",
-        "verification_plan": "docs/porting/radical-correlation-spectrum/verification-plan.md"
-      },
-      "tests_path": "tests/test_fourier_correlation.py",
-      "src_path": "src/asymmetry/core/fourier/correlation.py",
-      "depends_on": [
-        "frequency-domain-finishers"
-      ],
-      "updated": "2026-06-11",
-      "notes": "Promotion of frequency-domain-finishers comparison.md \u00a79 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). IMPLEMENTED (3 phases): core/fourier/correlation.py + spectrum.py derived mode + fft.py alias (P1); badged GUI radio + reference-field/order controls + A\u03bc-axis field-unit lock + schema recipe keys (P2); user-guide page docs/user_guide/radical_correlation.rst with TF-vs-ALC subsection (P3). validate green 2328 passed."
-    },
-    {
       "slug": "fit-workflow-diagnostics",
       "feature_name": "Fit-workflow diagnostics: MINOS asymmetric errors, \u03c7\u00b2 quality band, chain-seeding, mid-fit abort, persistent fit record",
       "status": "study",
@@ -934,31 +723,6 @@
       },
       "updated": "2026-06-12",
       "notes": "Promoted to full study: see slug 'python-user-functions' (docs/porting/python-user-functions). Candidate docs retained for scoring history; the study supersedes their technical content."
-    },
-    {
-      "slug": "rrf",
-      "feature_name": "Rotating-reference-frame display and fitting (WiMDA RRF + complex-demodulation upgrade)",
-      "status": "implemented",
-      "path": "docs/porting/rrf",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)",
-        "Riseman & Brewer, Hyperfine Interact. 65, 1107 (1991)",
-        "Rainford, in Muon Science (CRC Press, 1999)"
-      ],
-      "docs": {
-        "readme": "docs/porting/rrf/README.md",
-        "comparison": "docs/porting/rrf/comparison.md",
-        "implementation_options": "docs/porting/rrf/implementation-options.md",
-        "test_data": "docs/porting/rrf/test-data.md",
-        "verification_plan": "docs/porting/rrf/verification-plan.md"
-      },
-      "updated": "2026-06-12",
-      "notes": "Promotion of the rrf-transform candidate via the wimda-parity-gap umbrella (Wave B project 10). Verified vs WiMDA Pascal (PlotPar.pas RRF controls 427-475; Plot.pas 2cos+box demod 1652-1695, single-group variant 1712-1727, 2pi/deg conversions 2532-2536; Analyse.pas MusrFun shift 1124-1140 + AsymFitFunction.pas 440-470; dofit raw-data assembly 805-867), Mantid RRFMuon (exact quadrature rotation oracle), musrfit PRunAsymmetryRRF (2cos + packing). Display = complex demodulation + windowed-sinc FIR (WiMDA 2cos+box as named comparison mode; 2w-image suppression is the headline divergence); fitting = core-only frequency-offset CompositeModel wrapper on raw data (textbook: RRF is a visualization tool, not a fit preprocessor). Controls only on fb_asymmetry view; plot_state['rrf'] additive, no schema bump. IMPLEMENTED: core/transform/rrf.py (Blackman FIR, sampling-aware default bandwidth ducking the folded 2nu0 image; exact error propagation; WiMDA mode bin-for-bin vs Pascal loop) + core/fitting/rrf_offset.py (registry+wrapper, delta-nu semantics, fit-equivalence proven, engine-level frequency_offset flagged follow-up) + gui/widgets/rrf_controls.py (one-line panel hook, display-only transform, frame badge, plot_state['rrf']) + corpus smoke on HAL-9500 8T kappa-ET (F2/F7 near-opposite pair; group-sum washout documented) + user_guide/rotating_frame.rst. validate green 2632.",
-      "tests_path": "tests/test_rrf_transform.py",
-      "src_path": "src/asymmetry/core/transform/rrf.py"
     },
     {
       "slug": "run-arithmetic",
@@ -1114,8 +878,6 @@
       "path": "docs/porting/fit-trend-representation-consolidation",
       "depends_on": [
         "multi-group-time-domain-fitting",
-        "frequency-domain-fitting",
-        "maxent-completion",
         "fit-workflow-diagnostics",
         "time-integral-asymmetry"
       ],

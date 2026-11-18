@@ -99,8 +99,8 @@ unified 10-category taxonomy.
   (`doc/musrfit.dox:68`). The only entropy code in the tree is
   `PFTPhaseCorrection` (`src/include/PFourier.h:84`, C++/Minuit2) — an
   automatic *phase correction* of an already-computed FFT spectrum
-  (`phase_opt_real`), not a MaxEnt spectral estimator. See
-  `docs/porting/maxent/comparison.md` for the verification pass.
+  (`phase_opt_real`), not a MaxEnt spectral estimator. See the maintained
+  [spectral comparison](../../../reference/fourier_analysis.rst).
 
 ## 6. Parameter trending
 

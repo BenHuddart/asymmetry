@@ -62,9 +62,9 @@ For a window over the line, above an amplitude cutoff, Asymmetry reports:
 - **Asymmetry** :math:`\beta=(B_{\mathrm{ave}}-B_{\mathrm{pk}})/B_{\mathrm{rms,pk}}`
   — positive when the mean lies above the peak.
 
-The vortex-lattice field distribution is the canonical use case: a sharp low-field
-cutoff at the lattice's saddle-point field and a long tail to high field near the
-cores give it a positive skew, so :math:`\beta>0` and :math:`\gamma_1>0` are the
+The vortex-lattice field distribution is the canonical use case: a low-field
+cutoff and a long tail to high field near the vortex cores give it a positive
+skew, so :math:`\beta>0` and :math:`\gamma_1>0` are the
 expected signature, and their magnitude tracks the lattice geometry and its
 disorder. The sign convention here matches WiMDA and the literature for that
 distribution [1] [2] [3].

@@ -196,7 +196,7 @@ penetration-depth analysis).
 **Roadmap links.**
 [`theory-library-expansion`](../../candidates/theory-library-expansion/)
 adds the time-domain Brandt vortex model;
-[`maxent-spectrum`](../../candidates/maxent-spectrum/) sharpens the
+[MaxEnt reconstruction](../../reference/fourier_analysis.rst) sharpens the
 P(B) lineshape extraction.
 
 ---
@@ -280,7 +280,7 @@ Amato-Morenzoni Ch 6 (the section on the vortex-state field
 distribution).
 
 **Roadmap links.**
-[`maxent-spectrum`](../../candidates/maxent-spectrum/);
+[MaxEnt reconstruction](../../reference/fourier_analysis.rst);
 [`theory-library-expansion`](../../candidates/theory-library-expansion/)
 (Brandt P(*B*) model).
 
