@@ -330,5 +330,3 @@ class TestDetectInstrument:
 
     def test_65_returns_none(self):
         assert detect_instrument(65) is None
-
-
