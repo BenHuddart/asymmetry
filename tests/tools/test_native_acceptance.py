@@ -468,3 +468,32 @@ def test_source_packet_failure_retains_sanitized_real_entry_outcome_before_clean
     assert outcome["report"]["failure"]["stage"] == "identity"
     assert outcome["report"]["failure"]["type"] == "ValueError"
     assert str(tmp_path) not in output
+
+
+@pytest.mark.parametrize(
+    "target,backend,native_library",
+    [
+        ("windows-x64", "_internal/pyhdf/_hdfext.cp312-win_amd64.pyd", "_internal/mfhdf.dll"),
+        (
+            "macos-arm64",
+            "Contents/Frameworks/pyhdf/_hdfext.cpython-312-darwin.so",
+            "Contents/Frameworks/pyhdf/__dot__dylibs/libmfhdf.0.dylib",
+        ),
+    ],
+)
+def test_omission_selector_matches_native_origin_paths_to_portable_inventory(
+    target, backend, native_library
+):
+    components = [
+        {"path": "resources/logo_256x256.png", "kind": "resource", "sha256": "1" * 64},
+        {"path": backend, "kind": "native_library"},
+        {"path": native_library, "kind": "native_library"},
+    ]
+    control = {
+        "resource_sha256": "1" * 64,
+        "origins": {
+            "pyhdf._hdfext": backend.replace("/", "\\") if target == "windows-x64" else backend
+        },
+    }
+    selected = native.omission_components(components, control, target)
+    assert selected == dict(zip(("resource", "backend", "native"), components, strict=True))

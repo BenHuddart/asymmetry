@@ -506,3 +506,36 @@ def test_entry_accepts_macos_bundle_resource_symlinks_and_rejects_escape(tmp_pat
         environment=source_environment(),
     )
     assert result["report"]["origins"]["asymmetry"].startswith("Contents/Resources/")
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_entry_imports_lazy_required_dependencies_before_checking_origins(
+    tmp_path, inputs, available
+):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import sys\nfrom asymmetry.gui import scientific_acceptance as acceptance\n"
+        "original=acceptance.scientific_journey\n"
+        "def journey(*args):\n"
+        "    result=original(*args)\n"
+        + (
+            "    sys.modules.pop('awkward_cpp',None)\n"
+            if available
+            else "    sys.modules['awkward_cpp']=None\n"
+        )
+        + "    return result\n"
+        "acceptance.scientific_journey=journey\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    args = ([sys.executable, "-B", str(bootstrap)], inputs, identity(), tmp_path / "run")
+    if available:
+        outcome = run_acceptance(*args, environment=source_environment())
+        assert outcome["report"]["origins"]["awkward_cpp"] == "awkward_cpp"
+    else:
+        with pytest.raises(RuntimeError):
+            run_acceptance(*args, environment=source_environment())
+        outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+        assert outcome["report"]["failure"] == {"stage": "origins", "type": "ModuleNotFoundError"}
+    for name in ("counts.root", "counts.nxs"):
+        assert outcome["report"]["results"][name]["fit_percent"] == pytest.approx(20, abs=1e-5)
+        assert outcome["report"]["results"][name]["replay_fraction"] == pytest.approx([0.2] * 16)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import shutil
@@ -365,7 +366,8 @@ def main(arguments: list[str]) -> int:
         origins = {}
         payload = frozen_payload_root() if getattr(sys, "frozen", False) else None
         for name in names:
-            origin = Path(sys.modules[name].__file__).resolve()
+            module = importlib.import_module(name)
+            origin = Path(module.__file__).resolve()
             if payload is not None and not origin.is_relative_to(payload.resolve()):
                 raise ValueError("scientific import escaped delivered payload")
             origins[name] = str(origin.relative_to(payload.resolve())) if payload else name

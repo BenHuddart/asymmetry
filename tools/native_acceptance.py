@@ -204,7 +204,7 @@ def omission_components(components: list, control: dict, target: str) -> dict:
         "backend": [
             item
             for item in components
-            if item["path"] == control["origins"]["pyhdf._hdfext"]
+            if item["path"] == control["origins"]["pyhdf._hdfext"].replace("\\", "/")
             and item["kind"] == "native_library"
         ],
         "native": [
