@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Verify unchanged Windows acquisition files consistently after writing or copying,
+  while retaining concurrent-change and path-replacement checks.
+
 - Clarify sourced methods comparisons, evidence limits, and current file-loading support; add topic navigation for fitting, Fourier/MaxEnt, and integral scans.
 
 - Refuse known unconverted Gaussian-component widths at Brandt trend fits;

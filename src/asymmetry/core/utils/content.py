@@ -55,9 +55,11 @@ def hash_file(
             progress(done, before.st_size)
         checkpoint()
         try:
-            changed = file_stamp(before) != file_stamp(os.fstat(stream.fileno())) or file_stamp(
-                before
-            ) != file_stamp(path.stat())
+            changed = file_stamp(before) != file_stamp(os.fstat(stream.fileno()))
+            if not changed:
+                # Windows path stat and fstat give ctime different meanings (CPython #157671).
+                with path.open("rb") as current:
+                    changed = file_stamp(before) != file_stamp(os.fstat(current.fileno()))
         except OSError as exc:
             raise ContentReadError(str(exc)) from exc
         if changed:

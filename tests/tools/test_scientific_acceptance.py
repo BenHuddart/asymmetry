@@ -594,3 +594,29 @@ def test_entry_retains_authoritative_source_verification_failure_facts(tmp_path,
     assert "active=True" in tail and "observed=unknown" in tail
     assert "expected=" + outcome["report"]["fixtures"]["counts.root"] in tail
     assert str(tmp_path) not in json.dumps(outcome)
+
+
+def test_entry_project_replay_uses_consistent_descriptor_timestamp_semantics(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "from pathlib import Path\nfrom types import SimpleNamespace\n"
+        "import asymmetry.core.utils.content as content\n"
+        "class BirthTimePath(type(Path())):\n"
+        "    def stat(self,*args,**kwargs):\n"
+        "        value=super().stat(*args,**kwargs)\n"
+        "        return SimpleNamespace(st_dev=value.st_dev,st_ino=value.st_ino,st_size=value.st_size,st_mtime_ns=value.st_mtime_ns,st_ctime_ns=value.st_ctime_ns-1000)\n"
+        "content.Path=BirthTimePath\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    outcome = run_acceptance(
+        [sys.executable, "-B", str(bootstrap)],
+        inputs,
+        identity(),
+        tmp_path / "run",
+        environment=source_environment(),
+    )
+    assert outcome["report"]["success"]
+    for name in ("counts.root", "counts.nxs"):
+        result = outcome["report"]["results"][name]
+        assert result["fit_percent"] == pytest.approx(20, abs=1e-5)
+        assert result["replay_fraction"] == pytest.approx([0.2] * 16)
