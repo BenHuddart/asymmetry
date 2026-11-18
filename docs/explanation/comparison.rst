@@ -2036,7 +2036,7 @@ the separate count-likelihood error-scale difference does not apply. No
 package-wide pull, coverage, or acquisition-chain agreement follows.
 
 Static Gaussian longitudinal-field Kubo–Toyabe
----------------------------------------------
+----------------------------------------------
 
 Asymmetry evaluates the static isotropic Gaussian field average with
 :math:`\Delta` in μs⁻¹ and longitudinal field ``B_L`` in Gauss. The musrfit
