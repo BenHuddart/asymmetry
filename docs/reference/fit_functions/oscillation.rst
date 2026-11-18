@@ -133,6 +133,12 @@ order use ``Oscillatory`` or ``OscillatoryField``. For a **powder** sample,
 where the ⅓ non-precessing tail is also visible, use ``OverhauserPowder``
 instead.
 
+The signed-field average above gives :math:`J_0(2\pi f t)` at zero phase.
+The fitted argument shift gives :math:`A(0)=A J_0(\phi)`; it is a fitting
+or time-origin convention, not the same normalised initial-spin state.
+A Bessel-like signal alone does not establish incommensurate order; other
+field distributions can resemble it.
+
 =============  ============  =====  ==========================================
 Name           Symbol        Unit   Description
 =============  ============  =====  ==========================================
@@ -479,26 +485,44 @@ VortexLattice / VortexLatticePowder
 Transverse-field precession in the **mixed state of a type-II superconductor**.
 Below :math:`T_c` the muon samples the inhomogeneous field of the flux-line
 lattice, whose distribution :math:`p(B)` is strongly **non-Gaussian** — a sharp
-low-field cutoff at the saddle point, a most-probable field below the mean, and
+low-field cutoff, a most-probable field below the mean, and
 a long tail to high field near the vortex cores (a positively skewed line). The
 relaxation :math:`R(t)=\langle e^{i 2\pi\gamma_\mu(B-\bar B)t}\rangle` is the
 characteristic function of the *modified-London* field distribution of an ideal
-triangular lattice. Fitting the lineshape directly — rather than a single
-``Gaussian`` proxy, whose returned rate depends on the fit window and binning —
-gives a window-independent penetration depth :math:`\lambda` and upper critical
-field :math:`B_{c2}`.
+triangular lattice. It is an explicit modified-London approximation with a
+Gaussian reciprocal-space core cutoff
+:math:`\exp(-\xi^2G^2/2)/(1+\lambda^2G^2)`, where
+:math:`\xi^2=\Phi_0/(2\pi B_{c2})`. The field deviations are rescaled to
+match Brandt's second moment. Agreement of that moment does not establish
+the full field-distribution shape or remove model and fit-window dependence
+from inferred :math:`\lambda` and :math:`B_{c2}`.
 
-``VortexLatticePowder`` applies the :math:`3^{1/4}\lambda_{ab}` polycrystalline
-average and returns the ab-plane depth :math:`\lambda_{ab}`. The line's second
-moment is calibrated to the Brandt result (see :doc:`../sc_penetration_depth`),
-so the depth read from this lineshape matches the field-domain
-``SC_Brandt_VortexLattice`` trend models. Multiply by a ``Gaussian`` for the
+``VortexLatticePowder`` substitutes :math:`3^{1/4}\lambda_{ab}` and returns
+the ab-plane depth :math:`\lambda_{ab}`. This is a width-based approximation
+for a highly anisotropic powder, not an orientation average of an anisotropic
+vortex-lattice distribution. Pratt *et al.*, Eq. (3), give the conversion in
+the London limit :math:`B_{c1}\ll B\ll B_{c2}`. Brandt's Eq. (13) describes
+the second moment for :math:`\kappa\geq5` over its stated reduced-field range;
+using it to calibrate a modified-London shape does not extend that physical
+domain (see :doc:`../sc_penetration_depth`). Multiply by a ``Gaussian`` for the
 nuclear dipolar background and add ``Oscillatory + Constant`` for the
 (weakly relaxing) sample-holder signal:
 
 .. code-block:: text
 
    VortexLatticePowder * Gaussian + Oscillatory + Constant
+
+The time transform also approximates the chosen spatial field map using a
+cached histogram. For the unpowdered variant at :math:`\lambda=195` nm,
+:math:`B=400` G and :math:`B_{c2}=25` T, 500 times over 0–8 μs show a maximum
+complex-envelope difference of :math:`0.0023846` from the direct mean over
+the same :math:`96^2` cell samples. Including the carrier at zero phase gives
+a maximum normalised real-signal difference of :math:`0.0023688`.
+This comparison isolates histogram discretisation; it is not a converged
+continuum reference. Powder-kernel checks at :math:`\lambda_{ab}=195,240`
+nm, 400 G and 25 T bound the same comparison by :math:`2\times10^{-3}`.
+Neither check establishes the general :math:`10^{-5}` polarisation target
+for these approximations.
 
 ==============  ===================  =====  =====================================
 Name            Symbol               Unit   Description

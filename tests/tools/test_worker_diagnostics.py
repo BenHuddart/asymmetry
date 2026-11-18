@@ -23,18 +23,18 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_worker_diagnostics_retain_timeout_and_native_failure(tmp_path, mode, enabled):
     child = tmp_path / "child"
     child.mkdir()
-    (child / "conftest.py").write_text('pytest_plugins = ["tests.conftest"]\n')
+    (child / "conftest.py").write_text("from tests.conftest import pytest_sessionstart\n")
     deadline = (
         "@pytest.mark.timeout(1, method='thread', func_only=True)\n" if mode == "timeout" else ""
     )
     (child / "test_worker.py").write_text(
-        "import os\nimport resource\nimport time\nimport pytest\n"
+        "import os\nimport resource\nimport threading\nimport time\nimport pytest\n"
         "resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n"
         + deadline
         + "def test_worker_exit():\n"
         + {
             "healthy": "    time.sleep(0.02)\n",
-            "timeout": "    time.sleep(3)\n",
+            "timeout": "    threading.Event().wait()\n",
             "abort": "    os.abort()\n",
         }[mode]
     )
@@ -79,19 +79,19 @@ def test_worker_diagnostics_retain_timeout_and_native_failure(tmp_path, mode, en
     output = stdout + stderr
     assert process.returncode == (0 if mode == "healthy" else 1), output
     if not enabled:
-        assert not diagnostics.exists()
+        assert not diagnostics.exists(), output
         return
     files = list(diagnostics.glob("worker-*.log"))
     assert len(files) == 1, output
     worker_output = files[0].read_text()
-    assert "worker=gw0 pid=" in worker_output
+    assert "worker=gw0 pid=" in worker_output, output
     if mode == "timeout":
-        assert " Timeout " in worker_output
-        assert "test_worker_exit" in worker_output
-        assert "Timeout (0:00:00.250000)!" in output
+        assert " Timeout " in worker_output, output
+        assert "test_worker_exit" in worker_output, output
+        assert "Timeout (0:00:00.250000)!" in output, output
     elif mode == "abort":
-        assert "Fatal Python error: Aborted" in output
-        assert "test_worker_exit" in output
+        assert "Fatal Python error: Aborted" in output, output
+        assert "test_worker_exit" in output, output
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="CI test step uses Bash pipefail")

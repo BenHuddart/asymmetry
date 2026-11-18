@@ -72,8 +72,7 @@ def test_get_param_info_registry_entries_not_shadowed_by_fraction_pattern() -> N
 
     f_quad = get_param_info("f_quad")
     assert (
-        f_quad.description
-        == "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive)."
+        f_quad.description == "Signed coefficient of I_z² in the axial spin-J Hamiltonian, in MHz."
     )
     assert f_quad.unit == "MHz"
 

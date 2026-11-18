@@ -16,11 +16,16 @@ A time-independent background asymmetry, used additively in essentially
 every composite model. Physically it accounts for muons that stop outside
 the sample — silver sample holders, cryostat walls, and tails — and for any
 residual detector imbalance that survives the α calibration. Because all
-relaxation functions satisfy :math:`G(0) = 1`, the asymmetry amplitudes and
-the background obey the sum rule :math:`\sum_i A_i + A_{\mathrm{bg}} = A_0`
+unfiltered, zero-phase full polarisation functions satisfy :math:`G(0) = 1`,
+their asymmetry amplitudes and background obey the sum rule
+:math:`\sum_i A_i + A_{\mathrm{bg}} = A_0`
 with :math:`A_0` the calibrated total asymmetry; a fitted background that
 drifts across a run series usually signals a changing beam spot rather than
 sample physics, and is worth fixing from a calibration measurement.
+
+Apply the actual initial-value convention when a component contains only
+selected transitions or filtering. In particular, :ref:`fit-muonium-zf`
+omits an additional static sample contribution :math:`A/6`.
 
 ==========  =======================  =====  ====================================
 Name        Symbol                   Unit   Description

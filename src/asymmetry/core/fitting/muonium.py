@@ -1,35 +1,16 @@
-"""Muonium oscillation line-shapes following WiMDA's muonium functions.
+"""Dimensionless muonium transition kernels and relaxation envelope.
 
-These follow WiMDA's ``TFMuonium`` / ``LowTFMuonium`` / ``ZFmuonium``, adapted to
-Asymmetry conventions:
+Frequencies are in MHz, time in microseconds and phase in radians. Physical
+constants come from :mod:`asymmetry.core.utils.constants`; composite wrappers
+apply the asymmetry amplitude. Selected-transition kernels need not start at
+one: low TF retains half the initial intensity, while the axial ZF component
+omits an additional constant sixth in its unfiltered, zero-phase definition.
 
-* frequencies in MHz, time in µs, the ``2π`` factor explicit;
-* **phase in radians** (WiMDA uses degrees);
-* g-factors taken from :mod:`asymmetry.core.utils.constants` rather than the
-  literals ``gm = 0.01355342`` / ``ge = 2.8024`` (they agree to 6 figures);
-* these return the *normalised* oscillation; the leading amplitude ``A`` is
-  applied by the composite-model wrapper (as for every other component).
-
-**Positive-frequency (same-phase) convention.** WiMDA's ``TFMuonium`` uses the
-*signed* transition frequency ``w12`` (which is negative), so its
-``cos(2π w12 t + φ)`` puts the lower satellite at phase ``−φ``; yet WiMDA's own
-``LowTFMuonium`` *negates* ``w12`` to make it positive — an internal
-inconsistency. Physically the muonium precession lines share one initial phase,
-so here every line uses ``|w|`` (positive frequency, ``+φ`` for all lines). This
-is the deliberate, documented deviation from ``TFMuonium``'s literal signed form
-(it matches ``LowTFMuonium``'s negation and same-phase data).
-
-The transverse-field functions take the applied field ``B`` (Gauss) and the
-hyperfine coupling ``A_hf`` (MHz); the central diamagnetic Mu⁺ line is **not**
-included here (model it separately with ``OscillatoryField``), matching WiMDA.
-
-In the shallow-donor regime (small ``A_hf``) ``TFMuonium`` reduces to two
-satellites straddling ``ν_d = γ_µ·B`` with separation ``≈ A_hf``: the two extra
-transitions carry weight ``(1−δ) → 0``. For that shallow-donor case the muonium
-satellites are better fit as three independent oscillating lines (WiMDA's own
-recommendation, = Asymmetry's link groups); these components target genuine
-muonium where all transitions and their relative weights matter. See
-``docs/porting/muonium-triplet/``.
+The isotropic TF functions use positive transition frequencies with a shared
+cosine phase. This is a fitting convention; the independent normalized spin
+observable is established at phase zero, not at arbitrary common phase.
+The axial tensor and selected high-field approximations are specified by
+individual functions. A diamagnetic signal is a separate component.
 """
 
 from __future__ import annotations
@@ -99,10 +80,10 @@ def tf_muonium(
 def low_tf_muonium(
     t: NDArray[np.float64], field: float, A_hf: float, phase: float
 ) -> NDArray[np.float64]:
-    """Normalised low-field TF muonium oscillation (WiMDA ``LowTFMuonium``).
+    """Selected low-field TF transition pair, with initial value 1/2 at zero phase.
 
-    Two transitions ``w12, w23`` (positive-frequency convention; WiMDA's
-    ``LowTFMuonium`` likewise negates ``w12`` so its lower line is positive).
+    Two intratriplet transitions ``w12, w23`` use exact positive frequencies.
+    Omitting the other pair does not renormalize the retained intensity.
     """
     t = np.asarray(t, dtype=float)
     delta, e1, e2, e3, _e4 = _tf_levels(field, A_hf)
@@ -190,8 +171,8 @@ def a_hf_from_low_tf_pair(
 
 
 #: Gauss-Legendre nodes for the anisotropic powder average, computed once at
-#: import (WiMDA uses a 15-point midpoint rule; 32-node Gauss-Legendre keeps
-#: the average converged for any D/A_hf the fit will visit).
+#: import. Finite angular sampling does not guarantee convergence for
+#: arbitrarily large anisotropy-times-time products.
 _ANISO_POWDER_NODES = 32
 _ANISO_NODES, _ANISO_WEIGHTS = np.polynomial.legendre.leggauss(_ANISO_POWDER_NODES)
 #: cos(theta) grid on (0, 1) and weights normalised to 1.
@@ -296,41 +277,19 @@ def high_tf_muonium_aniso(
 def muonium_lf_relaxation(
     t: NDArray[np.float64], delta_ex: float, tau_c: float, B_LF: float, A_hf: float
 ) -> NDArray[np.float64]:
-    """Muonium longitudinal-field T1 relaxation, exp(-lambda(B) t) (WiMDA ``Mu LF reln``).
+    """Intratriplet muonium T1 envelope from fluctuating nuclear hyperfine fields.
 
-    Spin-lattice relaxation of muonium polarization by a fluctuating coupling
-    (nuclear-hyperfine modulation from muonium hopping, or electron spin
-    exchange) of amplitude ``delta_ex`` (MHz ≡ µs⁻¹, no 2π) and correlation time ``tau_c``
-    (µs), sampled at the intratriplet ``nu_12`` transition (BPP/Redfield form):
+    Kadono and Ito, JPSJ 94, 064601 (2025), Eq.(22), attributed there to
+    Kadono et al., PRL 64, 665 (1990): lambda=delta_ex²*tau_c /
+    [1+(omega_12*tau_c)²]. The dominant intratriplet angular frequency is
+    omega_12=2*pi*nu_12; nu_12 comes from exact isotropic Breit-Rabi levels.
+    delta_ex is an angular-rate amplitude in inverse microseconds, tau_c in
+    microseconds, field in Gauss and A_hf in MHz. There is no extra 2*pi
+    conversion on delta_ex and no (1-delta) rate prefactor.
 
-        lambda(B) = delta_ex^2 tau_c / (1 + (omega_12 tau_c)^2),
-
-    with ``omega_12 = 2 pi nu_12``.  This is Kadono's intra-triplet
-    approximation: with ``tau_c = 1/nu`` it is identically
-    ``lambda = delta_ex^2 nu / (omega_12^2 + nu^2)`` — the BPP/Redfield
-    Lorentzian sampled at the dominant low-frequency transition ``nu_12``.
-
-    ``nu_12`` is computed from the *exact* Breit-Rabi levels
-    (:func:`_tf_levels`); WiMDA instead uses an approximate ``nu_12`` built with
-    ``(gamma_e - gamma_mu)`` in both the linear and square-root terms (a
-    convention also found in the quantum-diffusion literature) and contains a
-    2π unit inconsistency, so this function deliberately differs from it (see
-    docs/porting/wimda-fit-function-parity/).
-
-    Field decoupling enters *solely* through ``omega_12(B)``: as the field
-    grows the intra-triplet splitting moves the spectral density off the
-    fluctuation peak and the rate falls.  WiMDA additionally multiplies by a
-    ``(1 - delta)`` factor (``delta = x/sqrt(1+x^2)``, the Breit-Rabi mixing
-    parameter); that prefactor is **not** present in the cited source and is
-    *not* applied here — see the correction note in
-    docs/porting/wimda-fit-function-parity/comparison.md.  ``A_hf`` defaults to
-    vacuum muonium and is normally held fixed.
-
-    References: R. Kadono et al., Phys. Rev. Lett. 64, 665 (1990) (the cited
-    source; the same intra-triplet form is restated as Eq. 22 of T. U. Ito &
-    R. Kadono, J. Phys. Soc. Jpn. 94, 064601 (2025), arXiv:2410.23575, where it
-    is attributed to that PRL); R. F. Kiefl et al., Phys. Rev. Lett. 62, 792
-    (1989).
+    The complete observable in Eq.(19) includes a separate repolarization
+    amplitude. This function supplies only its exponential decay envelope;
+    it does not describe general electron spin exchange or all transitions.
     """
     t = np.asarray(t, dtype=float)
     _d, e1, e2, _e3, _e4 = _tf_levels(B_LF, A_hf)
@@ -343,11 +302,14 @@ def muonium_lf_relaxation(
 def zf_muonium(
     t: NDArray[np.float64], A_hf: float, D: float, f_cut: float, phase: float
 ) -> NDArray[np.float64]:
-    """Normalised zero-field axial muonium oscillation (WiMDA ``ZFmuonium``).
+    """Defined three-line axial muonium component, omitting an additional static 1/6.
 
     Three lines ``f1=A_hf−D``, ``f2=A_hf+D/2``, ``f3=3D/2`` with weights
     ``a1,a2,a3`` (a Lorentzian roll-off above ``f_cut`` when ``f_cut > 0``),
-    normalised by ``1/6``.
+    divided by six. At phase=cutoff=0 the initial value is 5/6; adding 1/6
+    gives the ideal static powder polarization for tensor (A-D,A-D,A+2D).
+    The cutoff is an empirical amplitude-response approximation, not a full
+    causal detector filter. High-TF anisotropic muonium uses twice this D.
     """
     t = np.asarray(t, dtype=float)
     f1 = A_hf - D

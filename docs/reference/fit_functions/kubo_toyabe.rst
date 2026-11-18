@@ -390,6 +390,13 @@ time panels and independently integrated endpoint remainders evaluate the
 polarisation directly at the requested times, without interpolation.
 WiMDA's ``Gau broad KT`` "rel width" equals :math:`w_\Delta\sqrt{2}`.
 
+The explicit width distribution is Gaussian in :math:`\Delta'`, not in its
+variance :math:`\Delta'^2`. Negative Gaussian draws use the even static
+kernel, equivalently folding the width distribution about zero. Noakes and
+Kalvius motivate Gaussian broadening in zero field; the finite-field function
+here is the stated average of the static LF kernel, not a distinct published
+dynamic or disorder model.
+
 =========  =================  =====  =========================================
 Name       Symbol             Unit   Description
 =========  =================  =====  =========================================

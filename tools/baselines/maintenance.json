@@ -704,7 +704,7 @@
   },
   "sizes": {
     "src/asymmetry/cli/commands/trend.py": 1374,
-    "src/asymmetry/core/fitting/composite.py": 3327,
+    "src/asymmetry/core/fitting/composite.py": 3326,
     "src/asymmetry/core/fitting/count_domain.py": 1015,
     "src/asymmetry/core/fitting/damped_line_scan.py": 1635,
     "src/asymmetry/core/fitting/engine.py": 2841,

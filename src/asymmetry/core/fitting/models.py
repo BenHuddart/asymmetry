@@ -19,8 +19,8 @@ wrong minimum and trips
 :func:`asymmetry.core.transform.units.to_percent` first.  The polarization-shape
 functions that carry no amplitude (:func:`risch_kehr`,
 :func:`bessel_oscillation`, and the ``P(t)`` kernels in the muonium /
-muon-fluorine / nuclear-dipole modules) are unit-normalised and therefore
-scale-free.  See "Asymmetry units across the API" in the documentation.
+muon-fluorine / nuclear-dipole modules) are scale-free; selected-transition
+functions need not start at one. See "Asymmetry units across the API" in the documentation.
 """
 
 from __future__ import annotations
