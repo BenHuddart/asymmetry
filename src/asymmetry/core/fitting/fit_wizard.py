@@ -4399,7 +4399,7 @@ def _assess_candidate_template(
     residual_gate_passed = not residual_gate_reasons
     disqualification_reasons = _disqualification_reasons(dataset, template, best_result, bound_hits)
 
-    if dense_curves:
+    if dense_curves and best_result.success:
         fitted_time, fitted_curve, component_curves = _dense_fit_curves(
             dataset,
             template.model,
@@ -4434,18 +4434,17 @@ def _with_dense_curves(
     assessment: CandidateAssessment,
     dataset: MuonDataset,
 ) -> CandidateAssessment:
-    """Draw one assessment over the record it was fitted on, without refitting.
-
-    Counts-first prepared timestamps delimit the displayed dense curves.
-    Missing model parameters use the model defaults for an unsuccessful row.
-    """
+    """Draw successful assessments; failed rows retain no model or residual curve."""
+    result = assessment.fit_result
+    if not result.success:
+        empty = np.array([], dtype=float)
+        return replace(assessment, fitted_time=empty, fitted_curve=empty, component_curves=())
     fitted_time, fitted_curve, component_curves = _dense_fit_curves(
         dataset,
         assessment.template.model,
         assessment.fit_result.parameters,
     )
-    result = assessment.fit_result
-    if result.success and result.observation_report is not None:
+    if result.observation_report is not None:
         observations = dataset_observations(dataset)
         values = _curve_parameter_values(assessment.template.model, result.parameters)
         residuals = observations.values - assessment.template.model.function(

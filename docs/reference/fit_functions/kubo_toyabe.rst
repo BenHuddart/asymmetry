@@ -343,7 +343,7 @@ samples and fits within this budget. Each numerical kernel cache retains at
 most 16 parameter combinations. These are work and memory bounds, not a
 physical rate or width restriction. A wizard seed attempt that exceeds this
 budget is recorded as failed with its diagnostic; the other seed attempts
-continue. A manual fit reports the failure through its normal error readout.
+continue. Failed candidates have no model or residual curve. A manual fit reports the failure through its normal error readout.
 At the sample limit the dynamic spline
 cache can retain about 320 MiB and the static Lorentzian grid cache about
 128 MiB, in addition to temporary solver arrays. A successful single preview

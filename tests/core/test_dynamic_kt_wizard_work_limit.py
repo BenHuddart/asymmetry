@@ -46,3 +46,20 @@ def test_wizard_preserves_all_work_limited_attempt_diagnostic(monkeypatch):
     assert [(p.name, p.value, p.fixed) for p in result.parameters] == [
         (p.name, p.value, p.fixed) for p in calls[0]
     ]
+
+
+def test_actual_oversized_seeds_have_no_eager_or_deferred_curve():
+    from asymmetry.core.fitting.fit_wizard import assessment_with_curves
+
+    dataset = _record(metadata={"field": 1e6, "field_direction": "LF"})
+    recommendation = build_fit_wizard_recommendation_for_templates(dataset, [_lkt_template()])
+    (assessment,) = recommendation.assessments
+    assert not assessment.fit_result.success
+    assert "work budget" in assessment.fit_result.message
+    assert assessment.fit_result.parameters["B_L"].value == 1e6
+    assert assessment.fit_result.parameters["B_L"].fixed
+    assert assessment.fitted_time.size == assessment.fitted_curve.size == 0
+    rebuilt = assessment_with_curves(recommendation, assessment.template.key, dataset)
+    assert rebuilt.fit_result is assessment.fit_result
+    assert rebuilt.fitted_time.size == rebuilt.fitted_curve.size == 0
+    assert rebuilt.component_curves == ()
