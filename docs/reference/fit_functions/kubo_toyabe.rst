@@ -404,7 +404,7 @@ the dip and soften the tail, and a single spectrum rarely distinguishes them
 — vary temperature or field before preferring this model over
 ``DynamicGaussianKT``.
 
-.. figure:: /_images/screenshots/gaussian_broadened_kt_series.png
+.. figure:: /_generated/screenshots/gaussian_broadened_kt_series.png
    :alt: Synthetic Gaussian-width distributions at zero and longitudinal field
    :width: 100%
 
