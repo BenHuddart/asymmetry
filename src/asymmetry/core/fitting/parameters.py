@@ -351,7 +351,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "phi_h": ParamInfo("phi_h", "phi_h", "φ_h", r"$\phi_h$", r"\phi_{h}", "°", default_min=0.0),
     "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "µs⁻¹", default_min=0.0),
     "delta_ex": ParamInfo(
-        "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "MHz", default_min=0.0
+        "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "µs⁻¹", default_min=0.0
     ),
     "tau_c": ParamInfo("tau_c", "tau_c", "τ_c", r"$\tau_c$", r"\tau_{c}", "µs", default_min=0.0),
     "w_rel": ParamInfo(
@@ -555,7 +555,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "frequency": "Muon spin precession frequency.",
     "field": "Applied or effective magnetic field magnitude.",
     "A_hf": "Muonium hyperfine coupling constant; sets the satellite splitting about the central line.",
-    "D_mu": "Axial anisotropy of the zero-field muonium hyperfine interaction.",
+    "D_mu": "Axial hyperfine parameter; MuoniumHighTFAniso uses twice MuoniumZF's D for the same tensor.",
     "f_cut": "Lorentzian cutoff frequency damping high-frequency muonium lines (0 disables it).",
     "B_L": "Applied longitudinal magnetic field (Gauss) to decouple muons from the static local-field distribution.",
     "r_muF": "Muon-fluorine distance for two-spin or linear F-mu-F polarization functions.",
@@ -573,7 +573,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
         "projected initial muon polarization and the B_max axis of the field ellipse."
     ),
     "Gamma": "Risch-Kehr relaxation rate set by the 1D diffusion of the depolarizing carrier.",
-    "delta_ex": "Amplitude of the fluctuating (nuclear-hyperfine or spin-exchange) coupling relaxing muonium.",
+    "delta_ex": "Fluctuating nuclear-hyperfine angular-rate amplitude; no extra 2π conversion.",
     "tau_c": "Correlation time of the fluctuating coupling (inverse hop or collision rate).",
     "w_rel": "Fractional standard deviation of the Gaussian distribution of the Kubo-Toyabe width Δ.",
     "B_dip": "Dipolar field at the muon from the coupled nuclear spin (ω_d = γµB_dip).",
@@ -587,7 +587,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "r_muH": "Muon-proton distance for the spin-1/2 dipole-pair polarization.",
     "r_mue": "Muon-electron distance for the spin-1/2 dipole-pair polarization.",
     "f_dip": "Dipolar coupling frequency between the muon and the spin-J nucleus.",
-    "f_quad": "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive).",
+    "f_quad": "Signed coefficient of I_z² in the axial spin-J Hamiltonian, in MHz.",
     "J_spin": "Nuclear spin quantum number J (half-integer); normally held fixed.",
     "baseline": "Additive constant baseline contribution.",
     "a": "Scale prefactor for the component term.",

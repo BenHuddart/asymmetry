@@ -130,20 +130,19 @@ StretchedExponential
 
 The Kohlrausch–Williams–Watts form, interpolating continuously between a
 simple exponential (:math:`\beta = 1`) and a Gaussian (:math:`\beta = 2`). It
-is the standard phenomenological relaxation function for systems in which the
-muon ensemble samples a *distribution* of relaxation rates rather than a
-single :math:`\lambda` — spin glasses near and below freezing, dilute and
-concentrated magnetic alloys with broad RKKY-coupling distributions,
-frustrated magnets with quenched disorder.
+is an empirical envelope used for spin glasses, disordered magnets and other
+systems with nonexponential relaxation. For :math:`0<\beta\leq1` it admits
+a positive distribution of exponential decay rates. For :math:`\beta>1` it
+is a compressed envelope, including the Gaussian at :math:`\beta=2`, and
+does not have that positive-rate-mixture interpretation. The fitted shape
+alone does not identify a microscopic mechanism.
 
-The stretching exponent :math:`\beta` is the physically informative
-parameter. :math:`\beta` near 1 indicates a narrow distribution of dynamic
-rates; :math:`\beta = 1/2` is the Walstedt–Walker form expected for dilute,
-broadly distributed static moments in the fast-fluctuation limit; values
-approaching 2 indicate a static near-Gaussian distribution better fitted with
-a Kubo–Toyabe form. A fitted :math:`\beta` drifting from 1 toward
-:math:`\approx 1/3` on cooling through a transition is one of the canonical
-μSR signatures of glassy freezing.
+Within the positive-rate-mixture interpretation, :math:`\beta=1` is a single
+rate and :math:`\beta<1` gives a broader distribution. Connecting an exponent
+to magnetic disorder or glassy dynamics requires additional physical evidence.
+The Gaussian envelope at :math:`\beta=2` has no zero-field Kubo–Toyabe dip or
+:math:`1/3` recovery; the transverse-field and zero-field responses remain
+distinct.
 
 ==========  ===============  =====  ==========================================
 Name        Symbol           Unit   Description
@@ -276,12 +275,13 @@ Relaxation of the muon (or muonium) polarisation by a spin carrier diffusing
 in **one dimension** — a polaron moving along a conducting-polymer chain, or
 an excitation confined to a structural channel. The 1D random walk keeps
 returning the carrier to the muon, so instead of an exponential the
-polarisation acquires a :math:`(\pi\Gamma t)^{-1/2}` long-time tail. A
-stretched-exponential fit drifting toward :math:`\beta \approx 1/2` at early
-times is the usual hint to try this form; prefer it over a stretched
-exponential whenever 1D transport is physically motivated, since
-:math:`\Gamma` then has a microscopic interpretation in terms of the
-intrachain diffusion rate and hyperfine coupling.
+polarisation acquires a :math:`(\pi\Gamma t)^{-1/2}` long-time tail.
+The equation defines a reduced relaxation form. Relating :math:`\Gamma`
+to an intrachain diffusion rate also requires assumptions about hyperfine
+coupling, electron spin flips and the applied field; the curve alone does
+not establish one-dimensional transport. Telling and Kilcoyne give this
+form explicitly for finite-field fits in Eq. (2), with a spin-flip timescale
+short compared with the measurement window.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -299,3 +299,5 @@ negative rates is intentionally not reproduced.
 **References**
 
 - R. Risch and K. W. Kehr, Phys. Rev. B **46**, 5246 (1992).
+- M. T. F. Telling and S. H. Kilcoyne, J. Phys.: Condens. Matter **19**,
+  026221 (2007), Eq. (2), https://doi.org/10.1088/0953-8984/19/2/026221.
