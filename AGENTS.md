@@ -1,18 +1,15 @@
 # Asymmetry agent guide
 
-This is the one instruction file for every coding agent and contributor. Claude Code imports
-it from `CLAUDE.md`; Codex, Cursor and Copilot read it directly. Its rules are binding; linked
-docs give the rationale. `tools/harness.py structural` caps it at 150 lines.
+This binding guide covers all coding agents and contributors. Claude Code imports it from
+`CLAUDE.md`; Codex, Cursor and Copilot read it directly. `tools/harness.py structural` caps it at 150 lines.
 
-These rules describe the repository we want, not always the one we have. Issues labelled
-`polish` bring existing code and docs into line. Every line you add or touch meets the rule,
-and an old pattern is never a reason to extend it.
+Every added or touched line meets these rules; old patterns never justify extending them.
+Issues labelled `polish` bring existing code and docs into line.
 
 ## What Asymmetry is
 
-A public, MIT-licensed Python library, CLI and PySide6 application for muon-spin spectroscopy
-(μSR) analysis. Results end up in papers, so correctness and provenance come before features.
-Users, instrument scientists and other μSR authors read what you commit, and your issues and PRs.
+A public, MIT-licensed Python library, CLI and PySide6 application for μSR analysis. Correctness
+and provenance come before features: scientists read its results, commits, issues, and PRs.
 
 ## Where to read first
 
@@ -94,8 +91,11 @@ WiMDA, musrfit and Mantid are colleagues' work under their own terms, and Asymme
 
 - Physical constants live in `core/utils/constants.py`, with units in the name and a cited
   source. Never type a value anywhere else.
-- Every model, correction and estimator cites its primary source in the docs and has a test
-  against an independent value: an analytic limit, a published result or a cross-check.
+- Every model, correction and estimator cites its primary source and has an independent test.
+  Revised polarisation models target ≤1e-5 absolute normalised numerical error; never silently
+  substitute a physical model. Document independently validated exceptions and domains in the
+  owning docs/tests. Other quantities need metrics suited to their units and scientific scale;
+  see `docs/explanation/numerical_accuracy.rst`.
 - Provenance travels with the data: run metadata, grouping, t0, good-bin range, deadtime and
   background assumptions. Stochastic methods take a seed and record it.
 - A project saved by any release keeps loading. Renames and format changes happen once, as a

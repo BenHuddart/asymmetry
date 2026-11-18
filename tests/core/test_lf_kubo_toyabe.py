@@ -119,9 +119,8 @@ class TestLFKuboToyabe:
     def test_lf_kt_numerically_stable_small_field(self) -> None:
         """Verify numerical stability for small B_L values.
 
-        With the vectorised integral and the ``omega0 << Delta`` crossover to the
-        exact zero-field limit, a negligible applied field reproduces the ZF KT
-        instead of amplifying the ``2*Delta^2/omega0^2`` floating-point cancellation.
+        A negligible field approaches the zero-field curve continuously, without
+        amplifying inverse-field cancellation.
         """
         t = np.linspace(0, 20, 200)
         delta = 0.3

@@ -311,9 +311,11 @@ spanning :math:`\gamma_\mu B_L/\Delta \in \{0, 1, 2, 5, 10\}`, is best shown on
 a synthetic silver dataset, for which the answer is known exactly.
 
 .. image:: /_generated/screenshots/lf_kt_global_results.png
-   :alt: Converged global LF-KT fit on a synthetic Ag decoupling series
+   :alt: Member Results window from a global Ag LF-KT fit, showing shared width and Hessian error
    :width: 100%
 
+The member results window shows the fitted parameters and Hessian errors for
+one member of the global fit; its shared width is the same across all members.
 The model for every run is ``LongitudinalFieldKT + Constant``, fitted jointly
 across the field series in a global fit: the Gaussian width :math:`\Delta` is
 shared (Global), the applied field :math:`B_L` is fixed per run (File), and the
@@ -321,7 +323,7 @@ initial asymmetry and background are shared. Hayano *et al.* computed the full
 LF-KT polarisation function, which recovers to unity once
 :math:`\gamma_\mu B_L \gg \Delta`. For the synthetic Ag series with input
 :math:`\Delta = 0.39\;\mu\mathrm{s}^{-1}` the global fit recovers
-:math:`\Delta = 0.3902\;\mu\mathrm{s}^{-1}` with per-run reduced :math:`\chi^2`
+:math:`\Delta = 0.3903(4)\;\mu\mathrm{s}^{-1}` with per-run reduced :math:`\chi^2`
 near unity, and the diagnostic is read off the highest-field run: because it
 flattens to :math:`A_0 + A_{bg}` within the fit uncertainty, the distribution
 is confirmed static and :math:`\Delta` is the final answer. Were that run still

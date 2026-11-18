@@ -4680,20 +4680,12 @@ def _semilog_slope_ratio(
 
 #: Largest recorded |field| still pinned as a *nulled* longitudinal component.
 #:
-#: Deliberately much tighter than :data:`wizard_scope.ZERO_FIELD_MAX_GAUSS`
-#: (2 G), which is a *scope*-widening tolerance — "close enough to zero that ZF
-#: families are worth offering". As an actual ``B_L`` value 2 G is not zero: it
-#: clears the ``omega0 < 0.05·width`` decoupling window for every local-field
-#: width below 3.4 µs⁻¹, i.e. for most of the Kubo-Toyabe records the wizard
-#: sees, so pinning a 2 G setpoint to 0 would misstate a physically active
-#: field. At 0.1 G the two models are indistinguishable for any width above
-#: 0.17 µs⁻¹, which covers every record with measurable KT relaxation.
+#: The scope tolerance (2 G) offers ZF families; this tighter 0.1 G metadata
+#: tolerance represents a nulled magnet. It does not switch the Gaussian kernel.
 _ZERO_LONGITUDINAL_FIELD_MAX_GAUSS: float = 0.1
 
-#: Free-``B_L`` seed, as a multiple of the decoupling threshold field for the
-#: seeded local-field width. 2× puts the seed clear of the flat zero-field
-#: branch (where the objective has no ``B_L`` gradient at all) while staying
-#: small enough to be a weak-field starting point rather than a claim.
+#: Positive free-field seed: clears the Lorentzian zero-field shortcut and gives
+#: Gaussian KT a nonzero derivative in B_L, whose response is even in field.
 _FREE_B_L_SEED_DECOUPLING_FACTOR: float = 2.0
 
 #: The local-field width parameters of the ``B_L`` carriers — ``a_L`` for the
@@ -4756,16 +4748,11 @@ def _recorded_longitudinal_field(
 
 
 def _free_longitudinal_field_seed(default: float, width_per_us: float) -> float:
-    """A free-``B_L`` seed that is strictly inside its bounds and not flat.
+    """Seed inside the bounds with useful field sensitivity.
 
-    ``B_L``'s lower bound is 0 and most carriers default it to 0 — Migrad cannot
-    start on a bound, which is exactly how a zero-field record used to lose its
-    own model to a "parameters at limit" failure. Nor is any seed inside the
-    ``omega0 < 0.05·width`` decoupling window usable: there the line shape *is*
-    its zero-field form and the objective has no gradient in ``B_L`` at all.
-    So seed clear of both, keeping a carrier's own larger default
-    (``MuoniumLFRelax`` seeds 10 G, a real longitudinal-field model) when it
-    already is.
+    Gaussian KT is even in B_L and has zero derivative at zero. Lorentzian KT
+    additionally has a finite zero-field shortcut. Twice its threshold is a
+    useful positive scale for both; retain any larger carrier default.
     """
     return max(
         float(default),
