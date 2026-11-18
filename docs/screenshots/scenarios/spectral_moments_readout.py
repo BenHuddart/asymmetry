@@ -71,6 +71,8 @@ class SpectralMomentsReadoutScenario(Scenario):
         from asymmetry.gui.widgets.panel_section import PanelSection
 
         window = MainWindow()
+        self._original_ui_scale = window._ui_manager.ui_scale
+        window._ui_manager.set_ui_scale(1.2)
         window._on_fourier()
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
@@ -161,6 +163,10 @@ class SpectralMomentsReadoutScenario(Scenario):
             ancestor.ensureWidgetVisible(moments, 0, 40)
         _process_events_for(milliseconds=80)
         super().settle(widget)
+
+    def teardown(self, widget: QWidget) -> None:
+        widget._ui_manager.set_ui_scale(self._original_ui_scale)
+        super().teardown(widget)
 
 
 register(SpectralMomentsReadoutScenario())
