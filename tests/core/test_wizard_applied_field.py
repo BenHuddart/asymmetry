@@ -401,6 +401,7 @@ def test_a_longitudinal_answer_lets_the_wizard_pin_b_l_at_the_recorded_field() -
     def fitted_b_l():
         recommendation = build_fit_wizard_recommendation_for_templates(dataset, [_lkt_template()])
         (assessment,) = recommendation.assessments
+        assert assessment.fit_result.success, assessment.fit_result.message
         return assessment.fit_result.parameters["B_L"]
 
     assert fitted_b_l().fixed is False

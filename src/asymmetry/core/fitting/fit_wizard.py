@@ -78,6 +78,7 @@ from asymmetry.core.fitting.seeding import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.spectral_residual import _dominant_peak_metrics, _residual_diagnostics
+from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     UNTIMED,
@@ -4289,11 +4290,6 @@ def _assess_candidate_template(
     seeded = _initial_parameters_for_template(
         dataset, fingerprint, template, seed_context=seed_context
     )
-    # ``variant_budget=0`` means "no ladder at all", which only ever accompanies a
-    # warm start — a cell re-fitted from an already-fitted answer for the same
-    # model on the same data at another binning needs that answer tried, not a
-    # search around it. ``_parameter_variants`` keeps its own ``max(1, budget)``
-    # floor, so the emptiness is decided here.
     ladder = (
         _parameter_variants(
             seeded,
@@ -4308,14 +4304,9 @@ def _assess_candidate_template(
         attempts = ladder
         deferred_rungs: tuple[ParameterSet, ...] = ()
     else:
-        # Warm-aware ladder: the warm start and the base rung (the unmodified
-        # seed) run first, and the perturbed rungs only when those two fail to
-        # settle the basin between them — see ``_warm_ladder_is_settled``.
         attempts = (_warm_started_parameters(seeded, warm_start), *ladder[:1])
         deferred_rungs = ladder[1:]
 
-    # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
-    # the scipy fallback below (scipy has no call-count knob).
     migrad_kwargs = {"ncall": migrad_ncall} if migrad_ncall is not None else None
 
     best_result: FitResult | None = None
@@ -4328,25 +4319,33 @@ def _assess_candidate_template(
         for parameters in parameter_sets:
             if cancel_callback is not None and cancel_callback():
                 raise FitCancelledError("Fit wizard analysis cancelled.")
-            result = fit_engine.fit(
-                dataset,
-                template.model.function,
-                _clone_parameter_set(parameters),
-                cancel_callback=cancel_callback,
-                migrad_kwargs=migrad_kwargs,
-            )
-            if _needs_fit_backend_fallback(result):
-                result = _scipy_fit_fallback(dataset, template.model.function, parameters)
-            elif migrad_kwargs is None:
-                # Only the uncapped fits continue: a screening fit that hit the
-                # cap hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
-                result = _fit_with_call_limit_continuations(
-                    fit_engine,
+            try:
+                result = fit_engine.fit(
                     dataset,
-                    template,
-                    parameters,
-                    result,
+                    template.model.function,
+                    _clone_parameter_set(parameters),
                     cancel_callback=cancel_callback,
+                    migrad_kwargs=migrad_kwargs,
+                )
+                if _needs_fit_backend_fallback(result):
+                    result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+                elif migrad_kwargs is None:
+                    result = _fit_with_call_limit_continuations(
+                        fit_engine,
+                        dataset,
+                        template,
+                        parameters,
+                        result,
+                        cancel_callback=cancel_callback,
+                    )
+            except EvaluationWorkLimitError as exc:
+                result = FitResult(
+                    computation_revision=computation.COMPUTATION_REVISION,
+                    objective=Objective.GAUSSIAN,
+                    parameters=_clone_parameter_set(parameters),
+                    success=False,
+                    chi_squared=float("inf"),
+                    message=str(exc),
                 )
             batch.append(result)
             if best_result is None:

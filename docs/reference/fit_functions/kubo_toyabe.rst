@@ -341,7 +341,10 @@ window or explicitly choose a suitable analytic approximation; no curve is
 silently substituted. For example, 5 kG over 20 μs uses about 273,000 fine
 samples and fits within this budget. Each numerical kernel cache retains at
 most 16 parameter combinations. These are work and memory bounds, not a
-physical rate or width restriction. At the sample limit the dynamic spline
+physical rate or width restriction. A wizard seed attempt that exceeds this
+budget is recorded as failed with its diagnostic; the other seed attempts
+continue. A manual fit reports the failure through its normal error readout.
+At the sample limit the dynamic spline
 cache can retain about 320 MiB and the static Lorentzian grid cache about
 128 MiB, in addition to temporary solver arrays. A successful single preview
 replaces the error readout with “Previewing the current parameter values.”
