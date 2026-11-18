@@ -12,7 +12,7 @@ import pytest
 from tests.core.test_static_gaussian_accuracy import hayano_integral
 from tests.reference_programs import musrfit_executable
 
-pytestmark = pytest.mark.io
+pytestmark = [pytest.mark.io, pytest.mark.integration]
 
 
 @pytest.mark.parametrize("ratio,total", [(0.06, 1.19978e-5), (1, 1.25459e-12), (10, 2.09439e-10)])
