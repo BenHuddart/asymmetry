@@ -4684,8 +4684,7 @@ def _semilog_slope_ratio(
 #: tolerance represents a nulled magnet. It does not switch the Gaussian kernel.
 _ZERO_LONGITUDINAL_FIELD_MAX_GAUSS: float = 0.1
 
-#: Positive free-field seed: clears the Lorentzian zero-field shortcut and gives
-#: Gaussian KT a nonzero derivative in B_L, whose response is even in field.
+#: A positive field seed avoids the zero derivative at B_L=0 of either KT family.
 _FREE_B_L_SEED_DECOUPLING_FACTOR: float = 2.0
 
 #: The local-field width parameters of the ``B_L`` carriers — ``a_L`` for the
@@ -4750,9 +4749,8 @@ def _recorded_longitudinal_field(
 def _free_longitudinal_field_seed(default: float, width_per_us: float) -> float:
     """Seed inside the bounds with useful field sensitivity.
 
-    Gaussian KT is even in B_L and has zero derivative at zero. Lorentzian KT
-    additionally has a finite zero-field shortcut. Twice its threshold is a
-    useful positive scale for both; retain any larger carrier default.
+    Both KT families are even in B_L and have zero derivative at zero.
+    Twice the weak-field scale is a useful positive seed; retain a larger default.
     """
     return max(
         float(default),

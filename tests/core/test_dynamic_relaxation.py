@@ -16,14 +16,13 @@ from asymmetry.core.fitting import COMPONENTS, MODELS, CompositeModel
 from asymmetry.core.fitting.component_docs import get_component_applicability
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import (
-    _dynamic_kt_grid,
+    _dynamic_kt_spline,
     _exponential_sum,
     _lorentzian_kt_zf_realisation,
     _lorentzian_lf_lineshape_reference,
     _lorentzian_lf_uniform,
     _strong_collision_modes,
     _strong_collision_solve,
-    _strong_collision_solve_reference,
     abragam,
     dynamic_gaussian_kt,
     dynamic_lorentzian_kt,
@@ -153,11 +152,13 @@ def test_static_lorentzian_zf_value_at_zero() -> None:
     assert abs(static_lorentzian_kt_zf(np.array([0.0]), 1.0, 0.5)[0] - 1.0) < 1e-12
 
 
-def test_lorentzian_lf_zero_field_shortcut() -> None:
-    # A negligible field (omega0 < 0.05 a_L) is treated as exact zero field.
-    assert np.allclose(
-        static_lorentzian_kt_lf(T, 1.0, 0.5, 0.1), static_lorentzian_kt_zf(T, 1.0, 0.5), atol=1e-12
-    )
+def test_lorentzian_lf_weak_field_is_continuous_not_a_plateau() -> None:
+    t = np.linspace(0, 8, 101)
+    zero = static_lorentzian_kt_zf(t, 1.0, 1.0)
+    weak = static_lorentzian_kt_lf(t, 1.0, 1.0, 0.03 / _omega0(1.0))
+    assert np.max(np.abs(weak - zero)) > 1e-5
+    near = static_lorentzian_kt_lf(t, 1.0, 1.0, 1e-5 / _omega0(1.0))
+    np.testing.assert_allclose(near, zero, atol=1e-8, rtol=0)
 
 
 def _omega0(b_gauss: float) -> float:
@@ -230,10 +231,8 @@ def test_lorentzian_lf_static_grid_respects_fft_cap() -> None:
         _lorentzian_lf_uniform(0.5, _omega0(20.0), 1e-4, _LOR_LF_FFT_CAP)
 
 
-def test_lorentzian_lf_continuous_at_zero_field_shortcut() -> None:
-    # Just above the omega0 < 0.05 a_L shortcut the field correction is
-    # second order, so the numerical line shape sits within ~1e-3 of the
-    # analytic zero-field form it hands over to.
+def test_lorentzian_lf_weak_field_approaches_zero_field() -> None:
+    # The weak-field correction is quadratic and approaches the analytic zero-field form.
     a = 0.5
     b = 1.0001 * 0.05 * a / _omega0(1.0)
     assert (
@@ -280,9 +279,9 @@ def test_dynamic_kt_grid_resolves_larmor_oscillation() -> None:
     # The Volterra grid step must resolve the static line shape's oscillation
     # at omega0 (<= 0.1 rad per step) as well as the collision rate.
     for kind in ("gaussian", "lorentzian"):
-        grid, gd = _dynamic_kt_grid(kind, 1.0, 0.5, 1000.0, 16.0)
-        assert (grid[1] - grid[0]) * _omega0(1000.0) <= 0.1 + 1e-9, kind
-        assert np.all(np.isfinite(gd)) and abs(gd[0] - 1.0) < 1e-9
+        curve = _dynamic_kt_spline(kind, 1.0, 0.5, 1000.0, 16.0)
+        assert (curve.x[1] - curve.x[0]) * _omega0(1000.0) <= 0.1 + 1e-9, kind
+        assert np.all(np.isfinite(curve(curve.x))) and abs(curve(0.0) - 1.0) < 1e-9
 
 
 @pytest.mark.parametrize(
@@ -290,7 +289,7 @@ def test_dynamic_kt_grid_resolves_larmor_oscillation() -> None:
     [
         (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 0.2}),
         (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 0.2, "B_L": 20.0}),
-        (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 15.0, "B_L": 20.0}),  # Keren branch
+        (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 15.0, "B_L": 20.0}),
         (dynamic_lorentzian_kt, {"a_L": 0.37, "nu": 0.2, "B_L": 20.0}),
         (static_lorentzian_kt_lf, {"a_L": 0.37, "B_L": 20.0}),
     ],
@@ -476,51 +475,18 @@ def test_dynamic_gaussian_kt_round_trip() -> None:
 
 
 # --- Strong-collision solver: fast blocked path vs. scalar reference ----------
-def _static_gs(kind: str, grid: np.ndarray, width: float, b_l: float) -> np.ndarray:
-    if kind == "gaussian":
-        gs = (
-            static_gkt_zf(grid, 1.0, width, 0.0)
-            if abs(b_l) < 1e-9
-            else longitudinal_field_kubo_toyabe(grid, 1.0, width, b_l, 0.0)
-        )
-    else:
-        gs = (
-            static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
-            if abs(b_l) < 1e-9
-            else static_lorentzian_kt_lf(grid, 1.0, width, b_l, 0.0)
-        )
-    return np.asarray(gs, dtype=float)
+@pytest.mark.parametrize("n", [2, 64, 777, 2048])
+def test_blocked_renewal_solve_matches_dense_toeplitz(n):
+    from scipy.linalg import solve_toeplitz
+    from asymmetry.core.fitting.strong_collision import _renewal_toeplitz
 
-
-@pytest.mark.parametrize("kind", ["gaussian", "lorentzian"])
-@pytest.mark.parametrize("nu", [0.05, 0.5, 3.0, 6.0, 11.9])
-def test_strong_collision_fast_matches_reference(kind: str, nu: float) -> None:
-    # The fast blocked/FFT solver must reproduce the scalar O(n^2) recursion to
-    # machine precision across widths, B_L (incl. zero field), grid sizes (small
-    # edge cases, a non-power-of-two, a single-block and a multi-block size) and
-    # steps with nu*h straddling the 0.02 the caller targets.
-    for width in (0.1, 0.5):
-        for b_l in (0.0, 25.0):
-            for h in (0.02 / nu, 0.018 / nu):
-                for n in (2, 3, 64, 777, 1000):
-                    grid = np.linspace(0.0, (n - 1) * h, n)
-                    gs = _static_gs(kind, grid, width, b_l)
-                    fast = _strong_collision_solve(gs, nu, h)
-                    ref = _strong_collision_solve_reference(gs, nu, h)
-                    assert np.allclose(fast, ref, rtol=1e-9, atol=1e-12)
-
-
-@pytest.mark.parametrize("kind", ["gaussian", "lorentzian"])
-@pytest.mark.parametrize("nu", [0.5, 11.9])
-def test_strong_collision_fast_matches_reference_large_grid(kind: str, nu: float) -> None:
-    # 20001 points is the caller's grid cap and exercises the multi-block FFT
-    # cross-coupling path (n >> the 512-point block).
-    n, h = 20001, 0.02 / nu
-    grid = np.linspace(0.0, (n - 1) * h, n)
-    gs = _static_gs(kind, grid, 0.3, 0.0)
-    fast = _strong_collision_solve(gs, nu, h)
-    ref = _strong_collision_solve_reference(gs, nu, h)
-    assert np.allclose(fast, ref, rtol=1e-9, atol=1e-12)
+    lag = np.arange(n - 1) + 1
+    kernel = 0.02 * np.exp(-0.03 * lag)
+    forcing = np.cos(0.02 * np.arange(n)) * np.exp(-0.02 * np.arange(n))
+    expected = solve_toeplitz((np.r_[1.0, -kernel], np.r_[1.0, np.zeros(n - 1)]), forcing)
+    np.testing.assert_allclose(
+        _renewal_toeplitz(1.0, kernel, forcing), expected, atol=1e-12, rtol=1e-12
+    )
 
 
 def test_strong_collision_single_point_grid() -> None:

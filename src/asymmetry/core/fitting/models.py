@@ -31,13 +31,16 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.linalg import solve_triangular, toeplitz
+from scipy.interpolate import CubicSpline
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.phi_functions import phi2
 from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.fitting.static_gaussian_kt import static_gaussian_polarisation
+from asymmetry.core.fitting.strong_collision import (
+    strong_collision_polarisation as _strong_collision_solve,
+)
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 #: Groundwork for the deferred variable-projection (VarPro) follow-up. VarPro is
@@ -127,8 +130,8 @@ class ModelDefinition:
 # Model functions
 # ---------------------------------------------------------------------------
 
-# The Lorentzian evaluator uses its zero-field branch below this field/width ratio.
-_FIELD_DECOUPLING_RATIO = 0.05
+# Positive field seeds avoid the symmetry-enforced zero derivative at zero field.
+_FIELD_SEED_RATIO = 0.05
 
 #: Muon Larmor angular frequency per Gauss of applied field, in rad/µs — the
 #: ``omega0 = gamma_mu * B_L`` conversion every longitudinal-field line shape
@@ -140,14 +143,12 @@ LARMOR_RAD_PER_US_PER_GAUSS: float = (
 
 
 def field_decoupling_threshold_gauss(width_per_us: float) -> float:
-    """Lorentzian zero-field shortcut threshold, also a useful Gaussian seed scale.
+    """A positive weak-field seed scale for Gaussian and Lorentzian KT, in Gauss.
 
-    The Lorentzian shapes use their zero-field form for ``omega0 < 0.05*width``.
-    Gaussian KT has smooth field dependence down to zero; a positive seed on
-    this scale still avoids its symmetry-enforced zero derivative at B_L=0.
-    Width is ``a_L`` or ``Delta`` in µs⁻¹, and the returned field is in Gauss.
+    Width is ``a_L`` or ``Delta`` in µs⁻¹. Both field responses are smooth
+    down to zero; this scale is not a finite numerical zero-field threshold.
     """
-    return _FIELD_DECOUPLING_RATIO * max(float(width_per_us), 0.0) / LARMOR_RAD_PER_US_PER_GAUSS
+    return _FIELD_SEED_RATIO * max(float(width_per_us), 0.0) / LARMOR_RAD_PER_US_PER_GAUSS
 
 
 def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
@@ -452,7 +453,7 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
     constant term is fixed by G(0) = 1.
     """
     a = float(a_L)
-    w0 = float(omega0)
+    w0 = abs(float(omega0))
     n = int(n)
     if 2 * n > _LOR_LF_FFT_CAP:
         raise ValueError(
@@ -470,10 +471,20 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
     n_fft = max(min(n_fft, _LOR_LF_FFT_CAP), 1 << int(np.ceil(np.log2(2 * n))))
     d_w = 2.0 * np.pi / (n_fft * h)
     w = d_w * np.arange(1, n_fft)
-    q = a * a + (w - w0) ** 2
-    s = (a / (2.0 * np.pi * w0**3 * w)) * (
-        (a * a + w * w + w0 * w0) * np.log1p(4.0 * w0 * w / q) - 4.0 * w0 * w
+    total = a * a + w * w + w0 * w0
+    ratio = 2.0 * w0 * w / total
+    ratio2 = ratio**2
+    density_factor = np.empty_like(ratio)
+    weak = ratio < 0.1
+    r2 = ratio2[weak]
+    density_factor[weak] = 1.0 / 3.0 + r2 * (
+        1.0 / 5.0 + r2 * (1.0 / 7.0 + r2 * (1.0 / 9.0 + r2 * (1.0 / 11.0 + r2 / 13.0)))
     )
+    r = ratio[~weak]
+    density_factor[~weak] = (
+        0.5 * np.log1p(4.0 * w0 * w[~weak] / (a * a + (w[~weak] - w0) ** 2)) - r
+    ) / r**3
+    s = 8.0 * a * w * w / (np.pi * total**2) * density_factor
     s -= (8.0 * a / (3.0 * np.pi)) * w * w / (w * w + a * a) ** 2
     s -= c4 / (w * w + kappa * kappa) ** 2
     # Even extension of length 2 n_fft: [S(0), s_1 .. s_{N-1}, S(W_N) ~ 0,
@@ -623,25 +634,22 @@ def static_lorentzian_kt_lf(
     The line shape is evaluated by the closed-form spectral density of
     ``asymmetry.core.fitting.models._lorentzian_lf_uniform`` (accurate to ~1e-6 at any field) on a grid
     that resolves the Larmor oscillation, linearly interpolated onto the
-    requested times, and cached per (a_L, B_L, tmax); very small fields
-    (omega0 < 0.05 a_L) are treated as zero field, where the eqn 5.47 form is
-    exact.
+    requested times with a cubic spline, and cached per (a_L, B_L, tmax).
+    Only exactly zero field selects the analytic zero-field function.
     """
     t = np.asarray(t, dtype=float)
     scalar = t.ndim == 0
     tt = np.atleast_1d(np.abs(t))
     a = float(a_L)
     gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
-    if a <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * max(a, 1e-12):
-        # Field negligible vs the distribution width: indistinguishable from ZF,
-        # where the analytic eqn 5.47 form is exact (and avoids the ill-conditioned
-        # small-omega0 limit of the longitudinal-field reduction).
+    omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
+    if a <= 0 or omega0 == 0.0:
+        # Exactly zero applied field has the analytic Lorentzian polarisation.
         gs = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
     else:
         tmax = float(max(tt.max(), 1e-6))
         grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
-        gs = np.interp(tt, grid, gs_grid)
+        gs = CubicSpline(grid, gs_grid)(tt)
     out = A0 * np.asarray(gs, dtype=float) + baseline
     return float(out[0]) if scalar else out
 
@@ -736,91 +744,6 @@ def gaussian_broadened_kt(
     return float(out[0]) if scalar else out
 
 
-# Forward-substitution block size for _strong_collision_solve: cross-block
-# coupling is an O(n log n) FFT convolution, within-block coupling a dense
-# BxB triangular solve, so total cost is ~O(n log n + n B).  512 keeps both
-# terms small while holding the FFT products at machine precision.
-_STRONG_COLLISION_BLOCK = 512
-
-
-def _strong_collision_solve(
-    gs_grid: NDArray,
-    nu: float,
-    h: float,
-) -> NDArray:
-    """Solve the strong-collision Volterra equation on a uniform grid.
-
-    G_d(t) = f(t) + nu * integral_0^t f(t - tau) G_d(tau) dtau, with
-    f(t) = e^{-nu t} G_s(t), discretised with the trapezoidal rule on a uniform
-    grid of spacing ``h``.  ``gs_grid`` is the static G_s sampled on that grid
-    (gs_grid[0] = G_s(0) = 1).
-
-    The trapezoidal discretisation is a unit-lower-triangular Toeplitz system
-    for g[1:] (see ``_strong_collision_solve_reference`` for the equivalent
-    scalar recursion):
-
-        denom * g[i] - nu*h * sum_{j=1}^{i-1} f[i-j] * g[j] = f[i] * (1 + nu*h/2)
-
-    with ``denom = 1 - nu*h*f[0]/2``.  It is solved by blocked forward
-    substitution -- cross-block contributions via FFT convolution of the
-    already-known g against the (bounded) kernel f, the within-block coupling
-    via a dense triangular solve of the block's Toeplitz matrix -- for
-    O(n log n + n B) cost in place of the O(n^2) scalar recursion.
-    """
-    n = gs_grid.shape[0]
-    idx = np.arange(n)
-    f = np.exp(np.clip(-nu * idx * h, -700, 0)) * gs_grid
-    g = np.empty(n, dtype=float)
-    g[0] = 1.0
-    if n == 1:
-        return g
-    denom = 1.0 - 0.5 * nu * h * f[0]
-    coef = 1.0 + 0.5 * nu * h
-    block = _STRONG_COLLISION_BLOCK
-    for start in range(1, n, block):
-        end = min(start + block, n)
-        bs = end - start
-        rhs = f[start:end] * coef
-        if start > 1:
-            gk = g[1:start]
-            fk = f[1:end]
-            size = 1 << (gk.shape[0] + fk.shape[0] - 2).bit_length()
-            conv = np.fft.irfft(np.fft.rfft(gk, size) * np.fft.rfft(fk, size), size)
-            rhs = rhs + nu * h * conv[start - 2 : start - 2 + bs]
-        col = np.empty(bs)
-        col[0] = denom
-        if bs > 1:
-            col[1:] = -nu * h * f[1:bs]
-        trow = np.zeros(bs)
-        trow[0] = denom
-        block_mat = toeplitz(col, trow)
-        g[start:end] = solve_triangular(block_mat, rhs, lower=True, check_finite=False)
-    return g
-
-
-def _strong_collision_solve_reference(
-    gs_grid: NDArray,
-    nu: float,
-    h: float,
-) -> NDArray:
-    """Scalar O(n^2) trapezoidal recursion, kept as the reference solution.
-
-    This is the original, obviously-correct implementation of
-    ``_strong_collision_solve``; the fast solver is validated against it in the
-    tests (``tests/core/test_dynamic_relaxation.py``).
-    """
-    n = gs_grid.shape[0]
-    idx = np.arange(n)
-    f = np.exp(np.clip(-nu * idx * h, -700, 0)) * gs_grid
-    g = np.empty(n, dtype=float)
-    g[0] = 1.0
-    denom = 1.0 - 0.5 * nu * h * f[0]
-    for i in range(1, n):
-        conv = float(np.dot(f[i - 1 : 0 : -1], g[1:i])) if i > 1 else 0.0
-        g[i] = (f[i] + nu * h * (0.5 * f[i] * g[0] + conv)) / denom
-    return g
-
-
 def _strong_collision_modes(
     A: NDArray, b: NDArray, c: NDArray, nu: float
 ) -> tuple[NDArray, NDArray]:
@@ -888,66 +811,34 @@ def _lorentzian_kt_zf_realisation(a_L: float) -> tuple[NDArray, NDArray, NDArray
     return a_mat, b, c
 
 
-# Above this fluctuation rate (MHz) the explicit trapezoidal strong-collision
-# solver is numerically unstable: the kernel e^{-nu t} G_s(t) decays within a few
-# grid steps and the recursion amplifies roundoff (it diverges, not "degrades
-# gracefully"), and refining the grid enough to stay stable is prohibitive.  The
-# system is then deep in the fast-fluctuation regime, where the analytic
-# motional-narrowing limit is accurate -- for the Gaussian case the Keren function
-# matches a converged solver to < 0.5 % for nu >~ 6*Delta, which is satisfied at
-# this crossover for any physical width.  (The zero-field Lorentzian case never
-# reaches the solver: it has the exact closed form of
-# ``asymmetry.core.fitting.models._strong_collision_modes`` at every rate.)
-_DYN_KT_NU_SWITCH = 12.0
-
-
 @lru_cache(maxsize=256)
-def _dynamic_kt_grid(
-    kind: str, width: float, nu: float, B_L: float, tmax: float
-) -> tuple[NDArray, NDArray]:
-    """Return the cached (grid, G_d) of a grid-solved dynamic KT.
+def _dynamic_kt_spline(kind: str, width: float, nu: float, B_L: float, tmax: float) -> CubicSpline:
+    """Same-model renewal solution on continuously spaced, causally padded grids.
 
-    Serves the Gaussian family and the longitudinal-field Lorentzian; the
-    zero-field Lorentzian is evaluated in closed form by
-    :func:`dynamic_lorentzian_kt` and never comes here.
-
-    Keyed on the exact arguments: a repeated evaluation hits, a perturbed one
-    recomputes, so the solution responds to any finite-difference step.
+    The step depends continuously on width and field, not on fluctuation rate.
+    Adding an end sample does not move earlier nodes; padding keeps the requested
+    window clear of the cubic interpolant's far boundary condition.
     """
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
-    if nu <= _DYN_KT_NU_SWITCH:
-        # Slow/intermediate regime: strong-collision Volterra solve.
-        nu_solve = float(nu)
-    elif kind == "gaussian":
-        # Fast-fluctuation Gaussian: the Keren function is the analytic motional-
-        # narrowing limit (rate ~2*Delta^2/nu), accurate to <0.5% here and bounded.
-        grid = np.linspace(0.0, tmax, 800)
-        return grid, keren(grid, 1.0, width, nu, B_L)
-    else:
-        # Fast-fluctuation Lorentzian in a field: the relaxation rate saturates
-        # (it is ~independent of nu, since a Lorentzian distribution has no
-        # finite second moment -- the zero-field closed form shows the rate
-        # tending to 4 a_L / 3), so reuse the stable solver evaluated at the
-        # crossover rate: continuous across the switch and physically correct.
-        nu_solve = _DYN_KT_NU_SWITCH
-
-    # Step sized so that nu*h <= 0.02 (stable and < 1 % here) and so that the
-    # static line shape's Larmor oscillation is resolved (<= 0.1 rad per step).
-    h_des = min(0.02, 0.02 / max(nu_solve, 1e-3), 0.1 / max(omega0, 1e-3))
-    n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
-    grid = np.linspace(0.0, tmax, n)
-    h = grid[1] - grid[0] if n > 1 else tmax
-    if kind == "gaussian":
-        if abs(B_L) < 1e-9:
-            gs = static_gkt_zf(grid, 1.0, width, 0.0)
+    omega0 = abs(LARMOR_RAD_PER_US_PER_GAUSS * B_L)
+    h = 1.0 / (64.0 * np.hypot(width, omega0 / 4.0))
+    n = max(int(np.ceil(tmax / h)) + 13, 16)
+    initial_derivative = 0.0 if kind == "gaussian" else -4.0 * width / 3.0
+    curves = []
+    for refinement in (1, 2):
+        step = h / refinement
+        count = refinement * (n - 1) + 1
+        grid = np.arange(count) * step
+        if kind == "gaussian":
+            gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L)
         else:
-            gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
-    elif width <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * width:
-        gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
-    else:
-        gs = _lorentzian_lf_uniform(width, omega0, h, n)
-    return grid, _strong_collision_solve(np.asarray(gs, dtype=float), nu_solve, h)
+            gs = _lorentzian_lf_uniform(width, omega0, step, count)
+        curves.append(_strong_collision_solve(gs, nu, step, initial_derivative=initial_derivative))
+    boundary = ((1, initial_derivative), "not-a-knot")
+    coarse_grid = np.arange(n) * h
+    extrapolated = (
+        4.0 * curves[1] - CubicSpline(coarse_grid, curves[0], bc_type=boundary)(grid)
+    ) / 3.0
+    return CubicSpline(grid, extrapolated, bc_type=boundary)
 
 
 def dynamic_gaussian_kt(
@@ -968,20 +859,18 @@ def dynamic_gaussian_kt(
     - ``nu >> Delta`` : motional narrowing, G -> exp(-2 Delta^2 t / nu) (B_L = 0).
     - ``B_L -> inf``  : decoupling, G -> 1.
     """
+    nu = _require_rate(nu)
     t = np.asarray(t, dtype=float)
-    scalar = t.ndim == 0
-    tt = np.atleast_1d(np.abs(t))
-    if nu <= 1e-9:
-        if abs(B_L) < 1e-9:
-            gd = static_gkt_zf(tt, 1.0, Delta, 0.0)
-        else:
-            gd = longitudinal_field_kubo_toyabe(tt, 1.0, Delta, B_L, 0.0)
+    width = abs(float(Delta))
+    if t.size == 0 or width == 0.0:
+        gd = np.ones_like(t)
+    elif nu == 0.0:
+        gd = longitudinal_field_kubo_toyabe(t, 1.0, width, B_L)
     else:
-        tmax = float(max(tt.max(), 1e-6))
-        grid, gd_grid = _dynamic_kt_grid("gaussian", float(Delta), float(nu), float(B_L), tmax)
-        gd = np.interp(tt, grid, gd_grid)
+        curve = _dynamic_kt_spline("gaussian", width, nu, float(B_L), float(np.abs(t).max()))
+        gd = curve(np.abs(t))
     out = A0 * np.asarray(gd, dtype=float) + baseline
-    return float(out[0]) if scalar else out
+    return float(out) if t.ndim == 0 else out
 
 
 def dynamic_lorentzian_kt(
@@ -998,13 +887,13 @@ def dynamic_lorentzian_kt(
     Lorentzian local-field distribution of half-width ``a_L`` (us^-1) fluctuating
     at rate ``nu`` (MHz), with optional longitudinal field ``B_L`` (Gauss).
 
-    In zero field (``omega0 < 0.05 a_L``) the solution is **exact and closed
+    In exactly zero field the solution is **exact and closed
     form**: the static function is a three-state linear system, so the
     strong-collision integral equation reduces to a 3x3 eigenproblem and
     ``G_d`` is a sum of three exponentials (``asymmetry.core.fitting.models._strong_collision_modes``),
-    valid at every rate with no grid, cache or fast-fluctuation switch.  In a
-    longitudinal field the static line shape has no finite realisation, and the
-    Volterra equation is solved on a grid (``asymmetry.core.fitting.models._dynamic_kt_grid``).
+    valid at every rate with no integration grid. In a longitudinal field,
+    exponential-weighted product integration solves the same renewal equation;
+    the requested fluctuation rate is never frozen or replaced.
 
     - ``nu -> 0``    : recovers the static Lorentzian KT (zero-field analytic
       eqn 5.47; longitudinal field computed numerically per Blundell et al. 2022).
@@ -1012,27 +901,21 @@ def dynamic_lorentzian_kt(
       Lorentzian distribution has no second moment to narrow).
     - ``B_L -> inf`` : decoupling, G -> 1.
     """
+    nu = _require_rate(nu)
     t = np.asarray(t, dtype=float)
-    scalar = t.ndim == 0
-    tt = np.atleast_1d(np.abs(t))
-    a = float(a_L)
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
-    zero_field = a <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * a
-    if nu <= 1e-9:
-        if zero_field:
-            gd = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
-        else:
-            gd = static_lorentzian_kt_lf(tt, 1.0, a, B_L, 0.0)
-    elif zero_field:
-        lam, weights = _strong_collision_modes(*_lorentzian_kt_zf_realisation(a), float(nu))
-        gd = _exponential_sum(tt, lam, weights)
+    a = abs(float(a_L))
+    if t.size == 0 or a == 0.0:
+        gd = np.ones_like(t)
+    elif nu == 0.0:
+        gd = static_lorentzian_kt_lf(t, 1.0, a, B_L)
+    elif B_L == 0.0:
+        lam, weights = _strong_collision_modes(*_lorentzian_kt_zf_realisation(a), nu)
+        gd = _exponential_sum(np.abs(t), lam, weights)
     else:
-        tmax = float(max(tt.max(), 1e-6))
-        grid, gd_grid = _dynamic_kt_grid("lorentzian", a, float(nu), float(B_L), tmax)
-        gd = np.interp(tt, grid, gd_grid)
+        curve = _dynamic_kt_spline("lorentzian", a, nu, float(B_L), float(np.abs(t).max()))
+        gd = curve(np.abs(t))
     out = A0 * np.asarray(gd, dtype=float) + baseline
-    return float(out[0]) if scalar else out
+    return float(out) if t.ndim == 0 else out
 
 
 # ---------------------------------------------------------------------------
