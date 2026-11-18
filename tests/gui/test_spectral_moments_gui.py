@@ -54,7 +54,21 @@ def _activate_fft_spectrum(window: MainWindow, runs, *, display="phase_corrected
     window._frequency_plot_panel.plot_dataset(datasets[0])
     window._data_browser = _FakeBrowser(datasets)
     window._refresh_spectral_moments()
+    _wait_moments(window)
     return datasets
+
+
+def _wait_moments(window):
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+
+    for _ in range(500):
+        if window._moment_readout._worker is None and window._moment_batch._worker is None:
+            return
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    raise AssertionError("Spectral moment workers did not settle")
 
 
 @pytest.fixture
@@ -116,6 +130,7 @@ def test_send_to_trend_records_computed_series(window):
     _activate_fft_spectrum(window, [1, 2])
     widget = window._fourier_panel.moments_widget
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     batches = _moments_batches(window)
     assert len(batches) == 1
     series = batches[0]
@@ -133,8 +148,10 @@ def test_resending_same_selection_replaces(window):
     _activate_fft_spectrum(window, [1, 2])
     widget = window._fourier_panel.moments_widget
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     first_ids = [b.batch_id for b in _moments_batches(window)]
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     second_ids = [b.batch_id for b in _moments_batches(window)]
     assert first_ids == second_ids
     assert len(second_ids) == 1
@@ -144,9 +161,11 @@ def test_different_selection_is_a_new_series(window):
     datasets = _activate_fft_spectrum(window, [1, 2])
     widget = window._fourier_panel.moments_widget
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     # Narrow the selection → a different member set → a different series.
     window._data_browser = _FakeBrowser([datasets[0]])
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     assert len(_moments_batches(window)) == 2
 
 
@@ -158,6 +177,7 @@ def test_moments_series_round_trips_through_project_model(window):
     widget = window._fourier_panel.moments_widget
     widget.set_cutoff_fraction(0.1)
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     original = _moments_batches(window)[0]
 
     restored_model = ProjectModel.from_dict(window._project_model.to_dict())
@@ -197,10 +217,12 @@ def test_resending_in_a_different_unit_replaces_not_duplicates(window):
     _activate_fft_spectrum(window, [1, 2])
     widget = window._fourier_panel.moments_widget
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     first = [b.batch_id for b in _moments_batches(window)]
     # Same selection + window, different display unit → still one series.
     widget._unit = FieldUnit.MHZ
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     second = [b.batch_id for b in _moments_batches(window)]
     assert first == second
     assert len(second) == 1
@@ -296,7 +318,7 @@ def _wrap_spectrum_moments_counter(monkeypatch) -> list:
     ``_compute_and_show_moments`` still gets a real ``SpectrumMoments`` back
     (``window_peak_amplitude``, the readout attrs, etc. all need to resolve).
     """
-    import asymmetry.gui.mainwindow as mainwindow_module
+    import asymmetry.gui.moment_tasks as mainwindow_module
 
     calls: list[str] = []
     original = mainwindow_module.spectrum_moments
@@ -375,8 +397,9 @@ def test_drag_release_runs_one_bootstrap_and_restores_uncertainty(window, monkey
 
     # Release: cancels any still-pending cheap tick and runs one full bootstrap.
     window._frequency_plot_panel.moments_drag_finished.emit()
+    _wait_moments(window)
 
-    assert calls == ["none", "bootstrap"]
+    assert calls == ["none", "none", "bootstrap"]
     assert not window._moments_drag_timer.isActive()
     assert "±" in widget._value_labels["b_ave"].text()  # uncertainty is back
 
@@ -486,6 +509,7 @@ def test_approximate_errors_survive_moment_project_trend_and_exports(window, mon
     assert widget._uncertainty_label.text() == "Approximate errors"
     assert "Spectral correlations" in widget._uncertainty_label.toolTip()
     window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
     original = _moments_batches(window)[0]
     restored = ProjectModel.from_dict(window._project_model.to_dict()).batches[original.batch_id]
     assert restored.results_by_run[1]["warnings"] == original.results_by_run[1]["warnings"]
@@ -510,4 +534,273 @@ def test_approximate_errors_survive_moment_project_trend_and_exports(window, mon
     panel._gle_snapshot()._write_gle_data_file(gle)
     assert "Heuristic approximate errors" in gle.read_text()
     widget.clear_readout()
+    assert widget._uncertainty_label.isHidden()
+
+
+def _await_event(event):
+    import time
+
+    from PySide6.QtCore import QCoreApplication
+
+    for _ in range(500):
+        if event.is_set():
+            return
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    raise AssertionError("Worker did not reach the requested boundary")
+
+
+def test_full_readout_runs_off_thread_and_latest_edit_wins(window, monkeypatch):
+    import threading
+
+    from PySide6.QtCore import QTimer
+
+    import asymmetry.gui.moment_tasks as tasks
+
+    _activate_fft_spectrum(window, [1])
+    entered, release, heartbeat = (threading.Event() for _ in range(3))
+    calls = []
+    original = tasks.spectrum_moments
+
+    def gated(*args, **kwargs):
+        if kwargs["uncertainty"] == "bootstrap":
+            calls.append((threading.get_ident(), kwargs["cutoff_fraction"]))
+            entered.set()
+            assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "spectrum_moments", gated)
+    widget = window._fourier_panel.moments_widget
+    widget.set_cutoff_fraction(0.1)
+    window._on_moments_settings_changed(widget)
+    _await_event(entered)
+    try:
+        assert widget._points_label.text() == "Calculating approximate errors…"
+        for _ in range(5):
+            window._refresh_spectral_moments()
+        QTimer.singleShot(0, window, heartbeat.set)
+        _await_event(heartbeat)
+        for cutoff in (0.12, 0.14, 0.16, 0.18):
+            widget.set_cutoff_fraction(cutoff)
+            window._on_moments_settings_changed(widget)
+        assert "±" not in widget._value_labels["b_ave"].text()
+        assert len(calls) == 1
+    finally:
+        release.set()
+    _wait_moments(window)
+    assert [cutoff for _, cutoff in calls] == [0.1, 0.18]
+    assert all(thread_id != threading.get_ident() for thread_id, _ in calls)
+    assert "±" in widget._value_labels["b_ave"].text()
+    assert window._moment_readout._wanted.recipe.cutoff_fraction == 0.18
+
+
+def test_obsolete_spectrum_preparation_cannot_start_moment_batch(window, monkeypatch):
+    _activate_fft_spectrum(window, [1, 2])
+    callbacks = []
+    monkeypatch.setattr(
+        window,
+        "_ensure_frequency_spectra_for_runs_async",
+        lambda *args, on_ready: callbacks.append(on_ready),
+    )
+    widget = window._fourier_panel.moments_widget
+    window._on_moments_send_to_trend(widget)
+    widget.set_cutoff_fraction(0.2)
+    window._on_moments_settings_changed(widget)
+    callbacks.pop()()
+    assert window._moment_batch._worker is None
+    assert _moments_batches(window) == []
+
+
+def test_batch_cancel_between_runs_never_publishes_partial_series(window, monkeypatch):
+    import threading
+
+    import asymmetry.gui.moment_tasks as tasks
+
+    _activate_fft_spectrum(window, [1, 2])
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    original = tasks.moments_trend_row
+
+    def gated(*args, **kwargs):
+        calls.append(kwargs["run_number"])
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "moments_trend_row", gated)
+    window._on_moments_send_to_trend(window._fourier_panel.moments_widget)
+    _await_event(entered)
+    try:
+        window._on_moments_send_to_trend(window._fourier_panel.moments_widget)
+        widget = window._fourier_panel.moments_widget
+        widget.set_cutoff_fraction(0.2)
+        window._on_moments_settings_changed(widget)
+        assert _moments_batches(window) == []
+    finally:
+        release.set()
+    _wait_moments(window)
+    assert calls == [1]
+    assert _moments_batches(window) == []
+
+
+def test_batch_uses_each_spectrums_recorded_padding(window):
+    from asymmetry.core.fourier.moments import spectrum_moments
+    from asymmetry.core.fourier.units import FieldUnit, convert
+
+    datasets = _activate_fft_spectrum(window, [1, 2])
+    datasets[0].metadata["fourier_padding"] = 1
+    datasets[1].metadata["fourier_padding"] = 4
+    widget = window._fourier_panel.moments_widget
+    window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
+    rows = _moments_batches(window)[0].results_by_run
+    for dataset in datasets:
+        expected = spectrum_moments(
+            convert(dataset.time, FieldUnit.MHZ, widget.unit()),
+            dataset.asymmetry,
+            errors=dataset.error,
+            x_range=None,
+            cutoff_fraction=widget.cutoff_fraction(),
+            error_oversampling=dataset.metadata["fourier_padding"],
+        )
+        assert rows[int(dataset.run_number)]["uncertainties"]["B_ave"] == expected.b_ave_err
+    assert rows[2]["moments_recipe"]["seed"] == 0
+    assert rows[2]["moments_recipe"]["error_oversampling"] == 4
+    assert rows[1]["moments_recipe"]["error_oversampling"] == 1
+    assert rows[2]["uncertainties"]["B_ave"] == 2 * rows[1]["uncertainties"]["B_ave"]
+
+
+@pytest.mark.parametrize("action", ["source", "reset", "close"])
+def test_obsolete_full_readout_does_not_publish_after_lifecycle_change(window, monkeypatch, action):
+    import threading
+    import time
+
+    import asymmetry.gui.moment_tasks as tasks
+
+    browser = window._data_browser
+    _activate_fft_spectrum(window, [1])
+    entered = threading.Event()
+    original = tasks.spectrum_moments
+    published = []
+
+    def cancellable(*args, **kwargs):
+        if kwargs["uncertainty"] == "bootstrap":
+            entered.set()
+            deadline = time.monotonic() + 5
+            while not kwargs["cancel_callback"]() and time.monotonic() < deadline:
+                time.sleep(0.005)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "spectrum_moments", cancellable)
+    widget = window._fourier_panel.moments_widget
+    widget.set_cutoff_fraction(0.2)
+    window._on_moments_settings_changed(widget)
+    _await_event(entered)
+    monkeypatch.setattr(window, "_show_moment_result", lambda *args: published.append(args))
+    if action == "source":
+        window._frequency_plot_panel.plot_dataset(_spectrum(2, display="power"))
+        window._refresh_spectral_moments()
+    elif action == "reset":
+        window._data_browser = browser
+        window._clear_all_state()
+    else:
+        window._shutdown_workers()
+    _wait_moments(window)
+    assert published == []
+
+
+def test_repeated_refresh_reuses_full_readout_and_retains_current_errors(window, monkeypatch):
+    import asymmetry.gui.moment_tasks as tasks
+
+    _activate_fft_spectrum(window, [1])
+    widget = window._fourier_panel.moments_widget
+    calls = []
+    original = tasks.spectrum_moments
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs["uncertainty"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "spectrum_moments", counted)
+    before = widget._value_labels["b_ave"].text()
+    assert "±" in before
+    for _ in range(5):
+        window._refresh_spectral_moments()
+    _wait_moments(window)
+    assert calls == []
+    assert widget._value_labels["b_ave"].text() == before
+
+
+def test_readout_snapshot_detaches_arrays_and_recipe(window):
+    from asymmetry.gui.moment_tasks import MomentInput, MomentRecipe
+
+    dataset = _activate_fft_spectrum(window, [1])[0]
+    widget = window._fourier_panel.moments_widget
+    request = MomentInput.capture(
+        dataset,
+        (dataset.time, dataset.asymmetry, dataset.error),
+        MomentRecipe.from_widget(widget, RepresentationType.FREQ_FFT),
+    )
+    before = request.compute()
+    dataset.asymmetry[:] = 0
+    dataset.error[:] = 100
+    widget.set_cutoff_fraction(0.5)
+    assert not request.frequency.flags.writeable
+    assert not request.amplitude.flags.writeable
+    assert not request.errors.flags.writeable
+    assert request.compute() == before
+    assert request.recipe.seed == 0
+    assert request.recipe.mode == RepresentationType.FREQ_FFT.value
+    assert request.source[0] == id(dataset)
+    assert not request.matches(dataset, request.recipe)
+
+
+def test_selected_run_extraction_is_off_thread_and_duplicate_send_is_single_flight(
+    window, monkeypatch
+):
+    import threading
+
+    import asymmetry.gui.moment_tasks as tasks
+
+    _activate_fft_spectrum(window, [1, 2])
+    calls = []
+    original = tasks.spectrum_moments
+
+    def counted(*args, **kwargs):
+        calls.append((threading.get_ident(), kwargs["uncertainty"]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "spectrum_moments", counted)
+    widget = window._fourier_panel.moments_widget
+    window._on_moments_send_to_trend(widget)
+    window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
+    assert len(_moments_batches(window)) == 1
+    assert len(calls) == 2
+    assert all(thread != threading.get_ident() and mode == "bootstrap" for thread, mode in calls)
+
+
+def test_batch_retains_skipped_ineligible_run_diagnostic(window):
+    datasets = _activate_fft_spectrum(window, [1, 2, 3])
+    datasets[1].metadata["fourier_display"] = "power"
+    datasets[2].time = np.array([])
+    datasets[2].asymmetry = np.array([])
+    notes = []
+    window._set_fourier_status = notes.append
+    window._on_moments_send_to_trend(window._fourier_panel.moments_widget)
+    _wait_moments(window)
+    assert _moments_batches(window)[0].member_run_numbers == [1]
+    assert notes[-1] == (
+        "Spectral moments sent to trend: 1 run(s). Skipped 2 without an eligible spectrum."
+    )
+
+
+def test_malformed_error_shape_retains_uncertainty_free_readout(window):
+    dataset = _activate_fft_spectrum(window, [1])[0]
+    dataset.error = np.array([0.01])
+    window._refresh_spectral_moments()
+    _wait_moments(window)
+    widget = window._fourier_panel.moments_widget
+    assert widget._value_labels["b_ave"].text() != "—"
+    assert "±" not in widget._value_labels["b_ave"].text()
     assert widget._uncertainty_label.isHidden()
