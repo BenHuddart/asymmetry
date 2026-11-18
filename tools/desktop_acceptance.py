@@ -32,7 +32,7 @@ def payload_environment() -> dict[str, str]:
         }
     }
     if os.name == "nt":
-        windows = Path(environment["SystemRoot"])
+        windows = Path(os.environ["SystemRoot"])
         environment["PATH"] = os.pathsep.join(map(str, (windows / "System32", windows)))
     else:
         environment["PATH"] = os.defpath
@@ -183,7 +183,7 @@ def run_acceptance(
                 diagnostic = stream.read().decode("utf-8", errors="replace")
             outcome["launcher_output_tail"] = re.sub(
                 r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>]+", "<path>", diagnostic
-            )
+            )[-4096:]
         (work / "outcome.json").write_text(
             json.dumps(outcome, indent=2, allow_nan=False) + "\n", encoding="utf-8"
         )

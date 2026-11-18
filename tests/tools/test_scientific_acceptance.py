@@ -61,7 +61,7 @@ def test_production_entry_nonzero_anchor_export_and_project(tmp_path, inputs):
     )
     report = outcome["report"]
     assert report["mode"] == "source"
-    assert report["identity"]["version"] == "0.28.0"
+    assert report["identity"]["version"] == identity()["version"]
     assert report["fixtures"] == json.loads((inputs / "fixtures.json").read_text())
     assert str(tmp_path) not in json.dumps(outcome)
     for result in report["results"].values():
@@ -379,3 +379,54 @@ def test_timeout_kills_the_owned_child_tree(tmp_path):
     outcome = json.loads((tmp_path / "run/outcome.json").read_text())
     assert outcome["child_reaped"]
     assert outcome["tree_cleanup_exit"] == 0
+
+
+def test_path_redaction_cannot_expand_diagnostic_budget(tmp_path):
+    child = tmp_path / "failure.py"
+    child.write_text("import sys\nprint('/a '*1500,file=sys.stderr)\nsys.exit(9)")
+    with pytest.raises(RuntimeError):
+        run_acceptance([sys.executable, str(child)], tmp_path, {}, tmp_path / "run")
+    outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+    assert len(outcome["launcher_output_tail"]) <= 4096
+    assert "/a" not in outcome["launcher_output_tail"]
+
+
+def test_zero_launch_status_is_required_even_with_fresh_success_report(tmp_path):
+    child = tmp_path / "child.py"
+    child.write_text(
+        "import json,pathlib,sys\na=sys.argv\n"
+        "root=pathlib.Path(a[a.index('--acceptance-root')+1]); root.mkdir()\n"
+        "token=a[a.index('--acceptance-token')+1]\n"
+        "(root/'result.json').write_text(json.dumps(dict(token=token,identity={},success=True,stages=['complete'])))\n"
+        "sys.exit(7)\n"
+    )
+    with pytest.raises(RuntimeError, match="process failed"):
+        run_acceptance([sys.executable, str(child)], tmp_path, {}, tmp_path / "run")
+    outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+    assert outcome["exit_code"] == 7
+    assert outcome["report"]["success"]
+    assert not outcome["success"]
+
+
+def test_windows_environment_lookup_uses_case_insensitive_owner(monkeypatch):
+    from types import SimpleNamespace
+
+    import tools.desktop_acceptance as runner
+
+    class WindowsEnvironment(dict):
+        def __getitem__(self, key):
+            return super().__getitem__(key.upper())
+
+    monkeypatch.setattr(
+        runner,
+        "os",
+        SimpleNamespace(
+            name="nt",
+            environ=WindowsEnvironment(SYSTEMROOT="C:/Windows", PATH="developer-rescue"),
+            pathsep=";",
+        ),
+    )
+    result = runner.payload_environment()
+    assert "developer-rescue" not in result["PATH"]
+    assert "System32" in result["PATH"]
+    assert "Windows" in result["PATH"]
