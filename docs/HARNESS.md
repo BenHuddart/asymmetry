@@ -472,7 +472,10 @@ complete the same journey, with imports resolved inside their delivered payloads
 
 `tests/tools/test_native_acceptance.py` checks packet identity and tool tampering,
 fixture transport, checkout/build-environment rejection, and shared cleanup after
-scientific or native failures. The workflow checks require both native outcomes
+scientific or native failures, including an attached image without a mounted
+volume. Fresh matching omission reports and an intact-copy control reject unrelated
+startup errors; only native-library omissions allow component-specific loader
+diagnostics without an app report. The workflow checks require both native outcomes
 on dispatch and before publication. Disposable native payload copies omit the used
 logo, HDF4 library, and native reader backend; actual nonzero scientific or loader
 failures are required, and a timeout cannot satisfy an omission. Original media,

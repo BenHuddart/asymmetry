@@ -8,6 +8,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -210,7 +211,9 @@ def omission_components(components: list, control: dict, target: str) -> dict:
     return {name: items[0] for name, items in required.items()}
 
 
-def execute_case(command, inputs, identity, work, cases, name, expected_stage=None):
+def execute_case(
+    command, inputs, identity, work, cases, name, expected_stage=None, loader_component=None
+):
     """Only an actual nonzero scientific failure can satisfy an omission control."""
     try:
         desktop.run_acceptance(command, inputs, identity, work)
@@ -227,16 +230,43 @@ def execute_case(command, inputs, identity, work, cases, name, expected_stage=No
     else:
         if (
             outcome["success"]
-            or not isinstance(outcome["exit_code"], int)
+            or type(outcome["exit_code"]) is not int
             or outcome["exit_code"] == 0
             or outcome["failure"] == "timeout"
         ):
             raise ValueError("omission did not produce a decisive nonzero child failure")
         if "report" in outcome:
-            if outcome["report"]["failure"]["stage"] != expected_stage:
-                raise ValueError("omission failed at an unrelated scientific stage")
-        elif not outcome.get("launcher_output_tail"):
-            raise ValueError("native loader failure has no retained diagnostic")
+            report = outcome["report"]
+            if (
+                outcome["failure"] != "scientific stage failed"
+                or report["identity"] != identity
+                or report["token"] != outcome["token"]
+                or report["failure"]["stage"] != expected_stage
+            ):
+                raise ValueError("omission has no fresh expected scientific-stage failure")
+        else:
+            if loader_component is None or outcome["failure"] != "missing report":
+                raise ValueError("omission has no valid scientific report or native loader failure")
+            marker = None
+            for filename in ("launcher-error.log", "launcher.log"):
+                log = work / filename
+                with log.open("rb") as stream:
+                    stream.seek(max(0, log.stat().st_size - 16384))
+                    diagnostic = stream.read().decode("utf-8", errors="replace")
+                found = re.search(
+                    r"Library not loaded|DLL load failed|cannot open shared object|dyld\[|Error loading Python DLL|Failed to load",
+                    diagnostic,
+                    re.IGNORECASE,
+                )
+                if found and loader_component.lower() in diagnostic.lower():
+                    marker = found.group().lower()
+                    break
+            if marker is None:
+                raise ValueError(
+                    "missing report has no component-specific native loader diagnostic"
+                )
+            outcome["native_loader_failure"] = {"component": loader_component, "marker": marker}
+
     return outcome
 
 
@@ -291,6 +321,21 @@ def run_native(
                 "control",
             )
             compare_results(source, control["report"])
+            with tempfile.TemporaryDirectory(prefix="intact-copy-", dir=work) as temporary:
+                clone = Path(temporary) / application.name
+                shutil.copytree(application, clone, symlinks=True)
+                copied = execute_case(
+                    [str(clone / launcher)],
+                    packet / "inputs",
+                    identity,
+                    work / "copy-control",
+                    report["cases"],
+                    "copy-control",
+                )
+                compare_results(source, copied["report"])
+            copied["copy_removed"] = not clone.exists()
+            if not copied["copy_removed"]:
+                raise ValueError("intact control copy remains after cleanup")
             for name, component in omission_components(
                 components["components"], control["report"], target
             ).items():
@@ -315,6 +360,7 @@ def run_native(
                         report["cases"],
                         name,
                         "resource" if name == "resource" else "counts.nxs:load",
+                        Path(relative).name if name == "native" else None,
                     )
                     outcome["omitted_component"] = {
                         "path": relative,

@@ -1,5 +1,6 @@
 """Delivered native acceptance shares the existing final-media lifecycle."""
 
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -218,6 +219,19 @@ def test_shared_dmg_lifecycle_detaches_after_partial_attach_and_scientific_timeo
 
     def command(args, cwd, **kwargs):
         calls.append(args[1])
+        if args[1] == "info":
+            return plistlib.dumps(
+                {
+                    "images": [
+                        {
+                            "image-path": str(tmp_path / "app.dmg"),
+                            "system-entities": [{"dev-entry": "/dev/disk77"}],
+                        }
+                    ]
+                    if mounted
+                    else []
+                }
+            ).decode()
         if args[1] == "attach":
             mount = Path(args[args.index("-mountpoint") + 1])
             mounted.add(mount)
@@ -228,7 +242,8 @@ def test_shared_dmg_lifecycle_detaches_after_partial_attach_and_scientific_timeo
         else:
             if failure in {"detach", "both"}:
                 raise OSError("detach failed")
-            mounted.remove(Path(args[2]))
+            assert args[2] == "/dev/disk77"
+            mounted.clear()
         return ""
 
     def visit(application, work):
@@ -242,38 +257,115 @@ def test_shared_dmg_lifecycle_detaches_after_partial_attach_and_scientific_timeo
         artifacts.inspect_payload(
             tmp_path / "app.dmg", [], "macos-arm64", set(), visit, events=events
         )
-    assert calls == ["attach", "detach"]
+    assert [name for name in calls if name != "info"] == ["attach", "detach"]
     assert events[-2]["stage"] == "native cleanup"
     assert events[-2]["success"] == (failure not in {"detach", "both"})
 
 
-@pytest.mark.parametrize("failure", ["timeout", "zero", "stage", "silent", "loader", "expected"])
-def test_omission_requires_actual_nonzero_expected_stage_or_loader_diagnostic(
+@pytest.mark.parametrize(
+    "failure", ["timeout", "zero", "stage", "silent", "loader", "expected", "stale", "identity"]
+)
+def test_omission_requires_actual_nonzero_expected_stage_or_specific_loader_diagnostic(
     tmp_path, monkeypatch, failure
 ):
-    outcome = {"success": False, "exit_code": 9, "failure": "process failed"}
+    outcome = {"success": False, "exit_code": 9, "failure": "missing report", "token": "fresh"}
     if failure == "timeout":
         outcome.update(exit_code=-9, failure="timeout")
     elif failure == "zero":
         outcome["exit_code"] = 0
-    if failure in {"stage", "expected"}:
+    if failure in {"stage", "expected", "stale", "identity"}:
+        outcome["failure"] = (
+            "stale or mismatched report" if failure == "stale" else "scientific stage failed"
+        )
         outcome["report"] = {
-            "failure": {"stage": "wrong" if failure == "stage" else "counts.nxs:load"}
+            "token": "old" if failure == "stale" else "fresh",
+            "identity": {"wrong": True} if failure == "identity" else {},
+            "failure": {"stage": "wrong" if failure == "stage" else "counts.nxs:load"},
         }
     elif failure != "silent":
-        outcome["launcher_output_tail"] = "native loader could not load omitted library"
+        outcome["launcher_output_tail"] = "unrelated startup failure"
 
     def child(*args):
         tmp_path.mkdir(exist_ok=True)
         artifacts.write_json(tmp_path / "outcome.json", outcome)
+        (tmp_path / "launcher-error.log").write_text(
+            "dyld[123]: Library not loaded: /private/path/libmfhdf.0.dylib"
+        )
+        (tmp_path / "launcher.log").touch()
         raise RuntimeError("child failed")
 
     monkeypatch.setattr(native.desktop, "run_acceptance", child)
+    arguments = (
+        [],
+        tmp_path,
+        {},
+        tmp_path,
+        {},
+        "omission",
+        "counts.nxs:load",
+        "libmfhdf.0.dylib" if failure == "loader" else None,
+    )
     if failure in {"loader", "expected"}:
-        assert (
-            native.execute_case([], tmp_path, {}, tmp_path, {}, "omission", "counts.nxs:load")
-            == outcome
-        )
+        result = native.execute_case(*arguments)
+        if failure == "loader":
+            assert result["native_loader_failure"] == {
+                "component": "libmfhdf.0.dylib",
+                "marker": "dyld[",
+            }
+            assert "private" not in str(result)
     else:
         with pytest.raises(ValueError):
-            native.execute_case([], tmp_path, {}, tmp_path, {}, "omission", "counts.nxs:load")
+            native.execute_case(*arguments)
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_partial_attach_cleans_actual_device_and_checks_absence(tmp_path, monkeypatch, mounted):
+    binary = tmp_path / "app.dmg"
+    attached = []
+    calls = []
+    monkeypatch.setattr(Path, "is_mount", lambda path: bool(attached) and mounted)
+
+    def command(args, cwd, **kwargs):
+        calls.append(args)
+        if args[1] == "info":
+            return plistlib.dumps({"images": attached}).decode()
+        if args[1] == "attach":
+            attached.append(
+                {
+                    "image-path": str(binary),
+                    "system-entities": [{"dev-entry": "/dev/disk77"}, {"dev-entry": "/dev/disk78"}],
+                }
+            )
+            raise subprocess.TimeoutExpired(args, 60)
+        assert args[1:] == ["detach", "/dev/disk77"]
+        attached.clear()
+        return ""
+
+    monkeypatch.setattr(artifacts.release, "run", command)
+    events = []
+    with pytest.raises(subprocess.TimeoutExpired):
+        artifacts.inspect_payload(binary, [], "macos-arm64", set(), events=events)
+    assert not attached
+    assert sum(args[1] == "detach" for args in calls) == 1
+    assert events[-2:] == [
+        {"stage": "native cleanup", "success": True},
+        {"stage": "temporary cleanup", "success": True},
+    ]
+
+
+def test_preexisting_image_attachment_is_never_detached(tmp_path, monkeypatch):
+    binary = tmp_path / "app.dmg"
+
+    def command(args, cwd, **kwargs):
+        assert args == ["hdiutil", "info", "-plist"]
+        return plistlib.dumps(
+            {
+                "images": [
+                    {"image-path": str(binary), "system-entities": [{"dev-entry": "/dev/disk77"}]}
+                ]
+            }
+        ).decode()
+
+    monkeypatch.setattr(artifacts.release, "run", command)
+    with pytest.raises(ValueError, match="pre-existing"):
+        artifacts.inspect_payload(binary, [], "macos-arm64", set())

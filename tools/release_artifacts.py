@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import sys
@@ -471,8 +472,9 @@ def native_stage(name, command, work, timeout, events):
     started = time.monotonic()
     event = {"stage": name, "timeout_seconds": timeout, "success": False}
     try:
-        release.run(command, work, display=False, timeout=timeout)
+        output = release.run(command, work, display=False, timeout=timeout)
         event["success"] = True
+        return output
     except Exception as exc:
         event["failure_type"] = type(exc).__name__
         event["cleanup"] = list(exc.__notes__) if hasattr(exc, "__notes__") else []
@@ -482,11 +484,57 @@ def native_stage(name, command, work, timeout, events):
         events.append(event)
 
 
+def attached_image_device(binary, work, events):
+    """Identify the whole device from the actual image, including unmounted attachments."""
+    output = native_stage("image attachments", ["hdiutil", "info", "-plist"], work, 30, events)
+    images = plistlib.loads(output.encode())["images"]
+    matches = [image for image in images if Path(image["image-path"]).resolve() == binary.resolve()]
+    if not matches:
+        events.append({"stage": "image ownership", "success": True, "attached": False})
+        return None
+    if len(matches) != 1:
+        raise ValueError("owned image has ambiguous attached devices")
+    # hdiutil lists the backing device before its partitions or synthesized volumes.
+    device = matches[0]["system-entities"][0]["dev-entry"]
+    if not re.fullmatch(r"/dev/disk[0-9]+", device):
+        raise ValueError("owned image has no identifiable backing device")
+    events.append(
+        {"stage": "image ownership", "success": True, "attached": True, "device": Path(device).name}
+    )
+    return device
+
+
+def detach_image(binary, mount, work, events):
+    """Retain query failures while still attempting cleanup of the owned mount."""
+    errors = []
+    device = None
+    try:
+        device = attached_image_device(binary, work, events)
+    except Exception as exc:
+        errors.append(exc)
+    try:
+        if device is not None or mount.is_mount():
+            native_stage("detach", ["hdiutil", "detach", device or str(mount)], work, 60, events)
+    except Exception as exc:
+        errors.append(exc)
+    try:
+        if attached_image_device(binary, work, events) is not None or mount.is_mount():
+            raise ValueError("temporary DMG remains attached or mounted after detach")
+    except Exception as exc:
+        errors.append(exc)
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("owned image cleanup failures", errors)
+
+
 def inspect_payload(binary, expected, target, required_resources, visitor=None, *, events=None):
     """Inspect and visit the final installed/mounted app within one checked lifetime."""
     if target not in ("windows-x64", "macos-arm64"):
         raise ValueError("unsupported native payload target")
     events = [] if events is None else events
+    if target == "macos-arm64" and attached_image_device(binary, binary.parent, events) is not None:
+        raise ValueError("refusing to reuse a pre-existing image attachment")
     work = Path(tempfile.mkdtemp(prefix="asymmetry-payload-"))
     application = work / ("application" if target == "windows-x64" else "volume/Asymmetry.app")
     mount = work / "volume"
@@ -607,10 +655,8 @@ def inspect_payload(binary, expected, target, required_resources, visitor=None, 
                     raise ValueError("temporary installed payload remains after uninstall")
             elif target == "windows-x64" and application.exists():
                 raise ValueError("partial installation has no cleanup executable")
-            elif target == "macos-arm64" and mount.is_mount():
-                native_stage("detach", ["hdiutil", "detach", str(mount)], work, 60, events)
-                if mount.is_mount():
-                    raise ValueError("temporary DMG remains mounted after detach")
+            elif target == "macos-arm64":
+                detach_image(binary, mount, work, events)
             events.append({"stage": "native cleanup", "success": True})
         except Exception as exc:
             events.append(

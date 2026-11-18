@@ -308,17 +308,21 @@ the installed application or mounted bundle, including macOS resource symlinks.
 
 Both native jobs reuse the final-payload inspection lifecycle: silent unattended
 Windows installation and checked uninstall, or read-only DMG mount and checked
-detach. Install and uninstall commands have 120-second budgets; attach and detach
+detach, including image devices left attached without a mounted volume. The
+lifecycle rejects pre-existing same-image attachments and verifies device absence
+after cleanup. Install and uninstall commands have 120-second budgets; attach and detach
 have 60-second budgets, with owned command trees killed and reaped on timeout.
 Windows removal is checked for up to 30 seconds after uninstall. Cleanup runs on
 success, scientific failure, and timeout; primary and cleanup failures are retained.
 
-The intact delivered launcher must complete both formats and match the source
-numerical results. Three disposable, link-preserving payload copies each omit an
+The intact delivered launcher and an intact disposable copy must complete both
+formats and match the source numerical results. Three disposable, link-preserving
+payload copies each omit an
 actual required component: the decoded logo, the HDF4 native library, and the
 native HDF4 reader backend. Each altered launcher must fail nonzero at the expected
-scientific stage or produce a retained native-loader diagnostic before a report
-can be written. Manifest rejection alone cannot satisfy an omission. Timeouts do
+scientific stage with matching identity and invocation. Only the native-library
+omission may instead use a component-specific native-loader diagnostic before a
+report can be written. Manifest rejection alone cannot satisfy an omission. Timeouts do
 not count as successful omission detection. Original media and payload inventories
 must remain unchanged, and all disposable copies must be removed.
 
