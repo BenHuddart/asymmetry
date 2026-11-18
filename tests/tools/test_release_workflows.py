@@ -45,13 +45,29 @@ def test_every_release_job_gates_publication() -> None:
 
 @pytest.mark.parametrize("filename", ["release.yml", "full-suite.yml"])
 def test_no_status_function_bypasses_the_gate(filename: str) -> None:
-    for job in _workflow(filename)["jobs"].values():
+    for job_name, job in _workflow(filename)["jobs"].items():
         for entry in [job, *job.get("steps", [])]:
             assert "continue-on-error" not in entry
             if entry.get("name") == "Report memory counters":
                 assert filename == "full-suite.yml" and entry is not job
                 assert entry["if"] == "always()"
                 assert entry["run"] == "awk '$1 == \"oom_kill\" { print }' /proc/vmstat\nfree -h\n"
+                continue
+            if entry.get("name") == "Retain native scientific inputs":
+                targets = {"build-macos-arm": "macos-arm64", "build-windows": "windows-x64"}
+                assert filename == "release.yml" and job_name in targets
+                assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
+                assert entry["with"] == {
+                    "name": "release-science-inputs-" + targets[job_name],
+                    "path": "${{ runner.temp }}/release-science-inputs-" + targets[job_name],
+                    "if-no-files-found": "error",
+                    "retention-days": 1,
+                }
+                continue
+            if entry.get("name") == "Retain native scientific report":
+                assert filename == "release.yml" and job_name == "accept-native"
+                assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
+                assert entry["with"]["path"] == "${{ runner.temp }}/native-science-result.json"
                 continue
             assert not re.search(r"\b(always|cancelled|failure)\s*\(", str(entry.get("if", "")))
 
@@ -381,7 +397,12 @@ def test_downloaded_artifacts_are_verified_on_dispatch_and_before_publication() 
     assert "verify-artifacts" in jobs["release"]["needs"]
     for job in (verifier, jobs["release"]):
         steps = job["steps"]
-        downloads = [s for s in steps if s.get("uses", "").startswith("actions/download-artifact@")]
+        downloads = [
+            s
+            for s in steps
+            if s.get("uses", "").startswith("actions/download-artifact@")
+            and s.get("with", {}).get("pattern") == "asymmetry-*"
+        ]
         assert len(downloads) == 1
         assert downloads[0]["with"]["pattern"] == "asymmetry-*"
         verify = next(s for s in steps if s.get("name") == "Verify downloaded publication assets")
@@ -428,8 +449,63 @@ def test_native_records_follow_assembly_and_share_packaging_owner(filename: str)
             i
             for i, s in enumerate(steps)
             if s.get("uses", "").startswith("actions/upload-artifact@")
+            and "build-components.json" in s.get("with", {}).get("path", "")
         )
         assert prepare < freeze < collect < assembly < finalize < upload
         assert "build-components.json" in steps[upload]["with"]["path"]
         assert "artifact.json" in steps[upload]["with"]["path"]
         assert "SHA256SUMS" in steps[upload]["with"]["path"]
+
+
+def test_clean_native_science_jobs_gate_dispatch_and_publication_without_checkout():
+    jobs = _workflow("release.yml")["jobs"]
+    job = jobs["accept-native"]
+    assert "accept-native" in jobs["release"]["needs"]
+    assert set(job["needs"]) == {"verify-artifacts", "verify-version"}
+    assert "if" not in job and job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"]["include"] == [
+        {"target": "windows-x64", "os": "windows-2025", "architecture": "x64"},
+        {"target": "macos-arm64", "os": "macos-15", "architecture": "arm64"},
+    ]
+    assert job["permissions"] == {"contents": "read", "actions": "read"}
+    assert not any("checkout" in step.get("uses", "") for step in job["steps"])
+    run = next(
+        step["run"]
+        for step in job["steps"]
+        if step["name"] == "Execute delivered scientific journey and actual omissions"
+    )
+    assert "venv --without-pip" in run and "-I -B" in run
+    assert 'native_acceptance.py" run' in run and '--commit "$GITHUB_SHA"' in run
+    verification = next(
+        step["run"]
+        for step in jobs["verify-artifacts"]["steps"]
+        if step["name"] == "Verify downloaded publication assets"
+    )
+    assert "tools/native_acceptance.py verify" in verification
+    for name in ("build-macos-arm", "build-windows"):
+        steps = jobs[name]["steps"]
+        source = next(
+            i
+            for i, step in enumerate(steps)
+            if "tools/native_acceptance.py prepare" in step.get("run", "")
+        )
+        identity = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Prepare packaged build identity"
+        )
+        freeze = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Build application with PyInstaller"
+        )
+        assert identity < source < freeze
+        packet = next(step for step in steps if step["name"] == "Retain native scientific inputs")
+        assert packet["if"] == "always()"
+        assert packet["with"]["name"].startswith("release-science-inputs-")
+        assert packet["with"]["retention-days"] == 1
+    report = next(
+        step for step in job["steps"] if step["name"] == "Retain native scientific report"
+    )
+    assert report["with"]["retention-days"] == 1
+    assert report["with"]["name"].startswith("release-science-results-")

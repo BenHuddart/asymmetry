@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import platform
 import re
@@ -16,6 +17,9 @@ import tomllib
 import venv
 from pathlib import Path
 from urllib.parse import urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from desktop_acceptance import terminate_tree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ROOT / "packaging/release"
@@ -141,23 +145,39 @@ def clean_environment() -> dict[str, str]:
     return env
 
 
-def run(command: list[str], cwd: Path, *, offline: bool = False, display: bool = True) -> str:
+def run(
+    command: list[str],
+    cwd: Path,
+    *,
+    offline: bool = False,
+    display: bool = True,
+    timeout: float = 600,
+) -> str:
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("release subprocess timeout must be finite and positive")
     env = clean_environment()
     if offline:
         env["PIP_NO_INDEX"] = "1"
-    result = subprocess.run(
+    process = subprocess.Popen(
         command,
         cwd=cwd,
         env=env,
-        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        exc.add_note("Owned child cleanup: " + json.dumps(terminate_tree(process), sort_keys=True))
+        raise
+    result = subprocess.CompletedProcess(command, process.returncode, output)
     if display or result.returncode:
-        print(result.stdout, flush=True)
+        print(output, flush=True)
     result.check_returncode()
-    return result.stdout
+    return output
 
 
 def environment_python(directory: Path) -> Path:
@@ -447,7 +467,7 @@ def main() -> None:
     if args.smoke:
         if Path.cwd().is_relative_to(ROOT):
             raise ValueError("packaged smoke must run outside source")
-        run(args.smoke, Path.cwd())
+        run(args.smoke, Path.cwd(), timeout=60)
         print("Packaged smoke completed with exit status 0.")
     elif args.verify:
         verify_build(args.verify)
