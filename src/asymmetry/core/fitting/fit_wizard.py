@@ -6276,6 +6276,8 @@ def _residual_gate_reasons(
     reasons: list[str] = []
     if not fit_result.success:
         reasons.append(fit_result.message or "Fit failed")
+        if fit_result.residuals is None or len(fit_result.residuals) == 0:
+            return reasons
     if residual_rms > 1.25:
         reasons.append(f"standardized residual RMS is high ({residual_rms:.2f})")
     if abs(runs_z_score) > 2.0:
