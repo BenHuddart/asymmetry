@@ -474,7 +474,6 @@ def test_data_browser_logged_and_accent_colours_are_token_derived(qapp) -> None:
     from asymmetry.gui.styles import tokens
 
     assert data_browser._LOG_TEMPERATURE_FOREGROUND == QColor(tokens.LOGGED_VALUE_FG)
-    accent = QColor(tokens.ACCENT)
-    soft = _RowHighlightDelegate._ACCENT_SOFT
-    assert (soft.red(), soft.green(), soft.blue()) == (accent.red(), accent.green(), accent.blue())
-    assert soft.alpha() == 102
+    assert _RowHighlightDelegate._ACCENT == QColor(tokens.ACCENT)
+    assert _RowHighlightDelegate._MEMBER_SEL_BG == QColor(tokens.BROWSER_SELECTED_BG)
+    assert _RowHighlightDelegate._MEMBER_FOC_BG == QColor(tokens.BROWSER_CURRENT_BG)

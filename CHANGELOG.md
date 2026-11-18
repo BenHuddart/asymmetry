@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Distinguish selected Data Browser runs from their group tint and mark the
+  current run with an arrow, including when focus moves to another control.
+
 - Allow documentation screenshot capture ten minutes to avoid intermittent
   publishing failures.
 
