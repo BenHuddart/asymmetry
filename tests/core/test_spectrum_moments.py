@@ -366,6 +366,8 @@ def test_trend_row_has_fit_summary_shape():
         "success",
         "parameters",
         "uncertainties",
+        "moments_recipe",
+        "warnings",
         "run_number",
         "run_label",
         "field",
@@ -374,6 +376,8 @@ def test_trend_row_has_fit_summary_shape():
     assert row["success"] is True
     assert "B_rms_mean" in row["parameters"] and "beta" in row["parameters"]
     assert row["field"] == 3000.0
+    assert row["warnings"] == []
+    assert row["moments_recipe"] == m.recipe
 
 
 def test_trend_row_non_finite_coord_becomes_none():
