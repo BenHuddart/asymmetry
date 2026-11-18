@@ -204,7 +204,9 @@ def test_export_tsv_headers_include_units(
 
     panel._export_tsv()
 
-    first_line = out.read_text(encoding="utf-8").splitlines()[0]
+    first_line = next(
+        line for line in out.read_text(encoding="utf-8").splitlines() if not line.startswith("#")
+    )
     assert first_line == (
         "Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\tLambda (µs⁻¹)\terr_Lambda (µs⁻¹)\t"
         "reduced_chi2\tchi2"
@@ -214,13 +216,7 @@ def test_export_tsv_headers_include_units(
 def test_export_tsv_golden_header_and_data_rows(
     panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full golden string for header + both data rows (Phase 0 characterization).
-
-    Pins the exact tab-separated content — including value/uncertainty
-    formatting sourced from the table's displayed text and the trailing
-    reduced_chi2/chi2 columns — so Phase 1c's shared-TSV-writer extraction
-    can diff its output against this literal string.
-    """
+    """Raw column order, values, and errors remain stable beneath provenance comments."""
     panel._refresh_table()
     out = tmp_path / "fit_parameters.tsv"
 
@@ -231,13 +227,13 @@ def test_export_tsv_golden_header_and_data_rows(
 
     panel._export_tsv()
 
-    lines = out.read_text(encoding="utf-8").splitlines()
+    lines = [
+        line for line in out.read_text(encoding="utf-8").splitlines() if not line.startswith("#")
+    ]
     assert lines[0] == (
         "Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\tLambda (µs⁻¹)\terr_Lambda (µs⁻¹)\t"
         "reduced_chi2\tchi2"
     )
-    # panel fixture rows are sorted by run number ascending: run 1 (field=100)
-    # then run 2 (field=200); neither row carries a chi-squared value.
     data_lines = lines[1:]
     assert len(data_lines) == 2
     assert data_lines[0].split("\t")[:7] == [
@@ -295,7 +291,9 @@ def test_export_tsv_includes_custom_abscissa_column(
     )
     panel._export_tsv()
 
-    lines = out.read_text(encoding="utf-8").splitlines()
+    lines = [
+        line for line in out.read_text(encoding="utf-8").splitlines() if not line.startswith("#")
+    ]
     header = lines[0]
     assert header.startswith("Run\tB (G)\tT (K)\tA0 (%)\terr_A0 (%)\t")
     assert header.endswith("\tAngle\treduced_chi2\tchi2")

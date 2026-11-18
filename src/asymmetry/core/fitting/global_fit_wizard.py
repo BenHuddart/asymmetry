@@ -122,7 +122,7 @@ from asymmetry.core.fitting.information_criteria import (
     rank as rank_criteria,
 )
 from asymmetry.core.fitting.likelihood import Objective, dataset_observations, gaussian_selection
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.result_payload import (
     _deserialize_fit_result,
@@ -6348,6 +6348,21 @@ def _initial_parameter_sets_for_candidate(
             seeded_values=seeded_values,
         )
         base_by_run[run_number] = parameters
+    # A weak trace's span does not bound its zero-time amplitude on this common data scale.
+    for name, kind in template.model.parameter_kinds().items():
+        if (
+            kind is not ParameterKind.AMPLITUDE
+            or split_parameter_name(name)[0] != "A"
+            or name in parameter_bounds
+        ):
+            continue
+        free = [
+            parameters[name] for parameters in base_by_run.values() if not parameters[name].fixed
+        ]
+        if free:
+            upper = max(parameter.max for parameter in free)
+            for parameter in free:
+                parameter.max = upper
     return base_by_run
 
 
@@ -9382,26 +9397,10 @@ def _separable_coupled_strategy(
     global_param_names: tuple[str, ...],
     local_param_names: tuple[str, ...],
 ) -> str:
-    """Which minimiser architecture solves this node: always ``"least_squares"``.
+    """Use sparse least squares for coupled sharing nodes.
 
-    A coupled node — any free global, or a grouped local tie — has an
-    arrow-shaped Jacobian: every residual depends on the shared globals and on
-    exactly one run's locals. The sparse trust-region least-squares solver is
-    built for that shape, and the two Minuit architectures are not. The joint
-    solver carries one dense ``(n_global + n_local*G)²`` Hessian; the profiled
-    solver trades it for a small outer Hessian but re-solves *every* run on each
-    outer iteration. Measured on a 12-run phase with a two-line damped template
-    (9 free parameters per run, ~217 k points): the profiled strategy took ~800 s
-    for one node — thousands of inner Minuit fits — and the 97-parameter joint
-    problem failed to converge at all, while the sparse solver reached the same
-    minimum in seconds from under twenty residual evaluations. Elimination visits
-    of order one node plus one flip per free parameter per raced template, so
-    that gap is the difference between a search that finishes inside its budget
-    and one that keeps nothing.
-
-    The strategy names what a *coupled* node uses. A node with nothing actually
-    shared (no free global, no grouped tie) is block-separable and the engine's
-    own fast path fits its runs independently whatever is passed here.
+    The shared/member Jacobian structure keeps derivative work sparse.
+    Unshared nodes use the engine's independent-fit route.
     """
 
     return "least_squares"

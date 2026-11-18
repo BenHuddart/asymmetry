@@ -204,6 +204,14 @@ recommendation unless you mark a parameter ``Fixed``; a fixed parameter is left
 untouched throughout. Invalid bounds are reported inline and stop the run
 before any fitting starts.
 
+Without an explicit amplitude bound, the series wizard uses the widest automatic
+upper bound for that same amplitude across its members. A slow trace's small
+observed span cannot cap its zero-time amplitude more tightly than the rest of
+the series. This search envelope preserves individual amplitude values and
+roles; fixed values, supplied bounds, fraction limits, and lower bounds remain
+authoritative. A genuinely binding bound still limits symmetric uncertainty
+reporting as described in :ref:`global-marginal-errors`.
+
 The **Search settings** row starts with **Recommend**, which sets what the
 coupled optimisation is for:
 
@@ -822,12 +830,14 @@ grows with the *per-run* parameter count rather than with
 with nine free parameters per run over a couple of hundred thousand points —
 that is the difference between minutes per fit and seconds, and the equivalent
 Minuit problem over ninety-odd parameters may not converge at all. The fitted
-values, :math:`\chi^2` and parameter uncertainties are the same quantities
-Minuit reports (the uncertainties come from the Gauss–Newton curvature at the
-solution, which for a :math:`\chi^2` cost is Minuit's own convention), so
-nothing about the ranking or the reported numbers changes — only how long the
-search takes. Asymmetric MINOS intervals are the one thing this solver cannot
-produce; the wizard does not request them.
+values and :math:`\chi^2` optimise the same objective. Default symmetric
+parameter errors use its observed local curvature and include all free shared
+and local parameters, as described in :ref:`global-marginal-errors`. Nonlinear
+residual curvature is retained. The member covariance includes global/local
+cross terms; ordinary trend scoring still approximates different runs as
+independent. When marginal covariance is unavailable the fit warnings explain
+why; symmetric errors are omitted. Asymmetric MINOS intervals are unavailable
+on this solver; the wizard does not request them.
 
 The exhaustive "wavefront" search that enumerates every :math:`2^P` role
 assignment has not gone away — it is retained behind the lower-level

@@ -200,7 +200,7 @@ class CompositeExpression:
             covariance=covariance,
             covariance_order=covariance_order,
         )
-        uncertainty = float(math.sqrt(max(0.0, variance)))
+        uncertainty = float(math.sqrt(variance))
         return CompositeEvaluation(
             value=float(value),
             uncertainty=uncertainty,
@@ -377,7 +377,7 @@ class CompositeExpression:
         covariance: np.ndarray | Mapping[str, Mapping[str, float]] | None,
         covariance_order: Sequence[str] | None,
     ) -> float:
-        symbols = [name for name in self.referenced_symbols if name in gradient]
+        symbols = [name for name in self.referenced_symbols if gradient.get(name, 0.0) != 0.0]
         if not symbols:
             return 0.0
 
@@ -387,7 +387,9 @@ class CompositeExpression:
         # Start with diagonal fallback from provided uncertainties.
         for i, name in enumerate(symbols):
             sigma = float(symbol_uncertainties.get(name, 0.0))
-            if np.isfinite(sigma) and sigma > 0.0:
+            if not np.isfinite(sigma):
+                return math.nan
+            if sigma > 0.0:
                 cov[i, i] = sigma * sigma
 
         if covariance is not None:
