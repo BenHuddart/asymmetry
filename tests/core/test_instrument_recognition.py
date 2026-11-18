@@ -3,6 +3,7 @@
 import pytest
 
 from asymmetry.core.instrument import detect_instrument
+from tests.core.test_instrument import GPS_ROOT15_LABELS
 
 
 class TestDetectInstrument:
