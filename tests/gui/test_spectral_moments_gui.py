@@ -2,8 +2,7 @@
 
 Covers eligibility gating, the on-plot window overlay, send-to-trend recording a
 computed ``FitSeries`` (replace-on-resend), the ``.asymp`` round-trip of the
-series + recipe, and live-setting persistence without a schema bump. See
-``docs/porting/spectral-moments/verification-plan.md`` (C9–C14).
+series + recipe, and live-setting persistence.
 """
 
 from __future__ import annotations

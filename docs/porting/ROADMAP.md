@@ -54,10 +54,7 @@ higher-impact candidate.
 | 2 | [dynamic-kubo-toyabe](candidates/dynamic-kubo-toyabe/) | 5 | 4 | 20 | Now |
 | 3 | [theory-library-expansion](candidates/theory-library-expansion/) | 4 | 4 | 16 | Now |
 | 4 | [simulate-mode](simulate-mode/) | 4 | 4 | 16 | Now — **implemented** (study + port at `docs/porting/simulate-mode/`; candidate docs at `simulate-mode/candidate/`) |
-| 5 | [maxent-spectrum](candidates/maxent-spectrum/) | 4 | 3 | 12 | Next |
-| 6 | [rrf-transform](candidates/rrf-transform/) | 3 | 4 | 12 | Next |
 | 7 | [python-user-functions](candidates/python-user-functions/) | 4 | 3 | 12 | Next |
-| 8 | [moments-analysis](candidates/moments-analysis/) | 2 | 5 | 10 | Later |
 | 9 | [bpp-relaxation](candidates/bpp-relaxation/) | 2 | 5 | 10 | Later |
 | 10 | [phase-auto-calibration](candidates/phase-auto-calibration/) | 3 | 3 | 9 | Next |
 | 11 | [period-arithmetic](candidates/period-arithmetic/) | 3 | 3 | 9 | Next |
@@ -109,15 +106,9 @@ These candidates stay in `docs/porting/candidates/<slug>/` until
 roadmap refresh. They are flagged for public visibility in the
 comparison chapter but are not yet scheduled.
 
-- **MaxEnt spectrum (12)** — now studied in full at
-  `docs/porting/maxent/` (slug `maxent`). The study reverses the
-  earlier Burg-first plan: implement the MULTIMAX-lineage joint
-  MaxEnt once (WiMDA `Wimdamax.pas` contract, Mantid `MaxentTools`
-  as oracle); Burg MEM is a different method and is excluded.
-  Heaviest algorithm in this roadmap.
-- **RRF transform (12)** — rotating reference-frame demodulation
-  algorithm. Useful for vortex-lattice and high-TF studies; ~30
-  lines numpy plus a low-pass.
+Implemented spectral methods are documented in [Fourier analysis](../reference/fourier_analysis.rst)
+and [rotating-frame analysis](../reference/rotating_frame.rst).
+
 - **Python user functions (12)** — decorator-based plugin API.
   Lower-friction analogue of musrfit's C++ plugins. Best landed
   after theory-library-expansion so the user-facing example library

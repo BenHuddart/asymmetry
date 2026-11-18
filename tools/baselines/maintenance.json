@@ -720,7 +720,7 @@
     "src/asymmetry/core/io/nexus.py": 1363,
     "src/asymmetry/core/io/psi.py": 1483,
     "src/asymmetry/core/io/root.py": 1015,
-    "src/asymmetry/core/maxent/engine.py": 2378,
+    "src/asymmetry/core/maxent/engine.py": 2370,
     "src/asymmetry/core/project/profiles.py": 1848,
     "src/asymmetry/core/project/schema.py": 1777,
     "src/asymmetry/core/simulate.py": 2060,

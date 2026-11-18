@@ -98,7 +98,7 @@ analogue in the reference programs) are deferred to the closing
 | Zero-padding | ✅ | ✅ | ✅ | ✅ |
 | Phase optimisation | ◐ manual + phase table | ★ Minuit2-driven (`PFTPhaseCorrection`) | ✅ via MaxEnt phases | ◐ manual + auto entropy mode |
 | Group-resolved spectra | ◐ via plot | ◐ via canvas | ✅ as workspace groups | ✅ `core/fourier/grouped.py` |
-| MaxEnt | ★ MULTIMAX joint MaxEnt (`Wimdamax.pas`); also a separate Burg MEM (`MaxEnt.pas`) | ❌ none (roadmap item only) | ★ `MuonMaxent` (same MULTIMAX lineage) + generic `MaxEnt-v1` | ◐ stub in `core/fourier/maxent.py`; study at `docs/porting/maxent/` |
+| MaxEnt | ★ MULTIMAX joint MaxEnt (`Wimdamax.pas`); also a separate Burg MEM (`MaxEnt.pas`) | ❌ none (roadmap item only) | ★ `MuonMaxent` (same MULTIMAX lineage) + generic `MaxEnt-v1` | Grouped-count reconstruction; see [Fourier analysis](../reference/fourier_analysis.rst) |
 | Eigenvalue spectral estimator | ✅ `Eigen.pas` | ❌ | ❌ | ❌ |
 
 ### 6. Parameter trending
@@ -197,9 +197,8 @@ Where the reference programs are materially richer:
   (especially) Mantid; absent in Asymmetry.
 - **MaxEnt** — production implementations in WiMDA (`Wimdamax.pas`,
   Pratt/MULTIMAX) and Mantid (`MuonMaxent`, same lineage); musrfit has
-  none; Asymmetry has a placeholder stub. WiMDA's `MaxEnt.pas` is a
-  separate Burg all-poles MEM, not the same method. Full study:
-  `docs/porting/maxent/`.
+  none. Asymmetry's grouped-count reconstruction is described in the
+  maintained [Fourier reference](../reference/fourier_analysis.rst).
 - **ALC interface** — Mantid only.
 - **Rotating Reference Frame** — Mantid algorithm; musrfit has a
   partial implementation inside the asymmetry classes.
