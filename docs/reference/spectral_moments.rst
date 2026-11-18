@@ -148,8 +148,7 @@ Compared with other programs
 
 WiMDA's inspected single-spectrum moment workflow supplies central values;
 scatter across multiple entries is a different statistic from a propagated
-single-spectrum error. Asymmetry's approximate errors do not establish superiority
-or agreement with another program. See the versioned scope and public manuals in
+single-spectrum error. See the versioned scope and public manuals in
 :ref:`spectral-error-comparison`.
 
 Which spectra qualify
