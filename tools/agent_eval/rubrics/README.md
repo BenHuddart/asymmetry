@@ -42,6 +42,11 @@ alone, without needing to see the agent's tool calls or the raw data.
 
 ## How to tick a rubric
 
+A pass means a scientifically responsible preliminary answer. It must meet
+all dataset Musts, but need not complete every possible analysis. An explicit
+limitation satisfies a Must only where that Must permits it; contradictory
+claims or disclaiming every essential finding do not pass.
+
 1. Read the agent's final summary only — not its tool transcript,
    thinking, or intermediate output. The summary is what a real user
    would see.
@@ -92,6 +97,22 @@ includes:
   significance in σ that no command printed (made explicit 2026-09-24; the
   rule was already applied this way). Quoting the two printed values and
   describing the relation in words is fine.
+
+Approximate worded comparisons such as "roughly half", "about twice" or
+"about a tenth" are allowed when the summary identifies both quantities and
+the session's printed values support the comparison. Check units, fit windows
+and uncertainty: a hedge does not excuse a misleading comparison. A precise
+ratio, percentage or significance remains a derived result even when spelled
+out. Audit checks provenance patterns, not whether a comparison is true.
+
+Examples (illustrative, not corpus results):
+
+- Widths printed as 20 G and 40 G, reported as "roughly half as broad": pass.
+- The same widths described as "about a tenth as broad": fail.
+- "A 33.7% reduction" without a command reporting that reduction: fail.
+- "Four standard errors apart" without a command reporting significance: fail.
+- A single ratio hiding a reference width that varies substantially with the
+  fit window: fail unless the comparison remains supported across that range.
 
 A summary may still *discuss* such numbers in words (e.g. "the
 worksheet's textbook Tc is far higher than the temperatures probed

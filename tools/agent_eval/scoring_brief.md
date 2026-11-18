@@ -33,8 +33,15 @@ change was used.
    (percentages, ratios, differences of printed columns, unit conversions,
    σ-significance). A rounded printed value, or a printed input restated in
    other units in passing, is borderline: note it, do not fail on it alone.
-   Background or literature numbers quoted as such are fine.
-3. **Verdict.** PASS only if every Must is ticked and the number rule holds.
+   Background or literature numbers quoted as such are fine. Approximate
+   worded comparisons ("roughly half", "about twice", "about a tenth") are
+   allowed when the identified printed quantities support them, including
+   their units, uncertainty and fit-window limitations. Precise ratios,
+   percentages and significance claims still require command output even
+   when spelled out. Follow the examples in `rubrics/README.md`.
+3. **Verdict.** PASS means a scientifically responsible preliminary answer:
+   every Must is ticked and the number rule holds. An honest limitation counts
+   only where a Must explicitly permits it, with no contradictory conclusion.
    Mark a fail that rests on a judgement call as such. A run cut short by
    infrastructure (an API outage, a harness error) is **void**, not a fail.
 4. For every fail, and any notable Should gap, find the **root cause** in

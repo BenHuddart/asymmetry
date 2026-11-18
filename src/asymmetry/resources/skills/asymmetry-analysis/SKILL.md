@@ -1502,18 +1502,17 @@ per-run tables and exploratory fits in the named CLI products, keep the
 decisive values, uncertainties, windows, geometry, calibration and
 limitations in the report, and do not repeat a result in several tables.
 
-> **Every number in the summary must appear in a command's output.** A
-> temperature, field, frequency, rate, exponent, run number, alpha, χ² or count
-> that no command printed does not go in. That excludes numbers you calculated
-> in a shell, a spreadsheet or your head — a significance in σ, a percentage
-> change, a ratio, a sum, a unit conversion, a literature formula applied to a
-> stored value. If a useful derived quantity is not printed, state the
-> relation in words. Textbook or literature values may be *discussed* —
-> clearly attributed as such ("the textbook value for bulk nickel is far above
-> the range scanned here") — never presented as a result of this session. Nor
-> may a unit the data does not give be attached to a number: a concentration
-> written "0.25" or "quarter" in a title is not 0.25 M. Keep each printed
-> parameter with its unit and uncertainty as one quantity.
+> **Every numerical result must appear in an Asymmetry command's output.**
+> Do not calculate significance, percentage changes, ratios, sums, conversions
+> or literature-formula results in a shell, spreadsheet or your head.
+> Approximate worded comparisons ("roughly half", "about twice") are allowed
+> when both printed quantities are identified and their units, uncertainties
+> and fit windows support the comparison. Precise ratios, percentages and
+> significance need command output even when spelled out. Otherwise describe
+> the direction without a magnitude. Attribute literature values explicitly;
+> never present them as this session's measurements. Do not attach a unit
+> absent from the data: "0.25" or "quarter" in a title is not 0.25 M.
+> Keep each printed parameter with its unit and uncertainty as one quantity.
 
 **Invalid fitted quantities do not carry physics.** Parameters flagged
 `frequency_unresolved` or `amplitude_exceeds_data`, or otherwise rejected as
