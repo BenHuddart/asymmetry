@@ -5,13 +5,12 @@ from pathlib import Path
 import pytest
 
 from asymmetry.core import computation
+from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
 
 pytestmark = pytest.mark.gui
 
 
-def test_tsv_and_gle_keep_mixed_current_historical_and_unknown_revisions(
-    qapp, tmp_path, monkeypatch
-):
+def test_tsv_and_gle_keep_warning_scope_and_mixed_execution_revisions(qapp, tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     from asymmetry.gui.panels.fit_parameters_panel import (
         FitParametersPanel,
@@ -30,6 +29,7 @@ def test_tsv_and_gle_keep_mixed_current_historical_and_unknown_revisions(
             values={"Lambda": 0.1 * run},
             errors={"Lambda": 0.01 * run},
             computation_revision=revision,
+            warnings=[FIT_UNCERTAINTY_SCOPE] if run == 1 else [],
         )
         for run, revision in enumerate((computation.COMPUTATION_REVISION, "2", None), 1)
     ]
@@ -77,6 +77,7 @@ def test_tsv_and_gle_keep_mixed_current_historical_and_unknown_revisions(
     for run, revision in enumerate((computation.COMPUTATION_REVISION, "2", "unknown"), 1):
         assert f"# Computation revision ['mixed', run {run}]: {revision}" in text
     assert "# Computation revision ['historic', run 1]: 1" in text
+    assert f"# Warning [run 1]: {FIT_UNCERTAINTY_SCOPE}" in text
     data = [line.split("\t") for line in text.splitlines() if not line.startswith("#")]
     assert data[0][0] == "Series"
     assert len(data) == 5
@@ -88,6 +89,7 @@ def test_tsv_and_gle_keep_mixed_current_historical_and_unknown_revisions(
     for run, revision in enumerate((computation.COMPUTATION_REVISION, "2", "unknown"), 1):
         assert f"! Computation revision ['mixed', run {run}]: {revision}" in text
     assert "historic" not in text
+    assert f"! Warning [run 1]: {FIT_UNCERTAINTY_SCOPE}" in text
     numeric = [line.split() for line in text.splitlines() if line and not line.startswith("!")]
     assert len(numeric) == 3
     assert [float(line[4]) for line in numeric] == pytest.approx([0.01, 0.02, 0.03])
