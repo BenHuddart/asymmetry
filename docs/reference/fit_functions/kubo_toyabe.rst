@@ -289,10 +289,11 @@ The zero-field static limit is the analytic Lorentzian Kubo–Toyabe,
    G^{\mathrm{s}}(t) = \tfrac{1}{3} + \tfrac{2}{3}(1 - a_L t)\,e^{-a_L t},
 
 and in zero field the strong-collision dynamics have an **exact closed
-form**: the static function is a three-state linear system, so the
-strong-collision integral equation reduces to a 3 × 3 eigenproblem and
-:math:`G^{\mathrm{d}}(t)` is a sum of three exponentials, valid at every
-rate with no integration grid, cache, or fast-fluctuation crossover. Unlike
+form**: the rational Laplace transform of the static function gives one
+real pole and a conjugate pair. The real pole is bracketed in scaled
+coordinates, and the pair is evaluated with cosine and sinc functions.
+This retains the exact strong-collision solution at very large rate-to-width
+ratios and near coincident poles, without a fast-fluctuation crossover. Unlike
 the Gaussian case there is no motional narrowing — a Lorentzian distribution
 has no second moment — and the closed form shows the relaxation rate
 saturating at :math:`4a_L/3` for :math:`\nu \gg a_L`.
@@ -309,10 +310,12 @@ Lorentzian distribution as a cosine transform in the total-field magnitude
    \ln\frac{a_L^{2} + (W + \omega_0)^{2}}{a_L^{2} + (W - \omega_0)^{2}}
    - 4\,\omega_0 W\right],
 
-with :math:`\omega_0 = \gamma_\mu B_L`, whose :math:`1/W^{2}` tail is exactly
-the zero-field density (carrying the :math:`e^{-a_L t}` cusp analytically) and
-whose remainder is transformed by one FFT with the frequency step chosen so
-its conjugate time step is the integration grid's. At weak field the spectral
+with :math:`\omega_0 = \gamma_\mu B_L`. Two rational tail terms with
+scale :math:`\kappa^2=a_L^2+\omega_0^2` are subtracted before the FFT and their
+analytic cosine transforms added back. They retain the original inverse-square
+and inverse-fourth-power tails while resolving high-field oscillations even
+for a narrow distribution. The conjugate time step is the integration grid's.
+At weak field the spectral
 density uses the finite series for
 :math:`[\operatorname{atanh}(q)-q]/q^3`, with
 :math:`q=2\omega_0W/(a_L^2+W^2+\omega_0^2)`, to avoid inverse-field
@@ -323,8 +326,25 @@ also use Uemura's spherical-Bessel time expression.
 The dynamic field solution uses the same exponential-weighted renewal method
 and numerical target as ``DynamicGaussianKT``. The requested fluctuation rate
 is retained, including its effect in fast fluctuating fields. The field path
-costs more than the zero-field closed form, so fix :math:`B_L` from the known applied field where
-it is not the quantity of interest.
+uses a control difference: the numerical finite-field and zero-field solutions
+share exactly the same grids, startup, and refinement. Their interpolated
+difference is added to the exact zero-field value at each requested time.
+This cancels the discretisation offset as the field tends to zero and retains
+physical field curvature. The field path costs more than the closed form, so fix :math:`B_L` from the
+known applied field where it is not the quantity of interest.
+
+Both dynamic models resolve the distribution width and Larmor frequency on
+causally padded grids. Evaluation stops before allocating a grid requiring
+more than 524,288 fine samples and reports the required count and budget.
+The fit and preview error readout asks users to shorten the selected time
+window or explicitly choose a suitable analytic approximation; no curve is
+silently substituted. For example, 5 kG over 20 μs uses about 273,000 fine
+samples and fits within this budget. Each numerical kernel cache retains at
+most 16 parameter combinations. These are work and memory bounds, not a
+physical rate or width restriction. At the sample limit the dynamic spline
+cache can retain about 320 MiB and the static Lorentzian grid cache about
+128 MiB, in addition to temporary solver arrays. A successful single preview
+replaces the error readout with “Previewing the current parameter values.”
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description

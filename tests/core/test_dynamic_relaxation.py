@@ -18,7 +18,6 @@ from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import (
     _dynamic_kt_spline,
     _exponential_sum,
-    _lorentzian_kt_zf_realisation,
     _lorentzian_lf_lineshape_reference,
     _lorentzian_lf_uniform,
     _strong_collision_modes,
@@ -33,6 +32,16 @@ from asymmetry.core.fitting.models import (
     static_lorentzian_kt_zf,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+
+def _lorentzian_kt_zf_realisation(width):
+    """Independent three-state realisation of (1/3)+(2/3)(1-a*t)exp(-a*t)."""
+    return (
+        np.array([[0.0, 0.0, 0.0], [0.0, -width, 1.0], [0.0, 0.0, -width]]),
+        np.array([1 / 3, 2 / 3, -2 * width / 3]),
+        np.array([1.0, 1.0, 0.0]),
+    )
+
 
 T = np.linspace(0.0, 8.0, 200)
 NEW = ["DynamicGaussianKT", "DynamicLorentzianKT", "Keren", "Abragam"]
@@ -217,18 +226,11 @@ def test_lorentzian_lf_high_field_long_window_is_resolved() -> None:
     assert np.max(np.abs(g - ref)) < 1e-3
 
 
-def test_lorentzian_lf_static_grid_respects_fft_cap() -> None:
-    # An extreme B_L * tmax would ask for a Larmor-resolved grid whose spectral
-    # FFT exceeds the cap; the cached grid coarsens instead of allocating it,
-    # and the sign of omega0 is immaterial.
-    from asymmetry.core.fitting.models import _LOR_LF_FFT_CAP, _static_lorentzian_lf_grid
+def test_lorentzian_lf_static_grid_work_budget_is_explicit() -> None:
+    from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 
-    grid, g = _static_lorentzian_lf_grid(0.5, _omega0(20000.0), 200.0)
-    assert 2 * grid.shape[0] <= _LOR_LF_FFT_CAP
-    assert grid[-1] >= 200.0 - 1e-9 and np.all(np.isfinite(g))
-    assert np.allclose(g, _static_lorentzian_lf_grid(0.5, -_omega0(20000.0), 200.0)[1])
-    with pytest.raises(ValueError):
-        _lorentzian_lf_uniform(0.5, _omega0(20.0), 1e-4, _LOR_LF_FFT_CAP)
+    with pytest.raises(EvaluationWorkLimitError, match="work budget"):
+        static_lorentzian_kt_lf(np.array([0.0, 200.0]), 1.0, 0.5, 20000.0)
 
 
 def test_lorentzian_lf_weak_field_approaches_zero_field() -> None:
@@ -281,7 +283,8 @@ def test_dynamic_kt_grid_resolves_larmor_oscillation() -> None:
     for kind in ("gaussian", "lorentzian"):
         curve = _dynamic_kt_spline(kind, 1.0, 0.5, 1000.0, 16.0)
         assert (curve.x[1] - curve.x[0]) * _omega0(1000.0) <= 0.1 + 1e-9, kind
-        assert np.all(np.isfinite(curve(curve.x))) and abs(curve(0.0) - 1.0) < 1e-9
+        assert np.all(np.isfinite(curve(curve.x)))
+        assert abs(curve(0.0) - (1.0 if kind == "gaussian" else 0.0)) < 1e-9
 
 
 @pytest.mark.parametrize(
@@ -478,6 +481,7 @@ def test_dynamic_gaussian_kt_round_trip() -> None:
 @pytest.mark.parametrize("n", [2, 64, 777, 2048])
 def test_blocked_renewal_solve_matches_dense_toeplitz(n):
     from scipy.linalg import solve_toeplitz
+
     from asymmetry.core.fitting.strong_collision import _renewal_toeplitz
 
     lag = np.arange(n - 1) + 1
@@ -685,3 +689,19 @@ def test_phi2_accepts_array_like_inputs(argument):
             expected.shape
         )
         np.testing.assert_allclose(result, reference, rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("rate", [1e-20, 1e-12, 1e-8, 0.01, 1, 2.4, 100, 1e6, 1e15, 1e20])
+def test_exact_lorentzian_poles_retain_initial_slope_and_scaling(rate):
+    from asymmetry.core.fitting.lorentzian_kt import lorentzian_zf_polarisation
+
+    time = np.array([[0, 1e-7], [0.1, 5]])
+    result = lorentzian_zf_polarisation(time, 1, rate)
+    assert result[0, 0] == 1
+    assert abs((result[0, 1] - 1) / 1e-7 + 4 / 3) < 3e-6
+    np.testing.assert_allclose(
+        lorentzian_zf_polarisation(time / 5, 5, 5 * rate), result, atol=2e-15, rtol=0
+    )
+    assert np.isfinite(lorentzian_zf_polarisation(np.asarray(1.0), 1, rate))
+    if rate >= 1e15:
+        np.testing.assert_allclose(result, np.exp(-4 * time / 3), atol=2e-15, rtol=0)

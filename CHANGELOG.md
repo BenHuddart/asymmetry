@@ -48,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Avoid high-field alias growth for narrow Lorentzian Kubo–Toyabe field distributions.
 
 - Evaluate Gaussian and Lorentzian strong-collision Kubo–Toyabe at the requested
-  fluctuation rate, with smooth weak-field response and fit-parameter curvature.
+  fluctuation rate, with smooth weak-field response, stable exact zero-field
+  Lorentzian dynamics, and explicit evaluation-work diagnostics.
 
 - Stabilise static Gaussian longitudinal-field Kubo–Toyabe at weak fields and
   all width scales, including the shared Gaussian-broadened kernel.

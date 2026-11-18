@@ -31,7 +31,8 @@ class DynamicKtRateSeriesScenario(Scenario):
         window._on_dataset_selected(run_numbers[0])
         label = window._plot_panel._label_field_combo.findData("comment")
         window._plot_panel._label_field_combo.setCurrentIndex(label)
-        window._dock_fit.hide()
+        for dock in (window._dock_fit, window._dock_fit_parameters, window._dock_fourier):
+            dock.hide()
         return window
 
 

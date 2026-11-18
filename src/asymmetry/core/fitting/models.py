@@ -34,10 +34,16 @@ from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 from scipy.special import erfcx, j0, sici
 
+from asymmetry.core.fitting.lorentzian_kt import lorentzian_zf_polarisation
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.phi_functions import phi2
 from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.fitting.static_gaussian_kt import static_gaussian_polarisation
+from asymmetry.core.fitting.strong_collision import (
+    KT_CACHE_ENTRIES,
+    KT_GRID_SAMPLE_BUDGET,
+    EvaluationWorkLimitError,
+)
 from asymmetry.core.fitting.strong_collision import (
     strong_collision_polarisation as _strong_collision_solve,
 )
@@ -394,27 +400,15 @@ def static_lorentzian_kt_zf(
     where ``a_L`` is the half-width of the field distribution expressed as a rate
     in us^-1.
     """
-    at = float(a_L) * np.abs(np.asarray(t, dtype=float))
-    exp_term = np.exp(np.clip(-at, -700, 0))
-    return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
+    return A0 * lorentzian_zf_polarisation(t, abs(float(a_L)), 0.0) + baseline
 
 
-# Longest spectral FFT the longitudinal-field Lorentzian line shape will use.
-# The frequency sampling step must resolve the strip of analyticity of the
-# spectral density, whose half-width is a_L, so the sample count grows like
-# 1/a_L; below a_L ~ 1e-4 us^-1 the cap is reached and the aliasing error grows
-# instead of the cost -- harmless there, because a field that exceeds the
-# distribution width by four orders of magnitude has decoupled the muon and the
-# line shape is unity to within the same 1e-4.
-_LOR_LF_FFT_CAP = 1 << 20
+# The spectral transform must hold twice the maximum allowed time-grid samples.
+_LOR_LF_FFT_CAP = 2 * KT_GRID_SAMPLE_BUDGET
 # Period margin, in units of 1/a_L, that the spectral sampling adds beyond the
 # requested time window: the transform decays like exp(-a_L t), so 30/a_L puts
 # the aliased copy at exp(-30) ~ 1e-13.
 _LOR_LF_ALIAS_MARGIN = 30.0
-# Larmor phase per time-grid step for the cached static line shape: linear
-# interpolation of a cos(omega0 t) oscillation from a grid of step h errs by
-# (omega0 h)^2 / 8 of its amplitude, ~1e-4 here.
-_LOR_LF_STATIC_STEP_RAD = 0.03
 
 
 def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArray:
@@ -585,24 +579,30 @@ def _lorentzian_lf_lineshape_reference(
     return out
 
 
-@lru_cache(maxsize=64)
+def _kt_time_grid(width: float, omega0: float, tmax: float, refinement: int) -> tuple[float, int]:
+    """Resolve width and Larmor time scales, checking work before allocating grids."""
+    h = 1.0 / (64.0 * np.hypot(width, omega0 / 4.0))
+    intervals = tmax / h
+    if not np.isfinite(intervals):
+        raise EvaluationWorkLimitError(
+            f"Kubo–Toyabe evaluation exceeds the {KT_GRID_SAMPLE_BUDGET:,}-sample work budget; "
+            "shorten the selected time window or explicitly choose a suitable analytic approximation."
+        )
+    n = max(int(np.ceil(intervals)) + 13, 16)
+    required = refinement * (n - 1) + 1
+    if required > KT_GRID_SAMPLE_BUDGET:
+        raise EvaluationWorkLimitError(
+            f"Kubo–Toyabe evaluation requires {required:,} time-grid samples; "
+            f"the work budget is {KT_GRID_SAMPLE_BUDGET:,}. "
+            "Shorten the selected time window or explicitly choose a suitable analytic approximation."
+        )
+    return h, n
+
+
+@lru_cache(maxsize=KT_CACHE_ENTRIES)
 def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[NDArray, NDArray]:
-    """Cached (uniform grid, line shape) for the static Lorentzian-LF, for interpolation.
-
-    The grid step resolves the Larmor oscillation (``_LOR_LF_STATIC_STEP_RAD``
-    of phase per step, never coarser than 0.02 us). Requested times use cubic
-    interpolation; the FFT evaluation costs ~O(n log n) in the grid length.
-
-    Keyed on the exact arguments: a repeated evaluation hits, a perturbed one
-    recomputes, so the line shape responds to any finite-difference step.
-    """
-    h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(abs(float(omega0)), 1e-12))
-    n = int(np.ceil(float(tmax) / h)) + 1
-    if 2 * n > _LOR_LF_FFT_CAP:
-        # The FFT needs 2n samples; beyond the cap coarsen the grid instead
-        # of growing the transform (only reachable for extreme B_L * tmax).
-        n = _LOR_LF_FFT_CAP // 2
-        h = float(tmax) / (n - 1)
+    """Width- and field-resolved static grid with causal interpolation padding."""
+    h, n = _kt_time_grid(a_L, abs(omega0), tmax, 1)
     grid = h * np.arange(n)
     return grid, _lorentzian_lf_uniform(a_L, omega0, h, n)
 
@@ -645,7 +645,7 @@ def static_lorentzian_kt_lf(
     else:
         tmax = float(max(tt.max(), 1e-6))
         grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
-        gs = CubicSpline(grid, gs_grid)(tt)
+        gs = CubicSpline(grid, gs_grid, bc_type=((1, -4.0 * a / 3.0), "not-a-knot"))(tt)
     out = A0 * np.asarray(gs, dtype=float) + baseline
     return float(out[0]) if scalar else out
 
@@ -794,30 +794,16 @@ def _exponential_sum(t: NDArray, lam: NDArray, weights: NDArray) -> NDArray:
     return np.real(np.exp(np.multiply.outer(np.asarray(t, dtype=float), lam)) @ weights)
 
 
-def _lorentzian_kt_zf_realisation(a_L: float) -> tuple[NDArray, NDArray, NDArray]:
-    """State-space ``(A, b, c)`` of the static zero-field Lorentzian Kubo-Toyabe.
-
-    ``G_s(t) = 1/3 + (2/3) e^{-a t} - (2a/3) t e^{-a t}``: a constant mode and a
-    2x2 Jordan block for the ``t e^{-a t}`` term.
-    """
-    a = float(a_L)
-    a_mat = np.array([[0.0, 0.0, 0.0], [0.0, -a, 1.0], [0.0, 0.0, -a]])
-    b = np.array([1.0 / 3.0, 2.0 / 3.0, -2.0 * a / 3.0])
-    c = np.array([1.0, 1.0, 0.0])
-    return a_mat, b, c
-
-
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=KT_CACHE_ENTRIES)
 def _dynamic_kt_spline(kind: str, width: float, nu: float, B_L: float, tmax: float) -> CubicSpline:
-    """Same-model renewal solution on continuously spaced, causally padded grids.
+    """Gaussian polarisation or Lorentzian field correction on padded renewal grids.
 
     The step depends continuously on width and field, not on fluctuation rate.
     Adding an end sample does not move earlier nodes; padding keeps the requested
     window clear of the cubic interpolant's far boundary condition.
     """
     omega0 = abs(LARMOR_RAD_PER_US_PER_GAUSS * B_L)
-    h = 1.0 / (64.0 * np.hypot(width, omega0 / 4.0))
-    n = max(int(np.ceil(tmax / h)) + 13, 16)
+    h, n = _kt_time_grid(width, omega0, tmax, 2)
     initial_derivative = 0.0 if kind == "gaussian" else -4.0 * width / 3.0
     curves = []
     for refinement in (1, 2):
@@ -828,8 +814,17 @@ def _dynamic_kt_spline(kind: str, width: float, nu: float, B_L: float, tmax: flo
             gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L)
         else:
             gs = _lorentzian_lf_uniform(width, omega0, step, count)
-        curves.append(_strong_collision_solve(gs, nu, step, initial_derivative=initial_derivative))
-    boundary = ((1, initial_derivative), "not-a-knot")
+        solution = _strong_collision_solve(gs, nu, step, initial_derivative=initial_derivative)
+        if kind == "lorentzian":
+            control = _strong_collision_solve(
+                static_lorentzian_kt_zf(grid, 1.0, width),
+                nu,
+                step,
+                initial_derivative=initial_derivative,
+            )
+            solution -= control
+        curves.append(solution)
+    boundary = ((1, 0.0), "not-a-knot")
     coarse_grid = np.arange(n) * h
     extrapolated = (
         4.0 * curves[1] - CubicSpline(coarse_grid, curves[0], bc_type=boundary)(grid)
@@ -885,9 +880,9 @@ def dynamic_lorentzian_kt(
 
     In exactly zero field the solution is **exact and closed
     form**: the static function is a three-state linear system, so the
-    strong-collision integral equation reduces to a 3x3 eigenproblem and
-    ``G_d`` is a sum of three exponentials (``asymmetry.core.fitting.models._strong_collision_modes``),
-    valid at every rate with no integration grid. In a longitudinal field,
+    strong-collision integral equation has a rational three-pole transform.
+    A bracketed real pole and an entire paired-mode expression evaluate the
+    exact zero-field solution without an integration grid. In a longitudinal field,
     exponential-weighted product integration solves the same renewal equation;
     the requested fluctuation rate is never frozen or replaced.
 
@@ -905,11 +900,10 @@ def dynamic_lorentzian_kt(
     elif nu == 0.0:
         gd = static_lorentzian_kt_lf(t, 1.0, a, B_L)
     elif B_L == 0.0:
-        lam, weights = _strong_collision_modes(*_lorentzian_kt_zf_realisation(a), nu)
-        gd = _exponential_sum(np.abs(t), lam, weights)
+        gd = lorentzian_zf_polarisation(t, a, nu)
     else:
         curve = _dynamic_kt_spline("lorentzian", a, nu, abs(float(B_L)), float(np.abs(t).max()))
-        gd = curve(np.abs(t))
+        gd = lorentzian_zf_polarisation(t, a, nu) + curve(np.abs(t))
     out = A0 * np.asarray(gd, dtype=float) + baseline
     return float(out) if t.ndim == 0 else out
 

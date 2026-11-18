@@ -11,25 +11,45 @@ _BLOCK_SIZE = 512
 _GAUSS_RULES = {order: np.polynomial.legendre.leggauss(order) for order in (8, 32)}
 
 
+class EvaluationWorkLimitError(ValueError):
+    """The selected model needs more time samples than its evaluation-work budget."""
+
+
+KT_GRID_SAMPLE_BUDGET = 1 << 19
+KT_CACHE_ENTRIES = 16
+
+
 def _renewal_toeplitz(diagonal: float, kernel: NDArray, forcing: NDArray) -> NDArray:
-    """Solve a causal convolution system by blocked triangular substitution."""
+    """Solve a causal Toeplitz system with recursively blocked FFT substitution.
+
+    Every coupling from time j to a later time i is added once, at the first
+    interval split separating j and i. Leaves solve the same triangular block;
+    the recursive schedule avoids repeatedly transforming the entire history.
+    """
     result = np.empty_like(forcing)
-    for start in range(0, forcing.size, _BLOCK_SIZE):
-        end = min(start + _BLOCK_SIZE, forcing.size)
+    rhs = forcing.copy()
+
+    def solve_interval(start: int, end: int) -> None:
         size = end - start
-        rhs = forcing[start:end].copy()
-        if start:
-            fft_size = 1 << (start + end - 2).bit_length()
-            convolution = np.fft.irfft(
-                np.fft.rfft(result[:start], fft_size) * np.fft.rfft(kernel[: end - 1], fft_size),
-                fft_size,
+        if size <= _BLOCK_SIZE:
+            column = np.r_[diagonal, -kernel[: size - 1]]
+            row = np.r_[diagonal, np.zeros(size - 1)]
+            result[start:end] = solve_triangular(
+                toeplitz(column, row), rhs[start:end], lower=True, check_finite=False
             )
-            rhs += convolution[start - 1 : end - 1]
-        column = np.r_[diagonal, -kernel[: size - 1]]
-        row = np.r_[diagonal, np.zeros(size - 1)]
-        result[start:end] = solve_triangular(
-            toeplitz(column, row), rhs, lower=True, check_finite=False
+            return
+        middle = start + size // 2
+        solve_interval(start, middle)
+        left = middle - start
+        fft_size = 1 << (size + left - 2).bit_length()
+        convolution = np.fft.irfft(
+            np.fft.rfft(result[start:middle], fft_size) * np.fft.rfft(kernel[: size - 1], fft_size),
+            fft_size,
         )
+        rhs[middle:end] += convolution[left - 1 : size - 1]
+        solve_interval(middle, end)
+
+    solve_interval(0, forcing.size)
     return result
 
 

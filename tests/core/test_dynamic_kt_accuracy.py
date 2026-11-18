@@ -264,3 +264,43 @@ def test_lorentzian_high_field_narrow_width_has_no_alias_growth(field):
     )
     actual = static_lorentzian_kt_lf(time, 1, width, field)
     np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=0)
+
+
+@pytest.mark.parametrize("width", [0.05, 1, 10, 50, 100])
+def test_lorentzian_static_weak_field_resolves_width(width):
+    time = np.array([0, 0.001, 0.01, 0.03, 0.1, 0.3, 1, 3, 5]) / width
+    field = 1e-6 * width / LARMOR_RAD_PER_US_PER_GAUSS
+    expected = 1 / 3 + 2 / 3 * (1 - width * time) * np.exp(-width * time)
+    actual = static_lorentzian_kt_lf(time, 1, width, field)
+    np.testing.assert_allclose(actual, expected, atol=1e-8, rtol=0)
+    np.testing.assert_allclose(
+        dynamic_lorentzian_kt(time, 1, width, 1e-20 * width, field), actual, atol=1e-8, rtol=0
+    )
+
+
+@pytest.mark.parametrize("rate", [0.01, 2.4, 10, 100])
+def test_lorentzian_field_correction_has_continuous_zero_limit(rate):
+    time = np.linspace(0, 5, 101)
+    zero = dynamic_lorentzian_kt(time, 1, 1, rate, 0)
+    near = dynamic_lorentzian_kt(time, 1, 1, rate, 1e-6 / LARMOR_RAD_PER_US_PER_GAUSS)
+    assert np.max(np.abs(near - zero)) < 3e-13
+    # Resolve physical field curvature above the floating-point subtraction floor.
+    curvatures = []
+    for omega in (0.02, 0.01):
+        plus = dynamic_lorentzian_kt(time, 1, 1, rate, omega / LARMOR_RAD_PER_US_PER_GAUSS)
+        curvatures.append(2 * (plus - zero) / omega**2)
+    np.testing.assert_allclose(curvatures[0], curvatures[1], atol=1e-6, rtol=0.002)
+
+
+def test_dynamic_work_guard_precedes_grid_allocation(monkeypatch):
+    from asymmetry.core.fitting import models
+    from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
+
+    def forbidden_allocation(*args, **kwargs):
+        pytest.fail("grid allocated before checking the evaluation-work budget")
+
+    monkeypatch.setattr(models.np, "arange", forbidden_allocation)
+    with pytest.raises(EvaluationWorkLimitError, match=r"requires .*samples.*524,288"):
+        dynamic_gaussian_kt(np.array([0, 20]), 1, 1, 1, 20000)
+    assert models._dynamic_kt_spline.cache_info().maxsize == 16
+    assert models._static_lorentzian_lf_grid.cache_info().maxsize == 16

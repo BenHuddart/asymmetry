@@ -6,7 +6,6 @@ the per-page rationale linking each generator to a textbook archetype.
 
 from .archetypes import (  # noqa: F401
     make_ag_lf_decoupling,
-    make_ag_dynamic_rate_scan,
     make_ag_zf_gkt,
     make_alc_field_scan,
     make_emu_vector,
@@ -22,3 +21,4 @@ from .archetypes import (  # noqa: F401
     make_ybco_knight_grouped,
     make_ybco_vortex_lattice,
 )
+from .dynamic_kt import make_ag_dynamic_rate_scan  # noqa: F401

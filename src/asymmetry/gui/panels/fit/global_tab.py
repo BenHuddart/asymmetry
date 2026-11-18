@@ -95,6 +95,7 @@ from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
 )
+from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 from asymmetry.core.representation.naming import format_run_range
 from asymmetry.core.representation.series import FitSeries, normalise_recipe
 from asymmetry.core.transform.preparation import wizard_observation_identity
@@ -183,20 +184,15 @@ from .tab_base import (
 )
 from .wizard_cache import GlobalWizardCacheEntry, _wizard_response_error, global_wizard_cache_entry
 
-#: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
-#: combobox and the ``Analysis ▸ Batch seeding`` menu so the two cannot drift.
-#: "auto" picks per the order key; "as_provided" seeds every run independently;
-#: "chain" carries each run's fit into the next (natural for an ordered T/B scan).
+#: Shared labels and tokens for the Batch selector and Analysis menu.
 BATCH_SEEDING_MODES: tuple[tuple[str, str], ...] = (
     ("Auto", "auto"),
     ("Independent seeds", "as_provided"),
     ("Chain from previous run", "chain"),
 )
 
-#: mode token -> display label, for logging/lookups (reverse of the pairs above).
 BATCH_SEEDING_LABELS: dict[str, str] = {mode: label for label, mode in BATCH_SEEDING_MODES}
 
-#: Tooltip shared by the on-tab selector and the menu submenu.
 BATCH_SEEDING_TOOLTIP = (
     "How each run in the batch is seeded:\n"
     "• Auto — choose per the series order key.\n"
@@ -205,28 +201,18 @@ BATCH_SEEDING_TOOLTIP = (
     "(best for an ordered temperature/field scan)."
 )
 
-#: ``QSettings`` prefix under which the Parameters rail persists its chips —
-#: one boolean key per column group, ``fit/batch/columns/<group>``.
+#: QSettings prefix for the parameter-column chips.
 COLUMN_GROUPS_SETTINGS_KEY = "fit/batch/columns"
 
-#: The Batch tab's Parameters rail: chip label, column group, whether it starts
-#: on, and its hover text. Min and Max rest hidden — a batch is configured by
-#: role far more often than by limits, and the dock is ~300 px wide.
 _COLUMN_GROUP_CHIPS = (("Bounds", "bounds", False, "Show the Min and Max columns."),)
 
-#: Min/Max column indices in the combo-role tables whose shape is fixed: the
-#: classification table (Parameter · Seed · Type · Min · Max) and the batch
-#: grouped physics table (Parameter · Value · Type · Min · Max).
+#: Bound columns in the classification and grouped-physics tables.
 _COL_MIN = 3
 _COL_MAX = 4
 
-#: Character budget of the Min/Max columns, shared with `FitParameterTable`.
 _BOUNDS_COL_CHARS = 7
 
-#: How many members the "Batch members" list shows before it scrolls. Past this
-#: the list would crowd out the fit controls in a dock that scrolls anyway — and
-#: the list is a filter, not the batch's contents, so a glance at three runs plus
-#: a scrollbar says as much as a column of twelve.
+#: Limit the member filter to three visible rows.
 _MEMBERS_LIST_MAX_ROWS = 3
 
 #: Widest the series selector's label gets before it elides (the chip rail's
@@ -4303,11 +4289,15 @@ class GlobalFitTab(FitTabBase):
             self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
-        preview_curves = self._build_grouped_preview_curves(
-            grouped_groups=grouped_groups,
-            grouped_datasets=grouped_datasets,
-            grouped_config=grouped_config,
-        )
+        try:
+            preview_curves = self._build_grouped_preview_curves(
+                grouped_groups=grouped_groups,
+                grouped_datasets=grouped_datasets,
+                grouped_config=grouped_config,
+            )
+        except EvaluationWorkLimitError as exc:
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
+            return
         self._results_card.set_message(
             f"Previewing grouped time-domain curves for {len(grouped_datasets)} groups.",
             tag="Preview",
