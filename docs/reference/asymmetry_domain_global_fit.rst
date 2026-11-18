@@ -226,18 +226,23 @@ they are an independence approximation.
 These errors describe a local quadratic approximation, not a guarantee of
 interval coverage. Non-Gaussian likelihoods, multiple minima, and parameter
 bounds can invalidate symmetric intervals; see `iminuit's HESSE and MINOS guide
-<https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_. The profiled and
-sparse solvers omit errors and covariance when curvature is singular,
-ill-conditioned, nonfinite, numerically unstable, too close to a bound, or the
-solution is invalid. They retain central estimates where available, set
+<https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_. When the profiled
+or sparse strategy uses coupled member-curvature blocks, it omits errors and
+covariance when curvature is singular, ill-conditioned, nonfinite, numerically
+unstable, too close to a bound, or the solution is invalid. Such fits retain
+central estimates where available, set
 ``covariance_accurate=False``, and record ``Marginal covariance unavailable:``
 with the reason in fit warnings. They never substitute conditional local errors.
-Asymmetry also checks numerical stability at two derivative step sizes. Both
-curvature and propagated covariance must agree to 0.2 % when each matrix element
+When no global is free and there are no grouped local ties, each member instead
+uses the ordinary single-fit route, including its boundary-error behaviour.
+
+For those coupled blocks, Asymmetry also checks numerical stability at two
+derivative step sizes. Both curvature and propagated covariance must agree to 0.2 % when each matrix element
 is scaled by the geometric mean of its diagonal entries. Up to four bounded
-step refinements seek a stable local estimate; the tolerance is unchanged. Near-null curvature
-is rejected in dimensionless coordinates; this diagnostic concerns the reported
-errors, and leaves usable observations and central estimates available.
+step refinements seek a stable local estimate; the tolerance is unchanged.
+Near-null curvature is rejected in dimensionless coordinates; this diagnostic
+concerns the reported errors, and leaves usable observations and central
+estimates available.
 
 ``minos=True`` is supported by ``"joint"`` and explicitly rejected by
 ``"profiled"`` and ``"least_squares"``.

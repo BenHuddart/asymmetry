@@ -360,12 +360,15 @@ Limits in this version
   members; there is no affine or expression relation (no "twice this other
   series' value") across series. Within one series, ordinary equality link
   groups still work exactly as before.
-* **Sparse least-squares solver.** ``fit_joint`` reports Gauss–Newton
-  ``(JᵀJ)⁻¹`` uncertainties from a bounded sparse trust-region solve (or, with
-  ``strategy="joint"``, one Minuit HESSE covariance over the whole vector).
-  There is no MINOS support for a joint fit, and ``strategy="profiled"``
-  raises: it profiles one shared set of globals over datasets that already
-  share one model, which a joint fit's differently modelled series do not.
+* **Sparse least-squares solver.** ``fit_joint`` reports marginal local-quadratic
+  errors from observed objective curvature, including nonlinear residual terms.
+  The bounded sparse trust-region solver recovers member covariance blocks;
+  ``strategy="joint"`` uses one Minuit HESSE covariance over the whole vector.
+  See :ref:`global-marginal-errors` for the approximation and fixed nuisance
+  assumptions. ``minos=True`` requires ``strategy="joint"``.
+  ``strategy="profiled"`` raises: it profiles one shared set of globals over
+  datasets that already share one model, which a joint fit's differently modelled
+  series do not.
 * **No wizard entry point yet.** The Global Fit Wizard's phase partition does
   not yet offer "make these phases a joint fit" — for now, record each
   phase's series from the wizard or the Batch tab as usual, then compose

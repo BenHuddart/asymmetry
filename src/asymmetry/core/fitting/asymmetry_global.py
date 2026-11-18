@@ -200,8 +200,8 @@ def fit_global(
         Either a single :class:`~asymmetry.core.fitting.parameters.ParameterSet` broadcast to every dataset, or a
         mapping ``dataset key -> ParameterSet``. Each set must contain every name
         referenced by ``global_params`` and ``local_params`` (plus any fixed
-        parameters the model needs). Global seed values and bounds are taken from
-        the first dataset's set.
+        parameters the model needs). A free global's seed and bounds come from
+        the first member that leaves it free; fixed members keep their own value.
     t_min, t_max
         Optional time-range clip applied to every dataset.
     method
@@ -209,15 +209,18 @@ def fit_global(
     max_calls
         Maximum cost-function evaluations.
     minos
-        Run MINOS for asymmetric intervals on top of the symmetric HESSE errors.
+        Run MINOS for asymmetric intervals on top of the symmetric marginal
+        errors; supported only by ``strategy="joint"``.
     strategy
         Minimiser architecture, forwarded to
         :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit`. ``"joint"``
         (default) is the historical single-Minuit solver; ``"profiled"`` runs an
         outer Minuit over the shared globals only with per-dataset local solves,
         so per-fit cost scales ~linearly in the number of datasets (technique L).
-        Both converge to the same minimum; profiled reports conditional local
-        errors (globals pinned) while its shared-global errors are marginal.
+        Both minimise the same objective and report marginal local-quadratic
+        errors over every free parameter. Profiled errors release the globals
+        after its conditional local solves; member covariance includes global/local
+        cross terms. ``"least_squares"`` uses the same observed-curvature convention.
     use_varpro
         **Deferred — not implemented.** Forwarded to the engine, where
         ``use_varpro=True`` currently raises :class:`NotImplementedError`; only the
@@ -226,7 +229,7 @@ def fit_global(
         objective) is a planned follow-up; see
         :meth:`~asymmetry.core.fitting.engine.FitEngine.global_fit` for why it is
         deferred (constant-factor-only once the profiled strategy separates the
-        per-dataset locals, and marginal-error matching needs a final full Hessian).
+        per-dataset locals). Marginal covariance is recovered from member blocks.
     fit_engine
         Optional :class:`~asymmetry.core.fitting.engine.FitEngine` to reuse; a fresh one is created otherwise.
     cancel_callback
