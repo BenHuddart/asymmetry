@@ -387,6 +387,8 @@ def test_wizard_recovers_dynamic_lorentzian_kt_on_a_zero_field_record() -> None:
     assert "B_L" not in {p.name for p in assessment.fit_result.parameters.free_parameters}
 
 
+# Two full seed ladder fits share one CI test deadline.
+@pytest.mark.timeout(240)
 def test_a_longitudinal_answer_lets_the_wizard_pin_b_l_at_the_recorded_field() -> None:
     """A recorded setpoint with no direction tag leaves ``B_L`` free; the user's
     LF answer (D4) confirms the geometry, so the same run pins it."""
