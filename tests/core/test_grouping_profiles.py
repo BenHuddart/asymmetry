@@ -1401,8 +1401,8 @@ def test_reconcile_unknown_count_preserves_authored_musr_grouping(n_hist, tmp_pa
     run.source_file = "run000123.nxs"
     payload = {
         "instrument": "MuSR",
-        "groups": {1: [1, 4, 9], 2: [2, 7]},
-        "group_names": {1: "Sample forward", 2: "Sample backward"},
+        "groups": {"1": [1, 4, 9], "2": [2, 7]},
+        "group_names": {"1": "Sample forward", "2": "Sample backward"},
         "forward_group": 2,
         "backward_group": 1,
         "alpha": 1.23,
