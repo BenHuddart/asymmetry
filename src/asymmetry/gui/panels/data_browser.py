@@ -33,6 +33,7 @@ from PySide6.QtGui import (
     QIcon,
     QPalette,
     QPixmap,
+    QPolygon,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -78,7 +79,7 @@ from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.corrections import correction_warnings
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.core.utils.constants import CELSIUS_ZERO_K
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.palette import is_dark_surface
 from asymmetry.gui.styles.typography import header_font
@@ -404,39 +405,27 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     Group header normal            GROUP_HEADER_BG       –
     Group header selected          GROUP_HEADER_SEL_BG   –
     Group header focused           GROUP_HEADER_FOCUS_BG –  (white text)
-    Member / run focused           ACCENT_SOFT2          3 px solid ACCENT
-    Member / run selected          ACCENT_SOFT           2 px ACCENT @ 40 % alpha
+    Member / run current           BROWSER_CURRENT_BG   3 px solid ACCENT
+    Member / run selected          BROWSER_SELECTED_BG  2 px solid ACCENT
     Member / run unselected        item bg role          –
 
-    All colours come from ``styles/tokens.py`` (see the class attributes below);
-    the names above are the token roles, not literals.
-
-    The delegate strips State_Selected and State_HasFocus from the option copy
-    before calling super().paint() so that QSS selection-background-color and
-    ::item:focus rules never override the custom backgrounds above.
-
-    The Title column renders two lines when the run carries a comment: the
-    title on top, the comment in smaller muted text underneath (replacing the
-    old Comment column, which forced horizontal scrolling).
+    The current selected run has a right-pointing marker in a reserved gutter.
+    Native selection/focus painting never overrides these token-based fills.
+    Title cells render comments on a second line.
     """
 
     _SENTINEL = "group:"
     _HEADER_SEL_BG = QColor(tokens.GROUP_HEADER_SEL_BG)
     _HEADER_FOC_BG = QColor(tokens.GROUP_HEADER_FOCUS_BG)
-    #: Auto-group (kind == "auto", D4) selected/focused header tints — the
-    #: red-grey analogue of the blue ramp above; the row's ``kind`` is read from
-    #: :data:`_GROUP_KIND_ROLE` on its col-0 item.
+    #: Auto groups use red-grey header tints.
     _AUTO_HEADER_SEL_BG = QColor(tokens.AUTO_GROUP_HEADER_SEL_BG)
     _AUTO_HEADER_FOC_BG = QColor(tokens.AUTO_GROUP_HEADER_FOCUS_BG)
-    _MEMBER_FOC_BG = QColor(tokens.ACCENT_SOFT2)
-    _MEMBER_SEL_BG = QColor(tokens.ACCENT_SOFT)
+    _MEMBER_FOC_BG = QColor(tokens.BROWSER_CURRENT_BG)
+    _MEMBER_SEL_BG = QColor(tokens.BROWSER_SELECTED_BG)
     _ACCENT = QColor(tokens.ACCENT)
-    _ACCENT_SOFT = QColor(tokens.ACCENT)
-    _ACCENT_SOFT.setAlpha(102)  # 40 % accent — selected-member left bar
     _WHITE = QColor(tokens.WHITE)
     _COMMENT_COLOR = QColor(tokens.TEXT_MUTED)
     _CLEAR_FLAGS = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus
-    #: Vertical padding around the two text lines of a title+comment cell.
     _TWO_LINE_PAD = 3
 
     @staticmethod
@@ -487,12 +476,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         return font
 
     def _line_metrics(self, base: QFont) -> tuple[QFont, QFontMetrics, QFontMetrics]:
-        """Return (comment font, title metrics, comment metrics), cached per font.
-
-        paint() runs per cell per frame; constructing QFontMetrics there makes
-        scrolling measurably jankier, and the base font only changes on a UI
-        scale change.
-        """
+        """Cache comment and title metrics per font to keep scrolling responsive."""
         cache = getattr(self, "_metrics_cache", None)
         if cache is None:
             cache = self._metrics_cache = {}
@@ -504,12 +488,8 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             cache[key] = entry
         return entry
 
-    def _draw_two_line_cell(self, painter, opt, index) -> None:
-        """Draw title over muted smaller-text comment inside ``opt.rect``.
-
-        ``opt`` must already be initStyleOption()-initialised; the background
-        is the caller's responsibility.
-        """
+    def _draw_two_line_cell(self, painter, opt, index, *, selected: bool = False) -> None:
+        """Draw title and comment; selected comments use the dark text foreground."""
         comment = self._cell_second_line(index)
         title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = opt.rect.adjusted(4, self._TWO_LINE_PAD, -4, -self._TWO_LINE_PAD)
@@ -532,7 +512,9 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             title_fm.elidedText(title, Qt.TextElideMode.ElideRight, rect.width()),
         )
         painter.setFont(comment_font)
-        painter.setPen(self._COMMENT_COLOR)
+        painter.setPen(
+            opt.palette.color(QPalette.ColorRole.Text) if selected else self._COMMENT_COLOR
+        )
         painter.drawText(
             QRect(
                 rect.left(),
@@ -546,14 +528,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         painter.restore()
 
     def _draw_phase_stripe(self, painter, option, index) -> None:
-        """Draw the 4 px phase marker at the left edge of a Run cell (D2).
-
-        Solid in the phase's identity colour for a phase member, hatched grey
-        for a member the partition excluded from every phase. Only ever called
-        for column 0 of an unselected row — while the row is selected the
-        accent selection bar owns that edge, exactly as the series-highlight
-        tint yields the row background to the selection.
-        """
+        """Mark unselected phase members; selected rows use the selection bar."""
         color = index.data(_PHASE_STRIPE_ROLE)
         if not isinstance(color, str):
             return
@@ -567,9 +542,12 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):  # noqa: N802 — Qt override
         hint = super().sizeHint(option, index)
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        key = index.data(Qt.ItemDataRole.UserRole)
+        if index.column() == 0 and not (isinstance(key, str) and key.startswith(self._SENTINEL)):
+            hint.setWidth(hint.width() + opt.fontMetrics.height())
         if self._cell_second_line(index):
-            opt = QStyleOptionViewItem(option)
-            self.initStyleOption(opt, index)
             _, title_fm, comment_fm = self._line_metrics(opt.font)
             hint.setHeight(title_fm.height() + comment_fm.height() + 2 * self._TWO_LINE_PAD)
         return hint
@@ -584,6 +562,11 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         )
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         has_comment = bool(self._cell_second_line(index))
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        run_gutter = not is_header and index.column() == 0
+        if run_gutter:
+            opt.rect.adjust(opt.fontMetrics.height(), 0, 0, 0)
 
         if is_selected:
             is_focused = index.row() == table.currentRow()
@@ -596,12 +579,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             else:
                 bg = self._MEMBER_FOC_BG if is_focused else self._MEMBER_SEL_BG
 
-            # initStyleOption() re-reads Qt.BackgroundRole from the model and overwrites
-            # backgroundBrush — so we call it ourselves first, then clear the brush before
-            # passing the option directly to drawControl (bypassing the second initStyleOption
-            # call that super().paint() would trigger).
-            opt = QStyleOptionViewItem(option)
-            self.initStyleOption(opt, index)
+            # Native painting must not replace the selection fill with the member tint.
             opt.state = opt.state & ~self._CLEAR_FLAGS
             opt.backgroundBrush = QBrush()
 
@@ -613,28 +591,46 @@ class _RowHighlightDelegate(QStyledItemDelegate):
                 opt.palette = pal
 
             if has_comment:
-                self._draw_two_line_cell(painter, opt, index)
+                self._draw_two_line_cell(painter, opt, index, selected=True)
             else:
                 table.style().drawControl(
                     QStyle.ControlElement.CE_ItemViewItem, opt, painter, table
                 )
 
             # Left-edge bar on column 0 for member / run rows only
-            if not is_header and index.column() == 0:
-                bar_color = self._ACCENT if is_focused else self._ACCENT_SOFT
+            if run_gutter:
                 bar_width = 3 if is_focused else 2
                 painter.fillRect(
                     QRect(option.rect.left(), option.rect.top(), bar_width, option.rect.height()),
-                    bar_color,
+                    self._ACCENT,
                 )
+                if is_focused:
+                    half_height = max(3, opt.fontMetrics.height() // 4)
+                    left, centre = option.rect.left(), option.rect.center().y()
+                    painter.save()
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(self._ACCENT)
+                    painter.drawPolygon(
+                        QPolygon(
+                            [
+                                QPoint(left + 5, centre - half_height),
+                                QPoint(left + opt.fontMetrics.height() - 3, centre),
+                                QPoint(left + 5, centre + half_height),
+                            ]
+                        )
+                    )
+                    painter.restore()
         elif has_comment:
-            opt = QStyleOptionViewItem(option)
-            self.initStyleOption(opt, index)
             if opt.backgroundBrush.style() != Qt.BrushStyle.NoBrush:
                 painter.fillRect(option.rect, opt.backgroundBrush)
             self._draw_two_line_cell(painter, opt, index)
         else:
-            super().paint(painter, option, index)
+            if run_gutter:
+                brush = opt.backgroundBrush
+                if brush.style() == Qt.BrushStyle.NoBrush:
+                    brush = opt.palette.base()
+                painter.fillRect(option.rect, brush)
+            super().paint(painter, opt, index)
 
         if not is_selected and index.column() == 0:
             self._draw_phase_stripe(painter, option, index)
@@ -2307,7 +2303,10 @@ class DataBrowserPanel(QWidget):
             self._table.resizeColumnsToContents()
             header = self._table.horizontalHeader()
             minimums = {0: 56, 1: 145, 2: 48, 3: 48}
-            maximums = {0: 150, 1: 320, 2: 76, 3: 76}
+            # Two indentation levels, six digits and a copy marker fit beside the pointer.
+            run_max = max(150, metrics.field_width_for(16, self._table))
+            run_max += self._table.fontMetrics().height()
+            maximums = {0: run_max, 1: 320, 2: 76, 3: 76}
             for col, min_width in minimums.items():
                 size = header.sectionSize(col)
                 if size < min_width:

@@ -19,6 +19,7 @@ dock-splitter layout.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_euo_tf_tscan
@@ -50,10 +51,14 @@ class DataBrowserGroupsScenario(Scenario):
         # its first (user) group, a marked copy row under this one.
         browser.create_data_group([3003, 3004, 3005], name="Runs 3003–3005", kind="auto")
 
-        browser.select_runs([3002])
-        # The Run column's automatic width cap (150 px) elides the auto-group's
-        # full name; widen it as a user would drag it, so the "Runs <range>"
-        # naming convention the docs describe is actually legible.
+        browser.select_runs([3001, 3002])
+        current_item = next(
+            browser._table.item(row, 0)
+            for row in range(browser._table.rowCount())
+            if browser._table.item(row, 0).data(Qt.ItemDataRole.UserRole) == 3002
+        )
+        browser._table.setCurrentItem(current_item, QItemSelectionModel.SelectionFlag.NoUpdate)
+        # Widen Run as a user would, keeping both group names legible.
         browser._table.horizontalHeader().resizeSection(0, 190)
         return browser
 

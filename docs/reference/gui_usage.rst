@@ -158,6 +158,13 @@ Data groups
 *automatically) sharing run 3003. The shared run renders under its primary*
 *(user-group) row and again as a marked copy row under the auto group.*
 
+Selected runs have a stronger blue background and a solid blue marker at the
+left edge. A right-pointing arrow beside the run number identifies the current
+selected run, which also has a darker background and a wider edge marker.
+Other selected runs remain clearly marked when several runs are selected.
+Selection stays visible when focus moves to another control. Group headers and
+indented run numbers retain group membership, and selected comments use dark text.
+
 A **data group** is a named, ordered collection of runs — a temperature scan,
 a field sweep, or any set of runs you want to treat together. Groups organise
 the Data Browser *and* drive batch and global fitting: a group is the vehicle
