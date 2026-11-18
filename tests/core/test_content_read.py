@@ -29,7 +29,7 @@ def test_descriptor_change_in_each_original_stamp_field_is_rejected(tmp_path, mo
             return SimpleNamespace(**values)
         return status
 
-    monkeypatch.setattr(content.os, "fstat", changed)
+    monkeypatch.setattr(content, "os", SimpleNamespace(fstat=changed))
     with pytest.raises(content.ContentReadError, match="Source changed"):
         content.hash_file(path)
 
@@ -69,7 +69,7 @@ def test_current_path_replacement_is_rejected_even_with_unchanged_read_descripto
         if done == total:
             os.replace(replacement, path)
 
-    monkeypatch.setattr(content.os, "fstat", stable_original)
+    monkeypatch.setattr(content, "os", SimpleNamespace(fstat=stable_original))
     with pytest.raises(content.ContentReadError, match="Source changed"):
         content.hash_file(path, progress=replace_path)
     assert path.read_bytes() == b"new"
@@ -82,23 +82,26 @@ def test_current_path_observation_failure_closes_all_owned_handles(tmp_path, mon
     opened = []
     real_open, real_stat = Path.open, os.fstat
 
-    def observe(self, *args, **kwargs):
-        if opened and failure == "open":
-            raise FileNotFoundError("current path unavailable")
-        result = real_open(self, *args, **kwargs)
-        opened.append(result)
-        return result
+    class ObservedPath(type(path)):
+        def open(self, *args, **kwargs):
+            if opened and failure == "open":
+                raise FileNotFoundError("current path unavailable")
+            result = real_open(self, *args, **kwargs)
+            opened.append(result)
+            return result
 
     def status(fd):
         if len(opened) == 2 and failure == "stat":
             raise OSError("current path metadata unavailable")
         return real_stat(fd)
 
-    monkeypatch.setattr(content.Path, "open", observe)
-    monkeypatch.setattr(content.os, "fstat", status)
+    monkeypatch.setattr(content, "Path", ObservedPath)
+    monkeypatch.setattr(content, "os", SimpleNamespace(fstat=status))
     with pytest.raises(content.ContentReadError, match="unavailable"):
         content.hash_file(path)
     assert all(handle.closed for handle in opened)
+    with path.open("rb") as unrelated:
+        assert os.fstat(unrelated.fileno()).st_size == len(b"original")
 
 
 @pytest.mark.parametrize("callback", ["checkpoint", "progress"])
