@@ -188,6 +188,7 @@ class MomentReadout(QObject):
 
     def _error(self, message):
         if self._running is self._wanted:
+            self.parent()._show_moment_result(self._running, self._running.compute(cheap=True))
             self.parent()._set_fourier_status(f"Spectral moments: {message}")
             self._wanted = None
         self._settle()

@@ -20,7 +20,9 @@ The current point estimates remain visible while **Calculating approximate
 errors…** is shown. Approximate error calculation runs in the background;
 changing the range, cutoff, unit or active spectrum supersedes pending results.
 During a drag, the readout updates without uncertainties; releasing the handle
-requests the approximate errors for the final range and cutoff.
+requests the approximate errors for the final range and cutoff. If uncertainty
+calculation fails, the readout retains the current point estimates without
+errors and the status reports the failure; another edit or request can retry.
 
 .. image:: /_generated/screenshots/spectral_moments_readout.png
    :alt: The Spectral moments readout in the Fourier panel, computed on the

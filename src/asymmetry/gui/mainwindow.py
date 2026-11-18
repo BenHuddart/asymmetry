@@ -2234,8 +2234,6 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_domain_changed(self, _domain: str) -> None:
         """Refresh fit blocking when the active plot workspace tab changes."""
-        self._moment_readout.invalidate()
-        self._moment_batch.invalidate()
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
             if hasattr(self._fit_panel, "set_domain"):
@@ -10074,6 +10072,8 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
+        self._moment_readout.invalidate()
+        self._moment_batch.invalidate()
         # RRF controls show only on the FB-asymmetry representation (W16).
         if getattr(self._plot_panel, "_rrf_controls", None) is not None:
             self._plot_panel._rrf_controls.set_active_view_token(view)
