@@ -804,3 +804,25 @@ def test_malformed_error_shape_retains_uncertainty_free_readout(window):
     assert widget._value_labels["b_ave"].text() != "—"
     assert "±" not in widget._value_labels["b_ave"].text()
     assert widget._uncertainty_label.isHidden()
+
+
+@pytest.mark.parametrize("historical", ["5", None])
+def test_fresh_moment_rows_record_revision_six_without_relabelling_history(window, historical):
+    _activate_fft_spectrum(window, [1])
+    widget = window._fourier_panel.moments_widget
+    window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
+    recorded = _moments_batches(window)[0]
+    assert recorded.results_by_run[1]["computation_revision"] == "6"
+    recorded.results_by_run[1]["computation_revision"] = historical
+    reopened = ProjectModel.from_dict(window._project_model.to_dict())
+    assert (
+        reopened.batches[recorded.batch_id].results_by_run[1]["computation_revision"] == historical
+    )
+    widget.set_cutoff_fraction(0.2)
+    window._on_moments_send_to_trend(widget)
+    _wait_moments(window)
+    assert recorded.results_by_run[1]["computation_revision"] == historical
+    fresh = [batch for batch in _moments_batches(window) if batch is not recorded]
+    assert len(fresh) == 1
+    assert fresh[0].results_by_run[1]["computation_revision"] == "6"
