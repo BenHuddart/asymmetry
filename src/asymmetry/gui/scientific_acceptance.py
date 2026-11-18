@@ -80,6 +80,16 @@ def runtime_identity() -> dict:
     return {"version": __version__, "source_commit": commit, "target": "source"}
 
 
+def frozen_payload_root() -> Path:
+    """Bound resolved imports to the delivered app, including macOS resource links."""
+    root = Path(sys.executable).resolve().parent
+    if root.name == "MacOS" and root.parent.name == "Contents":
+        root = root.parent.parent
+    if not Path(sys._MEIPASS).resolve().is_relative_to(root):
+        raise ValueError("frozen loader directory escaped delivered application")
+    return root
+
+
 def check_array(actual, expected, *, export=False):
     """Compare declared observations without accepting broadcasting or nonfinite values."""
     import numpy as np
@@ -353,7 +363,7 @@ def main(arguments: list[str]) -> int:
             "iminuit._core",
         )
         origins = {}
-        payload = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else None
+        payload = frozen_payload_root() if getattr(sys, "frozen", False) else None
         for name in names:
             origin = Path(sys.modules[name].__file__).resolve()
             if payload is not None and not origin.is_relative_to(payload.resolve()):

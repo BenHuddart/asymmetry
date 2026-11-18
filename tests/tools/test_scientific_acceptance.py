@@ -440,3 +440,69 @@ def test_windows_environment_lookup_uses_case_insensitive_owner(monkeypatch):
     assert "developer-rescue" not in result["PATH"]
     assert "System32" in result["PATH"]
     assert "Windows" in result["PATH"]
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_entry_accepts_macos_bundle_resource_symlinks_and_rejects_escape(tmp_path, inputs, escape):
+    app = tmp_path / "Asymmetry.app"
+    frameworks = app / "Contents/Frameworks"
+    resources = app / "Contents/Resources"
+    executable = app / "Contents/MacOS/Asymmetry"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    frameworks.mkdir()
+    resources.mkdir()
+    (resources / "asymmetry/resources").mkdir(parents=True)
+    shutil.copyfile(
+        ROOT / "src/asymmetry/resources/logo_256x256.png",
+        resources / "asymmetry/resources/logo_256x256.png",
+    )
+    # The delivered macOS inventory places pure-Python package data in Resources.
+    (frameworks / "asymmetry").symlink_to("../Resources/asymmetry", target_is_directory=True)
+    expected = identity()
+    expected["target"] = "layout-regression"
+    (frameworks / "build-identity.json").write_text(json.dumps(expected))
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import importlib,sys\nfrom pathlib import Path\n"
+        "from asymmetry.gui.scientific_acceptance import scientific_journey\n"
+        "from asymmetry.gui.utils.plot_export_data import PlotExportData\n"
+        "import PySide6.QtGui, PySide6.QtCore\n"
+        "from asymmetry.core.project import load_prepared_project\n"
+        "from asymmetry.core.representation import FitSlot\n"
+        "from asymmetry.core.workflow.reduction import reduce_run\n"
+        "import pyhdf.SD, pyhdf.hdfext, iminuit._core, awkward_cpp, uproot, scipy\n"
+        f"root=Path({str(frameworks)!r})\n"
+        "names=('asymmetry','asymmetry.core.io.root','asymmetry.core.io.hdf4','numpy','scipy','uproot','awkward','awkward_cpp','pyhdf.SD','pyhdf.hdfext','pyhdf._hdfext','iminuit','iminuit._core')\n"
+        "for name in names:\n"
+        "    module=importlib.import_module(name)\n"
+        "    module.__file__=str(root/Path(*name.split('.'))/'__init__.py') if name=='asymmetry' else str(root/Path(*name.split('.')).with_suffix('.py'))\n"
+        + (
+            f"import numpy; numpy.__file__={str(tmp_path / 'developer/numpy.py')!r}\n"
+            if escape
+            else ""
+        )
+        + f"sys.executable={str(executable)!r}\n"
+        "sys.frozen=True\nsys._MEIPASS=str(root)\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    if escape:
+        with pytest.raises(RuntimeError):
+            run_acceptance(
+                [sys.executable, "-B", str(bootstrap)],
+                inputs,
+                expected,
+                tmp_path / "run",
+                environment=source_environment(),
+            )
+        report = json.loads((tmp_path / "run/outcome.json").read_text())["report"]
+        assert report["failure"]["stage"] == "origins"
+        return
+    result = run_acceptance(
+        [sys.executable, "-B", str(bootstrap)],
+        inputs,
+        expected,
+        tmp_path / "run",
+        environment=source_environment(),
+    )
+    assert result["report"]["origins"]["asymmetry"].startswith("Contents/Resources/")

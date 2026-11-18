@@ -459,12 +459,24 @@ checks actual omission of the used logo. Process failures, timeout, missing or
 stale reports, and reuse of an invocation directory cannot pass the parent runner.
 
 ```bash
-python3 tools/harness.py test -- tests/tools/test_scientific_acceptance.py tests/io/test_hdf4_loader.py tests/io/test_root_loader.py tests/project/test_project_preparation.py tests/tools/test_release_environment.py tests/tools/test_release_artifacts.py tests/tools/test_release_workflows.py -n 4 --dist loadfile
+python3 tools/harness.py test -- tests/tools/test_scientific_acceptance.py tests/tools/test_native_acceptance.py tests/io/test_hdf4_loader.py tests/io/test_root_loader.py tests/project/test_project_preparation.py tests/tools/test_release_environment.py tests/tools/test_release_artifacts.py tests/tools/test_release_workflows.py -n 4 --dist loadfile
 ```
 
 The fixture writer is build/test tooling; the frozen application imports neither
 it nor tests. Reports contain original fixture hashes and explicit settings and
-tolerances. Source tests and local frozen experiments do not certify delivered
-Windows/macOS media or native omission sensitivity. Native install/mount/cleanup,
-download identity, publication gates, and the independent Linux core-wheel smoke
-retain their existing owners. See RELEASING.md for diagnostic commands and limits.
+tolerances. Native delivery jobs start without a checkout or build environment and
+use an isolated standard-library driver. Source verification binds transported
+tools, inputs, identity, and the source comparison report to the exact candidate.
+Both final installed Windows x64 and read-only mounted macOS arm64 launchers must
+complete the same journey, with imports resolved inside their delivered payloads.
+
+`tests/tools/test_native_acceptance.py` checks packet identity and tool tampering,
+fixture transport, checkout/build-environment rejection, and shared cleanup after
+scientific or native failures. The workflow checks require both native outcomes
+on dispatch and before publication. Disposable native payload copies omit the used
+logo, HDF4 library, and native reader backend; actual nonzero scientific or loader
+failures are required, and a timeout cannot satisfy an omission. Original media,
+payloads, and cleanup remain checked through the existing artifact owner. The
+separate one-day scientific report artifacts contain explicit JSON reports only.
+See RELEASING.md for diagnostic commands, finite budgets, and limits. The Linux
+core-wheel check remains independently required.

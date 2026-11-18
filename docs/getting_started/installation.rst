@@ -45,11 +45,15 @@ A parent runner checks completion and a fresh report within a finite time budget
 
 This bounded scenario checks packaging and scientific wiring. It does not certify
 instrument defaults, corrections, uncertainty coverage, or all model families.
-Source and locally available frozen checks are distinct from native scientific
-acceptance of the final Windows x64 installer and Apple Silicon macOS DMG. Final
-payload and download-provenance checks retain their separate scope; a successful
-startup/import smoke alone does not establish this scientific journey. The
-core-only Linux wheel gate also remains separate.
+Release verification runs this journey through the final installed Windows x64
+launcher and read-only mounted Apple Silicon macOS app on fresh native hosts
+without source or developer Python dependencies. Both must match the source
+scenario numerically. Disposable payload copies must also fail when a required
+logo, native HDF4 library, or reader backend is actually removed. Installation,
+uninstallation, mounting, analysis, and cleanup use finite time budgets; timeouts
+and missing or stale reports fail verification. Scientific reports remain separate
+from artifact provenance records. Both native outcomes gate publication alongside
+payload and download checks; the core-only Linux wheel gate remains separate.
 
 Requirements
 ------------

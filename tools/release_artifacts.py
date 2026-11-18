@@ -7,9 +7,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -464,77 +466,93 @@ def verify_bundle(bundle: Path, record: dict) -> None:
         raise ValueError("collected bundle changed after component inventory")
 
 
-def inspect_assembled_artifact(binary: Path, bundle: Path, target: str) -> dict:
-    expected = bundle_inventory(bundle)
-    with tempfile.TemporaryDirectory(prefix="asymmetry-payload-") as directory:
-        work = Path(directory)
+def native_stage(name, command, work, timeout, events):
+    """Retain measured native command outcomes separately from the fixed public manifest."""
+    started = time.monotonic()
+    event = {"stage": name, "timeout_seconds": timeout, "success": False}
+    try:
+        release.run(command, work, display=False, timeout=timeout)
+        event["success"] = True
+    except Exception as exc:
+        event["failure_type"] = type(exc).__name__
+        event["cleanup"] = list(exc.__notes__) if hasattr(exc, "__notes__") else []
+        raise
+    finally:
+        event["elapsed_seconds"] = time.monotonic() - started
+        events.append(event)
+
+
+def inspect_payload(binary, expected, target, required_resources, visitor=None, *, events=None):
+    """Inspect and visit the final installed/mounted app within one checked lifetime."""
+    if target not in ("windows-x64", "macos-arm64"):
+        raise ValueError("unsupported native payload target")
+    events = [] if events is None else events
+    work = Path(tempfile.mkdtemp(prefix="asymmetry-payload-"))
+    application = work / ("application" if target == "windows-x64" else "volume/Asymmetry.app")
+    mount = work / "volume"
+    uninstaller = application / "unins000.exe"
+    errors = []
+    try:
         if target == "windows-x64":
-            installed = work / "application"
-            uninstaller = installed / "unins000.exe"
-            try:
-                release.run(
-                    [
-                        str(binary.resolve()),
-                        "/SP-",
-                        "/VERYSILENT",
-                        "/SUPPRESSMSGBOXES",
-                        "/NORESTART",
-                        "/NOICONS",
-                        "/TASKS=",
-                        "/NOCLOSEAPPLICATIONS",
-                        "/NORESTARTAPPLICATIONS",
-                        f"/DIR={installed}",
-                    ],
-                    work,
-                )
-                if not uninstaller.is_file():
-                    raise ValueError("final installer payload has no cleanup executable")
-                inventory = bundle_inventory(installed)
-                generated = {"unins000.exe", "unins000.dat", "unins000.msg"}
-                payload = [
-                    item for item in inventory if item["path"] not in generated | {"asymmetry.ico"}
-                ]
-                if payload != expected:
-                    raise ValueError("final installer payload differs from inventoried bundle")
-                icon = installed / "asymmetry.ico"
-                if release.digest(icon) != release.digest(ROOT / "build/icons/Asymmetry.ico"):
-                    raise ValueError("final installer resource differs from compiled icon input")
-                result = {
-                    "method": "silent Inno payload inspection",
-                    "additional_resources": [
-                        {
-                            "path": "asymmetry.ico",
-                            "sha256": release.digest(icon),
-                            "size": icon.stat().st_size,
-                        }
-                    ],
-                    "generated_installer_files": sorted(
-                        item["path"] for item in inventory if item["path"] in generated
-                    ),
-                }
-            finally:
-                if uninstaller.is_file():
-                    release.run(
-                        [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], work
-                    )
-            return result
-        mount = work / "volume"
-        mount.mkdir()
-        release.run(
-            [
-                "hdiutil",
+            native_stage(
+                "install",
+                [
+                    str(binary.resolve()),
+                    "/SP-",
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    "/NOICONS",
+                    "/TASKS=",
+                    "/NOCLOSEAPPLICATIONS",
+                    "/NORESTARTAPPLICATIONS",
+                    f"/DIR={application}",
+                ],
+                work,
+                120,
+                events,
+            )
+            if not uninstaller.is_file():
+                raise ValueError("final installer payload has no cleanup executable")
+            inventory = bundle_inventory(application)
+            generated = {"unins000.exe", "unins000.dat", "unins000.msg"}
+            payload = [
+                item for item in inventory if item["path"] not in generated | {"asymmetry.ico"}
+            ]
+            if payload != expected:
+                raise ValueError("final installer payload differs from inventoried bundle")
+            icon = application / "asymmetry.ico"
+            result = {
+                "method": "silent Inno payload inspection",
+                "additional_resources": [
+                    {
+                        "path": "asymmetry.ico",
+                        "sha256": release.digest(icon),
+                        "size": icon.stat().st_size,
+                    }
+                ],
+                "generated_installer_files": sorted(
+                    item["path"] for item in inventory if item["path"] in generated
+                ),
+            }
+        else:
+            mount.mkdir()
+            native_stage(
                 "attach",
-                "-readonly",
-                "-nobrowse",
-                "-mountpoint",
-                str(mount),
-                str(binary.resolve()),
-            ],
-            work,
-            display=False,
-        )
-        try:
-            if bundle_inventory(mount / "Asymmetry.app") != expected:
+                [
+                    "hdiutil",
+                    "attach",
+                    "-readonly",
+                    "-nobrowse",
+                    "-mountpoint",
+                    str(mount),
+                    str(binary.resolve()),
+                ],
+                work,
+                60,
+                events,
+            )
+            if bundle_inventory(application) != expected:
                 raise ValueError("final DMG payload differs from inventoried bundle")
             applications = mount / "Applications"
             if not applications.is_symlink() or os.readlink(applications) != "/Applications":
@@ -557,10 +575,7 @@ def inspect_assembled_artifact(binary: Path, bundle: Path, target: str) -> dict:
                         "size": path.stat().st_size,
                     }
                 )
-            background = release.digest(ROOT / "build/dmg-bg.png")
-            if sum(item["sha256"] == background for item in extras) != 1:
-                raise ValueError("final DMG background resource differs from assembly input")
-            return {
+            result = {
                 "method": "read-only mounted DMG payload inspection",
                 "additional_resources": extras,
                 "external_system_link": {
@@ -568,8 +583,62 @@ def inspect_assembled_artifact(binary: Path, bundle: Path, target: str) -> dict:
                     "system_location": "Applications directory",
                 },
             }
-        finally:
-            release.run(["hdiutil", "detach", str(mount)], work, display=False)
+        for digest in required_resources:
+            if sum(item["sha256"] == digest for item in result["additional_resources"]) != 1:
+                raise ValueError("final assembly resource differs from required input")
+        if visitor is not None:
+            visitor(application, work)
+    except Exception as exc:
+        errors.append(exc)
+    finally:
+        try:
+            if target == "windows-x64" and uninstaller.is_file():
+                native_stage(
+                    "uninstall",
+                    [str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                    work,
+                    120,
+                    events,
+                )
+                deadline = time.monotonic() + 30
+                while application.exists() and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                if application.exists():
+                    raise ValueError("temporary installed payload remains after uninstall")
+            elif target == "windows-x64" and application.exists():
+                raise ValueError("partial installation has no cleanup executable")
+            elif target == "macos-arm64" and mount.is_mount():
+                native_stage("detach", ["hdiutil", "detach", str(mount)], work, 60, events)
+                if mount.is_mount():
+                    raise ValueError("temporary DMG remains mounted after detach")
+            events.append({"stage": "native cleanup", "success": True})
+        except Exception as exc:
+            events.append(
+                {"stage": "native cleanup", "success": False, "failure_type": type(exc).__name__}
+            )
+            errors.append(exc)
+        try:
+            if target == "macos-arm64" and mount.is_mount():
+                raise OSError("temporary cleanup refused while owned DMG remains mounted")
+            shutil.rmtree(work)
+            events.append({"stage": "temporary cleanup", "success": True})
+        except OSError as exc:
+            events.append(
+                {"stage": "temporary cleanup", "success": False, "failure_type": type(exc).__name__}
+            )
+            errors.append(exc)
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("native payload and cleanup failures", errors)
+    return result
+
+
+def inspect_assembled_artifact(binary: Path, bundle: Path, target: str) -> dict:
+    resource = ROOT / (
+        "build/icons/Asymmetry.ico" if target == "windows-x64" else "build/dmg-bg.png"
+    )
+    return inspect_payload(binary, bundle_inventory(bundle), target, {release.digest(resource)})
 
 
 def finalize(binary: Path, bundle: Path, target: str, commit: str, label: str) -> None:
@@ -632,6 +701,12 @@ def checksum_text(final: dict) -> str:
 
 def verify_download(directory: Path, target: str, commit: str) -> list[Path]:
     identity = expected_identity(target, commit)
+    return verify_downloaded(directory, identity, release.digest(ROOT / "THIRD_PARTY_LICENSES.md"))
+
+
+def verify_downloaded(directory: Path, identity: dict, notice_digest: str) -> list[Path]:
+    """Verify the same downloaded-byte contract using an already source-bound expectation."""
+    target, commit = identity["target"], identity["source_commit"]
     manifest = directory / f"{target}-artifact.json"
     final = read_json(manifest)
     if (
@@ -661,9 +736,7 @@ def verify_download(directory: Path, target: str, commit: str) -> list[Path]:
     if components.get("assembly", {}).get("method") != method:
         raise ValueError("downloaded final payload inspection record is missing or swapped")
     notices = [item for item in components["components"] if item["kind"] == "notice"]
-    if not notices or any(
-        item["sha256"] != release.digest(ROOT / "THIRD_PARTY_LICENSES.md") for item in notices
-    ):
+    if not notices or any(item["sha256"] != notice_digest for item in notices):
         raise ValueError("downloaded notice identity differs from checkout")
     checksum = directory / f"{target}-SHA256SUMS"
     if checksum.read_text(encoding="utf-8") != checksum_text(final):

@@ -153,6 +153,7 @@ def build(tmp_path, monkeypatch):
                 (destination / "Asymmetry.exe").write_bytes(b"stale executable")
             return ""
         if Path(command[0]).name == "unins000.exe":
+            shutil.rmtree(Path(command[0]).parent)
             return ""
         return original_run(command, cwd, **kwargs)
 
@@ -365,11 +366,14 @@ def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypa
     root, bundle, _, _, _, _ = build
     (root / "build/dmg-bg.png").write_bytes(b"background pixels")
     commands = []
+    mounted = set()
+    monkeypatch.setattr(Path, "is_mount", lambda path: path in mounted)
 
     def native_runner(command, cwd, **kwargs):
         commands.append(command)
         if command[1] == "attach":
             mount = Path(command[command.index("-mountpoint") + 1])
+            mounted.add(mount)
             shutil.copytree(bundle, mount / "Asymmetry.app")
             (mount / "Applications").symlink_to("/wrong" if tamper == "link" else "/Applications")
             (mount / ".background").mkdir()
@@ -380,6 +384,8 @@ def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypa
                 (mount / "Asymmetry.app/_internal/build-identity.json").unlink()
             elif tamper == "notice":
                 (mount / "Asymmetry.app/_internal/THIRD_PARTY_LICENSES.md").write_bytes(b"wrong")
+        elif command[1] == "detach":
+            mounted.remove(Path(command[2]))
         return ""
 
     monkeypatch.setattr(release, "run", native_runner)

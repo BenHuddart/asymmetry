@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      python: ${{ steps.native-tools.outputs.python }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -54,6 +55,11 @@ jobs:
               ;;
           esac
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Read native acceptance interpreter
+        id: native-tools
+        shell: bash
+        run: python3 -c "import json,os; t=json.load(open('packaging/release/tools.json')); f=open(os.environ['GITHUB_OUTPUT'],'a'); print('python='+t['python'],file=f)"
 
   build-macos-arm:
     name: Build macOS DMG (arm64)
@@ -113,6 +119,18 @@ jobs:
       - name: Record final artifact bytes
         shell: bash
         run: python -I tools/release_artifacts.py finalize --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg" --label "${{ needs.verify-version.outputs.version }}"
+
+      - name: Prepare bounded native scientific inputs
+        shell: bash
+        run: python -I tools/native_acceptance.py prepare --target macos-arm64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-macos-arm64"
+
+      - name: Retain native scientific inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-science-inputs-macos-arm64
+          path: ${{ runner.temp }}/release-science-inputs-macos-arm64
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v7
@@ -200,6 +218,20 @@ jobs:
         shell: bash
         run: python -I tools/release_artifacts.py finalize --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe" --label "${{ needs.verify-version.outputs.version }}"
 
+      - name: Prepare bounded native scientific inputs
+        env:
+          ASYMMETRY_HDF4_DLL_DIR: ${{ github.workspace }}/build/hdf4-dlls
+        shell: bash
+        run: python -I tools/native_acceptance.py prepare --target windows-x64 --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs-windows-x64"
+
+      - name: Retain native scientific inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-science-inputs-windows-x64
+          path: ${{ runner.temp }}/release-science-inputs-windows-x64
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
         with:
@@ -245,12 +277,73 @@ jobs:
           pattern: asymmetry-*
           path: ${{ runner.temp }}/release-assets
 
+      - name: Download bounded native scientific inputs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-science-inputs-*
+          path: ${{ runner.temp }}/release-science-inputs
+
       - name: Verify downloaded publication assets
         shell: bash
         run: |
           for target in macos-arm64 windows-x64; do
             python3 -I tools/release_artifacts.py verify --target "$target" --commit "$GITHUB_SHA" --directory "$RUNNER_TEMP/release-assets/asymmetry-$target"
+            python3 -I tools/native_acceptance.py verify --target "$target" --commit "$GITHUB_SHA" --packet "$RUNNER_TEMP/release-science-inputs/release-science-inputs-$target"
           done
+
+  accept-native:
+    name: Scientific acceptance (${{ matrix.target }})
+    needs: [verify-version, verify-artifacts]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            os: windows-2025
+            architecture: x64
+          - target: macos-arm64
+            os: macos-15
+            architecture: arm64
+    steps:
+      - name: Set up reviewed native driver interpreter
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.verify-version.outputs.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Download delivered native artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: asymmetry-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-artifacts
+      - name: Download source-verified scientific inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: release-science-inputs-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-science-inputs
+      - name: Execute delivered scientific journey and actual omissions
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -I -m venv --without-pip "$RUNNER_TEMP/native-driver"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            SCIENCE_PYTHON="$RUNNER_TEMP/native-driver/Scripts/python.exe"
+          else
+            SCIENCE_PYTHON="$RUNNER_TEMP/native-driver/bin/python"
+          fi
+          "$SCIENCE_PYTHON" -I -B "$RUNNER_TEMP/native-science-inputs/native_acceptance.py" run --packet "$RUNNER_TEMP/native-science-inputs" --directory "$RUNNER_TEMP/native-artifacts" --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "${{ needs.verify-version.outputs.version }}" --output "$RUNNER_TEMP/native-science-result.json"
+      - name: Retain native scientific report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-science-results-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-science-result.json
+          if-no-files-found: error
+          retention-days: 1
 
   release:
     if: github.event_name == 'push'
@@ -262,6 +355,7 @@ jobs:
       - build-macos-arm
       - build-windows
       - verify-artifacts
+      - accept-native
     permissions:
       actions: write
       contents: write
