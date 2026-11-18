@@ -58,7 +58,7 @@ class GlobalFitResult:
     success: bool
     #: The shared global parameters with their fitted values.
     global_parameters: ParameterSet
-    #: 1σ (HESSE) uncertainties on the free shared globals, ``{name: sigma}``.
+    #: Marginal symmetric 1σ errors on the free shared globals, ``{name: sigma}``.
     global_uncertainties: dict[str, float] = field(default_factory=dict)
     #: Per-dataset results keyed by the caller's dataset key.
     dataset_results: dict[Hashable, FitResult] = field(default_factory=dict)
@@ -304,8 +304,7 @@ def fit_global(
     # dataset, so summing them would double-count the globals. Compute the
     # combined dof directly instead: total points minus the free globals (counted
     # once) minus the free locals (counted per dataset).
-    first_set = engine_initial[0]
-    n_free_global = sum(1 for name in global_params if not first_set[name].fixed)
+    n_free_global = len(fitted_global.free_parameters)
 
     combined_chi2 = 0.0
     total_points = 0
@@ -322,11 +321,11 @@ def fit_global(
     reduced_chi2 = combined_chi2 / max(dof, 1)
 
     global_uncertainties: dict[str, float] = {}
-    if dataset_results:
-        any_result = next(iter(dataset_results.values()))
-        for name in global_params:
-            if name in any_result.uncertainties:
-                global_uncertainties[name] = float(any_result.uncertainties[name])
+    for name in global_params:
+        for result in dataset_results.values():
+            if name in result.uncertainties:
+                global_uncertainties[name] = float(result.uncertainties[name])
+                break
 
     success = bool(dataset_results) and all(r.success for r in dataset_results.values())
     if success:

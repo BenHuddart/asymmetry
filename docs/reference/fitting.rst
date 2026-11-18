@@ -583,6 +583,13 @@ spectra.  In that mode the Fit dock switches labels from ``A(t)`` to
 ``S(ν)``, uses MHz fit ranges, and offers peak/background components documented
 in :doc:`frequency_domain_fitting`.
 
+Global-fit symmetric errors are marginal local-quadratic errors over every
+free Global and Local parameter. The profiled and sparse strategies recover
+member covariance blocks, including Global–Local cross terms. They report
+unavailable errors explicitly when curvature is unreliable. Fixed calibration
+and other nuisance inputs remain fixed. See :ref:`global-marginal-errors` for
+limits, MINOS support, saved history, and correlations between runs.
+
 The :doc:`global_fit_wizard` automates model selection on ordered field or
 temperature series; use that wizard before constructing a hand-built
 global fit if you do not yet know which composite model the data prefer.

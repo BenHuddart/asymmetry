@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stabilise static Gaussian longitudinal-field Kubo–Toyabe at weak fields and
   all width scales, including the shared Gaussian-broadened kernel.
 
+- Report marginal global/local errors and member covariance consistently across
+  global-fit strategies; diagnose unavailable covariance and unsupported MINOS.
+
 - Verify unchanged Windows acquisition files consistently after writing or copying,
   while retaining concurrent-change and path-replacement checks.
 

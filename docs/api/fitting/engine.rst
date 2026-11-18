@@ -73,3 +73,13 @@ Likelihood
 .. autoclass:: asymmetry.core.fitting.likelihood.PoissonCounts
    :no-members:
    :no-special-members:
+
+Global-fit uncertainty convention
+---------------------------------
+
+All interchangeable global strategies report marginal symmetric errors from
+local objective curvature over every free parameter. ``"profiled"`` and
+``"least_squares"`` recover covariance by member blocks; they reject
+``minos=True`` and omit unreliable covariance with a fit warning. See
+:ref:`global-marginal-errors` for fixed nuisance assumptions, cross terms,
+non-Gaussian and boundary limits, and historical result identity.

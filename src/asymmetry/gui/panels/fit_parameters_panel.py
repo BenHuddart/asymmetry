@@ -134,6 +134,7 @@ from asymmetry.gui.utils.parameter_export_data import (
     _normalize_x_key,
     _x_custom_id,
     _x_param_name,
+    execution_revision_comments,
     recorded_warning_comments,
 )
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
@@ -6444,12 +6445,7 @@ class FitParametersPanel(QWidget):
         QApplication.clipboard().setText("\n".join(lines))
 
     def _export_model_label(self) -> str:
-        """Return the originating fit model common to the displayed rows.
-
-        The trend panel plots one series fit with a single time-domain model, so
-        the first non-empty per-row model label is representative. Empty when no
-        row recorded a model (computed/model-less series, or legacy projects).
-        """
+        """Return the first recorded model label, or empty for model-less rows."""
         for row in self._rows:
             if row.model_name:
                 return row.model_name
@@ -6517,6 +6513,8 @@ class FitParametersPanel(QWidget):
                 tsvfile.write(f"# Model: {model_label}\n")
             for plot_series in series:
                 tsvfile.writelines(recorded_warning_comments(plot_series.rows, "#"))
+                for comment in execution_revision_comments(plot_series.name, plot_series.rows):
+                    tsvfile.write(f"# {comment}\n")
             if x_active:
                 tsvfile.write(f"# X transform: {self._x_transform.expression_text}\n")
             for name in transformed_y:
@@ -6985,9 +6983,6 @@ class FitParametersPanel(QWidget):
         if not self._rows:
             return
 
-        # GLE overlay export (one .dat/figure per series) is not yet implemented;
-        # rather than silently drop the other series, tell the user and export the
-        # active one. (Export TSV already writes every overlaid series.)
         series = self._series_to_plot()
         if len(series) > 1:
             active = next((s.name for s in series if s.is_active), series[0].name)
@@ -7015,6 +7010,7 @@ class FitParametersPanel(QWidget):
         display = self._display_y_parameters()
         x_key = self._effective_x_key()
         label_names = set(display) | set(self._model_fits)
+        active_group = self._group_fit_results.get(self._active_group_id)
         return ParameterGleSnapshot(
             _rows=deepcopy(self._rows),
             _model_fits=deepcopy(self._model_fits),
@@ -7030,6 +7026,7 @@ class FitParametersPanel(QWidget):
             x_key=x_key,
             abscissa=self._export_abscissa_column(),
             model_label=self._export_model_label(),
+            series_name=active_group.group_name if active_group is not None else "",
             overlaid=len(self._series_to_plot()) > 1,
             x_header=self._transformed_x_export_header(x_key),
             y_headers={name: self._transformed_y_export_header(name) for name in display},

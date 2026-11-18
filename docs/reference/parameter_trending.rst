@@ -26,6 +26,13 @@ forms — and reports the resulting physical quantities (critical
 temperature, activation energy, gap ratios, dimensionality of motion)
 with uncertainties.
 
+Global-fit parameter errors are marginal over every free shared and local
+parameter. Shared parameters also correlate local estimates across runs.
+Ordinary weighted trend fits use the individual marginal errors and approximate
+runs as independent; they do not use a full covariance between runs. See
+:ref:`global-marginal-errors` for covariance propagation and fixed nuisance
+assumptions.
+
 Frequency-domain global fits use the same panel.  Peak centres and widths from
 Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
 equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
@@ -425,6 +432,9 @@ selected series. ``Export GLE (PDF)…`` / ``Export GLE (EPS)…`` likewise appe
 transformed columns (and point the plot and fitted curve at them, so the
 figure matches the screen), but currently write only the **active** series —
 they warn and name that series; export the others separately, or use TSV.
+TSV and GLE data comments record ``Computation revision`` separately for each
+series and run. ``unknown`` identifies errors with no captured execution
+revision; exporting never upgrades historical errors to current marginals.
 
 .. _trend-series-overlay:
 

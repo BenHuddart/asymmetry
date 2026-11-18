@@ -3,7 +3,7 @@
 from dataclasses import fields, is_dataclass, replace
 
 # Bump for numerical algorithms or interpretation changes; see ARCHITECTURE.md.
-COMPUTATION_REVISION = "4"
+COMPUTATION_REVISION = "5"
 
 
 def is_current(revision: str | None) -> bool:

@@ -4,7 +4,7 @@ Asymmetry-domain global fit (scripting)
 A shared ordinary time-asymmetry model can carry the fixed double-pulse
 :ref:`time response <ordinary-time-response>`. All members use that supplied
 response with their existing parameter roles, selected observations, and
-conditional errors. Separation is not a Global or Local fit parameter.
+errors conditioned on the supplied response. Separation is not a Global or Local fit parameter.
 
 
 :func:`asymmetry.core.fitting.asymmetry_global.fit_global` fits **one model across several
@@ -165,8 +165,8 @@ Inputs and keying
 * ``initial_params`` may be a single :class:`~asymmetry.core.fitting.parameters.ParameterSet`
   broadcast to every dataset, or a mapping ``key -> ParameterSet`` for per-dataset
   seeds. Each set must contain every name referenced by ``global_params`` and
-  ``local_params``. Global seed values and bounds are taken from the first
-  dataset's set.
+  ``local_params``. A free global's seed and bounds come from the first member
+  that leaves it free; a member that fixes the name keeps its own fixed value.
 * Fixed parameters (``Parameter(..., fixed=True)``) are held constant; bounds
   (``min`` / ``max``) are respected; a fixed global is not counted in the
   combined degrees of freedom.
@@ -177,7 +177,7 @@ The result
 :class:`~asymmetry.core.fitting.asymmetry_global.GlobalFitResult` carries:
 
 * ``global_parameters`` — the shared fitted globals (a ``ParameterSet``);
-* ``global_uncertainties`` — ``{name: sigma}`` 1σ HESSE errors on the free globals;
+* ``global_uncertainties`` — ``{name: sigma}`` marginal symmetric 1σ errors on the free globals;
 * ``dataset_results`` — per-dataset
   :class:`~asymmetry.core.fitting.results.FitResult` (each holding that dataset's globals
   *and* locals, with uncertainties and its own χ²/dof), keyed by your dataset key;
@@ -187,6 +187,66 @@ The result
 
 A single-dataset call behaves like an ordinary single fit: the combined reduced
 χ² reduces exactly to that dataset's reduced χ².
+
+.. _global-marginal-errors:
+
+Parameter errors and correlations
+---------------------------------
+
+Default symmetric errors are **marginal local-quadratic errors**: every free
+parameter in the combined objective contributes to the uncertainty of each
+reported Global or Local parameter. A local intercept, for example, includes
+the uncertainty of a fitted shared slope. Parameters explicitly marked
+``fixed=True`` and supplied nuisance inputs (calibration, response, and grouping)
+remain fixed; their uncertainty is not propagated by this fit.
+
+For an interior solution, let :math:`I` be half the Hessian of the recorded
+:math:`\chi^2` or Poisson deviance. The approximation is
+:math:`C=I^{-1}`, with :math:`\sigma_j=\sqrt{C_{jj}}`. For Gaussian data the
+observed Hessian includes residual-weighted second derivatives of the model;
+it need not equal the Gauss–Newton :math:`J^\mathsf{T}J` approximation.
+``FitEngine.global_fit`` uses this same meaning for ``"joint"``, ``"profiled"``,
+and ``"least_squares"``. The profiled optimiser still solves locals with globals
+pinned during its search, but its reported errors release all free parameters.
+The profiled and sparse solvers recover marginal covariance using member
+curvature blocks and a Schur complement. The dense shared block spans columns
+used by more than one member; member-only columns are eliminated locally. The
+sparse solver supports Gaussian observations; the profiled and joint solvers
+also support typed Poisson counts.
+
+Each in-memory ``FitResult.covariance`` includes that member's free global/local
+cross terms, ordered by ``covariance_parameters``. Use those terms when
+propagating a derived quantity within the member, following the covariance
+propagation rule in `JCGM 100:2008, section 5.2
+<https://doi.org/10.59161/JCGM100-2008E>`_. Shared parameters also correlate local
+estimates from different runs. Ordinary weighted parameter trends use the
+reported marginal errors but do **not** use a full covariance between runs;
+they are an independence approximation.
+
+These errors describe a local quadratic approximation, not a guarantee of
+interval coverage. Non-Gaussian likelihoods, multiple minima, and parameter
+bounds can invalidate symmetric intervals; see `iminuit's HESSE and MINOS guide
+<https://scikit-hep.org/iminuit/notebooks/hesse_and_minos.html>`_. The profiled and
+sparse solvers omit errors and covariance when curvature is singular,
+ill-conditioned, nonfinite, numerically unstable, too close to a bound, or the
+solution is invalid. They retain central estimates where available, set
+``covariance_accurate=False``, and record ``Marginal covariance unavailable:``
+with the reason in fit warnings. They never substitute conditional local errors.
+Asymmetry also checks numerical stability at two derivative step sizes. Both
+curvature and propagated covariance must agree to 0.2 % when each matrix element
+is scaled by the geometric mean of its diagonal entries. Up to four bounded
+step refinements seek a stable local estimate; the tolerance is unchanged. Near-null curvature
+is rejected in dimensionless coordinates; this diagnostic concerns the reported
+errors, and leaves usable observations and central estimates available.
+
+``minos=True`` is supported by ``"joint"`` and explicitly rejected by
+``"profiled"`` and ``"least_squares"``.
+
+Saved result errors and exports retain their scientific computation revision.
+Reopening a historical result preserves its recorded errors and revision;
+it does not establish that those errors have current marginal semantics.
+Compact wizard caches retain scalar errors rather than covariance matrices.
+Refit to obtain a current covariance for propagation.
 
 .. _asymmetry-vs-count-domain:
 
