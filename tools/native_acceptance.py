@@ -12,6 +12,7 @@ import re
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -211,6 +212,36 @@ def omission_components(components: list, control: dict, target: str) -> dict:
     return {name: items[0] for name, items in required.items()}
 
 
+@contextmanager
+def payload_copy(application, work, cases, name):
+    """Keep copy cleanup and primary validation failures visible at the owned OS boundary."""
+    directory = Path(tempfile.mkdtemp(prefix="payload-copy-", dir=work))
+    clone = directory / application.name
+    errors = []
+    try:
+        shutil.copytree(application, clone, symlinks=True)
+        yield clone
+    except Exception as exc:
+        cases.setdefault(name, {})["copy_primary_failure"] = type(exc).__name__
+        errors.append(exc)
+    try:
+        shutil.rmtree(directory)
+        if directory.exists():
+            raise OSError("owned payload copy remains after cleanup")
+        cases.setdefault(name, {})["copy_cleanup"] = {"success": True}
+    except OSError as exc:
+        cases.setdefault(name, {})["copy_cleanup"] = {
+            "success": False,
+            "failure_type": type(exc).__name__,
+        }
+        errors.append(exc)
+    cases.setdefault(name, {})["copy_removed"] = not directory.exists()
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise ExceptionGroup("payload copy validation and cleanup failures", errors)
+
+
 def execute_case(
     command, inputs, identity, work, cases, name, expected_stage=None, loader_component=None
 ):
@@ -222,7 +253,7 @@ def execute_case(
             raise
     finally:
         if (work / "outcome.json").is_file():
-            cases[name] = artifacts.read_json(work / "outcome.json")
+            cases.setdefault(name, {}).update(artifacts.read_json(work / "outcome.json"))
     outcome = cases[name]
     if expected_stage is None:
         if outcome["report"]["mode"] != "frozen":
@@ -321,9 +352,7 @@ def run_native(
                 "control",
             )
             compare_results(source, control["report"])
-            with tempfile.TemporaryDirectory(prefix="intact-copy-", dir=work) as temporary:
-                clone = Path(temporary) / application.name
-                shutil.copytree(application, clone, symlinks=True)
+            with payload_copy(application, work, report["cases"], "copy-control") as clone:
                 copied = execute_case(
                     [str(clone / launcher)],
                     packet / "inputs",
@@ -333,15 +362,10 @@ def run_native(
                     "copy-control",
                 )
                 compare_results(source, copied["report"])
-            copied["copy_removed"] = not clone.exists()
-            if not copied["copy_removed"]:
-                raise ValueError("intact control copy remains after cleanup")
             for name, component in omission_components(
                 components["components"], control["report"], target
             ).items():
-                with tempfile.TemporaryDirectory(prefix="omission-", dir=work) as temporary:
-                    clone = Path(temporary) / application.name
-                    shutil.copytree(application, clone, symlinks=True)
+                with payload_copy(application, work, report["cases"], name) as clone:
                     relative = artifacts.portable(component["path"])
                     removed = (clone / relative).resolve(strict=True)
                     if (
@@ -352,7 +376,12 @@ def run_native(
                     removed.unlink()
                     if removed.exists():
                         raise ValueError("omitted component remains available")
-                    outcome = execute_case(
+                    report["cases"].setdefault(name, {})["omitted_component"] = {
+                        "path": relative,
+                        "sha256": component["sha256"],
+                        "absent_before_child": True,
+                    }
+                    execute_case(
                         [str(clone / launcher)],
                         packet / "inputs",
                         identity,
@@ -362,14 +391,6 @@ def run_native(
                         "resource" if name == "resource" else "counts.nxs:load",
                         Path(relative).name if name == "native" else None,
                     )
-                    outcome["omitted_component"] = {
-                        "path": relative,
-                        "sha256": component["sha256"],
-                        "absent_before_child": True,
-                    }
-                outcome["copy_removed"] = not clone.exists()
-                if not outcome["copy_removed"]:
-                    raise ValueError("omission payload copy remains after cleanup")
             if artifacts.bundle_inventory(application) != baseline:
                 raise ValueError("scientific journey changed the intact delivered application")
             report["intact_payload_unchanged"] = True

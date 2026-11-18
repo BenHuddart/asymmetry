@@ -369,3 +369,49 @@ def test_preexisting_image_attachment_is_never_detached(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts.release, "run", command)
     with pytest.raises(ValueError, match="pre-existing"):
         artifacts.inspect_payload(binary, [], "macos-arm64", set())
+
+
+@pytest.mark.parametrize("failure", [None, "validation", "cleanup", "both"])
+def test_payload_copy_keeps_primary_failure_and_cleanup_disposition(tmp_path, monkeypatch, failure):
+    application = tmp_path / "application"
+    application.mkdir()
+    (application / "reader.bin").write_bytes(b"original delivered bytes")
+    (application / "reader-link").symlink_to("reader.bin")
+    work = tmp_path / "work"
+    work.mkdir()
+    cases = {}
+    original = shutil.rmtree
+
+    def remove(path, *args, **kwargs):
+        if Path(path).parent == work and failure in {"cleanup", "both"}:
+            raise OSError("owned copy cleanup failed")
+        return original(path, *args, **kwargs)
+
+    def journey():
+        with native.payload_copy(application, work, cases, "copy-control") as clone:
+            assert (clone / "reader-link").is_symlink()
+            assert (clone / "reader-link").read_bytes() == b"original delivered bytes"
+            if failure in {"validation", "both"}:
+                raise ValueError("primary numerical mismatch")
+
+    monkeypatch.setattr(shutil, "rmtree", remove)
+    try:
+        if failure is None:
+            journey()
+        else:
+            with pytest.raises(
+                ExceptionGroup
+                if failure == "both"
+                else (ValueError if failure == "validation" else OSError)
+            ) as caught:
+                journey()
+            if failure == "both":
+                assert [type(exc) for exc in caught.value.exceptions] == [ValueError, OSError]
+        record = cases["copy-control"]
+        assert record["copy_removed"] == (failure not in {"cleanup", "both"})
+        assert record["copy_cleanup"]["success"] == record["copy_removed"]
+        if failure in {"validation", "both"}:
+            assert record["copy_primary_failure"] == "ValueError"
+        assert (application / "reader.bin").read_bytes() == b"original delivered bytes"
+    finally:
+        original(work)
