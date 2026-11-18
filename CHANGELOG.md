@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NeXus field and temperature metadata honour recognised units while retaining
+  permissive loading; Get Info and `info --units` expose file declarations.
+
 - Avoid high-field alias growth for narrow Lorentzian Kubo–Toyabe field distributions.
 
 - Evaluate Gaussian and Lorentzian strong-collision Kubo–Toyabe at the requested

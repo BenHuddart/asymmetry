@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from asymmetry.cli._output import UserError, emit_json, payload
+from asymmetry.cli._output import UserError, emit_json, payload, render_table
 
 #: Metadata key held back from ``--json``: the loader's verbatim copy of the
 #: NeXus tree, which is thousands of nodes and would bury the run's own
@@ -21,13 +21,16 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     """Declare the ``info`` subcommand."""
     parser = subparsers.add_parser("info", help="Show metadata for a data file")
     parser.add_argument("file", help="Path to a μSR data file")
+    parser.add_argument(
+        "--units", action="store_true", help="Show original unit declarations and interpretations"
+    )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> None:
     """Load the file and print its summary."""
-    from asymmetry.core.io import load
+    from asymmetry.core.io import load, unit_report
     from asymmetry.core.transform.grouping import group_names
 
     try:
@@ -39,6 +42,18 @@ def run(args: argparse.Namespace) -> None:
     groups = group_names(run_result.run)
     grouping = run_result.run.grouping
     pair = (int(grouping["forward_group"]), int(grouping["backward_group"]))
+    units = unit_report(run_result) if args.units else None
+    if args.units and not args.json:
+        if units:
+            print(
+                render_table(
+                    ["Quantity", "Source", "Declaration and interpretation"],
+                    [[record.quantity, record.path, record.describe()] for record in units],
+                )
+            )
+        if not units:
+            print("No NeXus unit-report information available.")
+        return
     if not args.json:
         print(run_result.summary())
         print(
@@ -57,6 +72,7 @@ def run(args: argparse.Namespace) -> None:
             default_pair=list(pair),
             metadata=_metadata(run_result.metadata),
             summary=run_result.summary(),
+            **({"units": [record.to_dict() for record in units]} if units is not None else {}),
         )
     )
 

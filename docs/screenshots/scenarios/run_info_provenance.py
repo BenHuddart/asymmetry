@@ -66,3 +66,53 @@ def _pump_events(milliseconds: int) -> None:
 
 
 register(RunInfoProvenanceScenario())
+
+
+class RunInfoUnitsScenario(Scenario):
+    name = "run_info_units"
+    description = "NeXus declarations beside interpreted physical quantities."
+    size = (1280, 680)
+
+    def capture(self, ctx: CaptureContext) -> Path:
+        import shutil
+        from tempfile import TemporaryDirectory
+
+        import h5py
+
+        from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
+
+        fixture = (
+            Path(__file__).parents[3] / "tests/fixtures/reference_cases/manual-phase/synthetic.nxs"
+        )
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / "synthetic.nxs"
+            shutil.copyfile(fixture, source)
+            with h5py.File(source, "r+") as file:
+                sample = file["raw_data_1/sample"]
+                sample["temperature"][...] = 300
+                sample["temperature"].attrs["units"] = "mK"
+                sample["magnetic_field"][...] = 100
+                sample["magnetic_field"].attrs["units"] = "K"
+                resolution = file["raw_data_1/instrument/detector_1/resolution"]
+                resolution[...] = 10
+                del resolution.attrs["units"]
+            dataset = load(str(source))
+        dataset.metadata["source_file"] = "synthetic.nxs"
+        dataset.run.source_file = "synthetic.nxs"
+        dialog = RunInfoDialog(dataset)
+        dialog.resize(*self.size)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialog.show()
+        _pump_events(200)
+        out = ctx.output_dir / f"{self.name}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if not dialog.grab().save(str(out), "PNG"):
+            raise RuntimeError("Could not save units screenshot")
+        _optimize_png(out)
+        dialog.close()
+        dialog.deleteLater()
+        _pump_events(40)
+        return out
+
+
+register(RunInfoUnitsScenario())

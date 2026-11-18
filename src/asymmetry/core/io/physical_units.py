@@ -224,3 +224,53 @@ def parse_quantity(
         value, token, dimension, context=context, convention=convention
     )
     return float(converted), declaration
+
+
+# NeXus compatibility spellings retain their historical meanings. SI symbols
+# matched by physical_unit take precedence over these legacy spellings.
+_NEXUS_ALIASES = {
+    "temperature": dict.fromkeys(
+        (
+            "c",
+            "degc",
+            "celsius",
+            "celcius",
+            "centigrade",
+            "degreec",
+            "degreecelsius",
+            "degreescelsius",
+            "degcelsius",
+        ),
+        "°C",
+    ),
+    "field": {
+        "t": "T",
+        "tesla": "T",
+        "teslas": "T",
+        "mt": "mT",
+        "millitesla": "mT",
+        "milliteslas": "mT",
+    },
+}
+
+
+def nexus_physical_unit(raw: object, dimension: Dimension) -> PhysicalUnit | None:
+    """Recognise metadata units without rejecting malformed legacy declarations."""
+    if isinstance(raw, (list, tuple, np.ndarray)):
+        raw = np.asarray(raw)
+        if raw.size != 1:
+            return None
+    token = unit_text(raw)
+    unit = physical_unit(token, dimension=dimension)
+    if unit is not None:
+        return unit
+    compact = token.casefold().translate(str.maketrans("", "", "° ._"))
+    alias = _NEXUS_ALIASES.get(dimension, {}).get(compact)
+    return physical_unit(alias, dimension=dimension) if alias else None
+
+
+def nexus_quantity(value: object, raw: object, dimension: Dimension):
+    """Convert recognised metadata; retain numbers under compatibility assumptions."""
+    unit = nexus_physical_unit(raw, dimension)
+    values = np.asarray(value, dtype=float)
+    return values if unit is None else values * unit.factor + unit.offset

@@ -296,7 +296,7 @@ def coil_geometry(metadata: dict[str, Any]) -> str | None:
     """
     series = metadata.get("nexus_time_series", {})
     main, z, x, y = (
-        active_series_mean(series.get(name))
+        active_series_mean(series.get(name), "field")
         for name in ("Field_Main", "Field_Z", "Field_X", "Field_Y")
     )
     if main is None or z is None or x is None or y is None:

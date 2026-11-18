@@ -22,6 +22,7 @@ from asymmetry.core.io.periods import (
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
 from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
+from asymmetry.core.io.unit_report import unit_report as unit_report
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
@@ -272,6 +273,7 @@ def background_reference_for_grouping(
 
 
 __all__ = [
+    "unit_report",
     "BaseLoader",
     "LoadResult",
     "LoaderRegistry",
