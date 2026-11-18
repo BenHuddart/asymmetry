@@ -154,15 +154,29 @@ def test_driver_clean_host_probe_runs_without_scientific_dependencies(tmp_path):
     workspace.mkdir()
     temporary.mkdir()
     script = f"import sys;sys.path.insert(0,{str(ROOT / 'tools')!r});from native_acceptance import clean_host;from pathlib import Path;print(clean_host(Path({str(workspace)!r}),Path({str(temporary)!r})))"
-    result = subprocess.run(
-        [sys._base_executable, "-I", "-B", "-c", script],
-        cwd=tmp_path,
+    driver = tmp_path / "driver"
+    subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--without-pip", str(driver)],
+        check=True,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=30,
     )
-    assert result.returncode == 0, result.stderr
-    assert "absent" in result.stdout
+    isolated = driver / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    for executable, clean in ((sys.executable, False), (str(isolated), True)):
+        result = subprocess.run(
+            [executable, "-I", "-B", "-c", script],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if clean:
+            assert result.returncode == 0, result.stderr
+            assert "absent" in result.stdout
+        else:
+            assert result.returncode != 0
+            assert "can import developer scientific packages" in result.stderr
 
 
 @pytest.mark.parametrize("owner", [".git", "src", ".venv", "release-replay"])
