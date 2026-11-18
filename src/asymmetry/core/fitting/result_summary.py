@@ -177,12 +177,10 @@ def fit_result_covariance_map(fit_result: FitResult) -> dict[str, dict[str, floa
 
 
 def fit_result_uncertainties(fit_result: FitResult) -> dict[str, float]:
-    """Distinguish unavailable free-parameter errors from exact fixed values."""
+    """Preserve captured errors; fill missing free errors as unknown, fixed as exact."""
     return {str(name): float(value) for name, value in fit_result.uncertainties.items()} | {
-        parameter.name: (
-            0.0
-            if parameter.fixed
-            else float(fit_result.uncertainties.get(parameter.name, math.nan))
+        parameter.name: float(
+            fit_result.uncertainties.get(parameter.name, 0.0 if parameter.fixed else math.nan)
         )
         for parameter in fit_result.parameters
     }

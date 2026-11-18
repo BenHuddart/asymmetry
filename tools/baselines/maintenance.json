@@ -729,7 +729,7 @@
     "src/asymmetry/core/project/schema.py": 1777,
     "src/asymmetry/core/simulate.py": 2060,
     "src/asymmetry/core/workflow/survey.py": 1629,
-    "src/asymmetry/gui/mainwindow.py": 17474,
+    "src/asymmetry/gui/mainwindow.py": 17470,
     "src/asymmetry/gui/panels/alc_panel.py": 1500,
     "src/asymmetry/gui/panels/cross_group_fit_dialog.py": 1045,
     "src/asymmetry/gui/panels/data_browser.py": 5466,

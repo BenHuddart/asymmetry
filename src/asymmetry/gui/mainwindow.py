@@ -10338,10 +10338,10 @@ class MainWindow(QMainWindow):
         Delegates to the shared core helper so the run-batch and grouped-series
         recording paths produce identically shaped ``results_by_run`` entries,
         then stamps the additive provenance keys (``model_name``, ``fit_range``,
-        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
-        cannot source. ``npar`` is the free-parameter count (those carrying a
-        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
-        omitted when unavailable.
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) for series recording.
+        ``npar`` uses the fitted parameter set's free columns,
+        independent of error availability. ``ndof`` comes from the χ² quality
+        block and is omitted when unavailable.
 
         ``extra_flags`` threads engine-only member-quality flags (notably
         ``spurious_reseeded``, which needs the scan trend) into the stored
@@ -10352,7 +10352,6 @@ class MainWindow(QMainWindow):
             confidence=fit_quality_confidence(self._settings),
             extra_flags=extra_flags,
         )
-        uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None
         enrich_summary_provenance(
@@ -10361,7 +10360,7 @@ class MainWindow(QMainWindow):
             fit_range=fit_range,
             timestamp=timestamp,
             provenance=provenance,
-            npar=(len(uncertainties) or None),
+            npar=len(fit_result.parameters.free_parameters),
             ndof=ndof,
         )
         return summary
@@ -10600,10 +10599,7 @@ class MainWindow(QMainWindow):
 
             values = dict(summary.get("parameters", {}))
             errors = {
-                name: summary.get("uncertainties", {}).get(
-                    name, 0.0 if series.param_roles.get(name) == "fixed" else float("nan")
-                )
-                for name in values
+                name: summary.get("uncertainties", {}).get(name, float("nan")) for name in values
             }
             if collapse_groups:
                 # The collapsed row represents the whole run via one group member,

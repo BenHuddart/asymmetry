@@ -445,3 +445,17 @@ def test_summary_preserves_covariance_identity_and_unknown_free_errors():
     historical = fit_result_summary(result)
     assert historical["covariance"] is None
     assert historical["computation_revision"] is None
+
+
+def test_explicit_recorded_error_wins_over_parameter_fixed_flag():
+    result = FitResult(
+        success=True,
+        objective=Objective.GAUSSIAN,
+        parameters=ParameterSet(
+            [Parameter("unknown", 2, fixed=True), Parameter("exact", 1, fixed=True)]
+        ),
+        uncertainties={"unknown": float("nan")},
+    )
+    summary = fit_result_summary(result)
+    assert np.isnan(summary["uncertainties"]["unknown"])
+    assert summary["uncertainties"]["exact"] == 0.0
