@@ -68,6 +68,9 @@ class FitResult:
 
     def __post_init__(self):
         self.objective = Objective(self.objective)
+        scope = (self.input_attribution or {}).get("uncertainty_scope")
+        if scope and scope not in self.warnings:
+            self.warnings.append(scope)
         if self.observation_report is not None and self.observation_report.omitted:
             message = self.observation_report.summary()
             if message not in self.warnings:

@@ -7754,14 +7754,7 @@ class MainWindow(QMainWindow):
         )
 
     def _active_spectrum_error_oversampling(self) -> float:
-        """The displayed spectrum's zero-padding factor, 1.0 when unpadded.
-
-        Zero-padded samples are sinc-interpolated and correlated, so moment
-        uncertainties need the effective-sample-size correction — the same
-        ``error_oversampling`` contract the fit engine applies (a padded FFT
-        stamps ``fourier_padding`` into its metadata; MaxEnt spectra carry no
-        stamp and are untouched).
-        """
+        """The recorded padding factor used for heuristic error rescaling."""
         dataset = None
         if hasattr(self._frequency_plot_panel, "current_frequency_dataset"):
             dataset = self._frequency_plot_panel.current_frequency_dataset()
@@ -10636,6 +10629,7 @@ class MainWindow(QMainWindow):
                     "temperature": float(temperature),
                     "values": values,
                     "parameter_sources": summary.get("parameter_sources", captured_sources),
+                    "warnings": list(summary.get("warnings", [])),
                     "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
                     "custom_values": custom_values,

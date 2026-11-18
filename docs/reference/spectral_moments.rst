@@ -97,29 +97,35 @@ A caveat on :math:`B_{\mathrm{pk}}`
 fitted to five points around the discrete maximum; on a noisy or near-flat
 spectrum the maximum hops between bins and the parabolic vertex can swing wide.
 Everything built on it — :math:`\langle B_{\mathrm{ave}}-B_{\mathrm{pk}}\rangle`
-and, especially, :math:`\beta` — inherits that fragility. The robust members are
-:math:`B_{\mathrm{ave}}`, :math:`B_{\mathrm{rms}}` and (where the third moment
-converges) the skewness, which are amplitude-weighted integrals that average noise
-down. When the spectrum is noisy, trust :math:`B_{\mathrm{ave}}` and
-:math:`B_{\mathrm{rms}}`; read :math:`B_{\mathrm{pk}}` and :math:`\beta` as
-indicative. The bootstrap error bars make this visible: a fragile
-:math:`B_{\mathrm{pk}}` shows a large uncertainty next to a well-determined
-:math:`B_{\mathrm{ave}}`.
+and, especially, :math:`\beta` — inherits that fragility. The centroid, RMS
+width, and skewness also depend on noisy cutoff membership. A small displayed
+approximate error does not establish that any of these estimates is stable or
+has calibrated coverage.
 
 Uncertainties
 -------------
 
-WiMDA gives single-spectrum moments no error at all. Asymmetry does better: when
-the spectrum carries per-point errors (the averaged-FFT error, or the MaxEnt error
-estimate), each moment is given a **bootstrap** uncertainty — the spectrum is
-resampled within its noise many times and the moments recomputed, so the error
-propagates correctly through the nonlinear peak, skewness and :math:`\beta`. A
-value reads as :math:`B_{\mathrm{rms}} = 18.4(3)`. For a zero-padded FFT the
-samples are sinc-interpolated and correlated (only :math:`1/n` of them are
-independent at pad factor :math:`n`), so moment uncertainties are scaled by
-:math:`\sqrt{n}` — the same effective-sample-size correction the
-frequency-domain fits apply. Run-to-run scatter across a temperature scan is
-then handled, as for any series, by the trend layer.
+The readout marks available errors **Approximate errors**. These are heuristic
+errors under independent spectral-bin noise and frozen processing. Bootstrap
+perturbs spectral bins with the supplied errors and reselects the cutoff support
+and peak on each draw; it does not repeat the time/acquisition FFT or estimate
+phase again. Parenthesised values, such as :math:`18.4(3)`, express that numerical
+error estimate, not a calibrated confidence interval.
+
+FFT cross-bin correlations, automatically estimated phase, upstream calibration
+and background, and MaxEnt reconstruction uncertainty are not fully propagated.
+Finite errors are multiplied by the square root of the padding factor when that
+factor exceeds one. This scalar rescaling is heuristic: it can understate or
+overstate errors, including with apodisation, and does not recover spectral
+covariance or establish nominal coverage. The **Info** explanation describes these
+limits. New computed recipes and trend rows retain the scope; **Parameters** shows
+**Recorded warnings**, and TSV/GLE data exports retain each run's captured warning.
+Saved results without a recorded scope retain that unknown provenance.
+
+The central values describe the range-limited, cutoff-selected displayed spectrum.
+Windowing, finite time support, conditioning, and reconstruction affect it; its
+RMS width is not automatically the width of an unwindowed physical field
+distribution. Neither these errors nor run-to-run scatter remove that distinction.
 
 The scripting option ``uncertainty="propagate"`` uses the complete first-order
 Jacobian with independent per-point errors [4], including normalization and
@@ -134,8 +140,16 @@ Cube-root :math:`\alpha` has no propagated uncertainty because its derivative
 diverges at a symmetric line; use the propagated :math:`\gamma_1` uncertainty.
 An unrefined or clamped peak leaves all peak-derived errors unavailable
 (``NaN``), and zero-width support leaves every propagated error unavailable.
-The oversampling correction applies to finite propagated errors as it does to
-bootstrap errors.
+The same heuristic scalar padding rescaling applies to finite propagated and
+bootstrap errors; neither mode propagates full spectral covariance.
+
+Compared with other programs
+----------------------------
+
+WiMDA's inspected single-spectrum moment workflow supplies central values;
+scatter across multiple entries is a different statistic from a propagated
+single-spectrum error. See the versioned scope and public manuals in
+:ref:`spectral-error-comparison`.
 
 Which spectra qualify
 ---------------------

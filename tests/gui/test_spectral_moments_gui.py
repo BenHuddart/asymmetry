@@ -477,3 +477,37 @@ def test_default_window_click_grabs_moments_handle_not_fit_range(window):
     # The moments window moved; the (inert, invisible) fit-range state did not.
     assert panel._moments_window_display() != (lo, hi)
     assert (panel._fit_x_min, panel._fit_x_max) == pytest.approx((lo, hi))
+
+
+def test_approximate_errors_survive_moment_project_trend_and_exports(window, monkeypatch, tmp_path):
+    _activate_fft_spectrum(window, [1, 2])
+    widget = window._fourier_panel.moments_widget
+    assert not widget._uncertainty_label.isHidden()
+    assert widget._uncertainty_label.text() == "Approximate errors"
+    assert "Spectral correlations" in widget._uncertainty_label.toolTip()
+    window._on_moments_send_to_trend(widget)
+    original = _moments_batches(window)[0]
+    restored = ProjectModel.from_dict(window._project_model.to_dict()).batches[original.batch_id]
+    assert restored.results_by_run[1]["warnings"] == original.results_by_run[1]["warnings"]
+    rows = window._build_series_rows(restored)
+    panel = window._fit_parameters_panel
+    panel.load_representation_series(
+        [(restored.batch_id, "Moments", rows)], select_id=restored.batch_id
+    )
+    assert panel._rows[0].warnings == original.results_by_run[1]["warnings"]
+    assert "Recorded warnings" in panel._trend_provenance_label.text()
+    state = panel.get_state()
+    panel.restore_state(state)
+    assert panel._rows[0].warnings == original.results_by_run[1]["warnings"]
+    tsv = tmp_path / "moments.tsv"
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(tsv), ""),
+    )
+    panel._export_tsv()
+    assert "Heuristic approximate errors" in tsv.read_text()
+    gle = tmp_path / "moments.dat"
+    panel._gle_snapshot()._write_gle_data_file(gle)
+    assert "Heuristic approximate errors" in gle.read_text()
+    widget.clear_readout()
+    assert widget._uncertainty_label.isHidden()

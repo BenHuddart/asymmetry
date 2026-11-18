@@ -82,6 +82,7 @@ class SpectralMomentsReadoutScenario(Scenario):
         # estimated independently for each detector group.
         fourier = window._fourier_panel
         fourier._set_display_mode("Phase")
+        fourier._estimate_average_error_check.setChecked(True)
         fourier._auto_phase_btn.click()
         _process_events_for(milliseconds=80)
 
@@ -103,6 +104,9 @@ class SpectralMomentsReadoutScenario(Scenario):
             x = window._frequency_plot_panel._last_plot_time
             y = window._frequency_plot_panel._last_plot_asymmetry
             if x is not None and y is not None and len(x) and float(np.nanmax(x)) >= x_max:
+                window._refresh_spectral_moments()
+                if fourier.moments_widget._uncertainty_label.isHidden():
+                    continue
                 spectrum_x = np.asarray(x, dtype=float)
                 spectrum_y = np.asarray(y, dtype=float)
                 break
@@ -130,6 +134,8 @@ class SpectralMomentsReadoutScenario(Scenario):
         window._frequency_plot_panel.set_view_limits(x_min, x_max, -0.04 * peak, 1.10 * peak)
         window._refresh_spectral_moments()
         _process_events_for(milliseconds=120)
+        if moments._uncertainty_label.isHidden():
+            raise RuntimeError("Spectral error qualification is missing from the readout")
         return window
 
     def settle(self, widget: QWidget) -> None:

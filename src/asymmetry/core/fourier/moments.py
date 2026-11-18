@@ -1,42 +1,21 @@
-"""Statistical moments of a muon field/frequency spectrum.
+"""Cutoff-selected moments of a displayed field/frequency spectrum.
 
-Once a MaxEnt or phase-corrected FFT spectrum exists, its lineshape can be
-reduced to a handful of numbers that answer concrete physics questions:
+The caller supplies the axis unit; widths and positions retain it, while
+skewness and beta are invariant under linear field/frequency rescaling.
+The selected, range-limited displayed spectrum is the target, not automatically
+an unwindowed physical full-distribution moment. Windowing and reconstruction
+can change that target.
 
-* ``b_rms_mean`` — the RMS width of the field distribution ``p(B)``; in the
-  London limit of a type-II superconductor's mixed state this sets the magnetic
-  penetration depth (``B_rms ∝ 1/λ²``) and hence the superfluid density.
-* ``skewness`` / ``beta`` — the *asymmetry* of ``p(B)``: the long high-field tail
-  from the vortex cores and the sharp low-field cutoff at the lattice saddle
-  point, which probe the vortex-lattice geometry and its disorder.
-* ``b_pk`` / ``b_ave`` — where the line sits, and its diamagnetic shift.
+Amplitude-weighted moments, a five-point parabolic peak and a fraction-of-peak
+cutoff follow the documented spectral-moment convention. The peak and cutoff
+are chosen within the requested range. Peak-bin/support selection can be unstable
+under noise, including for the centroid and RMS width.
 
-This module is the Qt-free, array-in / array-out core. It is *unit-agnostic*: the
-caller passes an axis ``x`` in whatever unit it likes (the GUI defaults to Gauss,
-the penetration-depth reading) and the returned ``B_*`` moments share that unit,
-while ``skewness`` and ``beta`` are dimensionless and invariant under the linear
-field↔frequency rescaling.
-
-The arithmetic follows WiMDA's spectral moments — the
-amplitude-weighted central moments, the five-point parabolic peak refinement, the
-cutoff-as-fraction-of-peak gate — with documented divergences (see
-``docs/porting/spectral-moments/comparison.md``): a consistent ``0…n-1`` index
-range (WiMDA's peak search has an off-by-one), the textbook skewness ``γ₁``
-reported alongside WiMDA's cube-root ``α``, real per-moment uncertainties (WiMDA
-gives none), and a discrete peak taken over the analysis *range* rather than the
-whole spectrum so the cutoff threshold and ``b_pk`` stay self-consistent.
-
-Physics reference: Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An
-Introduction* (OUP, 2022), for the mixed-state field distribution; E. H. Brandt
-for the vortex-lattice ``p(B)`` whose positive skew fixes the sign of ``beta``.
-
-**``b_pk`` is the fragile member of the set.** It is a parabola fitted to the five
-spectral points around the discrete maximum; on a noisy or near-flat spectrum the
-maximum hops between bins and the vertex can swing wide. ``b_diff`` and especially
-``beta`` (which is referenced to ``b_pk``) inherit that fragility. The robust
-members are ``b_ave``, ``b_rms_mean`` and ``skewness`` — amplitude-weighted
-integrals that average noise down. The bootstrap uncertainties make this visible
-rather than asserted.
+Errors are heuristic independent-bin approximations with frozen processing.
+Spectral covariance, estimated phase and reconstruction uncertainty are not fully
+propagated; scalar padding rescaling does not establish coverage. Bootstrap
+reselects spectral support/peak; first-order propagation freezes their indices.
+See the spectral-moments reference for definitions, sources and limits.
 """
 
 from __future__ import annotations
@@ -49,6 +28,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from asymmetry.core import computation
+from asymmetry.core.fourier.uncertainty import MOMENT_UNCERTAINTY_SCOPE
 
 #: Minimum points required for the five-point parabolic peak refinement.
 _PARABOLA_POINTS = 5
@@ -59,12 +39,12 @@ UNCERTAINTY_METHODS = ("bootstrap", "propagate", "none")
 
 @dataclass(frozen=True)
 class SpectrumMoments:
-    """The WiMDA moment set for one spectrum, with per-moment uncertainties.
+    """Selected displayed-spectrum moments with heuristic approximate errors.
 
     ``B_*`` fields carry the axis unit the caller passed (Gauss by default);
     ``skewness``, ``skewness_g1`` and ``beta`` are dimensionless. ``*_err`` are
-    1σ uncertainties, ``NaN`` when unavailable (no spectrum errors, or a moment
-    the chosen method cannot propagate). An empty window yields ``n_sample == 0``
+    heuristic approximate errors, ``NaN`` when unavailable (no spectrum errors,
+    or a moment the chosen method cannot propagate). An empty window yields ``n_sample == 0``
     and all-``NaN`` moments. Propagation assumes fixed support and peak bin,
     independent errors, and leaves cube-root alpha unavailable.
     """
@@ -365,9 +345,9 @@ def spectrum_moments(
     errors:
         Optional per-point 1σ amplitude errors enabling uncertainties.
     uncertainty:
-        ``"bootstrap"`` (default; resample over *errors*, propagates through every
-        moment incl. the nonlinear ones), ``"propagate"`` (first order with fixed
-        support and peak bin, independent errors; cube-root alpha unavailable),
+        ``"bootstrap"`` (default; perturb independent spectral bins, reselecting
+        support and peak), ``"propagate"`` (first order with fixed support and
+        peak bin, independent errors; cube-root alpha unavailable),
         or ``"none"``. Errors are all ``NaN`` when *errors* is absent or
         non-positive. Unrefined or clamped peaks have no peak-derived errors.
     n_bootstrap, seed:
@@ -376,20 +356,11 @@ def spectrum_moments(
     unit, mode:
         Provenance only — the display unit and spectrum mode, stored in ``recipe``.
     error_oversampling:
-        Correction for correlated samples, keyword-only, default ``1.0`` (no
-        correction). A zero-padded FFT spectrum is sinc-interpolated — padding by
-        a factor ``s`` densifies the sampled points without adding independent
-        information, so only ``~1/s`` of the points are statistically
-        independent (the same correction applied to fits; see
-        :meth:`asymmetry.core.fitting.engine.FitEngine.fit`). The per-point
-        ``errors`` already describe the noise on the correlated samples
-        correctly, so the moment *values* need no change, but the bootstrap and
-        propagated *uncertainties* on the moments are correspondingly
-        underestimated by ``~1/√s``: when ``error_oversampling > 1`` every
-        finite ``*_err`` field is scaled by ``√error_oversampling`` before it is
-        returned. Pass the spectrum's zero-padding factor
-        (``metadata["fourier_padding"]``); ``1.0`` for an un-padded or
-        time-domain quantity.
+        Scalar heuristic: finite output errors are multiplied by
+        ``sqrt(error_oversampling)`` when greater than one; central values stay
+        unchanged. Pass the FFT padding factor. This does not recover spectral
+        covariance and can understate or overstate errors. Neither this scaling
+        nor independent-bin perturbations establish nominal coverage.
     """
     if uncertainty not in UNCERTAINTY_METHODS:
         raise ValueError(f"uncertainty must be one of {UNCERTAINTY_METHODS}, got {uncertainty!r}")
@@ -445,6 +416,8 @@ def spectrum_moments(
     sig_safe = None if sig is None else np.where(np.isfinite(sig) & (sig > 0.0), sig, 0.0)
     have_sigma = sig_safe is not None and bool(np.any(sig_safe > 0.0))
     if uncertainty != "none" and have_sigma:
+        recipe["uncertainty_scope"] = MOMENT_UNCERTAINTY_SCOPE
+        recipe["error_oversampling"] = max(float(error_oversampling), 1.0)
         if uncertainty == "bootstrap":
             errs = _bootstrap_errors(xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed)
         else:
@@ -452,9 +425,7 @@ def spectrum_moments(
                 errs[key] = float(np.linalg.norm(row * sig_safe))
 
     if error_oversampling > 1.0:
-        # Correlated (zero-padded) samples: the noise model above draws
-        # independent per-point perturbations, so its uncertainties are too
-        # small by the same ~1/√s the fit-error correction accounts for.
+        # Scalar padding rescaling is heuristic; it does not reconstruct covariance.
         scale = math.sqrt(float(error_oversampling))
         errs = {
             key: (value * scale if np.isfinite(value) else value) for key, value in errs.items()
@@ -514,6 +485,10 @@ def moments_trend_row(
         "computation_revision": moments.computation_revision,
         "parameters": values,
         "uncertainties": errors,
+        "moments_recipe": dict(moments.recipe),
+        "warnings": [moments.recipe["uncertainty_scope"]]
+        if moments.recipe.get("uncertainty_scope")
+        else [],
         "run_number": int(run_number),
         "run_label": str(run_label) if run_label is not None else None,
         "field": _coord(field),
