@@ -78,6 +78,7 @@ from asymmetry.core.fitting.seeding import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.spectral_residual import _dominant_peak_metrics, _residual_diagnostics
+from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 from asymmetry.core.fitting.time_response import TimeResponse
 from asymmetry.core.fitting.wizard_scope import (
     UNTIMED,
@@ -4289,11 +4290,6 @@ def _assess_candidate_template(
     seeded = _initial_parameters_for_template(
         dataset, fingerprint, template, seed_context=seed_context
     )
-    # ``variant_budget=0`` means "no ladder at all", which only ever accompanies a
-    # warm start — a cell re-fitted from an already-fitted answer for the same
-    # model on the same data at another binning needs that answer tried, not a
-    # search around it. ``_parameter_variants`` keeps its own ``max(1, budget)``
-    # floor, so the emptiness is decided here.
     ladder = (
         _parameter_variants(
             seeded,
@@ -4308,14 +4304,9 @@ def _assess_candidate_template(
         attempts = ladder
         deferred_rungs: tuple[ParameterSet, ...] = ()
     else:
-        # Warm-aware ladder: the warm start and the base rung (the unmodified
-        # seed) run first, and the perturbed rungs only when those two fail to
-        # settle the basin between them — see ``_warm_ladder_is_settled``.
         attempts = (_warm_started_parameters(seeded, warm_start), *ladder[:1])
         deferred_rungs = ladder[1:]
 
-    # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
-    # the scipy fallback below (scipy has no call-count knob).
     migrad_kwargs = {"ncall": migrad_ncall} if migrad_ncall is not None else None
 
     best_result: FitResult | None = None
@@ -4328,25 +4319,33 @@ def _assess_candidate_template(
         for parameters in parameter_sets:
             if cancel_callback is not None and cancel_callback():
                 raise FitCancelledError("Fit wizard analysis cancelled.")
-            result = fit_engine.fit(
-                dataset,
-                template.model.function,
-                _clone_parameter_set(parameters),
-                cancel_callback=cancel_callback,
-                migrad_kwargs=migrad_kwargs,
-            )
-            if _needs_fit_backend_fallback(result):
-                result = _scipy_fit_fallback(dataset, template.model.function, parameters)
-            elif migrad_kwargs is None:
-                # Only the uncapped fits continue: a screening fit that hit the
-                # cap hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
-                result = _fit_with_call_limit_continuations(
-                    fit_engine,
+            try:
+                result = fit_engine.fit(
                     dataset,
-                    template,
-                    parameters,
-                    result,
+                    template.model.function,
+                    _clone_parameter_set(parameters),
                     cancel_callback=cancel_callback,
+                    migrad_kwargs=migrad_kwargs,
+                )
+                if _needs_fit_backend_fallback(result):
+                    result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+                elif migrad_kwargs is None:
+                    result = _fit_with_call_limit_continuations(
+                        fit_engine,
+                        dataset,
+                        template,
+                        parameters,
+                        result,
+                        cancel_callback=cancel_callback,
+                    )
+            except EvaluationWorkLimitError as exc:
+                result = FitResult(
+                    computation_revision=computation.COMPUTATION_REVISION,
+                    objective=Objective.GAUSSIAN,
+                    parameters=_clone_parameter_set(parameters),
+                    success=False,
+                    chi_squared=float("inf"),
+                    message=str(exc),
                 )
             batch.append(result)
             if best_result is None:
@@ -4400,7 +4399,7 @@ def _assess_candidate_template(
     residual_gate_passed = not residual_gate_reasons
     disqualification_reasons = _disqualification_reasons(dataset, template, best_result, bound_hits)
 
-    if dense_curves:
+    if dense_curves and best_result.success:
         fitted_time, fitted_curve, component_curves = _dense_fit_curves(
             dataset,
             template.model,
@@ -4435,18 +4434,17 @@ def _with_dense_curves(
     assessment: CandidateAssessment,
     dataset: MuonDataset,
 ) -> CandidateAssessment:
-    """Draw one assessment over the record it was fitted on, without refitting.
-
-    Counts-first prepared timestamps delimit the displayed dense curves.
-    Missing model parameters use the model defaults for an unsuccessful row.
-    """
+    """Draw successful assessments; failed rows retain no model or residual curve."""
+    result = assessment.fit_result
+    if not result.success:
+        empty = np.array([], dtype=float)
+        return replace(assessment, fitted_time=empty, fitted_curve=empty, component_curves=())
     fitted_time, fitted_curve, component_curves = _dense_fit_curves(
         dataset,
         assessment.template.model,
         assessment.fit_result.parameters,
     )
-    result = assessment.fit_result
-    if result.success and result.observation_report is not None:
+    if result.observation_report is not None:
         observations = dataset_observations(dataset)
         values = _curve_parameter_values(assessment.template.model, result.parameters)
         residuals = observations.values - assessment.template.model.function(
@@ -4684,8 +4682,7 @@ def _semilog_slope_ratio(
 #: tolerance represents a nulled magnet. It does not switch the Gaussian kernel.
 _ZERO_LONGITUDINAL_FIELD_MAX_GAUSS: float = 0.1
 
-#: Positive free-field seed: clears the Lorentzian zero-field shortcut and gives
-#: Gaussian KT a nonzero derivative in B_L, whose response is even in field.
+#: A positive field seed avoids the zero derivative at B_L=0 of either KT family.
 _FREE_B_L_SEED_DECOUPLING_FACTOR: float = 2.0
 
 #: The local-field width parameters of the ``B_L`` carriers — ``a_L`` for the
@@ -4750,9 +4747,8 @@ def _recorded_longitudinal_field(
 def _free_longitudinal_field_seed(default: float, width_per_us: float) -> float:
     """Seed inside the bounds with useful field sensitivity.
 
-    Gaussian KT is even in B_L and has zero derivative at zero. Lorentzian KT
-    additionally has a finite zero-field shortcut. Twice its threshold is a
-    useful positive scale for both; retain any larger carrier default.
+    Both KT families are even in B_L and have zero derivative at zero.
+    Twice the weak-field scale is a useful positive seed; retain a larger default.
     """
     return max(
         float(default),
@@ -6280,6 +6276,8 @@ def _residual_gate_reasons(
     reasons: list[str] = []
     if not fit_result.success:
         reasons.append(fit_result.message or "Fit failed")
+        if fit_result.residuals is None or len(fit_result.residuals) == 0:
+            return reasons
     if residual_rms > 1.25:
         reasons.append(f"standardized residual RMS is high ({residual_rms:.2f})")
     if abs(runs_z_score) > 2.0:

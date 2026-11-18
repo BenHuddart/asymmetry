@@ -515,3 +515,31 @@ def test_residual_axis_uses_core_selected_times_with_middle_omissions(qapp):
         if len(line.get_xdata()) == 4
     ]
     np.testing.assert_array_equal(lines[0].get_xdata(), selected_time)
+
+
+@pytest.mark.parametrize("stored_curve", [False, True])
+def test_failed_assessment_never_requests_or_labels_a_fit(qapp, stored_curve):
+    from dataclasses import replace
+
+    time, asym, error = _plot_arrays()
+    recommendation = _recommendation(comparable=("gaussian_constant",))
+    winner, alternative = recommendation.assessments
+    failed = replace(
+        alternative if stored_curve else _bare(alternative),
+        fit_result=replace(
+            alternative.fit_result, success=False, residuals=None, message="Work budget exceeded."
+        ),
+    )
+    recommendation = replace(recommendation, assessments=(winner, failed))
+    card = _card(_Selection("gaussian_constant"))
+    requested = []
+    card.curves_required.connect(requested.append)
+    card.set_plot_data(time, asym, error)
+    card.set_recommendation(recommendation)
+    card._residuals_toggle.setChecked(True)
+    card.redraw()
+    assert requested == []
+    axes = card._plot_widget._figure.axes
+    assert len(axes) == 1
+    assert "Fit" not in [line.get_label() for line in axes[0].lines]
+    assert "work budget" in failed.fit_result.message.lower()

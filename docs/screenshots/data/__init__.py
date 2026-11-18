@@ -21,3 +21,4 @@ from .archetypes import (  # noqa: F401
     make_ybco_knight_grouped,
     make_ybco_vortex_lattice,
 )
+from .dynamic_kt import make_ag_dynamic_rate_scan  # noqa: F401
