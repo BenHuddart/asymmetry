@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.project_model import ProjectModel
@@ -817,14 +818,14 @@ def test_malformed_error_shape_retains_uncertainty_free_readout(window):
     assert widget._uncertainty_label.isHidden()
 
 
-@pytest.mark.parametrize("historical", ["5", None])
-def test_fresh_moment_rows_record_revision_six_without_relabelling_history(window, historical):
+@pytest.mark.parametrize("historical", ["5", "6", None])
+def test_fresh_moment_rows_record_current_revision_without_relabelling_history(window, historical):
     _activate_fft_spectrum(window, [1])
     widget = window._fourier_panel.moments_widget
     window._on_moments_send_to_trend(widget)
     _wait_moments(window)
     recorded = _moments_batches(window)[0]
-    assert recorded.results_by_run[1]["computation_revision"] == "6"
+    assert recorded.results_by_run[1]["computation_revision"] == computation.COMPUTATION_REVISION
     recorded.results_by_run[1]["computation_revision"] = historical
     reopened = ProjectModel.from_dict(window._project_model.to_dict())
     assert (
@@ -836,4 +837,4 @@ def test_fresh_moment_rows_record_revision_six_without_relabelling_history(windo
     assert recorded.results_by_run[1]["computation_revision"] == historical
     fresh = [batch for batch in _moments_batches(window) if batch is not recorded]
     assert len(fresh) == 1
-    assert fresh[0].results_by_run[1]["computation_revision"] == "6"
+    assert fresh[0].results_by_run[1]["computation_revision"] == computation.COMPUTATION_REVISION

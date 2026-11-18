@@ -34,6 +34,7 @@ from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 from scipy.special import erfcx, j0, sici
 
+from asymmetry.core.fitting.gaussian_width_kt import gaussian_width_polarisation
 from asymmetry.core.fitting.lorentzian_kt import lorentzian_zf_polarisation
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.fitting.phi_functions import phi2
@@ -689,12 +690,6 @@ def bessel_oscillation(t: NDArray, frequency: float, phase: float = 0.0) -> NDAr
     return np.asarray(j0(2.0 * np.pi * float(frequency) * t + float(phase)), dtype=float)
 
 
-# Gauss-Hermite quadrature for the Gaussian-broadened KT, computed at import.
-_GBKT_NODES = 21
-_GBKT_X, _GBKT_WEIGHTS = np.polynomial.hermite.hermgauss(_GBKT_NODES)
-_GBKT_WN = _GBKT_WEIGHTS / np.sqrt(np.pi)  # normalised quadrature weights
-
-
 def gaussian_broadened_kt(
     t: NDArray,
     Delta: float,
@@ -710,12 +705,11 @@ def gaussian_broadened_kt(
     softens the 1/3-tail recovery (cf. the Gaussian-broadened Gaussian of
     Noakes & Kalvius, Phys. Rev. B 56, 2352 (1997); WiMDA's ``Gau broad KT``).
 
-    Evaluated by Gauss-Hermite quadrature (21 nodes) over the Delta
-    distribution, with negative quadrature widths reflected to ``|Delta'|`` (as
-    in WiMDA).  The quadrature is evaluated **directly at the requested times**
-    using the same dimensionless static Gaussian kernel at every node, so the model is smooth
-    in ``w_rel`` and ``w_rel = 0`` reduces exactly and continuously to the
-    static (LF) Kubo-Toyabe.
+    Gaussian tilted moments analytically average the width distribution, with
+    negative widths reflected to ``|Delta'|``. Common Gauss-Legendre time panels
+    and directly integrated endpoint remainders evaluate the same static LF
+    expression without polarisation interpolation. Exact zero broadening uses
+    the static kernel; exact zero field uses the analytic continuous average.
 
     Note: WiMDA's ``rel width`` parameter enters as weight ``exp(-(i/7)^2)`` over
     ``Delta(1 + w i/7)``, i.e. a Gaussian of fractional standard deviation
@@ -727,16 +721,16 @@ def gaussian_broadened_kt(
     tt = np.atleast_1d(np.abs(t))
     delta = abs(float(Delta))
     width = abs(float(w_rel))
-    if width <= 0.0 or delta <= 0.0 or tt.size == 0:
+    if tt.size == 0:
+        return tt.copy()
+    if width <= 0.0 or delta <= 0.0:
         gz = longitudinal_field_kubo_toyabe(tt, 1.0, delta, B_L, 0.0)
         out = np.asarray(gz, dtype=float)
         return float(out[0]) if scalar else out
 
-    deltas = np.abs(delta * (1.0 + np.sqrt(2.0) * width * _GBKT_X))
-    gz_nodes = np.asarray(
-        [longitudinal_field_kubo_toyabe(tt, 1.0, node_delta, B_L) for node_delta in deltas]
+    out = gaussian_width_polarisation(
+        tt, delta, abs(LARMOR_RAD_PER_US_PER_GAUSS * float(B_L)), width
     )
-    out = np.tensordot(_GBKT_WN, gz_nodes, axes=(0, 0))
     return float(out[0]) if scalar else out
 
 

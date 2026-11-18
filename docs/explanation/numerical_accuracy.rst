@@ -25,11 +25,11 @@ fitted to its own output alone cannot establish numerical correctness.
 
 Exceptions require independently validated evidence in the owning model's
 documentation and tests. Record the domain, measured error, reason for the
-exception, and consequences for scientific interpretation. For example,
-:ref:`Gaussian-broadened KT <fit-gaussian-broadened-kt>` retains a finite
-width quadrature whose error can exceed the static kernel's target for
-broad distributions and long windows. Its limitation is distinct from the
-accuracy of each static kernel evaluation.
+exception, and consequences for scientific interpretation.
+:ref:`Gaussian-broadened KT <fit-gaussian-broadened-kt>` analytically averages
+the Gaussian widths and targets the same polarisation accuracy over its
+documented sampled domain. Its finite-field quadrature work budget limits
+evaluation cost; it does not certify accuracy outside the tested domain.
 
 Other quantities require metrics appropriate to their units and scales:
 counts, rates, transforms, corrections, and estimated uncertainties do not

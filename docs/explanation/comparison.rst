@@ -2051,8 +2051,10 @@ The summed squared residuals are :math:`1.20\times10^{-5}` at
 :math:`r=0.06`, :math:`1.25\times10^{-12}` at :math:`r=1`, and
 :math:`2.09\times10^{-10}` at :math:`r=10`. This retains a weak-field
 numerical discrepancy rather than asserting general agreement; independent
-Gaussian spin averages support Asymmetry's result there. The retained
-21-node Gaussian-width average has a distinct broadening limitation described under :ref:`fit-gaussian-broadened-kt`.
+Gaussian spin averages support Asymmetry's result there.
+The continuous Gaussian-width average has separate independent checks and
+a sampled domain described under :ref:`fit-gaussian-broadened-kt`; no new
+native-program agreement is implied by those checks.
 
 
 Dynamic Kubo–Toyabe

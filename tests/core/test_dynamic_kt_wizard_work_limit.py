@@ -1,9 +1,11 @@
 """A bounded numerical evaluation failure belongs to one wizard attempt."""
 
+import pytest
+
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.fit_wizard import build_fit_wizard_recommendation_for_templates
 from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
-from tests.core.test_wizard_applied_field import _lkt_template, _record
+from tests.core.test_wizard_applied_field import _lkt_template, _record, _template
 
 
 def test_wizard_continues_after_one_work_limited_attempt(monkeypatch):
@@ -48,15 +50,19 @@ def test_wizard_preserves_all_work_limited_attempt_diagnostic(monkeypatch):
     ]
 
 
-def test_actual_oversized_seeds_have_no_eager_or_deferred_curve():
+@pytest.mark.parametrize(
+    "template",
+    [_lkt_template(), _template(["GaussianBroadenedKT", "Constant"], ["+"], "gbkt_constant")],
+)
+def test_actual_oversized_seeds_have_no_eager_or_deferred_curve(template):
     from asymmetry.core.fitting.fit_wizard import assessment_with_curves
 
-    dataset = _record(metadata={"field": 1e6, "field_direction": "LF"})
-    recommendation = build_fit_wizard_recommendation_for_templates(dataset, [_lkt_template()])
+    dataset = _record(metadata={"field": 1e7, "field_direction": "LF"})
+    recommendation = build_fit_wizard_recommendation_for_templates(dataset, [template])
     (assessment,) = recommendation.assessments
     assert not assessment.fit_result.success
     assert "work budget" in assessment.fit_result.message
-    assert assessment.fit_result.parameters["B_L"].value == 1e6
+    assert assessment.fit_result.parameters["B_L"].value == 1e7
     assert assessment.fit_result.parameters["B_L"].fixed
     assert assessment.residual_gate_reasons == (assessment.fit_result.message,)
     assert assessment.fitted_time.size == assessment.fitted_curve.size == 0
