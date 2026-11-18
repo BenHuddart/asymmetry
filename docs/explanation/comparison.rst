@@ -2069,3 +2069,31 @@ Software references:
 For the underlying physics see S. J. Blundell, R. De Renzi, T. Lancaster,
 and F. L. Pratt, *Muon Spectroscopy: An Introduction* (Oxford University
 Press, Oxford, 2022).
+
+
+.. _spectral-error-comparison:
+
+Spectral errors and selected moments
+------------------------------------
+
+Asymmetry reports heuristic approximate errors for selected displayed-spectrum
+moments and frequency fits. Independent-bin noise, frozen processing, and scalar
+padding rescaling do not supply a general covariance or coverage result; see
+:doc:`/reference/spectral_moments` and
+:doc:`/reference/frequency_domain_fitting`.
+
+WiMDA's documented moment and averaging workflows need separate comparisons:
+scatter across entries and a propagated error for one spectrum are different
+statistics. See the
+`WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`__.
+No native WiMDA moment-error agreement is established here.
+A synthetic check of Mantid 6.16.1
+`FFT v1 <https://docs.mantidproject.org/v6.16.1/algorithms/FFT-v1.html>`__
+with two different positive input error levels returns zero output errors;
+those zeros do not mean zero physical uncertainty. The inspected musrfit 1.12.1
+Fourier output likewise has zero errors; its
+`Fourier documentation <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`__
+describes the transform/display settings. These are bounded output conventions,
+not statements about every extension or workflow. They establish neither native
+agreement with Asymmetry's error estimates nor a reason to describe its scalar
+padding rule as generally correct.

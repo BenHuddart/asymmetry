@@ -126,11 +126,21 @@ class _FitRow:
     quality_flags: list[str] = field(default_factory=list)
     computation_revision: str | None = None
     parameter_sources: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 def _x_custom_id(x_key: str) -> str | None:
     """Return the custom-column id for a ``custom:<id>`` x-key, else None."""
     return x_key if isinstance(x_key, str) and x_key.startswith("custom:") else None
+
+
+def recorded_warning_comments(rows, prefix):
+    """Carry captured fit/moment caveats into each exported member's provenance."""
+    return [
+        f"{prefix} Warning [run {row.run_number}]: " + " ".join(warning.splitlines()) + "\n"
+        for row in rows
+        for warning in row.warnings
+    ]
 
 
 def _coerce_abscissa(raw: object) -> float:
@@ -324,6 +334,7 @@ class ParameterExportData:
 
         with open(data_path, "w", encoding="utf-8") as f:
             f.write("! Fit parameter data for GLE export\n")
+            f.writelines(recorded_warning_comments(rows, "!"))
 
             model_label = self._export_model_label()
             if model_label:

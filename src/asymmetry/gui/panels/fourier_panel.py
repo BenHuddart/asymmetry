@@ -631,15 +631,13 @@ class FourierPanel(QWidget):
         # 336k-sample TDC window at ×64 is a ~21M-point spectrum. (The former
         # cap of 16 was WiMDA-adjacent habit; WiMDA's own dialog stops at ×8.)
         self._padding_spin.setRange(1, 64)
-        # Deliberate divergence from WiMDA (whose dialog defaults to no zero
-        # padding): the spectrum is auto-shown on view now, and an
-        # uninterpolated peak spanning 2-3 bins reads as broken on first paint.
-        # x4 sinc-interpolates the line shapes at negligible cost. Higher is
-        # display-only smoothing: padded bins are strongly CORRELATED, and
-        # frequency-domain fits / moment bootstraps treat samples as
-        # independent, so over-padded spectra yield underestimated
-        # uncertainties — the reason the default stays modest. Recipes and
-        # restored projects keep whatever padding they were saved with.
+        # Padding refines the display grid without adding observations; restored
+        # recipes retain their recorded factor. Error rescaling remains heuristic.
+        self._padding_spin.setToolTip(
+            "Refine the displayed frequency grid without adding observations. "
+            "Scalar error rescaling does not recover spectral covariance and can "
+            "understate or overstate errors."
+        )
         self._padding_spin.setValue(4)
         self._padding_spin.setMaximumWidth(metrics.spin_width_for(6, self._padding_spin))
         fft_settings_form.addRow(self._wrapping_label("Zero-pad factor:"), self._padding_spin)
