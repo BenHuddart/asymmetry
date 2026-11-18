@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Allow documentation screenshot capture ten minutes to avoid intermittent
   publishing failures.
 
+- Keep Fourier reference fields and compact spectral-moment bounds readable
+  when the UI scale is enlarged, without reducing numeric precision.
+
 - NeXus field and temperature metadata honour recognised units while retaining
   permissive loading; Get Info and `info --units` expose file declarations.
 

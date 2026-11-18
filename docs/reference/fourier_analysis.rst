@@ -1541,6 +1541,9 @@ plotted spectrum itself (not just the axis labels):
   the **X Units** selector is inert here). The axis is labelled
   ``Relative shift (B − B₀)/B₀ (ppm)``.
 
+The selector and its Gauss value stay together when the control row wraps.
+The numeric field keeps two decimal places and its ``G`` unit at enlarged UI scales.
+
 The **Ref.:** selector (enabled in the shift modes) chooses the reference x₀:
 
 - **Run field** (the default) — each spectrum uses **its own** applied field from

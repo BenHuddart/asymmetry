@@ -599,22 +599,7 @@ class GlobalFitTab(FitTabBase):
 
         # Fit range section
         _fr_group = PanelSection("Fit range")
-        _fr_layout = QHBoxLayout()
-        _fr_layout.setContentsMargins(0, 0, 0, 0)
-        _fr_layout.setSpacing(4)
-        _fr_group.addLayout(_fr_layout)
-
-        self._build_fit_range_fields()
-
-        self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
-        self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
-
-        _fr_layout.addWidget(self._fit_range_min_spin)
-        _fr_layout.addWidget(self._fit_range_mid_label)
-        _fr_layout.addWidget(self._fit_range_max_spin)
-        self._fit_range_unit_label = QLabel("µs")
-        _fr_layout.addWidget(self._fit_range_unit_label)
-        _fr_layout.addStretch()
+        _fr_group.addLayout(self._build_fit_range_fields())
         layout.addWidget(_fr_group)
 
         # Batch members (D1): the group-binding banner plus a per-member include
