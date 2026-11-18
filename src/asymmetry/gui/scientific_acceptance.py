@@ -244,6 +244,7 @@ def scientific_journey(path: Path, root: Path, stage) -> dict:
         np.full(16, value),
     )
     return {
+        "effective_recipe": reduced.effective_recipe.publishable(),
         "selected_forward_counts": forward.tolist(),
         "selected_backward_counts": backward.tolist(),
         "time_us": reduced.time.tolist(),
@@ -275,6 +276,18 @@ def main(arguments: list[str]) -> int:
         "stage_outcomes": {},
         "tolerances": TOLERANCES,
         "results": {},
+    }
+
+    report["declared_settings"] = {
+        "groups": {"1": [1], "2": [2]},
+        "pair": [1, 2],
+        "raw_bounds": [3, 18],
+        "bin_width_us": 0.125,
+        "t0_time_us": 0.3125,
+        "alpha": 1.0,
+        "background": "none",
+        "deadtime": "off",
+        "rebin": 1,
     }
 
     def stage(name):
@@ -323,20 +336,13 @@ def main(arguments: list[str]) -> int:
             report["results"][FIXTURES[0]]["asymmetry_percent"],
             report["results"][FIXTURES[1]]["asymmetry_percent"],
         )
-        report["settings"] = {
-            "groups": {"1": [1], "2": [2]},
-            "pair": [1, 2],
-            "raw_bounds": [3, 18],
-            "bin_width_us": 0.125,
-            "t0_time_us": 0.3125,
-            "alpha": 1.0,
-            "background": "none",
-            "deadtime": "off",
-            "rebin": 1,
-        }
         stage("origins")
         names = (
             "asymmetry",
+            "asymmetry.core.io.root",
+            "asymmetry.core.io.hdf4",
+            "numpy",
+            "scipy",
             "uproot",
             "awkward",
             "awkward_cpp",
@@ -344,6 +350,7 @@ def main(arguments: list[str]) -> int:
             "pyhdf.hdfext",
             "pyhdf._hdfext",
             "iminuit",
+            "iminuit._core",
         )
         origins = {}
         payload = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else None

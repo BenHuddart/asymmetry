@@ -287,7 +287,11 @@ schema or scientific computation revision changes are involved.
 The parent waits up to 60 seconds, terminates and reaps the owned process tree on
 timeout, and requires exit zero plus a fresh matching invocation report. Reports
 record stages, fixture hashes, settings, tolerances, numerical results, and import
-origins without temporary absolute paths. A failed child, missing or stale report,
+origins without temporary absolute paths. The actual reduction recipe uses the
+existing public numerical projection; declared expectations remain separate.
+Failure reports retain bounded, sanitised launcher diagnostics and record cleanup
+errors separately from the primary timeout. Raw launcher output stays temporary.
+A failed child, missing or stale report,
 missing input/resource/reader, numerical mismatch, export failure, or replay failure
 cannot pass. The command retains an outcome report even when analysis fails and
 cleans its temporary working directory. It removes developer Python/native search
