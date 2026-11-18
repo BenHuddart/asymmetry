@@ -217,7 +217,7 @@ def test_standard_ci_uses_the_native_per_test_watchdog() -> None:
     steps = _workflow("ci.yml")["jobs"]["test"]["steps"]
     run = next(step["run"] for step in steps if step.get("name") == "Run test suite")
     options = shlex.split(run.partition(" -- ")[2])
-    assert ("-o", "faulthandler_timeout=600") in tuple(zip(options, options[1:]))
+    assert ("-o", "faulthandler_timeout=90") in tuple(zip(options, options[1:]))
 
 
 def test_pages_uses_supported_timeout_and_preserves_failed_artifacts() -> None:

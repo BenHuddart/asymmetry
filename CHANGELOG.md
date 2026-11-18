@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retain CI test-worker timeout and native-crash evidence without masking failed tests.
+
 - Keep unidentified 64- and 96-detector runs on a generic layout and preserve
   stored grouping choices when instrument recognition is inconclusive.
 
