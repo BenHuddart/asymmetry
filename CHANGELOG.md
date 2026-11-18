@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify supported approximate comparisons and honest limitations in preliminary
+  agent analyses and their evaluation criteria.
+
 - Accelerate weak-field static Gaussian Kubo–Toyabe evaluation and its
   broadened-width fits with a stable Gaussian-moment series.
 

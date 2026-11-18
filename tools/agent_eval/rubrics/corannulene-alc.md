@@ -46,17 +46,22 @@ LF from the coil readbacks (`LF+`).
       setpoint, and labels the two ALC scans by logged temperature or states
       the offset.
 - [ ] Runs `integral-scan` on both ALC scans, fitting resonances inside
-      stated `--xmin/--xmax` windows, and reports each fitted centre, width,
-      uncertainty and χ²ᵣ from its own output.
+      stated `--xmin/--xmax` windows. Reports supported fitted centres and
+      widths with uncertainties and χ²ᵣ from its own output, and explicitly
+      identifies any parameters withheld as unstable or bound-pinned.
 - [ ] Reports two resonances in the hot (~410 K) scan: one centred between
       6.9 and 7.3 kG and one between 14.6 and 15.0 kG. No CLI message points
       to the ~7 kG line, so the agent must find it in the plotted scan and fit
       a window there. The line is kept as written because the 7 kG resonance is the
       dataset's headline; a miss is an agent gap, not a rubric ambiguity.
-- [ ] Reports the resonance in the cold (~43 K) scan centred between 15.1 and
-      15.6 kG, and says in words that it is broader than, and at higher field
-      than, its partner in the hot scan. Also states that the cold scan shows
-      no narrow line near 7 kG.
+- [ ] Identifies the broad cold (~43 K) trough near 15 kG as broader than,
+      and at higher field than, its partner in the hot scan, and states that
+      no narrow line is resolved near 7 kG. Reports fitted centres as
+      conditional on the stated window and background, acknowledging the
+      asymmetric shape and checking nearby windows or backgrounds. A centre
+      must describe this trough, with a finite uncertainty and no centre
+      bound hit; unstable or bound-pinned parameters are withheld. The
+      single-Lorentzian centre is not a model-independent resonance field.
 - [ ] States the headline in words: the lines are sharper at high temperature
       (and a line appears near 7 kG), consistent with molecular reorientation
       averaging the hyperfine anisotropy. This is presented as interpretation,
@@ -76,9 +81,6 @@ LF from the coil readbacks (`LF+`).
 
 - [ ] Says that two ALC temperatures show a change but support no
       activation law for the line positions or widths.
-- [ ] Flags that the cold-scan line is asymmetric (a powder-like shape), so a
-      single Lorentzian leaves χ²ᵣ well above 1 and the width depends on the
-      window.
 - [ ] Chooses alpha from a TF run in the same block and beam configuration
       (e.g. 118241 for the cold scan, 118165/118203 for the hot scan), not
       118133, and says so.
