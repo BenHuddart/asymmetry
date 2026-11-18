@@ -101,6 +101,10 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
     unregister_derived_param_info,
 )
+from asymmetry.core.fitting.result_summary import (
+    fit_result_covariance_map,
+    fit_result_uncertainties,
+)
 from asymmetry.core.fitting.sc.trend_width import (
     TrendWidthContext,
     derived_width_source,
@@ -1361,7 +1365,7 @@ class FitParametersPanel(QWidget):
 
             meta = dataset.metadata
             values = {p.name: p.value for p in fit_result.parameters}
-            errors = dict(fit_result.uncertainties)
+            errors = fit_result_uncertainties(fit_result)
             rows.append(
                 _FitRow(
                     run_number=run_number,
@@ -1375,7 +1379,7 @@ class FitParametersPanel(QWidget):
                     combined_from=[int(v) for v in meta.get("combined_from", [])]
                     if meta.get("combined_from")
                     else None,
-                    covariance=self._fit_result_covariance_map(fit_result),
+                    covariance=fit_result_covariance_map(fit_result),
                     custom_values=_custom_values_from_metadata(meta),
                     chi_squared=_optional_float(getattr(fit_result, "chi_squared", None)),
                     reduced_chi_squared=_optional_float(
@@ -1546,6 +1550,7 @@ class FitParametersPanel(QWidget):
                             temperature=float(rd.get("temperature", 0.0)),
                             values=dict(rd.get("values") or {}),
                             errors=dict(rd.get("errors") or {}),
+                            covariance=self._deserialize_row_covariance(rd.get("covariance")),
                             combined_from=rd.get("combined_from"),
                             custom_values=_custom_values_from_row_dict(rd),
                             model_name=str(rd.get("model_name") or ""),
@@ -2538,32 +2543,6 @@ class FitParametersPanel(QWidget):
                 out[name] = parsed_row
         return out or None
 
-    def _fit_result_covariance_map(
-        self, fit_result: FitResult
-    ) -> dict[str, dict[str, float]] | None:
-        if fit_result.covariance is None:
-            return None
-        cov = np.asarray(fit_result.covariance, dtype=float)
-        if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
-            return None
-
-        order = list(fit_result.covariance_parameters)
-        if not order:
-            order = [p.name for p in fit_result.parameters if p.name in fit_result.uncertainties]
-        if len(order) != cov.shape[0]:
-            return None
-
-        out: dict[str, dict[str, float]] = {}
-        for i, name_i in enumerate(order):
-            row: dict[str, float] = {}
-            for j, name_j in enumerate(order):
-                val = float(cov[i, j])
-                if np.isfinite(val):
-                    row[name_j] = val
-            if row:
-                out[name_i] = row
-        return out or None
-
     def _display_y_parameters(self) -> list[str]:
         params = list(self._varying_params)
         for definition in self._composite_parameters:
@@ -2611,10 +2590,10 @@ class FitParametersPanel(QWidget):
         if definitions:
             for row in rows:
                 symbol_values = dict(row.values)
-                symbol_uncertainties = dict(row.errors)
-                if global_uncertainties:
-                    for name, value in global_uncertainties.items():
-                        symbol_uncertainties.setdefault(name, value)
+                symbol_uncertainties = dict(global_uncertainties or {})
+                symbol_uncertainties.update(row.errors)
+                for name in row.values:
+                    symbol_uncertainties.setdefault(name, float("nan"))
 
                 for definition in definitions:
                     try:

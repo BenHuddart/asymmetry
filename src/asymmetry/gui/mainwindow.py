@@ -10557,7 +10557,6 @@ class MainWindow(QMainWindow):
             if run_label is None:
                 run_label = str(summary.get("run_label") or meta.get("run_label") or row_run_number)
 
-            # Fallback coordinate for older series persisted before T/B was
             # Lazily resolve the browser's *displayed* coordinate (honouring the
             # logged-T/B toggles) — only the legacy path below consults it, so a
             # normal stamped series never pays for the browser lookup + log scan.
@@ -10600,7 +10599,12 @@ class MainWindow(QMainWindow):
             )
 
             values = dict(summary.get("parameters", {}))
-            errors = dict(summary.get("uncertainties", {}))
+            errors = {
+                name: summary.get("uncertainties", {}).get(
+                    name, 0.0 if series.param_roles.get(name) == "fixed" else float("nan")
+                )
+                for name in values
+            }
             if collapse_groups:
                 # The collapsed row represents the whole run via one group member,
                 # so drop the per-group nuisance parameters: only the cross-group
@@ -10611,12 +10615,8 @@ class MainWindow(QMainWindow):
                     values.pop(nuisance, None)
                     errors.pop(nuisance, None)
 
-            # Per-member trend gate + advisory quality flags. The gate lives on
-            # the series (D4), so a run trended here and dropped from another
-            # series keeps both answers. ``trend_member_key`` is the key
-            # ``set_trend_excluded`` expects (a synthetic member key for groups,
-            # the run number otherwise), so click-to-exclude routes to the right
-            # member even for a collapsed group row.
+            # The member key routes exclusion to this series, including synthetic
+            # group keys used by collapsed per-run rows.
             trend_member_key = member_key
             include_in_trend = member_key not in series.trend_excluded_runs
             quality_flags = [str(f) for f in (summary.get("quality_flags") or [])]
@@ -10632,9 +10632,8 @@ class MainWindow(QMainWindow):
                     "warnings": list(summary.get("warnings", [])),
                     "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
+                    "covariance": summary.get("covariance"),
                     "custom_values": custom_values,
-                    # Originating fit provenance so the trend panel's exports can
-                    # record the model and per-run goodness of fit.
                     "model_name": summary.get("model_name"),
                     "chi_squared": summary.get("chi_squared"),
                     "reduced_chi_squared": summary.get("reduced_chi_squared"),

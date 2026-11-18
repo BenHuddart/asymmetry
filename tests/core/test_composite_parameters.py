@@ -132,3 +132,17 @@ def test_variable_exponent_derivative_requires_positive_base() -> None:
     expr = CompositeExpression("A0^Lambda")
     with pytest.raises(CompositeExpressionError, match="positive base"):
         expr.evaluate({"A0": -1.0, "Lambda": 0.5})
+
+
+@pytest.mark.parametrize("sigma", [float("nan"), float("inf")])
+def test_explicit_unavailable_uncertainty_keeps_value_and_zero_derivative(sigma):
+    value = CompositeExpression("A+B").evaluate_with_uncertainty(
+        {"A": 2.0, "B": 1.0}, {"A": sigma, "B": 0.0}
+    )
+    assert value.value == 3.0
+    assert np.isnan(value.uncertainty)
+    cancelled = CompositeExpression("A-A+B").evaluate_with_uncertainty(
+        {"A": 2.0, "B": 1.0}, {"A": sigma, "B": 0.0}
+    )
+    assert cancelled.uncertainty == 0.0
+    assert CompositeExpression("A").evaluate_with_uncertainty({"A": 2.0}).uncertainty == 0.0

@@ -219,7 +219,11 @@ cross terms, ordered by ``covariance_parameters``. Use those terms when
 propagating a derived quantity within the member, following the covariance
 propagation rule in `JCGM 100:2008, section 5.2
 <https://doi.org/10.59161/JCGM100-2008E>`_. Shared parameters also correlate local
-estimates from different runs. Ordinary weighted parameter trends use the
+estimates from different runs. Recorded fit series and saved projects retain
+the named within-member covariance for derived parameters in **Parameters**.
+Unavailable free-parameter errors remain unavailable in derived quantities;
+fixed parameters contribute zero variance. Historical missing covariance is
+not reconstructed. Ordinary weighted parameter trends use the
 reported marginal errors but do **not** use a full covariance between runs;
 they are an independence approximation.
 

@@ -55,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all width scales, including the shared Gaussian-broadened kernel.
 
 - Report marginal global/local errors and member covariance consistently across
-  global-fit strategies; diagnose unavailable covariance and unsupported MINOS.
+  global-fit strategies; retain covariance in saved series and keep unavailable
+  derived errors unknown, with diagnostics for covariance and unsupported MINOS.
 - Use the series amplitude envelope for automatic wizard search bounds, preserving
   supplied bounds and fixed values.
 
