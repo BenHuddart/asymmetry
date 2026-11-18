@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an isolated desktop diagnostic for synthetic ROOT/HDF4 reduction, fitting,
+  checked text export, and meaningful project replay with analytic anchors.
+
 ### Changed
 
 - Desktop builds verify external runtime archives and publish component records,

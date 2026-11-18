@@ -445,3 +445,26 @@ DLL lineage, retained notices, assembled DMG/EXE payloads and extra resources,
 final bytes, and transported public records.
 These checks supplement the existing replay/compiler and waited outside-source
 startup checks; synthetic tests do not substitute for either native platform.
+
+## Desktop scientific scenario checks
+
+`tests/tools/test_scientific_acceptance.py` invokes the actual desktop diagnostic
+entry with native HDF4 and ROOT files written through the declared dependencies.
+It checks the nonzero analytic ratio, percent-scale constant fit and known-error
+weighted-mean anchor, parsed text export, verified project source replay, settings
+and app-data isolation, and bypassed plugin discovery. Stage failures include
+wrong identity, missing/corrupt inputs, missing HDF4 reader, altered reduction,
+failed fit, empty export, and failed project reload. A disposable source copy
+checks actual omission of the used logo. Process failures, timeout, missing or
+stale reports, and reuse of an invocation directory cannot pass the parent runner.
+
+```bash
+python3 tools/harness.py test -- tests/tools/test_scientific_acceptance.py tests/io/test_hdf4_loader.py tests/io/test_root_loader.py tests/project/test_project_preparation.py tests/tools/test_release_environment.py tests/tools/test_release_artifacts.py tests/tools/test_release_workflows.py -n 4 --dist loadfile
+```
+
+The fixture writer is build/test tooling; the frozen application imports neither
+it nor tests. Reports contain original fixture hashes and explicit settings and
+tolerances. Source tests and local frozen experiments do not certify delivered
+Windows/macOS media or native omission sensitivity. Native install/mount/cleanup,
+download identity, publication gates, and the independent Linux core-wheel smoke
+retain their existing owners. See RELEASING.md for diagnostic commands and limits.
