@@ -58,8 +58,8 @@ LF from the coil readbacks (`LF+`).
       and at higher field than, its partner in the hot scan, and states that
       no narrow line is resolved near 7 kG. Reports fitted centres as
       conditional on the stated window and background, acknowledging the
-      asymmetric shape and checking nearby windows or backgrounds. A centre
-      must describe this trough, with a finite uncertainty and no centre
+      asymmetric shape and window/background dependence. A centre must
+      describe this trough, with a finite uncertainty and no centre
       bound hit; unstable or bound-pinned parameters are withheld. The
       single-Lorentzian centre is not a model-independent resonance field.
 - [ ] States the headline in words: the lines are sharper at high temperature
@@ -79,6 +79,9 @@ LF from the coil readbacks (`LF+`).
 
 ## Should
 
+- [ ] Tests nearby cold-line windows or backgrounds and reports how the
+      fitted centre and width change; a single fit does not establish
+      stability or a model-independent resonance field.
 - [ ] Says that two ALC temperatures show a change but support no
       activation law for the line positions or widths.
 - [ ] Chooses alpha from a TF run in the same block and beam configuration
