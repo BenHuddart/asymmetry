@@ -70,7 +70,8 @@ def test_fit_global_sets_a_field_parameter_per_run_and_holds_it() -> None:
     by_run = {result["run"]: result for result in outcome.results}
     assert by_run[10]["parameters"]["B_L"] == pytest.approx(0.0)
     assert by_run[11]["parameters"]["B_L"] == pytest.approx(8.0)
-    assert "B_L" not in by_run[11]["uncertainties"]
+    assert by_run[11]["uncertainties"]["B_L"] == 0.0
+    assert "B_L" not in outcome.free_params
 
 
 def test_fit_global_tabulates_its_run_local_parameters_along_the_axis() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from scipy import stats
 
@@ -421,3 +422,40 @@ def test_summary_is_json_serializable_with_numpy_scalar_diagnostics():
     )
     summary = fit_result_summary(result)
     assert json.loads(json.dumps(summary)) == summary
+
+
+def test_summary_preserves_covariance_identity_and_unknown_free_errors():
+    params = ParameterSet([Parameter("A", 2), Parameter("B", 1, fixed=True), Parameter("C", 3)])
+    result = FitResult(
+        success=True,
+        chi_squared=1,
+        reduced_chi_squared=1,
+        parameters=params,
+        uncertainties={"A": 0.2},
+        covariance=np.array([[0.09, -0.01], [-0.01, 0.04]]),
+        covariance_parameters=("C", "A"),
+        objective=Objective.GAUSSIAN,
+        computation_revision=None,
+    )
+    summary = fit_result_summary(result)
+    assert summary["covariance"] == {"C": {"C": 0.09, "A": -0.01}, "A": {"C": -0.01, "A": 0.04}}
+    assert summary["uncertainties"]["B"] == 0
+    assert np.isnan(summary["uncertainties"]["C"])
+    result.covariance = None
+    historical = fit_result_summary(result)
+    assert historical["covariance"] is None
+    assert historical["computation_revision"] is None
+
+
+def test_explicit_recorded_error_wins_over_parameter_fixed_flag():
+    result = FitResult(
+        success=True,
+        objective=Objective.GAUSSIAN,
+        parameters=ParameterSet(
+            [Parameter("unknown", 2, fixed=True), Parameter("exact", 1, fixed=True)]
+        ),
+        uncertainties={"unknown": float("nan")},
+    )
+    summary = fit_result_summary(result)
+    assert np.isnan(summary["uncertainties"]["unknown"])
+    assert summary["uncertainties"]["exact"] == 0.0

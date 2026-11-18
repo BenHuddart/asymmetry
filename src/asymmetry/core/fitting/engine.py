@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.global_covariance import CurvatureUnavailableError, observed_covariance
 from asymmetry.core.fitting.input_attribution import fit_input_attribution
 from asymmetry.core.fitting.likelihood import (
     FitInputError,
@@ -653,6 +654,7 @@ class _CoupledGlobalProblem:
     dataset_point_counts: tuple[int, ...]
     #: Parameter columns each dataset's residuals actually depend on.
     dataset_columns: tuple[tuple[int, ...], ...]
+    cancel_guard: Callable[[], None]
 
 
 #: Block key of the single block a plain global fit builds. Never user-visible:
@@ -869,6 +871,7 @@ def _build_coupled_problem(
         model_wrapper=model_wrapper,
         dataset_point_counts=tuple(len(observations[ds.run_number].time) for ds in fitted_datasets),
         dataset_columns=tuple(dataset_columns),
+        cancel_guard=cancel_guard,
     )
 
 
@@ -954,49 +957,6 @@ def _coupled_jacobian_sparsity(problem: _CoupledGlobalProblem):
     return csr_matrix((data, (row_index, col_index)), shape=(n_rows, n_cols))
 
 
-def _gauss_newton_covariance(
-    jacobian,
-) -> tuple[NDArray[np.float64], frozenset[int]]:
-    """``(JᵀJ)⁻¹`` at a least-squares solution, plus the unconstrained columns.
-
-    With residuals already in σ units (``(y − model)/σ``) the Gauss–Newton
-    approximation to the χ² Hessian is ``2 JᵀJ``, so the ``errordef = 1``
-    covariance Minuit would report is ``(JᵀJ)⁻¹`` — the same matrix, by the same
-    convention, as the joint path's ``m.covariance``.
-
-    ``JᵀJ`` is ``n_param × n_param`` and small even for a wide series, so it is
-    densified and diagonalised. A parameter the data do not constrain leaves a
-    null direction: the inverse is taken on the constrained subspace only, and
-    every column with weight in a null direction is returned as unconstrained.
-    Those columns get *no* entry in the reported uncertainties — the same
-    convention the joint path uses for a parameter Minuit could not estimate.
-    """
-
-    from scipy.sparse import issparse
-
-    gram = jacobian.T @ jacobian
-    gram = np.asarray(gram.toarray() if issparse(gram) else gram, dtype=float)
-    # Symmetrise: the product is symmetric in exact arithmetic, and ``eigh``
-    # reads only one triangle, so this only removes round-off asymmetry.
-    gram = 0.5 * (gram + gram.T)
-    eigenvalues, eigenvectors = np.linalg.eigh(gram)
-    scale = float(np.max(np.abs(eigenvalues))) if eigenvalues.size else 0.0
-    tolerance = max(gram.shape) * scale * float(np.finfo(float).eps)
-    constrained = eigenvalues > tolerance
-    covariance = (eigenvectors[:, constrained] / eigenvalues[constrained]) @ eigenvectors[
-        :, constrained
-    ].T
-    if bool(np.all(constrained)):
-        return covariance, frozenset()
-    null_space = eigenvectors[:, ~constrained]
-    unconstrained = frozenset(
-        int(index)
-        for index in range(gram.shape[0])
-        if bool(np.any(np.abs(null_space[index]) > 1e-8))
-    )
-    return covariance, unconstrained
-
-
 #: Least-squares convergence tolerances. ``xtol``/``gtol`` are scipy's 1e-8
 #: defaults; ``ftol`` is 1e-7. The temptation is to tighten them because the
 #: wizard compares information criteria at the ±6 scale, and on small synthetic
@@ -1031,19 +991,16 @@ class _CoupledMinimizationError(RuntimeError):
 class _CoupledSolution:
     """What a coupled minimiser returned, in the one shape the packer reads.
 
-    The joint Minuit path and the sparse trust-region path disagree on almost
-    everything about *how* they search and on what a "1σ" is (HESSE versus the
-    Gauss–Newton ``(JᵀJ)⁻¹``), but they agree on what they produce: a value per
-    column, a σ per column, a covariance over the columns, and some status. Packing
-    reads only this, which is why one packer can serve both — and now a third
-    caller, the joint fit, without a third copy of the 150-line result build.
+    All solvers report marginal local-quadratic errors over the free columns.
+    Packing requests only each member's covariance block, so block-separable
+    solvers need not materialise an all-members dense matrix.
     """
 
     values: NDArray[np.float64]
     #: 1σ for a column, or ``None`` where the data constrain nothing.
     uncertainty: Callable[[int], float | None]
-    #: Covariance over *all* columns, or ``None`` when the fit produced none.
-    covariance: NDArray[np.float64] | None
+    #: Selected marginal block accessor, or ``None`` when unavailable.
+    covariance: Callable[[Sequence[int]], NDArray[np.float64]] | None
     success: bool
     message: str
     #: MINOS offsets keyed by the problem's own column names (Minuit path only).
@@ -1053,6 +1010,7 @@ class _CoupledSolution:
     hessian_calls: int = 0
     edm: float | None = None
     covariance_accurate: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def _insufficient_coupled_solution(problem):
@@ -1183,7 +1141,9 @@ def _solve_coupled_minuit(
     return _CoupledSolution(
         values=np.asarray(m.values, dtype=float),
         uncertainty=uncertainty,
-        covariance=covariance_matrix,
+        covariance=(lambda indices: covariance_matrix[np.ix_(indices, indices)])
+        if covariance_matrix is not None
+        else None,
         success=bool(m.valid),
         message=_minuit_status_message(
             m,
@@ -1250,30 +1210,30 @@ def _solve_coupled_least_squares(
     # ``status > 0`` is one of scipy's convergence criteria (gtol/ftol/xtol);
     # 0 means the evaluation budget ran out and −1 an improper input.
     success = bool(solution.status > 0) and bool(np.all(np.isfinite(values)))
-    covariance_matrix, unconstrained = _gauss_newton_covariance(solution.jac)
-
-    def uncertainty(index: int) -> float | None:
-        """1σ for a parameter column, or ``None`` where the data fix nothing."""
-        if index in unconstrained:
-            return None
-        variance = float(covariance_matrix[index, index])
-        if not np.isfinite(variance) or variance < 0.0:
-            return None
-        return math.sqrt(variance)
+    covariance = None
+    covariance_message = (
+        "" if success else "; Marginal covariance unavailable: invalid minimizer solution"
+    )
+    if success:
+        try:
+            covariance = observed_covariance(problem, values, problem.cancel_guard)
+        except CurvatureUnavailableError as error:
+            covariance_message = f"; Marginal covariance unavailable: {error}"
 
     return _CoupledSolution(
         values=values,
-        uncertainty=uncertainty,
-        covariance=covariance_matrix,
+        uncertainty=covariance.uncertainty if covariance is not None else lambda _: None,
+        covariance=covariance.block if covariance is not None else None,
         success=success,
         message=(
-            f"Global fit successful (least squares): {solution.message}"
+            f"Global fit successful (least squares): {solution.message}{covariance_message}"
             if success
             else f"Global fit failed (least squares): {solution.message}"
         ),
         function_calls=int(solution.nfev),
         gradient_calls=int(solution.njev or 0),
-        covariance_accurate=success and not unconstrained,
+        covariance_accurate=covariance is not None,
+        warnings=(covariance_message.removeprefix("; "),) if covariance_message else (),
     )
 
 
@@ -1400,10 +1360,10 @@ def _pack_coupled_block(
         covariance_subset = None
         covariance_order: list[str] = []
         covariance_matrix = solution.covariance
-        if covariance_matrix is not None and covariance_matrix.ndim == 2:
+        if covariance_matrix is not None:
             cov_indices: list[int] = []
             for pname in block.global_params:
-                if pname in global_uncertainties:
+                if pname in uncertainties:
                     cov_indices.append(global_columns[pname])
                     covariance_order.append(pname)
             for pname in block.local_params:
@@ -1411,18 +1371,18 @@ def _pack_coupled_block(
                     cov_indices.append(problem.dataset_param_indices[ds.run_number][pname])
                     covariance_order.append(pname)
             if cov_indices:
-                covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
+                covariance_subset = covariance_matrix(cov_indices)
 
         ndata = len(record.time)
         # Count free parameters: global (shared) + local for this dataset
-        nfree_global = sum(1 for p in block.global_params if not first_params[p].fixed)
+        nfree_global = sum(1 for p in block.global_params if not params[p].fixed)
         nfree_local = sum(1 for p in block.local_params if not params[p].fixed)
         nfree = nfree_global + nfree_local
 
         dataset_dof = ndata - nfree
         red_chi2 = dataset_chi2 / max(dataset_dof, 1)
         minos_errors_result = minos_errors or None
-        dataset_warnings = list(correction_warnings(ds.metadata))
+        dataset_warnings = [*correction_warnings(ds.metadata), *solution.warnings]
         if error_oversampling > 1.0:
             (
                 dataset_chi2,
@@ -2159,10 +2119,12 @@ class FitEngine:
             series (a 12-run phase of ~9 free parameters per run over ~200 k
             points) that is the difference between minutes and seconds, and the
             joint Minuit problem at that width may not converge at all. The
-            covariance is the Gauss–Newton ``(JᵀJ)⁻¹`` at the solution, which for
-            residuals in σ units is Minuit's ``errordef = 1`` covariance. Only the
-            plain least-squares cost is supported, so a ``cost_factory`` raises, as
-            does ``minos=True`` (MINOS is a Minuit likelihood scan). The
+            covariance uses the observed objective Hessian, including nonlinear
+            residual curvature, recovered through member blocks. All strategies
+            report marginal symmetric errors over every free parameter; fixed
+            nuisance inputs remain fixed. Only Gaussian observations are
+            supported here. ``minos=True`` raises for both ``"least_squares"``
+            and ``"profiled"``; use ``"joint"`` for asymmetric scans. The
             Minuit-only controls — ``method``, ``migrad_iterations``,
             ``use_simplex_rescue``, ``minuit_strategy``, ``minuit_tol``,
             ``screening`` and ``initial_step_sizes`` — name algorithms and step
@@ -2181,10 +2143,9 @@ class FitEngine:
             the nonlinear Minuit vector, still counting them in ``dof`` / the IC
             ``k``. It is deferred because, once the ``"profiled"`` strategy has
             already separated the per-dataset locals, VarPro is only a
-            constant-factor per-fit win (it does not change the G-exponent), and
-            reproducing the current engine's *marginal* parameter errors needs a
-            final full Hessian over all parameters. The role-based linear-parameter
-            metadata is in place for that follow-up.
+            constant-factor per-fit win (it does not change the G-exponent).
+            The role-based linear-parameter metadata is available for that
+            follow-up; marginal covariance can be recovered with member blocks.
 
         Returns
         -------
@@ -2242,23 +2203,18 @@ class FitEngine:
                 "The 'least_squares' global-fit strategy requires Gaussian observations"
             )
         cost_factory = POISSON_COST if objective is Objective.POISSON else None
-        if strategy == "least_squares" and minos:
+        if strategy in ("least_squares", "profiled") and minos:
             # MINOS is a Minuit likelihood scan of the cost surface; the
-            # trust-region solver has no equivalent and reports only the
-            # Gauss-Newton symmetric errors.
+            # other solvers report symmetric local-quadratic errors only.
             raise NotImplementedError(
-                "MINOS is a Minuit scan and is not available on the 'least_squares' "
+                f"MINOS is not available on the {strategy!r} "
                 "global-fit strategy; use the 'joint' strategy for asymmetric intervals."
             )
         if use_varpro:
             # Variable projection (technique M) is deferred: once the profiled
             # strategy has separated the per-dataset locals it is only a
             # constant-factor per-fit win (it does not change the G-exponent),
-            # and matching the current engine's *marginal* parameter errors needs
-            # a final full Hessian over all parameters — the same O((n_local·G)²)
-            # cost the joint path already pays. The linear-parameter metadata is
-            # in place (models.default_linear_params) for the follow-up. Fail
-            # loudly rather than silently ignoring the request.
+            # with marginal covariance recovered from the member blocks.
             raise NotImplementedError(
                 "use_varpro (variable projection) is not yet wired into global_fit; "
                 "use the profiled strategy for the G-scaling win. VarPro is a "
@@ -2384,16 +2340,7 @@ class FitEngine:
             return results, fitted_global
         if strategy == "profiled" and free_global_params and not grouped_local_ties:
             return self._global_fit_profiled(
-                datasets=datasets,
-                model_fn=model_fn,
-                global_params=global_params,
-                local_params=local_params,
-                initial_params=initial_params,
-                free_global_params=free_global_params,
-                first_params=first_params,
-                observations=observations,
-                t_min=t_min,
-                t_max=t_max,
+                problem=problem,
                 method=method,
                 max_calls=max_calls,
                 migrad_iterations=migrad_iterations,
@@ -2401,9 +2348,7 @@ class FitEngine:
                 minuit_strategy=minuit_strategy,
                 minuit_tol=minuit_tol,
                 initial_step_sizes=initial_step_sizes,
-                minos=minos,
                 screening=screening,
-                use_varpro=use_varpro,
                 cancel_callback=cancel_callback,
                 cost_factory=cost_factory,
                 error_oversampling=error_oversampling,
@@ -2631,7 +2576,7 @@ class FitEngine:
         shared_covariance = None
         if shared_columns and solution.covariance is not None:
             n_shared = len(shared_columns)
-            shared_covariance = np.asarray(solution.covariance, dtype=float)[:n_shared, :n_shared]
+            shared_covariance = solution.covariance(list(range(n_shared)))
 
         total_points = int(sum(problem.dataset_point_counts))
         return CoupledFitSolution(
@@ -2651,16 +2596,7 @@ class FitEngine:
     def _global_fit_profiled(
         self,
         *,
-        datasets: list[MuonDataset],
-        observations: Mapping[int, Observations],
-        model_fn: Callable[..., NDArray],
-        global_params: list[str],
-        local_params: list[str],
-        initial_params: dict[int, ParameterSet],
-        free_global_params: list[str],
-        first_params: ParameterSet,
-        t_min: float | None,
-        t_max: float | None,
+        problem: _CoupledGlobalProblem,
         method: str,
         max_calls: int,
         migrad_iterations: int,
@@ -2668,19 +2604,16 @@ class FitEngine:
         minuit_strategy: int | None,
         minuit_tol: float | None,
         initial_step_sizes: dict[str, float] | None,
-        minos: bool,
         screening: bool,
-        use_varpro: bool,
         cancel_callback: Callable[[], bool] | None,
         cost_factory: CostFactory | None,
         error_oversampling: float = 1.0,
     ) -> tuple[dict[int, FitResult], ParameterSet]:
         """Profile shared globals while each member's locals minimize checked observations.
 
-        The outer Hessian gives marginal shared-parameter errors. Local errors
-        are conditional on those globals, unlike the joint solver's marginal
-        local errors. MINOS is unavailable on this strategy. Warm starts reuse
-        the last local solution; input observations are never revalidated.
+        Observed member curvature recovers marginal global/local errors and
+        cross terms at the final solution. MINOS is unavailable. Warm starts
+        reuse the last local solution; observations are never revalidated.
 
         Heuristic scalar padding rescaling applies once to reported statistics
         and uncertainties after minimization; the inner raw χ² is unchanged.
@@ -2694,8 +2627,15 @@ class FitEngine:
                 success=False,
                 message=f"iminuit import error: {e}",
             )
-            return {ds.run_number: error_result for ds in datasets}, ParameterSet()
+            return {ds.run_number: error_result for ds in problem.fitted_datasets}, ParameterSet()
 
+        block = problem.blocks[0]
+        datasets = block.datasets
+        model_fn = block.model_fn
+        global_params, local_params = block.global_params, block.local_params
+        initial_params, free_global_params = block.initial_params, block.free_global_params
+        observations = problem.observations
+        t_min, t_max = block.t_min, block.t_max
         cancel_guard = _make_cancel_guard(cancel_callback)
 
         # Warm-start cache: the last accepted local solution per dataset. Seeded
@@ -2733,7 +2673,9 @@ class FitEngine:
             for pname in global_params:
                 p = base[pname]
                 inner.add(
-                    Parameter(name=pname, value=global_values.get(pname, p.value), fixed=True)
+                    Parameter(
+                        name=pname, value=p.value if p.fixed else global_values[pname], fixed=True
+                    )
                 )
             warm = warm_locals[ds.run_number]
             for pname in local_params:
@@ -2793,9 +2735,6 @@ class FitEngine:
 
         def _outer_objective(*args: float) -> float:
             global_values = dict(zip(free_global_params, args))
-            for pname in global_params:
-                if pname not in global_values:
-                    global_values[pname] = first_params[pname].value
             inner_results = _solve_all(global_values)
             return float(sum(r.chi_squared for r in inner_results.values()))
 
@@ -2803,7 +2742,15 @@ class FitEngine:
         # (Minuit.LEAST_SQUARES), matching the joint LeastSquares cost.
         _outer_objective.errordef = Minuit.LEAST_SQUARES  # type: ignore[attr-defined]
 
-        init_values = [first_params[name].value for name in free_global_params]
+        global_seeds = {
+            name: next(
+                initial_params[ds.run_number][name]
+                for ds in datasets
+                if not initial_params[ds.run_number][name].fixed
+            )
+            for name in free_global_params
+        }
+        init_values = [global_seeds[name].value for name in free_global_params]
         m = Minuit(_outer_objective, *init_values, name=list(free_global_params))
         if minuit_strategy is not None:
             m.strategy = int(minuit_strategy)
@@ -2812,7 +2759,7 @@ class FitEngine:
         if minuit_tol is not None:
             m.tol = float(minuit_tol)
         for i, name in enumerate(free_global_params):
-            p = first_params[name]
+            p = global_seeds[name]
             lo = p.min if p.min != -float("inf") else None
             hi = p.max if p.max != float("inf") else None
             if lo is not None or hi is not None:
@@ -2832,10 +2779,6 @@ class FitEngine:
                 if use_simplex_rescue and not m.valid:
                     m.simplex()
                     m.migrad()
-            try:
-                m.hesse()
-            except Exception:
-                pass
         except FitCancelledError:
             raise
         except Exception as e:
@@ -2847,137 +2790,52 @@ class FitEngine:
             )
             return {ds.run_number: error_result for ds in datasets}, ParameterSet()
 
-        # Final global vector and its outer-Hessian errors.
         fitted_values = {name: float(m.values[i]) for i, name in enumerate(free_global_params)}
-        global_errors: dict[str, float] = {}
-        for i, name in enumerate(free_global_params):
-            try:
-                err = float(m.errors[i])
-                if np.isfinite(err):
-                    global_errors[name] = err
-            except Exception:
-                pass
-
-        fitted_global = ParameterSet()
-        global_values_full: dict[str, float] = {}
-        for pname in global_params:
-            p = first_params[pname]
-            if p.fixed:
-                fitted_global.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+        final_results = _solve_all(fitted_values)
+        values = np.asarray(problem.initial_values, dtype=float)
+        for name, column in problem.block_global_columns[_SINGLE_BLOCK].items():
+            values[column] = fitted_values[name]
+        for run, columns in problem.dataset_param_indices.items():
+            for name, column in columns.items():
+                member = final_results[run]
+                values[column] = (
+                    member.parameters[name].value
+                    if name in member.parameters
+                    else warm_locals[run][name]
                 )
-                global_values_full[pname] = p.value
-            else:
-                value = fitted_values[pname]
-                fitted_global.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
-                global_values_full[pname] = value
-
-        # One clean inner solve per dataset at the optimum to build the returned
-        # results (conditional local errors with the globals pinned, block-
-        # diagonal → linear in G). The outer Hessian supplies the global errors.
-        final_results = _solve_all(global_values_full)
-        minima = [result.minimum_expected_count for result in final_results.values()]
-        minimum_expected_count = (
-            min(minima) if minima and all(value is not None for value in minima) else None
+        valid = bool(m.valid) and all(result.success for result in final_results.values())
+        covariance = None
+        covariance_warning = ""
+        message = (
+            "Profiled global fit successful"
+            if valid
+            else "Profiled global fit did not fully converge"
         )
-
-        edm = getattr(getattr(m, "fmin", None), "edm", None)
-        edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
-        covariance_accurate = bool(getattr(m, "accurate", False))
-        outer_valid = bool(m.valid)
-
-        results: dict[int, FitResult] = {}
-        n_free_global = len(free_global_params)
-        for ds in datasets:
-            inner = final_results[ds.run_number]
-            params = initial_params[ds.run_number]
-            result_params = ParameterSet()
-            uncertainties: dict[str, float] = {}
-            for pname in global_params:
-                gp = fitted_global[pname]
-                result_params.add(
-                    Parameter(name=pname, value=gp.value, min=gp.min, max=gp.max, fixed=gp.fixed)
-                )
-                if pname in global_errors:
-                    uncertainties[pname] = global_errors[pname]
-            for pname in local_params:
-                p = params[pname]
-                if p.fixed:
-                    result_params.add(
-                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
-                    )
-                else:
-                    ip = inner.parameters[pname]
-                    result_params.add(Parameter(name=pname, value=ip.value, min=p.min, max=p.max))
-                    if pname in inner.uncertainties:
-                        uncertainties[pname] = inner.uncertainties[pname]
-            for p in params:
-                if p.fixed and p.name not in result_params:
-                    result_params.add(
-                        Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
-                    )
-
-            ndata = len(observations[ds.run_number].time)
-            nfree_local = sum(1 for pname in local_params if not params[pname].fixed)
-            nfree = n_free_global + nfree_local
-            dataset_chi2 = float(inner.chi_squared)
-            dataset_dof = ndata - nfree
-            dataset_reduced_chi2 = dataset_chi2 / max(dataset_dof, 1)
-            dataset_warnings = list(correction_warnings(ds.metadata))
-            if error_oversampling > 1.0:
-                (
-                    dataset_chi2,
-                    dataset_reduced_chi2,
-                    dataset_dof,
-                    uncertainties,
-                    _covariance,
-                    _minos_errors,
-                    oversampling_message,
-                ) = _oversampling_correction(
-                    chi_squared=dataset_chi2,
-                    ndata=ndata,
-                    nfree=nfree,
-                    reduced_chi_squared=dataset_reduced_chi2,
-                    dof=dataset_dof,
-                    uncertainties=uncertainties,
-                    covariance=None,
-                    minos_errors=None,
-                    error_oversampling=error_oversampling,
-                )
-                if oversampling_message:
-                    dataset_warnings.append(oversampling_message)
-            results[ds.run_number] = FitResult(
-                computation_revision=computation.COMPUTATION_REVISION,
-                input_attribution=fit_input_attribution(
-                    observations[ds.run_number],
-                    ds,
-                    window=(t_min, t_max),
-                    error_oversampling=error_oversampling,
-                ),
-                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
-                success=bool(inner.success) and outer_valid,
-                minimum_expected_count=minimum_expected_count,
-                chi_squared=dataset_chi2,
-                reduced_chi_squared=dataset_reduced_chi2,
-                parameters=result_params,
-                uncertainties=uncertainties,
-                residuals=inner.residuals,
-                residual_time=inner.residual_time,
-                residual_sigma=inner.residual_sigma,
-                observation_report=inner.observation_report,
-                message=(
-                    "Profiled global fit successful"
-                    if outer_valid and inner.success
-                    else "Profiled global fit did not fully converge"
-                ),
-                function_calls=counters["fcn"],
-                gradient_calls=counters["grad"],
-                hessian_calls=counters["hess"],
-                edm=edm_value,
-                covariance_accurate=covariance_accurate,
-                dof=dataset_dof,
-                warnings=dataset_warnings,
-                correction_metadata=correction_metadata(ds.metadata),
-            )
-
+        if valid:
+            try:
+                covariance = observed_covariance(problem, values, cancel_guard)
+            except CurvatureUnavailableError as error:
+                covariance_warning = f"Marginal covariance unavailable: {error}"
+        else:
+            covariance_warning = "Marginal covariance unavailable: invalid outer or member solution"
+        solution = _CoupledSolution(
+            values=values,
+            uncertainty=covariance.uncertainty if covariance is not None else lambda _: None,
+            covariance=covariance.block if covariance is not None else None,
+            success=valid,
+            message=message,
+            warnings=(covariance_warning,) if covariance_warning else (),
+            function_calls=counters["fcn"],
+            gradient_calls=counters["grad"],
+            hessian_calls=counters["hess"],
+            edm=float(m.fmin.edm) if np.isfinite(m.fmin.edm) else None,
+            covariance_accurate=covariance is not None,
+        )
+        results, fitted_global, _ = _pack_coupled_block(
+            problem=problem,
+            block=problem.blocks[0],
+            solution=solution,
+            cost_factory=cost_factory,
+            error_oversampling=error_oversampling,
+        )
         return results, fitted_global

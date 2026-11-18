@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 
+import numpy as np
+
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.likelihood import Objective
@@ -18,6 +20,8 @@ from asymmetry.core.fitting.member_quality import member_quality_flags, paramete
 
 __all__ = [
     "fit_result_summary",
+    "fit_result_covariance_map",
+    "fit_result_uncertainties",
     "parameters_at_bound",
     "reduced_statistic_label",
     "reduced_statistic_summary",
@@ -146,6 +150,42 @@ def _quality_summary(
     }
 
 
+def fit_result_covariance_map(fit_result: FitResult) -> dict[str, dict[str, float]] | None:
+    """Name a member covariance by parameter for persistence and propagation."""
+    if fit_result.covariance is None:
+        return None
+    cov = np.asarray(fit_result.covariance, dtype=float)
+    if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+        return None
+
+    order = list(fit_result.covariance_parameters)
+    if not order:
+        order = [p.name for p in fit_result.parameters if p.name in fit_result.uncertainties]
+    if len(order) != cov.shape[0]:
+        return None
+
+    out: dict[str, dict[str, float]] = {}
+    for i, name_i in enumerate(order):
+        row: dict[str, float] = {}
+        for j, name_j in enumerate(order):
+            val = float(cov[i, j])
+            if np.isfinite(val):
+                row[name_j] = val
+        if row:
+            out[name_i] = row
+    return out or None
+
+
+def fit_result_uncertainties(fit_result: FitResult) -> dict[str, float]:
+    """Preserve captured errors; fill missing free errors as unknown, fixed as exact."""
+    return {str(name): float(value) for name, value in fit_result.uncertainties.items()} | {
+        parameter.name: float(
+            fit_result.uncertainties.get(parameter.name, 0.0 if parameter.fixed else math.nan)
+        )
+        for parameter in fit_result.parameters
+    }
+
+
 def fit_result_summary(
     fit_result: FitResult,
     *,
@@ -160,7 +200,7 @@ def fit_result_summary(
     change trend inclusion. Confidence uses the configured two-sided band level.
     """
     parameters = {parameter.name: float(parameter.value) for parameter in fit_result.parameters}
-    uncertainties = {str(name): float(value) for name, value in fit_result.uncertainties.items()}
+    uncertainties = fit_result_uncertainties(fit_result)
     asymmetric = {
         str(name): [float(lo), float(hi)]
         for name, (lo, hi) in (fit_result.minos_errors or {}).items()
@@ -185,6 +225,7 @@ def fit_result_summary(
         "reduced_chi_squared": float(fit_result.reduced_chi_squared),
         "parameters": parameters,
         "uncertainties": uncertainties,
+        "covariance": fit_result_covariance_map(fit_result),
         "uncertainties_asymmetric": asymmetric,
         "quality": _quality_summary(fit_result, confidence),
         "quality_reason": _quality_reason(fit_result),

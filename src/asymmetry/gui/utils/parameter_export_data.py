@@ -160,6 +160,13 @@ def _coerce_abscissa(raw: object) -> float:
     return value if np.isfinite(value) else float("nan")
 
 
+def execution_revision_comments(series_name: str, rows: list[_FitRow]):
+    """Attribute each exported error to its recorded execution, including unknown history."""
+    for row in rows:
+        revision = "unknown" if row.computation_revision is None else row.computation_revision
+        yield f"Computation revision [{series_name or 'active series'!r}, run {row.run_number}]: {revision}"
+
+
 @dataclass(frozen=True)
 class PhaseDecoration:
     """Identity of the phase (Global Fit Wizard transitions) a series belongs to.
@@ -217,6 +224,7 @@ class ParameterExportData:
     x_key: str
     abscissa: Any
     model_label: str
+    series_name: str
     overlaid: bool
     x_header: str
     y_headers: Any
@@ -339,6 +347,9 @@ class ParameterExportData:
             model_label = self._export_model_label()
             if model_label:
                 f.write(f"! Model: {model_label}\n")
+            for comment in execution_revision_comments(self.series_name, rows):
+                self.check_cancelled()
+                f.write(f"! {comment}\n")
 
             x_active = not self._x_transform.is_identity
             transformed_y = self._transformed_y_params()
