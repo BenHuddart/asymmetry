@@ -1563,6 +1563,8 @@ Fourier **X Units:**, **Axis:**, and **Ref.:** controls wrap as labelled groups
 when the plot is narrow. The reference field retains its two decimal places and
 ``G`` unit; compact numeric limits, including spectral-moment bounds, reserve
 space from their current numeric font when the scale changes.
+The **Fit range** bounds also wrap when the inspector is narrow; the coordinate
+and unit stay beside the upper bound, with the displayed precision retained.
 
 Keyboard shortcuts
 ------------------

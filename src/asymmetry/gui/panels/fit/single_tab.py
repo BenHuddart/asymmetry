@@ -12,7 +12,6 @@ from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
-    QHBoxLayout,
     QLabel,
     QMenu,
     QMessageBox,
@@ -247,25 +246,9 @@ class SingleFitTab(FitTabBase):
 
         # ── Fit range ───────────────────────────────────────────────────────
         fit_range_group = PanelSection("Fit range")
-        fit_range_layout = QHBoxLayout()
-        fit_range_layout.setContentsMargins(0, 0, 0, 0)
-        fit_range_layout.setSpacing(4)
-        fit_range_group.addLayout(fit_range_layout)
-
-        self._build_fit_range_fields()
-
-        self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
-        self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
-
-        self._fit_range_unit_label = QLabel("µs")
-
+        fit_range_group.addLayout(self._build_fit_range_fields())
         self._fit_range_min_spin.editingFinished.connect(self._refresh_saved_fits_row)
         self._fit_range_max_spin.editingFinished.connect(self._refresh_saved_fits_row)
-        fit_range_layout.addWidget(self._fit_range_min_spin)
-        fit_range_layout.addWidget(self._fit_range_mid_label)
-        fit_range_layout.addWidget(self._fit_range_max_spin)
-        fit_range_layout.addWidget(self._fit_range_unit_label)
-        fit_range_layout.addStretch()
         layout.addWidget(fit_range_group)
 
         # ── Parameters ──────────────────────────────────────────────────────

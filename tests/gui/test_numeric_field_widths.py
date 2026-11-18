@@ -2,9 +2,12 @@
 
 import pytest
 from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QStyle, QStyleOptionFrame
 
 from asymmetry.gui.mainwindow import MainWindow
+from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
+from asymmetry.gui.styles.metrics import char_width
 
 pytestmark = pytest.mark.gui
 
@@ -55,3 +58,35 @@ def test_frequency_and_moment_values_fit_at_launch_and_live_scale(qapp, initial_
             assert window.width() <= 1305
     finally:
         window.close()
+
+
+@pytest.mark.parametrize("tab_class,dock_chars", [(SingleFitTab, 40), (GlobalFitTab, 46)])
+@pytest.mark.parametrize("domain", ["time", "frequency"])
+def test_fit_range_wraps_with_full_precision_under_a_small_application_font(
+    qapp, tab_class, dock_chars, domain
+):
+    original = qapp.font()
+    qapp.setFont(QFont("DejaVu Sans", 9))
+    tab = tab_class()
+    try:
+        tab.set_domain(domain)
+        tab.set_fit_range_display(-1000, 1000)
+        tab.resize(char_width(dock_chars), 1200)
+        tab.show()
+        settle()
+        assert tab.minimumSizeHint().width() <= char_width(dock_chars)
+        for field in (tab._fit_range_min_spin, tab._fit_range_max_spin):
+            assert field.text() == f"{field.value():.{3 if domain == 'time' else 4}f}"
+            assert text_width(field) >= field.fontMetrics().horizontalAdvance(field.text())
+        mid, high, unit = (
+            tab._fit_range_mid_label,
+            tab._fit_range_max_spin,
+            tab._fit_range_unit_label,
+        )
+        assert mid.mapTo(tab, mid.rect().center()).y() == high.mapTo(tab, high.rect().center()).y()
+        assert (
+            unit.mapTo(tab, unit.rect().center()).y() == high.mapTo(tab, high.rect().center()).y()
+        )
+    finally:
+        tab.close()
+        qapp.setFont(original)
