@@ -751,7 +751,7 @@
     "src/asymmetry/gui/windows/grouping/preview_pane.py": 1238,
     "src/asymmetry/gui/windows/joint_fit_window.py": 1087,
     "src/asymmetry/gui/windows/knight_shift_window.py": 1628,
-    "tests/core/test_cli_commands.py": 4462,
+    "tests/core/test_cli_commands.py": 4461,
     "tests/core/test_cli_numbers.py": 1094,
     "tests/core/test_count_domain_fits.py": 1081,
     "tests/core/test_fit_wizard_tiered.py": 3435,

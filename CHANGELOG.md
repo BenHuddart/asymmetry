@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep CLI line separations readable when errors are unavailable or frequencies are fixed.
+
 - Avoid high-field alias growth for narrow Lorentzian Kubo–Toyabe field distributions.
 
 - Evaluate Gaussian and Lorentzian strong-collision Kubo–Toyabe at the requested

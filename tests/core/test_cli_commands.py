@@ -1406,7 +1406,7 @@ def test_fit_with_fix_pins_the_parameter_at_the_given_value(
     _assert_stamped(payload)
     assert payload["fit"]["parameters"]["A_bg"] == pytest.approx(0.0)
     assert payload["fit"]["free_params"] == ["A_1", "Lambda"]
-    assert "A_bg" not in payload["fit"]["uncertainties"]
+    assert payload["fit"]["uncertainties"]["A_bg"] == 0.0
     # The stored recipe is unchanged — the override applies to this fit only.
     stored = json.loads((fitting_workdir / "recipes" / "relax.json").read_text(encoding="utf-8"))
     assert all(not entry["fixed"] for entry in stored["parameters"])
@@ -4440,7 +4440,6 @@ def test_fit_prints_the_spacing_of_separate_lines(
     from asymmetry.core.workflow.recipe import FitRecipe
     from asymmetry.core.workflow.workdir import WorkDir
 
-    # A summary otherwise takes a triplet's spacing as a difference of printed lines (CdS).
     expression = "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
     recipe = FitRecipe.from_expression(expression).with_overrides(
         fix={"frequency_1": 1.0, "frequency_3": 2.5}

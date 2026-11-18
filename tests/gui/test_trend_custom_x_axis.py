@@ -248,6 +248,11 @@ def test_tsv_export_includes_angle_column(qapp, tmp_path, monkeypatch):
     )
     panel._export_tsv()
     lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[:2] == [
+        "# Computation revision ['S', run 1]: unknown",
+        "# Computation revision ['S', run 2]: unknown",
+    ]
+    lines = [line for line in lines if not line.startswith("#")]
     # Abscissa is the last parameter column, before the trailing chi-squared cols.
     assert lines[0].split("\t")[-3:] == ["Angle (°)", "reduced_chi2", "chi2"]
     assert lines[1].split("\t")[-3] == "30"  # first (sorted) row's angle value
