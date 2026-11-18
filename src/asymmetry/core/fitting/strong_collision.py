@@ -12,7 +12,7 @@ _GAUSS_RULES = {order: np.polynomial.legendre.leggauss(order) for order in (8, 3
 
 
 class EvaluationWorkLimitError(ValueError):
-    """The selected model needs more time samples than its evaluation-work budget."""
+    """The selected model needs more numerical work than its evaluation-work budget."""
 
 
 KT_GRID_SAMPLE_BUDGET = 1 << 19
