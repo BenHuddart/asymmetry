@@ -411,6 +411,11 @@ class SpectralMomentsWidget(QGroupBox):
         note = "" if moments.peak_refined else "  (B_pk: discrete bin — edge)"
         self._points_label.setText(f"Points: {moments.n_sample}{note}")
 
+    def show_pending_moments(self, moments: SpectrumMoments) -> None:
+        """Keep current point estimates visible while withholding obsolete errors."""
+        self.show_moments(moments)
+        self._points_label.setText("Calculating approximate errors…")
+
     def clear_readout(self) -> None:
         self._uncertainty_label.hide()
         for label in self._value_labels.values():
