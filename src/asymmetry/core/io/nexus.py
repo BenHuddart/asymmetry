@@ -19,9 +19,8 @@ from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.nexus_periods import logged_data_periods, period_declaration
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
-from asymmetry.core.io.physical_units import physical_unit
+from asymmetry.core.io.physical_units import nexus_physical_unit, nexus_quantity, physical_unit
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
-from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -29,23 +28,6 @@ except ImportError:  # pragma: no cover - exercised when h5py is not installed
     h5py = None
 
 logger = logging.getLogger(__name__)
-
-#: Unit tokens (lower-cased, with degree signs / spaces / dots stripped) that a
-#: NeXus ``units`` attribute may use to name the Celsius scale. ``celcius`` is a
-#: common misspelling seen in the wild.
-_CELSIUS_UNIT_TOKENS = frozenset(
-    {
-        "c",
-        "degc",
-        "celsius",
-        "celcius",
-        "centigrade",
-        "degreec",
-        "degreecelsius",
-        "degreescelsius",
-        "degcelsius",
-    }
-)
 
 #: EMU's sample cryostat tops out near room temperature; a reading above this
 #: ceiling implies a furnace/oven, whose NeXus header is the known unit-mislabel
@@ -56,72 +38,19 @@ _EMU_FURNACE_SUSPECT_CEILING_K = 320.0
 
 
 def _is_celsius_unit(units: str | None) -> bool:
-    """True when a NeXus ``units`` token names the Celsius scale.
-
-    Normalisation strips degree signs, spaces, dots and underscores so
-    ``°C`` / ``deg C`` / ``Celsius`` all match the tokens in
-    :data:`_CELSIUS_UNIT_TOKENS`.
-    """
-    token = (
-        str(units or "")
-        .strip()
-        .lower()
-        .replace("°", "")
-        .replace(" ", "")
-        .replace(".", "")
-        .replace("_", "")
-    )
-    return token in _CELSIUS_UNIT_TOKENS
+    """Recognised temperature declarations with an affine Celsius offset."""
+    unit = nexus_physical_unit(units, "temperature")
+    return unit is not None and unit.offset != 0
 
 
 def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> float | None:
-    """Convert a temperature to kelvin, honoring the NeXus ``units`` attribute.
-
-    A Celsius unit (``degC`` / ``°C`` / ``Celsius``) shifts the value by
-    ``+273.15``; Kelvin, an empty unit, or any unrecognized unit is passed
-    through unchanged — we never *guess* a conversion the file did not declare.
-    ``None`` propagates as ``None``.
-
-    Note this honors the *declared* unit only. A file that stores Celsius values
-    but mislabels the field ``Kelvin`` (seen on some EMU furnace runs) is left
-    as-is; silently "correcting" it would corrupt genuinely-cold Kelvin runs.
-    The suspected-mislabel case is *surfaced* (not converted) via
-    :meth:`NexusLoader._temperature_unit_suspect`.
-    """
-    if value is None:
-        return None
-    if _is_celsius_unit(units):
-        return float(value) + CELSIUS_ZERO_K
-    return float(value)
-
-
-#: Unit tokens (lower-cased, with spaces / dots / underscores stripped) that a
-#: NeXus ``sample/magnetic_field`` ``units`` attribute may use to name the tesla
-#: and millitesla scales. The rest of the application treats
-#: ``metadata['field']`` as gauss (the ROOT/PSI/ICP-log loaders all normalise to
-#: gauss at the I/O boundary), so a declared tesla / millitesla unit is converted
-#: here; an absent, blank, gauss, or unrecognised unit is left as-is.
-_TESLA_UNIT_TOKENS = frozenset({"t", "tesla", "teslas"})
-_MILLITESLA_UNIT_TOKENS = frozenset({"mt", "millitesla", "milliteslas"})
+    """Interpret temperature metadata using declared or compatibility units."""
+    return None if value is None else float(nexus_quantity(value, units, "temperature"))
 
 
 def _normalize_field_to_gauss(value: float | None, units: str | None) -> float | None:
-    """Convert a magnetic field to gauss, honoring the NeXus ``units`` attribute.
-
-    A tesla unit (``T`` / ``tesla``) scales the value by ``1e4`` and a
-    millitesla unit (``mT`` / ``millitesla``) by ``10``; gauss, an empty unit, or
-    any unrecognized unit is passed through unchanged — we never *guess* a
-    conversion the file did not declare, preserving the historical
-    gauss-pass-through behaviour. ``None`` propagates as ``None``.
-    """
-    if value is None:
-        return None
-    token = str(units or "").strip().lower().replace(" ", "").replace(".", "").replace("_", "")
-    if token in _TESLA_UNIT_TOKENS:
-        return float(value) * (1.0 / GAUSS_TO_TESLA)
-    if token in _MILLITESLA_UNIT_TOKENS:
-        return float(value) * (1e-3 / GAUSS_TO_TESLA)
-    return float(value)
+    """Interpret magnetic metadata using declared or compatibility units."""
+    return None if value is None else float(nexus_quantity(value, units, "field"))
 
 
 def active_series_samples(entry: dict[str, Any]) -> np.ndarray:
@@ -147,7 +76,7 @@ def active_series_samples(entry: dict[str, Any]) -> np.ndarray:
     return v[np.isfinite(v)]
 
 
-def active_series_mean(entry: Any) -> float | None:
+def active_series_mean(entry: Any, dimension=None) -> float | None:
     """Mean of a logged NXlog series over its run-active samples (:func:`active_series_samples`).
 
     Falls back to the precomputed ``mean`` for a series that carries no samples.
@@ -158,12 +87,20 @@ def active_series_mean(entry: Any) -> float | None:
         return None
     samples = active_series_samples(entry)
     if samples.size:
-        return float(np.mean(samples))
+        return (
+            float(np.mean(nexus_quantity(samples, entry.get("units"), dimension)))
+            if dimension
+            else float(np.mean(samples))
+        )
     try:
         mean = float(entry.get("mean"))
     except (TypeError, ValueError):
         return None
-    return mean if np.isfinite(mean) else None
+    return (
+        (float(nexus_quantity(mean, entry.get("units"), dimension)) if dimension else mean)
+        if np.isfinite(mean)
+        else None
+    )
 
 
 def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, Any]]) -> None:
@@ -177,8 +114,8 @@ def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, A
     field are kept beside it as ``field_sweep_gauss`` and ``field_main_gauss``.
     """
     recorded = metadata.get("field")
-    main = active_series_mean(time_series.get("Field_Main"))
-    sweep = active_series_mean(time_series.get("Field_Z"))
+    main = active_series_mean(time_series.get("Field_Main"), "field")
+    sweep = active_series_mean(time_series.get("Field_Z"), "field")
     if recorded is None or main is None or sweep is None:
         return
     # The recorded field is the Z coil's, and the main is the larger field —
@@ -209,7 +146,7 @@ def _add_period_hall_offset(
     if (
         periods is None
         or hall is None
-        or active_series_mean(time_series.get("Field_Main")) is None
+        or active_series_mean(time_series.get("Field_Main"), "field") is None
         or len(data_periods) != 2
     ):
         return
@@ -399,6 +336,7 @@ class NexusLoader(BaseLoader):
             "detector_orientation": detector_orientation,
             "source_file": source_file,
             "nexus_version": "v1",
+            "nexus_unit_policy": "permissive-1",
         }
         if field_vector is not None:
             metadata_base["field_vector"] = field_vector
@@ -523,6 +461,7 @@ class NexusLoader(BaseLoader):
             "detector_orientation": detector_orientation,
             "source_file": source_file,
             "nexus_version": "v2",
+            "nexus_unit_policy": "permissive-1",
         }
         if field_vector is not None:
             metadata_base["field_vector"] = field_vector
@@ -912,7 +851,11 @@ class NexusLoader(BaseLoader):
                 v = np.asarray(node[value_name][()])
                 t_num = self._to_numeric_array(t)
                 v_num = self._to_numeric_array(v)
-                units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
+                units = self._value_to_python(
+                    getattr(node[value_name], "attrs", {}).get("units", "")
+                )
+                if isinstance(units, list) and len(units) == 1:
+                    units = units[0]
                 # The NXlog's human sensor label lives in a sibling ``name``
                 # dataset. Native HDF4 v1 files name the Vgroup generically and
                 # carry the real sensor name (e.g. ``Temp_Cryostat``) only here,
@@ -1202,7 +1145,7 @@ class NexusLoader(BaseLoader):
         value = self._safe_float(raw, default=default)
         units = ""
         if hasattr(node, "attrs"):
-            units = self._safe_str(node.attrs.get("units", ""))
+            units = node.attrs.get("units", "")
         normalized = _normalize_temperature_to_kelvin(value, units)
         return float(default) if normalized is None else float(normalized)
 
@@ -1236,7 +1179,7 @@ class NexusLoader(BaseLoader):
         value = self._safe_float(raw, default=default)
         units = ""
         if hasattr(node, "attrs"):
-            units = self._safe_str(node.attrs.get("units", ""))
+            units = node.attrs.get("units", "")
         normalized = _normalize_field_to_gauss(value, units)
         return float(default) if normalized is None else float(normalized)
 
@@ -1376,7 +1319,10 @@ class NexusLoader(BaseLoader):
                 return default
             return self._safe_str(value.flat[0], default=default)
         if isinstance(value, (bytes, np.bytes_)):
-            return value.decode("utf-8", errors="replace").strip()
+            try:
+                return value.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                return value.decode("latin-1").strip()
         return str(value).strip()
 
     def _safe_int(self, value: Any, default: int | None = None) -> int | None:

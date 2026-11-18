@@ -33,5 +33,7 @@ def test_unit_ratchet_allows_authority_and_unrelated_comparisons(tmp_path: Path)
     folder = tmp_path / "src/asymmetry/core/io"
     folder.mkdir(parents=True)
     (folder / "physical_units.py").write_text('if units == "ns":\n    pass\n')
-    (folder / "example.py").write_text('if mode == "time":\n    pass\n')
+    (folder / "example.py").write_text(
+        'if mode == "time":\n    pass\nif unit is not None:\n    pass\n'
+    )
     assert _load_harness().find_unit_comparison_violations(tmp_path, baseline={}) == []

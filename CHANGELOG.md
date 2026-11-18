@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NeXus field and temperature metadata honour recognised units while retaining
+  permissive loading; Get Info and `info --units` expose file declarations.
 - Keep CLI line separations readable when errors are unavailable or frequencies are fixed.
 
 - Avoid high-field alias growth for narrow Lorentzian Kubo–Toyabe field distributions.

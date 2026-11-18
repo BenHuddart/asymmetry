@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -25,6 +26,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io import unit_report
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.utils.series_scoring import score_series_path
 from asymmetry.gui.windows.log_plot_dialog import LogPlotDialog
@@ -46,7 +49,7 @@ class RunInfoDialog(QDialog):
     add_to_browser_requested = Signal(str)
     set_browser_field_inclusion_requested = Signal(str, bool)
 
-    _TABLE_HEADERS = ["Include in Data Browser", "Field", "Value", "Log Plot"]
+    _TABLE_HEADERS = ["Include in Data Browser", "Field", "Value", "Log Plot", "File declaration"]
 
     def __init__(
         self,
@@ -72,6 +75,7 @@ class RunInfoDialog(QDialog):
         self._included_fields: set[str] = {
             str(v) for v in (included_fields or set()) if str(v).strip()
         }
+        self._refresh_unit_records()
         self._advanced_dialog: AdvancedRunInfoDialog | None = None
         self._pending_counts_rows: dict[str, int] = {}
 
@@ -100,6 +104,22 @@ class RunInfoDialog(QDialog):
 
         self._populate_summary_table()
 
+    def _refresh_unit_records(self) -> None:
+        """Resolve declarations for the same channels as the summary values."""
+        interpretations = {}
+        for field_key in ("temperature", "field"):
+            if field_key in self._included_fields:
+                path = self._series_path_for_field(field_key)
+                if path:
+                    for name in ("value", "values"):
+                        interpretations[f"/{path}/{name}"] = field_key
+        self._unit_records = unit_report(self._dataset, interpretations=interpretations)
+
+    def _refresh_summary(self) -> None:
+        """Refresh after checkbox delivery, when its sender can be replaced."""
+        self._refresh_unit_records()
+        self._populate_summary_table()
+
     def _populate_summary_table(self) -> None:
         """Populate the primary run-info table with include/log controls."""
         meta = self._dataset.metadata
@@ -125,7 +145,7 @@ class RunInfoDialog(QDialog):
             ),
             (
                 "Magnetic Field (G)",
-                self._fmt_float(meta.get("field")),
+                self._fmt_float(self._summary_value_for_field("field", meta.get("field"))),
                 "field",
                 self._series_path_for_field("field"),
             ),
@@ -251,6 +271,10 @@ class RunInfoDialog(QDialog):
                 f"max={self._fmt_float(info.get('max'))}{units_suffix}"
             )
             rows.append((summary_key, summary_val, summary_key, series_path))
+        rows.extend(
+            ("Units: " + record.path, record.describe(), None, None)
+            for record in self._unit_records
+        )
         return rows
 
     def _fill_table(
@@ -282,7 +306,45 @@ class RunInfoDialog(QDialog):
             else:
                 table.setItem(row, 3, QTableWidgetItem(""))
 
+        for row, (_, _, field_key, series_path) in enumerate(rows):
+            paths = {"temperature": "/sample/temperature", "field": "/sample/magnetic_field"}
+            source = paths.get(field_key)
+            if field_key == "temperature" and self._dataset.metadata.get("temperature_selection"):
+                source = "/" + self._dataset.metadata["sample_temperature_log_source"] + "/value"
+            if series_path and field_key in self._included_fields:
+                source = "/" + series_path + "/value"
+            if field_key == "run_info.bin_width_us":
+                source = next(
+                    (
+                        record.path
+                        for record in self._unit_records
+                        if "; selected bin-width source" in record.explanation
+                    ),
+                    None,
+                )
+            sources = {source}
+            if (
+                field_key == "field"
+                and not (series_path and field_key in self._included_fields)
+                and self._dataset.metadata.get("field_source") == "main+sweep"
+            ):
+                sources.update({"/Field_Main/value", "/Field_Z/value"})
+            matching = [
+                record.describe()
+                for record in self._unit_records
+                if any(
+                    candidate and record.path in {candidate, candidate + "s"}
+                    for candidate in sources
+                )
+            ]
+            table.setItem(
+                row,
+                4,
+                QTableWidgetItem("\n".join(matching).replace("; ", "\n").replace(" [", "\n[")),
+            )
         table.resizeColumnsToContents()
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        table.resizeRowsToContents()
 
     def _on_field_inclusion_toggled(self, field_key: str, checked: bool) -> None:
         """Update local include state and emit browser inclusion requests."""
@@ -292,6 +354,8 @@ class RunInfoDialog(QDialog):
         else:
             self._included_fields.discard(field_key)
         self.set_browser_field_inclusion_requested.emit(field_key, checked)
+        if field_key in {"temperature", "field"}:
+            QTimer.singleShot(0, self, self._refresh_summary)
 
     def _open_advanced_dialog(self) -> None:
         """Open the advanced run-info subwindow."""
@@ -316,7 +380,13 @@ class RunInfoDialog(QDialog):
         if not scored:
             return None
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return scored[0][1]
+        for _, path in scored:
+            if (
+                field_key not in {"temperature", "field"}
+                or active_series_mean(self._series_cache[path]) is not None
+            ):
+                return path
+        return None
 
     def _series_path_score(self, field_key: str, series_path: str) -> int:
         """Score how well a time-series path represents a summary field.
@@ -367,10 +437,19 @@ class RunInfoDialog(QDialog):
     def _summary_value_for_field(self, field_key: str, fallback: Any) -> Any:
         """Return the summary value shown for a field in Run Info."""
         series_path = self._series_path_for_field(field_key)
-        if series_path:
+        if series_path and (
+            field_key in self._included_fields or not self._dataset.metadata.get("nexus_version")
+        ):
             info = self._series_cache.get(series_path, {})
-            if "mean" in info:
-                return info.get("mean")
+            value = active_series_mean(
+                info,
+                field_key
+                if self._dataset.metadata.get("nexus_unit_policy")
+                or not self._dataset.metadata.get("nexus_version")
+                else None,
+            )
+            if value is not None:
+                return value
         return fallback
 
     def _show_series_plot(self, series_path: str) -> None:

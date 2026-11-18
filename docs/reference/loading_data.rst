@@ -87,6 +87,40 @@ arrays and histograms are shared. Loading without this operation retains the
 loader's default policy. A representative temperature does not establish thermal
 equilibrium or supply a temperature uncertainty.
 
+Inspecting NeXus units
+----------------------
+
+**Get Info** displays a **File declaration** column alongside interpreted
+quantities. Original values and units stay distinct from values converted to
+G or K. **Advanced** includes timing, deadtime and log-clock declarations.
+**Units not declared** and **Unit declaration blank** distinguish absent and
+empty attributes. A compatibility assumption retains the numeric value; it
+is not verification of the unit. Historical metadata without interpretation
+provenance displays **Interpretation not recorded**.
+
+Recognised field and temperature declarations use the shared conversion table,
+including µT, kG and mK. Missing, unsupported and incompatible metadata units
+retain the format's existing compatibility behaviour; they do not prevent
+loading a usable acquisition. Raw logs remain in their original units. Existing
+header/log selection and averaging rules determine which values are used.
+Acquisition timing and deadtime retain their independent rules below.
+
+The command ``asymmetry info FILE --units`` lists retained source declarations
+and their interpretations. Add ``--json`` for a machine-readable ``units``
+array. Ordinary ``info`` output is unchanged. Files without NeXus inspection
+metadata produce an empty report. The command loads the file normally; it does
+not bypass acquisition-loading errors.
+
+.. image:: /_generated/screenshots/run_info_units.png
+   :alt: Get Info showing a millikelvin conversion, an incompatible field unit,
+         and an undeclared timing unit alongside the interpreted values.
+   :width: 100%
+
+Scripts can call ``asymmetry.core.io.unit_report(dataset)`` on a loaded dataset.
+Each record provides its source path, original declaration, bounded value
+summary, interpreted quantity where available, and explanatory text. Raw
+engineering logs are not automatically assigned a physical dimension.
+
 Supported formats
 -----------------
 

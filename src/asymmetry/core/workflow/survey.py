@@ -1,9 +1,7 @@
 """Survey run metadata and measured precession evidence in one folder.
 
-Metadata describes instruments, logged conditions, and scan membership.
 ``precession_evidence`` independently measures whether a non-zero logged field
-matches a Larmor line; metadata geometry alone cannot establish precession.
-``FolderSurvey.to_dict`` retains the executed survey's diagnostics."""
+matches a Larmor line; metadata geometry alone cannot establish precession."""
 
 from __future__ import annotations
 
@@ -296,7 +294,7 @@ def coil_geometry(metadata: dict[str, Any]) -> str | None:
     """
     series = metadata.get("nexus_time_series", {})
     main, z, x, y = (
-        active_series_mean(series.get(name))
+        active_series_mean(series.get(name), "field")
         for name in ("Field_Main", "Field_Z", "Field_X", "Field_Y")
     )
     if main is None or z is None or x is None or y is None:

@@ -2922,17 +2922,7 @@ class DataBrowserPanel(QWidget):
         return self._series_mean_for_field(sources[0] if sources else dataset, "field")
 
     def displayed_coordinate(self, run_number: int) -> dict[str, float | None]:
-        """The ``field``/``temperature`` the browser currently *displays* for a run.
-
-        Honours the log toggles and per-dataset overrides — the same resolution
-        as the fixed B/T columns (``asymmetry.gui.panels.data_browser.DataBrowserPanel._field_for_display``,
-        ``asymmetry.gui.panels.data_browser.DataBrowserPanel._temperature_for_display``) — so a batch trend and its CSV export
-        plot each run at the abscissa the user sees in the table, not the parked
-        header setpoint. When the browser shows a logged value it replaces the
-        scalar; an axis with no recorded value is ``None`` (off that axis), never
-        ``0`` — preserving the trend's "missing coordinate" semantics rather than
-        the columns' missing-value marker.
-        """
+        """Return displayed trend coordinates, honoring log toggles and overrides."""
         dataset = self.get_dataset(int(run_number))
         if dataset is None:
             return {"field": None, "temperature": None}
@@ -2960,13 +2950,7 @@ class DataBrowserPanel(QWidget):
         uses_log: bool,
         log_value_source,
     ) -> float | None:
-        """Displayed value for one trend axis: logged value if shown, else scalar.
-
-        ``log_value_source`` is resolved lazily so the master
-        log value is only computed when that axis is actually displaying the log
-        — the common setpoint path stays as cheap as the old metadata read.
-        Returns ``None`` (not ``0``) when no finite value is recorded.
-        """
+        """Use the displayed log or scalar; missing coordinates remain None."""
         if uses_log:
             log_value = log_value_source()
             if log_value is not None:
@@ -2995,9 +2979,16 @@ class DataBrowserPanel(QWidget):
             info = series.get(series_path, {})
             if not isinstance(info, dict):
                 continue
-            # Run-active (t >= 0) mean, shared with the loader so the browser and
-            # the scriptable ``sample_temperature_logged`` never disagree.
-            value = active_series_mean(info)
+            value = active_series_mean(
+                info,
+                field_key
+                if field_key in {"temperature", "field"}
+                and (
+                    dataset.metadata.get("nexus_unit_policy")
+                    or not dataset.metadata.get("nexus_version")
+                )
+                else None,
+            )
             if value is not None:
                 return value
         return None

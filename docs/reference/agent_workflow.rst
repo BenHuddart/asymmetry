@@ -2319,3 +2319,13 @@ approval loop or implicit model/calibration rerun. The action updates expectatio
 GUI reopening or an explicit reduction supplies new observations through its normal
 workflow. Old result and calibration expectations remain unchanged. See
 :doc:`project_files` and :doc:`/api/project`.
+
+Inspecting metadata declarations
+--------------------------------
+
+Use ``asymmetry info FILE --units --json`` when conflicting metadata could
+change the interpretation. Successful loading does not verify unit declarations;
+compatibility assumptions should be stated when they affect a conclusion.
+A logged temperature and a header setpoint can disagree because of units as
+well as experimental conditions. This is an evidence-triggered check, not a
+required audit of every run.
