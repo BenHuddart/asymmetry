@@ -1606,11 +1606,10 @@ in the table or by clicking the ring. **Detector Layout…** opens on
 **Preset grouping** list and **Apply Grouping** are disabled there.
 
 **Generic (N detectors)** is also listed under **Instrument** for every run.
-Choose it to edit detector membership without using a known instrument's drawing.
-A known layout can also be selected manually under **Instrument**.
-It changes only the drawing: the run keeps its own instrument, so it stays
-with its grouping profile. The choice lasts while the Grouping window stays on
-that instrument.
+Choosing **Generic (N detectors)** changes only the drawing: the run keeps its
+own instrument, so it stays with its grouping profile. The choice lasts while
+the Grouping window stays on that instrument. A known layout can also be
+selected manually under **Instrument**.
 
 The editor's **OK** needs at least two groups with detectors, because the
 asymmetry needs a forward and a backward group. Switching instrument in the
