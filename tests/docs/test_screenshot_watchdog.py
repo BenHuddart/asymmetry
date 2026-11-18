@@ -1,21 +1,16 @@
 """The screenshot-capture watchdog must survive GIL starvation.
 
-A documentation-screenshot scenario runs a fit on a Qt worker thread. A long
-``iminuit``/``migrad`` minimisation holds the GIL inside its native call, which
-starves *every* Python thread. A previous watchdog was a pure-Python daemon that
-slept and then called ``os._exit`` — but it could never wake to run that call
-while the GIL was held, so a CI run hung for ~3.5 hours instead of
-self-terminating.
-
-The fix routes the watchdog through :func:`faulthandler.dump_traceback_later`,
-whose timer fires from C without needing the GIL (and dumps every thread's stack
-for diagnosis). These tests pin that wiring so the GIL-independent guarantee
-cannot silently regress to a Python-thread timer again.
+Native fits can hold the GIL, so termination and stack dumps must use the
+C-level faulthandler timer. The whole suite has a ten-minute budget, below
+its twelve-minute CI backstop.
 """
 
 from __future__ import annotations
 
 import faulthandler
+from pathlib import Path
+
+import yaml
 
 from docs.screenshots import capture
 
@@ -61,7 +56,19 @@ def test_watchdog_does_not_spawn_a_python_daemon_thread(monkeypatch):
     assert created == [], "watchdog must not rely on a Python daemon thread"
 
 
-def test_capture_timeout_is_bounded():
-    # A generous-but-finite cap; the full set normally renders in well under a
-    # minute. Catch an accidental bump back to a multi-tens-of-minutes value.
-    assert 0 < capture._CAPTURE_TIMEOUT_S <= 15 * 60
+def test_default_capture_budget_precedes_ci_backstop(monkeypatch):
+    calls = []
+    monkeypatch.setattr(faulthandler, "enable", lambda: None)
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *a, **k: calls.append((a, k)))
+    capture._start_watchdog()
+    assert calls == [((600,), {"exit": True})]
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/docs-pages.yml").read_text()
+    )
+    step = next(
+        step
+        for step in workflow["jobs"]["build-docs"]["steps"]
+        if step["name"] == "Generate GUI screenshots"
+    )
+    assert step["timeout-minutes"] == 12
+    assert calls[0][0][0] < step["timeout-minutes"] * 60

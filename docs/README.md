@@ -170,7 +170,8 @@ registered in `capture.py::_import_scenarios()`. House rules:
 - **Cropped**: frame the panel or dialog the prose discusses, not the whole
   main window, and never ship a figure with large empty regions — an empty
   table or blank plot reads as a broken program.
-- **Fast**: well under a minute; the whole suite shares an 8-minute watchdog.
+- **Fast**: well under a minute; the whole suite shares a 10-minute watchdog,
+  below the 12-minute CI backstop.
   Set `requires_fit = True` when a real fit runs.
 - **Budgeted**: ≤ 600 KB per PNG after the automatic lossless optimisation
   (`structural` fails oversized images when they exist on disk).
