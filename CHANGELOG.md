@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Accelerate weak-field static Gaussian Kubo–Toyabe evaluation and its
+  broadened-width fits with a stable Gaussian-moment series.
+
 - Gate desktop publication on isolated scientific journeys through the installed
   Windows and mounted macOS apps, including component omissions and cleanup.
 

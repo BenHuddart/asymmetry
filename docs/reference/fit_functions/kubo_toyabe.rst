@@ -160,13 +160,29 @@ static model, not evidence that a sample is static.
       \left[u^3\frac{j_1(ru)}{ru}-u\operatorname{sinc}(ru)\right],
 
    where :math:`\operatorname{sinc}(z)=\sin(z)/z` and
-   :math:`j_1(z)/z\to1/3`. Integrating this finite expression by 48-point
-   Gauss–Legendre quadrature avoids inverse-field cancellation for
-   :math:`r<1`. The Gaussian envelope bounds the omitted derivative beyond
-   :math:`u=12` by less than :math:`10^{-28}`. For :math:`r\geq1`, the
-   Gaussian sine integral is evaluated analytically with the complex scaled
-   complementary error function. Both branches evaluate the same physical
-   field average directly at the requested times, without interpolation.
+   :math:`j_1(z)/z\to1/3`. For :math:`r<1`, termwise integration of
+   the Bessel series gives
+
+   .. math::
+
+      G(u,r)=1-\sum_{k=0}^{\infty}
+      \frac{2(-r^2)^k}{(2k+1)!(2k+3)}
+      \left[M_k(u)+u^{2k+2}e^{-u^2/2}\right],
+      \qquad M_k(u)=\int_0^u x^{2k+1}e^{-x^2/2}\,dx.
+
+   The moments follow :math:`M_0=1-e^{-u^2/2}` and
+   :math:`M_k=2kM_{k-1}-u^{2k}e^{-u^2/2}`. Evaluation retains
+   :math:`k=0,\ldots,15`. Each omitted term is bounded in magnitude by
+   :math:`2^{k+1}k!/(2k+1)!`, whose sum for :math:`k\geq16`
+   is below :math:`4\times10^{-19}` for :math:`0\leq r\leq1`, before
+   floating-point rounding. The Gaussian envelope bounds the omitted
+   derivative beyond :math:`u=12` by less than :math:`10^{-28}`.
+   This finite series avoids inverse-field cancellation and evaluates
+   smooth field dependence through zero with storage proportional to the
+   number of requested times. For :math:`r\geq1`, the Gaussian sine
+   integral is evaluated analytically with the complex scaled complementary
+   error function. Both branches evaluate the same physical field average
+   directly at the requested times, without interpolation.
 
 A standalone ``LFKuboToyabe`` model is available in the ``MODELS`` registry.
 

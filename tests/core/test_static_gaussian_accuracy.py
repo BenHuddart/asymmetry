@@ -173,3 +173,27 @@ def test_zero_width_limit_at_extreme_field_to_width_ratio():
     np.testing.assert_array_equal(
         longitudinal_field_kubo_toyabe(times, 1, 1e-200, 1.0), np.ones_like(times)
     )
+
+
+@pytest.mark.parametrize("ratio", [0.0, 0.001, 0.3, 1.0])
+@pytest.mark.parametrize("parameter", ["width", "field"])
+def test_first_and_second_parameter_differences_against_spin_rotation(ratio, parameter):
+    times = np.array([0.0, 0.13, 0.7, 1.7, 3.1, 4.99])
+    step = 1e-3
+    actual, expected = [], []
+    for offset in (-step, 0.0, step):
+        width = 1.0 + offset if parameter == "width" else 1.0
+        omega = ratio + offset if parameter == "field" else ratio
+        actual.append(
+            longitudinal_field_kubo_toyabe(times, 1.0, width, omega / LARMOR_RAD_PER_US_PER_GAUSS)
+        )
+        expected.append(gaussian_field_average(48, omega / width, times * width))
+    # Matching second differences protects the local curvature used in covariance fits.
+    for values, reference in (
+        ((actual[2] - actual[0]) / (2 * step), (expected[2] - expected[0]) / (2 * step)),
+        (
+            (actual[2] - 2 * actual[1] + actual[0]) / step**2,
+            (expected[2] - 2 * expected[1] + expected[0]) / step**2,
+        ),
+    ):
+        np.testing.assert_allclose(values, reference, atol=1e-7, rtol=0)
