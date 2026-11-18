@@ -481,7 +481,7 @@ def _oversampling_correction(
         }
     message = (
         f"Heuristic zero-padding rescaling: errors ×{sqrt_s:.3g}, χ² ÷{s:g}; "
-        "spectral covariance is not recovered and errors can be too small or too large."
+        "no covariance reconstruction."
     )
     return (
         corrected_chi2,

@@ -11,4 +11,8 @@ MOMENT_UNCERTAINTY_SCOPE = (
     "processing, with scalar padding rescaling. " + SPECTRAL_UNCERTAINTY_LIMITS
 )
 
-FIT_UNCERTAINTY_SCOPE = "Approximate spectral fit errors/statistics. " + SPECTRAL_UNCERTAINTY_LIMITS
+FIT_UNCERTAINTY_SCOPE = (
+    "Approximate spectral fit errors/statistics: correlations and estimated phase, "
+    "calibration/background and MaxEnt uncertainty are not fully propagated. "
+    "Errors and statistical interpretations are heuristic, without calibrated coverage."
+)
