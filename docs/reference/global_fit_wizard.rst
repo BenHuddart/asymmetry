@@ -204,6 +204,14 @@ recommendation unless you mark a parameter ``Fixed``; a fixed parameter is left
 untouched throughout. Invalid bounds are reported inline and stop the run
 before any fitting starts.
 
+Without an explicit amplitude bound, the series wizard uses the widest automatic
+upper bound for that same amplitude across its members. A slow trace's small
+observed span cannot cap its zero-time amplitude more tightly than the rest of
+the series. This search envelope preserves individual amplitude values and
+roles; fixed values, supplied bounds, fraction limits, and lower bounds remain
+authoritative. A genuinely binding bound still limits symmetric uncertainty
+reporting as described in :ref:`global-marginal-errors`.
+
 The **Search settings** row starts with **Recommend**, which sets what the
 coupled optimisation is for:
 

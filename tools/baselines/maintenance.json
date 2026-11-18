@@ -713,7 +713,7 @@
     "src/asymmetry/core/fitting/engine.py": 2841,
     "src/asymmetry/core/fitting/experiment_design.py": 1005,
     "src/asymmetry/core/fitting/fit_wizard.py": 6352,
-    "src/asymmetry/core/fitting/global_fit_wizard.py": 11502,
+    "src/asymmetry/core/fitting/global_fit_wizard.py": 11501,
     "src/asymmetry/core/fitting/grouped_time_domain.py": 2002,
     "src/asymmetry/core/fitting/knight_analysis.py": 1374,
     "src/asymmetry/core/fitting/models.py": 1004,
