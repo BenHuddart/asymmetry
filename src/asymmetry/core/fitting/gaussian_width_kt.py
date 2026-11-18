@@ -31,9 +31,13 @@ def _gaussian_width_intervals(
     envelope = np.exp(-(s**2) / (2 * denominator)) / np.sqrt(denominator)
     second = envelope * (mean**2 + variance)
     fourth = envelope * (mean**4 + 6 * mean**2 * variance + 3 * variance**2)
-    bessel = np.divide(
-        spherical_jn(1, phase), phase, out=np.full_like(phase, 1 / 3), where=phase != 0
-    )
+    # j1(x)/x=1/3-x²/30+x⁴/840-x⁶/45360+O(x⁸); for x<=0.1 the
+    # omitted term is <2.6e-15. Direct j1 underflows for tiny nonzero phases.
+    small = phase <= 0.1
+    squared = phase[small] ** 2
+    bessel = np.empty_like(phase)
+    bessel[small] = 1 / 3 + squared * (-1 / 30 + squared * (1 / 840 - squared / 45360))
+    bessel[~small] = spherical_jn(1, phase[~small]) / phase[~small]
     derivative = 2 * width_scale * (s**3 * fourth * bessel - s * second * np.sinc(phase / np.pi))
     return np.sum(derivative * _GAUSS_WEIGHTS, axis=-1) * length / 2
 

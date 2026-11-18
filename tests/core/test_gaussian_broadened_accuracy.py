@@ -204,3 +204,18 @@ def test_work_budget_boundary_and_recovery(monkeypatch):
     # Neither analytic limiting path uses the finite-field integration budget.
     assert gaussian_broadened_kt(200000, 1, 0, 0.5) == pytest.approx(1 / 3, abs=1e-12)
     assert np.isfinite(gaussian_broadened_kt(200000, 1, field, 0))
+
+
+@pytest.mark.parametrize("field", [1e-20, 1e-150, 1e-220, np.nextafter(0.0, 1.0)])
+def test_tiny_nonzero_field_retains_continuous_zero_field_limit(field):
+    time = np.array([0, 0.1, 1, 2, 20.0])
+    actual = gaussian_broadened_kt(time, 1, field / LARMOR_RAD_PER_US_PER_GAUSS, 1)
+    np.testing.assert_allclose(actual, exact_zero_field(time, 1), atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize("field", [0.099999, 0.1, 0.100001])
+def test_entire_factor_series_boundary_matches_width_oracle(field):
+    time = np.array([0.1, 1, 20.0])
+    expected = width_average(time, field, 1)
+    actual = gaussian_broadened_kt(time, 1, field / LARMOR_RAD_PER_US_PER_GAUSS, 1)
+    np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=0)

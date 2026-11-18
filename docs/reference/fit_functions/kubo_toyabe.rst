@@ -468,6 +468,9 @@ static kernel, so these limits need no width-integration work budget.
 
    The factors :math:`j_1(x)/x\to1/3` and
    :math:`\operatorname{sinc}(x)\to1` make the zero-field limit finite.
+   For phases at most 0.1, the first factor uses its series through
+   :math:`x^6`, whose first omitted term is below :math:`2.6\times10^{-15}`;
+   this also retains the limit at subnormal nonzero fields.
    GL16 panels have width at most one in :math:`u` and eight in phase
    :math:`ru`. Shared full-panel integrals are accumulated once; each
    endpoint remainder is integrated independently. At exactly zero field,
