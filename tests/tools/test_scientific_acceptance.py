@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -374,8 +375,17 @@ def test_timeout_kills_the_owned_child_tree(tmp_path):
     with pytest.raises(RuntimeError, match="timeout"):
         run_acceptance([sys.executable, str(child)], tmp_path, {}, tmp_path / "run", timeout=1)
     status = Path("/proc") / pid_file.read_text() / "status"
-    if status.exists():
-        assert "State:\tZ" in status.read_text()
+    # Group SIGKILL delivery can finish after the direct child's wait returns.
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            state = status.read_text()
+        except FileNotFoundError:
+            break
+        if "State:\tZ" in state:
+            break
+        assert time.monotonic() < deadline, state
+        time.sleep(0.01)
     outcome = json.loads((tmp_path / "run/outcome.json").read_text())
     assert outcome["child_reaped"]
     assert outcome["tree_cleanup_exit"] == 0
