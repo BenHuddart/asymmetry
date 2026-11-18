@@ -1587,14 +1587,17 @@ The **Include** checkbox for each group does not change the stored detector
 membership of the group. Instead, it controls whether that group participates
 in the **Individual Groups** plot view and in grouped time-domain fitting.
 
+.. _instruments-without-layout:
+
 Instruments without a layout
 -----------------------------
 
 Asymmetry has drawings and presets for HiFi, MuSR, EMU, FLAME, HAL-9500 and
 GPS. A run from any other instrument gets a generic layout instead: one ring
 of the run's own detectors, numbered clockwise from the top, with no presets.
-The ring makes no claim about where the detectors sit. It only gives each
-detector a segment to click.
+Detector count alone never identifies an instrument: unknown 64- and
+96-detector runs also use this layout. The ring makes no claim about where
+the detectors sit. It only gives each detector a segment to click.
 
 For such a run the **Preset** dropdown reads **No presets for this
 instrument** and is disabled. The groups come from the file, and you edit them
@@ -1603,28 +1606,26 @@ in the table or by clicking the ring. **Detector Layout…** opens on
 **Preset grouping** list and **Apply Grouping** are disabled there.
 
 **Generic (N detectors)** is also listed under **Instrument** for every run.
-Choose it when Asymmetry has mistaken an unknown instrument for a known one,
-for example a 64-detector run detected as HiFi from its detector count alone.
-It changes only the drawing: the run keeps its own instrument, so it stays
-with its grouping profile. The choice lasts while the Grouping window stays on
-that instrument.
+Choosing **Generic (N detectors)** changes only the drawing: the run keeps its
+own instrument, so it stays with its grouping profile. The choice lasts while
+the Grouping window stays on that instrument. A known layout can also be
+selected manually under **Instrument**.
 
 The editor's **OK** needs at least two groups with detectors, because the
 asymmetry needs a forward and a backward group. Switching instrument in the
 editor clears the groups, so assign detectors before pressing **OK**.
 
-A project saved by an earlier version opens with its groups unchanged. Earlier
-versions drew HiFi for an unknown instrument and offered HiFi's presets. A
-preset name stored that way reads **Custom**, because it is no preset of the
-generic layout.
+When recognition is inconclusive, reopening a project preserves its stored
+instrument choice, groups, and forward/backward assignments. A stored preset
+name absent from the selected layout reads **Custom**.
 
 .. figure:: /_generated/screenshots/generic_layout.png
    :width: 100%
-   :alt: Detector Layout editor on a generic ring of sixteen detectors, with
+   :alt: Detector Layout editor on a generic ring of 64 detectors, with
       the preset controls disabled.
 
-   The Detector Layout editor on ``Generic (16 detectors)``: a ring of the
-   run's sixteen detectors, grouped here into a forward half and a backward
+   The Detector Layout editor on ``Generic (64 detectors)``: a ring of the
+   run's 64 detectors, grouped here into a forward half and a backward
    half. The preset controls are disabled because a generic layout has no
    presets.
 

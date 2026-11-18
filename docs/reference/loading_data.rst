@@ -23,6 +23,12 @@ be navigated with the scriptable period-selection API — see
 For an end-to-end walk-through that starts with loading, see
 :doc:`/workflows/temperature_scan_magnetism`.
 
+Instrument recognition uses metadata, recognised detector labels, or the source
+filename. Detector count alone does not identify an instrument: an unidentified
+64- or 96-detector run uses a generic layout with no instrument presets.
+Stored grouping choices are retained when recognition is inconclusive; see
+:ref:`instruments-without-layout` for manual grouping and layout selection.
+
 Acquisition shape and alignment
 -------------------------------
 
