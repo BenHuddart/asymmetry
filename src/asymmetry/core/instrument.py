@@ -2341,19 +2341,18 @@ def detect_instrument(
     metadata: dict | None = None,
     source_file: str | None = None,
 ) -> str | None:
-    """Guess the instrument name from the number of histograms.
+    """Identify an instrument from metadata, detector labels, or its filename.
 
-    This is a heuristic for the automatic instrument selection in the
-    detector layout editor.  The caller should always allow the user to
-    override the returned value.
+    Histogram count alone does not identify an instrument. It selects a layout
+    variant only after instrument-specific evidence identifies the instrument.
+    The caller should allow the user to override the returned value.
 
     Parameters
     ----------
     n_histograms:
         Total number of histograms / raw-detector channels in the run.
     metadata:
-        Optional run metadata. If an instrument-like field is present, it takes
-        priority over the histogram-count heuristic.
+        Optional run metadata containing instrument names or detector labels.
     source_file:
         Optional source filename/path used as a final lightweight hint.
 
@@ -2402,11 +2401,4 @@ def detect_instrument(
                 return None
             return path_token
 
-    if psi_data:
-        return None
-
-    if n_histograms == 64:
-        return "HiFi"
-    if n_histograms == 96:
-        return "EMU"
     return None

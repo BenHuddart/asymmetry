@@ -93,10 +93,14 @@ def _preset_all_ids(preset: PresetGrouping) -> list[int]:
 
 
 class TestDetectInstrument:
-    def test_64_returns_hifi(self):
-        assert detect_instrument(64) == "HiFi"
+    @pytest.mark.parametrize("n_histograms", [64, 96])
+    @pytest.mark.parametrize("metadata", [None, {"instrument": "Unknown"}])
+    def test_detector_count_does_not_identify_instrument(self, n_histograms, metadata):
+        assert (
+            detect_instrument(n_histograms, metadata=metadata, source_file="run000123.nxs") is None
+        )
 
-    def test_metadata_instrument_overrides_64_histogram_heuristic(self):
+    def test_metadata_identifies_instrument(self):
         assert detect_instrument(64, metadata={"instrument": "MUSR"}) == "MuSR"
 
     def test_source_file_prefix_can_hint_instrument(self):
@@ -399,8 +403,8 @@ class TestDetectInstrument:
         # Without a PSI marker, the bare "HiFi" name remains the ISIS layout.
         assert detect_instrument(64, metadata={"instrument": "HiFi"}) == "HiFi"
 
-    def test_96_returns_emu(self):
-        assert detect_instrument(96) == "EMU"
+    def test_metadata_identifies_emu(self):
+        assert detect_instrument(96, metadata={"instrument": "EMU"}) == "EMU"
 
     def test_unknown_returns_none(self):
         assert detect_instrument(0) is None

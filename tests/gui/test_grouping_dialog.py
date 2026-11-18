@@ -2773,9 +2773,11 @@ def test_preset_dropdown_clears_stale_preset_on_drift(qapp: QApplication) -> Non
     assert not dialog._current_grouping_payload().get("grouping_preset")
 
 
-def _unknown_instrument_dataset(grouping_extra: dict | None = None) -> MuonDataset:
-    """A 16-histogram run from an instrument Asymmetry has no layout for."""
-    histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(16)]
+def _unknown_instrument_dataset(
+    grouping_extra: dict | None = None, *, n_histograms: int = 16
+) -> MuonDataset:
+    """A run from an instrument Asymmetry has no layout for."""
+    histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(n_histograms)]
     metadata = {"run_number": 7001, "facility": "TRIUMF", "instrument": "M20"}
     run = Run(
         run_number=7001,
@@ -2802,12 +2804,15 @@ def _unknown_instrument_dataset(grouping_extra: dict | None = None) -> MuonDatas
     )
 
 
-def test_unknown_instrument_gets_a_generic_layout_without_presets(qapp: QApplication) -> None:
-    """No HiFi fallback: the run's own 16 detectors, and no presets to offer."""
-    dialog = GroupingDialog([_unknown_instrument_dataset()])
+@pytest.mark.parametrize("n_histograms", [16, 64, 96])
+def test_unknown_instrument_gets_a_generic_layout_without_presets(
+    qapp: QApplication, n_histograms: int
+) -> None:
+    """Unknown identity keeps the run's detector count and offers no presets."""
+    dialog = GroupingDialog([_unknown_instrument_dataset(n_histograms=n_histograms)])
     layout = dialog._current_instrument_layout()
     assert layout.name == "Generic"
-    assert layout.n_detectors == 16
+    assert layout.n_detectors == n_histograms
     assert dialog._preset_combo.count() == 0
     assert dialog._preset_combo.isEnabled() is False
     assert dialog._preset_combo.placeholderText() == "No presets for this instrument"
