@@ -37,7 +37,7 @@ def reduced_curve():
     return reduce_run(_continuous_run(0), ReductionSettings(alpha=1.0, alpha_source="user"))
 
 
-@pytest.mark.parametrize("revision", [None, "historical"])
+@pytest.mark.parametrize("revision", [None, "historical", "5", "6"])
 def test_fresh_fit_over_historical_observations_records_both_executions(revision):
     data = replace(reduced_curve(), computation_revision=revision).time_range(0.3, 0.5)
     assert data.computation_revision == revision
@@ -49,7 +49,7 @@ def test_fresh_fit_over_historical_observations_records_both_executions(revision
     assert data.computation_revision == revision
 
 
-@pytest.mark.parametrize("revision", [None, "historical", "1"])
+@pytest.mark.parametrize("revision", [None, "historical", "1", "5", "6"])
 def test_fit_codec_and_nested_history_never_stamp_on_load_or_resave(revision, monkeypatch):
     data = reduced_curve().time_range(0.3, 0.5)
     result = FitEngine().fit(data, constant, ParameterSet([Parameter("c", 0.0)]))
@@ -335,7 +335,7 @@ def test_reopened_derived_series_checks_selected_trend_execution(tmp_path, revis
     ] == series_digest(source, "law")
 
 
-@pytest.mark.parametrize("revision", [None, "historical"])
+@pytest.mark.parametrize("revision", [None, "historical", "5", "6"])
 def test_moment_execution_is_captured_before_trend_serialization(revision, monkeypatch):
     from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 

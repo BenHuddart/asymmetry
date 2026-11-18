@@ -384,9 +384,10 @@ single-width KT fit is qualitatively right but the dip is too sharp and the
 dilute magnetic alloys, or several inequivalent muon sites. The fractional
 standard deviation :math:`w_\Delta` is the broadening parameter
 (:math:`w_\Delta = 0` reduces exactly and continuously to
-``LongitudinalFieldKT``); the average is evaluated by Gauss–Hermite
-quadrature with 21 nodes directly at the requested times. Every node uses
-the same static Gaussian kernel as ``LongitudinalFieldKT``.
+``LongitudinalFieldKT``). Gaussian tilted moments analytically average the
+width distribution inside the static LF time integral. Shared Gauss–Legendre
+time panels and independently integrated endpoint remainders evaluate the
+polarisation directly at the requested times, without interpolation.
 WiMDA's ``Gau broad KT`` "rel width" equals :math:`w_\Delta\sqrt{2}`.
 
 =========  =================  =====  =========================================
@@ -403,19 +404,82 @@ the dip and soften the tail, and a single spectrum rarely distinguishes them
 — vary temperature or field before preferring this model over
 ``DynamicGaussianKT``.
 
-The retained 21-node width quadrature has a separate accuracy limitation;
-the static kernel's :math:`10^{-5}` target does not certify the continuous
-width average at every broadening or time. Against the exact zero-field
-Gaussian-width average, its largest absolute normalised error on
-:math:`0\leq\Delta t\leq5` is below :math:`10^{-6}` for
-:math:`w_\Delta=0.1,0.2,0.3`, but reaches :math:`1.7\times10^{-4}` at
-:math:`w_\Delta=0.4` and :math:`2.3\times10^{-3}` at
-:math:`w_\Delta=0.5`. At :math:`w_\Delta=0.3`, extending the window to
-:math:`\Delta t=20` gives :math:`6.4\times10^{-4}`; at
-:math:`w_\Delta=1` on that window the error reaches 0.095. This retained
-finite-quadrature limitation preserves the width-distribution definition.
-Broad or long-window fits require a converged width average before
-interpreting precision at this level. It does not authorise a different physical model.
+.. figure:: /_generated/screenshots/gaussian_broadened_kt_series.png
+   :alt: Synthetic Gaussian-width distributions at zero and longitudinal field
+   :width: 100%
+
+   *Synthetic width distributions at the Ag nuclear-field scale. The imposed
+   broadening illustrates a distribution of static widths, rather than a
+   measurement of disorder in Ag.*
+
+The numerical target is absolute error :math:`\leq10^{-5}` in normalised
+polarisation. Sampled checks cover :math:`0\leq w_\Delta\leq1`,
+:math:`0\leq u=|\Delta t|\leq20`, and zero, weak, and strong fields at
+:math:`r=|\omega_0/\Delta|=0,10^{-6},10^{-3},0.06,1,10,100`, including
+nearby parameter values, both field signs, and width scales 0.05, 0.4, 1,
+and 5 μs⁻¹. These checks are finite-domain evidence, not a continuum error
+proof or accuracy certification outside those ranges. The numerical work
+limit does not define the physical applicability of the model.
+
+Independent checks use the exact continuous zero-field width average,
+a converged adaptive average in the original width coordinate, and direct
+classical spin averages at representative times through :math:`u=2`.
+Nested integration of the published static LF expression supplies separate
+long-time anchors at :math:`u=20`, :math:`r=0.06,1,10,100`; its quadrature
+refinement changes the reference by less than :math:`2\times10^{-8}`.
+Nearby parameter and panel-boundary checks retain smooth fit derivatives.
+Fits to independent width-average curves test numerical bias; they do not
+establish experimental parameter identifiability.
+
+Finite-field integration permits at most 2,097,152 quadrature nodes per
+model evaluation: 16 times the sum of full time panels and requested times.
+The panel rate is :math:`\max(\Delta,|\omega_0|/8)`. All work is checked
+before allocating panel arrays, and intervals are evaluated in blocks of
+1,024 to bound temporary storage. The budget and blocking keep numerical
+integration arrays below approximately 16 MiB, apart from caller-owned
+arrays and library overhead. This supports 65,536 requested times in
+ordinary short windows. An excessive request raises an evaluation-work
+diagnostic asking you to shorten the time window or reduce the requested
+times; no coarser rule or other physical model is substituted. Exact zero
+field uses the analytic width average and exact zero broadening uses the
+static kernel, so these limits need no width-integration work budget.
+
+.. dropdown:: Analytically averaging the Gaussian widths
+
+   Let :math:`X\sim\mathcal{N}(1,w_\Delta^2)`. Reflecting to
+   :math:`|X|` leaves the static Gaussian variance :math:`X^2` unchanged.
+   Define :math:`M_k(s)=\langle X^k e^{-X^2s^2/2}\rangle`. Completing the
+   Gaussian square gives
+
+   .. math::
+
+      D=1+w_\Delta^2s^2,\quad
+      M_0=D^{-1/2}e^{-s^2/(2D)},\quad m=D^{-1},\quad v=w_\Delta^2/D,
+
+      M_2=M_0(m^2+v),\qquad M_4=M_0(m^4+6m^2v+3v^2).
+
+   Interchanging the width average and the Hayano time integral yields
+
+   .. math::
+
+      G(u,r)=1+2\int_0^u\left[
+      s^3M_4(s)\frac{j_1(rs)}{rs}-sM_2(s)\operatorname{sinc}(rs)
+      \right]ds.
+
+   The factors :math:`j_1(x)/x\to1/3` and
+   :math:`\operatorname{sinc}(x)\to1` make the zero-field limit finite.
+   For phases at most 0.1, the first factor uses its series through
+   :math:`x^6`, whose first omitted term is below :math:`2.6\times10^{-15}`;
+   this also retains the limit at subnormal nonzero fields.
+   GL16 panels have width at most one in :math:`u` and eight in phase
+   :math:`ru`. Shared full-panel integrals are accumulated once; each
+   endpoint remainder is integrated independently. At exactly zero field,
+   with :math:`D=1+w_\Delta^2u^2`, the result is
+
+   .. math::
+
+      G(u,0)=\frac13+\frac23D^{-3/2}
+      \left(1-\frac{u^2}{D}\right)e^{-u^2/(2D)}.
 
 Compared with other programs
 ----------------------------

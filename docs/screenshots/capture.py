@@ -355,6 +355,7 @@ def _import_scenarios() -> None:
         lf_kt_global_results,
         lf_kt_series_plot,
         dynamic_kt_rate_series,
+        gaussian_broadened_kt_series,
         logbook_view,
         main_window,
         maxent_ybco,

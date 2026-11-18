@@ -105,25 +105,6 @@ def test_shapes_zero_width_and_registry_paths():
     )
 
 
-def test_broadened_width_average():
-    # The independent time integral checks the existing 21-node width definition.
-    x, weights = np.polynomial.hermite.hermgauss(21)
-    times = np.linspace(0, 5, 21)
-    omega = 0.06
-    for width in (0.1, 0.3):
-        deltas = np.abs(1 + np.sqrt(2) * width * x)
-        expected = sum(
-            w * hayano_integral(times * d, omega / d)
-            for d, w in zip(deltas, weights / np.sqrt(np.pi), strict=True)
-        )
-        np.testing.assert_allclose(
-            gaussian_broadened_kt(times, 1, omega / LARMOR_RAD_PER_US_PER_GAUSS, width),
-            expected,
-            atol=1e-5,
-            rtol=0,
-        )
-
-
 def test_fit_independent_spin_rotation_curve():
     u = np.linspace(0, 5, 61)
     truth = np.array([1.0, 0.3])
@@ -142,30 +123,6 @@ def test_fit_independent_spin_rotation_curve():
     # Absolute supplied errors define the local Fisher uncertainty; no residual rescaling.
     assert np.all(np.abs(fit.x - truth) < 0.1 * np.sqrt(np.diag(covariance)))
     assert np.max(np.abs(fit.fun * error)) < 1e-5
-
-
-@pytest.mark.parametrize(
-    "width,window,tolerance",
-    [
-        (0.1, 5, 1e-5),
-        (0.2, 5, 1e-5),
-        (0.3, 5, 1e-5),
-        (0.4, 5, 2e-4),
-        (0.5, 5, 0.003),
-        (1, 20, 0.1),
-        (0.3, 20, 0.0007),
-    ],
-)
-def test_broadened_continuous_zero_field_average(width, window, tolerance):
-    # Wide/long-window tolerances record the retained outer quadrature limitation.
-    times = np.linspace(0, window, 1001)
-    denominator = 1 + (width * times) ** 2
-    expected = 1 / 3 + 2 / 3 / denominator**1.5 * (1 - times**2 / denominator) * np.exp(
-        -(times**2) / (2 * denominator)
-    )
-    np.testing.assert_allclose(
-        gaussian_broadened_kt(times, 1, 0, width), expected, atol=tolerance, rtol=0
-    )
 
 
 def test_zero_width_limit_at_extreme_field_to_width_ratio():
