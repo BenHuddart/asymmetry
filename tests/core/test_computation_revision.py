@@ -335,7 +335,7 @@ def test_reopened_derived_series_checks_selected_trend_execution(tmp_path, revis
     ] == series_digest(source, "law")
 
 
-@pytest.mark.parametrize("revision", [None, "historical"])
+@pytest.mark.parametrize("revision", [None, "historical", "5", "6"])
 def test_moment_execution_is_captured_before_trend_serialization(revision, monkeypatch):
     from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 
