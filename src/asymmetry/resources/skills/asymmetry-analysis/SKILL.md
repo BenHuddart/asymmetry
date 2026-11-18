@@ -232,6 +232,7 @@ setpoint, so take its temperature scans as provisional: order those series by
 `sample_temperature_logged`, split off runs that sit far from the rest, and
 quote logged temperatures in the summary.
 
+Successful loading does not verify units. For material discrepancies inspect `asymmetry info FILE --units --json`; disclose compatibility assumptions, never infer replacement units, and do not require routine audits.
 **Check temperature provenance before interpreting a temperature scan.** Some
 cryostat files keep the setpoint parked while the sample temperature changes;
 then many distinct runs can appear at one nominal temperature. Several runs at

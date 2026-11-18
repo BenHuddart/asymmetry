@@ -706,13 +706,14 @@ options:
 ## `asymmetry info`
 
 ```
-usage: asymmetry info [-h] [--json] file
+usage: asymmetry info [-h] [--units] [--json] file
 
 positional arguments:
   file        Path to a μSR data file
 
 options:
   -h, --help  show this help message and exit
+  --units     Show original unit declarations and interpretations
   --json      Emit the machine-readable payload
 ```
 

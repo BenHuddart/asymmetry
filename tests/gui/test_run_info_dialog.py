@@ -549,3 +549,55 @@ def test_summary_table_omits_the_exact_time_zero_when_the_run_has_none(
     dialog = RunInfoDialog(_dataset_with_run())
 
     assert _row_for_field(dialog._summary_table, "Time Zero (us)") == -1
+
+
+def test_nexus_units_refresh_with_temperature_toggle(tmp_path, qapp):
+    from asymmetry.core.io import load
+    from tests.io.test_nexus_loader import _write_v2_file
+
+    path = tmp_path / "units.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=20,
+        temp_setpoint_units="K",
+        temp_log_values=(300, 400, 500),
+        temp_log_units="mK",
+    )
+    dialog = RunInfoDialog(load(str(path)))
+    table = dialog._summary_table
+    row = next(i for i in range(table.rowCount()) if table.item(i, 1).text() == "Temperature (K)")
+    assert float(table.item(row, 2).text()) == 20
+    table.cellWidget(row, 0).setChecked(True)
+    qapp.processEvents()
+    assert float(table.item(row, 2).text()) == pytest.approx(0.4)
+    assert "mK" in table.item(row, 4).text()
+    table.cellWidget(row, 0).setChecked(False)
+    qapp.processEvents()
+    assert float(table.item(row, 2).text()) == 20
+    assert "/sample/temperature" in table.item(row, 4).text()
+    dialog.close()
+
+
+def test_explicit_selected_temperature_declaration_matches_scalar(tmp_path, qapp):
+    from asymmetry.core.io import load
+    from asymmetry.core.workflow import select_logged_temperature
+    from tests.io.test_nexus_loader import _write_v2_file
+
+    path = tmp_path / "selected.nxs"
+    _write_v2_file(
+        path,
+        temp_setpoint=20,
+        temp_setpoint_units="K",
+        temp_log_values=(300, 400, 500),
+        temp_log_units="mK",
+    )
+    ds = load(str(path))
+    channel = ds.metadata["sample_temperature_log_source"]
+    selected = select_logged_temperature(ds, channel)
+    dialog = RunInfoDialog(selected)
+    table = dialog._summary_table
+    row = next(i for i in range(table.rowCount()) if table.item(i, 1).text() == "Temperature (K)")
+    assert float(table.item(row, 2).text()) == pytest.approx(0.4)
+    assert channel in table.item(row, 4).text()
+    assert "mK" in table.item(row, 4).text()
+    dialog.close()
