@@ -12,10 +12,11 @@ import numpy as np
 
 def write_fixtures(directory: Path) -> dict:
     """Create tiny actual containers; neither the app nor frozen code imports this writer."""
-    import pyhdf.V  # noqa: F401
     import uproot
-    from pyhdf.HDF import HC, HDF
-    from pyhdf.SD import SD, SDC
+
+    from asymmetry.core.io.hdf4 import _require_pyhdf
+
+    hdf_type, hc, sd_type, sdc = _require_pyhdf()
 
     directory.mkdir(parents=True, exist_ok=False)
     counts = np.array([120 * np.arange(1, 21), 80 * np.arange(1, 21)], dtype=np.int32)
@@ -44,44 +45,44 @@ def write_fixtures(directory: Path) -> dict:
             )
 
     path = directory / "counts.nxs"
-    hdf = HDF(str(path), HC.WRITE | HC.CREATE)
+    hdf = hdf_type(str(path), hc.WRITE | hc.CREATE)
     groups = hdf.vgstart()
-    sd = SD(str(path), SDC.WRITE | SDC.CREATE)
+    sd = sd_type(str(path), sdc.WRITE | sdc.CREATE)
     try:
 
         def number(parent, name, values, dtype, attrs=()):
-            values = np.asarray(values, dtype=np.int32 if dtype == SDC.INT32 else np.float64)
+            values = np.asarray(values, dtype=np.int32 if dtype == sdc.INT32 else np.float64)
             dataset = sd.create(name, dtype, values.shape)
             dataset[:] = values
             for key, value in attrs:
-                dataset.attr(key).set(SDC.CHAR8 if isinstance(value, str) else SDC.INT32, value)
-            parent.add(HC.DFTAG_NDG, dataset.ref())
+                dataset.attr(key).set(sdc.CHAR8 if isinstance(value, str) else sdc.INT32, value)
+            parent.add(hc.DFTAG_NDG, dataset.ref())
             dataset.endaccess()
 
         def text(parent, name, value):
-            dataset = sd.create(name, SDC.CHAR8, len(value))
+            dataset = sd.create(name, sdc.CHAR8, len(value))
             dataset[:] = value
-            parent.add(HC.DFTAG_NDG, dataset.ref())
+            parent.add(hc.DFTAG_NDG, dataset.ref())
             dataset.endaccess()
 
         run = groups.create("run")
         run._class = "NXentry"
         text(run, "analysis", "muonTD")
         text(run, "title", "Original acceptance counts")
-        number(run, "number", [4452], SDC.INT32)
+        number(run, "number", [4452], sdc.INT32)
         hist = groups.create("histogram_data_1")
         hist._class = "NXdata"
         number(
             hist,
             "counts",
             counts,
-            SDC.INT32,
+            sdc.INT32,
             (("t0_bin", 3), ("first_good_bin", 4), ("last_good_bin", 19)),
         )
-        number(hist, "corrected_time", (np.arange(20) - 2) * 0.125, SDC.FLOAT64)
-        number(hist, "resolution", [125000], SDC.INT32, (("units", "picoseconds"),))
-        number(hist, "time_zero", [0.3125], SDC.FLOAT64, (("units", "microseconds"),))
-        number(hist, "grouping", [1, 2], SDC.INT32)
+        number(hist, "corrected_time", (np.arange(20) - 2) * 0.125, sdc.FLOAT64)
+        number(hist, "resolution", [125000], sdc.INT32, (("units", "picoseconds"),))
+        number(hist, "time_zero", [0.3125], sdc.FLOAT64, (("units", "microseconds"),))
+        number(hist, "grouping", [1, 2], sdc.INT32)
         run.insert(hist)
         hist.detach()
         run.detach()

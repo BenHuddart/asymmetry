@@ -440,3 +440,183 @@ def test_windows_environment_lookup_uses_case_insensitive_owner(monkeypatch):
     assert "developer-rescue" not in result["PATH"]
     assert "System32" in result["PATH"]
     assert "Windows" in result["PATH"]
+
+
+@pytest.mark.parametrize("escape", [False, True])
+def test_entry_accepts_macos_bundle_resource_symlinks_and_rejects_escape(tmp_path, inputs, escape):
+    app = tmp_path / "Asymmetry.app"
+    frameworks = app / "Contents/Frameworks"
+    resources = app / "Contents/Resources"
+    executable = app / "Contents/MacOS/Asymmetry"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    frameworks.mkdir()
+    resources.mkdir()
+    (resources / "asymmetry/resources").mkdir(parents=True)
+    shutil.copyfile(
+        ROOT / "src/asymmetry/resources/logo_256x256.png",
+        resources / "asymmetry/resources/logo_256x256.png",
+    )
+    # The delivered macOS inventory places pure-Python package data in Resources.
+    (frameworks / "asymmetry").symlink_to("../Resources/asymmetry", target_is_directory=True)
+    expected = identity()
+    expected["target"] = "layout-regression"
+    (frameworks / "build-identity.json").write_text(json.dumps(expected))
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import importlib,sys\nfrom pathlib import Path\n"
+        "from asymmetry.gui.scientific_acceptance import scientific_journey\n"
+        "from asymmetry.gui.utils.plot_export_data import PlotExportData\n"
+        "import PySide6.QtGui, PySide6.QtCore\n"
+        "from asymmetry.core.project import load_prepared_project\n"
+        "from asymmetry.core.representation import FitSlot\n"
+        "from asymmetry.core.workflow.reduction import reduce_run\n"
+        "import pyhdf.SD, pyhdf.hdfext, iminuit._core, awkward_cpp, uproot, scipy\n"
+        f"root=Path({str(frameworks)!r})\n"
+        "names=('asymmetry','asymmetry.core.io.root','asymmetry.core.io.hdf4','numpy','scipy','uproot','awkward','awkward_cpp','pyhdf.SD','pyhdf.hdfext','pyhdf._hdfext','iminuit','iminuit._core')\n"
+        "for name in names:\n"
+        "    module=importlib.import_module(name)\n"
+        "    module.__file__=str(root/Path(*name.split('.'))/'__init__.py') if name=='asymmetry' else str(root/Path(*name.split('.')).with_suffix('.py'))\n"
+        + (
+            f"import numpy; numpy.__file__={str(tmp_path / 'developer/numpy.py')!r}\n"
+            if escape
+            else ""
+        )
+        + f"sys.executable={str(executable)!r}\n"
+        "sys.frozen=True\nsys._MEIPASS=str(root)\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    if escape:
+        with pytest.raises(RuntimeError):
+            run_acceptance(
+                [sys.executable, "-B", str(bootstrap)],
+                inputs,
+                expected,
+                tmp_path / "run",
+                environment=source_environment(),
+            )
+        report = json.loads((tmp_path / "run/outcome.json").read_text())["report"]
+        assert report["failure"]["stage"] == "origins"
+        return
+    result = run_acceptance(
+        [sys.executable, "-B", str(bootstrap)],
+        inputs,
+        expected,
+        tmp_path / "run",
+        environment=source_environment(),
+    )
+    assert result["report"]["origins"]["asymmetry"].startswith("Contents/Resources/")
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_entry_imports_lazy_required_dependencies_before_checking_origins(
+    tmp_path, inputs, available
+):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import sys\nfrom asymmetry.gui import scientific_acceptance as acceptance\n"
+        "original=acceptance.scientific_journey\n"
+        "def journey(*args):\n"
+        "    result=original(*args)\n"
+        + (
+            "    sys.modules.pop('awkward_cpp',None)\n"
+            if available
+            else "    sys.modules['awkward_cpp']=None\n"
+        )
+        + "    return result\n"
+        "acceptance.scientific_journey=journey\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    args = ([sys.executable, "-B", str(bootstrap)], inputs, identity(), tmp_path / "run")
+    if available:
+        outcome = run_acceptance(*args, environment=source_environment())
+        assert outcome["report"]["origins"]["awkward_cpp"] == "awkward_cpp"
+    else:
+        with pytest.raises(RuntimeError):
+            run_acceptance(*args, environment=source_environment())
+        outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+        assert outcome["report"]["failure"] == {"stage": "origins", "type": "ModuleNotFoundError"}
+    for name in ("counts.root", "counts.nxs"):
+        assert outcome["report"]["results"][name]["fit_percent"] == pytest.approx(20, abs=1e-5)
+        assert outcome["report"]["results"][name]["replay_fraction"] == pytest.approx([0.2] * 16)
+
+
+def test_entry_retains_project_failure_message_with_owned_spaced_root_redacted(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import asymmetry.core.project as persistence\n"
+        "def reject(project):\n"
+        "    raise ValueError(f'deliberate project replay diagnostic at {project}')\n"
+        "persistence.load_prepared_project=reject\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    work = tmp_path / "private root" / "run"
+    with pytest.raises(RuntimeError):
+        run_acceptance(
+            [sys.executable, "-B", str(bootstrap)],
+            inputs,
+            identity(),
+            work,
+            environment=source_environment(),
+        )
+    outcome = json.loads((work / "outcome.json").read_text())
+    assert outcome["report"]["failure"] == {"stage": "counts.root:reload", "type": "ValueError"}
+    assert outcome["launcher_output_tail"].splitlines() == [
+        "ValueError: deliberate project replay diagnostic at <path>"
+    ]
+    assert str(tmp_path) not in json.dumps(outcome)
+
+
+def test_entry_retains_authoritative_source_verification_failure_facts(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "from dataclasses import replace\n"
+        "import asymmetry.core.project as persistence\n"
+        "verify=persistence.verify_project_sources\n"
+        "def unreadable(*args,**kwargs):\n"
+        "    result=verify(*args,**kwargs)\n"
+        "    return replace(result,facts=tuple(replace(f,status='unreadable',observed=None,diagnostic='deliberate verification fault') for f in result.facts))\n"
+        "persistence.verify_project_sources=unreadable\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    with pytest.raises(RuntimeError):
+        run_acceptance(
+            [sys.executable, "-B", str(bootstrap)],
+            inputs,
+            identity(),
+            tmp_path / "run",
+            environment=source_environment(),
+        )
+    outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+    assert outcome["report"]["failure"] == {"stage": "counts.root:reload", "type": "ValueError"}
+    tail = outcome["launcher_output_tail"]
+    assert "unreadable" in tail and "deliberate verification fault" in tail
+    assert "active=True" in tail and "observed=unknown" in tail
+    assert "expected=" + outcome["report"]["fixtures"]["counts.root"] in tail
+    assert str(tmp_path) not in json.dumps(outcome)
+
+
+def test_entry_project_replay_uses_consistent_descriptor_timestamp_semantics(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "from pathlib import Path\nfrom types import SimpleNamespace\n"
+        "import asymmetry.core.utils.content as content\n"
+        "class BirthTimePath(type(Path())):\n"
+        "    def stat(self,*args,**kwargs):\n"
+        "        value=super().stat(*args,**kwargs)\n"
+        "        return SimpleNamespace(st_dev=value.st_dev,st_ino=value.st_ino,st_size=value.st_size,st_mtime_ns=value.st_mtime_ns,st_ctime_ns=value.st_ctime_ns-1000)\n"
+        "content.Path=BirthTimePath\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    outcome = run_acceptance(
+        [sys.executable, "-B", str(bootstrap)],
+        inputs,
+        identity(),
+        tmp_path / "run",
+        environment=source_environment(),
+    )
+    assert outcome["report"]["success"]
+    for name in ("counts.root", "counts.nxs"):
+        result = outcome["report"]["results"][name]
+        assert result["fit_percent"] == pytest.approx(20, abs=1e-5)
+        assert result["replay_fraction"] == pytest.approx([0.2] * 16)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import shutil
@@ -78,6 +79,16 @@ def runtime_identity() -> dict:
         timeout=10,
     ).stdout.strip()
     return {"version": __version__, "source_commit": commit, "target": "source"}
+
+
+def frozen_payload_root() -> Path:
+    """Bound resolved imports to the delivered app, including macOS resource links."""
+    root = Path(sys.executable).resolve().parent
+    if root.name == "MacOS" and root.parent.name == "Contents":
+        root = root.parent.parent
+    if not Path(sys._MEIPASS).resolve().is_relative_to(root):
+        raise ValueError("frozen loader directory escaped delivered application")
+    return root
 
 
 def check_array(actual, expected, *, export=False):
@@ -219,7 +230,22 @@ def scientific_journey(path: Path, root: Path, stage) -> dict:
     prepared = load_prepared_project(project)
     verified = verify_project_sources(prepared, project)
     if not verified.facts or any(fact.status != "matched" for fact in verified.facts):
-        raise ValueError("saved project source content did not verify")
+        details = []
+        for fact in verified.facts:
+            expected = (
+                fact.source.expected.sha256 if fact.source.expected is not None else "unknown"
+            )
+            observed = fact.observed.sha256 if fact.observed is not None else "unknown"
+            owner = fact.source.owner
+            details.append(
+                f"role={fact.source.role} owner={owner.address if owner is not None else 'unknown'} "
+                f"active={owner.active if owner is not None else False} status={fact.status} "
+                f"expected={expected} observed={observed} diagnostic={fact.diagnostic}"
+            )
+        raise ValueError(
+            f"saved project source content did not verify ({len(verified.facts)} facts): "
+            + "; ".join(details)
+        )
     application = apply_source_decisions(verified)
     reloaded = load(application.dataset_paths()[run.run_number])
     sample = application.input_for(("datasets", 0))
@@ -353,9 +379,10 @@ def main(arguments: list[str]) -> int:
             "iminuit._core",
         )
         origins = {}
-        payload = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else None
+        payload = frozen_payload_root() if getattr(sys, "frozen", False) else None
         for name in names:
-            origin = Path(sys.modules[name].__file__).resolve()
+            module = importlib.import_module(name)
+            origin = Path(module.__file__).resolve()
             if payload is not None and not origin.is_relative_to(payload.resolve()):
                 raise ValueError("scientific import escaped delivered payload")
             origins[name] = str(origin.relative_to(payload.resolve())) if payload else name
@@ -364,6 +391,7 @@ def main(arguments: list[str]) -> int:
         report["success"] = True
         stage("complete")
     except Exception as exc:
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         report["stage_outcomes"][report["stages"][-1]] = "failed"
         report["failure"] = {"stage": report["stages"][-1], "type": type(exc).__name__}
         (root / "result.json").write_text(

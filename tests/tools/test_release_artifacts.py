@@ -1,6 +1,7 @@
 """Production release record generation and verification with synthetic bundles."""
 
 import json
+import plistlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -153,6 +154,7 @@ def build(tmp_path, monkeypatch):
                 (destination / "Asymmetry.exe").write_bytes(b"stale executable")
             return ""
         if Path(command[0]).name == "unins000.exe":
+            shutil.rmtree(Path(command[0]).parent)
             return ""
         return original_run(command, cwd, **kwargs)
 
@@ -365,11 +367,27 @@ def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypa
     root, bundle, _, _, _, _ = build
     (root / "build/dmg-bg.png").write_bytes(b"background pixels")
     commands = []
+    mounted = set()
+    monkeypatch.setattr(Path, "is_mount", lambda path: path in mounted)
 
     def native_runner(command, cwd, **kwargs):
         commands.append(command)
+        if command[1] == "info":
+            return plistlib.dumps(
+                {
+                    "images": [
+                        {
+                            "image-path": str(root / "final.dmg"),
+                            "system-entities": [{"dev-entry": "/dev/disk77"}],
+                        }
+                    ]
+                    if mounted
+                    else []
+                }
+            ).decode()
         if command[1] == "attach":
             mount = Path(command[command.index("-mountpoint") + 1])
+            mounted.add(mount)
             shutil.copytree(bundle, mount / "Asymmetry.app")
             (mount / "Applications").symlink_to("/wrong" if tamper == "link" else "/Applications")
             (mount / ".background").mkdir()
@@ -380,6 +398,9 @@ def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypa
                 (mount / "Asymmetry.app/_internal/build-identity.json").unlink()
             elif tamper == "notice":
                 (mount / "Asymmetry.app/_internal/THIRD_PARTY_LICENSES.md").write_bytes(b"wrong")
+        elif command[1] == "detach":
+            assert command[2] == "/dev/disk77"
+            mounted.clear()
         return ""
 
     monkeypatch.setattr(release, "run", native_runner)
@@ -390,9 +411,10 @@ def test_native_dmg_inspection_binds_payload_and_always_detaches(build, monkeypa
         record = artifacts.inspect_assembled_artifact(root / "final.dmg", bundle, "macos-arm64")
         assert record["additional_resources"][0]["path"] == ".background/picture.png"
         assert str(root) not in json.dumps(record)
-    assert commands[0][1] == "attach"
-    assert "-readonly" in commands[0] and "-nobrowse" in commands[0]
-    assert commands[-1][1] == "detach"
+    attach = next(command for command in commands if command[1] == "attach")
+    assert "-readonly" in attach and "-nobrowse" in attach
+    assert [command[1] for command in commands].count("detach") == 1
+    assert not mounted
 
 
 def test_windows_payload_failure_still_checks_uninstaller(build, monkeypatch):

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -498,3 +501,23 @@ def test_packaged_smoke_cli_waits_and_propagates_failure(tmp_path: Path, exit_co
     )
     assert marker.read_text() == "finished"
     assert (result.returncode == 0) is (exit_code == 0)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_release_command_rejects_unbounded_timeout(tmp_path, timeout):
+    with pytest.raises(ValueError, match="finite and positive"):
+        release.run([sys.executable, "-c", "raise AssertionError"], tmp_path, timeout=timeout)
+
+
+def test_release_command_timeout_kills_and_reaps_owned_child(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        release.run([sys.executable, "-c", "import time;time.sleep(30)"], tmp_path, timeout=0.1)
+    cleanup = json.loads(caught.value.__notes__[0].split(": ", 1)[1])
+    assert cleanup == {"child_reaped": True, "tree_cleanup_exit": 0}
+
+
+def test_release_command_nonzero_status_remains_failure(tmp_path):
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        release.run([sys.executable, "-c", "print('failure');raise SystemExit(7)"], tmp_path)
+    assert caught.value.returncode == 7
+    assert caught.value.output.strip() == "failure"

@@ -87,6 +87,9 @@ Source decisions before restoration
 
 The **Opening Project** worker displays **Verifying project sources…** and remains
 cancellable. Byte-identical sources, including relocated files, continue normally.
+Verification hashes the complete file and compares file identity, size, modification
+time and change time through open handles. A concurrent write or path replacement
+makes the read unavailable.
 Legacy inputs without an expected digest open unverified without a mandatory
 replacement question. Missing or unreadable inputs retain their unavailable state.
 
