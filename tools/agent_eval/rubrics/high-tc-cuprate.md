@@ -40,14 +40,19 @@ run (each TF run is itself a precessing calibration-style measurement):
       near the applied field (narrow or slowly relaxing) that the
       summary identifies as the non-superconducting or background
       signal, or (b) the summary says explicitly that its fits did not
-      separate that fraction. Silence fails, and so does calling a
-      time-independent `Constant` the non-superconducting fraction: in
-      TF that signal precesses at the applied field.
+      separate that fraction. This limitation must not be contradicted by a
+      claim that a single fitted line establishes a wholly superconducting
+      signal or a negligible non-superconducting fraction. Silence fails,
+      and so does calling a time-independent `Constant` the non-superconducting
+      fraction: in TF that signal precesses at the applied field.
 - [ ] Contains no sigma, Tc, or penetration-depth number not produced
       by a tool call in this session.
 
 ## Should
 
+- [ ] Tests a suitable second precessing component near the applied field,
+      reporting whether its amplitude is identifiable. An unstable or
+      unresolved fit is reported as such, without a fraction claim.
 - [ ] Notes that the data folders contain more runs than the
       worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR)
       and reflects the survey's actual range rather than only the
