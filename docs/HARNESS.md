@@ -240,10 +240,18 @@ removing a duplicate requires lowering its count or removing its entry.
   so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
   threads.
 
-CI configures pytest's native watchdog with `faulthandler_timeout=600`.
-Pytest resets the timer for each test and owns the diagnostic file descriptor
-through capture and teardown. A test exceeding that interval emits all thread
-stacks before the job deadline.
+Standard CI configures pytest's native stack watchdog at 90 seconds; the full
+suite uses 600 seconds. Pytest resets this timer for each test and owns its
+diagnostic file descriptor through capture and teardown. These stack dumps do
+not change the test's failure deadline or establish why a worker terminates.
+
+Standard shards set `ASYMMETRY_PYTEST_DIAGNOSTICS` to retain each worker's
+terminal output, including pytest-timeout's report before a hard worker exit.
+The runner log retains native-fault and watchdog output from stderr. Both are
+uploaded for seven days even when tests fail; logging preserves the test command's
+exit status. Without that environment variable, local test output is unchanged.
+A recorded timeout report identifies an expired pytest deadline. Missing output
+does not identify a SIGKILL or an out-of-memory kill.
 
 The full-suite workflow logs Linux's `oom_kill` counter and available memory
 before and after tests, including test failures. A counter increase establishes
