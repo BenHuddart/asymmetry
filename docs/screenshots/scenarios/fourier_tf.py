@@ -124,6 +124,8 @@ class FourierTfScenario(Scenario):
         return window
 
     def settle(self, widget: QWidget) -> None:
+        self._original_ui_scale = widget._ui_manager.ui_scale
+        widget._ui_manager.set_ui_scale(1.2)
         # Bring the Fourier tab of the inspector deck to the front so the
         # screenshot shows the transform's own controls (apodisation,
         # padding, phase, units) — the settings the embedding pages actually
@@ -139,6 +141,10 @@ class FourierTfScenario(Scenario):
         panel = widget._fourier_panel
         panel.findChild(QScrollArea).ensureWidgetVisible(panel._pulse_width_edit, 0, 120)
         _process_events_for(milliseconds=80)
+
+    def teardown(self, widget: QWidget) -> None:
+        widget._ui_manager.set_ui_scale(self._original_ui_scale)
+        super().teardown(widget)
 
 
 # Local import alias kept inside the module to avoid leaking constants from

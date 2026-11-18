@@ -41,11 +41,21 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QKeyEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionFrame,
+    QWidget,
+)
 
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import field_width_for
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 
@@ -74,9 +84,10 @@ class FloatLimitField(QLineEdit):
     decimals:
         Display precision. Defaults to 3 (fit_panel's default).
     minimum_width, maximum_width:
-        Pixel width bounds. ``maximum_width=None`` leaves the field
-        unbounded above (plot_panel/alc_panel do not cap width; fit_panel
-        does, to keep the min/max pair compact on a 13" dock).
+        Pixel width bounds. The default minimum fits a sign, four integer digits,
+        and the configured decimal places at the live UI scale; it also raises
+        a smaller maximum to preserve that text budget. ``maximum_width=None``
+        leaves the field unbounded above.
     value_range:
         ``(minimum, maximum)`` passed to the ``QDoubleValidator`` and used to
         clamp ``setValue``/typed input. Defaults to fit_panel's historical
@@ -101,28 +112,25 @@ class FloatLimitField(QLineEdit):
         value: float = 0.0,
         *,
         decimals: int = 3,
-        minimum_width: int = 56,
+        minimum_width: int | None = None,
         maximum_width: int | None = 88,
         value_range: tuple[float, float] = (-1000.0, 1000.0),
         commit_on_set_value: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._minimum_width = minimum_width
+        self._maximum_width = maximum_width
         self._commit_on_set_value = bool(commit_on_set_value)
         self._decimals = max(0, int(decimals))
         self._value = float(value)
         self._validator = QDoubleValidator(value_range[0], value_range[1], self._decimals, self)
         self._validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.setValidator(self._validator)
-        self.setFont(mono_font(11.0))
         self.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.setClearButtonEnabled(False)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        # A bare QLineEdit sizes to ~17 chars; cap it so a min/max pair stays
-        # compact (fits "-1000.000" with room to spare).
-        self.setMinimumWidth(minimum_width)
-        if maximum_width is not None:
-            self.setMaximumWidth(maximum_width)
+        self._refresh_font()
         # Unset support (see set_unset): once a field has been given an unset
         # placeholder it is "unset-capable", and blank text on it means "no
         # value" rather than a half-finished edit — _normalise_text must then
@@ -137,6 +145,28 @@ class FloatLimitField(QLineEdit):
         # connects first, so an external editingFinished handler reads the
         # already-normalised text via value().
         self.editingFinished.connect(self._normalise_text)
+
+    def _refresh_font(self) -> None:
+        """Reserve the compact numeric budget in the field's current mono font."""
+        self.setFont(mono_font(11.0))
+        minimum = self._minimum_width
+        if minimum is None:
+            option = QStyleOptionFrame()
+            self.initStyleOption(option)
+            sample = self._format(-1000.0)
+            text = QSize(self.fontMetrics().horizontalAdvance(sample) + 4, 0)
+            styled = self.style().sizeFromContents(
+                QStyle.ContentsType.CT_LineEdit, option, text, self
+            )
+            minimum = max(field_width_for(len(sample), self), styled.width())
+        self.setMinimumWidth(minimum)
+        if self._maximum_width is not None:
+            self.setMaximumWidth(max(minimum, self._maximum_width))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._refresh_font()
 
     def _format(self, value: float) -> str:
         return f"{float(value):.{self._decimals}f}"
@@ -249,6 +279,7 @@ class FloatLimitField(QLineEdit):
     def setDecimals(self, decimals: int) -> None:  # noqa: N802 — spinbox-API shim
         self._decimals = int(decimals)
         self._validator.setDecimals(self._decimals)
+        self._refresh_font()
         self.setText(self._format(self.value()))
 
     def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim

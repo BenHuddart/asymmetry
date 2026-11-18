@@ -15,6 +15,7 @@ import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -68,7 +69,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.metrics import char_width, field_width_for
+from asymmetry.gui.styles.metrics import char_width, spin_width_for
 from asymmetry.gui.styles.plots import (
     draw_empty_state_message,
     draw_fit_range_span,
@@ -93,6 +94,7 @@ from asymmetry.gui.widgets.axis_limits import (
     FloatLimitField,
 )
 from asymmetry.gui.widgets.elided_label import ElidedLabel
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
@@ -768,21 +770,15 @@ class PlotPanel(QWidget):
         )
         self._waterfall_delta_field.editingFinished.connect(self._on_waterfall_delta_edited)
 
-        # ── Row 1: frequency-specific controls (surfaceAlt tinted second row) ──
         if self._is_frequency_plot_panel():
             row1_widget = QWidget()
             row1_widget.setObjectName("plotFrequencyRow")
-            # Scope to the container: a bare QWidget selector would cascade
-            # the border/background onto every child label and combo.
             row1_widget.setStyleSheet(
                 f"QWidget#plotFrequencyRow {{ background-color: {tokens.SURFACE_ALT};"
                 f" border-top: 1px solid {tokens.BORDER}; }}"
             )
-            row1 = QHBoxLayout(row1_widget)
+            row1 = FlowLayout(row1_widget)
             row1.setContentsMargins(4, 3, 4, 3)
-            row1.setSpacing(8)
-
-            row1.addWidget(QLabel("X Units:"))
             self._frequency_x_unit_combo = QComboBox()
             self._frequency_x_unit_combo.addItem("Frequency (MHz)", userData="frequency_mhz")
             self._frequency_x_unit_combo.addItem("Field (G)", userData="field_gauss")
@@ -790,9 +786,6 @@ class PlotPanel(QWidget):
             self._frequency_x_unit_combo.currentIndexChanged.connect(
                 self._on_frequency_x_unit_changed
             )
-            row1.addWidget(self._frequency_x_unit_combo)
-
-            row1.addWidget(QLabel("Axis:"))
             self._frequency_axis_mode_combo = QComboBox()
             self._frequency_axis_mode_combo.addItem("Absolute", userData="absolute")
             self._frequency_axis_mode_combo.addItem("Shift (x − x₀)", userData="shift")
@@ -805,9 +798,7 @@ class PlotPanel(QWidget):
             self._frequency_axis_mode_combo.currentIndexChanged.connect(
                 self._on_frequency_axis_mode_changed
             )
-            row1.addWidget(self._frequency_axis_mode_combo)
 
-            row1.addWidget(QLabel("Ref.:"))
             self._frequency_reference_mode_combo = QComboBox()
             self._frequency_reference_mode_combo.addItem("Run field", userData="run")
             self._frequency_reference_mode_combo.addItem("Common", userData="common")
@@ -820,30 +811,19 @@ class PlotPanel(QWidget):
             self._frequency_reference_mode_combo.currentIndexChanged.connect(
                 self._on_frequency_reference_mode_changed
             )
-            row1.addWidget(self._frequency_reference_mode_combo)
 
             self._frequency_reference_spin = NoScrollDoubleSpinBox()
             self._frequency_reference_spin.setRange(0.0, 1_000_000.0)
             self._frequency_reference_spin.setDecimals(2)
             self._frequency_reference_spin.setSuffix(" G")
             self._frequency_reference_spin.setValue(0.0)
-            # Set the mono field font *before* sizing, so field_width_for
-            # measures the font the spin actually renders in (mirrors alc_panel).
-            self._frequency_reference_spin.setFont(mono_font(11.0))
-            self._frequency_reference_spin.setMinimumWidth(
-                field_width_for(8, self._frequency_reference_spin)
-            )
+            self._refresh_frequency_reference_metrics()
+            QApplication.instance().fontChanged.connect(self._refresh_frequency_reference_metrics)
             self._frequency_reference_spin.setEnabled(False)
             self._frequency_reference_spin.editingFinished.connect(
                 self._on_frequency_reference_spin_committed
             )
-            # Arrow clicks and wheel steps fire valueChanged but not
-            # editingFinished until focus leaves, so without this the plot
-            # ignores stepping — commit through a short single-shot debounce
-            # (the fourier_panel settings-debounce idiom). editingFinished
-            # (Enter / focus-out) still commits immediately; the commit is
-            # idempotent so both paths firing for one edit is harmless.
-            # Parented so it dies with the panel.
+            # Steps debounce; focus-out and Enter commit immediately.
             self._frequency_reference_debounce = QTimer(self)
             self._frequency_reference_debounce.setSingleShot(True)
             self._frequency_reference_debounce.setInterval(300)
@@ -853,10 +833,25 @@ class PlotPanel(QWidget):
             self._frequency_reference_spin.valueChanged.connect(
                 self._on_frequency_reference_spin_stepped
             )
-            row1.addWidget(self._frequency_reference_spin)
-
-            row1.addStretch()
+            for label, controls in (
+                ("X Units:", (self._frequency_x_unit_combo,)),
+                ("Axis:", (self._frequency_axis_mode_combo,)),
+                ("Ref.:", (self._frequency_reference_mode_combo, self._frequency_reference_spin)),
+            ):
+                group = QWidget()
+                layout = QHBoxLayout(group)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.addWidget(QLabel(label))
+                for control in controls:
+                    layout.addWidget(control)
+                row1.addWidget(group)
             self._limit_toolbar.addWidget(row1_widget)
+
+    def _refresh_frequency_reference_metrics(self) -> None:
+        self._frequency_reference_spin.setFont(mono_font(11.0))
+        self._frequency_reference_spin.setMinimumWidth(
+            spin_width_for(8, self._frequency_reference_spin)
+        )
 
     def _is_frequency_plot_panel(self) -> bool:
         """Return True when this panel is dedicated to frequency-domain viewing."""

@@ -16,6 +16,9 @@ and under the reconstruction in the MaxEnt panel. Pick a unit, drag a range over
 the line, and the readout updates live; **Send to trend** records the moments of
 every selected run as a trendable series.
 
+**Range from:** and **Range to:** retain three decimal places. Their compact
+numeric fields follow the UI scale so bounds such as ``1918.270`` remain readable.
+
 The current point estimates remain visible while **Calculating approximate
 errors…** is shown. Approximate error calculation runs in the background;
 changing the range, cutoff, unit or active spectrum supersedes pending results.

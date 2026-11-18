@@ -2419,42 +2419,36 @@ class FitTabBase(QWidget):
         text = table.as_tsv() if isinstance(table, FitParameterTable) else table_as_tsv(table)
         QApplication.clipboard().setText(text)
 
-    # ------------------------------------------------------------------
-    # Shared fit-range spinbox pair
-    # ------------------------------------------------------------------
-    def _build_fit_range_fields(self) -> None:
-        """Create and wire the two fit-range spinboxes.
-
-        Populates ``self._fit_range_min_spin`` / ``self._fit_range_max_spin``
-        and connects each ``editingFinished`` to
-        ``self._on_fit_range_spinbox_committed``. The subclass owns the
-        surrounding layout (mid/unit labels and their placement).
-
-        The fields opt into ``commit_on_set_value`` so a programmatic
-        ``setValue`` commits the range to the plot panel (the owner of the
-        fit-range state) exactly as a typed entry does — otherwise a driven
-        value change would display but never reach the fit. The display-mirror
-        (``set_fit_range_display`` -> ``_apply_fit_range_display``) blocks the
-        signal, so echoing the owner's value back stays silent.
-        """
+    def _build_fit_range_fields(self) -> FlowLayout:
+        """Wrap numeric bounds while keeping the coordinate and unit beside the upper bound."""
         self._fit_range_min_spin = FloatLimitField(commit_on_set_value=True)
         self._fit_range_max_spin = FloatLimitField(commit_on_set_value=True)
         self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+        self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
+        self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
+        self._fit_range_unit_label = QLabel("µs")
+        row = FlowLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._fit_range_min_spin)
+        upper = QWidget()
+        layout = QHBoxLayout(upper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        for widget in (
+            self._fit_range_mid_label,
+            self._fit_range_max_spin,
+            self._fit_range_unit_label,
+        ):
+            layout.addWidget(widget)
+        row.addWidget(upper)
+        return row
 
     # ------------------------------------------------------------------
     # Shared Stop / run-controls construction (template-method seam)
     # ------------------------------------------------------------------
     def _build_run_controls(self, tooltip: str) -> None:
-        """Create the shared Stop button (:class:`FitRunControls`).
-
-        Populates ``self._run_controls`` and ``self._stop_btn`` and wires the
-        cancel action to ``self._on_stop_fit`` — which each subclass defines
-        (single vs global/grouped worker selection). The ``tooltip`` differs per
-        tab (single "no result is recorded"; global "no partial result is
-        recorded"), so the subclass passes its own text and owns the
-        ``btn_layout`` placement of ``self._stop_btn``.
-        """
+        """Wire Stop to the tab's cancel handler; the tab owns its tooltip and placement."""
         self._run_controls = FitRunControls(
             button_label="Stop",
             tooltip=tooltip,
