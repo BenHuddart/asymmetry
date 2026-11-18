@@ -561,8 +561,36 @@ def test_entry_retains_project_failure_message_with_owned_spaced_root_redacted(t
         )
     outcome = json.loads((work / "outcome.json").read_text())
     assert outcome["report"]["failure"] == {"stage": "counts.root:reload", "type": "ValueError"}
-    assert (
-        outcome["launcher_output_tail"]
-        == "ValueError: deliberate project replay diagnostic at <path>\n"
+    assert outcome["launcher_output_tail"].splitlines() == [
+        "ValueError: deliberate project replay diagnostic at <path>"
+    ]
+    assert str(tmp_path) not in json.dumps(outcome)
+
+
+def test_entry_retains_authoritative_source_verification_failure_facts(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "from dataclasses import replace\n"
+        "import asymmetry.core.project as persistence\n"
+        "verify=persistence.verify_project_sources\n"
+        "def unreadable(*args,**kwargs):\n"
+        "    result=verify(*args,**kwargs)\n"
+        "    return replace(result,facts=tuple(replace(f,status='unreadable',observed=None,diagnostic='deliberate verification fault') for f in result.facts))\n"
+        "persistence.verify_project_sources=unreadable\n"
+        "from asymmetry.gui.app import main\nmain()\n"
     )
+    with pytest.raises(RuntimeError):
+        run_acceptance(
+            [sys.executable, "-B", str(bootstrap)],
+            inputs,
+            identity(),
+            tmp_path / "run",
+            environment=source_environment(),
+        )
+    outcome = json.loads((tmp_path / "run/outcome.json").read_text())
+    assert outcome["report"]["failure"] == {"stage": "counts.root:reload", "type": "ValueError"}
+    tail = outcome["launcher_output_tail"]
+    assert "unreadable" in tail and "deliberate verification fault" in tail
+    assert "active=True" in tail and "observed=unknown" in tail
+    assert "expected=" + outcome["report"]["fixtures"]["counts.root"] in tail
     assert str(tmp_path) not in json.dumps(outcome)

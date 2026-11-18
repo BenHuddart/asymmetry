@@ -230,7 +230,22 @@ def scientific_journey(path: Path, root: Path, stage) -> dict:
     prepared = load_prepared_project(project)
     verified = verify_project_sources(prepared, project)
     if not verified.facts or any(fact.status != "matched" for fact in verified.facts):
-        raise ValueError("saved project source content did not verify")
+        details = []
+        for fact in verified.facts:
+            expected = (
+                fact.source.expected.sha256 if fact.source.expected is not None else "unknown"
+            )
+            observed = fact.observed.sha256 if fact.observed is not None else "unknown"
+            owner = fact.source.owner
+            details.append(
+                f"role={fact.source.role} owner={owner.address if owner is not None else 'unknown'} "
+                f"active={owner.active if owner is not None else False} status={fact.status} "
+                f"expected={expected} observed={observed} diagnostic={fact.diagnostic}"
+            )
+        raise ValueError(
+            f"saved project source content did not verify ({len(verified.facts)} facts): "
+            + "; ".join(details)
+        )
     application = apply_source_decisions(verified)
     reloaded = load(application.dataset_paths()[run.run_number])
     sample = application.input_for(("datasets", 0))
