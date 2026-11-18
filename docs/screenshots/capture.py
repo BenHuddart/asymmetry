@@ -27,7 +27,7 @@ from pathlib import Path
 # stalls, the watchdog dumps every thread's stack and exits rather than blocking
 # the CI job indefinitely.  ``continue-on-error: true`` on the workflow step
 # means the Sphinx build proceeds even when we exit with a non-zero code.
-_CAPTURE_TIMEOUT_S = 8 * 60  # 8 minutes
+_CAPTURE_TIMEOUT_S = 10 * 60  # 10 minutes
 
 DOCS_DIR = Path(__file__).resolve().parents[1]
 SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios"
