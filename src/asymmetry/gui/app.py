@@ -226,6 +226,11 @@ def _create_splash_screen(app, logo=None):
 def main() -> None:
     mp.freeze_support()
 
+    if "--scientific-acceptance" in sys.argv:
+        from asymmetry.gui.scientific_acceptance import main as acceptance_main
+
+        sys.exit(acceptance_main([arg for arg in sys.argv[1:] if arg != "--scientific-acceptance"]))
+
     global QApplication, ProjectShell
 
     smoke_test = "--smoke-test" in sys.argv
