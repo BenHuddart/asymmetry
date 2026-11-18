@@ -952,6 +952,11 @@ as fitted) and ``plots/fit-<run>.png`` with ``--plot``; it is the quick way to
 check a hand-edited recipe converges on one run before spending a whole series
 on it (see `Hand-editing a recipe`_).
 
+Recorded fixed parameters have zero uncertainty when no error was supplied;
+unavailable fitted errors remain unknown. ``Line spacings:`` and close-pair
+readouts retain central separations when a contributing error is unavailable.
+They omit the uncertainty term in that case and for entirely fixed frequencies.
+
 A relaxation too slow to tell from a constant over the fitted window lets its
 amplitude and ``A_bg`` run off in opposite signs: χ² barely changes as the
 amplitude grows, the rate falls and the background goes negative to cancel it.

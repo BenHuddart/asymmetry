@@ -108,13 +108,13 @@ def run(args: argparse.Namespace) -> None:
             else ""
         )
         errors = [
-            result["uncertainties"][name]
+            result["uncertainties"].get(name)
             for name, value in result["parameters"].items()
             if name.split("_")[0] == "frequency" and abs(value) in pair
         ]
         print(
             f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz, "
-            f"{pair[1] - pair[0]:.4g} ± {math.hypot(*errors):.2g} MHz apart. A split below the "
+            f"{pair[1] - pair[0]:.4g}{_spacing_uncertainty_text(*errors)} MHz apart. A split below the "
             f"FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
             f"fit's{weight} and if it is lower report both frequencies, their separation and "
             f"amplitudes, not a single line. A rate pinned at its bound or a large error flags "
@@ -132,11 +132,7 @@ def run(args: argparse.Namespace) -> None:
             "Line spacings: "
             + "; ".join(
                 f"{high:.6g} − {low:.6g} = {high - low:.4g}"
-                + (
-                    ""
-                    if low_err is None or high_err is None
-                    else f" ± {math.hypot(low_err, high_err):.2g}"
-                )
+                + _spacing_uncertainty_text(low_err, high_err)
                 + " MHz"
                 for (low, low_err), (high, high_err) in zip(lines, lines[1:])
             )
@@ -144,6 +140,14 @@ def run(args: argparse.Namespace) -> None:
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
+
+
+def _spacing_uncertainty_text(*sigmas: float | None) -> str:
+    """Quote separation precision only when all source errors are available."""
+    if any(sigma is None or not math.isfinite(sigma) or sigma < 0 for sigma in sigmas):
+        return ""
+    uncertainty = math.hypot(*sigmas)
+    return f" ± {uncertainty:.2g}" if uncertainty > 0 else ""
 
 
 #: What a run fitted with its background held at zero says about why.

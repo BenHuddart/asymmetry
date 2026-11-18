@@ -10338,10 +10338,10 @@ class MainWindow(QMainWindow):
         Delegates to the shared core helper so the run-batch and grouped-series
         recording paths produce identically shaped ``results_by_run`` entries,
         then stamps the additive provenance keys (``model_name``, ``fit_range``,
-        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
-        cannot source. ``npar`` is the free-parameter count (those carrying a
-        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
-        omitted when unavailable.
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) for series recording.
+        ``npar`` uses the fitted parameter set's free columns,
+        independent of error availability. ``ndof`` comes from the χ² quality
+        block and is omitted when unavailable.
 
         ``extra_flags`` threads engine-only member-quality flags (notably
         ``spurious_reseeded``, which needs the scan trend) into the stored
@@ -10352,7 +10352,6 @@ class MainWindow(QMainWindow):
             confidence=fit_quality_confidence(self._settings),
             extra_flags=extra_flags,
         )
-        uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None
         enrich_summary_provenance(
@@ -10361,7 +10360,7 @@ class MainWindow(QMainWindow):
             fit_range=fit_range,
             timestamp=timestamp,
             provenance=provenance,
-            npar=(len(uncertainties) or None),
+            npar=len(fit_result.parameters.free_parameters),
             ndof=ndof,
         )
         return summary
@@ -10557,7 +10556,6 @@ class MainWindow(QMainWindow):
             if run_label is None:
                 run_label = str(summary.get("run_label") or meta.get("run_label") or row_run_number)
 
-            # Fallback coordinate for older series persisted before T/B was
             # Lazily resolve the browser's *displayed* coordinate (honouring the
             # logged-T/B toggles) — only the legacy path below consults it, so a
             # normal stamped series never pays for the browser lookup + log scan.
@@ -10600,7 +10598,9 @@ class MainWindow(QMainWindow):
             )
 
             values = dict(summary.get("parameters", {}))
-            errors = dict(summary.get("uncertainties", {}))
+            errors = {
+                name: summary.get("uncertainties", {}).get(name, float("nan")) for name in values
+            }
             if collapse_groups:
                 # The collapsed row represents the whole run via one group member,
                 # so drop the per-group nuisance parameters: only the cross-group
@@ -10611,12 +10611,8 @@ class MainWindow(QMainWindow):
                     values.pop(nuisance, None)
                     errors.pop(nuisance, None)
 
-            # Per-member trend gate + advisory quality flags. The gate lives on
-            # the series (D4), so a run trended here and dropped from another
-            # series keeps both answers. ``trend_member_key`` is the key
-            # ``set_trend_excluded`` expects (a synthetic member key for groups,
-            # the run number otherwise), so click-to-exclude routes to the right
-            # member even for a collapsed group row.
+            # The member key routes exclusion to this series, including synthetic
+            # group keys used by collapsed per-run rows.
             trend_member_key = member_key
             include_in_trend = member_key not in series.trend_excluded_runs
             quality_flags = [str(f) for f in (summary.get("quality_flags") or [])]
@@ -10632,9 +10628,8 @@ class MainWindow(QMainWindow):
                     "warnings": list(summary.get("warnings", [])),
                     "computation_revision": summary.get("computation_revision"),
                     "errors": errors,
+                    "covariance": summary.get("covariance"),
                     "custom_values": custom_values,
-                    # Originating fit provenance so the trend panel's exports can
-                    # record the model and per-run goodness of fit.
                     "model_name": summary.get("model_name"),
                     "chi_squared": summary.get("chi_squared"),
                     "reduced_chi_squared": summary.get("reduced_chi_squared"),

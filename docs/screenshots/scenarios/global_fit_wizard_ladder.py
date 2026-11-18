@@ -12,7 +12,8 @@ hop rate ν local, with the anomalous run exempt. The scenario unfolds that
 model's ladder, so the other rungs show beneath it: the earlier ones, where Δ or
 the amplitude is still fitted run by run and trends badly, and the last one,
 which shares ν as well and costs far too much. The strip under the list traces
-ν against temperature for the recommended rung.
+ν against temperature for the recommended rung. Its error bars use marginal
+local-quadratic errors including the shared-parameter contribution.
 
 Seed 58 (the generator's default): every run passes its residual checks, so the
 summary carries the exemption and nothing else. On about half of the seeds one
@@ -33,7 +34,8 @@ class GlobalFitWizardLadderScenario(Scenario):
     name = "global_fit_wizard_ladder"
     description = (
         "Global Fit Wizard Compare step under Best for trending — the sharing "
-        "ladder of a dynamic Kubo–Toyabe model on a synthetic hopping scan, with "
+        "ladder of a dynamic Kubo–Toyabe model on a synthetic hopping scan, "
+        "with marginal errors and "
         "the trace strip for the recommended rung."
     )
     size = (1180, 1000)

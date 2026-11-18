@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep CLI line separations readable when errors are unavailable or frequencies are fixed.
+
 - Avoid high-field alias growth for narrow Lorentzian Kubo–Toyabe field distributions.
 
 - Evaluate Gaussian and Lorentzian strong-collision Kubo–Toyabe at the requested
@@ -53,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stabilise static Gaussian longitudinal-field Kubo–Toyabe at weak fields and
   all width scales, including the shared Gaussian-broadened kernel.
+
+- Report marginal global/local errors and member covariance consistently across
+  global-fit strategies; retain covariance in saved series and keep unavailable
+  derived errors unknown, with diagnostics for covariance and unsupported MINOS.
+- Use the series amplitude envelope for automatic wizard search bounds, preserving
+  supplied bounds and fixed values.
 
 - Verify unchanged Windows acquisition files consistently after writing or copying,
   while retaining concurrent-change and path-replacement checks.
