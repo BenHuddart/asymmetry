@@ -2035,6 +2035,26 @@ precision. Its absolute tolerances are :math:`10^{-7}` for Mantid and
 the separate count-likelihood error-scale difference does not apply. No
 package-wide pull, coverage, or acquisition-chain agreement follows.
 
+Static Gaussian longitudinal-field Kubo–Toyabe
+---------------------------------------------
+
+Asymmetry evaluates the static isotropic Gaussian field average with
+:math:`\Delta` in μs⁻¹ and longitudinal field ``B_L`` in Gauss. The musrfit
+manual's ``statGssKTLF`` uses the same documented formula with Gaussian
+width :math:`\sigma=\Delta` and cyclic frequency
+:math:`f=\gamma_\mu B_L/(2\pi)` in MHz. Independent spin-rotation and
+adaptive-integral checks validate Asymmetry's static kernel at the domains
+listed in :ref:`fit-lf-kubo-toyabe`. Native musrfit 1.12.1 (``708f777b``,
+ROOT 6.40.04) fixed-parameter type-8 checks use 41 adaptive-integral values
+on :math:`0\leq\Delta t\leq5`, unit supplied errors, and packing one.
+The summed squared residuals are :math:`1.20\times10^{-5}` at
+:math:`r=0.06`, :math:`1.25\times10^{-12}` at :math:`r=1`, and
+:math:`2.09\times10^{-10}` at :math:`r=10`. This retains a weak-field
+numerical discrepancy rather than asserting general agreement; independent
+Gaussian spin averages support Asymmetry's result there. The retained
+21-node Gaussian-width average has a distinct broadening limitation described under :ref:`fit-gaussian-broadened-kt`.
+
+
 References
 ----------
 

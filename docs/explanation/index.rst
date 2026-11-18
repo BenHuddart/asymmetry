@@ -12,6 +12,7 @@ documentation.
 
    musr_primer
    conventions
+   numerical_accuracy
    reduction_pipeline
    comparison
    glossary

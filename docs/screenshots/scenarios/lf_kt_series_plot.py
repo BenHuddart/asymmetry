@@ -1,7 +1,7 @@
 """LF Kubo–Toyabe field-decoupling series overlay on Ag polycrystal.
 
 Loads the five-field LF series (B_L = 0, 5, 10, 25, 50 G against Δ=0.39
-μs⁻¹, spanning the textbook decoupling units γ_μB_L/Δ ∈ {0, 1, 2, 5, 10},
+μs⁻¹, spanning approximately γ_μB_L/Δ ∈ {0, 1.1, 2.2, 5.5, 10.9},
 Fig 5.6 of Blundell et al.) and selects all runs so the central plot
 overlays the decoupling progression. The data browser groups them as
 "LF decoupling — Ag" to keep the run table tidy.
@@ -27,7 +27,7 @@ class LfKtSeriesPlotScenario(Scenario):
         window = MainWindow()
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        datasets = make_ag_lf_decoupling()
+        datasets = make_ag_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0, 50.0))
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
