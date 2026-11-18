@@ -125,6 +125,7 @@ jobs:
         run: python -I tools/release_artifacts.py finalize --target macos-arm64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry.app --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg" --label "${{ needs.verify-version.outputs.version }}"
 
       - name: Retain native scientific inputs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: release-science-inputs-macos-arm64
@@ -225,6 +226,7 @@ jobs:
         run: python -I tools/release_artifacts.py finalize --target windows-x64 --commit "$GITHUB_SHA" --bundle dist/Asymmetry --artifact "dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe" --label "${{ needs.verify-version.outputs.version }}"
 
       - name: Retain native scientific inputs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: release-science-inputs-windows-x64

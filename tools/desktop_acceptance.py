@@ -181,6 +181,8 @@ def run_acceptance(
             with log.open("rb") as stream:
                 stream.seek(max(0, log.stat().st_size - 4096))
                 diagnostic = stream.read().decode("utf-8", errors="replace")
+            for owned in (work, work.resolve(), inputs, inputs.resolve()):
+                diagnostic = re.sub(re.escape(str(owned)) + r"[^\r\n'\"]*", "<path>", diagnostic)
             outcome["launcher_output_tail"] = re.sub(
                 r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>]+", "<path>", diagnostic
             )[-4096:]

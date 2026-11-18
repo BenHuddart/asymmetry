@@ -53,6 +53,17 @@ def test_no_status_function_bypasses_the_gate(filename: str) -> None:
                 assert entry["if"] == "always()"
                 assert entry["run"] == "awk '$1 == \"oom_kill\" { print }' /proc/vmstat\nfree -h\n"
                 continue
+            if entry.get("name") == "Retain native scientific inputs":
+                targets = {"build-macos-arm": "macos-arm64", "build-windows": "windows-x64"}
+                assert filename == "release.yml" and job_name in targets
+                assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
+                assert entry["with"] == {
+                    "name": "release-science-inputs-" + targets[job_name],
+                    "path": "${{ runner.temp }}/release-science-inputs-" + targets[job_name],
+                    "if-no-files-found": "error",
+                    "retention-days": 1,
+                }
+                continue
             if entry.get("name") == "Retain native scientific report":
                 assert filename == "release.yml" and job_name == "accept-native"
                 assert entry["if"] == "always()" and entry["uses"] == "actions/upload-artifact@v7"
@@ -490,6 +501,7 @@ def test_clean_native_science_jobs_gate_dispatch_and_publication_without_checkou
         )
         assert identity < source < freeze
         packet = next(step for step in steps if step["name"] == "Retain native scientific inputs")
+        assert packet["if"] == "always()"
         assert packet["with"]["name"].startswith("release-science-inputs-")
         assert packet["with"]["retention-days"] == 1
     report = next(

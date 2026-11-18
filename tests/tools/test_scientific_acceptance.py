@@ -539,3 +539,30 @@ def test_entry_imports_lazy_required_dependencies_before_checking_origins(
     for name in ("counts.root", "counts.nxs"):
         assert outcome["report"]["results"][name]["fit_percent"] == pytest.approx(20, abs=1e-5)
         assert outcome["report"]["results"][name]["replay_fraction"] == pytest.approx([0.2] * 16)
+
+
+def test_entry_retains_project_failure_message_with_owned_spaced_root_redacted(tmp_path, inputs):
+    bootstrap = tmp_path / "entry.py"
+    bootstrap.write_text(
+        "import asymmetry.core.project as persistence\n"
+        "def reject(project):\n"
+        "    raise ValueError(f'deliberate project replay diagnostic at {project}')\n"
+        "persistence.load_prepared_project=reject\n"
+        "from asymmetry.gui.app import main\nmain()\n"
+    )
+    work = tmp_path / "private root" / "run"
+    with pytest.raises(RuntimeError):
+        run_acceptance(
+            [sys.executable, "-B", str(bootstrap)],
+            inputs,
+            identity(),
+            work,
+            environment=source_environment(),
+        )
+    outcome = json.loads((work / "outcome.json").read_text())
+    assert outcome["report"]["failure"] == {"stage": "counts.root:reload", "type": "ValueError"}
+    assert (
+        outcome["launcher_output_tail"]
+        == "ValueError: deliberate project replay diagnostic at <path>\n"
+    )
+    assert str(tmp_path) not in json.dumps(outcome)

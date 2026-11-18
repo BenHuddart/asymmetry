@@ -8,3 +8,6 @@ packaging/release/*.json text eol=lf
 
 # Public notice hashes must agree across native and download-verification jobs.
 THIRD_PARTY_LICENSES.md text eol=lf
+
+# Transported release tools use identical bytes on native and source checkouts.
+tools/*.py text eol=lf

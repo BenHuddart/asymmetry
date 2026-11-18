@@ -329,7 +329,8 @@ must remain unchanged, and all disposable copies must be removed.
 Both native scientific outcomes are required publication ancestors and execute on
 manual dispatch; the publisher remains excluded from dispatch. Separate one-day
 Actions artifacts retain the bounded original inputs and explicit scientific JSON
-reports. They do not extend the fixed public artifact manifests or release assets,
+reports, including partial source reports when preparation fails. Failed source
+proof remains ineligible for native acceptance. They do not extend the fixed public artifact manifests or release assets,
 and raw launcher logs are not uploaded. The independent Linux core-wheel gate and
 all replay, component, payload, download, full-validation, and version gates remain
 required. This diagnostic is a wiring anchor, not instrument, correction,

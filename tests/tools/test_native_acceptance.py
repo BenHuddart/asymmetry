@@ -468,6 +468,10 @@ def test_source_packet_failure_retains_sanitized_real_entry_outcome_before_clean
     assert outcome["report"]["failure"]["stage"] == "identity"
     assert outcome["report"]["failure"]["type"] == "ValueError"
     assert str(tmp_path) not in output
+    retained = native.artifacts.read_json(tmp_path / "packet/source-result.json")
+    assert retained == outcome["report"]
+    with pytest.raises(ValueError, match="incomplete or stale"):
+        native.packet_expectation(tmp_path / "packet", source_preparation)
 
 
 @pytest.mark.parametrize(
@@ -497,3 +501,59 @@ def test_omission_selector_matches_native_origin_paths_to_portable_inventory(
     }
     selected = native.omission_components(components, control, target)
     assert selected == dict(zip(("resource", "backend", "native"), components, strict=True))
+
+
+@pytest.mark.parametrize("autocrlf", ["true", "false"])
+def test_transported_tool_bytes_match_across_native_git_checkout_line_endings(
+    packet, tmp_path, autocrlf
+):
+    shutil.copyfile(ROOT / ".gitattributes", artifacts.ROOT / ".gitattributes")
+    subprocess.run(
+        ["git", "add", ".gitattributes"], cwd=artifacts.ROOT, check=True, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "canonical tool bytes",
+        ],
+        cwd=artifacts.ROOT,
+        check=True,
+        capture_output=True,
+    )
+    checkout = tmp_path / "native-checkout"
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            f"core.autocrlf={autocrlf}",
+            "clone",
+            "--no-local",
+            str(artifacts.ROOT),
+            str(checkout),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    for name in native.TOOLS:
+        assert (checkout / "tools" / name).read_bytes() == (ROOT / "tools" / name).read_bytes()
+
+
+def test_packet_rejects_actual_partial_source_failure_without_complete_mode(packet):
+    directory, identity, _ = packet
+    native.artifacts.write_json(
+        directory / "source-result.json",
+        {
+            "identity": native.source_identity(identity),
+            "success": False,
+            "stages": ["identity", "counts.root:reload"],
+            "failure": {"stage": "counts.root:reload", "type": "ValueError"},
+        },
+    )
+    with pytest.raises(ValueError, match="incomplete or stale"):
+        native.packet_expectation(directory, identity)

@@ -376,6 +376,7 @@ def main(arguments: list[str]) -> int:
         report["success"] = True
         stage("complete")
     except Exception as exc:
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         report["stage_outcomes"][report["stages"][-1]] = "failed"
         report["failure"] = {"stage": report["stages"][-1], "type": type(exc).__name__}
         (root / "result.json").write_text(

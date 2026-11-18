@@ -74,7 +74,10 @@ def prepare_packet(packet: Path, target: str, commit: str) -> None:
             )
         except RuntimeError:
             if (work / "outcome.json").is_file():
-                print(json.dumps(artifacts.read_json(work / "outcome.json"), allow_nan=False))
+                failed = artifacts.read_json(work / "outcome.json")
+                if "report" in failed:
+                    artifacts.write_json(packet / "source-result.json", failed["report"])
+                print(json.dumps(failed, allow_nan=False))
             raise
     artifacts.write_json(packet / "source-result.json", outcome["report"])
 
@@ -115,9 +118,9 @@ def packet_expectation(packet: Path, identity: dict) -> dict:
         raise ValueError("scientific fixture bytes differ from packet record")
     source = artifacts.read_json(packet / "source-result.json")
     if (
-        source["identity"] != source_identity(identity)
+        source.get("success") is not True
+        or source["identity"] != source_identity(identity)
         or source["mode"] != "source"
-        or source["success"] is not True
         or source["stages"][-1:] != ["complete"]
         or source["fixtures"] != fixtures
         or set(source["results"]) != set(FIXTURES)
