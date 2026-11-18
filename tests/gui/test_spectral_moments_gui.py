@@ -394,23 +394,37 @@ def test_real_timer_fires_the_coalesced_cheap_recompute(window, monkeypatch):
 
 
 def test_drag_release_runs_one_bootstrap_and_restores_uncertainty(window, monkeypatch):
+    import threading
+    from collections import Counter
+
+    import asymmetry.gui.moment_tasks as tasks
+
     _activate_fft_spectrum(window, [1])
     widget = window._fourier_panel.moments_widget
     assert widget.is_eligible() is True
 
-    calls = _wrap_spectrum_moments_counter(monkeypatch)
+    gui_thread = threading.get_ident()
+    calls = []
+    original = tasks.spectrum_moments
+
+    def recording(*args, **kwargs):
+        calls.append((kwargs["uncertainty"], threading.get_ident() == gui_thread))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tasks, "spectrum_moments", recording)
 
     for i in range(20):
         window._frequency_plot_panel.moments_window_changed.emit(25.0 + 0.1 * i, 55.0)
     window._dispatch_pending_moments_drag()
-    assert calls == ["none"]
+    assert calls == [("none", True)]
     assert "±" not in widget._value_labels["b_ave"].text()
 
     # Release: cancels any still-pending cheap tick and runs one full bootstrap.
     window._frequency_plot_panel.moments_drag_finished.emit()
     _wait_moments(window)
 
-    assert calls == ["none", "none", "bootstrap"]
+    # Worker entry and the synchronous pending preview can occur in either order.
+    assert Counter(calls) == {("none", True): 2, ("bootstrap", False): 1}
     assert not window._moments_drag_timer.isActive()
     assert "±" in widget._value_labels["b_ave"].text()  # uncertainty is back
 
