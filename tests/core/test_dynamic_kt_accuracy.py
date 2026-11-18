@@ -17,24 +17,10 @@ from asymmetry.core.fitting.models import (
 )
 
 
-def gaussian_renewal(n, width, rate, end):
-    """Scalar trapezoidal Nyström recursion, independent of the production solve."""
-    t = np.linspace(0, end, n)
-    h = t[1]
-    u = width * t
-    f = np.exp(-rate * t) * (1 / 3 + 2 / 3 * (1 - u**2) * np.exp(-(u**2) / 2))
-    result = np.ones(n)
-    for i in range(1, n):
-        result[i] = (f[i] + rate * h * (np.dot(f[1:i], result[i - 1 : 0 : -1]) + f[i] / 2)) / (
-            1 - rate * h / 2
-        )
-    return result
-
-
 @pytest.mark.parametrize("rate", [11.99, 12.01])
 def test_gaussian_former_absolute_rate_switch(rate):
-    coarse = gaussian_renewal(4001, 5, rate, 1)[::40]
-    fine = gaussian_renewal(8001, 5, rate, 1)[::80]
+    coarse = scalar_renewal("gaussian", rate / 5, 0, 5, 4001)[::40]
+    fine = scalar_renewal("gaussian", rate / 5, 0, 5, 8001)[::80]
     assert np.max(np.abs(coarse - fine)) < 1e-6
     actual = dynamic_gaussian_kt(np.linspace(0, 1, 101), 1, 5, rate, 0)
     np.testing.assert_allclose(actual, fine, atol=1e-5, rtol=0)
@@ -208,3 +194,73 @@ def test_dynamic_scalar_shaped_empty_and_zero_width(function):
 def test_dynamic_kt_rejects_nonphysical_rates(function, rate):
     with pytest.raises(ValueError, match="fluctuation rate nu must be finite and >= 0"):
         function(np.arange(3.0), 1, 1, rate, 0)
+
+
+@pytest.mark.parametrize("rate", [1e6, 1e12, 1e20])
+def test_finite_field_lorentzian_fast_limit_retains_cusp(rate):
+    time = np.linspace(0, 5, 101)
+    actual = dynamic_lorentzian_kt(time, 1, 1, rate, 1 / LARMOR_RAD_PER_US_PER_GAUSS)
+    # The Cauchy tail gives the finite 4a/3 limiting rate, independent of field.
+    np.testing.assert_allclose(actual, np.exp(-4 * time / 3), atol=1e-5, rtol=0)
+
+
+@pytest.mark.parametrize("rate", [0.01, 100, 1e20])
+def test_weighted_renewal_preserves_constant_polarisation(rate):
+    from asymmetry.core.fitting.strong_collision import strong_collision_polarisation
+
+    actual = strong_collision_polarisation(np.ones(2049), rate, 0.01, initial_derivative=0.0)
+    np.testing.assert_allclose(actual, 1.0, atol=1e-10, rtol=0)
+
+
+def test_width_curvature_when_future_grid_sample_is_added():
+    time = np.linspace(0, 12, 200)
+    width = 300 / (64 * 12)
+    step = np.finfo(float).eps ** 0.25 * width
+
+    def prediction(value):
+        return dynamic_gaussian_kt(time, 1, value, 1.55, 0)
+
+    base = prediction(width)
+    curvatures = [
+        (prediction(width + h) - 2 * base + prediction(width - h)) / h**2 for h in (step, step / 2)
+    ]
+    assert np.linalg.norm(curvatures[0] - curvatures[1]) < 0.001 * np.linalg.norm(curvatures[1])
+
+
+def lorentzian_published_field_expression(time, width, omega):
+    # Removing the analytic Si term leaves a regular sine-weighted integrand at zero.
+    from scipy.special import sici
+
+    result = []
+    for t in time:
+        if t == 0:
+            result.append(1.0)
+            continue
+        correction = quad(
+            lambda s: np.expm1(-width * s) / s if s else -width,
+            0,
+            t,
+            weight="sin",
+            wvar=omega,
+            epsabs=1e-12,
+            limit=300,
+        )[0]
+        integral = (sici(omega * t)[0] + correction) / omega
+        result.append(
+            1
+            - width / omega * spherical_jn(1, omega * t) * np.exp(-width * t)
+            - (width / omega) ** 2 * (np.exp(-width * t) * np.sinc(omega * t / np.pi) - 1)
+            - width * (1 + (width / omega) ** 2) * integral
+        )
+    return np.array(result)
+
+
+@pytest.mark.parametrize("field", [3000.0, 5000.0])
+def test_lorentzian_high_field_narrow_width_has_no_alias_growth(field):
+    time = np.array([0.0, 0.01, 0.1, 1.0, 5.0, 20.0])
+    width = 0.05
+    expected = lorentzian_published_field_expression(
+        time, width, field * LARMOR_RAD_PER_US_PER_GAUSS
+    )
+    actual = static_lorentzian_kt_lf(time, 1, width, field)
+    np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=0)

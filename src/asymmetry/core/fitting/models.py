@@ -135,7 +135,7 @@ _FIELD_SEED_RATIO = 0.05
 
 #: Muon Larmor angular frequency per Gauss of applied field, in rad/µs — the
 #: ``omega0 = gamma_mu * B_L`` conversion every longitudinal-field line shape
-#: below performs, hoisted so callers can reason about the decoupling window
+#: below performs, hoisted so callers can reason about the decoupling scale
 #: without re-deriving it (≈ 0.0851 rad µs⁻¹ G⁻¹).
 LARMOR_RAD_PER_US_PER_GAUSS: float = (
     2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
@@ -438,19 +438,15 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
                                             / (a^2 + (W - omega0)^2) )
                  - 4 omega0 W ],
 
-    for f(w) = (4a/pi) w^2 / (a^2 + w^2)^2.  Its large-W expansion is
-    (8a/3pi) [1/W^2 - (2a^2 - 2 omega0^2/5)/W^4 + ...]: the 1/W^2 tail is
-    exactly the zero-field density (8a/3pi) W^2/(W^2 + a^2)^2, whose transform
-    is the analytic (2/3)(1 - a t) e^{-a t} carrying the e^{-a t} cusp, and
-    the 1/W^4 term is removed with c4/(W^2 + kappa^2)^2, c4 = 16 a omega0^2
-    / (15 pi), whose transform is (pi c4 / 4 kappa^3)(1 + kappa t) e^{-kappa t}.
-    The remainder is even, O(W^-6), and analytic in the strip |Im W| < a, so
-    the trapezoidal rule on a uniform W grid -- one real FFT, with the grid
-    chosen so its conjugate time step is exactly ``h`` -- converges
-    exponentially in the step (validated against the original quadrature
-    :func:`_lorentzian_lf_lineshape_reference` to that reference's own
-    accuracy, and self-consistent to ~1e-12 under grid refinement).  The
-    constant term is fixed by G(0) = 1.
+    for f(w) = (4a/pi) w^2 / (a^2 + w^2)^2. Its large-W expansion is
+    (8a/3pi) [1/W^2 - (2a^2 - 2 omega0^2/5)/W^4 + ...]. Subtract
+    (8a/3pi) W^2/(W^2+kappa^2)^2 + c4/(W^2+kappa^2)^2,
+    with kappa^2=a^2+omega0^2 and c4=32a omega0^2/(5pi), leaving O(W^-6).
+    The added-back cosine transforms are respectively
+    (2a/3kappa)(1-kappa*t) exp(-kappa*t) and
+    (pi*c4/4kappa^3)(1+kappa*t) exp(-kappa*t). Their field-scaled decay
+    prevents aliases of an artificially subtracted slow zero-field tail.
+    The physical density is unchanged, and G(0)=1 fixes its constant term.
     """
     a = float(a_L)
     w0 = abs(float(omega0))
@@ -458,13 +454,12 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
     if 2 * n > _LOR_LF_FFT_CAP:
         raise ValueError(
             f"Lorentzian-LF grid of {n} points needs a {2 * n}-point spectral FFT, "
-            f"above the {_LOR_LF_FFT_CAP} cap; callers coarsen the grid instead."
+            f"above the {_LOR_LF_FFT_CAP} spectral-work budget; shorten the selected time window."
         )
     t = float(h) * np.arange(n)
-    g_zf = static_lorentzian_kt_zf(t, 1.0, a, 0.0)
-    if n < 2:
-        return np.asarray(g_zf, dtype=float)
-    c4 = 16.0 * a * w0 * w0 / (15.0 * np.pi)
+    if n < 2 or a == 0.0:
+        return np.ones(n, dtype=float)
+    c4 = 32.0 * a * w0 * w0 / (5.0 * np.pi)
     kappa = float(np.hypot(a, w0))
     period = (n - 1) * h + _LOR_LF_ALIAS_MARGIN / a
     n_fft = 1 << int(np.ceil(np.log2(max(2 * n, period / h))))
@@ -485,15 +480,17 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
         0.5 * np.log1p(4.0 * w0 * w[~weak] / (a * a + (w[~weak] - w0) ** 2)) - r
     ) / r**3
     s = 8.0 * a * w * w / (np.pi * total**2) * density_factor
-    s -= (8.0 * a / (3.0 * np.pi)) * w * w / (w * w + a * a) ** 2
+    s -= (8.0 * a / (3.0 * np.pi)) * w * w / (w * w + kappa * kappa) ** 2
     s -= c4 / (w * w + kappa * kappa) ** 2
     # Even extension of length 2 n_fft: [S(0), s_1 .. s_{N-1}, S(W_N) ~ 0,
     # s_{N-1} .. s_1]; S(0) is the tail-subtraction value, the rest vanish at 0.
     ext = np.concatenate(([-c4 / kappa**4], s, [0.0], s[::-1]))
     spectrum = np.fft.rfft(ext).real * (0.5 * d_w)  # cos transform at t_k = k h / 2
     g_delta = spectrum[0 : 2 * n : 2]
-    tail = c4 * (np.pi / (4.0 * kappa**3)) * ((1.0 + kappa * t) * np.exp(-kappa * t) - 1.0)
-    return np.asarray(g_zf + (g_delta - g_delta[0]) + tail, dtype=float)
+    damping = np.exp(-kappa * t)
+    analytic = (2.0 * a / (3.0 * kappa)) * (1.0 - kappa * t) * damping
+    analytic += c4 * (np.pi / (4.0 * kappa**3)) * (1.0 + kappa * t) * damping
+    return np.asarray(1.0 + (g_delta - g_delta[0]) + (analytic - analytic[0]), dtype=float)
 
 
 def _lorentzian_lf_lineshape_reference(
@@ -593,9 +590,8 @@ def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[
     """Cached (uniform grid, line shape) for the static Lorentzian-LF, for interpolation.
 
     The grid step resolves the Larmor oscillation (``_LOR_LF_STATIC_STEP_RAD``
-    of phase per step, never coarser than 0.02 us), so linear interpolation
-    onto the requested times errs by ~1e-4 of the oscillation amplitude at any
-    field; the FFT evaluation costs ~O(n log n) in the grid length.
+    of phase per step, never coarser than 0.02 us). Requested times use cubic
+    interpolation; the FFT evaluation costs ~O(n log n) in the grid length.
 
     Keyed on the exact arguments: a repeated evaluation hits, a perturbed one
     recomputes, so the line shape responds to any finite-difference step.
@@ -632,8 +628,8 @@ def static_lorentzian_kt_lf(
     - ``B_L -> inf`` : decoupling, G -> 1.
 
     The line shape is evaluated by the closed-form spectral density of
-    ``asymmetry.core.fitting.models._lorentzian_lf_uniform`` (accurate to ~1e-6 at any field) on a grid
-    that resolves the Larmor oscillation, linearly interpolated onto the
+    ``asymmetry.core.fitting.models._lorentzian_lf_uniform`` on a grid
+    that resolves the Larmor oscillation, interpolated onto the
     requested times with a cubic spline, and cached per (a_L, B_L, tmax).
     Only exactly zero field selects the analytic zero-field function.
     """
@@ -867,7 +863,7 @@ def dynamic_gaussian_kt(
     elif nu == 0.0:
         gd = longitudinal_field_kubo_toyabe(t, 1.0, width, B_L)
     else:
-        curve = _dynamic_kt_spline("gaussian", width, nu, float(B_L), float(np.abs(t).max()))
+        curve = _dynamic_kt_spline("gaussian", width, nu, abs(float(B_L)), float(np.abs(t).max()))
         gd = curve(np.abs(t))
     out = A0 * np.asarray(gd, dtype=float) + baseline
     return float(out) if t.ndim == 0 else out
@@ -912,7 +908,7 @@ def dynamic_lorentzian_kt(
         lam, weights = _strong_collision_modes(*_lorentzian_kt_zf_realisation(a), nu)
         gd = _exponential_sum(np.abs(t), lam, weights)
     else:
-        curve = _dynamic_kt_spline("lorentzian", a, nu, float(B_L), float(np.abs(t).max()))
+        curve = _dynamic_kt_spline("lorentzian", a, nu, abs(float(B_L)), float(np.abs(t).max()))
         gd = curve(np.abs(t))
     out = A0 * np.asarray(gd, dtype=float) + baseline
     return float(out) if t.ndim == 0 else out

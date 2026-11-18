@@ -2055,6 +2055,30 @@ Gaussian spin averages support Asymmetry's result there. The retained
 21-node Gaussian-width average has a distinct broadening limitation described under :ref:`fit-gaussian-broadened-kt`.
 
 
+Dynamic Kubo–Toyabe
+-------------------
+
+Asymmetry retains the selected Gaussian or Lorentzian strong-collision model
+at the requested fluctuation rate. Independent scalar renewal refinement and
+high-precision inverse-Laplace calculations establish the tested numerical
+domains in :ref:`fit-dynamic-gaussian-kt`. The exact zero-field Lorentzian
+solution remains separate; finite fields retain their field dependence.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) documents ``dynGssKTLF`` and
+``dynExpKTLF`` using cyclic field frequency in MHz. Fixed-parameter native
+checks on six or eight independent normalised observations retain summed
+squared residuals from :math:`9.98\times10^{-10}` to
+:math:`9.86\times10^{-6}` with unit errors and packing one. These are
+recorded numerical differences, not a general pointwise agreement claim.
+Mantid 6.16.1 ``DynamicKuboToyabe`` refinement at Gaussian width 1 μs⁻¹,
+fluctuation rate 2.4 μs⁻¹, and zero field reduces the six-point maximum
+reference difference from 0.00594 at ``BinWidth=0.02`` μs to 0.000295 at
+``BinWidth=0.001`` μs. Fresh processes and a uniform evaluation grid isolate
+each setting. This does not reach :math:`10^{-5}` at the documented minimum
+step. The owning model page records inputs, conventions, and the individual
+comparisons. No native WiMDA dynamic numerical agreement is claimed.
+
+
 References
 ----------
 

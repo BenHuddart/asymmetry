@@ -430,10 +430,9 @@ does not say how much of the field lies along the muon spin:
 - a transverse setpoint, or a run whose field was never recorded, leaves
   ``B_L`` free. It is then seeded at a small positive field rather than at its
   zero lower bound: Minuit cannot start a parameter sitting on a limit, and a
-  zero field has zero Gaussian field derivative by symmetry. The same seed
-  also clears the Lorentzian zero-field shortcut
-  (:math:`\omega_0 < 0.05\,a_L`). Gaussian KT retains smooth weak-field
-  dependence; its seed is a useful starting scale, not a numerical threshold.
+  zero field has zero field derivative by symmetry in both KT families.
+  Gaussian and Lorentzian KT retain smooth weak-field dependence; the seed
+  is a useful positive starting scale, not a numerical threshold.
 
 The zero-field case is the one that used to bite. ``B_L`` was seeded but left
 free, so on a genuine zero-field record it started exactly on its own lower

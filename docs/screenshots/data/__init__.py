@@ -6,6 +6,7 @@ the per-page rationale linking each generator to a textbook archetype.
 
 from .archetypes import (  # noqa: F401
     make_ag_lf_decoupling,
+    make_ag_dynamic_rate_scan,
     make_ag_zf_gkt,
     make_alc_field_scan,
     make_emu_vector,
