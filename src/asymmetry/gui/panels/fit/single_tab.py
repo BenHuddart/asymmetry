@@ -44,6 +44,7 @@ from asymmetry.core.fitting.rrf_offset import (
 )
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
+from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
 from asymmetry.core.pull_refit import CapturedPullFit, PullFitInput
 from asymmetry.core.pull_request import pull_model_unavailable_reason
 from asymmetry.core.representation.base import FitSlot
@@ -98,28 +99,22 @@ from .wizard_cache import WizardCacheEntry, _wizard_response_error
 
 logger = logging.getLogger(__name__)
 
-#: ``QSettings`` prefix under which the Parameters rail persists its chips —
-#: one boolean key per column group, ``fit/single/columns/<group>``.
+#: QSettings prefix for the parameter-column chips.
 COLUMN_GROUPS_SETTINGS_KEY = "fit/single/columns"
 
-#: The Parameters rail, in header order: chip label, the ``FitParameterTable``
-#: column group it drives, whether it starts on, and its hover text. Only
-#: ``Bounds`` rests on — Name·Value·Fix·Min·Max is what fits a ~300 px dock.
+#: Label, table column group, initial visibility, and tooltip.
 _COLUMN_GROUP_CHIPS = (
     ("Bounds", "bounds", True, "Show the Min and Max columns."),
     ("Links", "links", False, "Show the Link and Tie columns."),
     ("Batch", "batch", False, "Show the Batch-role column."),
 )
 
-#: Hand-off labels on the results card. Named so the construction and the
-#: ``action_triggered`` router cannot drift apart.
+#: Shared by card construction and action routing.
 DIAGNOSTIC_ACTION = "Diagnostic…"
 ADD_TO_SERIES_ACTION = "Add to series…"
 SEND_TO_BATCH_ACTION = "Send to Batch →"
 
-#: The saved-fit selector is a handle capped at a character count, like the
-#: Batch tab's series selector: a fit named after its model and window would
-#: otherwise set the dock's width. The full name lives on the tooltip.
+#: Full saved-fit names remain available in tooltips.
 _SAVED_FIT_SELECTOR_MAX_CHARS = 34
 
 
@@ -129,11 +124,8 @@ class SavedFitEntry:
 
     fit_id: str
     name: str
-    #: ``"χ²ᵣ 1.02 · 14:32"``: how the fit went, beside its name in the menu.
     detail: str
-    #: :meth:`FitSlot.identity`, so the row can say what the next Fit will do.
     identity: str
-    #: Why the fit no longer describes its run's data, or ``""`` while it does.
     stale_reason: str = ""
 
 
@@ -174,13 +166,10 @@ class SingleFitTab(FitTabBase):
     )  # (FitResult, fitted_curve, component_curves)
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
-    #: The Saved fits row (single-fit plan D1/D2): open, rename, delete one of
-    #: the bound run's saved fits, or compare them.
     saved_fit_open_requested = Signal(str)
     saved_fit_rename_requested = Signal(str, str)
     saved_fit_delete_requested = Signal(str)
     saved_fit_compare_requested = Signal()
-    #: Forwarded from the Fit Wizard: ``(run numbers, FieldGeometry | None)``.
     field_direction_answered = Signal(object, object)
 
     def __init__(
@@ -193,8 +182,6 @@ class SingleFitTab(FitTabBase):
         self._analysis_history: dict | None = None
         layout = QVBoxLayout(self)
 
-        #: Where the Parameters rail's chip states live. Injectable so a test can
-        #: use a scratch scope (mirrors ``PanelSection`` and ``gui/fit_settings``).
         self._settings = settings if settings is not None else QSettings()
         self._current_dataset: MuonDataset | None = None
         self._fit_blocked = False
@@ -1177,15 +1164,20 @@ class SingleFitTab(FitTabBase):
         n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         # Generate fitted curve for plotting
         t_fit = self._composite_model.time_response.curve_times(t_min, t_max, n_samples)
-        y_fit = self._composite_model.function(t_fit, **param_dict)
+        try:
+            y_fit = self._composite_model.function(t_fit, **param_dict)
 
-        component_curves = self._composite_model.evaluate_components(
-            t_fit,
-            additive_only=True,
-            **param_dict,
-        )
+            component_curves = self._composite_model.evaluate_components(
+                t_fit,
+                additive_only=True,
+                **param_dict,
+            )
+        except EvaluationWorkLimitError as exc:
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
+            return
 
-        # Create a dummy result object for preview (not a real fit)
+        self._results_card.set_message("Previewing the current parameter values.", tag="Preview")
+
         preview_result = object()
         self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 

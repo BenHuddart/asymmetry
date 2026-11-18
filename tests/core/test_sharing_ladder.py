@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
+from asymmetry.core.fitting.global_search import sharing_ladder
 from asymmetry.core.fitting.global_search.sharing_ladder import ADEQUACY_SIGMA
 from asymmetry.core.fitting.likelihood import Objective
 from tests.core.sharing_series import (
@@ -419,17 +420,39 @@ def test_budget_ends_the_climb_before_a_further_parameter() -> None:
     assert series.climb(further=1).rungs[-1].shared == ("A_bg", "A_1", "Delta")
 
 
-def test_rung_that_does_not_converge_is_reported_and_the_ladder_goes_on_without_it() -> None:
-    # Ten evaluations are too few for the background and amplitude rungs here,
-    # and enough for the width's.
-    ladder = hopping_series().climb(max_calls=10)
+def test_rung_that_does_not_converge_is_reported_and_the_ladder_goes_on_without_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fit_rung = sharing_ladder._Series.fit
+    attempted = []
+    failure = "Injected rung-fit failure."
+
+    def fail_scale_rungs(self, form, shared, exempt):
+        attempted.append(shared)
+        rung = fit_rung(self, form, shared, exempt)
+        if shared in (("A_bg",), ("A_1",)):
+            return replace(
+                rung,
+                results_by_run={
+                    run: replace(result, success=False, message=failure)
+                    for run, result in rung.results_by_run.items()
+                },
+            )
+        return rung
+
+    monkeypatch.setattr(sharing_ladder._Series, "fit", fail_scale_rungs)
+    ladder = hopping_series().climb()
     _all_local, background, amplitude, width, hop_rate = ladder.rungs
 
+    assert attempted == [("A_bg",), ("A_1",), ("Delta",), ("Delta", "nu")]
     assert not background.converged and not background.adequate
     assert amplitude.shared == ("A_1",)
     assert not amplitude.converged and not amplitude.adequate
+    for failed in (background, amplitude):
+        assert {result.message for result in failed.results_by_run.values()} == {failure}
     assert width.shared == ("Delta",)
     assert width.converged and width.adequate
+    assert width.results_by_run[1].parameters["Delta"].value == pytest.approx(0.39, abs=0.01)
     assert hop_rate.shared == ("Delta", "nu")
     assert ladder.preselected is width
 

@@ -354,6 +354,7 @@ def _import_scenarios() -> None:
         knight_shift_window,
         lf_kt_global_results,
         lf_kt_series_plot,
+        dynamic_kt_rate_series,
         logbook_view,
         main_window,
         maxent_ybco,

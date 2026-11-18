@@ -197,6 +197,15 @@ A standalone ``LFKuboToyabe`` model is available in the ``MODELS`` registry.
 DynamicGaussianKT
 -----------------
 
+.. image:: /_generated/screenshots/dynamic_kt_rate_series.png
+   :alt: Synthetic Gaussian strong-collision rate sweep at the Ag nuclear-field width
+   :width: 100%
+
+*An imposed rate sweep at Δ = 0.39 μs⁻¹: ν = 0, 0.1, 0.5, 2, and 20 MHz.
+Intermediate fluctuations relax the tail; fast fluctuations narrow the decay.
+These rates illustrate the model, rather than measured Ag diffusion.*
+
+
 The strong-collision (Markovian) dynamic generalisation of the Gaussian
 Kubo–Toyabe function: the static field of width :math:`\Delta` reorients
 stochastically at rate :math:`\nu` — muon hopping, ionic motion, or
@@ -208,9 +217,10 @@ static function :math:`G^{\mathrm{s}}(t)` by the strong-collision relation
    G^{\mathrm{d}}(t) = G^{\mathrm{s}}(t)\,e^{-\nu t}
    + \nu\int_0^t G^{\mathrm{d}}(t-t')\,G^{\mathrm{s}}(t')\,e^{-\nu t'}\,dt' ,
 
-solved on a uniform grid (trapezoidal rule) with the step chosen so the
-result is **grid-independent to better than 0.5 %**; solutions are cached per
-:math:`(\Delta, \nu, B_L, t_{\max})`. This is the standard model for
+solved by exponential-weighted quadratic product integration. The physical
+fluctuation rate is retained at every evaluation: ``Keren`` is an explicitly
+selected approximation, not an automatic high-rate branch. The zero-width
+limit is constant polarisation. This is the standard model for
 extracting a hop/fluctuation rate and its activation energy in metals (Cu)
 and ionic conductors. :math:`\nu \to 0` recovers the static (LF) function;
 :math:`\nu \gg \Delta` approaches exponential decay at rate
@@ -225,9 +235,39 @@ Name       Symbol           Unit   Description
 ``B_L``    :math:`B_L`      G      Applied longitudinal field.
 =========  ===============  =====  ===========================================
 
-In the fast/intermediate regime the analytic :ref:`fit-keren` function is an
-excellent and cheaper alternative. A standalone ``DynamicGaussianKT`` model
-is available in the ``MODELS`` registry.
+For an explicitly chosen approximation in the fast/intermediate regime,
+consider :ref:`fit-keren`; it is a different function and does not inherit
+the full renewal model's numerical target. A standalone ``DynamicGaussianKT``
+model is available in the ``MODELS`` registry.
+
+The normalised dynamic evaluation targets absolute numerical error
+:math:`\leq10^{-5}` before amplitude and baseline
+(:doc:`/explanation/numerical_accuracy`). Independent scalar renewal solves
+with grid refinement and high-precision inverse-Laplace evaluations check
+both dynamic families at :math:`\nu/\mathrm{width}=0.01,0.1,1,2.4,10,100`
+and :math:`\omega_0/\mathrm{width}=0,0.06,1,10`. The Laplace matrix samples
+:math:`\mathrm{width}\,t=0,0.05,0.2,1,2,5`; high-rate cases and selected
+slow/high-field cases also sample 8 and 20. Widths 0.05, 0.4, 1, and 5 μs⁻¹
+and both field signs reproduce the same scaled curves within this target.
+These checks establish numerical evaluation on the tested domain, not fit
+convergence or statistical coverage.
+
+.. dropdown:: Renewal quadrature and smooth parameter perturbations
+
+   The factor :math:`e^{-\nu t'}` is integrated in each interval rather than
+   sampled by a direct trapezoidal rule. Quadratic interpolation of the
+   unknown dynamic polarisation gives a causal Toeplitz system; its first
+   two steps use a refined linear product integration. This preserves a
+   constant static kernel and avoids spurious high-rate growth. Coarse and
+   half-step solutions remove the leading stiff-limit error.
+
+   The step varies continuously with field and width. Adding samples at the
+   future end of the window keeps existing nodes in place. Padding and cubic
+   interpolation keep the requested times clear of the remote interpolation
+   boundary. The static spline preserves its known initial derivative:
+   zero for Gaussian fields, and :math:`-4a_L/3` for Lorentzian fields.
+   Nearby-parameter tests check numerical second derivatives as well as
+   curve values, because small value errors can otherwise bias fit curvature.
 
 **References**
 
@@ -249,10 +289,11 @@ The zero-field static limit is the analytic Lorentzian Kubo–Toyabe,
    G^{\mathrm{s}}(t) = \tfrac{1}{3} + \tfrac{2}{3}(1 - a_L t)\,e^{-a_L t},
 
 and in zero field the strong-collision dynamics have an **exact closed
-form**: the static function is a three-state linear system, so the
-strong-collision integral equation reduces to a 3 × 3 eigenproblem and
-:math:`G^{\mathrm{d}}(t)` is a sum of three exponentials, valid at every
-rate with no integration grid, cache, or fast-fluctuation crossover. Unlike
+form**: the rational Laplace transform of the static function gives one
+real pole and a conjugate pair. The real pole is bracketed in scaled
+coordinates, and the pair is evaluated with cosine and sinc functions.
+This retains the exact strong-collision solution at very large rate-to-width
+ratios and near coincident poles, without a fast-fluctuation crossover. Unlike
 the Gaussian case there is no motional narrowing — a Lorentzian distribution
 has no second moment — and the closed form shows the relaxation rate
 saturating at :math:`4a_L/3` for :math:`\nu \gg a_L`.
@@ -269,15 +310,44 @@ Lorentzian distribution as a cosine transform in the total-field magnitude
    \ln\frac{a_L^{2} + (W + \omega_0)^{2}}{a_L^{2} + (W - \omega_0)^{2}}
    - 4\,\omega_0 W\right],
 
-with :math:`\omega_0 = \gamma_\mu B_L`, whose :math:`1/W^{2}` tail is exactly
-the zero-field density (carrying the :math:`e^{-a_L t}` cusp analytically) and
-whose remainder is transformed by one FFT with the frequency step chosen so
-its conjugate time step is the integration grid's. The line shape is accurate
-to ~10⁻⁶ at any field and resolves the Larmor oscillation however long the
-window; the dynamic solution in a field is then the strong-collision solver of
-``DynamicGaussianKT`` on that grid. The field path costs a few times the
-zero-field closed form, so fix :math:`B_L` from the known applied field where
-it is not the quantity of interest.
+with :math:`\omega_0 = \gamma_\mu B_L`. Two rational tail terms with
+scale :math:`\kappa^2=a_L^2+\omega_0^2` are subtracted before the FFT and their
+analytic cosine transforms added back. They retain the original inverse-square
+and inverse-fourth-power tails while resolving high-field oscillations even
+for a narrow distribution. The conjugate time step is the integration grid's.
+At weak field the spectral
+density uses the finite series for
+:math:`[\operatorname{atanh}(q)-q]/q^3`, with
+:math:`q=2\omega_0W/(a_L^2+W^2+\omega_0^2)`, to avoid inverse-field
+cancellation. Only exactly zero field selects the analytic zero-field
+function; finite fields retain smooth field dependence. Independent checks
+also use Uemura's spherical-Bessel time expression.
+
+The dynamic field solution uses the same exponential-weighted renewal method
+and numerical target as ``DynamicGaussianKT``. The requested fluctuation rate
+is retained, including its effect in fast fluctuating fields. The field path
+uses a control difference: the numerical finite-field and zero-field solutions
+share exactly the same grids, startup, and refinement. Their interpolated
+difference is added to the exact zero-field value at each requested time.
+This cancels the discretisation offset as the field tends to zero and retains
+physical field curvature. The field path costs more than the closed form, so fix :math:`B_L` from the
+known applied field where it is not the quantity of interest.
+
+Both dynamic models resolve the distribution width and Larmor frequency on
+causally padded grids. Evaluation stops before allocating a grid requiring
+more than 524,288 fine samples and reports the required count and budget.
+The fit and preview error readout asks users to shorten the selected time
+window or explicitly choose a suitable analytic approximation; no curve is
+silently substituted. For example, 5 kG over 20 μs uses about 273,000 fine
+samples and fits within this budget. Each numerical kernel cache retains at
+most 16 parameter combinations. These are work and memory bounds, not a
+physical rate or width restriction. A wizard seed attempt that exceeds this
+budget is recorded as failed with its diagnostic; the other seed attempts
+continue. Failed candidates have no model or residual curve. A manual fit reports the failure through its normal error readout.
+At the sample limit the dynamic spline
+cache can retain about 320 MiB and the static Lorentzian grid cache about
+128 MiB, in addition to temporary solver arrays. A successful single preview
+replaces the error readout with “Previewing the current parameter values.”
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -366,8 +436,35 @@ weak-field result.
 WiMDA's ``Gau broad KT`` uses the relative-width convention described above;
 no native broadening comparison is asserted here.
 
+For dynamic curves, musrfit 1.12.1 (``708f777b``, ROOT 6.40.04)
+``dynGssKTLF`` and ``dynExpKTLF`` use cyclic field frequency in MHz,
+width in μs⁻¹, and fluctuation rate in μs⁻¹. Fixed-parameter type-8
+checks use unit supplied errors, packing one, and the independent Laplace
+reference times above. The total squared residuals are:
+
+- Gaussian :math:`(\nu/w,\omega_0/w)=(2.4,0)`: 9.86018×10⁻⁶;
+- Gaussian :math:`(100,1)`: 9.97993×10⁻¹⁰;
+- Lorentzian :math:`(2.4,1)`: 6.16668×10⁻⁶;
+- Lorentzian :math:`(100,1)`: 3.42067×10⁻⁸.
+
+Here :math:`w` denotes the corresponding local-field width. The moderate-rate
+checks use six times through :math:`wt=5`; the high-rate checks include 8 and
+20. These numerical discrepancies are retained; they do not establish
+pointwise agreement at :math:`10^{-5}`.
+
+Mantid 6.16.1 ``DynamicKuboToyabe`` was checked in fresh processes on a
+uniform 0–5 μs grid with ``Asym=1``, ``Delta=1``, ``Nu=2.4``, and ``Field=0``.
+On the six common reference times, reducing ``BinWidth`` from 0.02 to 0.005
+to 0.001 μs reduces the largest absolute difference from the independent
+reference from 0.00594 to 0.00148 to 0.000295. This demonstrates refinement,
+but does not reach Asymmetry's :math:`10^{-5}` target at the documented
+minimum step. No native WiMDA dynamic comparison is asserted.
+
+
 **References**
 
 - `musrfit user manual, THEORY block
   <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_.
+- `Mantid DynamicKuboToyabe documentation
+  <https://docs.mantidproject.org/v6.10.0/fitting/fitfunctions/DynamicKuboToyabe.html>`_.
 - D. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).

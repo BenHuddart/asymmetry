@@ -220,3 +220,114 @@ def test_stale_direct_phase_application_keeps_bound_group_and_response(qapp):
         assert tab._composite_model.time_response == active.time_response
     finally:
         tab.close()
+
+
+@pytest.mark.gui
+def test_single_preview_displays_model_work_limit(qapp):
+    from asymmetry.gui.panels.fit.single_tab import SingleFitTab
+
+    tab = SingleFitTab()
+    try:
+        tab.set_dataset(causal_dataset())
+        tab._set_composite_model(CompositeModel(["DynamicGaussianKT"]))
+        for row in range(tab._param_table.rowCount()):
+            name = tab._param_table.item(row, 0).data(256)
+            if name == "B_L":
+                tab._param_table.item(row, 1).setText("1000000")
+        tab._on_preview()
+        assert tab._results_card.tag_text() == "Error"
+        assert "524,288" in tab._results_card.content_html()
+        assert "Shorten" in tab._results_card.content_html()
+        for row in range(tab._param_table.rowCount()):
+            if tab._param_table.item(row, 0).data(256) == "B_L":
+                tab._param_table.item(row, 1).setText("100")
+        tab._on_preview()
+        assert tab._results_card.tag_text() == "Preview"
+        assert "work budget" not in tab._results_card.content_html()
+    finally:
+        tab.close()
+
+
+@pytest.mark.gui
+def test_grouped_tab_preview_emits_curves_for_each_group(
+    qapp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.gui.panels.fit.global_tab import GlobalFitTab
+
+    dataset = causal_dataset()
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    grouped_datasets = [
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([120.0, 110.0, 95.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={
+                "group_id": 1,
+                "grouped_time_domain": True,
+                "run_number": 9001,
+                "run_label": "Forward",
+            },
+            run=dataset.run,
+        ),
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([80.0, 75.0, 70.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={
+                "group_id": 2,
+                "grouped_time_domain": True,
+                "run_number": 9002,
+                "run_label": "Backward",
+            },
+            run=dataset.run,
+        ),
+    ]
+
+    tab = GlobalFitTab(member_kind="groups")
+    monkeypatch.setattr(
+        tab,
+        "_grouped_mode_context",
+        lambda: (grouped_groups, grouped_datasets, "ready"),
+    )
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
+    tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
+
+    emitted: dict[str, object] = {}
+    tab.grouped_preview_requested.connect(
+        lambda datasets, curves: emitted.update({"datasets": datasets, "curves": curves})
+    )
+
+    tab._on_preview_requested()
+
+    assert emitted["datasets"] == grouped_datasets
+    curves = emitted["curves"]
+    assert set(curves) == {9001, 9002}
+    assert curves[9001][0] is not None
+    assert len(curves[9001][1][0]) >= len(grouped_datasets[0].time)
+
+    from asymmetry.core.fitting.strong_collision import EvaluationWorkLimitError
+
+    def oversized_preview(**kwargs):
+        raise EvaluationWorkLimitError("Required samples exceed the work budget.")
+
+    monkeypatch.setattr(tab, "_build_grouped_preview_curves", oversized_preview)
+    emitted.clear()
+    tab._on_preview_requested()
+    assert not emitted
+    assert tab._results_card.tag_text() == "Error"
+    assert "work budget" in tab._results_card.content_html()

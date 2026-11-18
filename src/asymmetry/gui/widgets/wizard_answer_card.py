@@ -321,7 +321,7 @@ class WizardAnswerCard(QWidget):
         assessment = self.selected_assessment()
         show_residuals = self._residuals_toggle.isChecked()
 
-        if show_residuals and assessment is not None:
+        if show_residuals and assessment is not None and assessment.fit_result.success:
             ax_fit = figure.add_subplot(2, 1, 1)
             ax_res = figure.add_subplot(2, 1, 2)
         else:
@@ -346,7 +346,7 @@ class WizardAnswerCard(QWidget):
             color=tokens.PLOT_DATA,
             label="Data",
         )
-        if assessment is not None:
+        if assessment is not None and assessment.fit_result.success:
             if assessment.fitted_time.size:
                 ax_fit.plot(
                     assessment.fitted_time,

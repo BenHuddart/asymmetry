@@ -446,15 +446,16 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "function (with its ⅓ tail in zero field), while ν ≫ Δ gives motional narrowing toward exponential "
         "decay with rate 2Δ²/ν. Set Bₗ for longitudinal-field decoupling studies. This is the standard model "
         "for extracting a hop/fluctuation rate and its activation energy in metals and ionic conductors. "
-        "Computed via the strong-collision integral equation; grid-independent to better than 0.5%."
+        "Computed from the strong-collision renewal equation at the requested rate. The normalized "
+        "numerical target is 1e-5 on the independently tested domains in the Kubo-Toyabe user guide."
     ),
     "DynamicLorentzianKT": (
         "Use instead of the Gaussian dynamic KT when the local-field distribution is Lorentzian rather than "
         "Gaussian, i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with "
         "half-width aₗ fluctuating at rate ν. ν → 0 recovers the static Lorentzian Kubo–Toyabe. Zero field is "
-        "exact (analytic); the longitudinal-field line shape is computed by an analytic angular average "
-        "(≈0.2% accurate for Bₗ ≳ 20 G). See the Kubo-Toyabe page of the fit-function user guide "
-        "for the method and accuracy."
+        "exact (analytic); finite fields use the same strong-collision renewal model without freezing ν. "
+        "The normalized numerical target is 1e-5 on the independently tested domains in the "
+        "Kubo-Toyabe user guide."
     ),
     "Keren": (
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an accurate "
