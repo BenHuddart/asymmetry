@@ -1,12 +1,10 @@
 """Compatibility wrapper for grouped MaxEnt spectral reconstruction.
 
-**There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt fits a
-forward model of the raw detector *counts*, weighting every bin by its own
-Poisson error and carrying per-group phases, amplitudes and backgrounds; an
-asymmetry curve has already combined detectors, divided out the normalisations
-and destroyed exactly those statistics. The frequency-domain estimator for an
-asymmetry curve is :func:`asymmetry.core.fourier.fft.fft_arrays` (or a
-frequency-domain fit). Callers holding counts but no
+Asymmetry's MaxEnt implementation fits a forward model of grouped detector
+*counts*, with count-domain errors, phases, amplitudes and backgrounds. An
+asymmetry curve does not retain those separate group signals and cannot be used
+as input to this algorithm. Use :func:`asymmetry.core.fourier.fft.fft_arrays`
+or a frequency-domain fit for a reduced curve. Callers holding counts but no
 :class:`~asymmetry.core.data.dataset.Run` want
 :func:`~asymmetry.core.maxent.engine.maxent_from_counts`, re-exported here.
 """
@@ -28,13 +26,12 @@ def maxent(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Return a MaxEnt spectrum as ``(frequencies, values)``.
 
-    This preserves the historical Fourier-module import path while delegating
-    to :mod:`asymmetry.core.maxent`.  MaxEnt is a grouped raw-count algorithm;
-    callers passing a :class:`~asymmetry.core.data.dataset.MuonDataset` must provide one with ``dataset.run``.
+    Delegates to :mod:`asymmetry.core.maxent`, which reconstructs a shared
+    spectrum from grouped raw counts. Callers passing a
+    :class:`~asymmetry.core.data.dataset.MuonDataset` must provide ``dataset.run``.
 
-    There is no asymmetry-domain MaxEnt (see the module docstring): an
-    asymmetry curve has destroyed the per-group Poisson statistics the
-    algorithm fits. Use :func:`asymmetry.core.fourier.fft.fft_arrays` for a
+    This implementation requires the separate detector-group signals and their
+    count-domain errors. Use :func:`asymmetry.core.fourier.fft.fft_arrays` for a
     curve, or :func:`~asymmetry.core.maxent.engine.maxent_from_counts` for counts
     without a run.
     """

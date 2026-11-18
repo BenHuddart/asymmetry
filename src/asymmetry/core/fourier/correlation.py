@@ -1,27 +1,16 @@
-"""Muoniated-radical correlation spectrum (WiMDA ``Corr`` / ``AvCorr``).
+"""Muoniated-radical correlation spectrum on a hyperfine-coupling axis.
 
-A muon that adds to a double bond or aromatic ring forms a *muoniated radical*,
-whose muon spin couples to the molecule's unpaired electron with an isotropic
-hyperfine coupling ``A_µ``.  In a transverse field the muon--electron
-(Breit--Rabi) two-spin system precesses as a **pair** of lines whose sum is
-``A_µ`` (Blundell/De Renzi/Lancaster/Pratt, *Muon Spectroscopy*, OUP 2022, §4.4;
-I. McKenzie, *Annu. Rep. Prog. Chem. Sect. C* **109**, 65 (2013)).
+For each candidate isotropic muon--electron coupling, the exact Breit--Rabi
+forward map gives two positive line positions. Interpolating the transverse-field
+spectrum at both positions and combining their amplitudes rewards resolved pairs.
+The signed transition sum equals the coupling; absolute FFT line positions can
+instead have that coupling as their difference after a level crossing.
 
-The correlation spectrum is a matched filter over the transverse-field FFT power
-spectrum that collapses each genuine Breit--Rabi line-pair onto a single peak at
-the hyperfine-coupling value ``A_µ`` -- the standard frequency-domain route to
-identifying a radical and pinning its coupling.
-
-The observable is WiMDA's ``Corr``/``AvCorr`` correlation spectrum, and only
-:func:`corr_fn` follows WiMDA's combiner (``CorrFn``) closely.  The scan differs:
-WiMDA searches for a partner per frequency through its approximate closed-form
-inverse ``rmatch`` (constants rounded at the 5th significant figure, drifting
-``A_µ`` by ~0.01--0.03 MHz), whereas this module walks the coupling with the
-**exact Breit--Rabi forward map** -- scanning the hyperfine axis ``A`` directly and
-obtaining the exact pair
-``(ν₁₂, ν₃₄)`` from :func:`asymmetry.core.fitting.muonium._tf_levels`, for which
-``ν₁₂ + ν₃₄ = A`` to machine precision (textbook eqn 4.65, high transverse
-field).  See ``docs/porting/radical-correlation-spectrum/comparison.md``.
+Sources: M. I. Eides, Phys. Lett. B 795, 113 (2019), eq. (2),
+doi:10.1016/j.physletb.2019.06.011 (signed sum); R. Kadono and T. U. Ito,
+J. Phys. Soc. Jpn. 94, 064601 (2025), eq. (4), doi:10.7566/JPSJ.94.064601
+(isotropic two-spin Hamiltonian). The shared Breit--Rabi levels are in
+:mod:`asymmetry.core.fitting.muonium`.
 """
 
 from __future__ import annotations
@@ -35,20 +24,20 @@ from asymmetry.core.fitting.muonium import (
     _tf_levels,
 )
 
-#: WiMDA's ``CorrOrder`` default.
+#: Default exponent of the line-amplitude ratio penalty.
 DEFAULT_CORR_ORDER = 2
 
 
 def corr_fn(y1: ArrayLike, y2: ArrayLike, order: int = DEFAULT_CORR_ORDER) -> NDArray[np.float64]:
-    """Order-weighted line-pair combiner (follows WiMDA's ``CorrFn``).
+    """Order-weighted line-pair combiner.
 
     Returns the product ``|y₁·y₂|`` weighted by an order-``n`` ratio penalty
     ``2 / (rⁿ + r⁻ⁿ)`` with ``r = |y₁/y₂|``.  The penalty is 1 when the two
     amplitudes are equal and falls toward 0 as they diverge, so a genuine pair
     (both lines present, comparable amplitude) is rewarded and a spurious pair
     (one line in the noise) is suppressed -- increasingly so for larger
-    ``order``.  ``order ≤ 0`` reduces to the plain product ``|y₁·y₂|`` (WiMDA's
-    ``order = 0`` / one-line-zero fallback).
+    ``order``. ``order ≤ 0`` reduces to the plain product ``|y₁·y₂|``; a zero
+    amplitude gives zero for every order.
     """
     a = np.abs(np.asarray(y1, dtype=float))
     b = np.abs(np.asarray(y2, dtype=float))
@@ -57,29 +46,23 @@ def corr_fn(y1: ArrayLike, y2: ArrayLike, order: int = DEFAULT_CORR_ORDER) -> ND
         return product
     # When either amplitude vanishes the ratio penalty diverges and the weighted
     # value is non-finite (inf/nan); falling back to `product` (which is 0 there)
-    # reproduces WiMDA's `else` branch. A diverging-but-finite penalty for a very
-    # unequal pair correctly drives the result toward 0. The divide/overflow are
-    # expected on those paths, so they are silenced rather than warned.
+    # gives zero for a missing partner. A finite penalty for unequal amplitudes
+    # drives the result toward zero; divide/overflow are expected on those paths.
     with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
         weighted = 2.0 * product / (np.power(a / b, order) + np.power(b / a, order))
     return np.where(np.isfinite(weighted), weighted, product)
 
 
 def breit_rabi_pair(field_gauss: float, a_mhz: float) -> tuple[float, float]:
-    """Return the high-field Breit--Rabi pair ``(ν₁₂, ν₃₄)`` in MHz.
+    """Return positive Breit--Rabi line positions ``(ν₁₂, ν₃₄)`` in MHz.
 
-    Thin scalar wrapper over :func:`asymmetry.core.fitting.muonium._tf_levels`
-    (textbook eqn 4.54): for an isotropic muon--electron system with hyperfine
-    coupling ``a_mhz`` at transverse field ``field_gauss`` (Gauss), the two
-    observable high-field precession frequencies are ``ν₁₂ = |E₁−E₂|`` and
-    ``ν₃₄ = |E₃−E₄|``.  In the high-field (Paschen--Back) regime
-    ``a_mhz ≫ (g_e+g_µ)·field`` their sum equals ``a_mhz`` (eqn 4.65); off that
-    regime the sum departs from ``a_mhz`` (the *difference* tends to it instead).
-    What matters for the correlation spectrum is that these are the two
-    *observed* line positions, so a real pair peaks at its true ``a_mhz`` on the
-    coupling axis regardless of regime.  Reuses the shared Breit--Rabi machinery
-    -- the relation is not re-derived here.  :func:`_pair_frequencies` is the
-    array-valued form (pinned equal to this wrapper by tests).
+    For isotropic coupling ``a_mhz`` and field ``field_gauss`` (Gauss), these
+    are ``|E₁−E₂|`` and ``|E₃−E₄|`` from the shared two-spin levels. The signed
+    differences sum to ``a_mhz`` (Eides 2019, eq. (2)); taking absolute
+    values changes this to a difference when ``E₁−E₂`` crosses zero. A high
+    electron Zeeman frequency alone does not guarantee the positive-line sum.
+    The correlation scan uses these exact positions rather than a sum rule.
+    :func:`_pair_frequencies` is the array-valued form.
     """
     _delta, e1, e2, e3, e4 = _tf_levels(float(field_gauss), float(a_mhz))
     return abs(e1 - e2), abs(e3 - e4)
@@ -137,16 +120,15 @@ def correlation_spectrum(
         The transverse-field FFT frequency axis (MHz) and a real, non-negative
         amplitude/power channel (e.g. ``(Power)^1/2``).
     field_gauss
-        The transverse field used for the Breit--Rabi pairing (WiMDA's
-        ``CorrField``); normally the run's applied field.
+        The transverse field used for the Breit--Rabi pairing; normally the
+        run's applied field.
     order
-        ``CorrFn`` ratio-penalty order (default 2).
+        Line-amplitude ratio-penalty order (default 2).
     a_axis
         Optional explicit hyperfine axis (MHz).  When omitted, a uniform axis at
-        the spectrum's frequency resolution is built, bounded above by the field
+        the spectrum's frequency resolution is built, bounded above by the coupling
         for which the upper line ``ν₃₄`` reaches the spectrum's Nyquist
-        frequency (partners beyond the data are unmeasurable -- WiMDA's
-        ``i2 ≤ nf`` guard).
+        frequency; partners beyond the sampled spectrum are unmeasurable.
 
     Returns
     -------
@@ -166,15 +148,9 @@ def correlation_spectrum(
     if resolution <= 0.0 or not np.isfinite(resolution):
         return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
 
-    # The diamagnetic muon line sits at γ_µ·B, and as A → 0 both radical lines
-    # collapse onto it. A candidate is only a genuine radical pair if its *lower*
-    # line ν₁₂ has cleared the diamagnetic line (the upper line is always higher
-    # still); below that the forward map just pairs the strong diamagnetic peak
-    # with itself and raises a spurious low-A artifact. Requiring ν₁₂ above the
-    # diamagnetic line matches WiMDA (which scans candidate frequencies starting
-    # above the diamagnetic line, on a spectrum whose diamagnetic line has been
-    # excluded) and also removes the ν₁₂ → 0 dip
-    # (the lower line buried in DC/baseline).
+    # As A → 0 both lines approach γ_µ·B. Requiring the lower line above
+    # that frequency prevents pairing the diamagnetic peak with itself and
+    # excludes pairs whose lower line is buried in the DC/baseline region.
     diamag_mhz = G_MU_MHZ_PER_G * field
     lower_floor = max(f_min, diamag_mhz + 2.0 * resolution)
 
@@ -186,7 +162,7 @@ def correlation_spectrum(
         # ν₃₄ rises monotonically with A and ν₃₄ ≥ A/2 at high field, so
         # A ≤ 2·ν₃₄ ≤ 2·f_max bounds the scan; keep the contiguous band of
         # couplings whose pair is resolvable (lower line above the diamagnetic
-        # line, upper line within the spectrum's Nyquist — WiMDA's i2 ≤ nf).
+        # line, upper line within the spectrum's Nyquist).
         grid = np.arange(resolution, 2.0 * f_max + resolution, resolution)
         nu12, nu34 = _pair_frequencies(field, grid)
         samplable = resolvable(nu12, nu34)

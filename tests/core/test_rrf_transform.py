@@ -1,6 +1,6 @@
 """Tests for rotating-reference-frame demodulation (core/transform/rrf.py).
 
-Numbered against docs/porting/rrf/verification-plan.md items 1-4.
+Checks frequency shifts, phase, low-pass filtering and propagated errors.
 """
 
 from __future__ import annotations
