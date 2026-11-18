@@ -1,7 +1,7 @@
 """Detector Layout editor: the generic ring for an unknown instrument.
 
-A 16-detector run from an instrument Asymmetry has no layout for opens the
-editor on ``Generic (16 detectors)``: one ring of equal wedges, numbered
+A 64-detector run from an instrument Asymmetry has no layout for opens the
+editor on ``Generic (64 detectors)``: one ring of equal wedges, numbered
 clockwise from the top, with the preset controls disabled. Companion to
 :doc:`/reference/detector_grouping`.
 """
@@ -21,7 +21,7 @@ from ._base import CaptureContext, Scenario, register
 class GenericLayoutScenario(Scenario):
     name = "generic_layout"
     description = (
-        "Detector Layout editor on the generic 16-detector ring offered for an "
+        "Detector Layout editor on the generic 64-detector ring offered for an "
         "instrument Asymmetry has no layout for."
     )
     size = (1100, 640)
@@ -30,8 +30,8 @@ class GenericLayoutScenario(Scenario):
         from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
 
         dialog = DetectorLayoutDialog(
-            generic_layout(16),
-            {1: list(range(1, 9)), 2: list(range(9, 17))},
+            generic_layout(64),
+            {1: list(range(1, 33)), 2: list(range(33, 65))},
             group_names={1: "Forward", 2: "Backward"},
         )
         dialog.resize(*self.size)

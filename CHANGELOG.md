@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Keep unidentified 64- and 96-detector runs on a generic layout and preserve
+  stored grouping choices when instrument recognition is inconclusive.
+
 - Clarify supported approximate comparisons and honest limitations in preliminary
   agent analyses and their evaluation criteria.
 
