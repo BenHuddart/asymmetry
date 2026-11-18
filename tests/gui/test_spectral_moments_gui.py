@@ -357,29 +357,40 @@ def test_drag_burst_defers_and_coalesces_to_one_cheap_recompute(window, monkeypa
     assert widget._value_labels["b_ave"].text() != "—"
 
 
-def test_real_timer_fires_the_coalesced_cheap_recompute(window):
-    """Exercises the actual ``QTimer`` wiring end to end (not a manual dispatch
-    call): a single drag event starts the real 30 ms single-shot timer, and
-    pumping the Qt event loop for a few multiples of that lets it fire on its
-    own, landing exactly one cheap recompute with a live (uncertainty-free)
-    readout — proving ``timeout.connect(self._dispatch_pending_moments_drag)``
-    is actually wired, not just the manually-invoked dispatch method.
-    """
-    from PySide6.QtTest import QTest
+def test_real_timer_fires_the_coalesced_cheap_recompute(window, monkeypatch):
+    """A real timer delivers one cheap result for the latest range in a burst."""
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtTest import QSignalSpy
 
-    _activate_fft_spectrum(window, [1])
+    from asymmetry.core.fourier.units import FieldUnit, convert
+
+    dataset = _activate_fft_spectrum(window, [1])[0]
     widget = window._fourier_panel.moments_widget
     widget.clear_readout()
     assert widget._value_labels["b_ave"].text() == "—"
+    calls = _wrap_spectrum_moments_counter(monkeypatch)
+    timer = window._moments_drag_timer
+    timeout = QSignalSpy(timer.timeout)
+    assert timeout.isValid()
 
-    window._frequency_plot_panel.moments_window_changed.emit(30.0, 50.0)
-    assert window._moments_drag_timer.isActive()
+    for lo in np.linspace(25.0, 30.0, 20):
+        window._frequency_plot_panel.moments_window_changed.emit(float(lo), 50.0)
+    assert timer.isActive()
+    assert timeout.count() == 0
+    assert calls == []
 
-    QTest.qWait(150)  # 5x the 30 ms interval: generous margin under CI load
+    assert timeout.wait(5_000), "The moments drag timer did not deliver its timeout"
+    QCoreApplication.processEvents()
 
-    assert not window._moments_drag_timer.isActive()  # single-shot: fired, not pending
-    assert widget._value_labels["b_ave"].text() != "—"
-    assert "±" not in widget._value_labels["b_ave"].text()  # cheap path: no bootstrap
+    assert not timer.isActive()
+    assert timeout.count() == 1
+    assert calls == ["none"]
+    assert window._frequency_plot_panel._moments_window_mhz == (30.0, 50.0)
+    selected = (dataset.time >= 30.0) & (dataset.time <= 50.0)
+    axis = convert(dataset.time[selected], FieldUnit.MHZ, widget.unit())
+    expected_mean = float(np.average(axis, weights=dataset.asymmetry[selected]))
+    assert widget._value_labels["b_ave"].text() == f"{expected_mean:.4g} G"
+    assert "±" not in widget._value_labels["b_ave"].text()
 
 
 def test_drag_release_runs_one_bootstrap_and_restores_uncertainty(window, monkeypatch):
