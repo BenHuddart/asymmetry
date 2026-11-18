@@ -458,13 +458,10 @@ def _oversampling_correction(
     dict[str, tuple[float, float]] | None,
     str | None,
 ]:
-    """Correct χ²/dof/errors for a zero-padded FFT spectrum's correlated samples.
+    """Apply heuristic scalar padding rescaling, without reconstructing covariance.
 
-    A no-op (returns its inputs unchanged, no advisory) when
-    ``error_oversampling <= 1``. See :meth:`FitEngine.fit`'s docstring for the
-    relations this applies; shared by the single-fit path and both branches of
-    :meth:`FitEngine.global_fit` so every reported statistic is corrected the
-    same way.
+    A no-op when ``error_oversampling <= 1``. Single and global fits retain
+    these numerical relations; this is not a general correlation correction.
     """
     if error_oversampling <= 1.0:
         return chi_squared, reduced_chi_squared, dof, uncertainties, covariance, minos_errors, None
@@ -483,8 +480,8 @@ def _oversampling_correction(
             name: (lower * sqrt_s, upper * sqrt_s) for name, (lower, upper) in minos_errors.items()
         }
     message = (
-        f"Uncertainties and χ² include the ×{sqrt_s:.3g} zero-padding correlation "
-        f"correction (effective samples: 1/{s:g} of the spectrum)."
+        f"Heuristic zero-padding rescaling: errors ×{sqrt_s:.3g}, χ² ÷{s:g}; "
+        "spectral covariance is not recovered and errors can be too small or too large."
     )
     return (
         corrected_chi2,
@@ -1613,7 +1610,7 @@ class FitEngine:
             ``m.fval / s``; reduced chi-squared uses that value and effective dof.
             HESSE/MINOS errors scale by ``sqrt(s)`` and covariance by ``s``;
             fitted parameter values remain unchanged. ``FitResult.warnings``
-            records this approximate correction for correlated observations.
+            records this heuristic; it does not recover covariance or establish coverage.
 
         Returns
         -------
@@ -2202,12 +2199,12 @@ class FitEngine:
             share one fitted value for ``pname`` (a third scope between fully
             global and fully per-dataset). Absent → ``pname`` is per-dataset.
         error_oversampling : float, optional
-            Correction for correlated samples (zero-padded FFT spectra), applied
+            Heuristic scalar padding rescaling (zero-padded FFT spectra), applied
             to every dataset's reported ``chi_squared``/``reduced_chi_squared``/
             ``dof``/``uncertainties``/``covariance``/``minos_errors`` the same
             way as :meth:`fit` — see that method's docstring for the exact
-            relations, the WiMDA precedent, and why fitted parameter values are
-            unaffected. Keyword-only, default ``1.0`` (no correction); pass the
+            relations. This does not recover covariance or establish coverage.
+            Keyword-only, default ``1.0`` (no rescaling); pass the
             common zero-padding factor of the fitted spectra
             (``metadata["fourier_padding"]``), or ``1.0`` for time-domain/count
             fits.
@@ -2685,7 +2682,7 @@ class FitEngine:
         local errors. MINOS is unavailable on this strategy. Warm starts reuse
         the last local solution; input observations are never revalidated.
 
-        Correlation oversampling corrections apply once to reported statistics
+        Heuristic scalar padding rescaling applies once to reported statistics
         and uncertainties after minimization; the inner raw χ² is unchanged.
         """
         try:

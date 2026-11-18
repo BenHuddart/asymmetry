@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fourier.moments import SpectrumMoments
+from asymmetry.core.fourier.uncertainty import MOMENT_UNCERTAINTY_SCOPE
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.gui.styles.widgets import warning_html
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
@@ -72,8 +73,8 @@ _READOUT_HELP: tuple[tuple[str, str], ...] = (
     ),
     (
         "B_ave",
-        "Mean field — the amplitude-weighted average ⟨B⟩ of the distribution p(B). "
-        "Robust; the diamagnetic shift is B_ave relative to the applied field.",
+        "Mean field — the amplitude-weighted average ⟨B⟩ of the selected displayed spectrum. "
+        "The diamagnetic shift is B_ave relative to the applied field; cutoff selection can be unstable.",
     ),
     (
         "⟨B_ave−B_pk⟩",
@@ -82,8 +83,8 @@ _READOUT_HELP: tuple[tuple[str, str], ...] = (
     ),
     (
         "B_rms (vs mean)",
-        "RMS width about the mean — the second central moment of p(B). "
-        "In a type-II mixed state B_rms ∝ 1/λ², the superfluid density.",
+        "RMS width about the mean of the selected displayed spectrum. "
+        "A penetration-depth interpretation also requires a physical line-shape model.",
     ),
     ("B_rms (vs peak)", "RMS width referenced to the peak field rather than the mean."),
     ("Skewness α", "Line asymmetry, WiMDA's cube-root α convention (dimensionless)."),
@@ -101,11 +102,13 @@ def _build_moments_info_html() -> str:
     return (
         "<html><body>"
         "<h2>Spectral moments</h2>"
-        "<p>Statistical moments of the active lineshape-faithful spectrum (MaxEnt or "
+        "<p>Moments of the displayed spectrum (MaxEnt or "
         "phase-corrected FFT), reduced over the chosen <i>range</i> and <i>cutoff</i>. "
         "<b>B</b> moments carry the displayed unit; skewness and asymmetry are dimensionless "
-        "and invariant under the field↔frequency rescaling. Each value shows a 1σ bootstrap "
-        "uncertainty when the spectrum carries errors.</p>"
+        "and invariant under the field↔frequency rescaling. These are selected displayed-"
+        "spectrum quantities, not automatically full physical-distribution moments.</p>"
+        f"<p><b>Approximate errors.</b> {MOMENT_UNCERTAINTY_SCOPE} Bootstrap reselects "
+        "spectral support and peak; first-order propagation holds their indices fixed.</p>"
         f"<table>{rows}</table>"
         "<p><b>Cutoff</b> ignores spectrum below the given fraction of the in-window peak; "
         "<b>Send to trend</b> pushes the current moment set into the trend table.</p>"
@@ -229,6 +232,10 @@ class SpectralMomentsWidget(QGroupBox):
         self._points_label = QLabel("Points: —")
         readout.addWidget(self._points_label, len(_READOUT_ROWS), 0, 1, 2)
         outer.addLayout(readout)
+        self._uncertainty_label = QLabel("Approximate errors")
+        self._uncertainty_label.setToolTip(MOMENT_UNCERTAINTY_SCOPE)
+        self._uncertainty_label.hide()
+        outer.addWidget(self._uncertainty_label)
 
         # ── action + status ──────────────────────────────────────────────
         self._send_btn = QPushButton("Send to trend")
@@ -394,6 +401,7 @@ class SpectralMomentsWidget(QGroupBox):
             if moments is not None:
                 self._points_label.setText("Points: 0 (empty window)")
             return
+        self._uncertainty_label.setVisible(bool(moments.recipe.get("uncertainty_scope")))
         suffix = _UNIT_SUFFIX[self._unit]
         for _label, attr, err_attr in _READOUT_ROWS:
             value = float(getattr(moments, attr))
@@ -404,6 +412,7 @@ class SpectralMomentsWidget(QGroupBox):
         self._points_label.setText(f"Points: {moments.n_sample}{note}")
 
     def clear_readout(self) -> None:
+        self._uncertainty_label.hide()
         for label in self._value_labels.values():
             label.setText("—")
         self._points_label.setText("Points: —")

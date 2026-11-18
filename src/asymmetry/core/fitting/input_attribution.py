@@ -8,6 +8,7 @@ import numpy as np
 from asymmetry.core import computation
 from asymmetry.core.data.reduction_recipe import numerical_recipe
 from asymmetry.core.fitting.likelihood import GaussianObservations, dataset_observations
+from asymmetry.core.fourier.uncertainty import FIT_UNCERTAINTY_SCOPE
 
 
 def fit_input_attribution(observations, dataset=None, *, window=None, error_oversampling=1.0):
@@ -75,6 +76,9 @@ def fit_input_attribution(observations, dataset=None, *, window=None, error_over
         "min": float(support.min()),
         "max": float(support.max()),
         "effective_recipe": recipe.to_dict() if recipe is not None else None,
+        "uncertainty_scope": FIT_UNCERTAINTY_SCOPE
+        if dataset is not None and dataset.metadata.get("plot_domain") == "frequency"
+        else None,
     }
 
 

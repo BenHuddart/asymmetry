@@ -1834,11 +1834,14 @@ gets a sensible window instead of the full Nyquist span. Spectra also default
 to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
 than 2–3 bins wide. Zero padding adds no observations and can change the
 sampled maximum. Padded spectral points are correlated. Frequency-domain fits
-and moment uncertainties apply a conditional effective-sample-size approximation:
-degrees of freedom count the unpadded samples, chi-square is scaled, and
-parameter/moment uncertainties receive the corresponding square-root factor.
-Fit results state this correction in their advisory row. This approximation
-does not recover full spectral covariance or establish coverage. The zero-pad
+and moment errors use heuristic scalar padding rescaling: effective degrees of
+freedom and chi-square are rescaled, and parameter/moment errors receive a
+square-root factor. This can understate or overstate errors; it does not recover
+spectral covariance or establish coverage. **Approximate errors** in the moment
+readout and **Approximate spectral fit errors/statistics** in fit results explain
+that correlations, estimated phase, and upstream/reconstruction uncertainty are
+not fully propagated. See :doc:`spectral_moments` and
+:doc:`frequency_domain_fitting`. The zero-pad
 factor goes up to 64. All of these are first-paint seeds only: your own zoom and settings
 are never overridden.
 
