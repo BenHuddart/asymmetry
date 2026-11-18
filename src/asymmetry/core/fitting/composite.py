@@ -1197,8 +1197,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         fixed_params=("A_hf",),
         latex_equation=(
             r"A(t) = A e^{-\lambda t},\ \ \lambda = "
-            r"\frac{(1-\delta)\,\delta_{ex}^2\,\tau_c}{1+(2\pi\nu_{12}\tau_c)^2},"
-            r"\ \delta=\frac{x}{\sqrt{1+x^2}}"
+            r"\frac{\delta_{ex}^2\,\tau_c}{1+(2\pi\nu_{12}\tau_c)^2}"
         ),
         category="Muonium",
         field_geometries=frozenset({FieldGeometry.LF}),

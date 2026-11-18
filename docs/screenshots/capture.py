@@ -319,6 +319,7 @@ def _import_scenarios() -> None:
         bunching_comparison,
         composite_fractions_dialog,
         composite_models_builder,
+        muonium_lf_component_info,
         data_browser_filter,
         data_browser_groups,
         data_browser_phases,

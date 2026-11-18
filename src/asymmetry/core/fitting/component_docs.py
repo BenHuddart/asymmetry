@@ -351,16 +351,17 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for transverse-field precession in the mixed state of a type-II superconductor, where the muon "
         "samples the inhomogeneous field of the flux-line lattice. The line is non-Gaussian — a sharp "
         "low-field cutoff, a most-probable field below the mean, and a long tail to high field near the "
-        "vortex cores — so a single Gaussian underestimates the second moment and biases the penetration "
-        "depth. This component fits the modified-London lineshape directly and returns the penetration depth "
-        "λ and upper critical field B_c2. Multiply by a Gaussian for nuclear dipolar broadening and add a "
+        "vortex cores. A Gaussian fit can give a window-dependent width for this skewed distribution. "
+        "This component fits an explicit modified-London approximation with a Gaussian core cutoff, "
+        "rescaled to Brandt's second moment. That width agreement does not validate the full lineshape. "
+        "Multiply by a Gaussian for nuclear dipolar broadening and add a "
         "background Oscillatory + Constant for muons stopping outside the sample."
     ),
     "VortexLatticePowder": (
         "Use for a polycrystalline type-II superconductor in the mixed state: the same skewed modified-London "
-        "vortex-lattice line as VortexLattice but with the ab-plane powder average, returning the ab-plane "
-        "penetration depth λ_ab. Prefer it over a single Gaussian for powder penetration-depth work, where "
-        "the skewed line otherwise biases λ_ab high. Multiply by a Gaussian for the nuclear background and "
+        "vortex-lattice approximation as VortexLattice, substituting 3^(1/4) λ_ab. This is a width conversion "
+        "in the highly anisotropic London limit, not an orientation average of the full powder lineshape. "
+        "Multiply by a Gaussian for the nuclear background and "
         "add an Oscillatory + Constant for the sample-holder signal."
     ),
     "MuoniumTF": (
@@ -372,13 +373,17 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
     ),
     "MuoniumLowTF": (
         "Low-field approximation to transverse-field muonium: the two dominant intratriplet Mu⁰ frequencies. "
-        "Use when only the two low-frequency lines are resolved (νB ≪ A_hf); otherwise prefer MuoniumTF."
+        "Use when only the two low-frequency lines are resolved (νB ≪ A_hf); otherwise prefer MuoniumTF. "
+        "At zero phase this selected pair starts at A/2; the ideal full signal includes the omitted transitions."
     ),
     "MuoniumZF": (
         "Use for zero-field muonium with an axially anisotropic hyperfine interaction: three lines at "
         "ν₁ = A_hf − D, ν₂ = A_hf + D/2 and ν₃ = 3D/2, set by the isotropic coupling A_hf and anisotropy D, "
         "with an optional Lorentzian cutoff f_cut suppressing lines beyond the spectrometer bandwidth. There "
-        "is no applied field, so no central diamagnetic line."
+        "is no applied field, so no central diamagnetic line. At zero phase without filtering the three-line "
+        "component starts at 5A/6; adding a further constant A/6 gives the ideal static powder polarization "
+        "for tensor (A_hf − D, A_hf − D, A_hf + 2D). The same tensor uses twice this D in MuoniumHighTFAniso. "
+        "The cutoff is an empirical bandwidth model; the full-polarization identity excludes filtering."
     ),
     "MuoniumHighTF": (
         "Use for transverse-field muonium at high field, B well above B₀ = A_hf/(γe + γµ) (≈ 1585 G for "
@@ -393,29 +398,26 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for high transverse-field muonium with an axially anisotropic hyperfine interaction — "
         "bond-centred muonium in semiconductors or muoniated radicals — measured on a polycrystalline or "
         "powder sample. The hyperfine tensor is written as an isotropic part A_hf plus an axial part D; each "
-        "crystallite shifts the two high-field lines by ±d/2 with d = (D/2)(3cos²θ − 1), and the powder "
-        "average over cosθ produces the characteristic asymmetric (Pake-like) broadening of the pair. D = 0 "
+        "crystallite has tensor principal values (A_hf − D/2, A_hf − D/2, A_hf + D). The exact Hamiltonian "
+        "frequencies are powder averaged, retaining only two lines with equal high-field weights. This is "
+        "not the full polarization at arbitrary field, and finite orientation sampling limits large |Dt|. D = 0 "
         "reduces exactly to MuoniumHighTF. For single crystals fit the orientation-dependent lines directly "
         "with MuoniumTF or Oscillatory components instead."
     ),
     "MuoniumLFRelax": (
-        "Use for the longitudinal-field spin-lattice (T₁) relaxation of muonium when a fluctuating coupling — "
-        "nuclear hyperfine fields modulated by muonium hopping, or electron spin exchange with carriers — "
-        "relaxes the muon spin via the intratriplet ν₁₂ transition. The rate takes the Redfield form "
-        "λ = δ_ex²·τ_c/[1 + (2πν₁₂τ_c)²], with ν₁₂ from the exact Breit–Rabi levels; the field decoupling "
-        "enters solely through ν₁₂(B) moving the spectral density off the fluctuation peak (Kadono PRL 64, "
-        "665 (1990); WiMDA's extra (1 − δ) prefactor is not in that source and is not applied here). "
-        "Measuring λ versus B and locating the T₁ minimum (2πν₁₂τ_c ≈ 1) determines both δ_ex and τ_c, the "
-        "classic route to muonium hop rates. A_hf defaults to vacuum muonium (4463 MHz) and should normally "
-        "be held fixed. This component is a relaxation envelope: multiply an oscillating component, or use it "
-        "standalone for the repolarized muonium fraction."
+        "Use for an intratriplet approximation to muonium T₁ relaxation from fluctuating nuclear hyperfine "
+        "fields, as in muonium self diffusion. The envelope rate is λ = δ_ex²·τ_c/[1 + (2πν₁₂τ_c)²], with "
+        "ν₁₂ from the exact Breit–Rabi levels and δ_ex an angular-rate amplitude in µs⁻¹. It retains the "
+        "dominant low-frequency transition; it is not a general electron spin-exchange model. A separate "
+        "repolarization amplitude multiplies the decay in the measured polarization; this component does "
+        "not calculate it or apply an extra (1 − δ) rate factor. Hold A_hf fixed where independently known."
     ),
     "StretchedExponential": (
         "Use for distributed relaxation-rate environments where a single exponential is insufficient — spin "
         "glasses near freezing, dilute or disordered magnets, and other hosts with broad rate distributions. "
-        "The stretching exponent β captures the breadth of the distribution phenomenologically: β drifting "
-        "from 1 toward ⅓ on cooling through a transition is a canonical signature of glassy freezing, and "
-        "β = ½ arises for dilute static moments in the fast-fluctuation limit."
+        "For 0 < β ≤ 1 the shape admits a positive mixture of exponential rates. For β > 1 it is a "
+        "compressed envelope, including a Gaussian at β = 2, without that rate-mixture interpretation. "
+        "A fitted exponent alone does not identify a microscopic mechanism."
     ),
     "RischKehr": (
         "Use when the muon (or muonium) polarization is relaxed by a spin carrier diffusing in one dimension, "
@@ -423,8 +425,9 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "channel. The 1D random walk keeps returning the carrier to the muon, giving "
         "G(t) = e^(Γt)·erfc(√(Γt)) with a characteristic (πΓt)^(−1/2) long-time tail in place of an "
         "exponential. A stretched-exponential fit returning β near ½ at early times is the usual hint; prefer "
-        "this function when 1D transport is physically motivated. Γ is a rate in µs⁻¹ and must be "
-        "non-negative."
+        "this function when 1D transport is physically motivated. A microscopic interpretation of Γ also "
+        "requires hyperfine, electron-spin-flip and field assumptions; the curve alone does not establish "
+        "1D transport. Γ is a non-negative rate in µs⁻¹."
     ),
     "StaticGKT_ZF": (
         "Use for a static isotropic Gaussian field distribution in zero field. Δ is γµ times the "
@@ -514,9 +517,9 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "oscillations on warming, because the muon hops away from the F–µ–F site or the coupling fluctuates: "
         "the static collinear F–µ–F polarization is dynamicized by the strong-collision model with "
         "fluctuation rate ν. ν = 0 recovers FmuF_Linear exactly; large ν gives motional narrowing toward "
-        "exp(−2ω_d²t/ν). Fitting a temperature series with shared r_µF and free ν extracts the hop rate and "
-        "hence an activation energy for muon diffusion in the fluoride. Assumes the equal-distance collinear "
-        "geometry of FmuF_Linear."
+        "exp(−2ω_d²t/ν). Assumes the equal-distance collinear geometry of FmuF_Linear and independent "
+        "Poisson resets erasing correlations. A fitted reset rate is not automatically a microscopic "
+        "diffusion or irreversible escape rate."
     ),
     "FmuF_Triangle": (
         "Use for fluorides where the muon couples to the two nearest fluorines of an F–µ–F centre and a "
@@ -602,7 +605,10 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
         "Phys. Rev. B 31, 546 (1985).",
         "I. A. Campbell et al., Phys. Rev. Lett. 72, 1291 (1994).",
     ),
-    "RischKehr": ("R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).",),
+    "RischKehr": (
+        "R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).",
+        "M. T. F. Telling and S. H. Kilcoyne, J. Phys.: Condens. Matter 19, 026221 (2007).",
+    ),
     "Bessel": ("L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",),
     "OverhauserPowder": (
         "A. T. Savici et al., Phys. Rev. B 66, 014524 (2002).",
@@ -671,7 +677,7 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
     "MuoniumLFRelax": (
         "R. F. Kiefl et al., Phys. Rev. Lett. 62, 792 (1989).",
         "R. Kadono et al., Phys. Rev. Lett. 64, 665 (1990).",
-        "T. U. Ito and R. Kadono, J. Phys. Soc. Jpn. 94, 064601 (2025).",
+        "R. Kadono and T. U. Ito, J. Phys. Soc. Jpn. 94, 064601 (2025).",
     ),
     "MuF": ("T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",),
     "FmuF_Linear": ("J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",),

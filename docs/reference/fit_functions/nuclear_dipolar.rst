@@ -166,7 +166,14 @@ implanted μ⁺ produces an electric field gradient that quadrupole-splits the
 neighbouring nucleus, so the two-spin spectrum depends on the quadrupolar
 splitting :math:`f_{\mathrm{quad}}` (sign-sensitive) as well as the dipolar
 coupling :math:`f_{\mathrm{dip}}`. The component implements the closed-form
-eigen-solution of Celio and Meier, averaged as
+eigen-solution of the explicitly axial two-spin Hamiltonian
+
+.. math::
+
+   H/h=f_{\mathrm{dip}}(\mathbf S\cdot\mathbf I-3S_zI_z)
+   +f_{\mathrm{quad}}I_z^2,
+
+with both coefficients in MHz, averaged as
 :math:`(P_z + 2P_x)/3` for a polycrystal. Typical applications are
 μ⁺–⁶³Cu (:math:`J = 3/2`) and μ⁺–⁹³Nb (:math:`J = 9/2`) pairs in metals.
 
@@ -175,7 +182,7 @@ Name          Symbol                      Unit   Description
 ============  ==========================  =====  ===============================
 ``A``         :math:`A`                   %      Component asymmetry amplitude.
 ``f_dip``     :math:`f_{\mathrm{dip}}`    MHz    Dipolar coupling frequency.
-``f_quad``    :math:`f_{\mathrm{quad}}`   MHz    Quadrupolar splitting.
+``f_quad``    :math:`f_{\mathrm{quad}}`   MHz    Coefficient of :math:`I_z^2`.
 ``J_spin``    :math:`J`                   —      Nuclear spin (hold fixed).
 ============  ==========================  =====  ===============================
 
@@ -187,6 +194,12 @@ model. Note that the implementation uses the **signed** block mixing angle,
 verified against exact diagonalisation; WiMDA's ``Dip gen ZF PCR`` drops the
 sign and is wrong for every :math:`J > 1/2`, so fitted parameters are not
 comparable with WiMDA for those spins.
+
+The quadrupolar principal axis is assumed collinear with the dipolar axis.
+``f_quad`` is the coefficient in this Hamiltonian, rather than a universal
+nuclear quadrupole resonance frequency; conversion from other quadrupole
+conventions depends on their spin factors. The cited work supplies the
+dipolar/quadrupolar context, while the equation above specifies this variant.
 
 **References**
 
@@ -315,10 +328,16 @@ integration grid, cache, or fast-fluctuation crossover. :math:`\nu = 0`
 recovers ``FmuF_Linear`` exactly; for :math:`\nu \gg \omega_d` the solution
 tends to the motional-narrowing exponential :math:`\exp(-2\omega_d^2
 t/\nu)` with the Abragam-form quadratic onset at short times, and it is
-smooth in :math:`\nu` throughout. Fitting a temperature series with shared
-:math:`r_{\mu F}` and free :math:`\nu` yields the hop rate and hence an
-activation energy for muon diffusion in the fluoride. Assumes the
+smooth in :math:`\nu` throughout. Relating a fitted reset rate or its
+temperature dependence to diffusion requires the microscopic reset assumptions.
+The static kernel assumes the
 equal-distance collinear geometry of ``FmuF_Linear``.
+
+This construction assumes independent Poisson resets that erase correlations
+between successive static evolutions. It is a defined strong-collision
+extension of the collinear kernel; a microscopic hop can retain spin or site
+correlations, so its fitted reset rate is not automatically a diffusion rate
+or an irreversible escape rate.
 
 =========  ==================  =====  ==========================================
 Name       Symbol              Unit   Description

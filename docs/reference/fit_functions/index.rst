@@ -19,8 +19,8 @@ the submenu it lives under in the GUI:
    background
    frequency_domain
 
-Components are *building blocks*: each evaluates a normalised polarisation or
-relaxation shape scaled by its amplitude, and a fittable model is assembled by
+Components are *building blocks*: each evaluates its defined shape, with the
+amplitude convention stated in its section, and a fittable model is assembled by
 combining components with ``+``, ``-``, ``*``, ``/`` and fraction groups in
 the builder (see :doc:`../composite_models`). The two canonical patterns are
 an additive background,
@@ -48,7 +48,16 @@ and relaxation rates in μs⁻¹; phases are in radians. The muon gyromagnetic
 ratio is :math:`\gamma_\mu/2\pi = 135.539` MHz/T. Component notation is kept
 consistent with Blundell, De Renzi, Lancaster and Pratt, *Muon Spectroscopy:
 An Introduction* (Oxford University Press, Oxford, 2022); each function's section
-cites the original literature for its functional form.
+cites the literature supporting its physical assumptions. Elementary envelopes,
+spectral peaks and backgrounds are mathematical definitions; their equations
+and units specify the convention without assigning an original discovery paper.
+An empirical fit shape does not by itself establish a physical mechanism.
+
+Source support for a family is distinct from evidence for an implemented
+variant. Width averaging, selected transition pairs, detector filtering and
+powder approximations carry the limits stated on the owning page. Numerical
+checks apply to their tested parameters and observable, rather than certifying
+an entire physical family; see :doc:`/explanation/numerical_accuracy`.
 
 The builder only offers components belonging to the analysis domain being
 fitted: time-domain representations see the time-domain categories
@@ -63,11 +72,9 @@ Documentation policy
 
 Every fit component must be documented in the page of this chapter that
 corresponds to its category in the component picker, in the same pedagogical
-style: when the model is physically relevant, the mathematical form (rendered
-with LaTeX), parameter table, practical fitting guidance, and APS-style
-references to the original literature. This placement is enforced by
-``tests/test_fit_function_docs.py`` — adding a new component without
-documenting it in the matching page fails the test suite.
+style: the mathematical form (rendered with LaTeX), parameter table, practical
+fitting guidance, physical assumptions and APS-style references where relevant.
+User-defined functions remain the responsibility of their authors.
 
 Migrating from WiMDA
 --------------------
