@@ -67,7 +67,7 @@ def round_trip(tmp_path, profile):
 def test_applied_fit_round_trip(tmp_path, fit_beta):
     result = candidate(fit_beta=fit_beta)
     record = CalibrationRecord("cal-1", result)
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2))
     apply_calibration(profile, record)
     restored = round_trip(tmp_path, profile)
     assert restored.alpha_policy.value == result.alpha
@@ -84,7 +84,7 @@ def test_selection_and_manual_edit_keep_history(tmp_path):
         for i, e in enumerate(TFEnvelope)
     )
     record = CalibrationRecord("selection", TFCalibrationSelection(results))
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2))
     apply_calibration(profile, record)
     profile.alpha_policy = AlphaPolicy(value=1.7)
     restored = round_trip(tmp_path, profile)
@@ -112,7 +112,7 @@ def test_uncertainty_states_and_constraints(tmp_path, status, envelope):
             covariance_accurate=status == "available",
         ),
     )
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("state", result))
     restored = round_trip(tmp_path, profile)
     fitted = restored.alpha_policy.result
@@ -137,7 +137,7 @@ def test_failed_selection_diagnostics_do_not_apply(tmp_path):
         for e in TFEnvelope
     )
     record = CalibrationRecord("failed", TFCalibrationSelection(results))
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2), calibration_records=(record,))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2), calibration_records=(record,))
     with pytest.raises(ValueError, match="usable"):
         apply_calibration(profile, record)
     restored = round_trip(tmp_path, profile)
@@ -153,7 +153,7 @@ def test_released_scalar_provenance_is_not_joint(tmp_path, method):
 
     profile = GroupingProfile(
         "old",
-        ProfileFingerprint("test", 2),
+        ProfileFingerprint("", 2),
         alpha_policy=AlphaPolicy("calibrated", 1.3, 0.07, method, 123),
         beta_policy=BetaPolicy("calibrated", 0.8, 0.04, "count_fit", 123),
     )
@@ -184,7 +184,7 @@ def test_actual_selection_support_and_fit_round_trip(tmp_path, fit_beta, correct
             parameters=(CountFitParameter("frequency", 1.3, fixed=True),),
         ),
     )
-    profile = GroupingProfile("actual", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("actual", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("actual", selection))
     restored = round_trip(tmp_path, profile)
     frozen = restored.calibration_records[0].result
@@ -209,7 +209,7 @@ def test_actual_selection_support_and_fit_round_trip(tmp_path, fit_beta, correct
 def test_project_rejects_corrupt_parameter_ownership_and_constraints(tmp_path):
     from copy import deepcopy
 
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("canonical", candidate()))
     payload = profile.to_dict()
     for change in ("duplicate_order", "negative_alpha", "beta_fixed", "missing_identity"):
@@ -231,7 +231,7 @@ def test_shared_profile_resolves_two_runs_and_manual_beta(tmp_path):
     from asymmetry.core.project.profiles import BetaPolicy, resolve_effective_grouping
     from tests.core.test_tf_calibration_fit import _raw_tf
 
-    profile = GroupingProfile("shared", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile = GroupingProfile("shared", ProfileFingerprint("", 2), groups={1: [1], 2: [2]})
     apply_calibration(profile, CalibrationRecord("joint", candidate()))
     restored = round_trip(tmp_path, profile)
     for number in (7, 8):
@@ -259,7 +259,7 @@ def test_nonfinite_failure_and_strict_json(tmp_path):
     )
     profile = GroupingProfile(
         "diagnostics",
-        ProfileFingerprint("test", 2),
+        ProfileFingerprint("", 2),
         calibration_records=(CalibrationRecord("failed", result),),
     )
     path = tmp_path / "failed.asymp"
@@ -286,7 +286,7 @@ def test_projection_history_retains_canonical_identity(tmp_path):
     from asymmetry.core.transform.projections import projection_alphas
     from tests.core.test_tf_calibration_fit import _raw_tf
 
-    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile = GroupingProfile("vector", ProfileFingerprint("", 2), groups={1: [1], 2: [2]})
     apply_calibration(profile, CalibrationRecord("joint", candidate()))
     profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
     restored = round_trip(tmp_path, profile)
@@ -312,7 +312,7 @@ def test_successful_fit_preserves_clipped_free_request_seed(tmp_path, seed):
     )
     result = fit_tf_calibration(_raw_tf(beta=1), request)
     assert result.ok, result.message
-    profile = GroupingProfile("seed", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("seed", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("seed", result))
     restored = round_trip(tmp_path, profile)
     assert restored.alpha_policy.result.request == request
@@ -327,7 +327,7 @@ def test_recorded_period_and_requested_window_survive(tmp_path, period):
         result.request, period=period, t_min=-0.02, t_max=6.0, exclude=(0.0, 0.04), minos=True
     )
     result = replace(result, request=request)
-    profile = GroupingProfile("support", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("support", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("support", result))
     restored = round_trip(tmp_path, profile)
     assert restored.alpha_policy.result.request == request
@@ -356,7 +356,7 @@ def test_schema35_records_upgrade_without_reinterpreting_coefficients():
 
     from asymmetry.core.project.schema import migrate_to_current
 
-    profile = GroupingProfile("saved", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("saved", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("history", candidate()))
     profile.alpha_policy = AlphaPolicy(
         mode="calibrated", value=1.37, method="general", source_run=42
@@ -383,7 +383,7 @@ def test_applied_quick_policy_requires_a_usable_alpha(invalid):
     ).result.to_dict()
     if invalid == "zero":
         result["alpha"] = 0.0
-    payload = GroupingProfile("quick", ProfileFingerprint("test", 2)).to_dict()
+    payload = GroupingProfile("quick", ProfileFingerprint("", 2)).to_dict()
     payload["beta_policy" if invalid == "beta" else "alpha_policy"] = {"quick_calibration": result}
     with pytest.raises(ValueError, match="quick|Quick"):
         GroupingProfile.from_dict(payload)
@@ -466,7 +466,7 @@ def test_pair_calibration_is_selected_by_actual_pair_without_axis_text():
     run = _run([90, 80], [60, 40])
     result = candidate(fit_beta=False)
     record = CalibrationRecord("pair-calibration", result)
-    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile = GroupingProfile("vector", ProfileFingerprint("", 2), groups={1: [1], 2: [2]})
     profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
     profile.calibration_records = (record,)
     profile.projection_alpha_policies = {
@@ -492,7 +492,7 @@ def test_projection_recipe_ignores_display_aliases_and_unused_scalar_calibration
     result = candidate(fit_beta=False)
     record = CalibrationRecord("active-projection", result)
     policy = CalibratedCoefficient(record, result.envelope, "alpha")
-    profile = GroupingProfile("vector", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile = GroupingProfile("vector", ProfileFingerprint("", 2), groups={1: [1], 2: [2]})
     profile.projections = [{"label": "pair", "forward_group": 1, "backward_group": 2}]
     profile.calibration_records = (record,)
     profile.projection_alpha_policies = {"pair": policy}
@@ -525,7 +525,7 @@ def test_pending_calibration_capture_does_not_require_committed_profile_history(
     run = _run([90, 80], [60, 40])
     result = candidate()
     record = CalibrationRecord("preview", result)
-    profile = GroupingProfile("pending", ProfileFingerprint("test", 2), groups={1: [1], 2: [2]})
+    profile = GroupingProfile("pending", ProfileFingerprint("", 2), groups={1: [1], 2: [2]})
     profile.alpha_policy = CalibratedCoefficient(record, result.envelope, "alpha")
     profile.beta_policy = CalibratedCoefficient(record, result.envelope, "beta")
     assert profile.calibration_records == ()

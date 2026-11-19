@@ -55,7 +55,9 @@ def _prepare_vector(dataset, reference_resolver, parent, operation):
         prepare=partial(
             operation,
             run,
-            facility=resolve_facility(metadata=run.metadata, grouping=grouping),
+            facility=resolve_facility(
+                metadata=run.metadata, grouping=grouping, instrument_choice=run.instrument_choice
+            ),
             reference=reference,
         ),
         label="Preparing vector projections…",

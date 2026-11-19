@@ -29,7 +29,7 @@ def test_quick_capture_retains_members_and_exclusions_after_regrouping(method):
     assert captured.backward_indices == (1, 3)
     assert captured.excluded_indices == (4, 5)
     before = json.dumps(captured.to_dict(), sort_keys=True)
-    profile = GroupingProfile("source", ProfileFingerprint("test", 6))
+    profile = GroupingProfile("source", ProfileFingerprint("", 6))
     apply_calibration_outcome(profile, result)
     profile.groups = {1: [2, 4], 2: [1, 3]}
     data.run.grouping["groups"][1][:] = [2, 4]

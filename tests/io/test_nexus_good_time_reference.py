@@ -100,7 +100,7 @@ range -1 2
     # stamps channel 10 at zero; Asymmetry retains the exact raw-edge origin.
     profile = GroupingProfile(
         name="matched",
-        fingerprint=ProfileFingerprint("EMU", 2),
+        fingerprint=ProfileFingerprint("isis.emu", 2),
         groups={1: [1], 2: [2]},
         t0_policy=T0Policy(mode="manual", offset_bins=shift),
         good_window_policy=GoodWindowPolicy(mode="manual", first_offset_bins=1, last_offset_bins=4)

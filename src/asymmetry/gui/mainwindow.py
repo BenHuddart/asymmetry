@@ -132,6 +132,11 @@ from asymmetry.core.instrument import (
     projection_memberships,
     recommend_grouping_preset_for_run,
 )
+from asymmetry.core.instruments.resolution import (
+    InstrumentConflictError,
+    RecordedInstrumentChoice,
+    resolve_instrument,
+)
 from asymmetry.core.io import background_reference_for_grouping, resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -165,15 +170,22 @@ from asymmetry.core.project.calibration import (
     PreparedGrouping,
     calibration_values,
 )
+from asymmetry.core.project.grouping_request import (
+    instrument_state_for_run,
+    persistent_grouping_for_run,
+    restore_instrument_state,
+)
 from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
     assigned_profile_for_run,
+    choose_instrument_for_run,
     default_profile_for_run,
+    grouping_request_payload,
     heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
-    reconcile_instrument_for_payload,
+    profile_grouping_request,
     resolve_effective_grouping,
     resolve_run_good_window,
 )
@@ -337,6 +349,7 @@ from asymmetry.gui.windows.global_parameter_fit_window import (
     StudySidebarEntry,
 )
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
 from asymmetry.gui.windows.joint_fit_window import (
     JointFitWindow,
     JointSeriesEntry,
@@ -1261,6 +1274,7 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
         analysis_menu.addAction("Knight shift analysis…", self._on_knight_shift_analysis)
         analysis_menu.addAction("Grouping...", self._on_grouping_current)
+        analysis_menu.addAction("Instrument identity…", self._on_instrument_identity)
         self._global_parameter_fit_action = analysis_menu.addAction(
             "Global Parameter Fit",
             self._on_global_parameter_fit,
@@ -1409,6 +1423,7 @@ class MainWindow(QMainWindow):
         _save_project_tb.setToolTip("Save the current project (Ctrl+S)")
         self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
+        self._main_toolbar.addAction("Instrument identity…", self._on_instrument_identity)
         # Fit / Fourier / Parameters live in the right-hand inspector deck
         # (visible by default, per-representation; see
         # _apply_inspector_for_domain) and are recoverable from the View menu.
@@ -2451,7 +2466,12 @@ class MainWindow(QMainWindow):
     def _projection_memberships(datasets: list[MuonDataset]) -> dict[str, list[int]]:
         """The projection subplots *datasets* share; see :func:`projection_memberships`."""
         return projection_memberships(
-            [ds.run.grouping if ds.run is not None else {} for ds in datasets]
+            [
+                dict(ds.run.grouping, instrument=profile_fingerprint_for_run(ds.run).instrument)
+                if ds.run is not None
+                else {}
+                for ds in datasets
+            ]
         )
 
     def _projection_memory_key(self, datasets: list[MuonDataset]) -> str | None:
@@ -4008,15 +4028,6 @@ class MainWindow(QMainWindow):
                     if apply_choice == "yes_to_all":
                         apply_comment_field_to_all = True
 
-                    # A freshly loaded run is the ground truth for its own
-                    # instrument. Before any profile/auto-grouping payload is
-                    # re-applied, heal a stale carried identity against fresh
-                    # detection so the fingerprint below resolves to the real
-                    # instrument (a FLAME run stored as "GPS" must not inherit a
-                    # (GPS, 8) profile or keep the GPS group names).
-                    if dataset is not None and dataset.run is not None:
-                        self._heal_run_instrument(dataset.run)
-
                     # Profile requests take precedence over ad-hoc propagation;
                     # unavailable requests retain raw data and remain repairable.
                     inherited_profile = (
@@ -4037,16 +4048,7 @@ class MainWindow(QMainWindow):
                         self._assign_dataset_profile(dataset, inherited_profile.name)
                     elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
-                        grouping_payload = dict(auto_grouping_payload)
-                        # Heal the template payload against the freshly loaded run
-                        # too: a template lifted from a mis-identified in-browser
-                        # dataset must not paste its instrument's structure onto a
-                        # run detection resolves differently.
-                        grouping_payload, heal_note = reconcile_instrument_for_payload(
-                            dataset.run, grouping_payload
-                        )
-                        if heal_note:
-                            self._log_panel.log(heal_note, tag="grouping")
+                        grouping_payload = dict(auto_grouping_payload.payload)
                         # Acquisition normalisers and exposures never follow a template.
                         for per_run_key in self._PER_RUN_NORMALISER_KEYS:
                             grouping_payload.pop(per_run_key, None)
@@ -4058,9 +4060,17 @@ class MainWindow(QMainWindow):
                         if active_axis and active_axis != "ALL":
                             grouping_payload["vector_axis"] = active_axis
 
-                        applied, _ = self._apply_grouping_settings_to_dataset(
-                            dataset, grouping_payload
-                        )
+                        try:
+                            applied, _ = self._apply_grouping_settings_to_dataset(
+                                dataset,
+                                PreparedGrouping(
+                                    grouping_payload, auto_grouping_payload.instrument_choice
+                                ),
+                            )
+                        except InvalidGroupingError as exc:
+                            dataset.run.grouping = dataset.run.grouping | exc.grouping
+                            dataset.metadata["correction_error"] = str(exc)
+                            applied = False
                         if applied:
                             auto_grouping_applied += 1
 
@@ -4212,7 +4222,7 @@ class MainWindow(QMainWindow):
             return answer
         return QMessageBox.StandardButton.No
 
-    def _get_project_grouping_template(self) -> dict | None:
+    def _get_project_grouping_template(self) -> PreparedGrouping | None:
         """Return grouping payload from the highest-run dataset in the browser.
 
         When multiple datasets have different grouping definitions, this chooses
@@ -4240,7 +4250,13 @@ class MainWindow(QMainWindow):
             if isinstance(payload, dict) and isinstance(payload.get("groups"), dict):
                 groups = payload.get("groups", {})
                 if groups:
-                    return payload
+                    context = resolve_instrument(dataset.run)
+                    choice = context.recorded
+                    if choice is None and context.selection is not None:
+                        choice = RecordedInstrumentChoice(
+                            context.selection, context.observed.evidence
+                        )
+                    return PreparedGrouping(payload, choice)
         return None
 
     def _load_file(self, path: str):
@@ -4417,6 +4433,61 @@ class MainWindow(QMainWindow):
         action.setChecked(self._data_browser.use_field_from_log())
         action.blockSignals(False)
 
+    def _record_instrument_choice(self, dataset, choice: RecordedInstrumentChoice) -> bool:
+        """Commit identity alone through the shared core release boundary."""
+        run = dataset.run
+        if run is None:
+            raise ValueError("Instrument identity requires a run")
+        assigned = self._dataset_assigned_profile_name(dataset)
+        profiles = [
+            item
+            for item in self._grouping_profiles
+            if item.name == assigned and item.fingerprint.matches(profile_fingerprint_for_run(run))
+        ]
+        following = (
+            profiles[0]
+            if len(profiles) == 1 and not self._dataset_has_grouping_override(dataset)
+            else None
+        )
+        dataset.run, released = choose_instrument_for_run(run, choice, following)
+        if released:
+            dataset.metadata["grouping_overrides"] = True
+        if dataset.metadata.get("correction_error") is not None:
+            dataset.metadata["correction_error"] = (
+                "Instrument identity recorded; apply the retained Grouping settings to recompute."
+            )
+        self._reduction_cache.invalidate_run(run)
+        self._mark_dirty()
+        self._data_browser._rebuild_table()
+        return released
+
+    def _on_instrument_identity(self) -> None:
+        """Review retained and observed identity without applying a preset or correction."""
+        dataset = self._current_dataset
+        if dataset is None or dataset.run is None:
+            self.statusBar().showMessage("Select a run to review its instrument identity.", 10000)
+            return
+        assigned = self._dataset_assigned_profile_name(dataset)
+        profiles = [
+            item
+            for item in self._grouping_profiles
+            if item.name == assigned
+            and item.fingerprint.matches(profile_fingerprint_for_run(dataset.run))
+        ]
+        following = (
+            profiles[0]
+            if len(profiles) == 1 and not self._dataset_has_grouping_override(dataset)
+            else None
+        )
+        dialog = InstrumentIdentityDialog(dataset.run, following_profile=following, parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self._record_instrument_choice(dataset, dialog.get_choice())
+        self.statusBar().showMessage(
+            "Instrument identity recorded. Grouping and calibrations retained; no preset applied.",
+            10000,
+        )
+
     def _on_grouping_requested(self, run_number: int) -> None:
         """Open shared grouping dialog focused on a selected run."""
         selected_run_numbers = [
@@ -4486,8 +4557,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
-        # D9: the t0 verdict never blocks Apply, but it is recorded where the
-        # user can find it after the window has closed.
+        # Advisory t0 verdicts remain inspectable after the dialog closes.
         for warning in dialog.t0_apply_warnings:
             self._log_panel.log(f"Time zero: {warning}", tag="grouping")
 
@@ -4495,10 +4565,7 @@ class MainWindow(QMainWindow):
         if not grouping_result:
             return
 
-        # Profile-editor result: save the draft profile (honouring any rename,
-        # deletions, and the fingerprint's default choice) and record the scope
-        # reconciliation. The flat ``grouping_result`` payload is still applied
-        # below, to the runs following the edited profile.
+        # Shared profiles and per-run overrides retain separate owners.
         profile_result = (
             dialog.get_profile_result() if hasattr(dialog, "get_profile_result") else None
         )
@@ -4506,10 +4573,7 @@ class MainWindow(QMainWindow):
         reassigned_runs: list[int] = []
         if profile_result is not None:
             edited_profile = profile_result["profile"]
-            # Profiles created this session (New…/Duplicate…) that are not the
-            # edited draft itself: stored first, preserving the current
-            # default, so the edited profile and the assignment map below can
-            # reference them.
+            # Referenced new profiles exist before assignments are applied.
             for created in profile_result.get("created_profiles") or []:
                 if created.name == edited_profile.name and created.fingerprint.matches(
                     edited_profile.fingerprint
@@ -4527,16 +4591,21 @@ class MainWindow(QMainWindow):
                     deleted_profiles,
                     fingerprint=profile_result["profile"].fingerprint,
                 )
+            identity_edit = profile_result.get("instrument_choice")
+            if identity_edit is not None:
+                selected_dataset = next(
+                    item
+                    for item in dialog_datasets
+                    if int(item.run_number) == int(profile_result["instrument_choice_run_number"])
+                )
+                self._record_instrument_choice(selected_dataset, identity_edit)
             self._reconcile_grouping_overrides(dialog_datasets, profile_result)
             override_updated_runs = self._apply_grouping_override_edits(
                 dialog_datasets, profile_result
             )
             reassigned_runs = self._apply_profile_assignments(dialog_datasets, profile_result)
 
-        # An explicitly-present run_numbers list is authoritative — an EMPTY
-        # list means "the profile applies to no runs" (every run released,
-        # Apply commits override edits only), not "no filter". Only a missing
-        # key (legacy callers) means unfiltered.
+        # An empty authored run list applies the shared profile to no runs.
         raw_run_numbers = grouping_result.get("run_numbers")
         run_numbers: set[int] | None = (
             {int(v) for v in raw_run_numbers} if raw_run_numbers is not None else None
@@ -4673,25 +4742,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Updated override(s) for run(s) {runs}", 8000)
 
     def _dataset_has_grouping_override(self, dataset) -> bool:
-        """Return whether *dataset* carries an explicit per-run grouping override.
-
-        A run is *overridden* (released from its profile) when its metadata flags
-        it as such, or — for runs loaded before the flag existed — when it does
-        not inherit any active profile of its fingerprint. Runs of a fingerprint
-        with no profile at all are treated as inheriting (they will inherit once a
-        profile is created).
-        """
-        metadata = getattr(dataset, "metadata", None)
-        if isinstance(metadata, dict) and "grouping_overrides" in metadata:
-            return bool(metadata.get("grouping_overrides"))
-        run = getattr(dataset, "run", None)
-        if run is None:
+        """Explicit release and a pending following assignment are distinct states."""
+        metadata = dataset.metadata
+        if "grouping_overrides" in metadata:
+            return bool(metadata["grouping_overrides"])
+        if metadata.get("grouping_profile"):
+            return False
+        run = dataset.run
+        if run is None or resolve_instrument(run).requires_choice:
             return False
         fingerprint = profile_fingerprint_for_run(run)
         has_profile = any(p.fingerprint.matches(fingerprint) for p in self._grouping_profiles)
-        if not has_profile:
-            return False
-        return default_profile_for_run(self._grouping_profiles, run) is None
+        return has_profile and default_profile_for_run(self._grouping_profiles, run) is None
 
     def _dataset_assigned_profile_name(self, dataset) -> str | None:
         """The name of the grouping profile *dataset* is assigned to, if recorded.
@@ -4717,25 +4779,6 @@ class MainWindow(QMainWindow):
             metadata["grouping_profile"] = str(name)
         else:
             metadata.pop("grouping_profile", None)
-
-    def _heal_run_instrument(self, run) -> None:
-        """Self-heal a stale instrument identity carried on a freshly loaded run.
-
-        Reconciles the run's own ``grouping`` payload against fresh detection
-        (see :func:`reconcile_instrument_for_payload`). On a normal fresh load the
-        loader's grouping already names the right instrument, so this is a no-op;
-        it matters when the carried grouping (rebuilt from a persisted mapping, or
-        a loader that trusted a stale header) names the wrong one. Corrects
-        ``run.grouping``/``run.metadata`` in place and logs the heal.
-        """
-        if run is None:
-            return
-        grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        reconciled, note = reconcile_instrument_for_payload(run, grouping)
-        if note is None:
-            return
-        run.grouping = reconciled
-        self._log_panel.log(note, tag="grouping")
 
     def _resolve_named_profile_for_run(self, name: str, run) -> dict | None:
         """Resolve the named profile (of the run's fingerprint) onto *run*.
@@ -5041,166 +5084,118 @@ class MainWindow(QMainWindow):
 
     def _grouping_persistence_for_dataset(self, dataset) -> dict:
         """Store the assigned profile, or authoritative run overrides with their base profile."""
-        run = getattr(dataset, "run", None)
-        profile = None
-        if run is not None:
-            assigned = self._dataset_assigned_profile_name(dataset)
-            if assigned:
-                profile = named_profile_for_run(self._grouping_profiles, assigned, run)
-            if profile is None:
-                profile = default_profile_for_run(self._grouping_profiles, run)
-        if not self._dataset_has_grouping_override(dataset) and profile is not None:
-            return {"profile": profile.name}
+        run = dataset.run
+        assigned = self._dataset_assigned_profile_name(dataset)
+        if not self._dataset_has_grouping_override(dataset) and assigned:
+            return {"profile": assigned}
+        if not self._dataset_has_grouping_override(dataset) and run is not None:
+            profile = default_profile_for_run(self._grouping_profiles, run)
+            if profile is not None:
+                return {"profile": profile.name}
         fragment: dict = {"grouping_overrides": self._extract_grouping_overrides(dataset)}
-        if profile is not None:
-            fragment["profile"] = profile.name
+        if assigned:
+            fragment["profile"] = assigned
         return fragment
 
-    def _extract_grouping_overrides(self, dataset) -> dict | None:
-        """Return grouping settings that should persist in project files."""
-        run = dataset.run
-        if run is None:
-            return None
-        grouping = run.grouping
-        groups_raw = grouping.get("groups")
-        if not isinstance(groups_raw, dict):
-            return None
-
-        groups: dict[int, list[object]] = {}
-        for key, values in groups_raw.items():
-            try:
-                gid = int(key)
-            except (TypeError, ValueError):
-                continue
-            groups[gid] = copy.deepcopy(values)
-
-        if not groups:
-            return None
-
-        t0_default = int(run.histograms[0].t0_bin) if run.histograms else 0
-
-        try:
-            t0_bin = int(grouping.get("t0_bin", t0_default))
-        except (TypeError, ValueError):
-            t0_bin = t0_default
-
-        raw_t_good = grouping.get("t_good_offset")
-        if raw_t_good is None:
-            try:
-                raw_t_good = int(grouping.get("first_good_bin", t0_bin)) - t0_bin
-            except (TypeError, ValueError):
-                raw_t_good = 0
-        try:
-            t_good_offset = int(raw_t_good)
-        except (TypeError, ValueError):
-            t_good_offset = 0
-
-        first_good_bin = int(grouping.get("first_good_bin", t0_bin + t_good_offset))
-        try:
-            last_good_bin = int(grouping.get("last_good_bin", 0))
-        except (TypeError, ValueError):
-            last_good_bin = 0
-        try:
-            bin_index_base = 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0
-        except (TypeError, ValueError):
-            bin_index_base = 0
-
-        payload = {
-            "groups": groups,
-            "forward_group": int(grouping.get("forward_group", 1)),
-            "backward_group": int(grouping.get("backward_group", 2)),
-            "alpha": float(grouping.get("alpha", 1.0)),
-            "t0_bin": t0_bin,
-            "t_good_offset": t_good_offset,
-            "first_good_bin": first_good_bin,
-            "last_good_bin": last_good_bin,
-            "bin_index_base": bin_index_base,
-            "bunching_factor": binning_spec(grouping).factor,
-            "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
-            "background_correction": bool(grouping.get("background_correction", False)),
+    def _restore_unavailable_combination(self, definition: dict, reason: str, model) -> None:
+        """Keep a missing combined acquisition's full request with its existing history owner."""
+        self._data_browser.restore_unavailable_combination(definition, reason)
+        owner = model.ensure_dataset(int(definition["combined_run_number"]))
+        owner.unavailable_source = {
+            key: value for key, value in definition.items() if key != "representations"
         }
-        if "period_mode" in grouping:
-            payload["period_mode"] = str(grouping.get("period_mode", PeriodMode.RED))
-        if isinstance(grouping.get("period_good_frames"), list):
-            payload["period_good_frames"] = list(grouping.get("period_good_frames", []))
-        if isinstance(grouping.get("period_dead_time_us"), list):
-            payload["period_dead_time_us"] = copy.deepcopy(grouping.get("period_dead_time_us", []))
 
-        deadtime_mode = correction_flags_from_grouping(grouping).deadtime_mode
-        payload["deadtime_mode"] = deadtime_mode
-        if grouping.get("deadtime_method"):
-            payload["deadtime_method"] = str(grouping.get("deadtime_method"))
-        for key in (
-            "deadtime_manual_us",
-            "deadtime_estimated_us",
-            "deadtime_reference_run",
-            "deadtime_errors_us",
-        ):
-            if key in grouping:
-                payload[key] = grouping.get(key)
+    def _restore_grouping_request(self, dataset, entry: dict, prepared) -> None:
+        """Restore an owned request without replacing a pending assignment or identity."""
+        number = int(dataset.run_number)
+        if dataset.run is not None:
+            dataset.run = restore_instrument_state(
+                dataset.run,
+                prepared.instrument_choices.get(number),
+                prepared.source_assessments.get(number),
+            )
+        requested_grouping = entry.get("grouping_overrides")
+        if not isinstance(requested_grouping, dict):
+            requested_grouping = None
+        requested_profile_name = entry.get("profile")
+        try:
+            profile_name = requested_profile_name
+            grouping = prepared.groupings.get(number)
+            if grouping is not None:
+                grouping_overrides = grouping.payload
+                requested_grouping = grouping_overrides
+                self._apply_grouping_settings_to_dataset(
+                    dataset, PreparedGrouping(requested_grouping)
+                )
+                dataset.metadata["grouping_overrides"] = True
+                if profile_name:
+                    self._assign_dataset_profile(dataset, str(profile_name))
+            elif dataset.run is not None:
+                followed_name: str | None = None
+                if profile_name:
+                    resolved_grouping = self._resolve_named_profile_for_run(
+                        str(profile_name), dataset.run
+                    )
+                    if resolved_grouping is not None:
+                        requested_grouping = resolved_grouping
+                        self._apply_grouping_settings_to_dataset(
+                            dataset, PreparedGrouping(requested_grouping)
+                        )
+                        followed_name = str(profile_name)
+                if followed_name is None and not profile_name:
+                    inherited = default_profile_for_run(self._grouping_profiles, dataset.run)
+                    if inherited is not None:
+                        run = dataset.run
+                        requested_profile_name = inherited.name
+                        resolved_grouping = resolve_effective_grouping(
+                            inherited,
+                            run,
+                            reference_resolver=self._resolve_background_reference,
+                        )
+                        requested_grouping = resolved_grouping
+                        self._apply_grouping_settings_to_dataset(
+                            dataset, PreparedGrouping(requested_grouping)
+                        )
+                        followed_name = inherited.name
+                if profile_name and followed_name is None:
+                    retained = next(
+                        (
+                            item
+                            for item in self._grouping_profiles
+                            if item.name == str(profile_name)
+                            and item.fingerprint.matches(profile_fingerprint_for_run(dataset.run))
+                        ),
+                        None,
+                    )
+                    if retained is not None:
+                        requested_grouping = profile_grouping_request(retained, dataset.run)
+                    raise InvalidGroupingError(
+                        "The recorded grouping profile is unavailable for the current instrument identity; "
+                        "choose Instrument identity… to review it. The assignment is retained.",
+                        requested_grouping or dataset.run.grouping,
+                    )
+                if followed_name is not None:
+                    dataset.metadata.pop("grouping_overrides", None)
+                    self._assign_dataset_profile(dataset, followed_name)
 
-        for axis in ("P_x", "P_y", "P_z"):
-            key = self._vector_alpha_key(axis)
-            if key is None:
-                continue
-            try:
-                if key in grouping:
-                    payload[key] = float(grouping.get(key))
-            except (TypeError, ValueError):
-                continue
+        except (ValueError, OSError) as exc:
+            if isinstance(exc, InvalidGroupingError) and requested_grouping is None:
+                requested_grouping = exc.grouping
+            if requested_grouping is not None and dataset.run is not None:
+                dataset.run.grouping = dict(dataset.run.grouping) | requested_grouping
+            if isinstance(entry.get("grouping_overrides"), dict):
+                dataset.metadata["grouping_overrides"] = True
+            if requested_profile_name is not None:
+                self._assign_dataset_profile(dataset, str(requested_profile_name))
+            dataset.metadata["correction_error"] = str(exc)
+            self._log_panel.log(
+                f"Run {dataset.run_number}: Corrections incomplete: {exc}",
+                tag="grouping",
+            )
 
-        vector_axis = self._normalize_vector_axis(grouping.get("vector_axis"))
-        if vector_axis is not None:
-            payload["vector_axis"] = vector_axis
-
-        projections_raw = grouping.get("projections")
-        if isinstance(projections_raw, list) and projections_raw:
-            payload["projections"] = [dict(p) for p in projections_raw if isinstance(p, dict)]
-
-        group_names_raw = grouping.get("group_names")
-        if isinstance(group_names_raw, dict) and group_names_raw:
-            payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
-        included_groups_raw = grouping.get("included_groups")
-        if isinstance(included_groups_raw, dict) and included_groups_raw:
-            payload["included_groups"] = {int(k): bool(v) for k, v in included_groups_raw.items()}
-
-        grouping_preset = grouping.get("grouping_preset")
-        if grouping_preset:
-            payload["grouping_preset"] = str(grouping_preset)
-
-        instrument_name = grouping.get("instrument")
-        if instrument_name:
-            payload["instrument"] = str(instrument_name)
-
-        if deadtime_mode != "from_file":
-            if isinstance(grouping.get("dead_time_us"), list):
-                payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
-        for key in ("good_frames", "reference_exposure", "period_reference_exposure"):
-            if key in grouping:
-                payload[key] = grouping[key]
-        for key in (
-            "background_ranges",
-            "background_range",
-            "background_forward_range",
-            "background_backward_range",
-            "background_fixed_values",
-            "background_values",
-            "background_method",
-        ):
-            if key in grouping:
-                payload[key] = grouping.get(key)
-        for key in (
-            "detector_t0_bins",
-            "detector_first_good_bins",
-            "detector_last_good_bins",
-            "histogram_labels",
-        ):
-            if isinstance(grouping.get(key), list):
-                payload[key] = list(grouping.get(key, []))
-        for key in REDUCTION_SETTING_KEYS + ALPHA_PROVENANCE_KEYS + ("period_mapping",):
-            if key in grouping:
-                payload[key] = copy.deepcopy(grouping.get(key))
-        return payload
+    def _extract_grouping_overrides(self, dataset) -> dict | None:
+        """Retain the complete request through the core project transport owner."""
+        return persistent_grouping_for_run(dataset.run) if dataset.run is not None else None
 
     def _grouping_source_arrays(
         self,
@@ -5249,14 +5244,18 @@ class MainWindow(QMainWindow):
         self, dataset, grouping_result: dict | PreparedGrouping
     ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
         """Apply atomically, returning success and each period's correction outcomes."""
-        grouping_result = (
-            grouping_result.payload
-            if isinstance(grouping_result, PreparedGrouping)
-            else calibration_values(grouping_result)
-        )
         run = dataset.run
         if run is None:
             return False, {}
+        if isinstance(grouping_result, PreparedGrouping):
+            if grouping_result.instrument_choice is not None:
+                run.instrument_choice = grouping_result.instrument_choice
+            grouping_result = grouping_result.payload
+        else:
+            grouping_result = calibration_values(grouping_result)
+        context = resolve_instrument(run)
+        if context.requires_choice:
+            raise InvalidGroupingError(str(InstrumentConflictError(context)), grouping_result)
         self._reduction_cache.invalidate_run(run)
         existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
@@ -5482,11 +5481,6 @@ class MainWindow(QMainWindow):
                 run.grouping["grouping_preset"] = str(preset_name)
             else:
                 run.grouping.pop("grouping_preset", None)
-            instrument_name = grouping_result.get("instrument")
-            if instrument_name:
-                run.grouping["instrument"] = str(instrument_name)
-            else:
-                run.grouping.pop("instrument", None)
             self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
             dataset.metadata.pop("correction_error", None)
             return True, {str(period_mode): CorrectionOutcomes()}
@@ -5496,7 +5490,7 @@ class MainWindow(QMainWindow):
         if not forward_idx or not backward_idx:
             return False, {}
 
-        grouping = dict(existing_grouping)
+        grouping = dict(existing_grouping) | grouping_request_payload(grouping_result)
 
         # Per-detector timing remains attached to this run.
         if isinstance(grouping_result.get("detector_t0_bins"), list):
@@ -5619,7 +5613,9 @@ class MainWindow(QMainWindow):
         run_alpha, run_beta = grouping_balances(reduction_grouping)
         outcomes: dict[str, CorrectionOutcomes] = {}
         facility = resolve_facility(
-            metadata=run.metadata, grouping=reduction_grouping
+            metadata=run.metadata,
+            grouping=reduction_grouping,
+            instrument_choice=run.instrument_choice,
         ) or resolve_facility(metadata=dataset.metadata)
         reference = (
             self._resolve_background_reference(reduction_grouping)
@@ -5699,11 +5695,6 @@ class MainWindow(QMainWindow):
             grouping["grouping_preset"] = str(preset_name)
         else:
             grouping.pop("grouping_preset", None)
-        instrument_name = grouping_result.get("instrument")
-        if instrument_name:
-            grouping["instrument"] = str(instrument_name)
-        else:
-            grouping.pop("instrument", None)
         run.grouping = grouping
         dataset.metadata.pop("correction_error", None)
         self._capture_time_results([dataset])
@@ -16210,6 +16201,7 @@ class MainWindow(QMainWindow):
                     if dataset.run is not None
                     else None,
                     "metadata_overrides": metadata_overrides,
+                    **(instrument_state_for_run(dataset.run) if dataset.run is not None else {}),
                     **self._grouping_persistence_for_dataset(dataset),
                 }
             )
@@ -16229,10 +16221,28 @@ class MainWindow(QMainWindow):
         combined_methods = self._data_browser._combined_methods
         combined_datasets = []
         for crn, src_runs in self._data_browser._combined_datasets.items():
-            entry = {
-                "combined_run_number": int(crn),
-                "source_run_numbers": [int(r) for r in src_runs],
-            }
+            combined = self._data_browser._datasets[crn]
+            assigned = self._dataset_assigned_profile_name(combined)
+            grouping_state = (
+                {"profile": assigned}
+                if assigned and not self._dataset_has_grouping_override(combined)
+                else {
+                    "grouping_overrides": self._extract_grouping_overrides(combined),
+                    **({"profile": assigned} if assigned else {}),
+                }
+            )
+            owner = self._project_model.datasets.get(int(crn))
+            retained = owner.unavailable_source if owner is not None else None
+            entry = (
+                dict(retained)
+                if combined.run is None and retained is not None
+                else {
+                    "combined_run_number": int(crn),
+                    "source_run_numbers": [int(r) for r in src_runs],
+                    **(instrument_state_for_run(combined.run) if combined.run is not None else {}),
+                    **grouping_state,
+                }
+            )
             source_facts = constituent_sources_for_project(self._data_browser._datasets[crn])
             if source_facts:
                 entry["constituent_sources"] = source_facts
@@ -16735,93 +16745,7 @@ class MainWindow(QMainWindow):
                     if saved_direction is not None:
                         restore_user_field_direction(dataset, saved_direction)
 
-                    # A freshly reloaded run is the ground truth for its own
-                    # instrument. Heal a stale carried identity against fresh
-                    # detection before any persisted grouping payload is
-                    # re-applied, so profile inheritance below resolves against the
-                    # corrected fingerprint (a FLAME run persisted as "GPS" must
-                    # not re-inherit a (GPS, 8) profile nor keep GPS group names).
-                    if dataset.run is not None:
-                        self._heal_run_instrument(dataset.run)
-
-                    # v17: a *released* dataset carries ``grouping_overrides``
-                    # (authoritative for resolution) plus, optionally, the
-                    # ``profile`` it was released from — its base/reattach
-                    # target. A following dataset names just its assigned
-                    # ``profile``. A dataset with neither — or whose assigned
-                    # name no longer resolves — follows the default profile of
-                    # its fingerprint, if any.
-                    requested_grouping = ds_info.get("grouping_overrides")
-                    if not isinstance(requested_grouping, dict):
-                        requested_grouping = None
-                    requested_profile_name = ds_info.get("profile")
-                    try:
-                        profile_name = requested_profile_name
-                        grouping = prepared.groupings.get(rn)
-                        if grouping is not None:
-                            grouping_overrides = grouping.payload
-                            # Heal the persisted per-run override against the fresh run
-                            # (its stored instrument may be stale); discard the wrong
-                            # instrument's structure before applying it.
-                            grouping_overrides, heal_note = reconcile_instrument_for_payload(
-                                dataset.run, grouping_overrides
-                            )
-                            if heal_note:
-                                self._log_panel.log(heal_note, tag="grouping")
-                            requested_grouping = grouping_overrides
-                            self._apply_grouping_settings_to_dataset(
-                                dataset, PreparedGrouping(requested_grouping)
-                            )
-                            dataset.metadata["grouping_overrides"] = True
-                            if profile_name:
-                                self._assign_dataset_profile(dataset, str(profile_name))
-                        elif dataset.run is not None:
-                            followed_name: str | None = None
-                            if profile_name:
-                                resolved_grouping = self._resolve_named_profile_for_run(
-                                    str(profile_name), dataset.run
-                                )
-                                if resolved_grouping is not None:
-                                    requested_grouping = resolved_grouping
-                                    self._apply_grouping_settings_to_dataset(
-                                        dataset, PreparedGrouping(requested_grouping)
-                                    )
-                                    followed_name = str(profile_name)
-                            if followed_name is None:
-                                inherited = default_profile_for_run(
-                                    self._grouping_profiles, dataset.run
-                                )
-                                if inherited is not None:
-                                    run = dataset.run
-                                    requested_profile_name = inherited.name
-                                    resolved_grouping = resolve_effective_grouping(
-                                        inherited,
-                                        run,
-                                        reference_resolver=self._resolve_background_reference,
-                                    )
-                                    requested_grouping = resolved_grouping
-                                    self._apply_grouping_settings_to_dataset(
-                                        dataset, PreparedGrouping(requested_grouping)
-                                    )
-                                    followed_name = inherited.name
-                            if followed_name is not None:
-                                dataset.metadata.pop("grouping_overrides", None)
-                                self._assign_dataset_profile(dataset, followed_name)
-
-                    except (ValueError, OSError) as exc:
-                        if isinstance(exc, InvalidGroupingError) and requested_grouping is None:
-                            requested_grouping = exc.grouping
-                        if requested_grouping is not None and dataset.run is not None:
-                            dataset.run.grouping = dict(dataset.run.grouping) | requested_grouping
-                        if isinstance(ds_info.get("grouping_overrides"), dict):
-                            dataset.metadata["grouping_overrides"] = True
-                        if requested_profile_name is not None:
-                            self._assign_dataset_profile(dataset, str(requested_profile_name))
-                        dataset.metadata["correction_error"] = str(exc)
-                        self._log_panel.log(
-                            f"Run {dataset.run_number}: Corrections incomplete: {exc}",
-                            tag="grouping",
-                        )
+                    self._restore_grouping_request(dataset, ds_info, prepared)
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)
@@ -16847,7 +16771,9 @@ class MainWindow(QMainWindow):
                             source_expectations=combined_info.get("constituent_sources"),
                         )
                     except (CombineError, ValueError) as exc:
-                        self._data_browser.restore_unavailable_combination(combined_info, str(exc))
+                        self._restore_unavailable_combination(
+                            combined_info, str(exc), prepared.model
+                        )
                         self._log_panel.log(
                             f"WARNING: Could not recreate combined dataset {src_runs}: {exc}"
                         )
@@ -16856,9 +16782,20 @@ class MainWindow(QMainWindow):
                         self._log_panel.log(
                             f"WARNING: Could not recreate combined dataset {src_runs}; missing source histograms."
                         )
+                    elif any(
+                        key in combined_info
+                        for key in (
+                            "instrument_choice",
+                            "source_assessment",
+                            "grouping_overrides",
+                            "profile",
+                        )
+                    ):
+                        combined = self._data_browser.get_dataset(restored_id)
+                        self._restore_grouping_request(combined, combined_info, prepared)
                 else:
-                    self._data_browser.restore_unavailable_combination(
-                        combined_info, "Source acquisitions unavailable"
+                    self._restore_unavailable_combination(
+                        combined_info, "Source acquisitions unavailable", prepared.model
                     )
                     missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
                     self._log_panel.log(

@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from numbers import Integral
 from typing import Any
@@ -55,11 +55,15 @@ from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     GENERIC_INSTRUMENT,
     derive_projection_pairs,
-    detect_instrument,
     generic_layout,
     get_instrument_layout,
     instrument_display_name,
-    variant_for_histograms,
+)
+from asymmetry.core.instruments.resolution import (
+    RecordedInstrumentChoice,
+    choice_for_layout,
+    layout_key_for_selection,
+    resolve_instrument,
 )
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
@@ -83,6 +87,7 @@ from asymmetry.core.project.profiles import (
     ProfileFingerprint,
     T0Policy,
     profile_fingerprint_for_run,
+    profile_grouping_request,
     resolve_run_good_window,
     run_file_good_window,
 )
@@ -260,6 +265,15 @@ def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
     )
 
 
+@dataclass(frozen=True)
+class InstrumentEdit:
+    """An accepted identity draft and the profile settings authored before that change."""
+
+    choice: RecordedInstrumentChoice
+    profile: GroupingProfile
+    run_number: int
+
+
 class GroupingDialog(TimingControls, QDialog):
     """Profile editor for detector grouping.
 
@@ -346,7 +360,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._renamed_from: str | None = None
         #: Pending per-fingerprint default-profile choice, keyed by fingerprint
         #: (survives instrument switches within the session).
-        self._default_names: dict[tuple[str, int], str] = {}
+        self._default_names: dict[ProfileFingerprint, str] = {}
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
             {int(v) for v in selected_run_numbers} if selected_run_numbers is not None else None
@@ -400,6 +414,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._run = self._reference_dataset.run
         assert self._run is not None
         self._fingerprint = profile_fingerprint_for_run(self._run)
+        self._instrument_edit: InstrumentEdit | None = None
         # The draft this editor mutates. Seeded below from the active profile for
         # the fingerprint, or synthesized from the reference run's payload.
         self._draft = self._initial_draft()
@@ -627,11 +642,10 @@ class GroupingDialog(TimingControls, QDialog):
             if grouping.get("grouping_preset")
             else None
         )
-        self._detector_layout_instrument_name: str | None = (
-            str(grouping.get("instrument")).strip() if grouping.get("instrument") else None
+        selected = resolve_instrument(self._run).selection
+        self._detector_layout_instrument_name = (
+            layout_key_for_selection(selected, len(self._run.histograms)) if selected else None
         )
-        # Generic is a drawing, not an instrument: picking it in the layout
-        # editor must never rewrite the run's instrument (its profile fingerprint).
         self._layout_is_generic = False
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
@@ -1442,13 +1456,10 @@ class GroupingDialog(TimingControls, QDialog):
                 return
         self._draft.color = next_profile_color(used_profile_colors(stored))
 
-    def _fingerprint_key(self) -> tuple[str, int]:
-        """Hashable key for the current fingerprint (case-folded instrument)."""
+    def _fingerprint_key(self) -> ProfileFingerprint:
+        """Configurations and retained unknown identities remain separate profile owners."""
         assert self._fingerprint is not None
-        return (
-            str(self._fingerprint.instrument).lower(),
-            int(self._fingerprint.histogram_count),
-        )
+        return self._fingerprint
 
     def _current_default_name(self) -> str:
         """The fingerprint's default-profile name, honouring pending changes."""
@@ -1576,8 +1587,14 @@ class GroupingDialog(TimingControls, QDialog):
         if not datasets or datasets[0].run is None:
             return
         self._fingerprint = fingerprint
+        self._instrument_edit = None
         # The layout follows the new instrument, not the outgoing one's choice.
-        self._detector_layout_instrument_name = fingerprint.instrument or None
+        selected = resolve_instrument(datasets[0].run).selection
+        self._detector_layout_instrument_name = (
+            layout_key_for_selection(selected, len(datasets[0].run.histograms))
+            if selected
+            else None
+        )
         self._layout_is_generic = False
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
@@ -1600,19 +1617,10 @@ class GroupingDialog(TimingControls, QDialog):
         self._refresh_editing_strip()
 
     def _default_draft_name(self) -> str:
-        """Synthesized draft name for a fingerprint with no saved profile.
-
-        Requires positive instrument identification: a generic facility token
-        (``"PSI"``) or an empty instrument never names a profile after an
-        instrument — the neutral ``"Default (<N> detectors)"`` is used instead,
-        so an unresolved file cannot masquerade as a specific spectrometer.
-        """
+        """Name only a positively identified instrument; otherwise use the acquired count."""
         instrument = ""
         if self._fingerprint is not None and self._fingerprint.instrument:
             instrument = instrument_display_name(self._fingerprint.instrument)
-        if not instrument:
-            grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-            instrument = str(grouping.get("instrument", "") or "")
         if not instrument or instrument.strip().upper() == "PSI":
             n = len(self._run.histograms) if self._run is not None and self._run.histograms else 0
             if n:
@@ -3850,6 +3858,12 @@ class GroupingDialog(TimingControls, QDialog):
             self._calibration_key = key
             self._alpha_section.invalidate()
         run = self._run
+        if (
+            self._instrument_edit is not None
+            and run is not None
+            and int(run.run_number) == self._instrument_edit.run_number
+        ):
+            run = replace(run, instrument_choice=self._instrument_edit.choice)
         if run is None or not run.histograms or self._fingerprint is None:
             pane.show_unavailable()
             return
@@ -3885,7 +3899,9 @@ class GroupingDialog(TimingControls, QDialog):
         metadata: dict[str, Any] = {}
         metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
-        facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
+        facility = resolve_facility(
+            metadata=metadata, grouping=run.grouping, instrument_choice=run.instrument_choice
+        )
         self._sync_compare_surfaces()
         searches = {
             int(mode == "green"): self._t0_search_cache.get(self._t0_cache_key(mode))
@@ -4455,48 +4471,11 @@ class GroupingDialog(TimingControls, QDialog):
         self._refresh_preview()
 
     def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
-        """Resolve the InstrumentLayout to show in the detector layout editor.
-
-        Resolution order:
-
-        1. A previously chosen layout name (``_detector_layout_instrument_name``)
-           when it maps to a known layout.
-        2. Facility-aware auto-detection. PSI data is always re-detected when the
-           stored name resolves to an ISIS-only layout, because the PSI loader
-           records the raw instrument string (e.g. ``"HIFI"``) which otherwise
-           canonicalises to the unrelated ISIS HiFi layout instead of HAL-9500.
-        3. A :func:`generic_layout` ring of the run's detectors when the
-           instrument is unknown (or the user picked it in the layout editor).
-        """
+        """Show the accepted layout only when its acquired channel map is compatible."""
         if self._layout_is_generic:
             return generic_layout(n_histo)
-        instrument = None
-        instrument_name = self._detector_layout_instrument_name
-        if instrument_name:
-            try:
-                instrument = get_instrument_layout(instrument_name)
-            except KeyError:
-                instrument = None
-
-        psi = self._reference_is_psi()
-        if instrument is None or (psi and instrument.name in {"HiFi", "MuSR", "EMU"}):
-            detected = detect_instrument(
-                n_histo,
-                metadata=metadata,
-                source_file=self._run.source_file if self._run else None,
-            )
-            if detected:
-                try:
-                    instrument = get_instrument_layout(detected)
-                except KeyError:
-                    pass
-
-        if instrument is None:
-            return generic_layout(n_histo)
-        # Correct to the layout variant whose detector count matches this run
-        # (e.g. GPS 6-detector BIN vs GPS-RD 11-detector ROOT), so a stored
-        # name does not pin the wrong-sized layout when the data format changes.
-        return get_instrument_layout(variant_for_histograms(instrument.name, n_histo))
+        key = self._detector_layout_instrument_name
+        return get_instrument_layout(key) if key else generic_layout(n_histo)
 
     def _on_detector_layout(self) -> None:
         """Open the interactive detector layout editor as a sub-dialog."""
@@ -4542,13 +4521,28 @@ class GroupingDialog(TimingControls, QDialog):
             return
 
         result = dlg.get_result()
+        key = result["instrument"]
+        if key != instrument.name:
+            from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
+
+            self._sync_draft_from_form()
+            chosen = choice_for_layout(self._run, key)
+            confirmation = InstrumentIdentityDialog(
+                self._run, following_profile=self._draft, selection=chosen.selection, parent=self
+            )
+            if confirmation.exec() != confirmation.DialogCode.Accepted:
+                return
+            before = (
+                self._instrument_edit.profile if self._instrument_edit is not None else self._draft
+            )
+            self._instrument_edit = InstrumentEdit(
+                confirmation.get_choice(),
+                GroupingProfile.from_dict(before.to_dict()),
+                int(self._reference_dataset.run_number),
+            )
         self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
         self._exclude_edit.setModified(True)
-        # Preserve any per-projection alpha the user edited in the table: the
-        # layout editor returns each projection with its preset-declared alpha,
-        # which would otherwise silently revert an unsaved edit for a label that
-        # still exists. Live spin values are only flushed into the payload on
-        # Accept, so carry them across here for surviving labels.
+        # Surviving projections retain the user's unsaved alpha edits.
         edited_alpha = {
             label: float(spin.value()) for label, spin in self._vector_alpha_spins.items()
         }
@@ -4579,10 +4573,7 @@ class GroupingDialog(TimingControls, QDialog):
         }
         self._group_names = result.get("group_names", {})
         preset_name = result.get("grouping_preset")
-        # When the editor reports a match, adopt its name outright. When it
-        # reports None (custom/drifted state), keep the *previous* preset name
-        # for now: ``_rebuild_preset_combo`` below re-derives drift from the
-        # payload itself and clears it to None.
+        # Preset matching is recomputed from the authored detector groups.
         if preset_name:
             self._grouping_preset_name = str(preset_name)
         instrument_name = result.get("instrument")
@@ -5275,7 +5266,6 @@ class GroupingDialog(TimingControls, QDialog):
                 "included_groups": self._current_included_groups(),
                 "group_names": dict(self._group_names),
                 "grouping_preset": self._grouping_preset_name,
-                "instrument": self._detector_layout_instrument_name,
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
                 "forward_indices": list(self._groups.get(forward_gid, [])),
@@ -5431,43 +5421,33 @@ class GroupingDialog(TimingControls, QDialog):
         }
 
     def get_grouping_result(self) -> dict[str, Any] | None:
-        """Return the applied grouping payload for inheriting runs.
-
-        The dialog is a profile editor: on Apply the draft is saved as the active
-        profile and resolved onto every *inheriting* run of the instrument. The
-        returned dict is the flat grouping payload the main window's
-        ``_apply_grouping_settings_to_dataset`` consumes, with ``run_numbers``
-        set to the inheriting runs. Per-run override edits are carried separately
-        in :meth:`get_profile_result`.
-
-        Returns
-        -------
-        dict or None
-            Grouping payload plus ``run_numbers`` (inheriting runs). ``None``
-            when no run histograms are available.
-        """
+        """Return the shared-profile request and its explicit following-run scope."""
         if self._run is None or not self._run.histograms:
             return None
         payload = self._profile_broadcast_payload()
-        # Only the runs *following the edited profile* receive the profile
-        # apply — runs assigned to another profile of the fingerprint are that
-        # profile's business (schema v17).
-        payload["run_numbers"] = sorted(self._scope_panel.runs_following(self._draft_name))
+        # A profile edit reaches only its following runs.
+        followers = self._scope_panel.runs_following(self._draft_name)
+        if self._instrument_edit is not None:
+            original_run = next(
+                item.run
+                for item in self._datasets
+                if int(item.run_number) == self._instrument_edit.run_number
+            )
+            chosen_run = replace(original_run, instrument_choice=self._instrument_edit.choice)
+            if not self._fingerprint.matches(profile_fingerprint_for_run(chosen_run)):
+                followers = set(followers) - {self._instrument_edit.run_number}
+                if followers:
+                    reference = next(
+                        item.run for item in self._datasets if int(item.run_number) in followers
+                    )
+                    payload = payload_from_profile_for_preview(
+                        self._instrument_edit.profile, reference
+                    )
+        payload["run_numbers"] = sorted(followers)
         return payload
 
     def get_profile_result(self) -> dict[str, Any] | None:
-        """Return the profile-editor result for the main window to reconcile.
-
-        Returns
-        -------
-        dict or None
-            ``{"profile": GroupingProfile, "inheriting": set[int],
-            "released": set[int], "newly_released": set[int],
-            "newly_reattached": set[int], "preview_run_number": int,
-            "override_edits": {run_number: payload}}`` — the saved draft profile,
-            the scope reconciliation, and every dirty per-run override payload to
-            apply to its run alone. ``None`` when no run is available.
-        """
+        """Return shared profile changes, per-run edits and the separately confirmed identity."""
         if self._run is None or not self._run.histograms:
             return None
         # The current target was synced by _on_apply; re-sync defensively in case
@@ -5500,17 +5480,36 @@ class GroupingDialog(TimingControls, QDialog):
                     self._override_profiles[int(run_number)],
                     payload,
                 )
+        profile = self._draft
+        newly_released = self._scope_panel.newly_released()
+        if self._instrument_edit is not None:
+            original_run = next(
+                item.run
+                for item in self._datasets
+                if int(item.run_number) == self._instrument_edit.run_number
+            )
+            chosen_run = replace(original_run, instrument_choice=self._instrument_edit.choice)
+            if not self._fingerprint.matches(profile_fingerprint_for_run(chosen_run)):
+                profile = self._instrument_edit.profile
+                number = self._instrument_edit.run_number
+                if number not in override_edits:
+                    override_edits[number] = profile_grouping_request(self._draft, original_run)
+                newly_released = {*newly_released, number}
         return {
-            "profile": GroupingProfile.from_dict(self._draft.to_dict()),
+            "profile": GroupingProfile.from_dict(profile.to_dict()),
+            "instrument_choice": self._instrument_edit.choice
+            if self._instrument_edit is not None
+            else None,
+            "instrument_choice_run_number": self._instrument_edit.run_number
+            if self._instrument_edit is not None
+            else None,
             "inheriting": self._scope_panel.inheriting_run_numbers(),
             "released": self._scope_panel.released_run_numbers(),
-            "newly_released": self._scope_panel.newly_released(),
+            "newly_released": newly_released,
             "newly_reattached": self._scope_panel.newly_reattached(),
             "preview_run_number": int(self._reference_dataset.run_number),
             "override_edits": override_edits,
-            # Schema v17 assignment reconciliation: the authoritative run→profile
-            # map, the changes made this session, the fingerprint's default
-            # profile after this apply, and any pending rename/deletions.
+            # Assignment changes remain independent of scientific payloads.
             "assignments": {int(rn): str(name) for rn, name in self._session_assignments.items()},
             "newly_assigned": {int(rn): str(name) for rn, name in self._newly_assigned().items()},
             "default_profile": self._current_default_name(),

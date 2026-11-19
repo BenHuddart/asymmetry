@@ -200,6 +200,8 @@ def combine_runs(
         metadata=metadata,
         grouping=grouping,
         source_file="",
+        instrument_choice=runs[0].instrument_choice,
+        source_assessment=runs[0].source_assessment,
     )
 
 

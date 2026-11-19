@@ -134,6 +134,15 @@ Instrument geometry
 
 .. autofunction:: asymmetry.core.instrument.detect_instrument
 
+.. autofunction:: asymmetry.core.instruments.resolution.resolve_instrument
+
+.. autoclass:: asymmetry.core.instruments.resolution.RecordedInstrumentChoice
+   :members: to_dict, from_dict
+
+.. autofunction:: asymmetry.core.instruments.resolution.choice_for_layout
+
+.. autofunction:: asymmetry.core.project.profiles.choose_instrument_for_run
+
 Simulation
 ----------
 

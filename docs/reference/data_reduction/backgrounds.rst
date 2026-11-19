@@ -415,13 +415,24 @@ file origins retain fractional residuals; applied reference alignment records
 those residuals relative to the sample's selected exact anchor, along with the
 reference timing sources and search strategy. A Manual offset remains relative
 to the reference's own file timing.
-A matching live reference's timing takes precedence and updates the recorded
-source-bound request. Saving captures the live timing in both profile and
-run-override declarations, including unambiguous number-only references.
-Unavailable or ambiguous declarations remain editable and saveable. When only
-its file is available, the saved request is replayed against the selected acquisition. **Manual** and **Auto-detect** requests
-cannot silently become **From file**. Edit timing on the reference's own row
-before selecting it with **Choose run…**; no second timing editor is required.
+A matching live reference's timing intent takes precedence and updates the
+recorded request. Saving captures that timing in both profile and run-override
+declarations, including unambiguous number-only references. Unavailable or
+ambiguous declarations remain editable and saveable. When only its file is
+available, the saved request is replayed against the selected acquisition.
+**Manual** and **Auto-detect** requests cannot silently become **From file**.
+Edit timing on the reference's own row before selecting it with **Choose run…**;
+no second timing editor is required.
+
+The request also captures the reference's pulsed, continuous, or explicitly
+unknown source classification and its provenance. Saving, ordinary refresh, and
+replay retain that classification, including any recorded profile origin and
+revision. An explicitly unknown source does not acquire a classification from
+new metadata or a revised instrument profile. An omitted classification instead
+uses supported hints from the reference's own metadata, with that inference
+recorded; it does not use instrument-profile defaults. A deliberate timing or
+source edit on the live reference recaptures its current selected source for
+dependent requests.
 
 Asymmetry also checks compatible native bin widths for the selected observations
 at subtraction. Widths may differ by at most one float64 ULP, admitting scalar

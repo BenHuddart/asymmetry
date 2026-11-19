@@ -91,6 +91,7 @@ class BackgroundReferenceRunCandidate:
     @classmethod
     def from_run(cls, run, period, label):
         """Snapshot the selected reference's timing intent without count searches."""
+        from asymmetry.core.instruments.source import source_for_run
         from asymmetry.core.io.reference_selection import select_reference_run
         from asymmetry.core.transform.reference_timing import ReferenceTiming
 
@@ -98,7 +99,10 @@ class BackgroundReferenceRunCandidate:
         if selected is None:
             raise ValueError("Reference picker requires an available acquired period")
         timing = ReferenceTiming.from_grouping(
-            selected.histograms, selected.grouping, selected.metadata
+            selected.histograms,
+            selected.grouping,
+            selected.metadata,
+            source=source_for_run(selected),
         )
         return cls(
             run_number=selected.metadata.get("source_run_number", selected.run_number),

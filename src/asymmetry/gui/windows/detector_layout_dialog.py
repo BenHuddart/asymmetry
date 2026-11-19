@@ -594,12 +594,6 @@ class DetectorLayoutDialog(QDialog):
         key = str(self._instrument_combo.currentData())
         new_layout = self._generic if key == GENERIC_INSTRUMENT else get_instrument_layout(key)
         self._instrument = new_layout
-        self._groups = {}
-        self._group_names = {}
-        for edit in self._group_name_edits.values():
-            edit.clear()
-        self._active_group = 1
-        self._group_buttons[1].setChecked(True)
         self._applied_preset_name = None
         self._populate_preset_combo()
         self._schematic.set_instrument(new_layout)

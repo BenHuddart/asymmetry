@@ -13,6 +13,14 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.instruments.catalog import profile_by_key
+from asymmetry.core.instruments.resolution import (
+    InstrumentSelection,
+    RecordedInstrumentChoice,
+    accept_instrument_choice,
+    resolve_instrument,
+    selection_for_profile,
+)
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
@@ -24,24 +32,30 @@ from asymmetry.core.project.profiles import (
     T0Policy,
     assigned_profile_for_run,
     default_profile_for_run,
-    detect_instrument_for_run,
     effective_grouping_for_loaded_run,
     heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
     profile_from_payload,
-    reconcile_instrument_for_payload,
     resolve_effective_grouping,
     resolve_good_window,
     run_file_good_window,
 )
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import InvalidGroupingError, group_forward_backward
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 # --------------------------------------------------------------------------- #
 # Fixtures / builders
 # --------------------------------------------------------------------------- #
+
+
+def _accepted_emu_run(**kwargs) -> Run:
+    """Retain continuous timing evidence with an explicitly chosen synthetic EMU identity."""
+    run = Run(**kwargs)
+    selected = selection_for_profile(profile_by_key("isis.emu"), len(run.histograms), "manual")
+    run.instrument_choice = accept_instrument_choice(run, selected)
+    return run
 
 
 def _run(
@@ -92,7 +106,7 @@ def _per_run_facts() -> dict:
 def _base_profile(**overrides) -> GroupingProfile:
     kwargs = {
         "name": "Default (EMU)",
-        "fingerprint": ProfileFingerprint("EMU", 4),
+        "fingerprint": ProfileFingerprint("isis.emu", 4),
         "groups": {1: [1, 2], 2: [3, 4]},
         "group_names": {1: "Forward", 2: "Backward"},
         "forward_group": 1,
@@ -163,30 +177,35 @@ def test_from_dict_rejects_unknown_modes_gracefully():
 # --------------------------------------------------------------------------- #
 
 
-def test_fingerprint_from_run_reads_grouping_instrument_and_histogram_count():
+def test_fingerprint_from_run_reads_canonical_identity_configuration_and_histogram_count():
     run = _run(instrument="MuSR", n_hist=64)
     fp = profile_fingerprint_for_run(run)
-    assert fp == ProfileFingerprint("MuSR", 64)
+    assert fp == ProfileFingerprint("isis.musr", 64, "nexus64")
 
 
-def test_fingerprint_falls_back_to_metadata_instrument():
-    run = _run(n_hist=4)
+def test_fingerprint_resolves_raw_metadata_without_a_grouping_identity():
+    run = _run(n_hist=64)
     run.grouping.pop("instrument")
-    run.metadata["instrument"] = "HIFI"
-    assert profile_fingerprint_for_run(run).instrument == "HIFI"
+    run.metadata = {"facility": "ISIS", "instrument": "HiFi"}
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint("isis.hifi", 64, "nexus64")
 
 
-def test_fingerprint_matching_is_case_insensitive_on_instrument():
-    assert ProfileFingerprint("EMU", 4).matches(ProfileFingerprint("emu", 4))
-    assert not ProfileFingerprint("EMU", 4).matches(ProfileFingerprint("EMU", 8))
-    assert not ProfileFingerprint("EMU", 4).matches(ProfileFingerprint("MuSR", 4))
+def test_fingerprint_matching_uses_stable_identity_configuration_and_acquired_count():
+    assert ProfileFingerprint("isis.emu", 4).matches(ProfileFingerprint("isis.emu", 4))
+    assert not ProfileFingerprint("isis.emu", 4).matches(ProfileFingerprint("isis.emu", 8))
+    assert not ProfileFingerprint("isis.emu", 4).matches(ProfileFingerprint("isis.musr", 4))
+    assert not ProfileFingerprint("psi.gps", 11, "root_split").matches(
+        ProfileFingerprint("psi.gps", 11, "bin_combined")
+    )
+    with pytest.raises(ValueError, match="canonical"):
+        ProfileFingerprint("EMU", 4)
 
 
 def test_default_profile_selection_by_fingerprint():
-    emu = _base_profile(name="EMU-A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
-    musr = _base_profile(name="MuSR-A", fingerprint=ProfileFingerprint("MuSR", 4), active=True)
+    emu = _base_profile(name="EMU-A", fingerprint=ProfileFingerprint("isis.emu", 4), active=True)
+    musr = _base_profile(name="MuSR-A", fingerprint=ProfileFingerprint("isis.musr", 4), active=True)
     non_default = _base_profile(
-        name="EMU-B", fingerprint=ProfileFingerprint("EMU", 4), active=False
+        name="EMU-B", fingerprint=ProfileFingerprint("isis.emu", 4), active=False
     )
     run = _run(instrument="EMU", n_hist=4)
     assert default_profile_for_run([non_default, musr, emu], run) is emu
@@ -194,9 +213,13 @@ def test_default_profile_selection_by_fingerprint():
 
 
 def test_named_profile_requires_matching_name_and_fingerprint():
-    emu = _base_profile(name="Sample A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
-    emu_b = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("EMU", 4), active=False)
-    musr = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("MuSR", 4), active=True)
+    emu = _base_profile(name="Sample A", fingerprint=ProfileFingerprint("isis.emu", 4), active=True)
+    emu_b = _base_profile(
+        name="Sample B", fingerprint=ProfileFingerprint("isis.emu", 4), active=False
+    )
+    musr = _base_profile(
+        name="Sample B", fingerprint=ProfileFingerprint("isis.musr", 4), active=True
+    )
     run = _run(instrument="EMU", n_hist=4)
     # Name + fingerprint both match — the default flag is irrelevant.
     assert named_profile_for_run([emu, musr, emu_b], "Sample B", run) is emu_b
@@ -205,16 +228,20 @@ def test_named_profile_requires_matching_name_and_fingerprint():
     assert named_profile_for_run([emu, emu_b], "Sample C", run) is None
 
 
-def test_assigned_profile_prefers_assignment_and_falls_back_to_default():
-    default = _base_profile(name="Sample A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
-    other = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("EMU", 4), active=False)
+def test_assigned_profile_retains_assignment_and_only_unassigned_runs_use_defaults():
+    default = _base_profile(
+        name="Sample A", fingerprint=ProfileFingerprint("isis.emu", 4), active=True
+    )
+    other = _base_profile(
+        name="Sample B", fingerprint=ProfileFingerprint("isis.emu", 4), active=False
+    )
     run = _run(instrument="EMU", n_hist=4)
     profiles = [default, other]
     # A recorded assignment wins over the default, even when not flagged default.
     assert assigned_profile_for_run(profiles, run, "Sample B") is other
-    # No assignment (or a stale name) falls back to the fingerprint's default.
+    # An unavailable assignment stays pending instead of attaching a different profile.
     assert assigned_profile_for_run(profiles, run, None) is default
-    assert assigned_profile_for_run(profiles, run, "Deleted sample") is default
+    assert assigned_profile_for_run(profiles, run, "Deleted sample") is None
     # No default either → None.
     assert assigned_profile_for_run([other], run, "Deleted sample") is None
 
@@ -235,7 +262,6 @@ def test_resolve_fixed_alpha_and_no_corrections():
         "binning_mode": "fixed",
         "bin0_us": 0.08,
         "bin10_us": 0.25,
-        "instrument": "EMU",
         "t0_bin": 5,
         "t_good_offset": 1,
         "first_good_bin": 6,
@@ -444,7 +470,7 @@ def test_profile_from_payload_lifts_shareable_fields_only():
         "background_fixed_values": [1.0, 2.0],
         "instrument": "EMU",
     }
-    profile = profile_from_payload(payload, "P1", ProfileFingerprint("EMU", 4))
+    profile = profile_from_payload(payload, "P1", ProfileFingerprint("isis.emu", 4))
     assert profile.groups == {1: [1, 2], 2: [3, 4]}
     assert profile.excluded_detectors == [3]
     assert profile.alpha_policy.mode == "calibrated"
@@ -463,7 +489,7 @@ def test_profile_from_payload_lifts_shareable_fields_only():
 
 def test_profile_from_payload_bare_alpha_is_fixed():
     payload = {"groups": {1: [1], 2: [2]}, "alpha": 1.1, "instrument": "EMU"}
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 2))
     assert profile.alpha_policy.mode == "fixed"
     assert profile.alpha_policy.value == 1.1
 
@@ -483,7 +509,7 @@ def test_profile_from_payload_round_trips_through_resolve():
         "instrument": "EMU",
     }
     run = _run(grouping=_per_run_facts())
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 4))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 4))
     resolved = resolve_effective_grouping(profile, run)
     assert resolved["alpha"] == 1.25
     assert resolved["groups"] == {1: [1, 2], 2: [3, 4]}
@@ -507,7 +533,7 @@ def test_deadtime_policy_round_trips_through_resolved_payload(policy):
     facts["dead_time_us"] = [0.011, 0.012, 0.013, 0.014]
     run = _run(grouping=facts)
     resolved = resolve_effective_grouping(_base_profile(deadtime_policy=policy), run)
-    lifted = profile_from_payload(resolved, "P", ProfileFingerprint("EMU", 4))
+    lifted = profile_from_payload(resolved, "P", ProfileFingerprint("isis.emu", 4))
     assert lifted.deadtime_policy.mode == policy.mode
 
 
@@ -528,7 +554,7 @@ def test_loaded_run_without_matching_profile_keeps_loader_default():
     facts = _per_run_facts()
     facts["alpha"] = 1.0
     run = _run(instrument="EMU", n_hist=4, grouping=facts)
-    musr_profile = _base_profile(fingerprint=ProfileFingerprint("MuSR", 4))
+    musr_profile = _base_profile(fingerprint=ProfileFingerprint("isis.musr", 4))
     grouping = effective_grouping_for_loaded_run([musr_profile], run)
     # No matching profile → the run's own loader grouping (copied) is returned.
     assert grouping == run.grouping
@@ -708,7 +734,7 @@ def test_t0_auto_detect_runs_search_per_run():
         )
         for _ in range(4)
     ]
-    run = Run(
+    run = _accepted_emu_run(
         run_number=1,
         histograms=histograms,
         grouping={"instrument": "EMU", "t0_bin": 3, "detector_t0_bins": [3, 3, 3, 3]},
@@ -740,7 +766,7 @@ def test_t0_auto_detect_records_provenance_even_when_the_delta_is_zero():
         )
         for _ in range(4)
     ]
-    run = Run(
+    run = _accepted_emu_run(
         run_number=1,
         histograms=histograms,
         grouping={"instrument": "EMU", "t0_bin": peak_bin, "detector_t0_bins": [peak_bin] * 4},
@@ -799,7 +825,7 @@ def _staggered_run(
     }
     if t0_time_us is not None:
         grouping["t0_time_us"] = t0_time_us
-    return Run(
+    return _accepted_emu_run(
         run_number=1,
         histograms=histograms,
         grouping=grouping,
@@ -924,7 +950,7 @@ def _run_without_file_t0(peak_bin: int = 7) -> Run:
         )
         for _ in range(4)
     ]
-    return Run(
+    return _accepted_emu_run(
         run_number=1,
         histograms=histograms,
         grouping={
@@ -1014,7 +1040,7 @@ def _t0_payload(**extra) -> dict:
 
 def test_profile_from_payload_infers_from_file_when_t0_matches_the_group_max():
     """The GPS bug: an out-of-group detector with a later t0 is not a manual shift."""
-    profile = profile_from_payload(_t0_payload(), "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(_t0_payload(), "P", ProfileFingerprint("isis.emu", 6))
     assert profile.t0_policy.mode == "from_file"
 
 
@@ -1027,12 +1053,12 @@ def test_profile_from_payload_ignores_an_excluded_in_group_detector():
         detector_t0_bins=[5, 5, 5, 9, 9, 9],
         excluded_detectors=[4],
     )
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 6))
     assert profile.t0_policy.mode == "from_file"
 
 
 def test_profile_from_payload_infers_a_manual_offset_when_t0_differs_from_the_group_max():
-    profile = profile_from_payload(_t0_payload(t0_bin=9), "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(_t0_payload(t0_bin=9), "P", ProfileFingerprint("isis.emu", 6))
     assert profile.t0_policy.mode == "manual"
     assert profile.t0_policy.offset_bins == 3  # 9 − in-group max 6
 
@@ -1042,7 +1068,7 @@ def test_profile_from_payload_infers_the_offset_from_an_effective_override():
         t0_bin=8,
         effective_detector_t0_bins=[7, 7, 8, 8, 11, 11],  # every entry is file + 2
     )
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 6))
     assert profile.t0_policy.mode == "manual"
     assert profile.t0_policy.offset_bins == 2
 
@@ -1050,7 +1076,7 @@ def test_profile_from_payload_infers_the_offset_from_an_effective_override():
 def test_profile_from_payload_no_detector_table_is_from_file():
     """A common-t0 NeXus payload (no per-detector table) has no manual signal."""
     payload = {"groups": {1: [1], 2: [2]}, "instrument": "EMU", "t0_bin": 40}
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 2))
     assert profile.t0_policy.mode == "from_file"
 
 
@@ -1230,7 +1256,7 @@ def test_good_window_manual_honours_a_negative_first_offset():
 def test_profile_from_payload_never_infers_a_good_window_policy():
     """D5: absolute window values are resolved *values*, never a Manual signal."""
     payload = _t0_payload(first_good_bin=42, last_good_bin=300, t_good_offset=36)
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 6))
     assert profile.good_window_policy == GoodWindowPolicy(mode="from_file")
 
 
@@ -1239,7 +1265,7 @@ def test_profile_from_payload_reads_an_explicit_good_window_policy():
         first_good_bin=42,
         good_window_policy={"mode": "manual", "first_offset_bins": 25, "last_offset_bins": 200},
     )
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 6))
     assert profile.good_window_policy == GoodWindowPolicy(
         mode="manual", first_offset_bins=25, last_offset_bins=200
     )
@@ -1295,135 +1321,71 @@ def test_run_file_good_window_without_tables_reads_the_payload_window():
 
 
 # --------------------------------------------------------------------------- #
-# Instrument self-healing on re-detection
+# Identity conflicts preserve authored grouping and require an explicit choice.
 # --------------------------------------------------------------------------- #
 
-#: The real FLAME eight-counter label set (Forw/Back/Righ/Left + the four split
-#: corner plates) from the investigation. ``detect_instrument`` returns FLAME for
-#: this label set even when the instrument token is a generic "PSI".
 _FLAME_LABELS = ["Forw", "Back", "Righ", "Left", "R_F", "R_B", "L_F", "L_B"]
 
 
-def _flame_run(*, grouping_instrument: str) -> Run:
-    """An 8-histogram run whose fresh detection is FLAME but whose grouping
-    carries *grouping_instrument* (e.g. a stale "GPS")."""
+def _flame_run() -> Run:
     return _run(
-        instrument=grouping_instrument,
+        instrument="GPS",
         n_hist=8,
-        grouping={"instrument": grouping_instrument},
-        metadata={
-            "facility": "PSI",
-            "instrument": "PSI",
-            "histogram_labels": list(_FLAME_LABELS),
-        },
+        metadata={"facility": "PSI", "instrument": "PSI", "histogram_labels": list(_FLAME_LABELS)},
     )
 
 
-def test_detect_instrument_for_run_uses_run_metadata():
-    run = _flame_run(grouping_instrument="GPS")
-    assert detect_instrument_for_run(run) == "FLAME"
+def test_observed_identity_uses_metadata_and_channel_labels_without_rewriting_them():
+    run = _flame_run()
+    before = copy.deepcopy((run.metadata, run.grouping))
+    context = resolve_instrument(run)
+    assert context.selection.identity == ("psi.flame", "eight_channel")
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint("psi.flame", 8, "eight_channel")
+    assert (run.metadata, run.grouping) == before
 
 
-def test_reconcile_heals_stale_instrument_and_discards_structure():
-    """A FLAME run persisted as GPS heals to FLAME and drops GPS structure."""
-    run = _flame_run(grouping_instrument="GPS")
-    stale_payload = {
-        "instrument": "GPS",
-        "groups": {1: [1], 2: [2]},
-        "group_names": {1: "Up", 2: "Down"},
-        "forward_group": 1,
-        "backward_group": 2,
-        "grouping_preset": "Transverse (Vector)",
-        "projections": [{"label": "Up-Down", "forward_group": 1, "backward_group": 2}],
-        "vector_axis": "P_y",
-        # Instrument-independent settings that must survive.
-        "t0_bin": 5,
-        "first_good_bin": 6,
-        "alpha": 1.23,
-        "deadtime_mode": "off",
-    }
-    reconciled, note = reconcile_instrument_for_payload(run, stale_payload)
-
-    assert note is not None
-    assert "GPS" in note and "FLAME" in note
-    # The run's own identity is corrected in place.
-    assert run.grouping["instrument"] == "FLAME"
-    assert run.metadata["instrument"] == "FLAME"
-    # The fingerprint now reports FLAME (8), not GPS.
-    assert profile_fingerprint_for_run(run) == ProfileFingerprint("FLAME", 8)
-    # Stale GPS structure is gone; instrument-independent settings kept.
-    assert reconciled["instrument"] == "FLAME"
-    for key in (
-        "groups",
-        "group_names",
-        "forward_group",
-        "backward_group",
-        "grouping_preset",
-        "projections",
-        "vector_axis",
-    ):
-        assert key not in reconciled
-    assert reconciled["t0_bin"] == 5
-    assert reconciled["first_good_bin"] == 6
-    assert reconciled["alpha"] == 1.23
-    assert reconciled["deadtime_mode"] == "off"
-
-
-def test_reconcile_does_not_inherit_wrong_fingerprint_profile():
-    """After healing, the run must not inherit a (GPS, 8) profile."""
-    run = _flame_run(grouping_instrument="GPS")
-    gps_profile = GroupingProfile(
-        name="Default (GPS)",
-        fingerprint=ProfileFingerprint("GPS", 8),
+def test_conflicting_retained_identity_preserves_all_authored_scientific_requests():
+    run = _flame_run()
+    run.instrument_choice = RecordedInstrumentChoice(
+        InstrumentSelection("psi.gps", "bin_combined", "1", "legacy"), ()
+    )
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("psi.gps", 8, "bin_combined"),
         groups={1: [1], 2: [2]},
         group_names={1: "Up", 2: "Down"},
+        alpha_policy=AlphaPolicy(mode="calibrated", value=1.23, error=0.02, source_run=9),
+        extra={"grouping_preset": "Transverse (Vector)", "vector_axis": "P_y"},
     )
-    reconcile_instrument_for_payload(run, {"instrument": "GPS", "groups": {1: [1]}})
-    assert default_profile_for_run([gps_profile], run) is None
+    before = copy.deepcopy((run.grouping, run.metadata, run.instrument_choice, profile.to_dict()))
+    assert resolve_instrument(run).requires_choice
+    assert default_profile_for_run([profile], run) is None
+    assert assigned_profile_for_run([profile], run, profile.name) is None
+    with pytest.raises(InvalidGroupingError, match="Instrument identity conflicts") as error:
+        resolve_effective_grouping(profile, run)
+    assert error.value.grouping["groups"] == profile.groups
+    assert error.value.grouping["alpha_policy"] == profile.alpha_policy.to_dict()
+    assert error.value.grouping["grouping_preset"] == "Transverse (Vector)"
+    assert error.value.grouping["vector_axis"] == "P_y"
+    assert (run.grouping, run.metadata, run.instrument_choice, profile.to_dict()) == before
 
 
-def test_reconcile_none_detection_keeps_stored_value():
-    """When detection is inconclusive, the stored instrument is kept."""
-    # A 2-histogram run with no instrument hints -> detect_instrument returns None.
-    run = _run(instrument="GPS", n_hist=2, metadata={"instrument": ""})
-    assert detect_instrument_for_run(run) is None
-    payload = {"instrument": "GPS", "groups": {1: [1], 2: [2]}}
-    reconciled, note = reconcile_instrument_for_payload(run, payload)
-    assert note is None
-    assert reconciled is payload  # unchanged object
-    assert run.grouping["instrument"] == "GPS"
+def test_accepted_retained_identity_keeps_its_named_assignment_despite_raw_conflict():
+    run = _flame_run()
+    selected = InstrumentSelection("psi.gps", "bin_combined", "1", "manual")
+    run.instrument_choice = accept_instrument_choice(run, selected)
+    profile = _base_profile(
+        name="Saved GPS", fingerprint=ProfileFingerprint("psi.gps", 8, "bin_combined")
+    )
+    assert not resolve_instrument(run).requires_choice
+    assert assigned_profile_for_run([profile], run, "Saved GPS") is profile
+    assert profile_fingerprint_for_run(run) == profile.fingerprint
 
 
-def test_reconcile_matching_value_leaves_payload_byte_identical():
-    """A payload whose stored instrument matches detection is untouched."""
-    run = _flame_run(grouping_instrument="FLAME")
-    payload = {
-        "instrument": "FLAME",
-        "groups": {1: [1], 2: [2]},
-        "group_names": {1: "Forward", 2: "Backward"},
-        "forward_group": 2,
-        "backward_group": 1,
-        "alpha": 1.0,
-    }
-    snapshot = copy.deepcopy(payload)
-    reconciled, note = reconcile_instrument_for_payload(run, payload)
-    assert note is None
-    assert reconciled is payload  # same object, not a copy
-    assert payload == snapshot  # byte-identical
-
-
-def test_reconcile_gps_variants_are_same_family_no_heal():
-    """GPS vs GPS-RD are variants of one instrument; never a spurious heal."""
-    # An 11-histogram GPS ROOT run detects as "GPS-RD"; a payload stored as the
-    # display-name "GPS" must not be "healed" to GPS-RD.
-    run = _run(
-        instrument="GPS",
-        n_hist=11,
-        metadata={
-            "facility": "PSI",
-            "psi_format": "psi-root",
-            "instrument": "LMU_BULKMUSR_GPS",
-            "histogram_labels": [
+@pytest.mark.parametrize(
+    "labels,configuration",
+    [
+        (
+            [
                 "Forw",
                 "Back",
                 "Up_B",
@@ -1436,28 +1398,10 @@ def test_reconcile_gps_variants_are_same_family_no_heal():
                 "Left_F",
                 "Mob-RL",
             ],
-        },
-    )
-    assert detect_instrument_for_run(run) == "GPS-RD"
-    payload = {"instrument": "GPS", "groups": {1: [1]}}
-    reconciled, note = reconcile_instrument_for_payload(run, payload)
-    assert note is None
-    assert reconciled is payload
-
-
-def test_reconcile_gps_15_histogram_export_detects_its_own_variant():
-    """A 15-histogram GPS ROOT run resolves to GPS-RD15, still the same family."""
-    # This export carries the six combined counters *and* the eight half-counters
-    # plus the mobile detector, so its detector ids differ from the 11-histogram
-    # sub-detector export's; detection must not fall back to GPS-RD.
-    run = _run(
-        instrument="GPS",
-        n_hist=15,
-        metadata={
-            "facility": "PSI",
-            "psi_format": "psi-root",
-            "instrument": "LMU_BULKMUSR_GPS",
-            "histogram_labels": [
+            "root_split",
+        ),
+        (
+            [
                 "Forw",
                 "Back",
                 "Up",
@@ -1474,14 +1418,30 @@ def test_reconcile_gps_15_histogram_export_detects_its_own_variant():
                 "Left_F",
                 "Mob-RL",
             ],
+            "root_combined_split",
+        ),
+    ],
+)
+def test_gps_root_export_resolves_its_acquired_configuration_without_changing_grouping(
+    labels, configuration
+):
+    run = _run(
+        instrument="GPS",
+        n_hist=len(labels),
+        grouping={"groups": {1: [1], 2: [2]}, "alpha": 1.23},
+        metadata={
+            "facility": "PSI",
+            "psi_format": "psi-root",
+            "instrument": "LMU_BULKMUSR_GPS",
+            "histogram_labels": labels,
         },
     )
-    assert detect_instrument_for_run(run) == "GPS-RD15"
-    # Same physical instrument as a stored "GPS" identity -> no spurious heal.
-    payload = {"instrument": "GPS", "groups": {1: [1]}}
-    reconciled, note = reconcile_instrument_for_payload(run, payload)
-    assert note is None
-    assert reconciled is payload
+    before = copy.deepcopy((run.metadata, run.grouping))
+    assert resolve_instrument(run).selection.identity == ("psi.gps", configuration)
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint(
+        "psi.gps", len(labels), configuration
+    )
+    assert (run.metadata, run.grouping) == before
 
 
 def test_profile_color_round_trips_and_defaults_none():
@@ -1502,7 +1462,7 @@ def test_profile_color_round_trips_and_defaults_none():
 def test_heal_converts_a_legacy_absolute_t0_into_an_offset():
     run = _run_with_detector_t0([4, 6])
     profile = _base_profile(
-        fingerprint=ProfileFingerprint("EMU", 2),
+        fingerprint=ProfileFingerprint("isis.emu", 2),
         groups={1: [1], 2: [2]},
         t0_policy=T0Policy(mode="manual", legacy_value=9),
     )
@@ -1520,7 +1480,7 @@ def test_heal_converts_a_legacy_absolute_t0_into_an_offset():
 def test_heal_converts_a_legacy_value_equal_to_the_file_t0_to_from_file():
     run = _run_with_detector_t0([4, 6])
     profile = _base_profile(
-        fingerprint=ProfileFingerprint("EMU", 2),
+        fingerprint=ProfileFingerprint("isis.emu", 2),
         groups={1: [1], 2: [2]},
         t0_policy=T0Policy(mode="manual", legacy_value=6),
     )
@@ -1538,7 +1498,7 @@ def test_heal_prefers_the_policys_source_run_as_the_reference():
     other = _run_with_detector_t0([1, 1])
     other.run_number = 3
     profile = _base_profile(
-        fingerprint=ProfileFingerprint("EMU", 2),
+        fingerprint=ProfileFingerprint("isis.emu", 2),
         groups={1: [1], 2: [2]},
         t0_policy=T0Policy(mode="manual", legacy_value=9, source_run=7),
     )
@@ -1586,5 +1546,5 @@ def test_profile_lifting_rejects_malformed_timing_overrides_without_coercion(ove
         "effective_detector_t0_bins": override,
     }
     with pytest.raises(InvalidGroupingError, match="t0") as caught:
-        profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
+        profile_from_payload(payload, "P", ProfileFingerprint("isis.emu", 2))
     assert caught.value.grouping == payload

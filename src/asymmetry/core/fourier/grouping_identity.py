@@ -112,7 +112,7 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
                 payload[key] = grouping.get(key)
         elif mode == "range" and not background_range_is_explicit(grouping):
             payload["background_facility"] = resolve_facility(
-                metadata=run.metadata, grouping=grouping
+                metadata=run.metadata, grouping=grouping, instrument_choice=run.instrument_choice
             )
         for key in (
             "background_values",

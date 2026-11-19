@@ -325,7 +325,7 @@ def test_prepared_sources_keep_reference_calibration_and_combined_roles(tmp_path
     identity = ContentIdentity("c" * 64)
     profile = GroupingProfile(
         "owned",
-        ProfileFingerprint("test", 2),
+        ProfileFingerprint("", 2),
         background_policy=BackgroundPolicy(
             "reference_run",
             {

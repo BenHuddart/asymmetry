@@ -303,7 +303,11 @@ def prepare_group_counts(
                         acquisition_start_bin=background_t0 - t0,
                         length=alignment.length,
                         bin_width_us=histograms[indices[0]].bin_width,
-                        facility=resolve_facility(metadata=run.metadata, grouping=payload),
+                        facility=resolve_facility(
+                            metadata=run.metadata,
+                            grouping=payload,
+                            instrument_choice=run.instrument_choice,
+                        ),
                     )[0]
                 )
             elif mode == "tail_fit":

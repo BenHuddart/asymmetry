@@ -8,11 +8,14 @@ from asymmetry.core.instrument import (
     derive_projection_pairs,
     get_instrument_layout,
     preset_grouping_for_run,
-    variant_for_histograms,
+)
+from asymmetry.core.instruments.resolution import (
+    InstrumentConflictError,
+    layout_key_for_selection,
+    resolve_instrument,
 )
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.project.profiles import (
-    detect_instrument_for_run,
     profile_fingerprint_for_run,
     profile_from_payload,
     resolve_effective_grouping,
@@ -51,10 +54,16 @@ def apply_grouping_preset(dataset: MuonDataset, preset_name: str) -> MuonDataset
         raise ValueError("Apply a grouping preset to the laboratory-frame source dataset.")
     if "period_reduced" in run.grouping and "period_histograms" not in run.grouping:
         raise ValueError("Applying a grouping preset requires raw histograms for all held periods.")
-    instrument = detect_instrument_for_run(run)
-    if instrument is None:
+    context = resolve_instrument(run)
+    if context.requires_choice:
+        raise InstrumentConflictError(context)
+    selected = context.selection
+    if selected is None:
         raise ValueError("Cannot apply a grouping preset to an unrecognised instrument.")
-    layout = get_instrument_layout(variant_for_histograms(instrument, len(run.histograms)))
+    key = layout_key_for_selection(selected, len(run.histograms))
+    if key is None:
+        raise ValueError("The selected instrument has no compatible acquired channel map.")
+    layout = get_instrument_layout(key)
     groups = preset_grouping_for_run(
         layout,
         preset_name,
@@ -62,7 +71,7 @@ def apply_grouping_preset(dataset: MuonDataset, preset_name: str) -> MuonDataset
         labels=run.grouping.get("histogram_labels", run.metadata.get("histogram_labels")),
     )
     preset = layout.presets[preset_name]
-    fingerprint = replace(profile_fingerprint_for_run(run), instrument=layout.name)
+    fingerprint = profile_fingerprint_for_run(run)
     previous = profile_from_payload(run.grouping, "preset", fingerprint)
     projections = [p.to_payload() for p in preset.projections]
     profile = replace(

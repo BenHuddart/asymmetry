@@ -21,14 +21,14 @@ from asymmetry.core.transform.rebin import BinningSpec
 )
 def test_profile_rejects_invalid_binning_at_its_boundary(key, value):
     with pytest.raises(ValueError, match="binning mode|bunching factor|bin0_us|bin10_us"):
-        profile_from_payload({key: value}, "test", ProfileFingerprint("test", 2))
+        profile_from_payload({key: value}, "test", ProfileFingerprint("", 2))
 
 
 def test_profile_stores_one_binning_spec_and_keeps_the_wire_keys():
     profile = profile_from_payload(
         {"binning_mode": "variable", "bunching_factor": 3, "bin0_us": 0.1, "bin10_us": 0.4},
         "test",
-        ProfileFingerprint("test", 2),
+        ProfileFingerprint("", 2),
     )
     assert profile.binning == BinningSpec("variable", 3, 0.1, 0.4)
     raw = profile.to_dict()
@@ -48,14 +48,14 @@ def test_invalid_saved_binning_loads_and_fails_when_profile_is_consumed(tmp_path
     loaded = load_project(path)["datasets"][0]["grouping_overrides"]
     assert loaded == payload
     with pytest.raises(ValueError, match="bunching factor"):
-        profile_from_payload(loaded, "test", ProfileFingerprint("test", 2))
+        profile_from_payload(loaded, "test", ProfileFingerprint("", 2))
 
 
 def test_profile_base_binning_cannot_silently_discard_a_display_merge():
     from asymmetry.core.project.profiles import GroupingProfile
 
     with pytest.raises(ValueError, match="base binning; merge must be 1"):
-        GroupingProfile("test", ProfileFingerprint("test", 2), binning=BinningSpec(merge=2))
+        GroupingProfile("test", ProfileFingerprint("", 2), binning=BinningSpec(merge=2))
 
 
 def test_oversized_authored_packing_survives_project_loading_and_repair(tmp_path):

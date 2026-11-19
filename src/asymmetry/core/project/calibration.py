@@ -25,6 +25,7 @@ from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow
 from asymmetry.core.transform.projections import _AXIS_ALPHA_KEYS
 
 if TYPE_CHECKING:
+    from asymmetry.core.instruments.resolution import RecordedInstrumentChoice
     from asymmetry.core.workflow.calibration_results import QuickCalibrationResult
 
 
@@ -224,6 +225,7 @@ class PreparedGrouping:
     """A detached grouping payload whose captured coefficient links are resolved."""
 
     payload: dict
+    instrument_choice: RecordedInstrumentChoice | None = None
 
 
 def calibration_values(payload):

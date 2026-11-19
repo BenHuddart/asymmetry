@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retain instrument choices, grouping, calibrations and reference timing on identity
+  conflicts; provide explicit identity review without applying a preset.
+
 - Keep model and fit-method evidence in maintained references and synthetic controls;
   clarify shared-amplitude kinetics assumptions and conditional uncertainties.
 
