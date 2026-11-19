@@ -80,7 +80,9 @@ from asymmetry.gui.panels.fit_panel import (
 
 def _short_group(group_id: int, name: str, counts=()) -> GroupedTimeDomainGroup:
     counts = np.asarray(counts, dtype=float)
-    return GroupedTimeDomainGroup(group_id, name, np.array([]), counts, np.ones_like(counts))
+    return GroupedTimeDomainGroup(
+        group_id, name, np.arange(counts.size, dtype=float), counts, np.ones_like(counts)
+    )
 
 
 @pytest.fixture
@@ -1620,24 +1622,22 @@ def test_grouped_tab_shows_one_value_column_per_group(
         for row in range(tab._group_param_table.rowCount())
     }
     forward_background, forward_n0, _forward_amplitude = seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+        np.array([120.0, 118.0]), time=np.arange(2.0)
     )
     backward_background, backward_n0, _backward_amplitude = seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+        np.array([80.0, 79.0]), time=np.arange(2.0)
     )
 
     assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
-    assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
-        forward_n0
+    assert tab._group_param_table.item(row_by_name["N0"], 1).text() == f"{forward_n0:.6g}"
+    assert tab._group_param_table.item(row_by_name["N0"], 2).text() == f"{backward_n0:.6g}"
+    assert (
+        tab._group_param_table.item(row_by_name["background"], 1).text()
+        == f"{forward_background:.6g}"
     )
-    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
-        backward_n0
-    )
-    assert float(tab._group_param_table.item(row_by_name["background"], 1).text()) == pytest.approx(
-        forward_background
-    )
-    assert float(tab._group_param_table.item(row_by_name["background"], 2).text()) == pytest.approx(
-        backward_background
+    assert (
+        tab._group_param_table.item(row_by_name["background"], 2).text()
+        == f"{backward_background:.6g}"
     )
     assert tab._group_param_table.cellWidget(row_by_name["N0"], 2) is None
     assert isinstance(tab._group_param_table.cellWidget(row_by_name["N0"], 3), QComboBox)
@@ -1773,10 +1773,10 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
         for row in range(tab._group_param_table.rowCount())
     }
     forward_background, forward_n0, forward_amplitude = seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+        np.array([120.0, 118.0]), time=np.arange(2.0)
     )
     backward_background, backward_n0, backward_amplitude = seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+        np.array([80.0, 79.0]), time=np.arange(2.0)
     )
     tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
     tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
@@ -1960,10 +1960,10 @@ def test_grouped_tab_reset_button_restores_estimated_values(
         for row in range(tab._group_param_table.rowCount())
     }
     forward_background, forward_n0, forward_amplitude = seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+        np.array([120.0, 118.0]), time=np.arange(2.0)
     )
     backward_background, backward_n0, backward_amplitude = seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+        np.array([80.0, 79.0]), time=np.arange(2.0)
     )
     relative_phase_defaults = seed_group_absolute_phases(grouped_groups)
     tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
@@ -1980,23 +1980,23 @@ def test_grouped_tab_reset_button_restores_estimated_values(
 
     tab._group_param_reset_btn.click()
 
-    assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
-        forward_n0
+    assert tab._group_param_table.item(row_by_name["N0"], 1).text() == f"{forward_n0:.6g}"
+    assert tab._group_param_table.item(row_by_name["N0"], 2).text() == f"{backward_n0:.6g}"
+    assert (
+        tab._group_param_table.item(row_by_name["background"], 1).text()
+        == f"{forward_background:.6g}"
     )
-    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
-        backward_n0
+    assert (
+        tab._group_param_table.item(row_by_name["background"], 2).text()
+        == f"{backward_background:.6g}"
     )
-    assert float(tab._group_param_table.item(row_by_name["background"], 1).text()) == pytest.approx(
-        forward_background
+    assert (
+        tab._group_param_table.item(row_by_name["amplitude"], 1).text()
+        == f"{forward_amplitude:.6g}"
     )
-    assert float(tab._group_param_table.item(row_by_name["background"], 2).text()) == pytest.approx(
-        backward_background
-    )
-    assert float(tab._group_param_table.item(row_by_name["amplitude"], 1).text()) == pytest.approx(
-        forward_amplitude
-    )
-    assert float(tab._group_param_table.item(row_by_name["amplitude"], 2).text()) == pytest.approx(
-        backward_amplitude
+    assert (
+        tab._group_param_table.item(row_by_name["amplitude"], 2).text()
+        == f"{backward_amplitude:.6g}"
     )
     assert float(
         tab._group_param_table.item(row_by_name["relative_phase"], 1).text()
@@ -2428,12 +2428,10 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
         for row in range(tab._group_param_table.rowCount())
     }
     _background_seed, backward_n0_seed, _amplitude_seed = seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+        np.array([80.0, 79.0]), time=np.arange(2.0)
     )
     assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
-    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
-        backward_n0_seed
-    )
+    assert tab._group_param_table.item(row_by_name["N0"], 2).text() == f"{backward_n0_seed:.6g}"
     assert tab._group_param_table.cellWidget(row_by_name["N0"], 2) is None
     assert isinstance(tab._group_param_table.cellWidget(row_by_name["N0"], 3), QComboBox)
 
