@@ -122,3 +122,27 @@ producers emit canonical state. Check parameter curves independently of JSON
 round trips; preserve draft forms, unavailable user models, and captured execution
 attribution. A storage version never proves that a historical calculation is
 current.
+
+Instrument definitions
+----------------------
+
+Keep each migrated instrument as frozen data in its facility-qualified module
+under ``asymmetry.core.instruments``. Declare physical elements, acquisition
+channels and display occurrences separately; unknown affiliations remain
+unknown. Use the shared circular, grid or explicit arrangements and preserve
+acquired ordinals. Record a beamline only when known; otherwise leave it unknown.
+Scientific memberships and ordered asymmetry legs are
+explicit data, independent of drawing positions.
+
+Attach evidence to named facts or coherent tables, with a primary source and
+locator where known. Schematic radii are not physical dimensions. An authored
+preset and a source-backed grouping have different evidence status; neither is
+an instrument-scientist review. Record the exact revision/scope and obtain
+consent before publishing a reviewer's name.
+
+The Sphinx instrument directive generates review prose and labelled diagrams
+from the resolved declaration and tracks its sources for incremental builds. Check them with the actual Detector Layout
+editor, along with independent manual anchors and a separately labelled old
+output comparison. Source-profile updates preserve recorded scientific settings;
+new defaults require a separate scientific decision. See the
+:doc:`instrument definitions <reference/instruments/index>`.

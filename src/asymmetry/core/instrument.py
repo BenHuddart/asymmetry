@@ -25,10 +25,25 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from asymmetry.core.instruments.isis_emu import PROFILE as EMU_PROFILE
+from asymmetry.core.instruments.layout import (
+    GENERIC_INSTRUMENT,
+    PROJECTION_TINTS,
+    TRANSVERSE_PROJECTION_TINTS,
+    AsymmetryProjection,
+    BankLayout,
+    DetectorSegment,
+    GroupDefinition,
+    InstrumentLayout,
+    PresetGrouping,
+    ReferenceArrow,
+    generic_layout,
+)
+from asymmetry.core.instruments.resolve import layout_from_profile
+from asymmetry.core.instruments.schema import matches_name
 from asymmetry.core.transform.grouping import resolve_group_indices
 
 __all__ = [
@@ -65,281 +80,14 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class DetectorSegment:
-    """Geometric description of a single detector element.
-
-    Parameters
-    ----------
-    detector_id:
-        1-based detector number matching instrument-manual convention.
-    sector_index:
-        Azimuthal sector index within the bank (0-based, 0 = first sector).
-    ring_index:
-        Radial ring index within the sector (0-based, 0 = innermost).
-        For single-ring instruments this is always 0.
-    angle_center_deg:
-        Central azimuthal angle of the segment in degrees.  ``0°`` points
-        right and positive rotation is counter-clockwise.
-    angle_half_width_deg:
-        Half the angular width of the segment in degrees.
-    r_inner:
-        Inner radius normalised to the outer disc radius (0–1).
-    r_outer:
-        Outer radius normalised to the outer disc radius (0–1).
-    shape:
-        Rendering primitive. ``"wedge"`` is used for circular ISIS detector
-        banks; ``"rectangle"`` is used for top-view detector plates such as
-        PSI FLAME.  ``"endon_out"`` / ``"endon_in"`` draw a detector seen
-        end-on — pointing toward (``⊙``) or away from (``⊗``) the viewer — used
-        in multi-panel plan layouts to show a detector that is perpendicular to
-        the current view (and therefore editable in the other panel).
-    label:
-        Optional short detector label displayed alongside the detector ID.
-    x_center, y_center, width, height, rotation_deg:
-        Rectangle geometry in an arbitrary plan-view coordinate system.
-    read_only:
-        When ``True`` the segment is drawn for spatial context only — it is not
-        clickable and never takes a group colour.  A detector that appears in
-        more than one plan panel is *active* (clickable) in exactly one panel
-        and ``read_only`` in the others.
-    """
-
-    detector_id: int
-    sector_index: int
-    ring_index: int
-    angle_center_deg: float
-    angle_half_width_deg: float
-    r_inner: float
-    r_outer: float
-    shape: str = "wedge"
-    label: str | None = None
-    x_center: float = 0.0
-    y_center: float = 0.0
-    width: float = 0.0
-    height: float = 0.0
-    rotation_deg: float = 0.0
-    read_only: bool = False
-
-    @property
-    def angle_start_deg(self) -> float:
-        """Lower bound of the segment arc in degrees (counter-clockwise measured)."""
-        return self.angle_center_deg - self.angle_half_width_deg
-
-    @property
-    def angle_end_deg(self) -> float:
-        """Upper bound of the segment arc in degrees (counter-clockwise measured)."""
-        return self.angle_center_deg + self.angle_half_width_deg
-
-
-@dataclass(frozen=True)
-class BankLayout:
-    """Collection of detector segments forming one detector bank.
-
-    Parameters
-    ----------
-    name:
-        Human-readable bank name (e.g. ``"Forward"``).
-    segments:
-        All detector segments that belong to this bank.
-    """
-
-    name: str
-    segments: tuple[DetectorSegment, ...]
-
-
-@dataclass(frozen=True)
-class GroupDefinition:
-    """A named set of detectors forming one group within a preset.
-
-    Parameters
-    ----------
-    name:
-        Display name for the group (e.g. ``"Forward"``, ``"Pz Backward"``).
-    detector_ids:
-        Tuple of 1-based detector IDs belonging to this group.
-    """
-
-    name: str
-    detector_ids: tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class AsymmetryProjection:
-    """One named asymmetry projection within a multi-projection preset.
-
-    A forward/backward asymmetry *is* the muon polarization projected onto the
-    axis joining that detector pair, so a preset that exposes several such pairs
-    (EMU vector polarization, transverse-field dual grouping) is a set of
-    projections.  Declaring them explicitly here replaces inferring them from
-    canonical group-name strings.
-
-    Parameters
-    ----------
-    label:
-        Display/identity label, e.g. ``"P_x"``, ``"P_z"``, ``"Top-Bottom"``.
-    forward_group:
-        Group ID supplying the forward histogram of this projection's pair.
-    backward_group:
-        Group ID supplying the backward histogram of this projection's pair.
-    alpha:
-        Default per-projection alpha balance.
-    tint:
-        Fixed semantic frame colour (hex) used for the chip and subplot frame.
-        This is *projection identity* and is deliberately distinct from a data
-        trace colour (which encodes run identity in RG mode).
-    """
-
-    label: str
-    forward_group: int
-    backward_group: int
-    alpha: float = 1.0
-    tint: str | None = None
-
-    def to_payload(self) -> dict[str, object]:
-        """Return the plain-dict form persisted in a dataset grouping payload."""
-        payload: dict[str, object] = {
-            "label": self.label,
-            "forward_group": int(self.forward_group),
-            "backward_group": int(self.backward_group),
-            "alpha": float(self.alpha),
-        }
-        if self.tint is not None:
-            payload["tint"] = self.tint
-        return payload
-
-
 #: Fixed semantic frame tints for the canonical EMU vector projections.  Chosen
 #: away from the common run-colour palette so they read as chrome, not data.
-PROJECTION_TINTS: Final[dict[str, str]] = {
-    "P_x": "#534AB7",  # purple
-    "P_y": "#BA7517",  # amber
-    "P_z": "#0F6E56",  # teal
-}
 
 #: Fixed semantic frame tints for the transverse-field dual-grouping projections
 #: (MuSR / HiFi).  Like :data:`PROJECTION_TINTS` these are muted and chosen away
 #: from both the run-colour palette and the EMU vector tints, since the two
 #: instruments are never shown together.  ``Top-Bottom`` keeps the same rose tint
 #: on MuSR and HiFi for cross-instrument consistency.
-TRANSVERSE_PROJECTION_TINTS: Final[dict[str, str]] = {
-    "Top-Bottom": "#B0436E",  # rose
-    "Fwd-Back": "#2E8B74",  # jade
-    "Left-Right": "#3F6FA0",  # steel blue
-}
-
-
-@dataclass(frozen=True)
-class PresetGrouping:
-    """A named, complete grouping assignment for an instrument.
-
-    Parameters
-    ----------
-    name:
-        Human-readable preset name (e.g. ``"Longitudinal"``).
-    groups:
-        Mapping from group ID (1-based, matching the Group 1–8 buttons) to
-        :class:`GroupDefinition`.  Unused group IDs should not appear.
-    forward_group:
-        Group ID of the default forward group.
-    backward_group:
-        Group ID of the default backward group.
-    projections:
-        Ordered projections exposed by this preset, when it is a multi-projection
-        (vector / dual-grouping) preset.  Empty for ordinary single-pair presets.
-    """
-
-    name: str
-    groups: dict[int, GroupDefinition]
-    forward_group: int
-    backward_group: int
-    projections: tuple[AsymmetryProjection, ...] = ()
-
-
-@dataclass(frozen=True)
-class ReferenceArrow:
-    """A labelled direction marker rendered on plan-view schematics."""
-
-    label: str
-    start: tuple[float, float]
-    end: tuple[float, float]
-    color: str = "#333333"
-
-
-@dataclass(frozen=True)
-class InstrumentLayout:
-    """Complete detector layout description for one muon instrument.
-
-    Parameters
-    ----------
-    name:
-        Canonical instrument name (``"HiFi"``, ``"MuSR"``, or ``"EMU"``).
-    n_detectors:
-        Total number of detectors / histograms.
-    banks:
-        Ordered tuple of :class:`BankLayout` objects.
-    presets:
-        Ordered dict of preset names to :class:`PresetGrouping`. The first entry is the default preset.
-    view:
-        Schematic rendering mode, either ``"radial"`` or ``"plan"``.
-    reference_arrows:
-        Optional labelled arrows used by plan-view layouts.
-    display_name:
-        Optional user-facing name shown in the instrument dropdown.  Defaults to
-        :attr:`name`.  Layout *variants* of one physical instrument (e.g. the
-        6-detector PSI GPS BIN layout ``"GPS"``, the 11-detector ROOT
-        sub-detector layout ``"GPS-RD"`` and the 15-detector combined+sub-detector
-        ROOT layout ``"GPS-RD15"``) share a display name so the user only
-        ever sees the variant matching their loaded data, while ``name`` stays a
-        distinct registry key for detection and persistence.
-    apply_default_preset_on_load:
-        When ``True``, a loader applies this instrument's default preset (the
-        first entry in :attr:`presets`) to a freshly loaded run automatically,
-        instead of leaving the loader's generic label-based grouping in place.
-        Used for instruments whose useful grouping is not the plain
-        forward/backward split the labels imply — HAL-9500, whose per-octant
-        angle-resolved grouping should be live the moment the data loads, without
-        the user having to open the grouping window and click Apply.  Off by
-        default so every other instrument keeps its loader grouping untouched.
-    """
-
-    name: str
-    n_detectors: int
-    banks: tuple[BankLayout, ...]
-    presets: dict[str, PresetGrouping]
-    view: str = "radial"
-    reference_arrows: tuple[ReferenceArrow, ...] = ()
-    display_name: str | None = None
-    apply_default_preset_on_load: bool = False
-
-    @property
-    def display(self) -> str:
-        """User-facing name (``display_name`` if set, else ``name``)."""
-        return self.display_name or self.name
-
-    @property
-    def all_segments(self) -> list[DetectorSegment]:
-        """All segments from all banks, in bank order.
-
-        In a multi-panel plan layout a detector may appear in more than one bank
-        (active in its home panel, ``read_only`` elsewhere), so this can contain
-        several segments per ``detector_id``.  Use :attr:`active_segments` for one
-        segment per physical detector.
-        """
-        segs: list[DetectorSegment] = []
-        for bank in self.banks:
-            segs.extend(bank.segments)
-        return segs
-
-    @property
-    def active_segments(self) -> list[DetectorSegment]:
-        """One clickable segment per detector (the non-``read_only`` segments)."""
-        return [seg for seg in self.all_segments if not seg.read_only]
-
-    @property
-    def default_preset_name(self) -> str:
-        """Name of the first (default) preset."""
-        return next(iter(self.presets))
 
 
 # ---------------------------------------------------------------------------
@@ -734,186 +482,6 @@ def _build_musr() -> InstrumentLayout:
 # ---------------------------------------------------------------------------
 # EMU layout builder
 # ---------------------------------------------------------------------------
-
-
-def _build_emu() -> InstrumentLayout:
-    """Build the EMU detector layout.
-
-    EMU has 96 detectors arranged in two circular banks of 48 each.
-    Each bank is divided into 16 azimuthal sectors, each containing three
-    radial rings (inner, middle, outer). Numbering is sector-major triplets
-    (inner/middle/outer of one sector before moving to the next), sector 0 is
-    at 12 o'clock, and numbers increase clockwise as viewed looking upstream
-    from downstream — matching the *EMU User Guide*, Section 8.1, and the
-    Mantid EMU instrument definition file (detector 1 at azimuth 90°).
-
-    Numbering formula for azimuth sector *s* (0–15):
-
-    * Forward bank: inner = ``1 + 3s``, middle = ``2 + 3s``, outer = ``3 + 3s``.
-    * Backward bank: inner = ``49 + 3s``, middle = ``50 + 3s``, outer = ``51 + 3s``.
-
-    Angular convention: looking into the instrument from downstream.
-    Sector 0 is at 12 o'clock (90°); numbers increase clockwise.
-    Sector *s* centre: ``(90 − 22.5 × s) mod 360°``.
-
-    **The three radial rings exist for stray-count rejection, not for the**
-    **"Vector Polarization" preset below.** EMU's inner/middle/outer split lets
-    an analysis discard counts from detectors more prone to stray-muon and
-    frame-overlap background — see Giblin *et al.*, *Nucl. Instrum. Methods*
-    *Phys. Res. A* **751**, 70 (2014). The facility does not document a
-    "vector polarization" detector grouping for EMU: the ``Vector
-    Polarization`` preset defined below (Px/Py/Pz octant composition) is an
-    **Asymmetry construct**, not a facility-defined or published EMU
-    convention. It is verified internally consistent against this module's
-    own sector geometry (see ``tests/core/test_instrument.py::
-    TestEMUVectorPolarizationGeometry``) but has no external oracle to check
-    it against.
-    """
-    n_sectors = 16
-    sector_pitch = 22.5  # degrees (360 / 16)
-    hw = sector_pitch / 2.0
-
-    # Three radial bands per sector (normalised to outer disc radius)
-    radial_bounds = [
-        (0.28, 0.52),  # ring 0 = inner (closest to sample)
-        (0.52, 0.76),  # ring 1 = middle
-        (0.76, 1.00),  # ring 2 = outer (furthest from sample)
-    ]
-
-    fwd_segs: list[DetectorSegment] = []
-    bwd_segs: list[DetectorSegment] = []
-
-    for s in range(n_sectors):
-        angle_center = (90.0 - sector_pitch * s) % 360.0
-        for ring_idx, (ri, ro) in enumerate(radial_bounds):
-            # Forward bank
-            det_fwd = 1 + 3 * s + ring_idx
-            fwd_segs.append(
-                DetectorSegment(
-                    detector_id=det_fwd,
-                    sector_index=s,
-                    ring_index=ring_idx,
-                    angle_center_deg=angle_center,
-                    angle_half_width_deg=hw,
-                    r_inner=ri,
-                    r_outer=ro,
-                )
-            )
-            # Backward bank
-            det_bwd = 49 + 3 * s + ring_idx
-            bwd_segs.append(
-                DetectorSegment(
-                    detector_id=det_bwd,
-                    sector_index=s,
-                    ring_index=ring_idx,
-                    angle_center_deg=angle_center,
-                    angle_half_width_deg=hw,
-                    r_inner=ri,
-                    r_outer=ro,
-                )
-            )
-
-    banks = (
-        BankLayout(name="Forward", segments=tuple(fwd_segs)),
-        BankLayout(name="Backward", segments=tuple(bwd_segs)),
-    )
-
-    # --- Presets ---
-    presets: dict[str, PresetGrouping] = {}
-
-    # Longitudinal (default)
-    presets["Longitudinal"] = PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Forward", tuple(range(1, 49))),
-            2: GroupDefinition("Backward", tuple(range(49, 97))),
-        },
-        forward_group=1,
-        backward_group=2,
-    )
-
-    # --- Vector polarization: 6 groups across Px, Py, Pz axes ---
-    #
-    # This is an in-house (non-facility-documented) grouping: each bank is
-    # split into four 12-detector quadrants (4 sectors x 3 rings) by the
-    # geometric half-plane of the sector centre (sector s at angle
-    # (90 - 22.5*s) mod 360, matplotlib polar convention: 0 deg = east,
-    # 90 deg = north/12 o'clock, CCW positive):
-    #   sectors 13-3 (13,14,15,0,1,2,3) = upper half  (y > 0), Py Top
-    #   sectors 5-11  (5,6,7,8,9,10,11) = lower half  (y < 0), Py Bottom
-    #   sectors 9-15  (9,10,11,12,13,14,15) = left half (x < 0), Px Left
-    #   sectors 1-7   (1,2,3,4,5,6,7)   = right half (x > 0), Px Right
-    # The four sectors centred exactly on an axis (0 = due north/top,
-    # 4 = due east/right, 8 = due south/bottom, 12 = due west/left) are
-    # boundary cases with y or x == 0 and are assigned to the neighbouring
-    # half that keeps each quadrant an equal 8 sectors: sector 0 -> Right,
-    # sector 4 -> Bottom, sector 8 -> Left, sector 12 -> Top. This partition
-    # is verified against the layout's own DetectorSegment angles in
-    # tests/core/test_instrument.py::TestEMUVectorPolarizationGeometry.
-    #
-    # Composite channel definitions:
-    #   Pz from forward/backward bank sums
-    #   Py from top/bottom half sums (across both banks)
-    #   Px from left/right half sums (across both banks)
-    #
-    # This intentionally creates overlap between Pz groups and transverse groups.
-
-    def _emu_sector_ids(sectors: list[int], bank_offset: int) -> tuple[int, ...]:
-        """Return all detector IDs (inner+middle+outer) for ``sectors`` in one bank."""
-        ids: list[int] = []
-        for s in sectors:
-            for ring_idx in range(3):
-                ids.append(bank_offset + 3 * s + ring_idx)
-        return tuple(sorted(ids))
-
-    fwd_offset = 1  # Forward bank: 1 + 3*s + ring_idx
-    bwd_offset = 49  # Backward bank: 49 + 3*s + ring_idx
-
-    top_sectors = [12, 13, 14, 15, 0, 1, 2, 3]
-    bottom_sectors = [4, 5, 6, 7, 8, 9, 10, 11]
-    left_sectors = [8, 9, 10, 11, 12, 13, 14, 15]
-    right_sectors = [0, 1, 2, 3, 4, 5, 6, 7]
-
-    presets["Vector Polarization"] = PresetGrouping(
-        name="Vector Polarization",
-        groups={
-            1: GroupDefinition("Pz Forward", tuple(range(1, 49))),
-            2: GroupDefinition("Pz Backward", tuple(range(49, 97))),
-            3: GroupDefinition(
-                "Py Top",
-                _emu_sector_ids(top_sectors, fwd_offset) + _emu_sector_ids(top_sectors, bwd_offset),
-            ),
-            4: GroupDefinition(
-                "Py Bottom",
-                _emu_sector_ids(bottom_sectors, fwd_offset)
-                + _emu_sector_ids(bottom_sectors, bwd_offset),
-            ),
-            5: GroupDefinition(
-                "Px Left",
-                _emu_sector_ids(left_sectors, fwd_offset)
-                + _emu_sector_ids(left_sectors, bwd_offset),
-            ),
-            6: GroupDefinition(
-                "Px Right",
-                _emu_sector_ids(right_sectors, fwd_offset)
-                + _emu_sector_ids(right_sectors, bwd_offset),
-            ),
-        },
-        forward_group=1,
-        backward_group=2,
-        projections=(
-            AsymmetryProjection("P_x", 5, 6, tint=PROJECTION_TINTS["P_x"]),
-            AsymmetryProjection("P_y", 3, 4, tint=PROJECTION_TINTS["P_y"]),
-            AsymmetryProjection("P_z", 1, 2, tint=PROJECTION_TINTS["P_z"]),
-        ),
-    )
-
-    return InstrumentLayout(
-        name="EMU",
-        n_detectors=96,
-        banks=banks,
-        presets=presets,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1638,35 +1206,6 @@ def _build_hal() -> InstrumentLayout:
 
 #: Layout name of :func:`generic_layout`. It is not a registry key: the layout
 #: depends on the run's detector count, so callers build it per run.
-GENERIC_INSTRUMENT: Final = "Generic"
-
-
-def generic_layout(n_detectors: int) -> InstrumentLayout:
-    """Return a preset-free ring of *n_detectors* equal wedges.
-
-    For instruments Asymmetry has no layout for: the drawing makes no claim
-    about geometry, only gives each detector a clickable segment. Detector 1
-    sits at the top and numbering runs clockwise.
-    """
-    segments = tuple(
-        DetectorSegment(
-            detector_id=d,
-            sector_index=d - 1,
-            ring_index=0,
-            angle_center_deg=(90.0 - (d - 1) * 360.0 / n_detectors) % 360.0,
-            angle_half_width_deg=180.0 / n_detectors,
-            r_inner=0.28,
-            r_outer=1.00,
-        )
-        for d in range(1, n_detectors + 1)
-    )
-    return InstrumentLayout(
-        name=GENERIC_INSTRUMENT,
-        n_detectors=n_detectors,
-        banks=(BankLayout(name="Detectors", segments=segments),),
-        presets={},
-        display_name=f"Generic ({n_detectors} detectors)",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1680,7 +1219,7 @@ def _build_registry() -> dict[str, InstrumentLayout]:
     return {
         "HiFi": _build_hifi(),
         "MuSR": _build_musr(),
-        "EMU": _build_emu(),
+        "EMU": layout_from_profile(EMU_PROFILE, "nexus96"),
         "FLAME": _build_flame(),
         "HAL": _build_hal(),
         "GPS": _build_gps(),
@@ -2085,8 +1624,8 @@ def _canonical_instrument_name(raw: object) -> str | None:
         return "HiFi"
     if "musr" in compact:
         return "MuSR"
-    if "emu" in compact:
-        return "EMU"
+    if matches_name(EMU_PROFILE.recognition, raw):
+        return EMU_PROFILE.identity.layout_key
     return None
 
 

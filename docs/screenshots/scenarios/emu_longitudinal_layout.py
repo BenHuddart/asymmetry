@@ -7,7 +7,8 @@ calibration on. The schematic draws EMU's forward and backward detector rings
 split into the two groups, the arrangement that starting point seeds before
 :math:`\\alpha` is calibrated. Companion to
 :doc:`/workflows/calibration_grouping_emu` and
-:doc:`/reference/detector_grouping`.
+:doc:`/reference/detector_grouping` and the generated
+:doc:`/reference/instruments/isis_emu` definition.
 """
 
 from __future__ import annotations

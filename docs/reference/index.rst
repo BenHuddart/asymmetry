@@ -183,6 +183,7 @@ the program.
 
    grouping_calibration
    detector_grouping
+   instruments/index
    data_processing
    asymmetry_units
    data_reduction/alpha_calibration
