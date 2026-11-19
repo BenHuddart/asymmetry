@@ -1,18 +1,8 @@
-"""Affine parameter ties (offset/equal-spacing) — core engine + serialization.
+"""Affine parameter ties in fitting and serialization.
 
-An equality link group (WiMDA "Ties") can only force ``follower == main``. It
-cannot express the *equal spacing* of muonium satellites about a central line —
-``f_lo = f_c - delta``, ``f_hi = f_c + delta`` with the half-splitting ``delta``
-left free. That fit shape was surfaced by the session-5 CdS run (the satellite
-amplitudes scatter when all three frequencies float independently, so the
-Arrhenius ionisation energy is un-extractable). Affine ties are the beyond-WiMDA
-capability that closes it: a follower is a linear map ``scale*main +
-offset_scale*offset + const`` of other parameters, where ``offset`` may be a free
-*auxiliary* parameter the model itself does not consume.
-
-Uses a synthetic damped-cosine triplet (central line + two satellites) so the
-tests never depend on the WiMDA corpus. See docs/porting/link-groups/ for the
-study and the final decision recorded there.
+A follower is ``scale*main + offset_scale*offset + const``. A free auxiliary
+offset can enforce equal spacing of three planted oscillation frequencies
+without adding another independently fitted line position.
 """
 
 from __future__ import annotations
@@ -27,7 +17,7 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 
-# Reference triplet (mirrors docs/porting/link-groups/test-data.md).
+# Planted symmetric three-line signal.
 _F0 = 1.389  # central Larmor line (MHz)
 _DELTA = 0.121  # half-splitting (MHz); full splitting 2*delta = 0.242 MHz = hyperfine const
 _LAMBDA = 0.30  # shared relaxation (us^-1)

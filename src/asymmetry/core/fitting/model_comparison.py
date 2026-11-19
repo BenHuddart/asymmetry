@@ -3,9 +3,8 @@
 Evidence weights, the shortlist rule, normalised residuals, parameter flags and
 the neutral :class:`CandidateSummary` a comparison panel renders. The summary is
 written for N runs; the single-run wizard and a run's saved single fits adapt
-to it with N = 1. Design: ``docs/plans/global-wizard-stepper.md`` (D4, D7, D8),
-``docs/plans/fit-wizard-compare.md`` (D2, D3) and
-``docs/plans/single-fit-compare.md`` (D7–D9).
+to it with N = 1. Information-criterion comparisons require the same
+observations and likelihood; a summary does not change the fitted objective.
 """
 
 from __future__ import annotations

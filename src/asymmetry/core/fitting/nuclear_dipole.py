@@ -118,14 +118,10 @@ def dipolar_spin_j(
     symmetric Hamiltonian, since ``P_x = P_y``), after Celio and Meier
     (Hyperfine Interact. 18, 435 (1984)); WiMDA's ``Dip gen ZF PCR``.
 
-    The per-block mixing angle is **signed**: ``cos 2α = −q1/W_m``.  WiMDA's
-    ``ZFdipgen`` instead uses ``|cos 2α|`` (it reconstructs the angle from
-    ``cos² 2α``), which is wrong for every ``J > 1/2`` — deviations of up to
-    ~0.5 in the normalised polarization, verified against exact
-    diagonalization of ``H = ω_d (S·I − 3 S_z I_z) + ω_q I_z²``.  This
-    implementation deliberately diverges from WiMDA there (see
-    ``docs/porting/wimda-fit-function-parity/comparison.md``); the regression
-    test pins it to the exact-diagonalization reference.
+    The per-block mixing angle is signed: ``cos 2α = −q1/W_m``. Its sign
+    contributes to the polarisation for ``J > 1/2`` and must survive the
+    reconstruction. Independent diagonalisation uses
+    ``H = ω_d (S·I − 3 S_z I_z) + ω_q I_z²``.
 
     For ``J = 1/2`` the quadrupole interaction is inactive (a spin-1/2 nucleus
     has no quadrupole moment) and the function reduces to the Meier pair

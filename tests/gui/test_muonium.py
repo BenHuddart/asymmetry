@@ -4,7 +4,7 @@ Physics checks are against the WiMDA arithmetic; the fit round-trip uses a
 self-consistent synthetic signal generated from the component itself (genuine
 muonium, well-separated satellites), so the suite never depends on the WiMDA
 corpus. Note: shallow-donor CdS is fit with three independent lines + link
-groups, not these components (see docs/porting/muonium-triplet/).
+groups, not these components.
 """
 
 from __future__ import annotations

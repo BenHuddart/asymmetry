@@ -829,8 +829,7 @@ def build_candidate_templates(
         # Risch-Kehr: 1D-diffusion relaxation e^{Gt}erfc(sqrt(Gt)), curved on a
         # semilog axis (fast early, ~(pi G t)^{-1/2} tail). A natural automatic
         # alternative to the stretched exponential for broader-than-exponential
-        # monotonic decay; one shape parameter, closed form (A1 in the
-        # wimda-fit-function-parity study).
+        # monotonic decay with one shape parameter.
         _add(
             "risch_kehr_constant",
             CompositeModel(["RischKehr", "Constant"], operators=["+"]),

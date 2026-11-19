@@ -2,203 +2,6 @@
   "version": 1,
   "studies": [
     {
-      "slug": "pulsed-fast-mu-kinetics",
-      "feature_name": "Pulsed-source fast-muonium reaction kinetics (truncated TF Mu: shared-amplitude \u03bb_Mu \u2192 k_Mu \u2192 Arrhenius E_a)",
-      "status": "implemented",
-      "path": "docs/porting/pulsed-fast-mu-kinetics",
-      "depends_on": [
-        "asymmetry-domain-global-fit",
-        "time-integral-asymmetry",
-        "muonium-triplet",
-        "link-groups"
-      ],
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "musrfit",
-        "Muonium reaction 2026.docx (ISIS EMU muon-school teaching guide)",
-        "D. C. Walker, Muon and Muonium Chemistry (CUP), Ch. 8",
-        "Percival, Roduner, Fischer et al., Chem. Phys. Lett. (1977)",
-        "Ng, Walker et al., J. Phys. Chem. 85, 454 (1981)",
-        "Ghandi et al., Phys. Chem. Chem. Phys. 4, 586 (2002)"
-      ],
-      "docs": {
-        "readme": "docs/porting/pulsed-fast-mu-kinetics/README.md",
-        "comparison": "docs/porting/pulsed-fast-mu-kinetics/comparison.md",
-        "implementation_options": "docs/porting/pulsed-fast-mu-kinetics/implementation-options.md",
-        "test_data": "docs/porting/pulsed-fast-mu-kinetics/test-data.md",
-        "verification_plan": "docs/porting/pulsed-fast-mu-kinetics/verification-plan.md"
-      },
-      "tests_path": "tests/test_mu_kinetics.py",
-      "src_path": "src/asymmetry/core/fitting/mu_kinetics.py",
-      "updated": "2026-06-16",
-      "notes": "IMPLEMENTED 2026-06-16 (Option B, signed off). core/fitting/mu_kinetics.py: fit_mu_relaxation_series (shared-A_Mu global fit over the 2 G series \u2014 globals A_1[=A_Mu]+phase, frequency fixed=f_mu, locals Lambda_2[=\u03bb_Mu],A_3,Lambda_3; wraps fit_global on 'Oscillatory*Exponential+Exponential'), fit_bimolecular_rate (weighted-LSQ \u03bb=\u03bb0+k_Mu\u00b7[x]), fit_arrhenius (weighted-LSQ on the guide's log10 k vs 1/T \u2192 E_a, slope=\u2212E/(ln10\u00b7R), default kJ/mol), mu_relaxation_from_amplitude (single-run cross-check: \u03bb_Mu with A_Mu FIXED to a reference = analytic limit). All exported from asymmetry.core.fitting + cookbook recipe + docs/user_guide/muonium_kinetics.rst (closes DG-C6). KEY IMPLEMENTATION FINDING: the shared-amplitude fit needs \u22651 slow, well-surviving member (the deox-water [x]=0 run) to PIN A_Mu \u2014 a {quarter,half,full}-only triplet has no good anchor and the fit is under-determined (negative slope / \u03c7\u00b2r\u226b1); adding the water reference fixes it. Encoded in the env-gated real-corpus test + documented as an .. important:: in the guide. VERIFIED: 8 synthetic planted-truth tests (simulate.py, no binary fixtures) pass deterministically in ~3.5s (degeneracy reproduced with share_amplitude=False \u2192 fast-member \u03bb error \u226b shared; shared fit recovers planted \u03bb_Mu/k_Mu/E_a; amplitude-inversion cross-check agrees). REAL CORPUS (env-gated ASYMMETRY_MALEIC_DIR, EMU 78251-78302): room-T line k_Mu=0.68\u00b10.02 \u00b5s\u207b\u00b9/rel-conc, \u03bb0=0.63 \u00b5s\u207b\u00b9, all four \u03bb_Mu finite+monotonic (half/full no longer rail = the S5 \u274c\u2192\u2705 flip); Arrhenius 278/298/338 K \u2192 E_a=10.5\u00b10.6 kJ/mol (diffusion-controlled order; lit \u224817.6). \u03c7\u00b2r is high (13-28) \u2014 single-frequency model approximates the 4-line Mu\u2070 TF spectrum + diamagnetic precession; slope/E_a robust regardless. k_Mu absolute not gradeable (no stock molarity \u2192 relative units only, GT \u00a79). ---- ORIGINAL STUDY NOTE: closes the only S5 API \u274c (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Closes the only S5 API \u274c (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Gap: at a pulsed source the 2 G TF Mu signal decays before first_good_bin (t_g\u22480.203 \u00b5s, EMU 78251-78302), so per-run A_Mu & \u03bb_Mu are degenerate (A_Mu\u00b7exp(\u2212\u03bb\u00b7t_g) conserved) and a free fit rails \u2014 only water (\u03bb\u22480.47) and quarter (\u03bb\u22482.87) fit; half/full diverge; integrate_run is flat (TF oscillation averages to zero). Physical key: A_Mu(0) is the beam/solvent Mu fraction, common across the concentration/T series (FFT corroborates: water Mu amp 62.9 vs maleic ~12-14 = same A_Mu, different survival); maleic changes only \u03bb_Mu. Rescue: SHARE A_Mu (+\u03c6; f_Mu fixed) across the series, \u03bb_Mu local \u2014 slow members pin A_Mu, which then forces \u03bb for the truncated fast members. Seam is COMPOSITION of implemented parts: fit_global (asymmetry_global.py:174 shared globals/locals) + 'Oscillatory*Exponential+Exponential' (or MuoniumTF*Exponential) + Linear (\u03bb=\u03bb0+k_Mu\u00b7[x]) + built-in Arrhenius/log10-2.3R (E_a). MISSING: (1) encoded shared-A_Mu recipe; (2) discoverable kinetics entry point (series\u2192\u03bb_Mu\u2192k_Mu/\u03bb0\u2192E_a); (3) concentration axis ([x] not in .nxs \u2014 caller-supplied vector); (4) amplitude/fraction inversion cross-check; (5) user-guide page. RECOMMENDED Option B: thin Qt-free core/fitting/mu_kinetics.py (fit_mu_relaxation_series + fit_bimolecular_rate + fit_arrhenius) + Option-C amplitude inversion as RED-test cross-check + docs. Reference programs ship NO turnkey fast-Mu kinetics workflow and NO fit log for this example (verification is synthetic-planted-truth-led + env-gated real-corpus physics check; no binary fixtures). CAVEAT: $WIMDA_SRC/$MUSRFIT_SRC/$MANTID_SRC not checked out locally \u2014 comparison rests on the teaching docx (read), Asymmetry's prior porting studies, and the muon-chemistry literature; WiMDA/Mantid muon-school recipe needs source re-trace before contracts harden. Arrhenius unit note: built-in component uses per-particle k_B; emit molar E_a (kJ/mol) via the guide's log10 k vs 1/T linear form (slope=\u2212E/2.3R). k_Mu absolute not gradeable (no stock molarity) \u2192 relative-conc units + \u03bb0 only."
-    },
-    {
-      "slug": "rf-resonance-gui",
-      "feature_name": "RF-\u00b5SR resonance: GUI surface (time-domain/scan picker + RF field-difference scan)",
-      "status": "study",
-      "path": "docs/porting/rf-resonance-gui",
-      "depends_on": [
-        "rf-musr-resonance-fit"
-      ],
-      "references": [
-        "WiMDA",
-        "McKenzie et al., J. Phys. Chem. B 117, 13614 (2013)"
-      ],
-      "docs": {
-        "readme": "docs/porting/rf-resonance-gui/README.md",
-        "comparison": "docs/porting/rf-resonance-gui/comparison.md",
-        "implementation_options": "docs/porting/rf-resonance-gui/implementation-options.md",
-        "test_data": "docs/porting/rf-resonance-gui/test-data.md",
-        "verification_plan": "docs/porting/rf-resonance-gui/verification-plan.md"
-      },
-      "updated": "2026-06-15",
-      "notes": "GUI-surfacing of the already-implemented core RFResonanceMuP (slug rf-musr-resonance-fit, parameter_models.py field-scope component). Round-2 GUI finding: RFResonanceMuP is absent from the time-domain/ALC fit picker and there is no RF field-difference (Red-Green) scan control, so PC1 is unreachable from the GUI. Scope: register the model in the fit-function picker and add an RF period-difference scan path analogous to the integral-scan (ALC) flow."
-    },
-    {
-      "slug": "sc-brandt-penetration-depth",
-      "feature_name": "Brandt field-dependent vortex-lattice penetration depth",
-      "status": "implemented",
-      "path": "docs/porting/sc-brandt-penetration-depth",
-      "references": [
-        "Brandt, Phys. Rev. B 37, 2349 (1988)",
-        "Brandt, Phys. Rev. B 68, 054506 (2003)",
-        "Pratt et al., Phys. Rev. B 79, 052508 (2009)",
-        "Sonier et al., Rev. Mod. Phys. 72, 769 (2000)"
-      ],
-      "docs": {
-        "readme": "docs/porting/sc-brandt-penetration-depth/README.md",
-        "comparison": "docs/porting/sc-brandt-penetration-depth/comparison.md",
-        "implementation_options": "docs/porting/sc-brandt-penetration-depth/implementation-options.md",
-        "test_data": "docs/porting/sc-brandt-penetration-depth/test-data.md",
-        "verification_plan": "docs/porting/sc-brandt-penetration-depth/verification-plan.md"
-      },
-      "tests_path": "tests/test_sc_brandt_field_width.py",
-      "src_path": "src/asymmetry/core/fitting/sc/models.py",
-      "updated": "2026-06-14",
-      "notes": "Adds the field-dependent vortex-lattice line width sigma(B0) = sigma0(lambda)*(1-b)[1+1.21(1-sqrt(b))^3]/2.21, b=B0/Bc2 (Brandt PRB 37,2349/68,054506), fitting lambda_ab (nm) and Bc2 (T) for a type-II superconductor. Core: brandt_field_width_sigma + brandt_field_factor in sc/models.py, reusing sc.constants.lambda_nm_to_sigma_us (the b->0 limit). Registered field-scope components SC_Brandt_VortexLattice and SC_Brandt_VortexLattice_Powder (3^(1/4) ab-plane powder average). Optional sigma_bg adds in quadrature (Pratt Eq.2). x=field in gauss, Bc2 in tesla. 11 tests; powder B_rms plateau reproduces Pratt 2009 Fig.1 (195 nm -> 1.91 mT, 244 nm -> 1.22 mT)."
-    },
-    {
-      "slug": "asymmetry-domain-global-fit",
-      "feature_name": "Asymmetry-domain global (shared-parameter) fit",
-      "status": "implemented",
-      "path": "docs/porting/asymmetry-domain-global-fit",
-      "references": [
-        "asymmetry.core (internal)",
-        "WiMDA Muon School corpus (motivating gap)"
-      ],
-      "docs": {
-        "readme": "docs/porting/asymmetry-domain-global-fit/README.md",
-        "comparison": "docs/porting/asymmetry-domain-global-fit/comparison.md",
-        "implementation_options": "docs/porting/asymmetry-domain-global-fit/implementation-options.md",
-        "test_data": "docs/porting/asymmetry-domain-global-fit/test-data.md",
-        "verification_plan": "docs/porting/asymmetry-domain-global-fit/verification-plan.md"
-      },
-      "tests_path": "tests/test_asymmetry_global_fit.py",
-      "src_path": "src/asymmetry/core/fitting/asymmetry_global.py",
-      "updated": "2026-06-14",
-      "notes": "Ergonomics/discoverability port of an existing internal capability: FitEngine.global_fit already does asymmetry-domain simultaneous least-squares (concatenates ds.asymmetry/ds.error, iminuit LeastSquares, shared globals + per-dataset locals); the count-domain fit_grouped_* family wraps it with a Cash factory. Gap was no first-class asymmetry-domain entry point and an undiscoverable contract (datasets must carry unique run_number; runless datasets collide on key 0). IMPLEMENTED (Option A): fit_global + GlobalFitResult in asymmetry_global.py wrap engine.global_fit with synthetic keying (sequence->positional, mapping->keys), single-ParameterSet broadcast, boundary validation (disjoint global/local, names present, finite positive errors), and a combined reduced chi2 (Sigma chi2_d over Sigma N_d - N_free_global - Sigma N_free_local_d). No minimiser duplication. Asymmetry-domain LSQ is the convenience default; count-domain Poisson/Cash remains statistically preferred for low counts (documented). Wizard left untouched (recommend vs execute separated)."
-    },
-    {
-      "slug": "muonium-triplet",
-      "feature_name": "Muonium triplet model component",
-      "status": "study",
-      "path": "docs/porting/muonium-triplet",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/muonium-triplet/README.md",
-        "comparison": "docs/porting/muonium-triplet/comparison.md",
-        "implementation_options": "docs/porting/muonium-triplet/implementation-options.md",
-        "test_data": "docs/porting/muonium-triplet/test-data.md",
-        "verification_plan": "docs/porting/muonium-triplet/verification-plan.md"
-      },
-      "tests_path": "tests/test_muonium.py",
-      "src_path": "src/asymmetry/core/fitting/muonium.py",
-      "updated": "2026-06-10",
-      "notes": "Follow-on from link-groups (PR #27). IMPLEMENTED: faithful ports of WiMDA TFMuonium/LowTFMuonium/ZFmuonium as undamped components MuoniumTF/MuoniumLowTF/MuoniumZF (composed with *Exponential like Oscillatory). Conventions: leading amplitude A (standard chain-amplitude), hyperfine A_hf (avoids the A clash), ZF anisotropy D_mu (bare D is a Redfield param), field in Gauss via existing g_mu/g_e constants, phase in radians, central diamagnetic line a separate OscillatoryField. TWO findings: (1) positive-frequency convention \u2014 TFMuonium uses signed w12 (lower satellite at -phase) while LowTFMuonium negates it; the port uses |w| so all lines share +phase. (2) These do NOT meet a CdS chi2~1.3 bar (chi2~22 vs 1.35 for independent lines) because (field,A_hf) is over-determined and the chi2 landscape is razor-sharp; WiMDA's own docx routes CdS to three independent lines = link groups. So scope = GENERAL genuine-muonium feature, verified by self-consistency (recover A_hf at chi2~1) + WiMDA arithmetic, NOT the CdS corpus. CdS stays with link groups."
-    },
-    {
-      "slug": "link-groups",
-      "feature_name": "Link groups (parameter ties)",
-      "status": "study",
-      "path": "docs/porting/link-groups",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/link-groups/README.md",
-        "comparison": "docs/porting/link-groups/comparison.md",
-        "implementation_options": "docs/porting/link-groups/implementation-options.md",
-        "test_data": "docs/porting/link-groups/test-data.md",
-        "verification_plan": "docs/porting/link-groups/verification-plan.md"
-      },
-      "tests_path": "tests/test_link_groups.py",
-      "src_path": null,
-      "updated": "2026-06-09",
-      "notes": "WiMDA link groups are equality-only (each follower takes its main's value); 4 groups; main=first non-fixed member; followers drop out of the free set. No offset/linear tie exists in WiMDA. The CdS docx 'Use Ties to keep the lines equally spaced' is loose wording: equal spacing comes either from the muonium model (ZFmuonium/TFMuonium: splitting is one parameter) or from three free frequencies recovered from the data. Chosen port: equality link groups + free frequencies (matches WiMDA, no offset ties), with the improvement that a follower reports the propagated (=main's) uncertainty. Follow-on: a MuoniumTriplet model component that enforces symmetry via a single splitting parameter."
-    },
-    {
-      "slug": "multi-group-time-domain-fitting",
-      "feature_name": "Multi-group time-domain fitting",
-      "status": "study",
-      "path": "docs/porting/multi-group-time-domain-fitting",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/multi-group-time-domain-fitting/README.md",
-        "comparison": "docs/porting/multi-group-time-domain-fitting/comparison.md",
-        "implementation_options": "docs/porting/multi-group-time-domain-fitting/implementation-options.md",
-        "test_data": "docs/porting/multi-group-time-domain-fitting/test-data.md",
-        "verification_plan": "docs/porting/multi-group-time-domain-fitting/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-05-18"
-    },
-    {
-      "slug": "minos-error-analysis",
-      "feature_name": "MINOS asymmetric error analysis",
-      "status": "candidate",
-      "tier": "now",
-      "score": 20,
-      "path": "docs/porting/candidates/minos-error-analysis",
-      "references": [
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/minos-error-analysis/README.md",
-        "comparison": "docs/porting/candidates/minos-error-analysis/comparison.md",
-        "scoring": "docs/porting/candidates/minos-error-analysis/scoring.md"
-      },
-      "updated": "2026-05-23"
-    },
-    {
-      "slug": "dynamic-kubo-toyabe",
-      "feature_name": "Dynamic Kubo-Toyabe",
-      "status": "candidate",
-      "tier": "now",
-      "score": 20,
-      "path": "docs/porting/candidates/dynamic-kubo-toyabe",
-      "references": [
-        "Mantid",
-        "musrfit",
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/dynamic-kubo-toyabe/README.md",
-        "comparison": "docs/porting/candidates/dynamic-kubo-toyabe/comparison.md",
-        "scoring": "docs/porting/candidates/dynamic-kubo-toyabe/scoring.md"
-      },
-      "updated": "2026-05-23"
-    },
-    {
       "slug": "theory-library-expansion",
       "feature_name": "Theory library expansion (Keren, Abragam, Bessel, SpinGlass, Meier, MuoniumDecouplingCurve, vortex lattice)",
       "status": "candidate",
@@ -235,28 +38,6 @@
       },
       "updated": "2026-06-10",
       "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation \u2014 chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
-    },
-    {
-      "slug": "python-user-functions",
-      "feature_name": "Python user functions (registration facade + discovery, replacing WiMDA plugin DLLs)",
-      "status": "implemented",
-      "path": "docs/porting/python-user-functions",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/python-user-functions/README.md",
-        "comparison": "docs/porting/python-user-functions/comparison.md",
-        "implementation_options": "docs/porting/python-user-functions/implementation-options.md",
-        "test_data": "docs/porting/python-user-functions/test-data.md",
-        "verification_plan": "docs/porting/python-user-functions/verification-plan.md"
-      },
-      "updated": "2026-06-12",
-      "tests_path": "tests/test_user_functions.py",
-      "src_path": "src/asymmetry/core/fitting/user_functions.py",
-      "notes": "Wave B project of wimda-parity-gap; promoted from candidate (python-user-functions-candidate retained for scoring history). IMPLEMENTED 2026-06-12, 5 milestones. Facade core/fitting/user_functions.py (register_component + register_parameter_component; MODELS internal-only, models._register aligned onto shared core/fitting/registration.py); N4 naming = grammar-atom names + required domain + cross-registry uniqueness (W17 user flag exempts docs tests); discovery core/plugins.py (~/.asymmetry/user_functions + asymmetry.user_functions entry points, explicit load_user_functions(), structured report, never crashes); W1 named zero-valued placeholder degrade replaces fit_panel silent fallback; GUI: startup hook, log lines, Setup dialog, picker/info badges; Keren example plugin bit-for-bit + exact-fit parity, doubles as docs/user_guide/user_functions.rst tutorial. Design-only: getresults derived-quantities hook, sandboxing (WiMDA trust model documented), hot reload."
     },
     {
       "slug": "phase-auto-calibration",
@@ -378,30 +159,6 @@
       "updated": "2026-05-23"
     },
     {
-      "slug": "dynamic-relaxation",
-      "feature_name": "Dynamic relaxation functions (dynamic Kubo-Toyabe Gaussian/Lorentzian, Keren, Abragam)",
-      "status": "study",
-      "path": "docs/porting/dynamic-relaxation",
-      "references": [
-        "Hayano et al. PRB 20 850 (1979)",
-        "Uemura et al. PRB 31 546 (1985)",
-        "Keren PRB 50 10039 (1994)",
-        "Abragam (1961)",
-        "Mantid",
-        "musrfit",
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/dynamic-relaxation/README.md",
-        "comparison": "docs/porting/dynamic-relaxation/comparison.md",
-        "implementation_options": "docs/porting/dynamic-relaxation/implementation-options.md",
-        "test_data": "docs/porting/dynamic-relaxation/test-data.md",
-        "verification_plan": "docs/porting/dynamic-relaxation/verification-plan.md"
-      },
-      "supersedes_candidate": "dynamic-kubo-toyabe",
-      "updated": "2026-06-07"
-    },
-    {
       "slug": "time-integral-asymmetry",
       "feature_name": "Time-integral asymmetry / field-scan observable (ALC / repolarisation / QLCR)",
       "status": "study",
@@ -426,25 +183,6 @@
       "updated": "2026-06-07"
     },
     {
-      "slug": "wimda-fit-function-parity",
-      "feature_name": "WiMDA Time-Domain Fit Function Parity",
-      "status": "implemented",
-      "path": "docs/porting/wimda-fit-function-parity",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/wimda-fit-function-parity/README.md",
-        "comparison": "docs/porting/wimda-fit-function-parity/comparison.md",
-        "implementation_options": "docs/porting/wimda-fit-function-parity/implementation-options.md",
-        "test_data": "docs/porting/wimda-fit-function-parity/test-data.md",
-        "verification_plan": "docs/porting/wimda-fit-function-parity/verification-plan.md"
-      },
-      "tests_path": "tests/test_wimda_parity_components.py",
-      "src_path": "src/asymmetry/core/fitting",
-      "updated": "2026-06-10"
-    },
-    {
       "slug": "wimda-parity-gap",
       "feature_name": "WiMDA functionality-parity gap study (umbrella)",
       "status": "complete",
@@ -463,135 +201,6 @@
       "src_path": null,
       "updated": "2026-06-13",
       "notes": "UMBRELLA study, now PROGRAMME COMPLETE (2026-06-13) \u2014 see programme-complete.md for the authoritative final status + full PR ledger (#29-#75). Full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Delivered: 12-project portfolio across Wave A (#30-#44) + collision reconciliation (#46-#51) + Wave B (#54-#58) + post-Wave-B follow-on tranche (#69/#71/#72/#73/#75), plus emergent projects (exact-Poisson error #35, radical correlation #43) and the API-only negmu WIP port (#69). Functional parity complete; everything unshipped is trigger-parked by design (follow-on-triage.md DEFER tier). Decisions: Burg all-poles MEM INCLUDED as diagnostic; Eigen.pas/Kramers-Kronig/HDF4/MUD permanently out (see decision-record.md). Physics: the MuoniumLFRelax (1-delta) prefactor was checked against Kadono and removed as spurious (#71). WiMDA-bug ledger (KTBArray low-field, General-alpha no-interior-minimum, ZFdipgen J>1/2, etc.) in decision-record.md section 3 = standing 'do not oracle against' list."
-    },
-    {
-      "slug": "model-function-parity",
-      "feature_name": "Model Function Parity (WiMDA Model layer)",
-      "status": "implemented",
-      "path": "docs/porting/model-function-parity",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/model-function-parity/README.md",
-        "comparison": "docs/porting/model-function-parity/comparison.md",
-        "implementation_options": "docs/porting/model-function-parity/implementation-options.md",
-        "test_data": "docs/porting/model-function-parity/test-data.md",
-        "verification_plan": "docs/porting/model-function-parity/verification-plan.md"
-      },
-      "tests_path": "tests/core/test_parameter_model_identities.py",
-      "src_path": null,
-      "updated": "2026-06-10",
-      "notes": "Parameter-trending model functions + Model-layer machinery (umbrella wimda-parity-gap, Wave A). All 8 fitfunctions.pas functions and the Model.pas machinery verified against the Pascal source. Phase 1: Polynomial, PowerLawQuadBG, MuRepolarisation (A_hf-parameterised, B0=A/(gamma_e+gamma_mu) from constants.py) + documented composite recipes (Arrhenius+Arrhenius eV->meV delta 0.089%; OrderParameter+Constant; 2xLorentzianLCR+Polynomial with coefficient non-transfer warning). Phase 2: error-mode selector (Column/Percent/Absolute/None + estimate-from-scatter as the one-pass fixed point of WiMDA's Estimate iteration), union multi-range windows on ModelFitRange, shared chi2-quality helper (core/fitting/fit_quality.py, reused by fit-workflow-diagnostics). Session-only (no .asymp changes); GUI in ModelFitDialog only. OUT: x2 second variable (requirements recorded; cross-group fitting covers it), *fit.dll (-> python-user-functions), .mfit ReloadFit, GLE. IMPLEMENTED 2026-06-10: Phases 1+2 shipped (validate green, 1810 passed); EuO regression Tc=69.24(9)/beta=0.409(7)/alpha=1.18(4) matches PR #15 within combined sigma; arbitrary-X stretch not reached (follow-on; GUI-only, core is x-agnostic)."
-    },
-    {
-      "slug": "model-fit-followons",
-      "feature_name": "Model-fit follow-ons (arbitrary X, cross-group error/windows, results-table recursion)",
-      "status": "implemented",
-      "path": "docs/porting/model-fit-followons",
-      "references": [
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/model-fit-followons/README.md",
-        "comparison": "docs/porting/model-fit-followons/comparison.md",
-        "implementation_options": "docs/porting/model-fit-followons/implementation-options.md",
-        "test_data": "docs/porting/model-fit-followons/test-data.md",
-        "verification_plan": "docs/porting/model-fit-followons/verification-plan.md"
-      },
-      "tests_path": "tests/test_model_fit_followons.py",
-      "src_path": "src/asymmetry/core/fitting/parameter_models.py",
-      "updated": "2026-06-10",
-      "notes": "Second-pass Model-layer follow-ons from model-function-parity (PR #32). Item 1 arbitrary X: any fitted parameter as x (param:<name> encoding), common-scope components (core component_names_for_x already degrades), opt-in effective-variance (Orear/York) x-uncertainty toggle default-off + horizontal x-bars (ODR rejected: no box bounds). Item 2 cross-group error modes + windows: global_fit_parameter_model gains error_mode/error_value/windows (reuse apply_error_mode/windows_mask; SCATTER rescales global+local sigma) FIRST, then un-hide CrossGroupFitDialog controls + config persistence. Item 3 results-table recursion: cross-group local+global outputs become a new trendable _GroupFitData series in FitParametersPanel (single-fit-range export deferred). Item 4 STRETCH: quadrature combinator. Decisions A/B/C agreed 2026-06-10. WiMDA columnscan/column-spinners verified directly against Model.pas. Study pass only; implementation paused for go-ahead. IMPLEMENTED 2026-06-10: items 1-3 shipped, validate green. Phase 3 landed as a first-class computed FitSeries in ProjectModel (MainWindow._record_model_fit_results_series) rather than panel-injected rows (load_representation_series rebuilds from ProjectModel, so a panel-only series would be wiped); no _FitRow.origin needed. Item 4 (quadrature combinator) remains a follow-on."
-    },
-    {
-      "slug": "count-domain-fit-modes",
-      "feature_name": "Count-domain fit modes (\u03b1-free F+B, single-histogram, exclude range, fittable t0/baseline, count-loss in fit, double pulse)",
-      "status": "implemented",
-      "path": "docs/porting/count-domain-fit-modes",
-      "references": [
-        "WiMDA",
-        "musrfit"
-      ],
-      "docs": {
-        "readme": "docs/porting/count-domain-fit-modes/README.md",
-        "comparison": "docs/porting/count-domain-fit-modes/comparison.md",
-        "implementation_options": "docs/porting/count-domain-fit-modes/implementation-options.md",
-        "test_data": "docs/porting/count-domain-fit-modes/test-data.md",
-        "verification_plan": "docs/porting/count-domain-fit-modes/verification-plan.md"
-      },
-      "tests_path": "tests/test_count_domain_fits.py",
-      "src_path": "src/asymmetry/core/fitting/count_domain.py",
-      "updated": "2026-06-10",
-      "notes": "Wave A project 3 of wimda-parity-gap. IMPLEMENTED 2026-06-10, all 3 phases validate-green (P1 2126 / P2 2135 / P3 2145). Raw-count fits with selectable Poisson(Cash, default)/Gaussian cost. P1: build_fb_count_model (sqrt(alpha) F/B tie) + count_domain.py driver; single-histogram = one-group degenerate case of build_grouped_count_model; raw model = e^(-t/tau)x existing builder; engine.py untouched. P2: interior exclude window, fittable t0, baseline drift (all no-op-when-off). P3: count-loss DT0(+C2/C3/C4 polynomial) + promote_deadtime_to_grouping (Send-to-Group, additive/replace) + double-pulse single-histogram (simulate_double_pulse_run round-trips dpsep; dpsep FIXED from metadata - non-smooth gate defeats migrad). GUI: fit-target selector in MultiGroupFitWindow + minimal fit_panel.py routing. Follow-ons: unify fgAll onto Poisson, free tau, DT1/power-law deadtime, robust dpsep scan, FB double-pulse, plot overlay, MINOS-on-alpha. NOT pushed."
-    },
-    {
-      "slug": "fit-workflow-diagnostics",
-      "feature_name": "Fit-workflow diagnostics: MINOS asymmetric errors, \u03c7\u00b2 quality band, chain-seeding, mid-fit abort, persistent fit record",
-      "status": "study",
-      "path": "docs/porting/fit-workflow-diagnostics",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid",
-        "iminuit",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/fit-workflow-diagnostics/README.md",
-        "comparison": "docs/porting/fit-workflow-diagnostics/comparison.md",
-        "implementation_options": "docs/porting/fit-workflow-diagnostics/implementation-options.md",
-        "test_data": "docs/porting/fit-workflow-diagnostics/test-data.md",
-        "verification_plan": "docs/porting/fit-workflow-diagnostics/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-06-12",
-      "notes": "Wave B. Absorbs the minos-error-analysis candidate. MINOS=display-only overlay (additive FitResult.minos_errors + 'uncertainties_asymmetric' summary key; downstream surfaces stay symmetric HESSE by design). One shared engine.py drive helper (migrad + opt-in MINOS; explicit HESSE only pre-MINOS on simplex since migrad already runs HESSE) from all three minimiser sites (FitEngine.fit, global_fit, count_domain._solve). fit_quality already an EXACT WiMDA port (chi2.cdf==Gammp); wired through result_summary + every surface (W7 'quality' key), R fixed 0.95. Chain-seeding ('chain from previous run', distinct from warm_start_source) passes through normalize_to_grouped_contract (W5); Auto order-key default. Abort mirrors MaxEnt contract: core cancel_callback + FitCancelledError, in-fit raise + between-member checks, nothing recorded on abort (W6). FitLog REFRAMED (Ben 2026-06-12): no append-file; .asymp already stores latest-fit-per-dataset (FitSlot.result) + latest batch (FitSeries.results_by_run) = WiMDA's overwrite .fit/.bfit snapshots; enrich those records additively + Qt-free fit_log.py formatter + on-demand export only (W14). Follow-ons: in-batch co-add, fgAll Poisson cost-factory unification, provenance keys at recording sites, worker mixin."
-    },
-    {
-      "slug": "python-user-functions-candidate",
-      "feature_name": "Python user-function plugins (decorator-based)",
-      "status": "candidate",
-      "tier": "next",
-      "score": 12,
-      "path": "docs/porting/candidates/python-user-functions-candidate",
-      "references": [
-        "musrfit",
-        "WiMDA",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/python-user-functions-candidate/README.md",
-        "comparison": "docs/porting/candidates/python-user-functions-candidate/comparison.md",
-        "scoring": "docs/porting/candidates/python-user-functions-candidate/scoring.md"
-      },
-      "updated": "2026-06-12",
-      "notes": "Promoted to full study: see slug 'python-user-functions' (docs/porting/python-user-functions). Candidate docs retained for scoring history; the study supersedes their technical content."
-    },
-    {
-      "slug": "negative-muon-analysis",
-      "feature_name": "Negative-muon (\u03bc\u207b) capture-lifetime analysis (API-only, experimental)",
-      "status": "study",
-      "path": "docs/porting/negative-muon-analysis",
-      "references": [
-        "WiMDA",
-        "Suzuki/Measday/Roalsvig, Phys. Rev. C 35, 2212 (1987)",
-        "Measday, Phys. Rep. 354, 243 (2001)",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/negative-muon-analysis/README.md",
-        "comparison": "docs/porting/negative-muon-analysis/comparison.md",
-        "implementation_options": "docs/porting/negative-muon-analysis/implementation-options.md",
-        "test_data": "docs/porting/negative-muon-analysis/test-data.md",
-        "verification_plan": "docs/porting/negative-muon-analysis/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "depends_on": [],
-      "updated": "2026-06-12",
-      "notes": "SUPERSEDES the deferred brief wimda-parity-gap/projects/negative-muon-analysis.md (promotion with changed scope). API-ONLY, work-in-progress: no GUI/panels/dialogs/menus and NO COMPONENTS/MODELS registration (the \u03bc\u207b models live in a new core/negmu/ package, never inserted via registration.insert_definition, so invisible to the GUI pickers by construction). Adapt-not-port: salvage physics+data from WiMDA NegMuAnalyse.pas, discard form structure (p[213..223] slots, GLE export). KEY REUSE FINDING: count_domain (single exp(-t/\u03c4_\u03bc) envelope) and FitEngine (Gaussian-on-asymmetry) CANNOT fit the multi-\u03c4 capture sum \u03a3 N_i exp(-t/\u03c4_i)+bg; new fitter reuses drive_minuit/FitResult/Parameter/ParameterSet and replicates only the ~6-line Cash cost (count_domain's is private + off-limits). Element lifetimes literature-anchored to textbook Table C.1 (= Suzuki/Measday/Roalsvig 1987), NOT WiMDA: caught WiMDA's mystrings 69-vs-67 length mismatch, myelements[66]='Ti' typo for 'Tl', and value divergences (Ne 1.520\u21921.461, Zn 0.169\u21920.161, Sr 0.142\u21920.132, Ba 0.072\u21920.0949). Decisions (Ben): EVERYTHING phased across multiple Sonnet sessions; \u03c4 fixed-at-table by default (freeable); ALSO add \u03b1-coupled F+B fit; new core/negmu/ package; add simulate_capture_run to core/simulate.py reusing _sample_and_build_run. Plan = plan.md: 5 phases (1 table+model+single-fit+sim; 2 F+B+ratio; 3 Set-as-BG; 4 \u03bc\u207bSR polarisation; 5 docs), full signatures, reuse audit, constants table w/ citations, test plan w/ expected values, WIP disclaimer verbatim, ready-to-paste Phase-1 implementer prompt. Promotion trigger for GUI: real ISIS \u03bc\u207b data + a user. STUDY+PLAN ONLY this session \u2014 no src/tests changes."
     },
     {
       "slug": "unified-asymmetry-projections",
@@ -633,49 +242,6 @@
       "notes": "Wave C (alone \u2014 touches plot_panel/data_browser/mainwindow). Governing test: benefit to the established browser-centric Asymmetry workflow, NOT WiMDA mimicry; every item gets ADOPT/ADAPT/REJECT. Verdicts: ADOPT events columns (good-range MEv + events/frame + add-column UI; LogbookUnit.pas:595-626), B-from-log (mirror the temperature-from-log machinery; WiMDA_Main.pas:729-733), log-count diagnostic (log-y toggle on the #53 raw-counts view; Plot.pas:1542-1548). ADAPT data-only/ASCII export (strengthen the existing GLE .dat path, content switch, NO second button; WiMDA_Main.pas:1414-1869), snapped cursor readouts FULL SET (snap+S/N + windowed-avg via integrate_curve + 3-pt parabolic peak on the existing cursor signal; Plot.pas:106-186,1159-1228 \u2014 belongs to the spectrum-reading workflow), REJECT F,B balance overlay (checkpoint 2026-06-13: estimator suite + alpha-free fit already serve calibration). Checkpoint accepted 2026-06-13. REJECT run-stepping pattern-walker (browser + native arrow-key auto-load is a superset), F,B balance overlay, deadtime-file auto-discovery+staleness (estimate/calibrate/promote + project persistence is fresher), cosmetic basket (UI-polish territory). DESIGN-ONLY live current-run monitoring (refreshable-loader hook). No schema bumps; additive panel-state keys only."
     },
     {
-      "slug": "rf-musr-resonance-fit",
-      "feature_name": "RF-\u00b5SR resonance fit (muon+electron+proton spin Hamiltonian)",
-      "status": "implemented",
-      "path": "docs/porting/rf-musr-resonance-fit",
-      "references": [
-        "WiMDA",
-        "McKenzie et al., J. Phys. Chem. B 117, 13614 (2013)"
-      ],
-      "docs": {
-        "readme": "docs/porting/rf-musr-resonance-fit/README.md",
-        "comparison": "docs/porting/rf-musr-resonance-fit/comparison.md",
-        "implementation_options": "docs/porting/rf-musr-resonance-fit/implementation-options.md",
-        "test_data": "docs/porting/rf-musr-resonance-fit/test-data.md",
-        "verification_plan": "docs/porting/rf-musr-resonance-fit/verification-plan.md"
-      },
-      "tests_path": "tests/test_rf_musr_resonance.py",
-      "src_path": "src/asymmetry/core/fitting/muon_proton.py",
-      "updated": "2026-06-14",
-      "notes": "Closes parity gap PC1 (RigiWorkshopFit RF-resonance / exact-diagonalisation fit). Ports WiMDA RFresonanceMuPlusProtonExact + muproton1: 8x8 isotropic contact Hamiltonian H = A_mu*Se.Smu + A_p*Se.Sp + (g_e*Sez - g_mu*Smuz - g_p*Spz)*B (MHz, field in G), diagonalised with numpy.linalg.eigvalsh (Eigenuni.pas superseded \u2014 Hermitian spectrum is basis-independent, so sorted level differences are identical to machine precision). RF resonance = fields where sorted transitions E7-E5 and E8-E6 (WiMDA selectors 75/86) equal nu_RF; model = BG + two Lorentzians. Implemented as field-scope parameter-trend component RFResonanceMuP in parameter_models.py (params A_mu,A_p,nu_RF,ampl1,wid1,ampl2,wid2,BG). Only the EXACT variant is registered; the analytic Breit-Rabi variant (kept as analytic_rf_transition_freqs for cross-check) under-splits at low field. Ap=0 reduces to muonium._tf_levels (validated). VERIFIED end-to-end on the benzene corpus (DEVA runs 56426-56462, nu_RF=218.5 MHz, 293 K): fitting the Green-Red integral-asymmetry field scan recovers A_mu=516.0 MHz (paper 514.78(4)) and A_p=125.4 MHz (paper 124.6(14), within stated sigma), resonances 866/772 G (digitised 865/773), chi2/dof=1.6. A_mu is the robust observable; A_p (the splitting) is the weak axis, as the paper notes. 19 new tests; 185 touched existing tests green."
-    },
-    {
-      "slug": "sc-vortex-lattice-lineshape",
-      "feature_name": "Vortex-lattice field-distribution lineshape (TF penetration depth)",
-      "status": "implemented",
-      "path": "docs/porting/sc-vortex-lattice-lineshape",
-      "references": [
-        "Brandt, Phys. Rev. B 68, 054506 (2003)",
-        "Sonier, Brewer, Kiefl, Rev. Mod. Phys. 72, 769 (2000)",
-        "Pratt et al., Phys. Rev. B 79, 052508 (2009)"
-      ],
-      "docs": {
-        "readme": "docs/porting/sc-vortex-lattice-lineshape/README.md",
-        "comparison": "docs/porting/sc-vortex-lattice-lineshape/comparison.md",
-        "implementation_options": "docs/porting/sc-vortex-lattice-lineshape/implementation-options.md",
-        "test_data": "docs/porting/sc-vortex-lattice-lineshape/test-data.md",
-        "verification_plan": "docs/porting/sc-vortex-lattice-lineshape/verification-plan.md"
-      },
-      "tests_path": "tests/test_sc_vl_lineshape.py",
-      "src_path": "src/asymmetry/core/fitting/sc/lineshape.py",
-      "updated": "2026-06-16",
-      "notes": "Adds time-domain vortex-lattice lineshape fit components VortexLattice and VortexLatticePowder: P(t)=A*Re[exp(i(2*pi*gamma_mu*B0*t+phase))*R(t)], R(t)=<exp(i 2pi gamma (B(r)-B0) t)>_r the characteristic function of the modified-London triangular-FLL field distribution p(B) (skewed: sharp low-field cutoff, high-field core tail). Fixes the single-Gaussian underestimate of sigma_VL (window/binning-dependent, 0.7-3.1 on LiFeAs run 3366) by fitting the lineshape directly. Width calibrated to brandt_field_width_sigma[_powder] so lambda/Bc2 match the SC_Brandt_VortexLattice trend models; modified-London supplies only the shape. Params [A, field, phase, lambda_ab, Bc2], field pre-fixed; powder uses 3^(1/4) lambda_ab. Core sc/lineshape.py (cached FLL build); 12 tests (anchor, skew, R(0), degenerate, lambda^-2, round-trip lambda=195.1+/-0.1 nm). LiFeAs powder headline remains data-degeneracy-limited (fast VL + slow nuclear + Ag background overlap); documented in the wimda-eval cookbook."
-    },
-    {
       "slug": "integral-scan-main-window",
       "feature_name": "Integral (ALC) field-scan representation in the main window plot area",
       "status": "study",
@@ -700,8 +266,6 @@
       "status": "in-progress",
       "path": "docs/porting/fit-trend-representation-consolidation",
       "depends_on": [
-        "multi-group-time-domain-fitting",
-        "fit-workflow-diagnostics",
         "time-integral-asymmetry"
       ],
       "references": [
@@ -721,72 +285,6 @@
       "src_path": "src/asymmetry/core/representation/project_model.py",
       "updated": "2026-07-02",
       "notes": "Study + phased plan complete (README, comparison F1-F22/D1-D8, IMPLEMENTATION_PLAN 8 phases). Phase 0.1 (schema v10->v11 keyed fit_states, F21c) implemented."
-    },
-    {
-      "slug": "global-fit-wizard-efficiency",
-      "feature_name": "Global fit wizard efficiency (effort-level slider Low/Balanced/Thorough/Exhaustive: exact bounds, escalation-on-anomaly, Q pre-tests, greedy/surrogate search, profiled locals + variable projection)",
-      "status": "study",
-      "path": "docs/porting/global-fit-wizard-efficiency",
-      "depends_on": [
-        "asymmetry-domain-global-fit",
-        "multi-group-time-domain-fitting"
-      ],
-      "references": [
-        "internal-refactor (no reference-program port)"
-      ],
-      "docs": {
-        "readme": "docs/porting/global-fit-wizard-efficiency/README.md",
-        "comparison": "docs/porting/global-fit-wizard-efficiency/comparison.md",
-        "implementation_options": "docs/porting/global-fit-wizard-efficiency/implementation-options.md",
-        "test_data": "docs/porting/global-fit-wizard-efficiency/test-data.md",
-        "verification_plan": "docs/porting/global-fit-wizard-efficiency/verification-plan.md"
-      },
-      "tests_path": "tests/core/test_global_fit_wizard.py",
-      "src_path": "src/asymmetry/core/fitting/global_fit_wizard.py",
-      "updated": "2026-07-05",
-      "notes": "Study + 5-PR phased plan complete, decision-ready. PR1 golden-verdict harness (gate, <10min via frozen-baseline cache + P<=5 cases), PR2 free wins (layer/cross-template bounds + no-Hesse screening + escalation-on-anomaly, target 7-12x, all tiers), PR3 engine G-scaling (profiled/nested locals + VarPro, Ben-requested, own PR), PR4 search+surrogate (greedy _search_parameter_roles + Q pre-tests + Wald surrogate + template racing), PR5 effort slider + GUI (Sonnet). Spine PR1->PR2->PR4->PR5; PR2//PR3 parallel (share only fit_global sig, mitigate w/ stub commit). Dropped: per-node B&B (redundant w/ layer bound), _staged_globalization as search, GlobalSearchOrchestrator on slider (park behind post-delivery bake-off), G subsetting, simplex-first."
-    },
-    {
-      "depends_on": [],
-      "docs": {
-        "comparison": "docs/porting/fermi-step-transition/comparison.md",
-        "implementation_options": "docs/porting/fermi-step-transition/implementation-options.md",
-        "readme": "docs/porting/fermi-step-transition/README.md",
-        "test_data": "docs/porting/fermi-step-transition/test-data.md",
-        "verification_plan": "docs/porting/fermi-step-transition/verification-plan.md"
-      },
-      "feature_name": "Fermi-function transition step (FermiStep trend model)",
-      "notes": "Logistic step y = A2 + (A1 - A2)/(exp((T - Tc)/dT) + 1) for the wTF/ZF initial asymmetry (magnetic volume fraction) across a transition. Plateau parameterisation (Steele PRB 84 064412; Mantid SmoothTransition, whose rst formula has a sign error vs its code). dT floor 1e-6 K via ParamInfo; data-aware seeds in suggest_trend_seeds. Deferred: erf sibling (Kamusella PRB 95 094415), shared-baseline multi-step sum (Khasanov arXiv:2512.22371), dialog default.",
-      "path": "docs/porting/fermi-step-transition",
-      "references": [
-        "Mantid"
-      ],
-      "slug": "fermi-step-transition",
-      "src_path": "src/asymmetry/core/fitting/parameter_models.py",
-      "status": "implemented",
-      "tests_path": "tests/core/test_fermi_step_parameter_model.py",
-      "updated": "2026-09-15"
-    },
-    {
-      "depends_on": [],
-      "docs": {
-        "comparison": "docs/porting/helical-field-distribution/comparison.md",
-        "implementation_options": "docs/porting/helical-field-distribution/implementation-options.md",
-        "readme": "docs/porting/helical-field-distribution/README.md",
-        "test_data": "docs/porting/helical-field-distribution/test-data.md",
-        "verification_plan": "docs/porting/helical-field-distribution/verification-plan.md"
-      },
-      "feature_name": "Exact helical (elliptical) field-distribution lineshape (HelicalPowder, HelicalCrystal)",
-      "notes": "Exact ZF polarization for a local field rotating on a centred ellipse, D(B) = (2/pi) B/sqrt((B^2-Bmin^2)(Bmax^2-B^2)) (Amato PRB 89 184425 Eq. 10, 14), replacing reliance on the shifted-Overhauser closed form (their Eq. 15-16), which is exact only for a fixed-direction modulated field. D = arcsine density x smooth h(B) = 2B/sqrt((B+Bmin)(B+Bmax)); Chebyshev coefficients of h give sum c_n J_n(dw t) cos(wav t + phi + n pi/2), summed by upward Bessel recurrence where stable and a Gauss-Chebyshev quadrature of the same integrand at early times; 1e-12 accuracy; r = 0 -> J0/Struve H0, r = 1 -> cosine. Single crystal: b_z^2 = c^2 + (a^2 - c^2)(1 - Bmin^2/B^2)/(1 - r^2), W0 = (a^2 + c^2 r)/(1 + r). Phase starts fixed at 0. Deferred: Fit Wizard templates, detector axis not along P0, count-domain/vector fits.",
-      "path": "docs/porting/helical-field-distribution",
-      "references": [
-        "Literature"
-      ],
-      "slug": "helical-field-distribution",
-      "src_path": "src/asymmetry/core/fitting/helical.py",
-      "status": "implemented",
-      "tests_path": "tests/core/test_helical.py",
-      "updated": "2026-09-15"
     }
   ]
 }
