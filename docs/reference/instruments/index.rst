@@ -16,15 +16,6 @@ for applying presets and :doc:`../../contributing` for maintaining definitions.
 
 .. toctree::
    :maxdepth: 1
+   :glob:
 
-   isis_emu
-   isis_hifi
-   isis_musr
-   psi_gps
-   psi_flame
-   psi_hal9500
-   psi_ltf
-   psi_gpd
-   psi_dolly
-   psi_alc
-   psi_lem
+   *_*

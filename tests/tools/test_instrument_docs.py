@@ -22,6 +22,8 @@ def test_emu_review_is_deterministic_and_discloses_scientific_limits(tmp_path):
     assert "normalized concentric radii are drawing choices" in text
     assert "Unverified" in text
     assert "nexus96" in text
+    assert "Basename token boundaries; run digits may follow" in text
+    assert "Compact substring" in text
     assert "EMU_Manual.pdf" in text
     assert ElementTree.parse(first_svg).getroot().tag.endswith("svg")
 
@@ -65,6 +67,7 @@ def test_incremental_sphinx_rebuild_tracks_profile_and_generator_sources(tmp_pat
     from pathlib import Path
 
     from sphinx.application import Sphinx
+    from sphinx.util.docutils import docutils_namespace
 
     from asymmetry.core.instruments import isis_emu
     from tools import instrument_docs
@@ -79,16 +82,17 @@ def test_incremental_sphinx_rebuild_tracks_profile_and_generator_sources(tmp_pat
     generator.write_text("# Initial generator dependency\n")
     monkeypatch.setattr(instrument_docs, "__file__", str(generator))
     output, doctrees = tmp_path / "html", tmp_path / "doctrees"
-    first = Sphinx(
-        str(source),
-        str(source),
-        str(output),
-        str(doctrees),
-        "html",
-        status=io.StringIO(),
-        warning=io.StringIO(),
-    )
-    first.build()
+    with docutils_namespace():
+        first = Sphinx(
+            str(source),
+            str(source),
+            str(output),
+            str(doctrees),
+            "html",
+            status=io.StringIO(),
+            warning=io.StringIO(),
+        )
+        first.build()
     assert first.statuscode == 0
     dependencies = {Path(path).resolve() for path in first.env.dependencies["index"]}
     assert Path(isis_emu.__file__).resolve() in dependencies
@@ -98,16 +102,17 @@ def test_incremental_sphinx_rebuild_tracks_profile_and_generator_sources(tmp_pat
     monkeypatch.setitem(instrument_docs.PROFILES, PROFILE.identity.key, changed)
     modified = max(generator.stat().st_mtime, first.env.all_docs["index"]) + 2
     os.utime(generator, (modified, modified))
-    second = Sphinx(
-        str(source),
-        str(source),
-        str(output),
-        str(doctrees),
-        "html",
-        status=io.StringIO(),
-        warning=io.StringIO(),
-    )
-    second.build()
+    with docutils_namespace():
+        second = Sphinx(
+            str(source),
+            str(source),
+            str(output),
+            str(doctrees),
+            "html",
+            status=io.StringIO(),
+            warning=io.StringIO(),
+        )
+        second.build()
     assert second.statuscode == 0
     assert "Changed fixture title" in (output / "index.html").read_text()
 

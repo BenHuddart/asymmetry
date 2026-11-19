@@ -33,6 +33,8 @@ extensions = [
     'tools.instrument_docs',
 ]
 
+instrument_review_directory = 'reference/instruments'
+
 templates_path = ['_templates']
 exclude_patterns = ['_build', '_generated', 'Thumbs.db', '.DS_Store']
 html_css_files = ['custom.css']

@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Generate instrument review pages and index entries directly from the bundled
+  catalogue, preserving their public URLs.
+
 - Retain instrument choices, grouping, calibrations and reference timing on identity
   conflicts; provide explicit identity review without applying a preset.
 
