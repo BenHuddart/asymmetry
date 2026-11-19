@@ -1,10 +1,4 @@
-"""Tests for core/negmu/lifetimes.py (WP1.1).
-
-Spot-checks are EXACT float comparisons (the table transcription is the source
-of truth; if a value changes here it means the table was re-transcribed and
-the test must be updated to match). ⚠confirm rows are NOT asserted to specific
-values — only presence and positivity.
-"""
+"""Source-row selections, uncertainty units and unresolved lifetime authority."""
 
 from __future__ import annotations
 
@@ -21,7 +15,7 @@ from asymmetry.core.negmu.lifetimes import (
 )
 
 # ---------------------------------------------------------------------------
-# Spot-checks from verification-plan.md §1 — exact values
+# Stable numeric lookups are separate from direct source-row verification.
 # ---------------------------------------------------------------------------
 
 SPOT_CHECKS = [
@@ -44,27 +38,49 @@ SPOT_CHECKS = [
 ]
 
 
+@pytest.mark.parametrize(
+    "symbol,tau_ns,sigma_ns,page,reference",
+    [
+        ("Rh", 95.8, 0.6, "2219", "49"),
+        ("Pd", 96.0, 0.6, "2219", "49"),
+        ("Ag", 87.0, 1.5, "2219", "a"),
+        ("Ho", 74.9, 0.6, "2220", "54"),
+        ("Er", 74.4, 1.5, "2220", "a"),
+    ],
+)
+def test_selected_suzuki_mean_life_rows(symbol, tau_ns, sigma_ns, page, reference):
+    """Suzuki PRC 35, 2212 (1987), Table IV mean life, not inverse capture rate."""
+    entry = lifetime(symbol)
+    assert entry.tau_us == pytest.approx(tau_ns / 1000, abs=1e-12)
+    assert entry.sigma_us == pytest.approx(sigma_ns / 1000, abs=1e-12)
+    assert entry.status == "selected_measurement"
+    assert "Table IV" in entry.source_location
+    assert page in entry.source_location
+    assert f"ref. {reference}" in entry.source_location
+
+
 @pytest.mark.parametrize("sym,expected_tau", SPOT_CHECKS)
 def test_spot_check_tau(sym, expected_tau):
     assert tau_us(sym) == expected_tau
 
 
 def test_tl_symbol_guard():
-    """Guards the WiMDA 'Ti'→'Tl' symbol bug."""
+    """Titanium and thallium retain distinct element identities."""
     assert tau_us("Tl") == 0.0704
     assert lifetime("Tl").symbol == "Tl"
     assert lifetime("Tl").z == 81
 
 
 def test_ne_value_guard():
-    """Guards WiMDA Ne 1.520 µs vs Suzuki 1.461 µs divergence."""
+    """The stored neon default remains unchanged by bounded source selections."""
     assert tau_us("Ne") == 1.461
 
 
-def test_source_field_confident_rows():
+def test_source_identifier_does_not_certify_unselected_rows():
     assert lifetime("H").source == "SuzukiMeasdayRoalsvig1987"
     assert lifetime("Fe").source == "SuzukiMeasdayRoalsvig1987"
     assert lifetime("Pb").source == "SuzukiMeasdayRoalsvig1987"
+    assert lifetime("H").status == lifetime("Fe").status == lifetime("Pb").status == "unverified"
 
 
 def test_source_field_wimda_provisional():
@@ -108,7 +124,7 @@ def test_decay_background_label():
 
 
 def test_lanthanide_cluster_present():
-    """⚠confirm rows — asserted present and positive only."""
+    """Existing cluster keys remain available without implying source verification."""
     for sym in (
         "Ru",
         "Rh",
@@ -134,20 +150,54 @@ def test_lanthanide_cluster_present():
         assert tau_us(sym) > 0, sym
 
 
-def test_no_qt_import():
-    """core/negmu/lifetimes must not trigger a Qt import."""
-    import sys
-
-    assert "PySide6" not in sys.modules or True  # Qt may be loaded by other tests
-    # The meaningful check: importing the module does not raise.
-    import importlib
-
-    importlib.import_module("asymmetry.core.negmu.lifetimes")
-
-
 def test_element_lifetime_is_dataclass():
     entry = lifetime("C")
     assert isinstance(entry, ElementLifetime)
     assert entry.symbol == "C"
     assert entry.z == 6
     assert entry.name == "Carbon"
+
+
+def test_selection_status_distinguishes_checked_unconfirmed_and_provisional_rows():
+    selected = {
+        symbol
+        for symbol, entry in ELEMENT_LIFETIMES.items()
+        if entry.status == "selected_measurement"
+    }
+    assert selected == {"Rh", "Pd", "Ag", "Ho", "Er"}
+    for symbol in ("Ru", "Tm", "Th", "U", "Np"):
+        assert lifetime(symbol).status == "unconfirmed"
+        assert lifetime(symbol).source_location is None
+    for symbol in ("He", "Kr", "Tc", "Re", "Os", "Ir", "Pt"):
+        assert lifetime(symbol).status == "provisional"
+        assert lifetime(symbol).source_location is None
+
+
+def test_selected_notes_preserve_material_and_selection_limits():
+    for symbol in ("Rh", "Pd", "Ho"):
+        note = lifetime(symbol).selection_note
+        assert "isotope composition" in note and "channel" in note and "unspecified" in note
+    for symbol in ("Ag", "Er"):
+        note = lifetime(symbol).selection_note
+        assert "self-supporting" in note and "decay-electron" in note
+        assert "isotope composition is unspecified" in note
+    assert "alternatives, not averaged" in lifetime("Ag").selection_note
+
+
+def test_existing_constructor_keeps_backward_compatible_metadata_defaults():
+    entry = ElementLifetime("Fe", 26, "Iron", 0.206, 0.001, "unverified-source")
+    assert entry.status == "unverified"
+    assert entry.source_location is None and entry.selection_note is None
+
+
+def test_corrected_lifetimes_seed_fixed_parameters_without_implicit_freeing():
+    import numpy as np
+
+    from asymmetry.core.negmu.fit import CaptureModelSpec, default_capture_parameters
+
+    symbols = ("Rh", "Pd", "Ag", "Ho", "Er")
+    spec = CaptureModelSpec(elements=symbols, include_decay_background=False)
+    parameters = default_capture_parameters(spec, time=np.linspace(0, 1, 100), counts=np.ones(100))
+    for symbol in symbols:
+        assert parameters[f"tau_{symbol}"].value == lifetime(symbol).tau_us
+        assert parameters[f"tau_{symbol}"].fixed

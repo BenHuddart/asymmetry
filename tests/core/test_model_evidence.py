@@ -638,9 +638,15 @@ PARAMETER_EVIDENCE = {
 NEGATIVE_MUON_EVIDENCE = {
     "lifetimes": Evidence(
         "derived-negative-muon-lifetimes",
-        "Suzuki Tables III-IV, Eq.(4); stored labels do not establish all row associations.",
-        ("tests/negmu/test_lifetimes.py::test_spot_check_tau",),
-        "Stored-value regression only; independent source selection and confirmed discrepancies unresolved.",
+        "Selected Suzuki Table IV mean-life rows; Eq.(4) distinguishes disappearance from capture rate.",
+        (
+            "tests/negmu/test_lifetimes.py::test_spot_check_tau",
+            "tests/negmu/test_lifetimes.py::test_selected_suzuki_mean_life_rows",
+            "tests/negmu/test_lifetimes.py::test_selection_status_distinguishes_checked_unconfirmed_and_provisional_rows",
+            "tests/project/test_negmu_lifetime_parameters.py::test_stored_fixed_lifetime_roundtrip_controls_evaluation_and_refit",
+        ),
+        "Five selected element-labelled measurements with quoted uncertainty and material/channel limits; "
+        "other source-labelled, unconfirmed and provisional rows remain unresolved. Not whole-table certification.",
         unresolved_issue=661,
     ),
     "count_model": Evidence(
