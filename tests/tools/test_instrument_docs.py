@@ -115,3 +115,49 @@ def test_incremental_sphinx_rebuild_tracks_profile_and_generator_sources(tmp_pat
 def test_unknown_beamline_is_explicit_without_inventing_an_identity():
     assert PROFILE.identity.beamline is None
     assert "Beamline: **Unknown (unverified)**" in profile_rst(PROFILE, {})
+
+
+def test_psi_review_preserves_legacy_variants_and_declared_direction_cues(tmp_path):
+    from asymmetry.core.instruments import FLAME, GPS, HAL9500
+
+    gps = generate_profile(GPS, tmp_path / "gps").read_text()
+    assert "Legacy layout key: ``GPS-RD``; displayed instrument: **GPS**" in gps
+    assert "Legacy layout key: ``GPS-RD15``; displayed instrument: **GPS**" in gps
+    assert "not an exact count equation or independence claim" in gps
+    assert "initial projection balances" in gps
+    flame = generate_profile(FLAME, tmp_path / "flame")
+    text = flame.read_text()
+    assert "beam, main magnetic field" in text
+    assert "(-2.55, -0.82)" in text
+    assert "not measured run-specific" in text
+    svg = flame.with_name("psi_flame-eight_channel.svg")
+    labels = " ".join(ElementTree.parse(svg).getroot().itertext())
+    assert "initial muon spin" in labels
+    assert "beam, main magnetic field" in labels
+    assert "HIFI, HAL9500" in profile_rst(HAL9500, {})
+    assert "HAL" in profile_rst(HAL9500, {})
+
+
+def test_shared_psi_assumptions_are_summarised_once_with_complete_fact_evidence():
+    from asymmetry.core.instruments import GPS
+    from asymmetry.core.instruments.schema import EvidenceStatus
+
+    text = profile_rst(GPS, {})
+    summary = text.split("Key assumptions\n", 1)[1].split("\nSource\n", 1)[0]
+    acquisition_detail = "Preserved ordinal/label map; combined/split roads"
+    preset_detail = "Explicit compatibility memberships and leg order."
+    assert summary.count(acquisition_detail) == 1
+    assert summary.count(preset_detail) == 1
+    assert text.count(acquisition_detail) == 4
+    assert text.count(preset_detail) == 13
+    for fact in GPS.fact_keys:
+        assert fact in text
+    evidence = tuple(
+        replace(item, status=EvidenceStatus.AUTHORED)
+        if item.fact == "acquisition.bin_combined"
+        else item
+        for item in GPS.sources.evidence
+    )
+    qualified = replace(GPS, sources=replace(GPS.sources, evidence=evidence))
+    summary = profile_rst(qualified, {}).split("Key assumptions\n", 1)[1].split("\nSource\n", 1)[0]
+    assert summary.count(acquisition_detail) == 2

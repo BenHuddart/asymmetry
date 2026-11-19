@@ -1322,11 +1322,9 @@ class PsiLoader(BaseLoader):
           pair the first forward with the first backward (unchanged behaviour).
         * Only one direction labelled (a forward- or backward-only ring such as
           HAL's ``F1..F8``): pair two diametrically-opposed detectors half a
-          ring apart (``F1`` vs ``F5`` for the eight-detector ring) — musrfit's
-          high-field "opposed pairs" scheme. This matches the F1-vs-F5 default
-          of the ``"Transverse (opposed pairs)"`` preset in
-          :func:`asymmetry.core.instrument._build_hal`; keep the two in step if
-          the documented opposed pairing ever changes.
+          ring apart (``F1`` vs ``F5`` for the eight-detector ring), matching
+          the declared ``"Transverse (opposed pairs)"`` preset in
+          :mod:`asymmetry.core.instruments.psi_hal9500`.
         * Otherwise: pair the first positron group with an opposed-position
           positron group.
 

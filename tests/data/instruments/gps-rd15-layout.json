@@ -1,0 +1,676 @@
+{
+  "name": "GPS-RD15",
+  "n_detectors": 15,
+  "banks": [
+    {
+      "name": "Top view",
+      "segments": [
+        {
+          "detector_id": 1,
+          "sector_index": 0,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Forward",
+          "x_center": 2.95,
+          "y_center": 0.0,
+          "width": 0.78,
+          "height": 1.7,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 2,
+          "sector_index": 1,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Backward",
+          "x_center": -2.95,
+          "y_center": 0.0,
+          "width": 0.78,
+          "height": 1.7,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 6,
+          "sector_index": 5,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Left",
+          "x_center": 0.0,
+          "y_center": 1.95,
+          "width": 1.7,
+          "height": 0.75,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 13,
+          "sector_index": 12,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Left_B",
+          "x_center": -0.5,
+          "y_center": 2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 14,
+          "sector_index": 13,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Left_F",
+          "x_center": 0.5,
+          "y_center": 2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 5,
+          "sector_index": 4,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Right",
+          "x_center": 0.0,
+          "y_center": -1.95,
+          "width": 1.7,
+          "height": 0.75,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 11,
+          "sector_index": 10,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Right_B",
+          "x_center": -0.5,
+          "y_center": -2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 12,
+          "sector_index": 11,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Right_F",
+          "x_center": 0.5,
+          "y_center": -2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 15,
+          "sector_index": 14,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Mob-RL",
+          "x_center": 0.0,
+          "y_center": 1.25,
+          "width": 0.95,
+          "height": 0.42,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 7,
+          "sector_index": 6,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Up_B",
+          "x_center": -0.62,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 3,
+          "sector_index": 2,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Up",
+          "x_center": 0.0,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 8,
+          "sector_index": 7,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Up_F",
+          "x_center": 0.62,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 9,
+          "sector_index": 8,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Down_B",
+          "x_center": -0.62,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 4,
+          "sector_index": 3,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Down",
+          "x_center": 0.0,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 10,
+          "sector_index": 9,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Down_F",
+          "x_center": 0.62,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        }
+      ]
+    },
+    {
+      "name": "Side view",
+      "segments": [
+        {
+          "detector_id": 3,
+          "sector_index": 2,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Up",
+          "x_center": 0.0,
+          "y_center": 1.95,
+          "width": 1.7,
+          "height": 0.75,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 7,
+          "sector_index": 6,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Up_B",
+          "x_center": -0.5,
+          "y_center": 2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 8,
+          "sector_index": 7,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Up_F",
+          "x_center": 0.5,
+          "y_center": 2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 4,
+          "sector_index": 3,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Down",
+          "x_center": 0.0,
+          "y_center": -1.95,
+          "width": 1.7,
+          "height": 0.75,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 9,
+          "sector_index": 8,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Down_B",
+          "x_center": -0.5,
+          "y_center": -2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 10,
+          "sector_index": 9,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Down_F",
+          "x_center": 0.5,
+          "y_center": -2.8,
+          "width": 0.85,
+          "height": 0.62,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 1,
+          "sector_index": 0,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Forward",
+          "x_center": 2.95,
+          "y_center": 0.0,
+          "width": 0.78,
+          "height": 1.7,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 2,
+          "sector_index": 1,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "Backward",
+          "x_center": -2.95,
+          "y_center": 0.0,
+          "width": 0.78,
+          "height": 1.7,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 13,
+          "sector_index": 12,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Left_B",
+          "x_center": -0.62,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 6,
+          "sector_index": 5,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Left",
+          "x_center": 0.0,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 14,
+          "sector_index": 13,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Left_F",
+          "x_center": 0.62,
+          "y_center": 0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 11,
+          "sector_index": 10,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Right_B",
+          "x_center": -0.62,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 5,
+          "sector_index": 4,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Right",
+          "x_center": 0.0,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 12,
+          "sector_index": 11,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_in",
+          "label": "Right_F",
+          "x_center": 0.62,
+          "y_center": -0.62,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        },
+        {
+          "detector_id": 15,
+          "sector_index": 14,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "endon_out",
+          "label": "Mob-RL",
+          "x_center": 0.0,
+          "y_center": 1.25,
+          "width": 0.32,
+          "height": 0.32,
+          "rotation_deg": 0.0,
+          "read_only": true
+        }
+      ]
+    }
+  ],
+  "presets": {
+    "Longitudinal": {
+      "name": "Longitudinal",
+      "groups": {
+        "1": {
+          "name": "Forward",
+          "detector_ids": [
+            1
+          ]
+        },
+        "2": {
+          "name": "Backward",
+          "detector_ids": [
+            2
+          ]
+        }
+      },
+      "forward_group": 2,
+      "backward_group": 1,
+      "projections": []
+    },
+    "Transverse (Vector)": {
+      "name": "Transverse (Vector)",
+      "groups": {
+        "1": {
+          "name": "Up-Down Up",
+          "detector_ids": [
+            7,
+            8
+          ]
+        },
+        "2": {
+          "name": "Up-Down Down",
+          "detector_ids": [
+            9,
+            10
+          ]
+        },
+        "3": {
+          "name": "Left-Right Right",
+          "detector_ids": [
+            11,
+            12
+          ]
+        },
+        "4": {
+          "name": "Left-Right Left",
+          "detector_ids": [
+            13,
+            14
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 2,
+      "projections": [
+        {
+          "label": "Up-Down",
+          "forward_group": 1,
+          "backward_group": 2,
+          "alpha": 1.0,
+          "tint": "#B0436E"
+        },
+        {
+          "label": "Left-Right",
+          "forward_group": 3,
+          "backward_group": 4,
+          "alpha": 1.0,
+          "tint": "#3F6FA0"
+        }
+      ]
+    },
+    "Spin-rotated (B+U/F+D)": {
+      "name": "Spin-rotated (B+U/F+D)",
+      "groups": {
+        "1": {
+          "name": "B+U",
+          "detector_ids": [
+            2,
+            7,
+            8
+          ]
+        },
+        "2": {
+          "name": "F+D",
+          "detector_ids": [
+            1,
+            9,
+            10
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 2,
+      "projections": []
+    },
+    "WEP (spin-rotated)": {
+      "name": "WEP (spin-rotated)",
+      "groups": {
+        "1": {
+          "name": "F",
+          "detector_ids": [
+            1
+          ]
+        },
+        "2": {
+          "name": "B",
+          "detector_ids": [
+            2
+          ]
+        },
+        "3": {
+          "name": "U",
+          "detector_ids": [
+            7,
+            8
+          ]
+        },
+        "4": {
+          "name": "D",
+          "detector_ids": [
+            9,
+            10
+          ]
+        }
+      },
+      "forward_group": 2,
+      "backward_group": 1,
+      "projections": [
+        {
+          "label": "FB",
+          "forward_group": 2,
+          "backward_group": 1,
+          "alpha": 0.75,
+          "tint": "#2E8B74"
+        },
+        {
+          "label": "UD",
+          "forward_group": 3,
+          "backward_group": 4,
+          "alpha": 1.0,
+          "tint": "#B0436E"
+        }
+      ]
+    }
+  },
+  "view": "plan",
+  "reference_arrows": [],
+  "display_name": "GPS",
+  "apply_default_preset_on_load": false
+}

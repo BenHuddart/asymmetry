@@ -268,10 +268,8 @@ BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
         detector_orientation="Transverse",
         groups={gid: (gid,) for gid in range(1, 9)},
         group_names={gid: f"Ring {gid}" for gid in range(1, 9)},
-        # k = gid - 1 at 0-based sector index; angle 0 = top (90°), numbering
-        # clockwise at 45° pitch — the same azimuth convention HAL-9500's
-        # Per-octant preset uses (see instrument.py's _build_hal), reused
-        # here only as a numbering convention, not any HAL-specific geometry.
+        # Sector zero is top (90°), numbering clockwise at 45° pitch.
+        # This angular convention does not imply HAL-specific geometry.
         group_azimuths={gid: (90.0 - (gid - 1) * 45.0) % 360.0 for gid in range(1, 9)},
         default_forward_group=1,
         default_backward_group=5,

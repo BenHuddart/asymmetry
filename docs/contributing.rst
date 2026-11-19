@@ -132,7 +132,9 @@ channels and display occurrences separately; unknown affiliations remain
 unknown. Use the shared circular, grid or explicit arrangements and preserve
 acquired ordinals. Record a beamline only when known; otherwise leave it unknown.
 Scientific memberships and ordered asymmetry legs are
-explicit data, independent of drawing positions.
+explicit data, independent of drawing positions. An acquisition can declare a
+legacy layout key while sharing its instrument's display name, and can carry
+schematic reference arrows. Metadata substring aliases and filename tokens are distinct; facility evidence retains precedence.
 
 Attach evidence to named facts or coherent tables, with a primary source and
 locator where known. Schematic radii are not physical dimensions. An authored

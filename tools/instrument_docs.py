@@ -13,7 +13,22 @@ from asymmetry.core.instruments.isis_musr import PROFILE as MUSR
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import InstrumentProfile
 
-PROFILES = {profile.identity.key: profile for profile in (EMU, HIFI, MUSR)}
+PROFILES = {
+    profile.identity.key: profile
+    for profile in (
+        EMU,
+        HIFI,
+        MUSR,
+        instruments.GPS,
+        instruments.FLAME,
+        instruments.HAL9500,
+        instruments.LTF,
+        instruments.GPD,
+        instruments.DOLLY,
+        instruments.ALC,
+        instruments.LEM,
+    )
+}
 
 
 def _table(headers, rows):
@@ -60,20 +75,35 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
     leading = next(iter(profile.detectors.acquisitions), None)
     if leading is not None and leading.key in diagrams:
         text += _review_figure(profile, leading, diagrams[leading.key])
-    assumptions = [
-        evidence
-        for evidence in profile.sources.evidence
-        if evidence.fact.startswith(("acquisition.", "preset."))
-        and evidence.status.value in {"Unverified", "Asymmetry-defined"}
-    ]
+    assumptions = tuple(
+        dict.fromkeys(
+            (evidence.status.value, evidence.detail)
+            for evidence in profile.sources.evidence
+            if evidence.fact.startswith(("acquisition.", "preset."))
+            and evidence.status.value in {"Unverified", "Asymmetry-defined"}
+        )
+    )
     if assumptions:
         text += (
             "Key assumptions\n---------------\n\n"
-            + "\n".join(f"* **{item.status.value}:** {item.detail}" for item in assumptions)
+            + "\n".join(f"* **{status}:** {detail}" for status, detail in assumptions)
             + "\n\n"
         )
     text += f"Source\n------\n\nDeclared family: **{profile.source.kind}**. {profile.source.description}\n\n"
     text += "Source declarations do not replace recorded timing, grouping, correction or calibration settings.\n\n"
+    text += "Recognition\n-----------\n\n"
+    text += _table(
+        ("Evidence kind", "Declared names", "Matching"),
+        (
+            ("Metadata", ", ".join(profile.recognition.aliases) or "None", "Compact substring"),
+            (
+                "Filename",
+                ", ".join(profile.recognition.filename_tokens) or "None",
+                "Compact substring",
+            ),
+        ),
+    )
+    text += "Facility precedence and acquired-channel checks remain authoritative; an ambiguous name alone does not certify an instrument.\n\n"
     text += "Physical structure\n------------------\n\n"
     text += (
         _table(
@@ -107,6 +137,14 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
     for config in profile.detectors.acquisitions:
         heading = f"Acquisition: {config.label}"
         text += f"{heading}\n{'-' * len(heading)}\n\nConfiguration key: ``{config.key}``. Histogram numbers identify the recorded channels; geometry does not redefine them. Shared hardware affiliations do not establish an exact count equation or statistical independence.\n\n"
+        layout = layout_from_profile(profile, config.key)
+        text += f"Legacy layout key: ``{layout.name}``; displayed instrument: **{layout.display_name or layout.name}**.\n\n"
+        if config.reference_arrows:
+            text += _table(
+                ("Schematic direction cue", "Start", "End"),
+                ((arrow.label, arrow.start, arrow.end) for arrow in config.reference_arrows),
+            )
+            text += "Direction cues are schematic declarations, not measured run-specific field or spin settings.\n\n"
         if config.key in diagrams and config is not leading:
             text += _review_figure(profile, config, diagrams[config.key])
         text += _table(
@@ -284,7 +322,7 @@ def render_profile_diagram(
                     ha="center",
                     va="center",
                 )
-                x, y = segment.x_center, segment.y_center + radius + 0.1
+                x, y = segment.x_center, segment.y_center - radius - 0.1
             patch.set_facecolor(
                 mpl.colors.to_rgba(color, 0.4)
                 if segment.shape in {"wedge", "rectangle"}
@@ -295,10 +333,38 @@ def render_profile_diagram(
             if segment.read_only:
                 patch.set_linestyle("--")
             axes.add_patch(patch)
-            label = segment.label or (
-                str(segment.detector_id) if segment.detector_id is not None else ""
+            label = (
+                str(segment.detector_id) if segment.detector_id is not None else segment.label or ""
             )
-            axes.text(x, y, label, ha="center", va="center", fontsize=11)
+            axes.text(
+                x,
+                y,
+                label,
+                ha="center",
+                va="top" if segment.shape.startswith("endon_") else "center",
+                fontsize=11,
+            )
+        for arrow in layout.reference_arrows:
+            axes.annotate(
+                "",
+                xy=arrow.end,
+                xytext=arrow.start,
+                color=arrow.color,
+                fontsize=10,
+                ha="center",
+                va="bottom",
+                arrowprops={"arrowstyle": "->", "color": arrow.color},
+            )
+            axes.text(
+                (arrow.start[0] + arrow.end[0]) / 2,
+                (arrow.start[1] + arrow.end[1]) / 2 + 0.1,
+                arrow.label,
+                color=arrow.color,
+                ha="center",
+                va="bottom",
+                fontsize=10,
+            )
+            axes.update_datalim((arrow.start, arrow.end))
         axes.autoscale_view()
         axes.margins(0.12)
     figure.suptitle(
