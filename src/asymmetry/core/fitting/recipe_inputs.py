@@ -25,7 +25,7 @@ class RecipeEngineInputs:
     ``global_params``/``local_params`` are the engine's partition; Fixed and
     File rows appear in neither, because a pinned parameter has no column —
     it reaches the engine only as a ``fixed=True`` entry of every run's
-    :class:`ParameterSet`. The two pinned lists are carried anyway so a caller
+    :class:`~asymmetry.core.fitting.parameters.ParameterSet`. The two pinned lists are carried anyway so a caller
     can tell *why* a name is absent (the Batch tab reports the free-Global
     count to decide between the chained and the tied path).
     """

@@ -320,7 +320,7 @@ def test_cross_group_run_fit_sets_in_progress_state(qapp, monkeypatch) -> None:
         return CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
 
     monkeypatch.setattr(
-        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+        "asymmetry.core.fitting.cross_group.global_fit_parameter_model",
         _fake_global_fit,
     )
 
@@ -337,7 +337,6 @@ def test_cross_group_run_fit_sets_in_progress_state(qapp, monkeypatch) -> None:
             time.sleep(0.01)
 
     assert dlg._fit_in_progress is False
-    assert app is not None
 
 
 def _param_groups_with_xerr() -> list[ParameterGroupData]:
@@ -1159,7 +1158,7 @@ def test_cross_group_success_no_modal(qapp, monkeypatch) -> None:
         return CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
 
     monkeypatch.setattr(
-        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+        "asymmetry.core.fitting.cross_group.global_fit_parameter_model",
         _fake_global_fit,
     )
 

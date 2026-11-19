@@ -129,7 +129,6 @@ asymmetry/
 │   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── cross_group_fit_dialog.py     # Cross-group Global/Local/Fixed role dialog (+ Suggest roles)
-│   │   ├── cross_group_config.py         # Widget-free config→global_fit_parameter_model bridge (shared by dialog + refit)
 │   │   ├── global_fit_setup_dialog.py    # Explicit setup dialog: parameter, series, x-axis, editable group variable
 │   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
@@ -681,9 +680,11 @@ values (prefilled from inference but overridable, incl. custom columns).
 *Continue* opens `gui/panels/cross_group_fit_dialog.py::CrossGroupFitDialog`,
 which carries the per-parameter Global/Local/Fixed role table and a *Suggest
 roles* button that runs `suggest_cross_group_roles` off-thread and applies the
-recommendation. `gui/panels/cross_group_config.py` is the widget-free
-config→`global_fit_parameter_model` bridge shared by the dialog and the
-off-thread **Refit** path. On accept, `MainWindow._on_cross_group_fit_completed`
+recommendation. `core/fitting/cross_group.py::prepare_cross_group_fit` resolves
+user or recorded configuration into detached `CrossGroupFitInputs`;
+`run_cross_group_fit` executes them for the dialog and off-thread **Refit**.
+Parameter-list reconciliation belongs to this configuration input boundary,
+while live model/table synchronization stays in the dialog. On accept, `MainWindow._on_cross_group_fit_completed`
 creates or updates (in place, by deterministic batch id) a `GlobalFitStudy` in
 the MainWindow-owned registry (`_global_fit_studies`), persisted via schema v13,
 and displays it in `gui/windows/global_parameter_fit_window.py`. That window
