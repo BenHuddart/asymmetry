@@ -42,11 +42,8 @@ def field_direction_from_text(*texts: object) -> str:
     PSI ``.bin``/``.mdu``/``.root`` files carry no structured field-state code,
     so the geometry is read from free text (run comment, setup, title) and
     **only** from an explicit, unambiguous ``TF``/``LF``/``ZF`` /
-    transverse/longitudinal/zero-field token.  This mirrors the policy the NeXus
-    loader and the field-geometry study settled on (see
-    ``docs/porting/field-geometry/``): never infer geometry from the field
-    *magnitude* (a TF run can sit at 0 G) nor from detector/sample *orientation*
-    (a build-axis that reads "L" regardless of the applied field).
+    transverse/longitudinal/zero-field token. Field magnitude and detector/sample
+    orientation do not establish the recorded applied-field direction.
 
     Parameters
     ----------

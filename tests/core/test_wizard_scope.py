@@ -258,14 +258,8 @@ def test_unknown_geometry_is_superset_of_zero_field():
     assert unknown.included_set == _time_component_names()
 
 
-# --- B≈0 geometry-label override -----------------------------------------
-#
-# Real ISIS runs are sometimes recorded "TF" with the applied-field setpoint
-# at (or near) zero — a ZF measurement on a TF-capable beamline (see
-# docs/porting/field-geometry/: "MUSR00044991.nxs: magnetic_field_state='TF'
-# at magnetic_field=0 G"). The scope must widen to include ZF families in that
-# case without dropping the labelled TF family, which may still be
-# hardware-correct.
+# Near-zero applied field adds ZF candidates without dropping labelled TF
+# candidates or changing the recorded field-direction metadata.
 
 
 def test_tf_label_zero_field_widens_to_include_zf_families():

@@ -401,10 +401,8 @@ class RunRow:
     geometry_source: str
     #: What the spectrum says about precession in the recorded field.
     precession: PrecessionEvidence
-    #: Detector-bank orientation as the file records it. Never a geometry: a
-    #: bank orientation says nothing about which way the applied field points
-    #: (see ``docs/porting/field-geometry/``). It is reported because it is
-    #: often the only clue to the sample environment a metadata-poor file gives.
+    #: Recorded detector-bank orientation, distinct from applied-field geometry.
+    #: Missing field-direction evidence remains unknown rather than inferred.
     detector_orientation: str
     #: The run's free-text note (NeXus ``notes``, which the loaders surface as
     #: ``comment``), where an experimenter records what a run actually was.

@@ -13,8 +13,7 @@ resolution as a typed :class:`ScopeView` for the model family picker.
 Design rules honoured here:
 
 * Field geometry is **never** inferred from the field magnitude — only from the
-  recorded geometry token (see ``docs/porting/field-geometry/`` and
-  :func:`asymmetry.core.io.base.field_direction_from_text`). The *muonium field
+  recorded geometry token (:func:`asymmetry.core.io.base.field_direction_from_text`). The *muonium field
   regime* (low-/high-TF) is a separate, magnitude-based refinement that only
   ever narrows the muonium sub-family within an already-TF run.
 * A scope never carries a geometry: geometry always comes from the runs. The
@@ -63,24 +62,9 @@ MUONIUM_LOW_TF_MAX_GAUSS: float = 150.0
 #: Below this TF field (gauss), the high-TF intratriplet forms are not yet valid.
 MUONIUM_HIGH_TF_MIN_GAUSS: float = 1500.0
 
-# --- B≈0 geometry-label override ----------------------------------------
-#
-# Real ISIS runs are sometimes recorded with a TF/LF beamline label while the
-# applied-field *setpoint* sits at (or near) zero — the run is physically a ZF
-# measurement on a TF-capable beamline (see docs/porting/field-geometry/,
-# "MUSR00044991.nxs: magnetic_field_state='TF' at magnetic_field=0 G"). Trusting
-# the label alone excludes ZF-only families (F-mu-F, Kubo-Toyabe) exactly on the
-# data that needs them.
-#
-# This is deliberately distinct from the "geometry is never inferred from field
-# magnitude" invariant honoured elsewhere in this module: that rule forbids
-# *guessing a TF/LF direction* from |B| (a TF run can legitimately sit at 0 G,
-# so |B|==0 must never be read as "this was actually LF"). Reading the recorded
-# setpoint and concluding "there is no applied field" is a different claim —
-# it says nothing about which direction a nonzero field would have pointed.
-# The override therefore only ever *widens* scope (adds the ZF family list on
-# top of the labelled one); it never removes or overrides the recorded label,
-# because the label may still be correct about which magnet/hardware was live.
+# A near-zero applied field widens the candidate families without relabelling
+# the recorded geometry or removing its candidates. It does not establish the
+# direction a nonzero field would have had; muonium-regime refinement is separate.
 ZERO_FIELD_MAX_GAUSS: float = 2.0
 
 #: A component whose screening fits are expected to take longer than this per run is slow.

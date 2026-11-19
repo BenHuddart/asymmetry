@@ -261,9 +261,8 @@ class BetaPolicy:
       (``method``/``source_run``) and applied to every run, with an optional
       ``error``.
 
-    Unlike :class:`AlphaPolicy` there is no ``per_run_estimate`` mode: beta is
-    broadly an instrument-dependent property of a detector pair, not something
-    resolution computes per run (docs/porting/beta-correction/).
+    Unlike :class:`AlphaPolicy`, beta has no ``per_run_estimate`` mode;
+    resolution applies the explicit fixed or calibrated coefficient.
     """
 
     mode: str = "fixed"
@@ -802,9 +801,8 @@ class GroupingProfile:
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
     good_window_policy: GoodWindowPolicy = field(default_factory=GoodWindowPolicy)
-    # Intrinsic-asymmetry balance beta = A_{0,B}/A_{0,F} (musrfit asymmetry fit
-    # type 2), applied with alpha as A = (F - aB)/(bF + aB). Mirrors
-    # alpha_policy minus per_run_estimate (docs/porting/beta-correction/).
+    # Intrinsic-asymmetry balance beta=A_{0,B}/A_{0,F}, applied with alpha
+    # as A=(F-aB)/(beta*F+aB); resolution never estimates beta implicitly.
     beta_policy: BetaPolicy | CalibratedCoefficient = field(default_factory=BetaPolicy)
     calibration_records: tuple[CalibrationRecord, ...] = ()
     projection_alpha_policies: dict[str, CalibratedCoefficient | QuickCalibratedCoefficient] = (

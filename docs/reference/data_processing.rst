@@ -28,9 +28,12 @@ independently of later source edits. Export headers distinguish source settings
 captured for inspection from that result history; see :doc:`workflow_conveniences`
 and :doc:`/explanation/reduction_pipeline`.
 
-Rebinning is the most common operation. Combining :math:`N` adjacent bins
-reduces the per-bin uncertainty by :math:`\sqrt{N}` at the cost of time
-resolution, so the new bin width should stay well below the period of any
+Rebinning trades time resolution for counting precision. For independent,
+comparable observations of a slowly varying signal, averaging :math:`N` bins
+reduces the error on the mean approximately by :math:`\sqrt{N}`. Raw-count
+reduction instead pools counts and retained variance before taking the ratio;
+shared background terms do not follow an independent-bin rule. The new bin
+width should stay well below the period of any
 precession you intend to fit (rule of thumb: at least eight samples per
 cycle). ISIS NeXus files carry raw counts and may supply per-detector deadtime
 coefficients; enable **File** in the Grouping window to apply them. PSI BIN/MDU
@@ -53,12 +56,15 @@ Rebinning
    :width: 100%
 
 *Same synthetic 100 G TF dataset before (left) and after (right) a* ×4 *bin*
-*merge. Combining* N *adjacent bins reduces the per-bin uncertainty by* √N
-*at the cost of time resolution — the precession is still clearly resolved*
+*merge. For comparable independent bins, the asymmetry error falls approximately*
+*as* 1/√N *at the cost of time resolution — the precession is still clearly resolved*
 *at* ×4 *because the new bin width (~67 ns) is well below the precession*
 *period (~740 ns).*
 
-Reduce noise by combining adjacent time bins:
+The array helper below averages independent processed curve points and adds
+their supplied errors in quadrature. It does not replay detector-count
+reduction or shared-background covariance; see :doc:`data_reduction/binning`
+for ordinary count-level binning.
 
 .. code-block:: python
 
@@ -67,7 +73,8 @@ Reduce noise by combining adjacent time bins:
    
    # Original data
    time = np.linspace(0, 10, 1000)
-   asymmetry = np.random.randn(1000) * 0.01
+   rng = np.random.default_rng(413)
+   asymmetry = rng.normal(0.0, 0.01, 1000)
    error = np.ones(1000) * 0.01
    
    # Rebin by factor of 10
@@ -166,7 +173,12 @@ is the detector-layout **Backward** group, and the analysis **Backward Group**
 is the detector-layout **Forward** group. ISIS data keep the instrument
 forward/backward convention already used by their detector layouts.
 
-Asymmetry and uncertainty handling uses the following convention:
+Point errors use first-order propagation at fixed applied :math:`\alpha`
+and :math:`\beta`; they are not exact finite-count ratio variances or confidence
+intervals. Applied calibration uncertainty and full between-bin covariance are
+not added to ordinary fit weights. See :ref:`asymmetry-counting-errors` and
+:ref:`conditional-calibration-errors` for the assumptions and fit eligibility.
+The following :math:`\beta=1` formulas use that convention:
 
 * If :math:`F + \alpha B = 0`, asymmetry is set to 0 for that bin.
 * The default uncertainty for that bin is 1.0 (fractional), i.e. 100% in the
@@ -210,41 +222,35 @@ respectively. See :doc:`vector_polarization` for setup and UI behaviour.
 Co-adding datasets
 ------------------
 
-Average multiple datasets with proper error propagation:
+Co-add original detector observations before forming the asymmetry, rather
+than averaging already reduced curves. For independent inputs the count
+coefficients act linearly and their squares act on variance. An unweighted
+mean of reduced asymmetries generally gives a different result, even when
+each input uses the same time grid.
 
 .. code-block:: python
 
-   import numpy as np
+   from asymmetry.core.data.combine import combine_runs, reduce_combined_run
    from asymmetry.core.io import load
-   
-   # Load multiple datasets
+
    datasets = [load(f"run_{i}.nxs") for i in range(1, 4)]
-   
-   # Ensure same time grid (or interpolate if needed)
-   time_grid = datasets[0].time
-   
-   asymmetries = [ds.asymmetry for ds in datasets]
-   errors = [ds.error for ds in datasets]
-   
-   # Average
-   avg_asymmetry = np.mean(asymmetries, axis=0)
-   
-   # Error propagation: σ_avg = √(Σσ²) / N
-   avg_error = np.sqrt(np.sum([e**2 for e in errors], axis=0)) / len(datasets)
+   combined_run = combine_runs([dataset.run for dataset in datasets])
+   combined = reduce_combined_run(combined_run)
 
-The GUI provides automatic co-adding via the context menu: select 2+ datasets,
-right-click, and choose "Co-add Selected" to combine them with proper error
-propagation.
+Preparation retains each original acquisition's timing, supported exposure,
+file coefficients and counting noise. Enabled nonlinear detector corrections
+act on those original observations before pooling; the requested grouped
+background operation then acts on the pooled set. This is not a prescription
+to correct one total with an averaged deadtime coefficient. Errors remain
+conditional on the supplied weights, calibration and correction settings.
+See :doc:`run_arithmetic` for compatibility, overlap, signed-input and
+project-replay limits.
 
-In the GUI, co-add is intentionally strict:
-
-* every selected dataset must already have equivalent grouping settings,
-* the resulting combined dataset mirrors that shared grouping state.
-
-When you later edit grouping on a combined dataset, Asymmetry applies the
-change to the hidden source datasets and rebuilds the combined row from those
-updated sources. Separating the combined dataset restores those source runs
-with the same grouping that was active on the combined entry.
+In the Data Browser select two or more runs and choose **Co-add Selected**.
+The inputs must share authored grouping intent; the combined row retains
+source-specific file facts. Editing its grouping rebuilds it from the retained
+originals. **Separate Combined** restores those source rows with the shared
+authored settings. Neither action discards the detector observations.
 
 Windowing for Fourier analysis
 ------------------------------

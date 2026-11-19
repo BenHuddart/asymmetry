@@ -213,8 +213,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
 
         h_data = entry.create_group("histogram_data_1")
         counts_ds = h_data.create_dataset("counts", data=counts.astype(counts_dtype))
-        # ISIS bin metadata is 1-based and inclusive
-        # (docs/porting/t0-determination/isis-header-index-base.md).
+        # ISIS header bins are one-based and inclusive; internal indices are zero-based.
         counts_ds.attrs["t0_bin"] = (t0_bins + 1).astype(np.int32)
         counts_ds.attrs["first_good_bin"] = np.int32(first_good + 1)
         counts_ds.attrs["last_good_bin"] = np.int32(last_good + 1)

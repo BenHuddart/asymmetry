@@ -4,8 +4,8 @@ For every file listed (one path per line in the file given as argv[1]) read
 ``time_zero`` (µs), ``resolution``, the ``t0_bin`` / ``first_good_bin`` /
 ``last_good_bin`` attributes on ``counts`` and the summed pulse, then report
 which integer rule maps ``time_zero / resolution`` onto ``t0_bin`` and how far
-the detected pulse rise sits from the header t0. Evidence and conclusions are
-recorded in ``docs/porting/t0-determination/isis-header-index-base.md``.
+the detected pulse rise sits from the header t0. Current loading conventions
+are documented in ``docs/reference/loading_data.rst``.
 
 Usage::
 

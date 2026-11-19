@@ -28,8 +28,7 @@ direction signal only** — never a TF/LF direction from the magnet name. A
 magnet named ``Danfysik`` or ``T20 Coils`` does not by itself say whether the
 field it drives is applied transverse or longitudinal to the initial muon
 spin; guessing that would be exactly the forbidden orientation-from-hardware
-inference the field-geometry study rejected (see
-``docs/porting/field-geometry/``). The one direction claim this parser will
+inference. The one direction claim this parser will
 make is reading the literal string ``a_selected_magnet == "Active ZF"``
 (or any value containing ``"ZF"``) as "zero field selected" — that is an
 explicit recorded token, the same kind of signal ``field_direction_from_text``
