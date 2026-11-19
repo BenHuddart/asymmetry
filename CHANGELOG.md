@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Expose sourced EMU instrument definitions and generated review diagrams, keeping
+  existing detector grouping and schematic behaviour.
+
 - Expose grouped count seeding and series-recipe fit preparation through Qt-free
   core APIs shared with the desktop fit controls.
 - Prepare and replay recorded cross-group parameter fits through the same Qt-free

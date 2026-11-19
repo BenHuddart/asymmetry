@@ -109,39 +109,27 @@ class DetectorSchematicWidget(QWidget):
         super().__init__(parent)
         self._instrument = instrument
 
-        # State -------------------------------------------------------
         # groups[gid] = set of included detector_ids (1-based)
         self._groups: dict[int, set[int]] = {}
         self._active_group: int = 1
-        # Optional gid -> display name, used only to make hover tooltips read
-        # "Forward" rather than "Group 1"; purely cosmetic, set by the caller
-        # (the layout dialog keeps the authoritative name mapping).
+        # Hover names are supplied by the layout dialog.
         self._group_names: dict[int, str] = {}
 
         # Patch map: detector_id → clickable (active) matplotlib patch
         self._patches: dict[int, Wedge | Rectangle] = {}
-        # Read-only context rectangles (a detector shown in a panel where it is
-        # edited elsewhere); kept so exclusion hatching stays consistent across
-        # both panels. Entries are (detector_id, patch).
-        self._readonly_patches: list[tuple[int, Rectangle]] = []
-        # Extra membership-slice patches drawn on top of the primary patch when a
-        # detector belongs to more than one group (see `_paint_detector`).  Kept
-        # separate from `_patches` so hit-testing / hover highlighting still
-        # resolves through the single primary patch per detector.
+        # Context copies share exclusion hatching with their editable channel.
+        self._readonly_patches: list[tuple[int, Wedge | Rectangle]] = []
+        # Membership slices leave one primary hit target per detector.
         self._membership_patches: dict[int, list[Wedge | Rectangle]] = {}
-        # "+N" ellipsis text artists for detectors in more than
-        # `_MAX_RENDERED_MEMBERSHIPS` groups at once.
+        # Overflow text counts memberships beyond the rendered slices.
         self._overflow_labels: dict[int, object] = {}
-        # Axis map: bank index → polar axes
         self._axes: list = []
 
         self._excluded: set[int] = set()
         self._exclude_mode = False
-        # Group IDs temporarily emphasised (e.g. hovering a group row in the
-        # layout dialog); purely visual, does not affect click behaviour.
+        # Highlighting never changes group membership.
         self._highlighted_groups: set[int] = set()
-        # Detector id currently under the cursor, so hover doesn't re-issue the
-        # same tooltip text on every motion event within one segment.
+        # Repeated motion within one detector does not reissue its tooltip.
         self._hovered_detector: int | None = None
         self._setup_ui()
         self._build_schematic()
@@ -166,6 +154,7 @@ class DetectorSchematicWidget(QWidget):
         layout.addWidget(self._canvas)
         self._canvas.setMouseTracking(True)
 
+        self._canvas.mpl_connect("resize_event", self._fit_schematic_on_resize)
         self._canvas.mpl_connect("button_press_event", self._on_click)
         self._canvas.mpl_connect("motion_notify_event", self._on_hover)
         self._canvas.mpl_connect("figure_leave_event", lambda _event: QToolTip.hideText())
@@ -173,6 +162,16 @@ class DetectorSchematicWidget(QWidget):
     # ------------------------------------------------------------------
     # Schematic construction
     # ------------------------------------------------------------------
+
+    def _fit_schematic_on_resize(self, event) -> None:
+        """Refit only decorations clipped by the canvas's actual size."""
+        renderer = event.canvas.get_renderer()
+        if any(
+            not self._fig.bbox.contains(*point)
+            for axes in self._axes
+            for point in axes.get_tightbbox(renderer).get_points()
+        ):
+            self._fig.tight_layout(pad=0.4)
 
     def _build_schematic(self) -> None:
         """Draw all detector banks onto the figure."""
@@ -197,17 +196,19 @@ class DetectorSchematicWidget(QWidget):
             ax.set_title(bank.name, fontsize=10, fontweight="bold", pad=4)
             self._axes.append(ax)
 
-            # Draw all segments for this bank
+            primitives = []
             for seg in bank.segments:
                 patch = self._make_radial_patch(seg)
+                primitives.append(patch)
                 ax.add_patch(patch)
-                self._patches[seg.detector_id] = patch
-                # Label at centroid
+                if seg.read_only:
+                    self._apply_read_only_style(patch)
+                    if seg.detector_id is not None:
+                        self._readonly_patches.append((seg.detector_id, patch))
+                else:
+                    self._patches[seg.detector_id] = patch
                 self._add_label(ax, seg)
 
-            # Annular instruments (wedge banks) get a central beam-hole disc.
-            # Banks built from edge-rectangles (HAL) define their own centre via
-            # the MV disc, so the generic hole is skipped.
             annular = [s for s in bank.segments if s.shape == "wedge" and s.r_inner > 0]
             if annular and not any(s.shape == "rectangle" for s in bank.segments):
                 hole = Circle(
@@ -220,6 +221,7 @@ class DetectorSchematicWidget(QWidget):
                 )
                 ax.add_patch(hole)
 
+            self._expand_primitive_bounds(ax, primitives)
             self._add_bank_caption(ax, bank)
 
         self._fig.tight_layout(pad=0.4)
@@ -248,15 +250,7 @@ class DetectorSchematicWidget(QWidget):
         self._refresh_colours()
 
     def _add_bank_caption(self, ax, bank) -> None:
-        """Draw an optional per-bank caption (e.g. "viewed looking upstream").
-
-        The caption text comes from an optional ``caption`` attribute on the
-        bank or instrument layout (looked up with ``getattr(..., "caption",
-        None)`` so this works whether or not that attribute has been added to
-        :class:`~asymmetry.core.instrument.BankLayout` /
-        :class:`~asymmetry.core.instrument.InstrumentLayout` yet).  Nothing is
-        drawn when neither object declares one.
-        """
+        """Draw a declared viewing-direction caption below the schematic."""
         caption = getattr(bank, "caption", None) or getattr(self._instrument, "caption", None)
         if not caption:
             return
@@ -275,20 +269,23 @@ class DetectorSchematicWidget(QWidget):
     def _draw_plan_panel(self, ax, bank, *, multi: bool) -> None:
         """Draw the detectors, sample and axis cues for one plan panel."""
         bound_segs: list[DetectorSegment] = []
+        primitives = []
         for seg in bank.segments:
             if seg.shape == "rectangle":
                 patch = self._make_rectangle(seg)
+                primitives.append(patch)
                 ax.add_patch(patch)
                 self._add_label(ax, seg)
                 bound_segs.append(seg)
                 if seg.read_only:
                     self._apply_read_only_style(patch)
-                    self._readonly_patches.append((seg.detector_id, patch))
+                    if seg.detector_id is not None:
+                        self._readonly_patches.append((seg.detector_id, patch))
                 else:
                     # Only active (clickable) segments take a group colour.
                     self._patches[seg.detector_id] = patch
             elif seg.shape in ("endon_out", "endon_in"):
-                self._draw_endon(ax, seg)
+                primitives.append(self._draw_endon(ax, seg))
 
         ax.add_patch(
             Circle(
@@ -303,11 +300,7 @@ class DetectorSchematicWidget(QWidget):
 
         min_x, max_x, min_y, max_y = self._plan_bounds(bound_segs or bank.segments)
 
-        # Direction cues are driven by the layout's data, not the panel count:
-        # an instrument that declares reference_arrows always gets them (so a
-        # future multi-panel instrument is not silently stripped of its cues);
-        # otherwise a beam (+z) arrow is drawn. The sample label and +z/+y axis
-        # indicators stay on single-panel views to avoid crowding multi panels.
+        # Declared reference arrows also apply to multi-panel layouts.
         if self._instrument.reference_arrows:
             self._draw_reference_arrows(ax)
         else:
@@ -318,28 +311,44 @@ class DetectorSchematicWidget(QWidget):
 
         ax.set_xlim(min_x - 0.45, max_x + 0.8)
         ax.set_ylim(min_y - 0.55, max_y + 0.55)
+        self._expand_primitive_bounds(ax, primitives)
 
-    def _apply_read_only_style(self, patch: Rectangle) -> None:
-        """Style a detector rectangle as read-only context (dashed grey box)."""
+    @staticmethod
+    def _expand_primitive_bounds(ax, primitives) -> None:
+        """Keep legacy framing unless a transformed detector extends beyond it."""
+        for patch in primitives:
+            bounds = patch.get_path().get_extents(patch.get_patch_transform())
+            for get_limits, set_limits, lower, upper in (
+                (ax.get_xlim, ax.set_xlim, bounds.xmin, bounds.xmax),
+                (ax.get_ylim, ax.set_ylim, bounds.ymin, bounds.ymax),
+            ):
+                start, stop = get_limits()
+                if lower < start or upper > stop:
+                    set_limits(
+                        lower - 0.1 if lower < start else start,
+                        upper + 0.1 if upper > stop else stop,
+                    )
+
+    def _apply_read_only_style(self, patch: Wedge | Rectangle) -> None:
+        """Style detector context with a dashed grey outline."""
         patch.set_facecolor(_READONLY_FACE)
         patch.set_edgecolor(_READONLY_EDGE)
         patch.set_linestyle((0, (4, 3)))
         patch.set_linewidth(1.0)
 
-    def _draw_endon(self, ax, seg: DetectorSegment) -> None:
+    def _draw_endon(self, ax, seg: DetectorSegment) -> Circle:
         """Draw a detector seen end-on: ⊙ (toward viewer) or ⊗ (away)."""
         x, y = seg.x_center, seg.y_center
-        r = 0.16
-        ax.add_patch(
-            Circle(
-                (x, y),
-                radius=r,
-                facecolor="none",
-                edgecolor=_ENDON_COLOUR,
-                linewidth=1.4,
-                zorder=4,
-            )
+        r = seg.width / 2.0 if seg.width > 0 else 0.16
+        outline = Circle(
+            (x, y),
+            radius=r,
+            facecolor="none",
+            edgecolor=_ENDON_COLOUR,
+            linewidth=1.4,
+            zorder=4,
         )
+        ax.add_patch(outline)
         if seg.shape == "endon_out":
             ax.add_patch(Circle((x, y), radius=0.035, facecolor=_ENDON_COLOUR, zorder=4))
         else:
@@ -359,10 +368,7 @@ class DetectorSchematicWidget(QWidget):
                 zorder=4,
             )
         if seg.label:
-            # For a split (_B/_F) pair sitting side by side, place each label
-            # *outward* (left member to its left, right member to its right) so
-            # neither label crowds the central sample or the other member. A lone
-            # centred marker (e.g. Mobile, or the 6-detector Up/Down) labels below.
+            # Split labels face outward; a centered marker labels below.
             if seg.x_center < -1e-6:
                 ax.text(
                     x - r - 0.08,
@@ -396,6 +402,8 @@ class DetectorSchematicWidget(QWidget):
                     color=_ENDON_COLOUR,
                     zorder=4,
                 )
+
+        return outline
 
     def _draw_beam_arrow(self, ax, min_x: float, max_x: float, min_y: float) -> None:
         """Draw the muon-beam (+z) arrow along the bottom of a plan panel."""
@@ -558,22 +566,10 @@ class DetectorSchematicWidget(QWidget):
     }
 
     def _rectangle_label_fontsize(self, seg: DetectorSegment) -> float:
-        """Return a label font size that fits inside *seg*'s rectangle.
-
-        Plan-view rectangles vary in both width and height (GPS-RD's split
-        transverse plates are under a third the width of its Forward/Backward
-        plates, and its "Mob-RL" bar is under a quarter their height), so a
-        single fixed size either overruns the small boxes or under-uses the
-        large ones. Approximates fit from the box dimensions in data (axes)
-        units, capped by whichever dimension is tighter.
-        """
+        """Fit the label to the tighter schematic rectangle dimension."""
         width = seg.width if seg.width > 0 else 1.0
         height = seg.height if seg.height > 0 else 1.0
-        # Empirically-tuned scales: ~7pt comfortably fits a 2-3 char
-        # abbreviation in a 0.85-wide box at this schematic's typical axes
-        # extent; wider boxes (Forward/Backward at 0.78-1.7 combined with a
-        # short "id\nname" label) can afford the 9pt cap. The two-line label
-        # ("id" + name) needs roughly a third of the box height per line.
+        # Schematic-unit scales reserve room for two lines of text.
         by_width = width * 9.5
         by_height = height * 13.0
         return max(5.5, min(9.0, by_width, by_height))
@@ -605,7 +601,13 @@ class DetectorSchematicWidget(QWidget):
             # show just the physical label to stay uncluttered.
             if self._instrument.view == "plan":
                 name = self._fit_rectangle_name(seg)
-                label = f"{seg.detector_id}\n{name}" if name else str(seg.detector_id)
+                label = (
+                    name
+                    if seg.detector_id is None
+                    else f"{seg.detector_id}\n{name}"
+                    if name
+                    else str(seg.detector_id)
+                )
             else:
                 label = seg.label if seg.label else str(seg.detector_id)
             # Read-only context plates use a muted label so they read as
@@ -628,18 +630,13 @@ class DetectorSchematicWidget(QWidget):
         x = r_mid * math.cos(angle_rad)
         y = r_mid * math.sin(angle_rad)
 
-        # Determine font size based on segment density. The floor is raised to
-        # 5pt (was 3.5pt, illegible on 32-sector HiFi/MuSR rings) — dense rings
-        # instead shorten the label text below to stay legible at that size.
+        # Keep azimuth labels legible on dense rings.
         n_sectors = max(len(set(s.sector_index for s in self._instrument.all_segments)), 1)
         fontsize = max(5.0, min(6.5, 130.0 / n_sectors))
 
-        # Prefer the physical detector label (e.g. "F1", "MV") when present;
-        # fall back to the bare detector ID for label-free banks (HiFi/MuSR/EMU).
-        # Dense rings (>24 sectors, e.g. HiFi/MuSR's 32) drop to the bare
-        # detector ID even when a physical label exists, since "id + label"
-        # would not fit at the raised font floor.
-        if n_sectors > 24:
+        if seg.detector_id is None:
+            text = seg.label or ""
+        elif n_sectors > 24:
             text = str(seg.detector_id)
         else:
             text = seg.label if seg.label else str(seg.detector_id)

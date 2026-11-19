@@ -30,6 +30,7 @@ extensions = [
     'sphinx_design',
     'lazy_images',
     'tools.docs_policy',
+    'tools.instrument_docs',
 ]
 
 templates_path = ['_templates']
