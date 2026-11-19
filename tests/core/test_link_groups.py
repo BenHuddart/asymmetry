@@ -2,7 +2,7 @@
 
 Uses a synthetic damped-cosine triplet (central line + two satellites) so the
 tests never depend on the WiMDA corpus files, which are not in the repo. See
-docs/porting/link-groups/ for the study and design.
+the independently planted three-line signal below.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-# Reference triplet (see docs/porting/link-groups/test-data.md).
+# Planted three-line signal.
 _F0 = 1.389  # central Larmor line (MHz)
 _DELTA = 0.121  # half-splitting (MHz); full splitting 2*delta = 0.242 MHz
 _LAMBDA = 0.30  # shared relaxation (us^-1)

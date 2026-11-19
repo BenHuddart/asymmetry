@@ -12,9 +12,8 @@ asymmetry traces, builds an iminuit ``LeastSquares`` cost, shares the named
 globals across datasets, and gives every local parameter an independent copy per
 dataset). The count-domain :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`
 family wraps the *same* engine method with a Cash/Poisson cost on grouped counts;
-this module is its asymmetry-domain, least-squares sibling. See
-``docs/porting/asymmetry-domain-global-fit/`` for the study and the
-asymmetry-vs-count-domain trade-off (when to use which).
+this module is its asymmetry-domain, least-squares sibling. The observation
+and its uncertainty model determine which objective is appropriate.
 
 The wrapper exists because the bare engine method has two discoverability traps
 for the asymmetry-domain user:
@@ -178,10 +177,9 @@ def fit_global(
     shared minimiser seam) and adds the asymmetry-domain ergonomics: datasets need
     not carry unique run numbers, ``initial_params`` may be one broadcast seed, and
     the return value is a :class:`GlobalFitResult` with the shared globals,
-    per-dataset locals, and a combined reduced χ². For the statistically-faithful
-    low-count alternative (Cash/Poisson on grouped counts) use the count-domain
-    :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`; see
-    ``docs/porting/asymmetry-domain-global-fit/`` for when to use which.
+    per-dataset locals, and a combined reduced χ². For eligible raw-count
+    observations, :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`
+    supplies a count-domain objective with its own observation restrictions.
 
     Parameters
     ----------

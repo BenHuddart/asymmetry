@@ -10,7 +10,7 @@ any candidate wizard configuration, reports per case:
     agreement vs planted truth (synthetics), wall time, Minuit fit / feval
     counts, and a status in {OK, TIMEOUT, ERROR}.
 
-Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
+Harness invariants:
 
 * **Core-import-only.** This module imports only ``asymmetry.core`` — no Qt, no
   matplotlib — so it is fast and headless.
@@ -68,12 +68,10 @@ import numpy as np
 
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
-# --------------------------------------------------------------------------- #
-# Paths / provenance
-# --------------------------------------------------------------------------- #
+# Frozen verdict fixtures and generating policy.
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_BASELINE_DIR = _REPO_ROOT / "docs" / "porting" / "global-fit-wizard-efficiency" / "baseline"
+_BASELINE_DIR = _REPO_ROOT / "tools" / "baselines" / "global_wizard"
 _BASELINE_PATH = _BASELINE_DIR / "exhaustive_baseline.json"
 #: Frozen verdict files for the statistical and trend objectives.
 OBJECTIVES = ("statistical", "trend")

@@ -255,16 +255,10 @@ def high_tf_muonium_aniso(
     asymmetric (Pake-like) powder broadening; each line keeps equal weight
     ``1/2`` (the high-field limit, as in :func:`high_tf_muonium`).
 
-    This deliberately diverges from WiMDA's
-    ``AnisMuoniumPairRot``, which shifts its two (signed) line frequencies by
-    a symmetric ``±d/2``: in our positive-frequency convention that moves
-    ``ν_12`` in the wrong direction, and the symmetric split is in any case
-    only approximate (see
-    ``docs/porting/wimda-fit-function-parity/comparison.md``).  ``D = 0``
-    reduces exactly to :func:`high_tf_muonium`.
-
-    WiMDA's parameter slot for the phase is occupied by ``D`` in this
-    function; here the phase is kept as an explicit parameter.
+    The pair uses positive transition frequencies and the secular effective
+    coupling for each orientation; it is not a symmetric signed-frequency
+    offset. ``D = 0`` reduces exactly to :func:`high_tf_muonium`. The phase is
+    an explicit parameter independent of ``D``.
     """
     t = np.asarray(t, dtype=float)
     f_lo, f_hi = _aniso_pair_frequencies(field, A_hf, D, _ANISO_COS_THETA)

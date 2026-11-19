@@ -1,6 +1,6 @@
 """Tests for the WiMDA fit-function-parity components.
 
-Verification criteria from docs/porting/wimda-fit-function-parity/:
+Controls cover
 limit identities against established components, t = 0 normalisation,
 registry/doc hygiene, serialization round-trips, and golden checks against
 independent evaluations.

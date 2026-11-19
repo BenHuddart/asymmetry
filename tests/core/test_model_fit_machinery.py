@@ -1,8 +1,8 @@
-"""Tests for the Model-layer fitting machinery (WiMDA parity Phase 2).
+"""Parameter-trend error modes, windows and fit-quality controls.
 
 Covers the error-mode selector (Column/Percent/Absolute/None/Scatter), the
 union multi-range windows on ModelFitRange, and the shared χ² fit-quality
-helper. Oracle values from docs/porting/model-function-parity/test-data.md.
+helper. The seeded linear case has a frozen ordinary-least-squares solution.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
 def _linear_scatter_data() -> tuple[np.ndarray, np.ndarray]:
-    """The frozen linear oracle of test-data.md §1.6 (seed 42)."""
+    """Seeded linear observations with a frozen OLS solution."""
     rng = np.random.default_rng(42)
     x = np.linspace(1.0, 10.0, 12)
     y = 2.0 + 0.7 * x + rng.normal(0.0, 0.35, x.size)
@@ -102,7 +102,7 @@ def test_scatter_mode_matches_unweighted_ols_with_rescaled_errors() -> None:
     assert result.success
     assert result.error_mode == "scatter"
     fitted = {p.name: p.value for p in result.parameters}
-    # Frozen OLS oracle (test-data.md §1.6).
+    # Frozen ordinary-least-squares solution for the seeded observations.
     np.testing.assert_allclose(fitted["b"], 1.84514937, rtol=1e-5)
     np.testing.assert_allclose(fitted["m"], 0.71914734, rtol=1e-5)
     np.testing.assert_allclose(result.reduced_chi_squared, 0.1202971846, rtol=1e-5)
@@ -232,7 +232,7 @@ def test_single_window_equals_min_max_bounds() -> None:
 
 def test_union_windows_recover_critical_divergence_excluding_tc() -> None:
     """The canonical WiMDA multi-range use: fit λ(T) across the divergence
-    while excluding the critical region around Tc (test-data.md §1.8)."""
+    while excluding the critical region around Tc."""
     rng = np.random.default_rng(7)
     true = dict(a=2.0, Tc=69.2, nu=0.7, c=0.05)
     t = np.linspace(40.0, 100.0, 61)
@@ -305,7 +305,7 @@ def test_range_mask_and_curve_sampling_over_window_envelope() -> None:
 
 
 def test_fit_quality_band_oracle() -> None:
-    # scipy.stats.chi2.ppf oracle at R = 0.95 (test-data.md §1.5).
+    # scipy.stats.chi2.ppf quantiles at R = 0.95.
     expected = {
         5: (0.16624232269733252, 2.566500398806005),
         10: (0.3246972780236841, 2.0483177350807393),

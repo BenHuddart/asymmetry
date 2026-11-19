@@ -1,0 +1,228 @@
+{
+  "cases": {
+    "correlated_pair_biexp_g3": {
+      "minuit_fevals": 469572,
+      "minuit_fits": 1940,
+      "provenance": {
+        "case_id": "correlated_pair_biexp_g3",
+        "components": [
+          "Exponential",
+          "Gaussian",
+          "Constant"
+        ],
+        "description": "Two dynamic rates that scan together (correlated pair).",
+        "n_groups": 3,
+        "n_params": 5,
+        "operators": [
+          "+",
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_2": "global",
+          "A_bg": "global",
+          "Lambda": "local",
+          "sigma": "local"
+        },
+        "seed": 1004,
+        "template_keys": [
+          "exp_gaussian_constant",
+          "exp_constant",
+          "gaussian_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 340.56466149356436,
+        "aicc": 341.0789472078501,
+        "bic": 375.5395977766158,
+        "n_params": 9,
+        "recommended_key": "exp_gaussian_constant|g=A_1,A_2,A_bg|l=Lambda,sigma",
+        "roles": {
+          "A_1": "global",
+          "A_2": "global",
+          "A_bg": "global",
+          "Lambda": "local",
+          "sigma": "local"
+        },
+        "template_key": "exp_gaussian_constant"
+      },
+      "wall_s": 12.032972333021462
+    },
+    "mixed_exp_g4": {
+      "minuit_fevals": 24319,
+      "minuit_fits": 270,
+      "provenance": {
+        "case_id": "mixed_exp_g4",
+        "components": [
+          "Exponential",
+          "Constant"
+        ],
+        "description": "Shared amplitude + background; only the rate scans.",
+        "n_groups": 4,
+        "n_params": 3,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "local"
+        },
+        "seed": 11003,
+        "template_keys": [
+          "exp_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 473.250288699621,
+        "aicc": 473.4278785516295,
+        "bic": 498.2930053230326,
+        "n_params": 6,
+        "recommended_key": "exp_constant|g=A_1,A_bg|l=Lambda",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "local"
+        },
+        "template_key": "exp_constant"
+      },
+      "wall_s": 2.6129419170028996
+    },
+    "near_degenerate_biexp_g3": {
+      "minuit_fevals": 491613,
+      "minuit_fits": 1806,
+      "provenance": {
+        "case_id": "near_degenerate_biexp_g3",
+        "components": [
+          "Exponential",
+          "Exponential",
+          "Constant"
+        ],
+        "description": "Two near-equal exponential rates (near-degenerate); the correct verdict is demotion to a single exponential.",
+        "n_groups": 3,
+        "n_params": 5,
+        "operators": [
+          "+",
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_2": "global",
+          "A_bg": "global",
+          "Lambda_1": "global",
+          "Lambda_2": "global"
+        },
+        "seed": 1005,
+        "template_keys": [
+          "biexp_constant",
+          "exp_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 377.30810585401366,
+        "aicc": 377.37552158435074,
+        "bic": 388.96641794836415,
+        "n_params": 3,
+        "recommended_key": "exp_constant|g=A_1,Lambda,A_bg|l=none",
+        "roles": {
+          "A_1": "global",
+          "A_2": "absent",
+          "A_bg": "global",
+          "Lambda_1": "absent",
+          "Lambda_2": "absent"
+        },
+        "template_key": "exp_constant"
+      },
+      "wall_s": 10.906981542007998
+    },
+    "pure_global_exp_g3": {
+      "minuit_fevals": 15067,
+      "minuit_fits": 270,
+      "provenance": {
+        "case_id": "pure_global_exp_g3",
+        "components": [
+          "Exponential",
+          "Constant"
+        ],
+        "description": "All parameters shared; identical across the series.",
+        "n_groups": 3,
+        "n_params": 3,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "global"
+        },
+        "seed": 1001,
+        "template_keys": [
+          "exp_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 397.88164571921243,
+        "aicc": 397.9490614495495,
+        "bic": 409.5399578135629,
+        "n_params": 3,
+        "recommended_key": "exp_constant|g=A_1,Lambda,A_bg|l=none",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "global"
+        },
+        "template_key": "exp_constant"
+      },
+      "wall_s": 3.570105999999214
+    },
+    "pure_local_exp_g4": {
+      "minuit_fevals": 26262,
+      "minuit_fits": 267,
+      "provenance": {
+        "case_id": "pure_local_exp_g4",
+        "components": [
+          "Exponential",
+          "Constant"
+        ],
+        "description": "Every parameter drifts along the scan; nothing shared.",
+        "n_groups": 4,
+        "n_params": 3,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "local",
+          "A_bg": "local",
+          "Lambda": "local"
+        },
+        "seed": 1002,
+        "template_keys": [
+          "exp_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 500.22521725275146,
+        "aicc": 500.8933114711669,
+        "bic": 550.3106504995746,
+        "n_params": 12,
+        "recommended_key": "exp_constant|g=none|l=A_1,Lambda,A_bg",
+        "roles": {
+          "A_1": "local",
+          "A_bg": "local",
+          "Lambda": "local"
+        },
+        "template_key": "exp_constant"
+      },
+      "wall_s": 2.860721375007415
+    }
+  },
+  "generation_date": "2026-07-05",
+  "git_sha": "2fc1a08c66c5447234fb36efd58ea7e0eca7da8d",
+  "schema_version": 1,
+  "tier": "exhaustive"
+}

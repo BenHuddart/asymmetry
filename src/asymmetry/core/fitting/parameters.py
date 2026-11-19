@@ -773,10 +773,9 @@ class AffineTie:
     ``delta``) that the model itself does not consume — it exists only to drive
     the ties, and is fitted with its own uncertainty.
 
-    This is a deliberate capability *beyond* WiMDA, which has no affine tie (see
-    docs/porting/link-groups/). It is intentionally a linear map of at most two
-    parameters plus a constant — enough for equal spacing, with a clean
-    delta-method uncertainty — rather than a general expression evaluator.
+    A tie is a linear map of at most two parameters plus a constant. This
+    encodes equal spacing and supports delta-method uncertainty propagation
+    without evaluating general expressions.
     """
 
     main: str
