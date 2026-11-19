@@ -122,12 +122,10 @@ asymmetry/
 │   │   ├── plot_panel.py     # Interactive plotting canvas
 │   │   ├── fit_panel.py      # Thin backward-compat shim re-exporting panels/fit/ (see below)
 │   │   ├── fit/              # Fit setup and results — split from the former fit_panel.py
-│   │   │   ├── __init__.py   # Public API re-exports; dependency order: seeding → tab_base → single_tab/global_tab → panel
-│   │   │   ├── seeding.py     # Phase/background/N0 seed math (leaf, no intra-package deps)
+│   │   │   ├── __init__.py   # Public API re-exports; dependency order: tab_base → single_tab/global_tab → panel
 │   │   │   ├── tab_base.py    # FitParameterTable, FitTabBase, tie dialog, shared delegates/helpers
 │   │   │   ├── single_tab.py  # SingleFitTab
 │   │   │   ├── global_tab.py  # GlobalFitTab + batch-seeding constants
-│   │   │   ├── recipe_inputs.py # build_recipe_engine_inputs() — one series' recipe -> engine inputs, shared by the Batch tab and the joint-fit window
 │   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── cross_group_fit_dialog.py     # Cross-group Global/Local/Fixed role dialog (+ Suggest roles)
@@ -733,9 +731,8 @@ with fewer than two members) and clearing stamps on `remove_joint_fit`.
 Project schema **v22** adds the top-level `joint_fits` list, purely additive
 (`_migrate_v21_to_v22`).
 
-**GUI workflow.** `gui/panels/fit/recipe_inputs.py::build_recipe_engine_inputs`
-extracts the recipe→engine-inputs step `GlobalFitTab._run_global_fit` already
-did, so a joint run resolves a member's seeds, bounds and fit range exactly as
+**Recipe preparation.** `core/fitting/recipe_inputs.py::build_recipe_engine_inputs`
+resolves a member's seeds, bounds and fit range exactly as
 a solo Batch-tab run of that series would — the joint-fit window edits no
 recipe. Analysis ▸ *New joint fit…* (and the *Joint fits* registry submenu,
 mirroring *Global parameter fits*) opens `gui/windows/joint_fit_window.py::JointFitWindow`:
@@ -1074,3 +1071,8 @@ persistence codec. Fit slots, assessment readers, and fit editors consume the
 canonical form; frozen recipes and calibration records remain historical facts.
 Keep every converter and regression fixture needed to load a released project,
 including alpha projects. Storage versions never establish computation currency.
+
+Grouped nuisance seeding lives in `core/fitting/grouped_seeding.py`: typed
+`GroupedTimeDomainGroup` traces supply absolute FFT phases in radians, while
+background/N0/amplitude estimates use the lifetime-corrected count convention.
+GUI tabs call these pure functions and own their editable table state.

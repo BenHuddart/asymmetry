@@ -37,6 +37,7 @@ from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
 )
+from asymmetry.core.fitting.recipe_inputs import file_parameter_value
 from asymmetry.core.fitting.rrf_offset import (
     UnsupportedRRFComponentError,
     rrf_frequency_offsets,
@@ -82,7 +83,6 @@ from .tab_base import (
     _fit_result_is_usable,
     _fit_summary,
     _fit_warnings_html,
-    _get_file_value_for_parameter,
     _normalized_model_param_values,
     _set_formula_label_text,
     _set_param_batch_role_cell,
@@ -795,18 +795,10 @@ class SingleFitTab(FitTabBase):
         self._cache_wizard_analysis(recommendation, signature=signature, log_text=log_text)
 
     def _seed_context(self, *, from_record: bool = True) -> SeedContext:
-        """Describe the data this tab's parameters are being seeded for.
-
-        ``from_record`` is cleared on the restore paths: the saved values are
-        about to be replayed over the seeds, so reading the bound record (a
-        spectrum peak search, the record's scale) would be work thrown away —
-        and the record bound at restore time may still be the previous
-        domain's. The applied field is metadata, cheap and domain-independent,
-        so it still seeds the rows a saved state does not mention.
-        """
+        """Use run metadata, omitting record-dependent seeds while replaying a state."""
         return SeedContext(
             dataset=self._current_dataset if from_record else None,
-            field_gauss=_get_file_value_for_parameter(self._current_dataset, "field"),
+            field_gauss=file_parameter_value(self._current_dataset, "field"),
             domain=self._domain,
         )
 
