@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve reciprocal, spatial and field-bin errors in vortex-lattice signals
   over documented sampled parameter ranges, with bounded compact caching.
 
+- Correct Rh, Pd, Ag, Ho and Er negative-muon lifetime defaults to selected
+  published measurements, retaining quoted uncertainties and source context.
+
 - Evaluate continuous Gaussian-broadened Kubo–Toyabe widths accurately for broad
   distributions and long windows, with bounded finite-field integration work.
 
