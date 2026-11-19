@@ -12,7 +12,7 @@ import pytest
 
 pytestmark = [pytest.mark.gui]
 
-# ── schema / migration unit tests ─────────────────────────────────────────────
+from asymmetry.core.instruments.resolution import choice_for_layout
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
     UnsupportedSchemaVersion,
@@ -331,9 +331,7 @@ class TestSchemaMigration:
         axes = plot_state["axis_limits"]["axes"]
         assert axes["x"] == {"auto": True, "held": [1.0, 4.0], "quantity": None}
         assert axes["y"] == {"auto": False, "held": [-30.0, 30.0], "quantity": None}
-        # Each cached projection becomes its own y axis, inheriting Auto Y
-        # (the toggle governed every subplot then and governs them now), and an
-        # inverted pair is stored low-to-high.
+        # Projection axes inherit Auto Y and store their held bounds low-to-high.
         assert axes["y:P_x"] == {"auto": False, "held": [-0.2, 0.4], "quantity": None}
         assert axes["y:P_y"] == {"auto": False, "held": [-1.0, 1.0], "quantity": None}
         for legacy in (
@@ -787,7 +785,7 @@ class TestProjectIO:
         assert grouping["alpha_z"] == pytest.approx(1.33)
 
     def test_per_projection_fit_ui_state_persists_independently(self, tmp_path):
-        """Each projection's single-fit UI payload survives save/load on its own slot."""
+        """Projection fit slots survive save/load."""
         from asymmetry.core.representation import (
             FitSlot,
             RepresentationType,
@@ -830,8 +828,7 @@ class TestProjectIO:
         assert restored.fit.is_empty()
 
     def test_per_projection_fit_persists_for_transverse_field_labels(self, tmp_path):
-        """Transverse-field projection labels round-trip on their own slots too,
-        proving the per-projection storage is genuinely label-agnostic."""
+        """Transverse-field labels retain their independent fit slots."""
         from asymmetry.core.representation import (
             FitSlot,
             RepresentationType,
@@ -2473,9 +2470,7 @@ class TestMainWindowProjectState:
                 self._datasets = {-1: _make_dataset(-1)}
                 self._combined_datasets = {-1: [3039, 3040]}
 
-                source_a = _make_dataset(3039)
-                source_b = _make_dataset(3040)
-                self._combined_source_datasets = {-1: [source_a, source_b]}
+                self._combined_source_datasets = {-1: [_make_dataset(n) for n in (3039, 3040)]}
 
         monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserCombined)
         monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
@@ -2495,6 +2490,8 @@ class TestMainWindowProjectState:
                 "combined_run_number": -1,
                 "source_run_numbers": [3039, 3040],
                 "representations": {},
+                "grouping_overrides": None,
+                "source_assessment": {"pulsed": None, "reason": "absent", "origin": "metadata"},
             }
         ]
 
@@ -2517,6 +2514,7 @@ class TestMainWindowProjectState:
                     "deadtime_correction": True,
                     "instrument": "MuSR",
                 }
+                ds.run.instrument_choice = choice_for_layout(ds.run, "MuSR")
                 self._datasets = {4042: ds}
 
         monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserGrouping)
@@ -2536,7 +2534,8 @@ class TestMainWindowProjectState:
         assert grouping["backward_group"] == 2
         assert grouping["included_groups"] == {1: True, 2: False}
         assert grouping["bunching_factor"] == 4
-        assert grouping["instrument"] == "MuSR"
+        assert "instrument" not in grouping
+        assert entry["instrument_choice"]["selection"]["profile_key"] == "isis.musr"
 
     def test_collect_project_state_includes_multi_group_fit_state(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

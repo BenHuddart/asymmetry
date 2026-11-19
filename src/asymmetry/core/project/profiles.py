@@ -84,6 +84,7 @@ from numbers import Integral
 from typing import Any
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.instruments.recognition import ACQUIRED_LABEL_KEYS
 from asymmetry.core.instruments.resolution import (
     InstrumentConflictError,
     InstrumentSelection,
@@ -1218,8 +1219,7 @@ def _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist):
     _apply_background_policy(grouping, profile.background_policy)
 
 
-#: Per-run, file-derived keys copied straight through from the run's own
-#: grouping (never stored on a profile).
+#: Acquired facts belong to each run, never to its shared profile.
 _PER_RUN_FACT_KEYS = (
     "t0_bin",
     "t0_time_us",
@@ -1232,7 +1232,7 @@ _PER_RUN_FACT_KEYS = (
     "detector_t0_sources",
     "detector_first_good_bins",
     "detector_last_good_bins",
-    "histogram_labels",
+    *ACQUIRED_LABEL_KEYS,
     "root_histo_numbers",
     "good_frames",
     "reference_exposure",

@@ -177,7 +177,7 @@ def test_emu_recognition_through_preset_reduces_independent_count_sentinels():
 
     from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
     from asymmetry.core.instrument import detect_instrument
-    from asymmetry.core.project.profiles import profile_fingerprint_for_run
+    from asymmetry.core.project.profiles import ProfileFingerprint, profile_fingerprint_for_run
     from asymmetry.core.transform.t0 import source_is_pulsed
     from asymmetry.core.workflow import apply_grouping_preset
 
@@ -197,7 +197,7 @@ def test_emu_recognition_through_preset_reduces_independent_count_sentinels():
     )
     data = MuonDataset(np.array([]), np.array([]), np.array([]), metadata=run.metadata, run=run)
     assert detect_instrument(len(run.histograms), metadata=run.metadata) == "EMU"
-    assert profile_fingerprint_for_run(run).instrument == "EMU"
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint("isis.emu", 96, "nexus96")
     result = apply_grouping_preset(data, "Longitudinal")
     assert result.run.grouping["groups"] == {1: list(range(1, 49)), 2: list(range(49, 97))}
     # Manual bank memberships, independent arithmetic sums: 1+...+48=1176;49+...+96=3480.
@@ -383,8 +383,8 @@ def test_psi_metadata_only_identities_preserve_generic_unknown_geometry(profile)
 @pytest.mark.parametrize(
     "raw, facility, expected",
     (
-        ("HAL", "PSI", None),
-        ("hal", "PSI", None),
+        ("HAL", "PSI", "HAL"),
+        ("hal", "PSI", "HAL"),
         ("halite", "PSI", None),
         ("HIFI", "PSI", "HAL"),
         ("HiFi", "ISIS", "HiFi"),
@@ -392,7 +392,7 @@ def test_psi_metadata_only_identities_preserve_generic_unknown_geometry(profile)
         ("HAL", "ISIS", None),
     ),
 )
-def test_psi_hal_alias_migration_preserves_existing_recognition_boundary(raw, facility, expected):
+def test_psi_hal_exact_names_preserve_facility_scope_and_reject_substrings(raw, facility, expected):
     from asymmetry.core.instrument import detect_instrument
 
     assert detect_instrument(17, metadata={"facility": facility, "instrument": raw}) == expected

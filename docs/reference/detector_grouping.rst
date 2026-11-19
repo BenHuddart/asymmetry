@@ -132,10 +132,13 @@ retained settings or deliberately select another grouping.
 
 Changing the instrument in **Detector Layout** preserves the current groups.
 Accepting a changed identity opens confirmation of that fixed proposal; use
-**Instrument identity…** to review other choices. Clicking **Apply Grouping** remains a separate scientific action: its chosen preset and
-any detector edits are retained for the selected run when the identity is
-confirmed. Canceling that confirmation discards the layout editor's proposed
-changes.
+**Instrument identity…** to review other choices. Clicking **Apply Grouping**
+remains a separate scientific action: its chosen preset and any detector edits
+are retained for the selected run when the identity is confirmed. An incompatible
+choice changes the pending scope to **Editing override for run N — this run only**;
+subsequent edits affect that run while other followers retain their shared
+profile. Canceling the Grouping window discards the pending choice and edits.
+Canceling the identity confirmation discards the layout editor's proposed changes.
 
 .. figure:: /_generated/screenshots/instrument_identity_conflict.png
    :alt: Explicit review of a retained GPS identity against FLAME file evidence

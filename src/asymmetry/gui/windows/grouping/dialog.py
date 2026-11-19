@@ -53,13 +53,13 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
-    GENERIC_INSTRUMENT,
     derive_projection_pairs,
     generic_layout,
     get_instrument_layout,
     instrument_display_name,
 )
 from asymmetry.core.instruments.resolution import (
+    InstrumentSelection,
     RecordedInstrumentChoice,
     choice_for_layout,
     layout_key_for_selection,
@@ -586,9 +586,7 @@ class GroupingDialog(TimingControls, QDialog):
         preset_row.addWidget(self._preset_combo)
         preset_row.addStretch()
         left_layout.addLayout(preset_row)
-        # The preset combo is populated at the end of __init__, once the
-        # detector-layout resolution state (_detector_layout_instrument_name)
-        # exists in the form section below.
+        # The preset combo is populated after the form's request is seeded.
 
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(
@@ -642,11 +640,6 @@ class GroupingDialog(TimingControls, QDialog):
             if grouping.get("grouping_preset")
             else None
         )
-        selected = resolve_instrument(self._run).selection
-        self._detector_layout_instrument_name = (
-            layout_key_for_selection(selected, len(self._run.histograms)) if selected else None
-        )
-        self._layout_is_generic = False
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -1589,13 +1582,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._fingerprint = fingerprint
         self._instrument_edit = None
         # The layout follows the new instrument, not the outgoing one's choice.
-        selected = resolve_instrument(datasets[0].run).selection
-        self._detector_layout_instrument_name = (
-            layout_key_for_selection(selected, len(datasets[0].run.histograms))
-            if selected
-            else None
-        )
-        self._layout_is_generic = False
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
         self._current_run = int(datasets[0].run_number)
@@ -2177,12 +2163,23 @@ class GroupingDialog(TimingControls, QDialog):
     # -- preset dropdown -------------------------------------------------
 
     def _current_instrument_layout(self):
-        """Instrument layout matching the preview run, for the preset dropdown."""
-        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
-        metadata = (
-            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
+        """Use the selected identity only when its actual acquired channel map agrees."""
+        count = len(self._run.histograms) if self._run is not None else 0
+        if self._run is None:
+            return generic_layout(count)
+        context = resolve_instrument(self._run)
+        selected = context.selection
+        if (
+            self._instrument_edit is not None
+            and int(self._run.run_number) == self._instrument_edit.run_number
+        ):
+            selected = self._instrument_edit.choice.selection
+        key = (
+            layout_key_for_selection(selected, count)
+            if isinstance(selected, InstrumentSelection)
+            else None
         )
-        return self._resolve_detector_layout(n_histo, metadata)
+        return get_instrument_layout(key) if key else generic_layout(count)
 
     def _rebuild_preset_combo(self) -> None:
         """Populate the preset dropdown from the preview run's instrument."""
@@ -2224,8 +2221,6 @@ class GroupingDialog(TimingControls, QDialog):
         self._group_names = {int(k): str(v) for k, v in payload.get("group_names", {}).items()}
         self._included_groups = {int(gid): True for gid in self._groups}
         self._grouping_preset_name = payload.get("grouping_preset")
-        if payload.get("instrument"):
-            self._detector_layout_instrument_name = str(payload["instrument"])
         projections = payload.get("projections")
         self._projection_specs = (
             [dict(p) for p in projections if isinstance(p, dict)] if projections else None
@@ -4470,32 +4465,13 @@ class GroupingDialog(TimingControls, QDialog):
         self._mark_dirty()
         self._refresh_preview()
 
-    def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
-        """Show the accepted layout only when its acquired channel map is compatible."""
-        if self._layout_is_generic:
-            return generic_layout(n_histo)
-        key = self._detector_layout_instrument_name
-        return get_instrument_layout(key) if key else generic_layout(n_histo)
-
     def _on_detector_layout(self) -> None:
         """Open the interactive detector layout editor as a sub-dialog."""
         from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
 
-        # Determine number of histograms for instrument auto-detection
-        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
-        grouping = self._run.grouping or {} if self._run else {}
-        metadata = (
-            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
-        )
-        if isinstance(grouping, dict):
-            for key in ("histogram_labels", "group_names"):
-                if key in grouping and key not in metadata:
-                    metadata[key] = grouping[key]
-
-        # Resolve only to seed the editor; the chosen instrument is committed to
-        # _detector_layout_instrument_name from the dialog result on Accept, so a
-        # cancelled editor session leaves the stored selection untouched.
-        instrument = self._resolve_detector_layout(n_histo, metadata)
+        n_histo = len(self._run.histograms) if self._run is not None else 0
+        grouping = self._run.grouping if self._run is not None else {}
+        instrument = self._current_instrument_layout()
 
         forward_gid = int(grouping.get("forward_group", self._forward_combo.currentData() or 1))
         backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))
@@ -4540,6 +4516,13 @@ class GroupingDialog(TimingControls, QDialog):
                 GroupingProfile.from_dict(before.to_dict()),
                 int(self._reference_dataset.run_number),
             )
+            selected_run = replace(self._run, instrument_choice=self._instrument_edit.choice)
+            if not self._fingerprint.matches(profile_fingerprint_for_run(selected_run)):
+                number = self._instrument_edit.run_number
+                if not self._run_is_overridden(number):
+                    self._override_profiles[number] = GroupingProfile.from_dict(before.to_dict())
+                    self._override_drafts[number] = profile_grouping_request(before, self._run)
+                    self._scope_panel.set_released(number, True)
         self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
         self._exclude_edit.setModified(True)
         # Surviving projections retain the user's unsaved alpha edits.
@@ -4576,13 +4559,6 @@ class GroupingDialog(TimingControls, QDialog):
         # Preset matching is recomputed from the authored detector groups.
         if preset_name:
             self._grouping_preset_name = str(preset_name)
-        instrument_name = result.get("instrument")
-        self._layout_is_generic = instrument_name == GENERIC_INSTRUMENT
-        if not self._layout_is_generic:
-            self._detector_layout_instrument_name = (
-                str(instrument_name) if instrument_name else None
-            )
-
         # Update forward/backward combos
         new_fwd = result.get("forward_group", forward_gid)
         new_bwd = result.get("backward_group", backward_gid)
@@ -4594,6 +4570,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._mark_dirty()
         # The editor may have switched instrument, so the preset list too.
         self._rebuild_preset_combo()
+        self._refresh_editing_strip()
         self._refresh_preview()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
@@ -5409,6 +5386,8 @@ class GroupingDialog(TimingControls, QDialog):
         followers = sorted(self._scope_panel.runs_following(self._draft_name)) or sorted(
             self._scope_panel.inheriting_run_numbers()
         )
+        if not followers:
+            return profile_grouping_request(self._draft, self._run)
         reference_run = self._run
         for ds in self._fingerprint_datasets():
             if int(ds.run_number) in followers and ds.run is not None:

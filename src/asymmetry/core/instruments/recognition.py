@@ -9,6 +9,8 @@ from typing import Final
 from asymmetry.core.instruments.catalog import profile_by_key
 from asymmetry.core.instruments.schema import matches_name
 
+ACQUIRED_LABEL_KEYS = ("histogram_labels", "detector_labels")
+
 EMU_PROFILE = profile_by_key("isis.emu")
 HIFI_PROFILE = profile_by_key("isis.hifi")
 MUSR_PROFILE = profile_by_key("isis.musr")
@@ -33,7 +35,7 @@ def canonical_layout_name(raw: object, *, filename: bool = False) -> str | None:
 
 def _metadata_labels(metadata: dict) -> list[str]:
     """Return detector-label hints from metadata-like dictionaries."""
-    raw = metadata.get("histogram_labels") or metadata.get("detector_labels")
+    raw = next((metadata[key] for key in ACQUIRED_LABEL_KEYS if metadata.get(key)), None)
     labels: list[str] = []
     if isinstance(raw, (list, tuple)):
         labels.extend(str(label) for label in raw)

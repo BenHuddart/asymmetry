@@ -64,7 +64,7 @@ def test_complete_preset_matches_supported_profile_preparation(instrument, prese
     preset = get_instrument_layout(instrument).presets[preset_name]
     profile = GroupingProfile(
         "expected",
-        replace(profile_fingerprint_for_run(data.run), instrument=instrument),
+        profile_fingerprint_for_run(data.run),
         groups={gid: sorted(g.detector_ids) for gid, g in preset.groups.items() if g.detector_ids},
         group_names={gid: g.name for gid, g in preset.groups.items() if g.detector_ids},
         included_groups={gid: True for gid, g in preset.groups.items() if g.detector_ids},
@@ -145,7 +145,11 @@ def test_conflicting_labels_and_empty_excluded_group_fail():
 
 def test_unknown_instrument_and_curve_only_fail():
     data = source()
-    data.run.metadata = {"instrument": "unknown", "facility": "PSI"}
+    data.run.metadata = {
+        "instrument": "unknown",
+        "facility": "PSI",
+        "histogram_labels": ["unknown"] * 6,
+    }
     with pytest.raises(ValueError, match="unrecognised instrument"):
         apply_grouping_preset(data, "Longitudinal")
     with pytest.raises(ValueError, match="acquired histograms"):

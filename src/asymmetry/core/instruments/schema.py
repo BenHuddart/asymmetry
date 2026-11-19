@@ -6,6 +6,7 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from asymmetry.core.instruments.geometry import View, expand_view
 from asymmetry.core.instruments.layout import AsymmetryProjection, ReferenceArrow
@@ -52,10 +53,21 @@ class Recognition:
 
 
 def matches_name(recognition: Recognition, raw: object, *, filename: bool = False) -> bool:
-    """Match declared compact name tokens; facility precedence remains with the caller."""
-    compact = re.sub(r"[^a-z0-9]+", "", str(raw or "").lower())
-    tokens = recognition.filename_tokens if filename else recognition.aliases
-    return any(re.sub(r"[^a-z0-9]+", "", token.lower()) in compact for token in tokens)
+    """Match metadata aliases or filename tokens followed by separators or run digits."""
+    text = str(raw or "").lower()
+    if filename:
+        text = Path(text).name
+        return any(
+            re.search(
+                r"(?<![a-z0-9])"
+                + r"[^a-z0-9]*".join(re.findall(r"[a-z0-9]+", token.lower()))
+                + r"(?![a-z])",
+                text,
+            )
+            for token in recognition.filename_tokens
+        )
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    return any(re.sub(r"[^a-z0-9]+", "", token.lower()) in compact for token in recognition.aliases)
 
 
 @dataclass(frozen=True)

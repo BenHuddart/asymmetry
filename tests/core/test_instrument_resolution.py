@@ -176,3 +176,48 @@ def test_unavailable_historical_selection_cannot_authorize_a_layout(key, configu
 def test_recorded_selection_rejects_an_unqualified_key():
     with pytest.raises(ValueError, match="facility-qualified"):
         InstrumentSelection("EMU", "made_up", "1", "manual")
+
+
+def test_format_filename_and_parent_paths_do_not_manufacture_instrument_identity():
+    from asymmetry.core.instruments.resolution import assess_instrument
+
+    for path in ("musrroot-folder.root", "/data/emu/musrroot-directory.root"):
+        observed = assess_instrument(
+            2, metadata={"facility": "PSI", "instrument": "n/a"}, source_file=path
+        )
+        assert observed.candidates == ()
+        assert observed.unresolved_reason == "unsupported"
+    conflict = assess_instrument(96, metadata={"instrument": "GPS"}, source_file="emu000123.nxs")
+    assert conflict.unresolved_reason == "conflict"
+    assert {item.profile_key for item in conflict.candidates} == {"isis.emu", "psi.gps"}
+
+
+@pytest.mark.parametrize("label_key", ["histogram_labels", "detector_labels"])
+def test_run_recognition_uses_acquired_labels_only_when_raw_metadata_omits_them(label_key):
+    from copy import deepcopy
+
+    import numpy as np
+
+    from asymmetry.core.data.dataset import Histogram, Run
+    from asymmetry.core.instruments.resolution import resolve_instrument
+
+    labels = ["Forw", "Back", "Righ", "Left", "R_F", "R_B", "L_F", "L_B"]
+    run = Run(
+        histograms=[Histogram(np.ones(4), 0.01) for _ in range(8)],
+        metadata={"facility": "PSI"},
+        grouping={label_key: labels},
+    )
+    assert resolve_instrument(run).selection.profile_key == "psi.flame"
+    assert dict(resolve_instrument(run).observed.evidence)[label_key] == str(labels)
+    run.metadata[label_key] = None
+    assert resolve_instrument(run).selection is None
+    run.metadata[label_key] = ["unknown"] * 8
+    assert resolve_instrument(run).selection is None
+    run.metadata[label_key] = labels
+    run.grouping[label_key] = ["unknown"] * 8
+    before = deepcopy(run.metadata)
+    assert resolve_instrument(run).selection.profile_key == "psi.flame"
+    assert run.metadata == before
+    run.metadata.pop(label_key)
+    run.grouping = {"group_names": dict(enumerate(labels, 1))}
+    assert resolve_instrument(run).selection is None

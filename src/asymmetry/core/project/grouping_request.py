@@ -5,7 +5,7 @@ from dataclasses import replace
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.instruments.resolution import RecordedInstrumentChoice, resolve_instrument
 from asymmetry.core.instruments.source import assess_source, source_for_run
-from asymmetry.core.project.profiles import grouping_request_payload
+from asymmetry.core.project.profiles import _PER_RUN_FACT_KEYS, grouping_request_payload
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
 
@@ -57,3 +57,12 @@ def restore_instrument_state(run: Run, choice, source) -> Run:
         inferred = assess_source(run.metadata)
         source = replace(inferred, origin="legacy:" + inferred.origin)
     return replace(run, instrument_choice=choice, source_assessment=source)
+
+
+def merge_grouping_request(current: dict, requested: dict) -> dict:
+    """Keep acquired evidence ahead of saved tables while retaining request extensions."""
+    incoming = grouping_request_payload(requested)
+    for key in _PER_RUN_FACT_KEYS:
+        if key in current:
+            incoming.pop(key, None)
+    return dict(current) | incoming

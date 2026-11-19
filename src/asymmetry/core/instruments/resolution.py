@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from asymmetry.core.instruments.catalog import PROFILES, profile_by_key
-from asymmetry.core.instruments.recognition import recognize_layout
+from asymmetry.core.instruments.recognition import ACQUIRED_LABEL_KEYS, recognize_layout
 from asymmetry.core.instruments.schema import InstrumentProfile, matches_name
 from asymmetry.core.instruments.source import SourceAssessment, assess_source, source_for_run
 
@@ -406,8 +406,12 @@ class InstrumentContext:
 
 def resolve_instrument(run, recorded: RecordedInstrumentChoice | None = None) -> InstrumentContext:
     """Prepare current evidence without mutating a recorded scientific request."""
+    metadata = dict(run.metadata)
+    for key in ACQUIRED_LABEL_KEYS:
+        if key not in metadata and key in run.grouping:
+            metadata[key] = run.grouping[key]
     observed = assess_instrument(
-        len(run.histograms), metadata=run.metadata, source_file=run.source_file
+        len(run.histograms), metadata=metadata, source_file=run.source_file
     )
     return InstrumentContext(observed, recorded if recorded is not None else run.instrument_choice)
 

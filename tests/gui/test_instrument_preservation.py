@@ -398,3 +398,23 @@ def test_combined_identity_source_and_released_request_survive_save_and_replay(
     missing_path = tmp_path / "unavailable-combined.asymp"
     save_project(resaved, missing_path)
     assert load_project(missing_path)["combined_datasets"][0]["instrument_choice"] == choice_before
+
+
+@pytest.mark.parametrize("label_key", ["histogram_labels", "detector_labels"])
+def test_saved_request_extensions_do_not_replace_acquired_channel_evidence(workflow, label_key):
+    window, state, _, _, _ = workflow
+    dataset = window._load_file(state["datasets"][0]["source_file"])
+    labels = ["fresh label " + str(i) for i in range(8)]
+    numbers = list(range(100, 108))
+    dataset.run.grouping.update({label_key: labels, "root_histo_numbers": numbers})
+    request = {
+        **dataset.run.grouping,
+        label_key: ["saved label"] * 8,
+        "root_histo_numbers": list(range(8)),
+        "scientific_extension": {"retained": 0.93},
+    }
+    applied, _ = window._apply_grouping_settings_to_dataset(dataset, request)
+    assert applied
+    assert dataset.run.grouping[label_key] == labels
+    assert dataset.run.grouping["root_histo_numbers"] == numbers
+    assert dataset.run.grouping["scientific_extension"] == {"retained": 0.93}

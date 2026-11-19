@@ -172,6 +172,7 @@ from asymmetry.core.project.calibration import (
 )
 from asymmetry.core.project.grouping_request import (
     instrument_state_for_run,
+    merge_grouping_request,
     persistent_grouping_for_run,
     restore_instrument_state,
 )
@@ -181,7 +182,6 @@ from asymmetry.core.project.profiles import (
     assigned_profile_for_run,
     choose_instrument_for_run,
     default_profile_for_run,
-    grouping_request_payload,
     heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
@@ -5481,6 +5481,7 @@ class MainWindow(QMainWindow):
                 run.grouping["grouping_preset"] = str(preset_name)
             else:
                 run.grouping.pop("grouping_preset", None)
+            run.grouping = merge_grouping_request(existing_grouping, grouping_result) | run.grouping
             self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
             dataset.metadata.pop("correction_error", None)
             return True, {str(period_mode): CorrectionOutcomes()}
@@ -5490,21 +5491,7 @@ class MainWindow(QMainWindow):
         if not forward_idx or not backward_idx:
             return False, {}
 
-        grouping = dict(existing_grouping) | grouping_request_payload(grouping_result)
-
-        # Per-detector timing remains attached to this run.
-        if isinstance(grouping_result.get("detector_t0_bins"), list):
-            grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
-        if isinstance(grouping_result.get("detector_first_good_bins"), list):
-            grouping["detector_first_good_bins"] = list(
-                grouping_result.get("detector_first_good_bins", [])
-            )
-        if isinstance(grouping_result.get("detector_last_good_bins"), list):
-            grouping["detector_last_good_bins"] = list(
-                grouping_result.get("detector_last_good_bins", [])
-            )
-        if isinstance(grouping_result.get("histogram_labels"), list):
-            grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
+        grouping = merge_grouping_request(existing_grouping, grouping_result)
 
         timing_histograms = run.histograms
         period_index = selected_period_index(grouping, period_mode)

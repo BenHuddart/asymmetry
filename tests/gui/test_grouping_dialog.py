@@ -19,10 +19,12 @@ from PySide6.QtWidgets import QApplication, QHeaderView, QLabel
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.instruments.resolution import accept_instrument_choice, choice_for_layout
 from asymmetry.core.transform.t0 import T0Assessment
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
@@ -44,14 +46,7 @@ def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
 
 
 def _estimate_vector_axis(dialog, axis: str) -> None:
-    """Drive the inline per-projection α estimate for *axis* and wait for it.
-
-    Per-projection calibration is now inline in the grouping dialog (the modal is
-    retired). The estimate runs off-thread on the dialog's vector runner; on
-    success it routes through ``_apply_calibrated_policy`` into the axis's spin.
-    "Estimate All" is serialised, so waiting for the runner to drain covers a
-    single axis or the whole table.
-    """
+    """Wait for the serial inline projection-calibration runner to drain."""
     dialog._alpha_section._method_combo.setCurrentIndex(
         dialog._alpha_section._method_combo.findData("diamagnetic")
     )
@@ -69,12 +64,7 @@ def _estimate_all_vector_alpha(dialog) -> None:
 
 
 def _estimate_single_alpha(dialog, method: str | None = None) -> None:
-    """Drive the inline single-α section's estimate and wait for the worker.
-
-    Single-α calibration is now inline in the Corrections panel (the modal is
-    kept only for the per-projection vector case). The estimate runs off-thread;
-    on success the section emits ``alpha_estimated`` and the dialog applies it.
-    """
+    """Drive the inline single-α estimate and wait for its worker."""
     section = dialog._alpha_section
     if method is None:
         method = "diamagnetic"
@@ -1335,6 +1325,7 @@ def test_per_projection_alpha_edit_survives_detector_layout_accept(
         _FakeDialog,
     )
 
+    monkeypatch.setattr(InstrumentIdentityDialog, "exec", lambda self: 1)
     dialog._on_detector_layout()
 
     by_label = {p["label"]: p for p in dialog._projection_specs}
@@ -1765,15 +1756,11 @@ def test_current_grouping_payload_contains_grouping_preset(qapp: QApplication) -
     assert payload["grouping_preset"] == "Longitudinal"
 
 
-def test_current_grouping_payload_contains_instrument(qapp: QApplication) -> None:
-    dataset = _dataset_with_histograms()
-    assert dataset.run is not None
-    dataset.run.grouping["instrument"] = "MuSR"
-
+def test_current_grouping_payload_keeps_identity_outside_scientific_request(qapp) -> None:
+    dataset = _gps_dataset(None)
     dialog = GroupingDialog([dataset])
-    payload = dialog._current_grouping_payload()
-
-    assert payload["instrument"] == "MuSR"
+    assert "instrument" not in dialog._current_grouping_payload()
+    assert dialog._current_instrument_layout().name == "GPS"
 
 
 def test_psi_detector_convention_defaults_are_swapped_in_grouping_dropdowns(
@@ -1871,7 +1858,11 @@ def test_detector_layout_prefers_saved_instrument(
 ) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
-    dataset.run.grouping["instrument"] = "MuSR"
+    dataset.run.histograms = dataset.run.histograms * 32
+    dataset.run.metadata["instrument"] = "EMU"
+    dataset.run.instrument_choice = accept_instrument_choice(
+        dataset.run, choice_for_layout(dataset.run, "MuSR").selection
+    )
 
     captured: dict[str, str] = {}
 
@@ -1884,14 +1875,6 @@ def test_detector_layout_prefers_saved_instrument(
         def exec(self):
             return 0
 
-    monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping.dialog.detect_instrument",
-        lambda *_args, **_kwargs: "EMU",
-    )
-    monkeypatch.setattr(
-        "asymmetry.gui.windows.grouping.dialog.get_instrument_layout",
-        lambda name: type("_Layout", (), {"name": name, "presets": {}})(),
-    )
     monkeypatch.setattr(
         "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
         _FakeDialog,
@@ -1909,6 +1892,7 @@ def test_detector_layout_detects_flame_from_psi_metadata(
 ) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
+    dataset.run.histograms = [dataset.run.histograms[0]] * 8
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.metadata["instrument"] = "FLAME"
 
@@ -2030,15 +2014,13 @@ def test_detector_layout_resolves_psi_hifi_to_hal(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The PSI loader stores instrument="HIFI" for HAL-9500 runs; this string
-    # canonicalises to the unrelated ISIS HiFi layout, so it must be re-detected
-    # to HAL for PSI data. Uses the real detector/layout functions.
+    # The PSI HIFI file header identifies HAL without changing the raw header.
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
+    dataset.run.histograms = [dataset.run.histograms[0]] * 17
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.metadata["psi_format"] = "psi-mdu"
     dataset.run.metadata["instrument"] = "HIFI"
-    dataset.run.grouping["instrument"] = "HIFI"
 
     captured: dict[str, str] = {}
 
@@ -2066,11 +2048,9 @@ def test_detector_layout_resolves_psi_hifi_to_hal(
     dialog = GroupingDialog([dataset])
     dialog._on_detector_layout()
 
-    # The editor is seeded with the HAL layout (not the unrelated ISIS HiFi),
     assert captured["instrument"] == "HAL"
-    # and on Accept the corrected layout name is committed, so it does not revert
-    # to the raw "HIFI" string on subsequent opens.
-    assert dialog._detector_layout_instrument_name == "HAL"
+    assert dialog._current_instrument_layout().name == "HAL"
+    assert dataset.run.metadata["instrument"] == "HIFI"
 
 
 def test_detector_layout_cancel_does_not_change_stored_instrument(
@@ -2080,10 +2060,10 @@ def test_detector_layout_cancel_does_not_change_stored_instrument(
     # Cancelling the editor must be a no-op for the stored instrument selection.
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
+    dataset.run.histograms = [dataset.run.histograms[0]] * 17
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.metadata["psi_format"] = "psi-mdu"
     dataset.run.metadata["instrument"] = "HIFI"
-    dataset.run.grouping["instrument"] = "HIFI"
 
     class _FakeDialog:
         DialogCode = type("DialogCode", (), {"Accepted": 1})
@@ -2100,9 +2080,9 @@ def test_detector_layout_cancel_does_not_change_stored_instrument(
     )
 
     dialog = GroupingDialog([dataset])
-    before = dialog._detector_layout_instrument_name
+    before = (dialog._current_instrument_layout(), dataset.run.instrument_choice)
     dialog._on_detector_layout()
-    assert dialog._detector_layout_instrument_name == before
+    assert (dialog._current_instrument_layout(), dataset.run.instrument_choice) == before
 
 
 def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
@@ -2111,9 +2091,9 @@ def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
 ) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
+    dataset.run.histograms = [dataset.run.histograms[0]] * 8
     dataset.run.metadata["facility"] = "PSI"
     dataset.run.metadata["instrument"] = "FLAME"
-    dataset.run.grouping["instrument"] = "FLAME"
     dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
     dataset.run.grouping["forward_group"] = 1
     dataset.run.grouping["backward_group"] = 2
@@ -2158,9 +2138,8 @@ def test_detector_layout_custom_edit_refreshes_preset_dropdown_and_marks_dirty(
     update the internal state silently (regression: _on_detector_layout updated
     ``_grouping_preset_name``/groups/combos but never called ``_mark_dirty`` or
     ``_refresh_preset_selection``, so it kept showing the stale preset name)."""
-    dataset = _dataset_with_histograms()
+    dataset = _gps_dataset(None)
     assert dataset.run is not None
-    dataset.run.grouping["instrument"] = "GPS"
     dataset.run.grouping["grouping_preset"] = "Longitudinal"
     dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
     # GPS's Longitudinal preset declares forward=2 / backward=1.
@@ -2216,9 +2195,8 @@ def test_detector_layout_unchanged_preset_does_not_clear_dropdown(
     """When the layout editor reconfirms the same preset (no drift), the
     dropdown must keep showing that preset rather than being over-cleared to
     Custom."""
-    dataset = _dataset_with_histograms()
+    dataset = _gps_dataset(None)
     assert dataset.run is not None
-    dataset.run.grouping["instrument"] = "GPS"
     dataset.run.grouping["grouping_preset"] = "Longitudinal"
     dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
     # GPS's Longitudinal preset declares forward=2 / backward=1.
@@ -2819,15 +2797,16 @@ def test_generic_choice_in_the_layout_editor_sticks(
     monkeypatch.setattr(
         "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog", _FakeDialog
     )
+    monkeypatch.setattr(InstrumentIdentityDialog, "exec", lambda self: 1)
     dialog._on_detector_layout()
 
     assert captured["n_histograms"] == 6
     assert dialog._current_instrument_layout().name == "Generic"
     assert dialog._preset_combo.count() == 0
     assert dialog._preset_combo.isEnabled() is False
-    # Generic is only the drawing: Apply writes the payload's instrument into
-    # the run, where it is the profile fingerprint, so it stays the run's own.
-    assert dialog._current_grouping_payload()["instrument"] == "GPS"
+    assert "instrument" not in dialog._current_grouping_payload()
+    assert dataset.run.instrument_choice is None
+    assert dialog._instrument_edit.choice.to_dict()["selection"] == {"generic": True}
 
     # Picking a real instrument again replaces the generic drawing.
     result["instrument"] = "GPS"
