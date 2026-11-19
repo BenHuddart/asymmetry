@@ -353,6 +353,7 @@ def _import_scenarios() -> None:
         grouping_window_profile_editor,
         grouping_window_t0_row,
         hifi_transverse_layout,
+        musr_transverse_layout,
         historical_fit_constraints,
         joint_fit_window,
         knight_shift_window,

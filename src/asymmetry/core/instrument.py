@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Final
 
 from asymmetry.core.instruments.isis_emu import PROFILE as EMU_PROFILE
+from asymmetry.core.instruments.isis_hifi import PROFILE as HIFI_PROFILE
+from asymmetry.core.instruments.isis_musr import PROFILE as MUSR_PROFILE
 from asymmetry.core.instruments.layout import (
     GENERIC_INSTRUMENT,
     PROJECTION_TINTS,
@@ -258,230 +260,6 @@ INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
     "GPS-RD",
     "GPS-RD15",
 )
-
-
-# ---------------------------------------------------------------------------
-# HiFi layout builder
-# ---------------------------------------------------------------------------
-
-
-def _build_hifi() -> InstrumentLayout:
-    """Build the HiFi detector layout.
-
-    HiFi has 64 detectors arranged in two circular banks of 32 each.
-    Source: *HiFi User Manual*, pages 30–31.
-
-    * Forward bank (1–32): detector *d* centred at
-      ``(270 + (d-1) × 11.25) mod 360°``, numbering counter-clockwise.
-    * Backward bank (33–64): detector *d* centred at
-      ``(264.375 − (d−33) × 11.25) mod 360°``, numbering clockwise
-      (the 0.5-sector offset is inferred from the manual figure).
-    """
-    pitch = 11.25  # degrees per sector (360/32)
-    hw = pitch / 2.0  # half-width
-
-    # Radial bounds for the single ring (normalised)
-    r_inner = 0.28  # central beam hole
-    r_outer = 1.00
-
-    # --- Forward bank (detectors 1–32) ---
-    fwd_segs: list[DetectorSegment] = []
-    for d in range(1, 33):
-        angle = (270.0 + (d - 1) * pitch) % 360.0
-        fwd_segs.append(
-            DetectorSegment(
-                detector_id=d,
-                sector_index=d - 1,
-                ring_index=0,
-                angle_center_deg=angle,
-                angle_half_width_deg=hw,
-                r_inner=r_inner,
-                r_outer=r_outer,
-            )
-        )
-
-    # --- Backward bank (detectors 33–64) ---
-    bwd_segs: list[DetectorSegment] = []
-    for d in range(33, 65):
-        angle = (264.375 - (d - 33) * pitch) % 360.0
-        bwd_segs.append(
-            DetectorSegment(
-                detector_id=d,
-                sector_index=d - 33,
-                ring_index=0,
-                angle_center_deg=angle,
-                angle_half_width_deg=hw,
-                r_inner=r_inner,
-                r_outer=r_outer,
-            )
-        )
-
-    banks = (
-        BankLayout(name="Forward", segments=tuple(fwd_segs)),
-        BankLayout(name="Backward", segments=tuple(bwd_segs)),
-    )
-
-    # --- Presets ---
-    presets: dict[str, PresetGrouping] = {}
-
-    # Longitudinal (default)
-    presets["Longitudinal"] = PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Forward", tuple(range(1, 33))),
-            2: GroupDefinition("Backward", tuple(range(33, 65))),
-        },
-        forward_group=1,
-        backward_group=2,
-    )
-
-    # Transverse (Vector): both transverse detector pairs exposed as two
-    # asymmetry projections of the same run, mirroring the EMU vector model.
-    # Four distinct group IDs so the Left-Right and Top-Bottom pairs coexist
-    # (the legacy split presets reused IDs 1/2 and were mutually exclusive).
-    #   Left-Right:  Left  = 5–13 (forward) + 52–60 (backward)
-    #                Right = 21–29 (forward) + 36–44 (backward)
-    #   Top-Bottom:  Top    = 13–21 (forward) + 44–52 (backward)
-    #                Bottom = 1–5, 29–36 (forward) + 60–64 (backward)
-    presets["Transverse (Vector)"] = PresetGrouping(
-        name="Transverse (Vector)",
-        groups={
-            1: GroupDefinition("Left-Right Left", tuple(range(5, 14)) + tuple(range(52, 61))),
-            2: GroupDefinition("Left-Right Right", tuple(range(21, 30)) + tuple(range(36, 45))),
-            3: GroupDefinition("Top-Bottom Top", tuple(range(13, 22)) + tuple(range(44, 53))),
-            4: GroupDefinition(
-                "Top-Bottom Bottom",
-                tuple(range(1, 6)) + tuple(range(29, 37)) + tuple(range(60, 65)),
-            ),
-        },
-        forward_group=1,
-        backward_group=2,
-        projections=(
-            AsymmetryProjection("Left-Right", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]),
-            AsymmetryProjection("Top-Bottom", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
-        ),
-    )
-
-    return InstrumentLayout(
-        name="HiFi",
-        n_detectors=64,
-        banks=banks,
-        presets=presets,
-    )
-
-
-# ---------------------------------------------------------------------------
-# MuSR layout builder
-# ---------------------------------------------------------------------------
-
-
-def _build_musr() -> InstrumentLayout:
-    """Build the MuSR detector layout.
-
-    MuSR has 64 detectors arranged in two concentric rings of 32 each.
-    Source: *MuSR Manual*, pages 12–13.
-
-    * Backward ring (1–32): detector *d* centred at
-      ``(230.625 + (d−1) × 11.25) mod 360°``, numbering counter-clockwise.
-      Detectors 1–8 occupy the bottom quadrant.
-    * Forward ring (33–64): detector *d* centred at
-      ``(309.375 − (d−33) × 11.25) mod 360°``, numbering clockwise.
-      Detectors 33–40 occupy the bottom quadrant, mirroring the backward ring.
-    """
-    pitch = 11.25  # degrees per sector
-    hw = pitch / 2.0
-
-    r_inner = 0.28
-    r_outer = 1.00
-
-    # --- Backward ring (detectors 1–32) ---
-    bwd_segs: list[DetectorSegment] = []
-    for d in range(1, 33):
-        angle = (230.625 + (d - 1) * pitch) % 360.0
-        bwd_segs.append(
-            DetectorSegment(
-                detector_id=d,
-                sector_index=d - 1,
-                ring_index=0,
-                angle_center_deg=angle,
-                angle_half_width_deg=hw,
-                r_inner=r_inner,
-                r_outer=r_outer,
-            )
-        )
-
-    # --- Forward ring (detectors 33–64) ---
-    fwd_segs: list[DetectorSegment] = []
-    for d in range(33, 65):
-        angle = (309.375 - (d - 33) * pitch) % 360.0
-        fwd_segs.append(
-            DetectorSegment(
-                detector_id=d,
-                sector_index=d - 33,
-                ring_index=0,
-                angle_center_deg=angle,
-                angle_half_width_deg=hw,
-                r_inner=r_inner,
-                r_outer=r_outer,
-            )
-        )
-
-    # MuSR manual labels the rings "Backward" and "Forward"; the backward ring
-    # detectors (1-32) form the *backward* group in longitudinal mode.
-    banks = (
-        BankLayout(name="Backward", segments=tuple(bwd_segs)),
-        BankLayout(name="Forward", segments=tuple(fwd_segs)),
-    )
-
-    # --- Presets ---
-    presets: dict[str, PresetGrouping] = {}
-
-    # Longitudinal: backward ring = backward group, forward ring = forward group
-    presets["Longitudinal"] = PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Backward", tuple(range(1, 33))),
-            2: GroupDefinition("Forward", tuple(range(33, 65))),
-        },
-        forward_group=2,
-        backward_group=1,
-    )
-
-    # Transverse (Vector): both transverse detector pairs exposed as two
-    # asymmetry projections of the same run, mirroring the EMU vector model.
-    # Four distinct group IDs so the Top-Bottom and Fwd-Back pairs coexist
-    # (the legacy split presets reused IDs 1/2 and were mutually exclusive).
-    #   Top-Bottom:  Top    = 17–24 (backward ring) + 49–56 (forward ring)
-    #                Bottom = 1–8   (backward ring) + 33–40 (forward ring)
-    #   Fwd-Back:    Forward  = 9–16  (backward ring) + 57–64 (forward ring)
-    #                Backward = 25–32 (backward ring) + 41–48 (forward ring)
-    presets["Transverse (Vector)"] = PresetGrouping(
-        name="Transverse (Vector)",
-        groups={
-            1: GroupDefinition("Top-Bottom Top", tuple(range(17, 25)) + tuple(range(49, 57))),
-            2: GroupDefinition("Top-Bottom Bottom", tuple(range(1, 9)) + tuple(range(33, 41))),
-            3: GroupDefinition("Fwd-Back Forward", tuple(range(9, 17)) + tuple(range(57, 65))),
-            4: GroupDefinition("Fwd-Back Backward", tuple(range(25, 33)) + tuple(range(41, 49))),
-        },
-        forward_group=1,
-        backward_group=2,
-        projections=(
-            AsymmetryProjection("Top-Bottom", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
-            AsymmetryProjection("Fwd-Back", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]),
-        ),
-    )
-
-    return InstrumentLayout(
-        name="MuSR",
-        n_detectors=64,
-        banks=banks,
-        presets=presets,
-    )
-
-
-# ---------------------------------------------------------------------------
-# EMU layout builder
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1217,8 +995,8 @@ _LAYOUTS: dict[str, InstrumentLayout] | None = None
 
 def _build_registry() -> dict[str, InstrumentLayout]:
     return {
-        "HiFi": _build_hifi(),
-        "MuSR": _build_musr(),
+        "HiFi": layout_from_profile(HIFI_PROFILE, "nexus64"),
+        "MuSR": layout_from_profile(MUSR_PROFILE, "nexus64"),
         "EMU": layout_from_profile(EMU_PROFILE, "nexus96"),
         "FLAME": _build_flame(),
         "HAL": _build_hal(),
@@ -1607,7 +1385,7 @@ def preset_grouping_for_run(
     return groups
 
 
-def _canonical_instrument_name(raw: object) -> str | None:
+def _canonical_instrument_name(raw: object, *, filename: bool = False) -> str | None:
     """Normalize free-form instrument text to a canonical instrument name."""
     if raw is None:
         return None
@@ -1620,11 +1398,11 @@ def _canonical_instrument_name(raw: object) -> str | None:
         return "FLAME"
     if "gps" in compact:
         return "GPS"
-    if "hifi" in compact:
-        return "HiFi"
-    if "musr" in compact:
-        return "MuSR"
-    if matches_name(EMU_PROFILE.recognition, raw):
+    if matches_name(HIFI_PROFILE.recognition, raw, filename=filename):
+        return HIFI_PROFILE.identity.layout_key
+    if matches_name(MUSR_PROFILE.recognition, raw, filename=filename):
+        return MUSR_PROFILE.identity.layout_key
+    if matches_name(EMU_PROFILE.recognition, raw, filename=filename):
         return EMU_PROFILE.identity.layout_key
     return None
 
@@ -1934,7 +1712,7 @@ def detect_instrument(
             return "FLAME"
 
     if source_file:
-        path_token = _canonical_instrument_name(Path(source_file).stem)
+        path_token = _canonical_instrument_name(Path(source_file).stem, filename=True)
         if path_token is not None:
             if psi_data and path_token not in {"FLAME", "GPS"}:
                 return None

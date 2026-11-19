@@ -1,0 +1,1 @@
+.. instrument-profile:: isis.musr
