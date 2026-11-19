@@ -14,6 +14,7 @@ import pytest
 from asymmetry.core.fitting.component_docs import get_component_references
 from asymmetry.core.fitting.composite import CATEGORY_REGISTRY, COMPONENTS
 from asymmetry.core.fitting.models import MODELS
+from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -369,6 +370,23 @@ def test_unresolved_components_remain_within_the_reviewed_allowance():
         assert EVIDENCE[name].unresolved_issue > 0
 
 
+def _assert_evidence_targets(evidence, page):
+    assert f".. _{evidence.anchor}:" in page.read_text()
+    assert evidence.basis and evidence.domain and evidence.cases
+    for node in evidence.cases:
+        module, *selectors = node.split("::")
+        target = ast.parse((ROOT / module).read_text())
+        for selector in selectors:
+            matches = [
+                item
+                for item in target.body
+                if isinstance(item, (ast.ClassDef, ast.FunctionDef)) and item.name == selector
+            ]
+            assert len(matches) == 1, node
+            target = matches[0]
+        assert isinstance(target, ast.FunctionDef), node
+
+
 @pytest.mark.parametrize("name,evidence", EVIDENCE.items(), ids=EVIDENCE)
 def test_evidence_targets_resolve(name, evidence):
     page = (
@@ -376,13 +394,328 @@ def test_evidence_targets_resolve(name, evidence):
         / "docs/reference/fit_functions"
         / f"{CATEGORY_REGISTRY[COMPONENTS[name].category]}.rst"
     )
-    assert f".. _{evidence.anchor}:" in page.read_text()
-    assert evidence.basis and evidence.domain and evidence.cases
+    _assert_evidence_targets(evidence, page)
     if not evidence.definition_only:
         assert get_component_references(name, kind="fit"), name
-    for node in evidence.cases:
-        module, function = node.split("::")
-        tree = ast.parse((ROOT / module).read_text())
-        assert any(
-            isinstance(item, ast.FunctionDef) and item.name == function for item in tree.body
-        ), node
+
+
+# Shared families declare their limited check once; registry completeness below
+# still requires every built-in parameter component to have an explicit entry.
+PARAMETER_EVIDENCE = {
+    **dict.fromkeys(
+        ("Quadratic", "Polynomial", "Cubic", "Quartic", "Quintic", "Sextic"),
+        Evidence(
+            "derived-empirical-definitions",
+            "Defined polynomial coefficients, low order first.",
+            (
+                "tests/core/test_derived_model_definitions.py::test_polynomial_bases_obey_binomial_landmark",
+            ),
+            "Binomial landmarks through degree six; no physical background attribution.",
+            True,
+        ),
+    ),
+    "Constant": Evidence(
+        "derived-empirical-definitions",
+        "Defined additive intercept in observable units.",
+        ("tests/core/test_parameter_models.py::test_constant_fills_array",),
+        "Signed/zero constant; not a background calibration.",
+        True,
+    ),
+    "Linear": Evidence(
+        "derived-empirical-definitions",
+        "Defined intercept and slope in observable/coordinate units.",
+        ("tests/core/test_parameter_models.py::test_linear_known_values",),
+        "Known signed-coordinate values.",
+        True,
+    ),
+    "PowerLaw": Evidence(
+        "derived-empirical-definitions",
+        "Defined power of absolute coordinate plus offset.",
+        ("tests/core/test_parameter_models.py::test_power_law_square",),
+        "Integer-power landmark; zero-coordinate floor is numerical.",
+        True,
+    ),
+    "PowerLawQuadBG": Evidence(
+        "derived-empirical-definitions",
+        "Defined quadrature of power law and background.",
+        (
+            "tests/core/test_parameter_model_identities.py::test_power_law_quad_bg_matches_quadrature_numeric_values",
+        ),
+        "Typed magnitude landmarks; independent Gaussian variance interpretation is conditional.",
+        True,
+    ),
+    "ExponentialDecay": Evidence(
+        "derived-empirical-definitions",
+        "Defined exponential plus offset; tau has coordinate units.",
+        (
+            "tests/core/test_parameter_models.py::test_exp_decay_at_zero_returns_a_plus_c",
+            "tests/core/test_parameter_models.py::test_exp_decay_asymptotes_to_c",
+        ),
+        "Origin and asymptote; not evidence of a particular kinetic mechanism.",
+        True,
+    ),
+    "Arrhenius": Evidence(
+        "derived-empirical-definitions",
+        "Defined activation exponent; Ea in meV and temperature in K.",
+        (
+            "tests/core/test_parameter_model_identities.py::test_arrhenius_energy_rescaling_compensates_for_rounded_constants",
+        ),
+        "Independent SI exponent conversion; prefactor/mechanism must be established separately.",
+        True,
+    ),
+    "CriticalDivergence": Evidence(
+        "derived-empirical-definitions",
+        "Defined absolute reduced-temperature power plus offset.",
+        (
+            "tests/core/test_parameter_model_identities.py::test_critical_divergence_identity_off_the_singular_point",
+        ),
+        "Off-singularity expression only; no universal exponent attribution.",
+        True,
+    ),
+    "OrderParameter": Evidence(
+        "derived-empirical-definitions",
+        "Defined clipped ordered-phase power, temperature in K.",
+        (
+            "tests/core/test_parameter_models.py::test_order_parameter_saturates_to_y0_at_zero_temperature",
+            "tests/core/test_parameter_models.py::test_order_parameter_is_zero_at_and_above_tc",
+        ),
+        "Zero/critical-temperature landmarks; chosen exponents are empirical.",
+        True,
+    ),
+    "FermiStep": Evidence(
+        "derived-empirical-definitions",
+        "Defined logistic step with plateaus and midpoint.",
+        (
+            "tests/core/test_fermi_step_parameter_model.py::test_fermi_step_plateaus_midpoint_and_width",
+        ),
+        "Independent 10-90 percent width; a step need not be a calibrated volume fraction.",
+        True,
+    ),
+    "Redfield": Evidence(
+        "derived-redfield-convention",
+        "Keren Eqs.(2),(5), with explicit cyclic-to-angular parameter mapping.",
+        (
+            "tests/core/test_derived_model_definitions.py::test_redfield_matches_exponential_correlation_with_explicit_units",
+        ),
+        "Independent exponential-correlation cosine transform for m=2; other m empirical.",
+    ),
+    "MuRepolarisation": Evidence(
+        "derived-empirical-definitions",
+        "Isotropic time-averaged muonium repolarisation definition.",
+        (
+            "tests/core/test_parameter_model_identities.py::test_mu_repolarisation_matches_isotropic_repolarisation_identity",
+            "tests/core/test_parameter_model_identities.py::test_mu_repolarisation_b0_from_constants",
+        ),
+        "Defining expression and zero/characteristic-field landmarks; shared constants, not an independent Hamiltonian trace.",
+    ),
+    "Lorentzian": Evidence(
+        "derived-empirical-definitions",
+        "Defined peak height and half width in field units.",
+        ("tests/core/test_parameter_model_identities.py::test_lorentzian_height_width_identity",),
+        "Half-height landmarks; phenomenological peak.",
+        True,
+    ),
+    **dict.fromkeys(
+        ("GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"),
+        Evidence(
+            "derived-empirical-definitions",
+            "Defined Gaussian/Lorentzian peaks or shifted difference; Kreitzman motivates ALC context.",
+            (
+                "tests/core/test_parameter_models.py::test_lcr_gaussian_peaks_at_b0",
+                "tests/core/test_derived_model_definitions.py::test_lcr_shapes_have_declared_width_and_pair_sign",
+            ),
+            "Peak/width and field-step sign landmarks; not exact spin dynamics.",
+        ),
+    ),
+    **dict.fromkeys(
+        ("DiffusionLF_1D", "DiffusionLF_2D", "DiffusionLF_3D"),
+        Evidence(
+            "derived-transport-definitions",
+            "Classical lattice random-walk return correlation and cosine spectral density.",
+            (
+                "tests/core/test_derived_model_definitions.py::test_transport_returns_are_independent_brillouin_zone_averages",
+                "tests/core/test_diffusion.py::test_fast_path_matches_quad_reference_mixed_tol",
+            ),
+            "Independent Brillouin-zone return probability and adaptive spectral quadrature; lattice and coupling assumptions remain.",
+        ),
+    ),
+    **dict.fromkeys(
+        ("BallisticLF_1D", "BallisticLF_2D", "BallisticLF_3D"),
+        Evidence(
+            "derived-transport-definitions",
+            "Defined separable coherent-hopping return probability and cosine spectral density.",
+            (
+                "tests/core/test_derived_model_definitions.py::test_transport_returns_are_independent_brillouin_zone_averages",
+                "tests/gui/test_ballistic.py::test_spectral_density_1d_matches_log_reference_at_low_frequency",
+            ),
+            "Independent Brillouin-zone return probability; low-frequency spectral asymptote only, not every transport process.",
+        ),
+    ),
+    "Lambda_bg": Evidence(
+        "derived-empirical-definitions",
+        "Defined additive constant in relaxation units.",
+        ("tests/core/test_derived_model_definitions.py::test_lambda_background_is_a_constant",),
+        "Signed offset; independent of field.",
+        True,
+    ),
+    "RFResonanceMuP": Evidence(
+        "derived-rf-branches",
+        "Declared isotropic three-spin Hamiltonian and selected sorted-energy gaps.",
+        (
+            "tests/core/test_derived_model_definitions.py::test_equal_coupling_zero_field_radical_has_angular_momentum_multiplets",
+            "tests/core/test_rf_musr_resonance.py::test_hamiltonian_reduces_to_muonium_when_Ap_zero",
+        ),
+        "Independent zero-field spin multiplets plus two-spin composition; no global branch visibility proof.",
+    ),
+    "KnightAnisotropy": Evidence(
+        "derived-empirical-definitions",
+        "Defined axial second-rank angular projection, degrees.",
+        ("tests/core/test_knight_anisotropy.py::test_knight_anisotropy_values_at_key_angles",),
+        "Parallel/perpendicular/magic-angle landmarks.",
+        True,
+    ),
+    "AngularCos2": Evidence(
+        "derived-empirical-definitions",
+        "Defined shifted second harmonic, degrees.",
+        ("tests/core/test_knight_anisotropy.py::test_angular_cos2_values",),
+        "Extrema separated by 90 degrees.",
+        True,
+    ),
+    "AngularFourier2": Evidence(
+        "derived-empirical-definitions",
+        "Defined first/second-harmonic expansion, degrees.",
+        (
+            "tests/core/test_derived_model_definitions.py::test_angular_fourier_coefficients_are_orthogonal_projections",
+        ),
+        "Full-turn orthogonal projections; not a unique misalignment diagnosis.",
+        True,
+    ),
+    **dict.fromkeys(
+        (
+            "SC_SWave",
+            "SC_DWave",
+            "SC_AnisotropicS_Cos4",
+            "SC_NonmonotonicD",
+            "SC_PWaveAxial",
+            "SC_ExtendedS",
+            "SC_SPlusG",
+            "SC_AlphaModel",
+            "SC_TwoGap_SS",
+            "SC_TwoGap_SD",
+            "SC_SWave_Q",
+            "SC_DWave_Q",
+            "SC_SPlusG_Q",
+        ),
+        Evidence(
+            "derived-sc-definitions",
+            "Declared gap basis/temperature interpolation and scalar thermal response; methodology citations do not certify pairing assignments.",
+            (
+                "tests/core/test_sc_kernel_accuracy.py::test_fermi_surface_average_matches_independent_reference",
+                "tests/core/test_sc_kernel_accuracy.py::test_default_s_wave_curve_matches_independent_integration",
+                "tests/core/test_sc_kernel_accuracy.py::test_gap_form_symmetries_hold",
+                "tests/core/test_sc_models.py::test_two_gap_weight_limits_reduce_to_single_gap",
+                "tests/core/test_sc_models.py::test_sigma_models_respect_zero_temperature_and_tc_limits",
+                "tests/core/test_sc_models.py::test_quadrature_model_is_bounded_by_sigma_nm",
+            ),
+            "Independent transformed thermal/angular integrals in the documented kernel domain; combinations and coefficient conventions are defined separately.",
+        ),
+    ),
+    **dict.fromkeys(
+        ("SC_Brandt_VortexLattice", "SC_Brandt_VortexLattice_Powder"),
+        Evidence(
+            "derived-sc-field-width",
+            "Brandt triangular-lattice second moment, explicit Gaussian convention; high-anisotropy powder conversion.",
+            (
+                "tests/core/test_sc_width_convention.py::test_gaussian_field_distribution_fixes_sqrt2",
+                "tests/core/test_sc_brandt_field_width.py::test_field_factor_limits",
+                "tests/core/test_sc_brandt_field_width.py::test_powder_is_single_crystal_over_sqrt3",
+            ),
+            "Independent Gaussian average, field limits and defined powder scaling; not a full powder field distribution.",
+        ),
+    ),
+}
+
+NEGATIVE_MUON_EVIDENCE = {
+    "lifetimes": Evidence(
+        "derived-negative-muon-lifetimes",
+        "Suzuki Tables III-IV, Eq.(4); stored labels do not establish all row associations.",
+        ("tests/negmu/test_lifetimes.py::test_spot_check_tau",),
+        "Stored-value regression only; independent source selection and confirmed discrepancies unresolved.",
+        unresolved_issue=661,
+    ),
+    "count_model": Evidence(
+        "derived-negative-muon-definitions",
+        "Defined exponential count mixture and flat/free-decay backgrounds.",
+        ("tests/negmu/test_model.py::test_model_matches_numpy",),
+        "Independent exponential expression on synthetic inputs; not measured-data validation.",
+        True,
+    ),
+    "polarisation": Evidence(
+        "derived-negative-muon-definitions",
+        "Defined damped/undamped cyclic-frequency cosine modulation.",
+        (
+            "tests/negmu/test_polarisation.py::TestLorentzianGaussianPolarisation::test_at_t0_equals_a0",
+            "tests/negmu/test_polarisation.py::TestLorentzianGaussianPolarisation::test_phase_pi_flips_sign_at_t0",
+        ),
+        "Origin/phase landmarks; not atomic depolarisation dynamics.",
+        True,
+    ),
+    "ratios": Evidence(
+        "derived-negative-muon-definitions",
+        "Amplitude quotient and first-order covariance propagation.",
+        (
+            "tests/negmu/test_ratio.py::test_fixture_a_sigma",
+            "tests/negmu/test_ratio.py::test_fixture_b_sigma",
+            "tests/negmu/test_ratio.py::test_fb_report_shared_ratios_identical",
+        ),
+        "Independent analytic covariance fixtures; no abundance calibration or lifetime uncertainty.",
+        True,
+    ),
+    "subtraction": Evidence(
+        "derived-negative-muon-definitions",
+        "Defined unpolarised exponential subtraction; conditional residual errors.",
+        (
+            "tests/negmu/test_background.py::TestSubtractCaptureBackground::test_mechanics_exact",
+            "tests/negmu/test_background.py::TestSubtractCaptureBackground::test_flat_background_not_subtracted",
+        ),
+        "Algebraic mechanics only; fitted nuisance covariance not propagated.",
+        True,
+    ),
+}
+
+
+def test_every_derived_model_has_an_evidence_contract():
+    assert set(PARAMETER_EVIDENCE) == {
+        name for name, item in PARAMETER_MODEL_COMPONENTS.items() if not item.user
+    }
+    assert set(NEGATIVE_MUON_EVIDENCE) == {
+        "lifetimes",
+        "count_model",
+        "polarisation",
+        "ratios",
+        "subtraction",
+    }
+    assert {
+        name: item.unresolved_issue
+        for name, item in NEGATIVE_MUON_EVIDENCE.items()
+        if item.unresolved_issue is not None
+    } == {"lifetimes": 661}
+    assert all(item.unresolved_issue is None for item in PARAMETER_EVIDENCE.values())
+
+
+@pytest.mark.parametrize("name,evidence", PARAMETER_EVIDENCE.items(), ids=PARAMETER_EVIDENCE)
+def test_parameter_evidence_targets_resolve(name, evidence):
+    if name.startswith("SC_"):
+        page = "sc_penetration_depth"
+    elif name.startswith(("DiffusionLF_", "BallisticLF_")):
+        page = "diffusion_ballistic_lf"
+    else:
+        page = "parameter_trending"
+    _assert_evidence_targets(evidence, ROOT / f"docs/reference/{page}.rst")
+    if not evidence.definition_only:
+        assert get_component_references(name, kind="parameter"), name
+
+
+@pytest.mark.parametrize("evidence", NEGATIVE_MUON_EVIDENCE.values(), ids=NEGATIVE_MUON_EVIDENCE)
+def test_negative_muon_evidence_targets_resolve(evidence):
+    _assert_evidence_targets(evidence, ROOT / "docs/reference/negative_muon_analysis.rst")

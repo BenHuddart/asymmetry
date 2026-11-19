@@ -1,42 +1,10 @@
-"""EXPERIMENTAL — WORK IN PROGRESS. Negative-muon (μ⁻) capture-lifetime analysis.
+"""Defined cosine modulations for synthetic negative-muon count models.
 
-This API is UNVALIDATED against real μ⁻ elemental-analysis data. No μ⁻ corpus
-exists in this project; every result here has been exercised only against
-synthetic histograms. The element lifetime values are literature-anchored
-(Suzuki, Measday & Roalsvig, Phys. Rev. C 35, 2212 (1987), via Blundell et al.,
-Muon Spectroscopy: An Introduction, OUP 2022, Table C.1), but the fitting,
-capture-ratio, and background machinery have NOT been checked against an
-established tool (WiMDA, Mantid) on measured data. The API, parameter names, and
-return shapes MAY CHANGE without notice. Do not rely on results for publication
-without independent verification. This feature is deliberately NOT exposed in the
-GUI fit builders. Promotion trigger for a GUI: real ISIS μ⁻ data AND a user.
-
-μ⁻SR polarisation functions and a polarisation-aware capture count model.
-
-In μ⁻SR a surviving spin polarisation (≥5/6 is lost in the muonic cascade;
-Blundell et al. 2022, §22.1) gives rise to an oscillatory modulation of the
-muonic-atom count decay.  The modulation multiplies the raw exponential sum by
-``(1 + P_pol(t))``, leaving the flat background unchanged.
-
-Two polarisation functions are provided:
-
-* ``lorentzian_gaussian_polarisation`` (WiMDA "LorGau") — damped precession
-* ``diamagnetic_polarisation`` (WiMDA "Diamagnetic") — undamped precession
-
-Both return **P_pol(t)** (the modulation depth × envelope × oscillation), not
-the full multiplier ``(1 + P_pol(t))``.  The composite model builder
-``build_capture_count_model_with_polarisation`` wraps the multiplier.
-
-Parameterisation conventions confirmed against WiMDA's
-``Polfunc()`` (the ``LorGau`` form):
-
-    LorGau forward: ``(1 + a0·exp(−λ·t)·cos(2π·freq·t + phase))``
-
-where ``freq`` is in MHz, ``t`` in µs, ``λ`` in µs⁻¹, and ``phase`` in
-radians.  Diamagnetic is the undamped (λ = 0) limit.  WiMDA's Diamagnetic
-RadioGroup mode (itemindex = 3) has no implementation in ``Polfunc`` (falls
-through with undefined result — a WiMDA bug), so the Asymmetry formula is the
-textbook one.
+The exponential count sum is multiplied by 1+P(t); the flat background is
+unchanged. The lorgau mode defines a0*exp(-lam*t)*cos(2*pi*freq*t+phase),
+with freq in MHz, time in microseconds, lam in inverse microseconds and
+phase in radians. Diamagnetic is its zero-damping limit. These definitions
+are not a full atomic-cascade or bound-muon depolarisation calculation.
 """
 
 from __future__ import annotations
@@ -59,7 +27,7 @@ def lorentzian_gaussian_polarisation(
     freq: float,
     phase: float,
 ) -> NDArray[np.float64]:
-    """Lorentzian-damped oscillation — WiMDA "LorGau" polarisation function.
+    """Defined exponentially damped cosine modulation.
 
     Returns ``a0·exp(−λ·t)·cos(2π·freq·t + phase)`` (the modulation part
     P_pol(t) only; the full multiplier is ``1 + P_pol(t)``).
@@ -69,8 +37,7 @@ def lorentzian_gaussian_polarisation(
     t:
         Time array in µs.
     a0:
-        Precession amplitude (dimensionless, typically ≤ 1/3 from muonic
-        cascade geometry).
+        Modulation amplitude (dimensionless).
     lam:
         Lorentzian damping rate λ in µs⁻¹.
     freq:
@@ -88,7 +55,7 @@ def diamagnetic_polarisation(
     freq: float,
     phase: float,
 ) -> NDArray[np.float64]:
-    """Undamped diamagnetic precession — WiMDA "Diamagnetic" polarisation.
+    """Defined undamped cosine modulation.
 
     Returns ``a0·cos(2π·freq·t + phase)`` (P_pol(t) only; full multiplier is
     ``1 + P_pol(t)``).  This is the λ → 0 limit of

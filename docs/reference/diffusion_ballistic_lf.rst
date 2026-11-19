@@ -20,6 +20,16 @@ in :doc:`parameter_trending`:
 - **BallisticLF_1D / 2D / 3D** for coherent ballistic transport at the
   same set of dimensionalities.
 
+.. _derived-transport-definitions:
+
+These components define separable lattice return correlations. Independent
+Brillouin-zone averages check the classical random-walk probability and the
+squared coherent-hopping amplitude; spectral quadrature and asymptotic tests
+check the stated transforms. This supports the declared lattice kernels,
+not every physical process called diffusion or ballistic transport. Extracted
+rates depend on the lattice, coupling and spectral-density conventions, and a
+successful field fit alone does not determine a unique transport mechanism.
+
 Both families share a common construction: an autocorrelation function
 :math:`S(t)` of the fluctuating local field is built from the appropriate
 transport propagator, its one-sided cosine transform gives the spectral

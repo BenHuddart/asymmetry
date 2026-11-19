@@ -1,10 +1,7 @@
-"""RF-µSR mu+e+p resonance fit (WiMDA RigiWorkshopFit parity, PC1).
+"""Defined three-spin Hamiltonian, selected RF branches and fit composition.
 
-Covers the exact-diagonalisation muon+electron+proton spin Hamiltonian, the RF
-resonance-field solver, the registered ``RFResonanceMuP`` field-trend component,
-and the benzene-corpus verification (paper-graded against McKenzie 2013).
-
-See ``docs/porting/rf-musr-resonance-fit/``.
+The decoupled-proton case shares the two-spin implementation. Experimental
+coupling landmarks are not outputs from an independently run program.
 """
 
 from __future__ import annotations
@@ -42,8 +39,8 @@ NU_RF = 218.5
 # --------------------------------------------------------------------------
 # Hamiltonian
 # --------------------------------------------------------------------------
-def test_proton_gyromagnetic_ratio_matches_wimda() -> None:
-    # WiMDA RigiWorkshopFit literal g_p = 0.00425764 MHz/G.
+def test_proton_gyromagnetic_ratio_matches_rounded_frequency_landmark() -> None:
+    # Rounded proton cyclic frequency in MHz/G; production uses central constants.
     assert G_P_MHZ_PER_G == pytest.approx(0.00425764, rel=1e-4)
 
 

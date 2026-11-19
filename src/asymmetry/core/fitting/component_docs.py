@@ -103,20 +103,20 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "low- and high-temperature plateaus (in the unit of the trended observable; either may be the larger), "
         "Tc is the midpoint where the curve is halfway between them, and ΔT is the width — the 10–90 % rise "
         "spans about 4.4 ΔT. The midpoint need not coincide with the ordering temperature itself, and a broad "
-        "ΔT signals a distribution of local transition temperatures rather than a critical exponent. Use "
+        "ΔT is a fitted step width, not a unique diagnosis of local transition-temperature variation. Use "
         "OrderParameter instead for a quantity that grows continuously from zero, such as a precession "
         "frequency."
     ),
     "Redfield": (
-        "Use for longitudinal-field relaxation in the motional-narrowing picture of dynamic local fields, "
-        "where λ(B) = 2Δ²ν/(ν² + ωµ²) with ωµ = γµB. It is appropriate when a single dominant fluctuation "
-        "rate ν and coupling scale are physically meaningful; the suppression of λ with field measures ν "
-        "directly."
+        "Defined field dependence λ(B)=D²/[2ν(1+(fµ/ν)^m)], with cyclic fµ=(γµ/2π)B. "
+        "For m=2 it represents a single exponential angular-frequency correlation under "
+        "r=2πν and Δ=√(π/2)D, where r is the inverse correlation time and Δ its component width. "
+        "The physical Redfield interpretation requires motional narrowing; other m values are empirical."
     ),
     "MuRepolarisation": (
         "Use for the longitudinal-field repolarisation of isotropic muonium: the time-averaged muon "
         "polarization rises from half the muonium amplitude at B = 0 to the full amplitude once "
-        "B ≫ B₀ = A_hf/(γₑ + γµ), on top of a field-independent diamagnetic baseline a_Dia. Fit it to "
+        "B ≫ B₀ = A_hf/(gₑ + gµ), with cyclic g=γ/(2π) in MHz/G, on top of a field-independent diamagnetic baseline a_Dia. Fit it to "
         "initial- or integral-asymmetry LF scans (e.g. built with the integral-vs-field observable) to "
         "estimate the hyperfine constant A_hf when the muonium precession is too fast to resolve — the "
         "standard method for large hyperfine couplings. It assumes an isotropic hyperfine interaction "
@@ -128,13 +128,13 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "This is a compact phenomenological shape for broad resonant-like suppression away from center."
     ),
     "GaussianLCR": (
-        "Use for localized avoided-level-crossing resonance features around a specific field B₀, where the "
-        "muon relaxation is resonantly enhanced when its Zeeman splitting matches a transition of a nearby "
-        "(typically quadrupolar) nucleus. B_wid controls broadening and f sets the resonance amplitude."
+        "Defined Gaussian peak for localised avoided-level-crossing features around B₀. "
+        "B_wid is its standard-deviation field width and f its height. ALC spectroscopy motivates "
+        "the fit shape; this component does not solve a quadrupolar spin Hamiltonian."
     ),
     "LorentzianLCR": (
-        "Use as the Lorentzian-shaped alternative to GaussianLCR for avoided-level-crossing resonance peaks, "
-        "appropriate when lifetime (rather than inhomogeneous) broadening dominates the resonance width."
+        "Use as a phenomenological Lorentzian alternative to GaussianLCR for resonance peaks. "
+        "The fitted width alone does not distinguish lifetime from inhomogeneous broadening."
     ),
     "LorentzianLCRPair": (
         "Use for a red/green (differential) ALC scan, where the green − red integral asymmetry of each "
@@ -180,14 +180,15 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
     "RFResonanceMuP": (
         "Use to fit a field-swept RF-µSR resonance scan of a muoniated radical (muon + electron + "
         "one dominant proton, e.g. cyclohexadienyl C₆H₆Mu) and extract the muon and proton hyperfine "
-        "couplings A_µ and A_p simultaneously. At fixed RF frequency ν_RF the swept-field asymmetry "
-        "shows two Lorentzian features whose positions are the resonance fields B₁, B₂ where an "
+        "couplings A_µ and A_p simultaneously. The defined response is two Lorentzian peaks at "
+        "fields B₁, B₂ where, at the fixed RF frequency ν_RF, a selected "
         "RF-driven muon-spin-flip transition of the three-spin Hamiltonian matches ν_RF; these are "
-        "found by exact diagonalisation rather than the high-field-limit linear relation, which is "
+        "defined from selected sorted-energy gaps of an exact Hamiltonian diagonalisation, rather than the high-field-limit linear relation, which is "
         "inaccurate at the low fields (hundreds of G) typical of these scans. The mean field tracks "
         "A_µ and the splitting tracks A_p. Set ampl negative to fit resonance dips (the Red−Green "
         "observable); hold ν_RF fixed at the applied frequency and give A_µ, A_p starting values "
-        "near the expected couplings, since the resonance condition is nonlinear."
+        "near the expected couplings, since the resonance condition is nonlinear. The selected branches "
+        "do not calculate RF transition strengths, populations, or every visible resonance."
     ),
     "SC_SWave": (
         "Use for superconductors consistent with a single isotropic, fully gapped order parameter. "
@@ -204,8 +205,9 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "The anisotropy parameter controls angular variation while preserving an s-wave-like symmetry class."
     ),
     "SC_NonmonotonicD": (
-        "Use for non-monotonic d-wave scenarios with mixed angular harmonics in the gap function. "
-        "The β parameter adjusts the relative weight of harmonics and can capture shape changes in ρ_s(T)."
+        "Defined gap basis β*cos(2phi)+(1-β)*cos(6phi) with the declared a=4/3 temperature law. "
+        "The gap coefficient multiplies this basis; it is not necessarily a normalised maximum gap. "
+        "Methodology references do not certify this entire parameterisation for a particular material."
     ),
     "SC_SPlusG": (
         "Use for anisotropic singlet s+g phenomenology when pure isotropic s-wave and pure d-wave are both "
@@ -213,12 +215,13 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "superconducting channel."
     ),
     "SC_PWaveAxial": (
-        "Use for candidate odd-parity axial p-wave superconducting states. "
-        "Apply when symmetry arguments or complementary probes motivate an axial p-wave gap structure."
+        "Defined two-dimensional cos(phi) gap-magnitude example. It does not compute a full "
+        "three-dimensional axial p-wave response tensor or establish odd-parity pairing."
     ),
     "SC_ExtendedS": (
-        "Use for extended-s scenarios where anisotropy or sign structure modifies the isotropic s-wave "
-        "kernel. This is useful when data sit between simple isotropic s-wave and nodal alternatives."
+        "Defined extended-s gap-magnitude example based on |cos(2phi)|. The thermal kernel is "
+        "insensitive to gap sign, so agreement with a fitted density does not distinguish it from "
+        "a d-wave basis with the same magnitude."
     ),
     "SC_AlphaModel": (
         "Use when a single-gap BCS temperature dependence is retained but the coupling strength differs from "
@@ -709,7 +712,10 @@ PARAMETER_MODEL_REFERENCES: dict[str, tuple[str, ...]] = {
         "Muon Spectroscopy: An Introduction (Oxford University Press, Oxford, 2022).",
         "B. D. Patterson, Rev. Mod. Phys. 60, 69 (1988).",
     ),
-    "Redfield": ("N. Bloembergen, E. M. Purcell, and R. V. Pound, Phys. Rev. 73, 679 (1948).",),
+    "Redfield": (
+        "N. Bloembergen, E. M. Purcell, and R. V. Pound, Phys. Rev. 73, 679 (1948).",
+        "A. Keren, Phys. Rev. B 50, 10039 (1994), Eq. (5).",
+    ),
     "GaussianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
     "LorentzianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
     "LorentzianLCRPair": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
