@@ -128,19 +128,21 @@ EVIDENCE = {
     ),
     "VortexLattice": Evidence(
         "fit-vortex-lattice",
-        "Defined Gaussian-cutoff modified-London shape, rescaled to Brandt Eq.(13) second moment.",
-        ("tests/core/test_sc_vl_lineshape.py::test_fft_build_matches_direct_reciprocal_sum",),
-        "Independent reciprocal field sum only; full time-envelope accuracy unresolved, histogram error exceeds 2e-3 on a sampled case.",
-        unresolved_issue=657,
+        "Defined Gaussian-cutoff London shape, rescaled to Brandt Eq.(13) second moment.",
+        (
+            "tests/core/test_sc_vl_accuracy.py::test_sampled_literature_anchors_and_nearby_variants",
+            "tests/core/test_sc_vl_accuracy.py::test_hard_variant_reference_refines_reciprocal_and_spatial_axes_separately",
+        ),
+        "Independent converged field averages at the documented sampled anchors and nearby points, both scalar modes, through 4-8 us; not a continuous-box or physical-shape certification.",
     ),
     "VortexLatticePowder": Evidence(
         "fit-vortex-lattice",
         "Same defined shape with effective lambda=3^(1/4)*lambda_ab; Pratt Eq.(3) supports width conversion.",
         (
-            "tests/core/test_sc_vl_lineshape.py::test_fft_build_matches_direct_reciprocal_sum",
-            "tests/core/test_sc_vl_lineshape.py::test_relaxation_matches_full_spatial_average",
+            "tests/core/test_sc_vl_accuracy.py::test_sampled_literature_anchors_and_nearby_variants",
+            "tests/core/test_sc_vl_accuracy.py::test_hard_variant_time_shapes_and_signed_component_consumers",
         ),
-        "Reciprocal field sum plus powder-kernel histogram comparison at 2e-3, not 1e-5; not a physical powder orientation average.",
+        "Same independently sampled numerical domain with effective lambda; not a physical anisotropic powder orientation average.",
     ),
     "StaticGKT_ZF": Evidence(
         "fit-static-gkt-zf",
@@ -365,9 +367,7 @@ def test_unresolved_components_remain_within_the_reviewed_allowance():
     unresolved = {
         name for name, evidence in EVIDENCE.items() if evidence.unresolved_issue is not None
     }
-    assert unresolved <= {"VortexLattice"}
-    for name in unresolved:
-        assert EVIDENCE[name].unresolved_issue > 0
+    assert not unresolved
 
 
 def _assert_evidence_targets(evidence, page):

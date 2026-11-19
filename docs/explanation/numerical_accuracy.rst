@@ -31,6 +31,14 @@ the Gaussian widths and targets the same polarisation accuracy over its
 documented sampled domain. Its finite-field quadrature work budget limits
 evaluation cost; it does not certify accuracy outside the tested domain.
 
+The :ref:`calibrated vortex-lattice signal <fit-vortex-lattice>` meets the
+same numerical target at its documented sampled literature scales and nearby
+parameter variations, using independently refined reciprocal and spatial
+averages. The field-bin compression bound is separate from those quadrature
+errors. Numerical agreement does not validate the Gaussian core cutoff,
+Brandt RMS rescaling or scalar powder approximation as a physical lineshape,
+and does not certify an entire continuous parameter domain.
+
 Other quantities require metrics appropriate to their units and scales:
 counts, rates, transforms, corrections, and estimated uncertainties do not
 share a universal absolute epsilon. State the metric, supported domain,
