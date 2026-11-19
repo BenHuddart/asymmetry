@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import textwrap
+from functools import partial
 from pathlib import Path
 
 from asymmetry.core import instruments
@@ -13,6 +14,7 @@ from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import InstrumentProfile
 
 PROFILES = {profile.identity.key: profile for profile in BUNDLED_PROFILES}
+GENERATED_REVIEW_MARKER = ".. Generated instrument review page; do not edit."
 
 
 def _table(headers, rows):
@@ -83,7 +85,7 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
             (
                 "Filename",
                 ", ".join(profile.recognition.filename_tokens) or "None",
-                "Compact substring",
+                "Basename token boundaries; run digits may follow",
             ),
         ),
     )
@@ -376,6 +378,68 @@ def generate_profile(
     return page
 
 
+def remove_retired_review_html(app, *, docnames):
+    """Remove only HTML corresponding to retired marker-owned source stubs."""
+    if app.builder.name != "html":
+        return
+    for docname in docnames:
+        output = Path(app.builder.get_outfilename(docname))
+        if not output.resolve().is_relative_to(Path(app.outdir).resolve()):
+            raise ValueError(
+                "Generated instrument review output must stay inside the build directory"
+            )
+        output.unlink(missing_ok=True)
+
+
+def generate_review_pages(app, config):
+    """Materialise catalog-owned source stubs before Sphinx discovers documents."""
+    if config.instrument_review_directory is None:
+        return
+    source = Path(app.srcdir).resolve()
+    directory = (source / config.instrument_review_directory).resolve()
+    if directory == source or not directory.is_relative_to(source):
+        raise ValueError(
+            "Generated instrument review directory must be inside the source directory"
+        )
+    wanted = {
+        key.replace(".", "_")
+        + ".rst": f"{GENERATED_REVIEW_MARKER}\n\n.. instrument-profile:: {key}\n"
+        for key in sorted(PROFILES)
+    }
+    if any(Path(name).name != name or "\\" in name for name in wanted):
+        raise ValueError("Generated instrument review pages require local filenames")
+    directory.mkdir(parents=True, exist_ok=True)
+    if len(wanted) != len(PROFILES):
+        raise ValueError("Instrument review profiles require distinct public page names")
+    retired = []
+    for page in directory.glob("*.rst"):
+        if page.is_symlink() or not page.resolve().is_relative_to(directory):
+            raise ValueError(
+                "Generated instrument review sources must be ordinary files inside their directory"
+            )
+        owned = page.read_text(encoding="utf-8").startswith(GENERATED_REVIEW_MARKER + "\n")
+        if page.name in wanted and not owned:
+            raise ValueError(f"Cannot replace authored instrument review source: {page}")
+        if owned and page.name not in wanted:
+            retired.append(page)
+    for page in retired:
+        page.unlink()
+    for name, text in wanted.items():
+        page = directory / name
+        if not page.exists() or page.read_text(encoding="utf-8") != text:
+            page.write_text(text, encoding="utf-8")
+    if retired:
+        app.connect(
+            "builder-inited",
+            partial(
+                remove_retired_review_html,
+                docnames=tuple(
+                    page.relative_to(source).with_suffix("").as_posix() for page in retired
+                ),
+            ),
+        )
+
+
 def setup(app):
     from docutils import nodes
     from docutils.parsers.rst import Directive
@@ -398,6 +462,8 @@ def setup(app):
             )
             return container.children
 
+    app.add_config_value("instrument_review_directory", None, "env", types=(str, type(None)))
+    app.connect("config-inited", generate_review_pages)
     app.add_directive("instrument-profile", InstrumentProfileDirective)
     return {"parallel_read_safe": False, "parallel_write_safe": True}
 
