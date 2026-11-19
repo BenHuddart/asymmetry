@@ -27,6 +27,12 @@ details, and the beam-vs-analysis naming conventions. For a hands-on
 walkthrough with a worked calibration, see :doc:`grouping_calibration`.
 
 
+The :doc:`instrument definition pages <instruments/index>` identify the sources,
+unknown channel-map assumptions and schematic conventions behind migrated
+layouts. :doc:`EMU <instruments/isis_emu>` distinguishes its physical axial layers
+from the concentric drawing bands and labels the authored vector preset.
+
+
 Scripted preset application
 ---------------------------
 

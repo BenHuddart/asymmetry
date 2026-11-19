@@ -1077,3 +1077,27 @@ Grouped nuisance seeding lives in `core/fitting/grouped_seeding.py`: typed
 `GroupedTimeDomainGroup` traces supply absolute FFT phases in radians, while
 background/N0/amplitude estimates use the lifetime-corrected count convention.
 GUI tabs call these pure functions and own their editable table state.
+
+Instrument declarations
+-----------------------
+
+`core/instruments/schema.py` validates immutable identity, source, recognition,
+physical structure, acquisition maps, explicit scientific presets and scoped
+evidence/review data. Metadata-only profiles can leave acquisition/geometry
+unknown. `geometry.py` expands finite circular, grid and explicit arrangements;
+shape and arrangement are independent. Physical hardware context has no acquired
+ordinal and is never selectable. Channel ordinals remain the analysis boundary.
+
+`layout.py` owns shared layout records and the preset-free generic fallback;
+`resolve.py` converts profile data into the existing GUI/core layout interface
+without an import cycle. EMU is declared in `isis_emu.py`; unmigrated instrument
+builders remain in `core/instrument.py`. The EMU external key, channel numbers,
+preset order, projections and defaults are preserved. Source declarations do
+not activate analysis defaults or change project fingerprints.
+
+`tools/instrument_docs.py` generates review text and labelled SVG diagrams from
+the same resolved geometry outside pure core. The Sphinx directive materialises
+them for each build. Evidence status is separate from expert approval and names
+are published only with consent. The existing Detector Layout scenario covers
+the EMU reference display; synthetic examples exercise both the actual renderer
+and generated review output.
