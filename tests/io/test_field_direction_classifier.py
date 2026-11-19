@@ -2,8 +2,7 @@
 
 PSI ``.bin``/``.mdu``/``.root`` files carry no structured field-state code, so
 ``field_direction`` is read from an explicit ``TF``/``LF``/``ZF`` tag in the
-free-text comment/setup/title (see ``docs/porting/field-geometry/``).  The
-classifier must trust only an unambiguous token and never guess.
+free-text comment/setup/title. Only an unambiguous token establishes the label.
 """
 
 from __future__ import annotations

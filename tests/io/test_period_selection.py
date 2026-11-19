@@ -354,6 +354,85 @@ def test_combine_period_asymmetry_empty_and_bad_mode():
         )
 
 
+def test_selected_periods_support_reference_amplitude_then_conditional_rate_fit():
+    """Planted periods exercise the reference-amplitude workflow without corpus data.
+
+    Holding the reference amplitude makes the second rate's fit error
+    conditional; this does not propagate reference-amplitude uncertainty.
+    """
+    from asymmetry.core.fitting import FitEngine, Parameter, ParameterSet
+    from asymmetry.core.fitting.models import MODELS
+    from asymmetry.core.simulate import (
+        BUILTIN_TEMPLATES,
+        PeriodSpec,
+        reduce_run_to_dataset,
+        simulate_two_period_run,
+    )
+
+    def exponential(time, rate):
+        return 20.0 * np.exp(-rate * time)
+
+    run = simulate_two_period_run(
+        BUILTIN_TEMPLATES["ideal_pulsed_fb"].build(),
+        [
+            PeriodSpec(exponential, {"rate": 0.9}, label="red"),
+            PeriodSpec(exponential, {"rate": 0.05}, label="green"),
+        ],
+        total_events=2.0e8,
+        seed=413,
+        run_number=413,
+    )
+    combined = reduce_run_to_dataset(run)
+    reference = select_period(combined, "green")
+    target = select_period(combined, "red")
+    np.testing.assert_array_equal(reference.time, target.time)
+    assert reference.metadata["period_number"] == 2
+    assert target.metadata["period_number"] == 1
+    assert reference.metadata["source_run_number"] == target.metadata["source_run_number"] == 413
+    assert reference.run.grouping["good_frames"] == run.grouping["period_good_frames"][1]
+    np.testing.assert_array_equal(
+        target.run.histograms[0].counts, run.grouping["period_histograms"][0][0].counts
+    )
+
+    engine = FitEngine()
+    function = MODELS["ExponentialRelaxation"].function
+    reference_fit = engine.fit(
+        reference,
+        function,
+        ParameterSet(
+            [
+                Parameter("A0", 18.0, min=0.0, max=100.0),
+                Parameter("Lambda", 0.1, min=0.0),
+                Parameter("baseline", 0.0, fixed=True),
+            ]
+        ),
+        t_min=0.0,
+        t_max=8.0,
+    )
+    assert reference_fit.success
+    amplitude = reference_fit.parameters["A0"].value
+    assert amplitude == pytest.approx(20.0, abs=0.1)
+    assert reference_fit.parameters["Lambda"].value == pytest.approx(0.05, abs=0.005)
+
+    target_fit = engine.fit(
+        target,
+        function,
+        ParameterSet(
+            [
+                Parameter("A0", amplitude, fixed=True),
+                Parameter("Lambda", 0.5, min=0.0),
+                Parameter("baseline", 0.0, fixed=True),
+            ]
+        ),
+        t_min=0.0,
+        t_max=1.0,
+    )
+    assert target_fit.success
+    assert target_fit.parameters["A0"].fixed
+    assert target_fit.parameters["A0"].value == amplitude
+    assert target_fit.parameters["Lambda"].value == pytest.approx(0.9, abs=0.02)
+
+
 # --- real NeXus round-trip (skipped without the WiMDA corpus) ----------------
 
 

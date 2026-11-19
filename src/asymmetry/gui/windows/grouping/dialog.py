@@ -1033,11 +1033,8 @@ class GroupingDialog(TimingControls, QDialog):
         alpha_area_form.addRow(self._vector_alpha_widget)
         alpha_area_layout.addLayout(alpha_area_form)
 
-        # β (intrinsic-asymmetry balance): a fixed user-entered scalar applied
-        # with α in the same asymmetry formula (A = (F − αB)/(βF + αB)).
-        # Scalar-only — in vector mode the whole card is hidden and the payload
-        # omits the key, so per-projection reductions stay at β = 1
-        # (docs/porting/beta-correction/).
+        # Scalar β enters A=(F−αB)/(βF+αB). Vector reductions use β=1;
+        # the scalar card and its payload are absent in that mode.
         self._beta_section = BetaSectionWidget()
         self._beta_section.set_value(grouping.get("beta", 1.0))
         self._beta_section.changed.connect(self._on_beta_changed)
@@ -1112,14 +1109,8 @@ class GroupingDialog(TimingControls, QDialog):
         form.addRow(self._period_mode_label, self._period_row_widget)
         self._update_map_periods_visibility()
 
-        # The right pane is tabless: a full-width pipeline strip over a two-column
-        # row — "Grouping and timing" (define what/when to group) on the left and
-        # "Corrections" (correct the counts) on the right — with the compare pager
-        # and the shared live preview pinned below BOTH columns. The single preview
-        # keeps working across columns because it reduces from the draft's widget
-        # *state* (read via `_current_grouping_payload`), never from which column is
-        # focused. See docs/porting/correction-order-alpha-estimation.
-        # Pipeline strip spans the full right-pane width, above both columns.
+        # Both columns share one preview of the current grouping payload;
+        # focus does not change the reduction. The pipeline strip spans both.
         right_layout.addWidget(self._build_pipeline_strip())
 
         # ── Grouping and timing column (left) ──────────────────────────────

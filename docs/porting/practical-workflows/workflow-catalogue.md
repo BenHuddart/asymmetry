@@ -518,16 +518,15 @@ combined.
    minus a background period 3).
 3. Continue with the standard asymmetry workflow.
 
-**Asymmetry support.** ❌ Asymmetry's NeXus loader currently
-exposes only the default period. Logged as the
-[`period-arithmetic`](../../candidates/period-arithmetic/)
-candidate.
+**Asymmetry support.** Period selection and subset mapping are implemented;
+see [Period mapping](https://benhuddart.github.io/asymmetry/reference/data_reduction/period_mapping.html)
+for the current preparation and uncertainty limits.
 
 **Textbook anchors.** Blundell Ch 14 (pulsed sources); Ch 15.1
 (experimental setup).
 
-**Roadmap links.**
-[`period-arithmetic`](../../candidates/period-arithmetic/).
+**Current reference.**
+[Period mapping](https://benhuddart.github.io/asymmetry/reference/data_reduction/period_mapping.html).
 
 ---
 

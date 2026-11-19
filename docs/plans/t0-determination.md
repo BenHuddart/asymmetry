@@ -3,8 +3,8 @@
 Status: planned 2026-09-17 on `study/t0-determination` (study commits
 52e6007, c1cf15d). Implementation lands as **one PR** from a feature branch
 off `main`, built in six phases by subagents with a lead review gate after
-each. Study and evidence:
-[porting/t0-determination](../porting/t0-determination/README.md).
+each. Current behavior:
+[Time-zero conventions](https://benhuddart.github.io/asymmetry/reference/data_reduction/t0_search.html).
 
 ## Problem
 
@@ -29,7 +29,7 @@ be re-checked before editing):
    `round(t0/w)`. Numerically: +3-bin corruption → fitted +1.9 bins →
    promoted 103 → 105 (truth 100).
 4. **ISIS header bins are 1-based** (`t0_bin`, `first_good_bin`,
-   `last_good_bin`; 1,245-file survey, [evidence](../porting/t0-determination/isis-header-index-base.md)).
+   `last_good_bin`; see the current [loading contract](https://benhuddart.github.io/asymmetry/reference/loading_data.html)).
    `nexus.py:1027-1068` infers this per file from an axis vote that abstains
    on exact-edge files; the integer bin discards the sub-bin position of
    `time_zero` (≤ 8 ns at 16 ns binning, 39° of TF phase at 0.1 T).
@@ -297,8 +297,8 @@ profiles healed to From file and a log line each; `gui-smoke` green.
   `t0_search_*`, `t0_method`, `t0_reference_run`; v21),
   `count_domain_fitting.rst` (promotion sign statement), glossary,
   `ARCHITECTURE.md`, screenshot scenario for the grouping window's t0 row (`docs/screenshots/scenarios/grouping_window_profile_editor.py`),
-  `CHANGELOG.md [Unreleased]`, and `docs/porting/t0-determination/README.md`
-  status → implemented with the final decisions.
+  `CHANGELOG.md [Unreleased]`, and the maintained
+  [time-zero reference](https://benhuddart.github.io/asymmetry/reference/data_reduction/t0_search.html).
 - `python tools/harness.py docs`.
 
 ### Lead gate (after every phase)

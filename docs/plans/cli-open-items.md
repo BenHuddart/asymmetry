@@ -60,9 +60,9 @@ The evidence below comes from four read-only studies run on 2026-09-25 against
   probes per run. Axial field (`Field_Main + Field_Z`) above 10× the transverse
   (`hypot(Field_X, Field_Y)`) is LF; transverse above 10× axial minus the
   ~7–12 G Z compensation is TF; otherwise unknown. These are the run's own
-  readbacks, which the field-geometry study (`docs/porting/field-geometry/`)
-  ranks above the file's stamp; it forbids inferring from *names*, which this
-  does not. It ranks below measured precession.
+  readbacks. The proposed readback-based classification is a separate analysis
+  hypothesis; it is not evidence supplied by the current
+  [recorded-field loading contract](https://benhuddart.github.io/asymmetry/reference/loading_data.html).
 - **D5 — radical repolarisation.** Not a CLI gap as the audit framed it. The
   benzene EMU curve still rises at 4 kG; an exact six-proton radical model
   saturates by ~1 kG (χ²ᵣ ≈ 9300), one free `MuRepolarisation` gives χ²ᵣ ≈ 440

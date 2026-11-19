@@ -966,9 +966,7 @@ def test_load_v2_normalizes_one_based_bin_attributes(tmp_path, loader: NexusLoad
 
 
 # --- Field geometry (TF/LF/ZF) vs detector orientation ---------------------
-# The applied-field geometry comes from sample/magnetic_field_state, NOT from
-# detector orientation. On EMU/MuSR the banks read 'L' even for TF runs, so
-# orientation must never decide field_direction. See docs/porting/field-geometry/.
+# Recorded applied-field state determines geometry independently of detector orientation.
 
 
 def test_v2_field_state_tf_overrides_l_orientation(tmp_path, loader: NexusLoader) -> None:
@@ -1256,8 +1254,7 @@ def test_v2_malformed_sidecar_log_does_not_raise(tmp_path, loader: NexusLoader) 
 #
 # ISIS writes ``t0_bin`` / ``first_good_bin`` / ``last_good_bin`` 1-based and
 # inclusive, and stores t0 twice: as that integer bin and as ``time_zero`` in
-# µs. Evidence and the representative numbers used below:
-# docs/porting/t0-determination/isis-header-index-base.md.
+# µs. Integer alignment and exact time coordinates remain distinct.
 
 _RES = 0.016  # µs, the common ISIS binning
 

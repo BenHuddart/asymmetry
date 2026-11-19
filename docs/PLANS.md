@@ -182,9 +182,8 @@ one-series caller.
 Status: planned 2026-09-17 on `study/t0-determination`; implementation to
 land as one PR in six phased subagent steps with a lead review gate. Full
 decision log (D1–D12), code map, per-phase briefs and acceptance criteria in
-[plans/t0-determination.md](plans/t0-determination.md); the audit and the
-ISIS 1-based header evidence in
-[porting/t0-determination](porting/t0-determination/README.md).
+[plans/t0-determination.md](plans/t0-determination.md). Current behavior is in
+[Time-zero conventions](https://benhuddart.github.io/asymmetry/reference/data_reduction/t0_search.html).
 
 The t0 policy becomes an explicit stored choice defaulting to From file
 (never inferred), Manual stores an offset from the file t0, every consumer
@@ -328,9 +327,10 @@ Status: complete — all three milestones (adaptive deadtime section →
 section-overflow indicator pill → compare pager above the preview) plus a
 saturation-readout fix and a post-review fit-restoration fix landed on
 `feat/correction-order-alpha-estimation` (commits `8b52aa0`..`9f73250`,
-2026-07-17). Plan, execution notes, and the deferred-idea record
-(converging-ghost stepper, hold-to-swap) live in
-[porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md](porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md).
+2026-07-17). Current behavior is in
+[Correction preview](https://benhuddart.github.io/asymmetry/reference/detector_grouping.html).
+The [retirement disposition](https://github.com/BenHuddart/asymmetry/issues/413#issuecomment-7004816569)
+keeps exploratory preview follow-ons outside the implemented contract.
 
 ### Bayesian Experimental Design: Suggest Next Point (Trending)
 

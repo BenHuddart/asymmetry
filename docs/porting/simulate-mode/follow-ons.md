@@ -80,12 +80,10 @@ against an N(0, 1) overlay with a verdict line; a **Pull diagnostic…** button 
 the single-fit tab enables after a converged time-domain fit and re-simulates
 from that run, model and fitted values over the same fit window.
 
-Pulls centre on N(0, 1) with **no** (1 + A²)/(1 − A²) correction — `main` now
-carries the exact Poisson error propagation (PR #35,
-[asymmetry-error-propagation](../asymmetry-error-propagation/)). The original
-simulate-mode refit test that documented the (1 − A²)/(1 + A²) χ²ᵣ bias was
-already updated when #35 landed; this diagnostic confirms it in the GUI and in
-`tests/test_pull_diagnostic.py`.
+Use the current fixed-calibration, first-order
+[asymmetry error conventions](https://benhuddart.github.io/asymmetry/explanation/conventions.html#asymmetry-counting-errors).
+Pull and χ² interpretation also depends on the observation and fit assumptions;
+the propagated point errors do not establish exact finite-count coverage.
 
 ### 4. Multi-group simulation (`core/simulate.py`)
 
