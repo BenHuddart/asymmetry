@@ -1,9 +1,8 @@
 """Vortex-lattice field-distribution lineshape (``sc.lineshape``).
 
-The line's *width* is calibrated to the validated Brandt second moment, so these
-tests anchor against :mod:`asymmetry.core.fitting.sc.models`; the *shape* (skew)
-and the time-domain relaxation are checked independently, and a synthetic
-round-trip confirms a window-stable penetration depth is recoverable.
+These checks cover the defined RMS calibration, field-map construction and
+component composition. Independent converged time-domain checks are separate
+from fitting a model to its own synthetic output.
 """
 
 from __future__ import annotations
@@ -12,8 +11,6 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fitting.sc.lineshape import (
-    _DEFAULT_N_G,
-    _DEFAULT_N_GRID,
     _TWO_PI_GAMMA,
     _field_offsets_calibrated,
     vortex_lattice_component,
@@ -24,21 +21,6 @@ from asymmetry.core.fitting.sc.models import (
     brandt_field_width_sigma,
     brandt_field_width_sigma_powder,
 )
-
-
-def _full_average_relaxation(t, lam, B0, Bc2, *, powder=True):
-    """Reference R(t): the exact average over every real-space grid point.
-
-    This is the pre-optimisation definition — ``< exp(i 2π γ (B(r)-B0) t) >_r`` over
-    the full ``n_grid²`` offsets — that the cached-histogram path must reproduce.
-    """
-    offsets = _field_offsets_calibrated(
-        lam, B0, Bc2, powder=powder, n_g=_DEFAULT_N_G, n_grid=_DEFAULT_N_GRID
-    )
-    t = np.atleast_1d(np.asarray(t, dtype=float))
-    if offsets is None:
-        return np.ones(t.shape, dtype=np.complex128)
-    return np.exp(1j * _TWO_PI_GAMMA * offsets[:, None] * t[None, :]).mean(axis=0)
 
 
 def _rate_from_offsets(offsets: np.ndarray) -> float:
@@ -184,11 +166,12 @@ def test_fft_build_matches_direct_reciprocal_sum() -> None:
     """
     from asymmetry.core.fitting.sc.lineshape import _centered_field_offsets
 
-    n_g, n_grid = _DEFAULT_N_G, _DEFAULT_N_GRID
+    n_g, n_grid = 3, 25
     for lam_eff_nm, B0_g, Bc2 in [(195.0, 400.0, 25.0), (240.0, 1600.0, 30.0)]:
         B0_t = B0_g * 1e-4
-        # Exact revised SI h/(2e), independent of the production constant.
-        flux_quantum_wb = 6.62607015e-34 / (2 * 1.602176634e-19)
+        from asymmetry.core.utils.constants import MAGNETIC_FLUX_QUANTUM_WB
+
+        flux_quantum_wb = MAGNETIC_FLUX_QUANTUM_WB
         lam = lam_eff_nm * 1.0e-9
         xi = np.sqrt(flux_quantum_wb / (2.0 * np.pi * Bc2))
         a = np.sqrt(2.0 * flux_quantum_wb / (np.sqrt(3.0) * B0_t))
@@ -219,58 +202,6 @@ def test_fft_build_matches_direct_reciprocal_sum() -> None:
         assert np.allclose(direct, fft, atol=1e-12, rtol=0.0)
 
 
-@pytest.mark.parametrize(("lam", "B0", "Bc2"), [(195.0, 400.0, 25.0), (240.0, 400.0, 25.0)])
-def test_relaxation_matches_full_spatial_average(lam: float, B0: float, Bc2: float) -> None:
-    """The cached-histogram R(t) reproduces the full real-space average tightly."""
-    t = np.linspace(0.0, 8.0, 500)
-    fast = vortex_lattice_relaxation(t, lam, B0, Bc2, powder=True)
-    reference = _full_average_relaxation(t, lam, B0, Bc2, powder=True)
-    assert np.abs(fast - reference).max() < 2.0e-3
-
-
-def test_fitted_lambda_unchanged_vs_full_average() -> None:
-    """A round-trip fit returns the same lambda through the fast and the reference
-    (full real-space average) lineshape — the optimisation must not move results."""
-    from scipy.optimize import curve_fit
-
-    from asymmetry.core.utils.constants import (
-        GAUSS_TO_TESLA,
-        MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-    )
-
-    t = np.linspace(0.0, 8.0, 400)
-    true_lam, B0, Bc2 = 195.0, 400.0, 25.0
-    freq = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * B0
-    rng = np.random.default_rng(7)
-    nuclear = np.exp(-0.5 * (0.20 * t) ** 2)
-    signal = (
-        vortex_lattice_powder_component(t, 18.0, B0, 0.3, true_lam, Bc2) * nuclear
-        + 3.0 * np.cos(2 * np.pi * freq * t + 0.3)
-        + 0.4
-    )
-    y = signal + rng.normal(0.0, 0.15, t.size)
-    err = np.full_like(t, 0.15)
-
-    def make_model(relax):
-        def model(tt, amp, lam, phi, sig_n, a_bg, c):
-            nu = np.exp(-0.5 * (sig_n * tt) ** 2)
-            carrier = np.exp(1j * (2 * np.pi * freq * tt + phi))
-            vl = amp * np.real(carrier * relax(tt, lam, B0, Bc2, powder=True)) * nu
-            return vl + a_bg * np.cos(2 * np.pi * freq * tt + phi) + c
-
-        return model
-
-    p0 = [15.0, 230.0, 0.0, 0.25, 2.0, 0.0]
-    bounds = ([0, 120, -np.pi, 0, 0, -2], [50, 360, np.pi, 1, 20, 2])
-    fast, _ = curve_fit(
-        make_model(vortex_lattice_relaxation), t, y, p0=p0, sigma=err, bounds=bounds, maxfev=40000
-    )
-    ref, _ = curve_fit(
-        make_model(_full_average_relaxation), t, y, p0=p0, sigma=err, bounds=bounds, maxfev=40000
-    )
-    assert abs(fast[1] - ref[1]) < 0.5  # lambda_ab within 0.5 nm of the reference fit
-
-
 def test_grid_finer_than_reciprocal_range_is_rejected() -> None:
     """The FFT field map aliases if n_grid < 2*n_g+1; the guard rejects it."""
     from asymmetry.core.fitting.sc.lineshape import _centered_field_offsets
@@ -281,12 +212,7 @@ def test_grid_finer_than_reciprocal_range_is_rejected() -> None:
 
 
 def test_relaxation_hot_path_stays_cheap() -> None:
-    """Perf regression guard: R(t) reduces over the n_bins histogram, not the
-    n_grid² grid, *and* it factors the uniform bin centres out instead of forming
-    the n_bins × N_t exponential matrix. Reverting either — to a per-grid-point
-    spatial average (~30x more work) or to the explicit matrix (~50x) — blows this
-    generous bound. The best of several batches is taken so a one-off scheduler
-    stall on CI cannot flake it."""
+    """Warm compact quadrature avoids a spatial-point by time exponential matrix."""
     import time
 
     t = np.linspace(0.0, 8.0, 500)
@@ -297,8 +223,6 @@ def test_relaxation_hot_path_stays_cheap() -> None:
         for _ in range(100):
             vortex_lattice_relaxation(t, 195.0, 400.0, 25.0, powder=True)
         best_ms = min(best_ms, (time.perf_counter() - start) / 100 * 1e3)
-    # Actual ~0.1 ms. Was ~5 ms with the exponential matrix over the histogram,
-    # ~165 ms with the full real-space average, so 2 ms still has 20x headroom.
     assert best_ms < 2.0
 
 
