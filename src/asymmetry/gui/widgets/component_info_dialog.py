@@ -29,7 +29,7 @@ _SC_KERNEL_LATEX = (
 
 _SC_KERNEL_TEXT = (
     "This kernel defines normalized superfluid density. In TF-muSR, the superconducting "
-    "Gaussian relaxation rate tracks the second moment of the vortex-lattice field distribution, "
+    "Gaussian relaxation rate tracks the square root of the second moment of the vortex-lattice field distribution, "
     "so ρ_s(T) controls the temperature dependence of σ(T)."
 )
 
@@ -81,13 +81,15 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
         "a positive fixed value or allows it to vary, that positive value is used instead."
     ),
     "SC_NonmonotonicD": (
-        "Nonmonotonic d-wave extension that mixes harmonics to capture curvature not reproduced by a simple cos(2φ) form."
+        "Defined cos(2φ)/cos(6φ) mixture with β-dependent nodes and extrema; the default β=0.8 "
+        "is monotonic from antinode to node. The a=4/3 interpolation is a fitting convention, "
+        "not the complete literal material example in the cited review."
     ),
     "SC_SPlusG": (
         "Anisotropic singlet s+g form used when pure isotropic s-wave and pure d-wave are both too restrictive."
     ),
     "SC_PWaveAxial": (
-        "Axial p-wave example for unconventional/odd-parity scenarios motivated by symmetry or complementary probes. "
+        "Two-dimensional cos(φ) gap-magnitude example, not a full axial response tensor or a diagnosis of odd parity. "
         "The optional shape_factor_a parameter controls the reduced-gap amplitude law: if shape_factor_a is left at 0, "
         "the model uses the Carrington-Manzano interpolation; a positive fixed or fitted value switches to the "
         "generalized weak-coupling form."
@@ -212,11 +214,11 @@ def _equation_html(component: ComponentDocDefinition, *, render_latex_images: bo
     if not equation:
         return f"<code>{html.escape(component.formula_template)}</code>"
 
-    if render_latex_images:
-        image_html = render_latex_to_html_image(equation, font_size=16, dpi=170)
-        if image_html is not None:
-            return image_html
-    return f"<code>{html.escape(equation)}</code>"
+    blocks = [
+        _latex_block_html(line, render_latex_images=render_latex_images, font_size=16)
+        for line in equation.splitlines()
+    ]
+    return blocks[0] if len(blocks) == 1 else "".join(f"<p>{block}</p>" for block in blocks)
 
 
 def _latex_block_html(latex: LatexBlock, *, render_latex_images: bool, font_size: int = 15) -> str:

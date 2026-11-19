@@ -7,9 +7,8 @@ Negative-muon capture-lifetime analysis (experimental)
 
    This page documents a scriptable, **API-only** μ⁻ capture-lifetime analysis
    that is **unvalidated against real μ⁻ data**. It has been exercised only on
-   synthetic histograms. The element lifetimes are literature-anchored
-   (Suzuki, Measday & Roalsvig 1987), but the fitting and capture-ratio
-   machinery have not been checked against an established μ⁻ tool on measured
+   synthetic histograms. Lifetime source associations include unresolved
+   discrepancies, and the fitting and capture-ratio machinery have not been checked against an established μ⁻ tool on measured
    data, and the API may change. There is **no GUI** for this feature. Verify
    any physical interpretation against the primary literature and an established
    tool (WiMDA, Mantid) before relying on it.
@@ -19,24 +18,50 @@ What this measures
 
 A negative muon implanted in matter forms a muonic atom at the lattice site,
 cascading to the 1s muonic orbit on a picosecond timescale. From there it either
-decays freely — just as a positive muon does, with lifetime τ\ :sub:`μ` =
-2.197 μs — or is captured by the nucleus at a rate Λ\ :sub:`cap`\ (Z) that grows
-steeply with atomic number. The observable disappearance lifetime
+decays while bound or is captured by the nucleus. The bound-decay rate is
+:math:`Q/\tau_\mu`, where :math:`Q` is the Huff correction and
+:math:`\tau_\mu` is the free-muon lifetime. Suzuki et al. Eq. (4) distinguishes
+this rate from the nuclear capture rate. The observable disappearance lifetime
 
 .. math::
 
-   \tau(Z) = \frac{1}{\Lambda_\mathrm{cap}(Z) + \Lambda_\mathrm{decay}}
+   \tau(Z) = \frac{1}{\Lambda_\mathrm{cap}(Z) + Q/\tau_\mu}
 
-is therefore element-characteristic: τ is 2.195 μs for hydrogen (capture
-negligible) and falls to ≈ 72–96 ns for the heavy elements from Ru to U.
+depends on the element, isotope and bound-state conditions. A capture rate
+cannot be inverted to obtain this lifetime without the bound-decay contribution.
 
 In a sample containing several elements the decay-electron histogram summed over
 all detectors is a sum of exponentials with those element-characteristic
-lifetimes, and the amplitude of each term is proportional to the fraction of
-muon captures on that element. Fitting the histogram and forming amplitude ratios
-gives the relative capture probabilities, which are directly related to the
-stoichiometric composition weighted by each element's capture rate. This is
-nuclear-charge-selective elemental analysis from the muon decay electrons.
+lifetimes. The fitted coefficient of each exponential is a count amplitude,
+not an integrated yield or an elemental abundance. Capture and transfer
+probabilities, bound-decay branching, detection efficiency and the observation
+window are needed to infer composition. The API reports amplitude ratios;
+it does not perform that material-dependent calibration.
+
+.. _derived-negative-muon-definitions:
+
+Amplitude and uncertainty conventions
+-------------------------------------
+
+For a single exponential, its integrated yield on :math:`[t_a,t_b]` is
+:math:`N_i\tau_i(e^{-t_a/\tau_i}-e^{-t_b/\tau_i})` in the continuous-time
+convention. A ratio of fitted :math:`N_i` therefore differs from a yield ratio
+when lifetimes differ. The simulator weights integrated populations and converts
+them to bin amplitudes; those weights are not the reported amplitude ratios.
+
+The ratio report uses the first-order covariance propagation for
+:math:`R=N_i/N_r`, including the fitted cross covariance when available.
+Without it the cross term is zero by assumption. This conditional fit uncertainty
+does not include lifetime-table uncertainty, transfer/efficiency calibration or
+model selection. Background-component subtraction uses unpolarised exponential
+terms; it does not propagate fitted background nuisance covariance into
+residual-count errors.
+
+The optional ``lorgau`` mode defines a damped cosine and ``diamagnetic`` an
+undamped cosine, with cyclic frequency in MHz, time in microseconds and phase
+in radians. They multiply the exponential count sum by :math:`1+P(t)` and
+leave the flat background untouched. These are count-modulation definitions,
+not a complete bound-muon atomic depolarisation calculation.
 
 The model
 ---------
@@ -54,20 +79,29 @@ literature lifetime τ\ :sub:`i` and a free amplitude N\ :sub:`i`\ ), the
 second term is a free-μ⁻ decay background with the fixed muon lifetime
 τ\ :sub:`μ` and a free amplitude N\ :sub:`bg`\ , and *b* is a flat background
 per bin. The model is fit directly to raw counts — not to the reduced asymmetry
-— using a Poisson (Cash) or Gaussian cost. The free amplitudes carry the
-composition information; the lifetimes are held fixed at their table values
-by default.
+— using a Poisson (Cash) or Gaussian cost. The lifetimes are held fixed at their table values by default. The exponential
+sum is a defined count model; a successful synthetic fit does not validate a
+material's capture physics.
+
+.. _derived-negative-muon-lifetimes:
 
 The lifetime table
 ------------------
 
-Lifetimes are transcribed from Table C.1 of Blundell, De Renzi, Lancaster &
-Pratt, *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford,
-2022), Appendix C, which
-combines measurements from Suzuki, Measday & Roalsvig (1987). Values for 79
-elements from H (Z = 1) to Np (Z = 93) are included. A small number of entries
-marked ``source="WiMDA-provisional"`` carry no published uncertainty and are
-drawn from WiMDA's older table where the primary compilation has no entry.
+The table contains 79 element keys. Its source strings retain the attribution
+``SuzukiMeasdayRoalsvig1987`` or ``WiMDA-provisional``; these strings are not
+per-row verification certificates. Seven provisional entries carry no published
+uncertainty. The claimed textbook aggregation has not been independently
+reconciled with every source measurement.
+
+Direct inspection of Suzuki et al. Table IV confirms source-association
+problems: its Pd row is 96.0 ± 0.6 ns, Ho is 74.9 ± 0.6 ns and Er is
+74.4 ± 1.5 ns; these differ from the stored defaults. Ru and Tm have no rows
+there. The compendium reports individual measurements, including isotope and
+particle-channel distinctions for actinides; it does not prescribe one weighted
+mean for every element. Source selection, uncertainties and isotope semantics
+remain unresolved in `issue 661 <https://github.com/BenHuddart/asymmetry/issues/661>`_.
+Check any lifetime used for interpretation against its reported measurement.
 
 Access lifetimes programmatically via
 :func:`~asymmetry.core.negmu.lifetimes.tau_us` and
@@ -93,12 +127,6 @@ element's lifetime by including its symbol in
        include_decay_background=True,
        free_tau=frozenset({"Fe"}),   # fit the Fe lifetime as a free parameter
    )
-
-WiMDA's older element table has several transcription errors — a Ti/Tl symbol
-swap and divergent values for Ne, Zn, Sr, and Ba — that were identified during
-the porting study (``docs/porting/negative-muon-analysis/``). The Table C.1
-values from the primary Suzuki/Measday/Roalsvig compilation are adopted
-throughout.
 
 *When to use this.* Reach for the negative-muon capture-lifetime API when:
 
@@ -199,7 +227,9 @@ real measurement, replace ``template`` and ``run`` with a loaded
        print(f"{r.numerator}/{r.denominator} = {r.ratio:.2f}({round(r.sigma * 100):d})")
    # Ca/Fe = 1.67(5)
 
-The ratio Ca/Fe = 1.67(5) recovers the input weight ratio 5/3.
+The amplitude ratio Ca/Fe = 1.67(5) recovers the targeted exponential-coefficient
+ratio, approximately 5/3. The simulator's integrated population weights are
+1.68/0.618; unequal lifetimes make this a different ratio.
 
 Forward/backward fitting and α
 -------------------------------
@@ -216,8 +246,8 @@ calibration constant α:
 
 The amplitudes N\ :sub:`i` are **shared** between the two banks (isotropic
 capture populations), so the per-side capture ratios are identical by
-construction. This diverges from WiMDA, which fits independent per-side
-amplitudes. Use per-group calls to
+construction. This is an imposed shared-population model, not an independent
+check of forward/backward equality. Use per-group calls to
 :func:`~asymmetry.core.negmu.fit.fit_capture_group` on each bank when a
 genuine forward/backward amplitude difference is needed.
 

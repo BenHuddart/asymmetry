@@ -1,51 +1,12 @@
-"""Muon + electron + proton (radical) spin Hamiltonian and RF-µSR resonance fit.
+"""Defined isotropic electron-muon-proton contact Hamiltonian and RF branches.
 
-Follows WiMDA's ``RigiWorkshopFit`` energy-level / RF-resonance models, adapted
-to Asymmetry conventions:
-
-* energies / hyperfine couplings in **MHz**, applied field in **Gauss**;
-* gyromagnetic ratios taken from :mod:`asymmetry.core.utils.constants` and
-  :mod:`asymmetry.core.fitting.muonium` rather than WiMDA's literals
-  (``g_mu = 0.01355342``, ``g_e = 2.80249514``, ``g_p = 0.00425764`` MHz/G —
-  they agree to ~5 figures);
-* WiMDA's bespoke Jacobi/Householder eigensolvers (``eigen``..``eigen4``) are
-  replaced by :func:`numpy.linalg.eigvalsh` — the spectrum of a Hermitian
-  matrix is basis-independent, so the sorted eigenvalues (and therefore every
-  level *difference* WiMDA selects) are identical to machine precision.
-
-**The model.** A muoniated radical such as cyclohexadienyl (C₆H₆Mu) couples the
-muon spin **and** one dominant proton spin to the unpaired electron. The
-isotropic contact Hamiltonian in the (electron ⊗ muon ⊗ proton) product basis,
-in frequency units (MHz), is
-
-    H = A_µ · Sₑ·S_µ + A_p · Sₑ·S_p
-        + (γₑ Sₑz − γ_µ S_µz − γ_p S_pz) · B,
-
-where ``A_µ`` is the muon hyperfine coupling, ``A_p`` the proton hyperfine
-coupling, and ``B`` the applied (longitudinal) field. Note the proton couples to
-the *electron*, not directly to the muon — the standard radical topology. With
-``A_p = 0`` the proton decouples and the 8 levels collapse pairwise onto the
-4 Breit-Rabi muonium levels of :func:`asymmetry.core.fitting.muonium._tf_levels`
-(plus the bare proton Zeeman splitting), which is the cross-check the unit tests
-assert.
-
-**RF-µSR resonance.** In an RF-µSR experiment a fixed-frequency RF field ``ν_RF``
-is applied while the static field ``B`` is swept; a resonance (an asymmetry dip
-or peak) occurs whenever an RF-driven muon-spin-flip transition matches ``ν_RF``.
-For the radical there are **two** such transitions, between the sorted-eigenvalue
-pairs ``E₇−E₅`` and ``E₈−E₆`` (WiMDA's ``RFresonanceMuPlusProtonExact``
-selectors ``75`` and ``86``). Their resonance fields ``B₁`` and ``B₂`` bracket
-the W-shaped double dip; the mean tracks ``A_µ`` and the splitting tracks
-``A_p``, so a single field-swept scan determines **both** hyperfine constants
-simultaneously. This is the capability flagged as parity gap PC1 against WiMDA
-(``docs/testing/parity-checks.md`` on the testing branch); see
-``docs/porting/rf-musr-resonance-fit/``.
-
-The high-field-limit linear map ``B_res = (ν_RF ± ½A_µ)/γ_µ`` and even WiMDA's
-own first-order **analytic** levels (:func:`analytic_rf_transition_freqs`) are
-inaccurate at the low fields (hundreds of G) where these scans are taken — hence
-the exact diagonalisation. Reference: I. McKenzie, R. Scheuermann, S. P.
-Cottrell, J. S. Lord, and I. M. Tucker, J. Phys. Chem. B 117, 13614 (2013).
+In cyclic frequency units H/h=A_mu*S_e.S_mu+A_p*S_e.S_p
++(g_e*S_ez-g_mu*S_muz-g_p*S_pz)*B, with g=gamma/(2*pi) in MHz/G.
+The fitted branches are sorted gaps E7-E5 and E8-E6 (one-based labels).
+Exact diagonalisation does not establish transition strengths or visibility:
+no RF matrix elements, populations or additional resonances are computed.
+McKenzie et al., J. Phys. Chem. B 117, 13614 (2013), supplies experimental
+radical spectroscopy context, not a global proof of this branch selection.
 """
 
 from __future__ import annotations
@@ -60,11 +21,10 @@ from asymmetry.core.utils.constants import (
     PROTON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 )
 
-#: Proton gyromagnetic ratio γ_p/2π in MHz/G (WiMDA's ``g_p = 0.00425764``).
+#: Proton gyromagnetic ratio γ_p/2π in MHz/G.
 G_P_MHZ_PER_G = PROTON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
 
-#: Default field-scan bracket (Gauss) for the resonance root search; mirrors
-#: WiMDA's ``zbrent(...,0,2000,...)`` window.
+#: Defined field-scan bracket (Gauss) for the resonance root search.
 _RES_FIELD_MIN_G = 1.0
 _RES_FIELD_MAX_G = 2000.0
 #: Coarse grid resolution used to bracket sign changes before Brent refinement.
@@ -81,8 +41,7 @@ def _spin_half_ops() -> tuple[NDArray[np.complex128], ...]:
 def _build_operators() -> tuple[NDArray[np.complex128], ...]:
     """Cartesian spin operators for electron, muon and proton in the 8-dim basis.
 
-    Ordering of the Kronecker product is (electron ⊗ muon ⊗ proton), matching the
-    sign pattern of WiMDA's diagonal in ``muproton1``.
+    Ordering of the Kronecker product is electron ⊗ muon ⊗ proton.
     """
     sx, sy, sz = _spin_half_ops()
     i2 = np.eye(2, dtype=complex)
@@ -141,10 +100,10 @@ def mu_proton_levels(
 def rf_transition_freqs(
     field: NDArray[np.float64] | float, A_mu: float, A_p: float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """The two RF-driven muon-spin-flip transition frequencies (MHz) vs field.
+    """The two selected sorted-energy gaps (MHz) vs field.
 
-    Returns ``(f1, f2)`` for the sorted-eigenvalue pairs ``E₇−E₅`` and ``E₈−E₆``
-    (1-indexed; WiMDA's exact-diagonalisation selectors ``75`` and ``86``). Both
+    Returns ``(f1, f2)`` for the pairs ``E₇−E₅`` and ``E₈−E₆``
+    (one-based labels); visibility is not computed. Both
     are returned as arrays matching the shape of ``field`` (0-d arrays for a
     scalar input).
     """

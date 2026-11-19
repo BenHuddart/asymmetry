@@ -85,13 +85,7 @@ SCOPES: tuple[str, ...] = ("common", "field", "temperature", "angle")
 
 @cache
 def _optional_function_params(function: Callable) -> frozenset[str]:
-    """Names of a component function's parameters that carry a Python default.
-
-    These are the parameters that may legitimately be absent from a saved
-    parameter set (added to the component after the fit was stored); the
-    function's own default then applies. Cached per function — the component
-    registry is a small fixed set.
-    """
+    """Optional component parameters whose function defaults supply absent inputs."""
     try:
         signature = inspect.signature(function)
     except (TypeError, ValueError):
@@ -319,15 +313,10 @@ def _angular_fourier2(
     K_amp: float,
     theta2: float,
 ) -> NDArray[np.float64]:
-    """Misalignment-aware Knight-shift modulation vs orientation angle θ (degrees).
+    """Defined first/second-harmonic modulation, orientation angles in degrees.
 
-    ``K(θ) = K_avg + K_1*cos(θ - θ1) + K_amp*cos(2(θ - θ2))``. A perfectly
-    aligned rotation axis gives a pure second harmonic (``AngularCos2``); a
-    tilted axis leaks a first harmonic whose amplitude grows with the tilt
-    (cf. the MnSi rotation-scan analysis), so ``K_1 != 0`` is fit-level
-    evidence of sample misalignment. This is the phenomenological Fourier
-    form — the full Euler-angle solve tying ``K_1``/``theta1`` to a physical
-    tilt angle is out of scope.
+    K(theta)=K_avg+K_1*cos(theta-theta1)+K_amp*cos(2*(theta-theta2)).
+    A first harmonic alone does not uniquely identify a physical tilt.
     """
     theta_rad = np.radians(np.asarray(x, dtype=float))
     theta1_rad = np.radians(float(theta1))
@@ -345,15 +334,11 @@ def _redfield(
     nu: float,
     m: int = 2,
 ) -> NDArray[np.float64]:
-    """0D Redfield contribution in paper notation.
+    """Defined Redfield-shaped contribution, field in Gauss, D and nu in MHz.
 
-    λ0D(B) = (D^2 / 4) * [2/nu] / [1 + (ω_mu/nu)^m],
-    where ω_mu = gamma_mu * B.
-
-    Notes
-    -----
-    - ``x`` is field in Gauss.
-    - ``D`` and ``nu`` are in MHz.
+    The denominator uses cyclic f_mu=(gamma_mu/2pi)*B. For m=2, an
+    exponential angular-frequency correlation has inverse time r=2*pi*nu
+    and component width Delta=sqrt(pi/2)*D. General m is empirical.
     """
     xx = np.asarray(x, dtype=float)
     omega_mu = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * np.abs(xx)
@@ -719,12 +704,15 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_defaults={"D": 10.0, "nu": 10.0, "m": 2},
         param_info={
             "D": get_param_info("D"),
-            "nu": get_param_info("nu"),
+            "nu": replace(
+                get_param_info("nu"),
+                description="Cyclic frequency scale in MHz; for m=2 the inverse correlation time is r=2πν.",
+            ),
             "m": replace(get_param_info("m"), default_min=1e-12),
         },
         formula_template="(({D}^2)/4)*(2/{nu})/(1 + ((gamma_mu*x)/{nu})^{m})",
         latex_equation=(
-            r"\lambda(B) = \frac{D^2}{4} \cdot \frac{2/\nu}{1 + (\gamma_\mu B / \nu)^m}"
+            r"\lambda(B) = \frac{D^2}{4} \cdot \frac{2/\nu}{1 + (\gamma_\mu B / (2\pi\nu))^m}"
         ),
         scopes=("field",),
     ),
@@ -938,14 +926,17 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "BG": 0.0,
         },
         param_info={
-            "A_mu": get_param_info("A_mu"),
-            "A_p": get_param_info("A_p"),
-            "nu_RF": get_param_info("nu_RF"),
-            "ampl1": get_param_info("ampl1"),
-            "wid1": get_param_info("wid1"),
-            "ampl2": get_param_info("ampl2"),
-            "wid2": get_param_info("wid2"),
-            "BG": get_param_info("BG"),
+            name: replace(get_param_info(name), description=description)
+            for name, description in {
+                "A_mu": "Isotropic electron–muon contact hyperfine coupling (cyclic MHz).",
+                "A_p": "Isotropic electron–proton contact hyperfine coupling (cyclic MHz).",
+                "nu_RF": "Applied cyclic RF frequency in MHz; hold fixed at the experimental value.",
+                "ampl1": "Height of the first selected-branch Lorentzian; negative for a dip.",
+                "wid1": "Half width at half maximum of the first selected-branch peak in Gauss.",
+                "ampl2": "Height of the second selected-branch Lorentzian; negative for a dip.",
+                "wid2": "Half width at half maximum of the second selected-branch peak in Gauss.",
+                "BG": "Additive constant baseline in the same units as the fitted observable.",
+            }.items()
         },
         formula_template=(
             "{BG} + {ampl1}*{wid1}^2/({wid1}^2 + (x-B1)^2)"
@@ -954,8 +945,9 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         ),
         latex_equation=(
             r"y(B) = \mathrm{BG} + \sum_{i=1,2} \mathrm{ampl}_i\,"
-            r"\frac{\mathrm{wid}_i^2}{\mathrm{wid}_i^2 + (B - B_i)^2},\quad "
-            r"E(B_i; A_\mu, A_p) = \nu_{\mathrm{RF}}"
+            r"\frac{\mathrm{wid}_i^2}{\mathrm{wid}_i^2 + (B - B_i)^2}"
+            "\n"
+            r"f_i(B_i; A_\mu, A_p) = \nu_{\mathrm{RF}}"
         ),
         scopes=("field",),
     ),
