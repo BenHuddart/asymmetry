@@ -26,3 +26,10 @@ Grouped time-domain fitting
 .. autoclass:: asymmetry.core.fitting.grouped_time_domain.GroupedTimeDomainGroup
    :no-members:
    :no-special-members:
+
+Grouped nuisance seeds
+----------------------
+
+.. autofunction:: asymmetry.core.fitting.grouped_seeding.seed_group_background_and_n0
+
+.. autofunction:: asymmetry.core.fitting.grouped_seeding.seed_group_absolute_phases

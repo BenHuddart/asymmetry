@@ -62,6 +62,24 @@ Parameter trend models
    others (``scope="angle"``).
 
 
+Recorded cross-group configurations
+-----------------------------------
+
+.. autoclass:: asymmetry.core.fitting.cross_group.CrossGroupFitInputs
+   :members:
+
+.. autoclass:: asymmetry.core.fitting.cross_group.CrossGroupFitRun
+   :members:
+
+.. autoexception:: asymmetry.core.fitting.cross_group.CrossGroupFitInputError
+
+.. autofunction:: asymmetry.core.fitting.cross_group.prepare_cross_group_fit
+
+.. autofunction:: asymmetry.core.fitting.cross_group.run_cross_group_fit
+
+.. autofunction:: asymmetry.core.fitting.cross_group.run_cross_group_fit_from_config
+
+
 Field-scan baseline and peak inference
 --------------------------------------
 

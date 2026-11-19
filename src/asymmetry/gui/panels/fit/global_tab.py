@@ -63,6 +63,10 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardRecommendation,
 )
 from asymmetry.core.fitting.global_search.trend_objective import left_out_note
+from asymmetry.core.fitting.grouped_seeding import (
+    seed_group_absolute_phases,
+    seed_group_background_and_n0,
+)
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     _group_dataset_run_number,
@@ -82,6 +86,11 @@ from asymmetry.core.fitting.parameters import (
     ParameterSet,
     get_param_info,
     split_parameter_name,
+)
+from asymmetry.core.fitting.recipe_inputs import (
+    build_recipe_engine_inputs,
+    file_parameter_value,
+    split_bounds_text,
 )
 from asymmetry.core.fitting.result_summary import reduced_statistic_label, reduced_statistic_summary
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
@@ -139,11 +148,6 @@ from asymmetry.gui.widgets.series_dialogs import SERIES, confirm_delete, prompt_
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
-from .recipe_inputs import build_recipe_engine_inputs
-from .seeding import (
-    _seed_group_absolute_phases,
-    _seed_group_background_and_n0,
-)
 from .tab_base import (
     RESTORED_TAG,
     SEEDED,
@@ -161,7 +165,6 @@ from .tab_base import (
     _fit_summary,
     _format_bound,
     _format_seed_value,
-    _get_file_value_for_parameter,
     _grouped_formula_string,
     _iter_named_parameter_rows,
     _make_param_name_item,
@@ -172,7 +175,6 @@ from .tab_base import (
     _set_formula_label_text,
     _set_value_provenance,
     _size_param_table_to_content,
-    _split_bounds_text,
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
     _value_provenance,
@@ -1944,12 +1946,11 @@ class GlobalFitTab(FitTabBase):
         fits one run, so it is that run's field.
         """
         if self._grouped_single:
-            return _get_file_value_for_parameter(self._current_dataset, "field")
+            return file_parameter_value(self._current_dataset, "field")
         fields = [
             float(value)
             for value in (
-                _get_file_value_for_parameter(dataset, "field")
-                for dataset in self._seed_member_datasets()
+                file_parameter_value(dataset, "field") for dataset in self._seed_member_datasets()
             )
             if value is not None and value != 0.0
         ]
@@ -2536,7 +2537,7 @@ class GlobalFitTab(FitTabBase):
                 bounds_text = previous.get("bounds") or (
                     f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
                 )
-            minimum, maximum = _split_bounds_text(bounds_text)
+            minimum, maximum = split_bounds_text(bounds_text)
             self._param_table.setItem(i, _COL_MIN, QTableWidgetItem(minimum))
             self._param_table.setItem(i, _COL_MAX, QTableWidgetItem(maximum))
 
@@ -3126,10 +3127,7 @@ class GlobalFitTab(FitTabBase):
         # resolver rather than living inside it (a joint run omits it, D6).
         effective_values = self._effective_initial_values_by_run(parsed)
 
-        # The recipe → engine-inputs step, shared with the joint-fit window so a
-        # series resolves identically whether it runs here or inside a joint fit.
-        # ``_parse_parameter_configuration`` above has already validated the very
-        # cells the recipe is read from, so the rows reaching it are sound.
+        # The committed recipe and per-run overrides share the joint-fit resolver.
         engine_inputs = build_recipe_engine_inputs(
             self.current_recipe(), model, self._datasets, values_by_run=effective_values
         )
@@ -5343,7 +5341,7 @@ class GlobalFitTab(FitTabBase):
                 if idx >= 0:
                     type_combo.setCurrentIndex(idx)
 
-            minimum, maximum = _split_bounds_text(p_data.get("bounds", "-inf, inf"))
+            minimum, maximum = split_bounds_text(p_data.get("bounds", "-inf, inf"))
             self._param_table.item(i, _COL_MIN).setText(minimum)
             self._param_table.item(i, _COL_MAX).setText(maximum)
         _configure_fraction_rows_in_table(
@@ -5630,13 +5628,13 @@ class GlobalFitTab(FitTabBase):
 
         seeds: dict[int, dict[str, dict[str, float]]] = {}
         for run, groups in self._grouped_members.items():
-            phases = _seed_group_absolute_phases(groups)
+            phases = seed_group_absolute_phases(groups)
             per_param: dict[str, dict[str, float]] = {name: {} for name in GROUP_NUISANCE_PARAMS}
             for group in groups:
                 gid = str(getattr(group, "group_id", ""))
                 counts = np.asarray(getattr(group, "counts", []), dtype=float)
                 if counts.size:
-                    background, n0, amplitude = _seed_group_background_and_n0(
+                    background, n0, amplitude = seed_group_background_and_n0(
                         counts, time=getattr(group, "time", None)
                     )
                     per_param["N0"][gid] = n0
@@ -5769,13 +5767,13 @@ class GlobalFitTab(FitTabBase):
             # Grouped fits hold the shared model phase fixed at zero, so each
             # group's per-group phase nuisance carries the full *absolute* FFT
             # phase estimate rather than an offset relative to the first group.
-            relative_phase_defaults_by_group = _seed_group_absolute_phases(grouped_groups)
+            relative_phase_defaults_by_group = seed_group_absolute_phases(grouped_groups)
             for group in grouped_groups:
                 counts = np.asarray(getattr(group, "counts", []), dtype=float)
                 if counts.size == 0:
                     continue
                 group_id = getattr(group, "group_id", None)
-                background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
+                background_default, n0_default, amplitude_default = seed_group_background_and_n0(
                     counts,
                     time=getattr(group, "time", None),
                 )
@@ -5832,7 +5830,7 @@ class GlobalFitTab(FitTabBase):
                 lambda _text, row=row: self._on_group_param_type_changed(row)
             )
             self._group_param_table.setCellWidget(row, self._group_param_type_column(), type_combo)
-            minimum, maximum = _split_bounds_text(previous.get("bounds") or bounds)
+            minimum, maximum = split_bounds_text(previous.get("bounds") or bounds)
             min_column = self._group_param_min_column()
             self._group_param_table.setItem(row, min_column, QTableWidgetItem(minimum))
             self._group_param_table.setItem(row, min_column + 1, QTableWidgetItem(maximum))
@@ -5975,7 +5973,7 @@ class GlobalFitTab(FitTabBase):
                 previous_type = "Global"
             type_combo.setCurrentText(previous_type)
             self._group_model_table.setCellWidget(row, 2, type_combo)
-            minimum, maximum = _split_bounds_text(
+            minimum, maximum = split_bounds_text(
                 previous.get("bounds")
                 or f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
             )
@@ -6279,7 +6277,7 @@ class GlobalFitTab(FitTabBase):
                 idx = type_combo.findText(str(entry.get("type", "")))
                 if idx >= 0:
                     type_combo.setCurrentIndex(idx)
-            minimum, maximum = _split_bounds_text(entry.get("bounds", "-inf, inf"))
+            minimum, maximum = split_bounds_text(entry.get("bounds", "-inf, inf"))
             table.item(row, _COL_MIN).setText(minimum)
             table.item(row, _COL_MAX).setText(maximum)
 
@@ -6312,7 +6310,7 @@ class GlobalFitTab(FitTabBase):
                     idx = type_combo.findText(str(entry.get("type", "")))
                     if idx >= 0:
                         type_combo.setCurrentIndex(idx)
-                minimum, maximum = _split_bounds_text(entry.get("bounds", "-inf, inf"))
+                minimum, maximum = split_bounds_text(entry.get("bounds", "-inf, inf"))
                 self._group_param_table.item(row, min_column).setText(minimum)
                 self._group_param_table.item(row, min_column + 1).setText(maximum)
                 self._sync_group_param_row_values(row)

@@ -56,8 +56,7 @@ def forbid_trend_optimization(monkeypatch) -> None:
         "asymmetry.core.fitting.parameter_models.global_fit_parameter_model",
         "asymmetry.gui.panels.fit_parameters_panel.fit_parameter_model",
         "asymmetry.gui.panels.model_fit_dialog.fit_parameter_model",
-        "asymmetry.gui.panels.cross_group_config.global_fit_parameter_model",
-        "asymmetry.gui.panels.cross_group_fit_dialog.global_fit_parameter_model",
+        "asymmetry.core.fitting.cross_group.global_fit_parameter_model",
     ):
         monkeypatch.setattr(target, unexpected)
     for method in ("migrad", "simplex", "hesse"):

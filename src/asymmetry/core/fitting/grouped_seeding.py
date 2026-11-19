@@ -1,23 +1,11 @@
-"""Fit-panel seeding helpers (per-group phase/background/N0 seed math).
+"""Grouped-count background, normalization and absolute FFT phase seeds."""
 
-Split out of ``fit_panel.py`` (Phase 2 mechanical split). Pure helpers; no
-intra-package dependencies.
-
-What lives here is the *per-detector-group nuisance* seeding of a grouped fit —
-quantities of a detector group, not parameters of the fit function, which is why
-they are not part of :mod:`asymmetry.core.fitting.seeding`'s one seeding
-function: heuristic grouped-count background/N0/amplitude seeding
-(``_seed_group_background_and_n0``), and FFT-based per-group phase seeding
-(``_group_phase_window_mhz`` → ``_seed_group_phase_degrees`` →
-``_seed_group_absolute_phases``, with ``_bounded_phase_seed_padding`` capping
-the padded FFT size so re-seeding on every selection change stays cheap).
-Entry points used by ``global_tab.py``: ``_seed_group_background_and_n0`` and
-``_seed_group_absolute_phases``.
-"""
+from collections.abc import Sequence
 
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.grouped_time_domain import GroupedTimeDomainGroup
 from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -26,7 +14,7 @@ from asymmetry.core.utils.constants import (
 )
 
 
-def _seed_group_background_and_n0(
+def seed_group_background_and_n0(
     counts: np.ndarray,
     *,
     time: np.ndarray | None = None,
@@ -142,11 +130,7 @@ def _group_phase_window_mhz(
     return 0.0, None
 
 
-#: Upper bound on the padded FFT length used for group-phase *seeding*.
-#: Zero-padding only interpolates the spectrum, so capping it for very large
-#: (high-resolution) histograms leaves the peak-phase seed essentially
-#: unchanged while keeping the per-selection cost bounded (avoids multi-second
-#: hangs when seeding is refreshed on every dataset/selection change).
+#: Zero-padding interpolates the spectrum; seed FFT allocation stays bounded.
 _MAX_PHASE_SEED_FFT_POINTS = 1 << 17  # 131072
 
 
@@ -158,13 +142,13 @@ def _bounded_phase_seed_padding(n_points: int, *, desired: int = 8) -> int:
     return max(1, min(int(desired), int(max_factor)))
 
 
-def _seed_group_phase_degrees(grouped_groups: list[object]) -> dict[str, float]:
+def _seed_group_phase_degrees(grouped_groups: Sequence[GroupedTimeDomainGroup]) -> dict[str, float]:
     """Return the FFT-estimated absolute phase (degrees) of each group's oscillation."""
     phase_degrees_by_group: dict[str, float] = {}
     for group in grouped_groups:
-        group_id = str(getattr(group, "group_id", ""))
-        time = np.asarray(getattr(group, "time", []), dtype=float)
-        counts = np.asarray(getattr(group, "counts", []), dtype=float)
+        group_id = str(group.group_id)
+        time = np.asarray(group.time, dtype=float)
+        counts = np.asarray(group.counts, dtype=float)
         if time.size < 4 or counts.size != time.size:
             phase_degrees_by_group[group_id] = 0.0
             continue
@@ -176,14 +160,14 @@ def _seed_group_phase_degrees(grouped_groups: list[object]) -> dict[str, float]:
             phase_degrees_by_group[group_id] = 0.0
             continue
 
-        error = np.asarray(getattr(group, "error", np.ones_like(counts)), dtype=float)
+        error = np.asarray(group.error, dtype=float)
         if error.shape != counts.shape:
             error = np.ones_like(counts, dtype=float)
         else:
             error = error[finite_mask]
 
-        metadata = dict(getattr(group, "metadata", {}) or {})
-        background_seed, n0_seed, _amplitude_seed = _seed_group_background_and_n0(
+        metadata = dict(group.metadata)
+        background_seed, n0_seed, _amplitude_seed = seed_group_background_and_n0(
             counts,
             time=time,
         )
@@ -213,12 +197,9 @@ def _seed_group_phase_degrees(grouped_groups: list[object]) -> dict[str, float]:
     return phase_degrees_by_group
 
 
-def _wrap_phase_rad(phase_deg: float) -> float:
-    """Wrap a phase in degrees to radians on ``(-pi, pi]``."""
-    return float(np.angle(np.exp(1j * np.deg2rad(phase_deg))))
-
-
-def _seed_group_absolute_phases(grouped_groups: list[object]) -> dict[str, float]:
+def seed_group_absolute_phases(
+    grouped_groups: Sequence[GroupedTimeDomainGroup],
+) -> dict[str, float]:
     """Return per-group *absolute* phase seeds in radians (wrapped to ``(-pi, pi]``).
 
     Grouped fits hold the shared model phase at zero, so each group's per-group
@@ -226,6 +207,6 @@ def _seed_group_absolute_phases(grouped_groups: list[object]) -> dict[str, float
     relative to the first group.
     """
     return {
-        group_id: _wrap_phase_rad(phase_deg)
+        group_id: float(np.angle(np.exp(1j * np.deg2rad(phase_deg))))
         for group_id, phase_deg in _seed_group_phase_degrees(grouped_groups).items()
     }

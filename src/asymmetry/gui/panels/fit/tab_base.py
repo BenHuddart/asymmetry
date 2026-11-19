@@ -499,29 +499,6 @@ def _configure_fraction_rows_in_table(
                 max_item.setText("1.0")
 
 
-def _get_file_value_for_parameter(
-    dataset: MuonDataset | None,
-    param_base_name: str,
-) -> float | None:
-    """Get the file-specific value for a parameter from dataset metadata.
-
-    Returns the value in Gauss for field-like parameters, or None if not available.
-    """
-    if dataset is None:
-        return None
-    if param_base_name in {"field", "B_L"}:
-        if dataset.run is not None and hasattr(dataset.run, "field"):
-            return float(dataset.run.field)
-        # Fall back to dataset-level metadata (e.g. datasets without a Run object).
-        raw = dataset.metadata.get("field")
-        if raw is not None:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                pass
-    return None
-
-
 def _fit_summary(result) -> dict:
     """Shared fit summary (χ² verdict + params-at-bound) for *result*, once.
 
@@ -1115,18 +1092,6 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     box = getattr(label, "_formula_box", None)
     if box is not None:
         box.refresh_height()
-
-
-def _split_bounds_text(text: object) -> tuple[str, str]:
-    """Split a stored ``"<min>, <max>"`` bounds string into its two cell texts.
-
-    The saved project shape and the tables' carried row state both describe a
-    parameter's limits as one string; the Batch tab's tables show them as a Min
-    and a Max cell. A string with no comma is read as a lower bound alone, which
-    is what a half-typed cell means.
-    """
-    minimum, _, maximum = str(text).partition(",")
-    return minimum.strip() or "-inf", maximum.strip() or "inf"
 
 
 def table_as_tsv(table: QTableWidget) -> str:

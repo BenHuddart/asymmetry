@@ -122,16 +122,13 @@ asymmetry/
 │   │   ├── plot_panel.py     # Interactive plotting canvas
 │   │   ├── fit_panel.py      # Thin backward-compat shim re-exporting panels/fit/ (see below)
 │   │   ├── fit/              # Fit setup and results — split from the former fit_panel.py
-│   │   │   ├── __init__.py   # Public API re-exports; dependency order: seeding → tab_base → single_tab/global_tab → panel
-│   │   │   ├── seeding.py     # Phase/background/N0 seed math (leaf, no intra-package deps)
+│   │   │   ├── __init__.py   # Public API re-exports; dependency order: tab_base → single_tab/global_tab → panel
 │   │   │   ├── tab_base.py    # FitParameterTable, FitTabBase, tie dialog, shared delegates/helpers
 │   │   │   ├── single_tab.py  # SingleFitTab
 │   │   │   ├── global_tab.py  # GlobalFitTab + batch-seeding constants
-│   │   │   ├── recipe_inputs.py # build_recipe_engine_inputs() — one series' recipe -> engine inputs, shared by the Batch tab and the joint-fit window
 │   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── cross_group_fit_dialog.py     # Cross-group Global/Local/Fixed role dialog (+ Suggest roles)
-│   │   ├── cross_group_config.py         # Widget-free config→global_fit_parameter_model bridge (shared by dialog + refit)
 │   │   ├── global_fit_setup_dialog.py    # Explicit setup dialog: parameter, series, x-axis, editable group variable
 │   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
@@ -683,9 +680,11 @@ values (prefilled from inference but overridable, incl. custom columns).
 *Continue* opens `gui/panels/cross_group_fit_dialog.py::CrossGroupFitDialog`,
 which carries the per-parameter Global/Local/Fixed role table and a *Suggest
 roles* button that runs `suggest_cross_group_roles` off-thread and applies the
-recommendation. `gui/panels/cross_group_config.py` is the widget-free
-config→`global_fit_parameter_model` bridge shared by the dialog and the
-off-thread **Refit** path. On accept, `MainWindow._on_cross_group_fit_completed`
+recommendation. `core/fitting/cross_group.py::prepare_cross_group_fit` resolves
+user or recorded configuration into detached `CrossGroupFitInputs`;
+`run_cross_group_fit` executes them for the dialog and off-thread **Refit**.
+Parameter-list reconciliation belongs to this configuration input boundary,
+while live model/table synchronization stays in the dialog. On accept, `MainWindow._on_cross_group_fit_completed`
 creates or updates (in place, by deterministic batch id) a `GlobalFitStudy` in
 the MainWindow-owned registry (`_global_fit_studies`), persisted via schema v13,
 and displays it in `gui/windows/global_parameter_fit_window.py`. That window
@@ -733,9 +732,8 @@ with fewer than two members) and clearing stamps on `remove_joint_fit`.
 Project schema **v22** adds the top-level `joint_fits` list, purely additive
 (`_migrate_v21_to_v22`).
 
-**GUI workflow.** `gui/panels/fit/recipe_inputs.py::build_recipe_engine_inputs`
-extracts the recipe→engine-inputs step `GlobalFitTab._run_global_fit` already
-did, so a joint run resolves a member's seeds, bounds and fit range exactly as
+**Recipe preparation.** `core/fitting/recipe_inputs.py::build_recipe_engine_inputs`
+resolves a member's seeds, bounds and fit range exactly as
 a solo Batch-tab run of that series would — the joint-fit window edits no
 recipe. Analysis ▸ *New joint fit…* (and the *Joint fits* registry submenu,
 mirroring *Global parameter fits*) opens `gui/windows/joint_fit_window.py::JointFitWindow`:
@@ -1074,3 +1072,8 @@ persistence codec. Fit slots, assessment readers, and fit editors consume the
 canonical form; frozen recipes and calibration records remain historical facts.
 Keep every converter and regression fixture needed to load a released project,
 including alpha projects. Storage versions never establish computation currency.
+
+Grouped nuisance seeding lives in `core/fitting/grouped_seeding.py`: typed
+`GroupedTimeDomainGroup` traces supply absolute FFT phases in radians, while
+background/N0/amplitude estimates use the lifetime-corrected count convention.
+GUI tabs call these pure functions and own their editable table state.
