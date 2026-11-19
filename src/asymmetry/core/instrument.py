@@ -11,10 +11,8 @@ layout editor
 (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
 
-Some grouping presets follow musrfit's instrument definitions
-(``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``) so that GPS
-analyses match the conventions PSI users already know — see the GPS ``WEP``
-preset in :func:`_build_gps`.
+PSI declarations distinguish acquired readouts, physical affiliations and drawing
+occurrences. Their sources and unresolved assumptions are published with each profile.
 
 Detector IDs are always **1-based** in this module, matching the instrument
 manual conventions.  Conversion to 0-based indices for internal computation
@@ -23,7 +21,6 @@ is the responsibility of the caller.
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
 from typing import Final
@@ -44,6 +41,9 @@ from asymmetry.core.instruments.layout import (
     ReferenceArrow,
     generic_layout,
 )
+from asymmetry.core.instruments.psi_flame import PROFILE as FLAME_PROFILE
+from asymmetry.core.instruments.psi_gps import PROFILE as GPS_PROFILE
+from asymmetry.core.instruments.psi_hal9500 import PROFILE as HAL_PROFILE
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import matches_name
 from asymmetry.core.transform.grouping import resolve_group_indices
@@ -262,726 +262,6 @@ INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
 )
 
 
-# ---------------------------------------------------------------------------
-# PSI FLAME layout builder
-# ---------------------------------------------------------------------------
-
-
-def _plan_rectangle(
-    detector_id: int,
-    name: str,
-    x: float,
-    y: float,
-    width: float,
-    height: float,
-    *,
-    read_only: bool = False,
-) -> DetectorSegment:
-    """Return one rectangular detector plate for a plan-view layout (FLAME, GPS)."""
-    return DetectorSegment(
-        detector_id=detector_id,
-        sector_index=detector_id - 1,
-        ring_index=0,
-        angle_center_deg=0.0,
-        angle_half_width_deg=0.0,
-        r_inner=0.0,
-        r_outer=0.0,
-        shape="rectangle",
-        label=name,
-        x_center=x,
-        y_center=y,
-        width=width,
-        height=height,
-        read_only=read_only,
-    )
-
-
-def _build_flame() -> InstrumentLayout:
-    """Build the PSI FLAME detector layout.
-
-    FLAME uses eight rectangular detector plates.  The plan-view geometry below
-    follows the published detector-name / histogram-number convention:
-
-    * 1 = Forward, 2 = Backward
-    * 3 = Right, 4 = Left
-    * 5 = R_F, 6 = R_B, 7 = L_F, 8 = L_B
-
-    The schematic is drawn from above, with the beam and main magnetic field
-    along +z and transverse left/right along y.
-    """
-    segments = (
-        _plan_rectangle(1, "Forward", 3.55, 0.0, 0.74, 1.72),
-        _plan_rectangle(2, "Backward", -3.55, 0.0, 0.74, 1.72),
-        _plan_rectangle(3, "Right", 0.0, -2.18, 2.18, 0.82),
-        _plan_rectangle(4, "Left", 0.0, 2.18, 2.18, 0.82),
-        _plan_rectangle(5, "R_F", 1.55, -2.18, 0.82, 0.82),
-        _plan_rectangle(6, "R_B", -1.55, -2.18, 0.82, 0.82),
-        _plan_rectangle(7, "L_F", 1.55, 2.18, 0.82, 0.82),
-        _plan_rectangle(8, "L_B", -1.55, 2.18, 0.82, 0.82),
-    )
-    banks = (BankLayout(name="FLAME top view", segments=segments),)
-
-    presets: dict[str, PresetGrouping] = {}
-    # FLAME is a PSI instrument: Forward/Backward name the *beam* directions, and
-    # for surface muons the spin is antiparallel to the momentum so the initial
-    # polarization points toward the Backward detector.  Declaring the
-    # analysis-forward slot as the Backward-named group (2) makes the preset match
-    # the PSI convention A = (B − αF)/(B + αF) standalone (headless core, no GUI
-    # swap to compensate) — the same treatment applied to the GPS presets.
-    presets["Longitudinal"] = PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Forward", (1,)),
-            2: GroupDefinition("Backward", (2,)),
-        },
-        forward_group=2,  # analysis-forward = beam-Backward group (sees polarization)
-        backward_group=1,  # analysis-backward = beam-Forward group
-    )
-    # Transverse: Right vs Left. musrfit ships no FLAME transverse definition, so
-    # there is no reference leg order to match; the two are a transverse pair
-    # whose order only sets the phase convention. Left as declared.
-    presets["Transverse"] = PresetGrouping(
-        name="Transverse",
-        groups={
-            1: GroupDefinition("Right", (3, 6, 5)),
-            2: GroupDefinition("Left", (4, 8, 7)),
-        },
-        forward_group=1,
-        backward_group=2,
-    )
-
-    return InstrumentLayout(
-        name="FLAME",
-        n_detectors=8,
-        banks=banks,
-        presets=presets,
-        view="plan",
-        reference_arrows=(
-            ReferenceArrow(
-                "beam, main magnetic field",
-                (-2.55, -0.82),
-                (2.55, -0.82),
-                "#202020",
-            ),
-            ReferenceArrow("initial muon spin", (0.0, 0.25), (-2.75, 0.25), "#5b2ea6"),
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# PSI GPS layout builder
-# ---------------------------------------------------------------------------
-
-
-def _gps_endon(detector_id: int, name: str, x: float, y: float, *, into: bool) -> DetectorSegment:
-    """Return a GPS detector seen end-on (⊙ toward / ⊗ away from the viewer).
-
-    End-on segments are always ``read_only`` context: the detector points
-    perpendicular to the current panel, so it is edited in the panel where it
-    lies in-plane.
-    """
-    return DetectorSegment(
-        detector_id=detector_id,
-        sector_index=detector_id - 1,
-        ring_index=0,
-        angle_center_deg=0.0,
-        angle_half_width_deg=0.0,
-        r_inner=0.0,
-        r_outer=0.0,
-        shape="endon_in" if into else "endon_out",
-        label=name,
-        x_center=x,
-        y_center=y,
-        read_only=True,
-    )
-
-
-#: Longitudinal preset shared by both GPS variants.
-def _gps_longitudinal_preset() -> PresetGrouping:
-    """Return the GPS Longitudinal preset in the PSI *analysis* convention.
-
-    PSI names the two beam-axis detectors by **beam** direction (Forward = +z
-    downstream, Backward = −z upstream), so the group *names* stay "Forward"/
-    "Backward" (physical convention).  For surface muons the spin is antiparallel
-    to the momentum, so the initial polarization points toward the **Backward**
-    detector — that is the group that sees the polarization and must occupy the
-    analysis-forward slot.  musrfit's GPS ZF/LF definitions encode exactly this
-    with ``logic_asym_detector FB forward=2(B) backward=1(F)``
-    (``instrument_def_psi.xml``), giving A = (B − αF)/(B + αF) as in the GPS
-    instrument paper (Amato *et al.*, Rev. Sci. Instrum. 88, 093301 (2017),
-    Eq. 2).  We therefore declare ``forward_group`` = the Backward-named group
-    (2) and ``backward_group`` = the Forward-named group (1) so the preset is
-    correct standalone (headless core, with no GUI swap to compensate).
-    """
-    return PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Forward", (1,)),
-            2: GroupDefinition("Backward", (2,)),
-        },
-        forward_group=2,  # analysis-forward = beam-Backward group (sees polarization)
-        backward_group=1,  # analysis-backward = beam-Forward group
-    )
-
-
-def _gps_presets(
-    up: tuple[int, ...],
-    down: tuple[int, ...],
-    left: tuple[int, ...],
-    right: tuple[int, ...],
-) -> dict[str, PresetGrouping]:
-    """Build the shared GPS preset set for a variant.
-
-    *up/down/left/right* are the detector-id tuples for each transverse direction
-    — one id each for the 6-detector BIN layout, the two ``_B``/``_F``
-    sub-detector ids for the 11-detector ROOT layout.  Forward and Backward are
-    always detectors 1 and 2.  Both GPS variants share this builder so the preset
-    physics lives in one place and cannot drift between the two.
-    """
-    return {
-        "Longitudinal": _gps_longitudinal_preset(),
-        # Transverse (Vector): rotator-off transverse geometry. The spin is
-        # antiparallel to the beam and precesses, so leg order only sets the
-        # phase convention. We match musrfit's GPS ``WED(L)`` definition
-        # (``instrument_def_psi.xml``): ``UD forward=3(U) backward=4(D)`` and
-        # ``RL forward=5(R) backward=6(L)``. Group 1 = Up, 2 = Down give the
-        # Up-Down pair forward=Up; group 3 = Right, 4 = Left give the Left-Right
-        # pair forward=Right, both matching musrfit.
-        "Transverse (Vector)": PresetGrouping(
-            name="Transverse (Vector)",
-            groups={
-                1: GroupDefinition("Up-Down Up", up),
-                2: GroupDefinition("Up-Down Down", down),
-                3: GroupDefinition("Left-Right Right", right),
-                4: GroupDefinition("Left-Right Left", left),
-            },
-            forward_group=1,
-            backward_group=2,
-            projections=(
-                AsymmetryProjection(
-                    "Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
-                ),
-                AsymmetryProjection(
-                    "Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]
-                ),
-            ),
-        ),
-        # Spin-rotated: with the spin rotator in transverse geometry the muon spin
-        # is tipped up by ~50 deg (GPS User Guide, Section 13).
-        #
-        # Geometry. For surface muons the *initial* polarization is antiparallel
-        # to the momentum, i.e. it points toward the Backward detector (−z). The
-        # rotator then tips it up (+y). The rotated polarization therefore points
-        # up-and-*backward* and lies in the plane between the **Backward** and
-        # **Up** detectors — NOT Forward+Up. The group that sees the rotated
-        # polarization (analysis-forward) is thus **B+U**, and the opposed group
-        # (analysis-backward) is **F+D**. This is corroborated by musrfit's WEP
-        # phases (B rel_phase=−45, U=+45, F=+135, D=+225): the polarization axis
-        # bisects B and U. (The old F+U/B+D grouping put the up-and-*forward*
-        # diagonal in the forward slot, which is roughly orthogonal to the true
-        # polarization and loses amplitude — the bug this preset fix corrects.)
-        # The name keeps the physical B/U/F/D detector letters.
-        "Spin-rotated (B+U/F+D)": PresetGrouping(
-            name="Spin-rotated (B+U/F+D)",
-            groups={
-                1: GroupDefinition("B+U", (2, *up)),
-                2: GroupDefinition("F+D", (1, *down)),
-            },
-            forward_group=1,  # B+U sees the rotated polarization (analysis-forward)
-            backward_group=2,  # F+D is the opposed group
-        ),
-        # WEP: follows musrfit's spin-rotated GPS setup -- F/B/U/D as four groups
-        # exposed as the FB and UD asymmetry pairs, each reduced with its own
-        # declared alpha (FB = 0.75, UD = 1.0). musrfit declares
-        # ``FB forward=2(B) backward=1(F) alpha=0.75`` and
-        # ``UD forward=3(U) backward=4(D) alpha=1.0``, so the FB projection's
-        # forward leg is the Backward-named group and the UD forward leg is Up.
-        # See _build_gps for the verbatim musrfit definition and provenance.
-        "WEP (spin-rotated)": PresetGrouping(
-            name="WEP (spin-rotated)",
-            groups={
-                1: GroupDefinition("F", (1,)),
-                2: GroupDefinition("B", (2,)),
-                3: GroupDefinition("U", up),
-                4: GroupDefinition("D", down),
-            },
-            forward_group=2,  # analysis-forward = B (matches FB projection below)
-            backward_group=1,  # analysis-backward = F
-            projections=(
-                # FB: A = (B − 0.75 F)/(B + 0.75 F). forward=B(group 2),
-                # backward=F(group 1), alpha=0.75 -- musrfit's leg order and sign.
-                AsymmetryProjection(
-                    "FB", 2, 1, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
-                ),
-                # UD: forward=U(group 3), backward=D(group 4), alpha=1.0.
-                AsymmetryProjection("UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
-            ),
-        ),
-    }
-
-
-def _build_gps() -> InstrumentLayout:
-    """Build the PSI GPS detector layout (General Purpose Spectrometer, πM3.2).
-
-    GPS has six positron detectors defined with respect to the beam direction —
-    **Forward (F), Backward (B), Up (U), Down (D), Right (R), Left (L)** — around
-    the sample, plus a muon counter (M) and veto detectors (a backward veto
-    pyramid and a forward veto) that feed the coincidence logic but are *not*
-    stored as histograms.  U/D/R/L are each two physical subdetectors read by
-    SiPM arrays; in the PSI-BIN export each direction is one combined plate.
-    Source: *GPS User Guide* (A. Amato & H. Luetkens), Section 4 "The detectors".
-
-    PSI GPS ``deltat_tdc_gps_*.bin`` files store the six histograms in the fixed
-    order ``Forw, Back, Up, Down, Righ, Left`` (verified across runs from 2016
-    to 2025).  Because detector IDs in this module map positionally to histogram
-    indices (detector *N* → histogram ``N − 1``), the IDs are F→1, B→2, U→3,
-    D→4, R→5, L→6.
-
-    The six detectors lie on three orthogonal axes, so the schematic uses **two
-    plan panels** (following the FLAME beam convention, beam → +z = Forward):
-
-    * **Top view** (looking down) — the horizontal plane: Forward/Backward on the
-      beam axis, Left/Right in-plane (top/bottom); Up/Down point out of the page
-      and are drawn end-on (⊙/⊗) for context.
-    * **Side view** (from the left) — the vertical plane: Up/Down in-plane,
-      Forward/Backward shown read-only; Left/Right point out of the page (⊙/⊗).
-
-    Each detector is clickable (active) in its home panel and read-only in the
-    other, which keeps the 3-D geometry legible.
-
-    **PSI beam-vs-analysis convention.** PSI names detectors by **beam**
-    direction: Forward (F) is downstream (+z), Backward (B) upstream (−z).  For
-    surface muons the spin is *antiparallel* to the momentum, so the initial
-    polarization points toward the **Backward** detector.  The PSI/musrfit
-    analysis convention (GPS instrument paper, Amato *et al.*,
-    Rev. Sci. Instrum. 88, 093301 (2017), Eq. 2) is therefore
-
-        A = (B − α F) / (B + α F),
-
-    i.e. the *Backward*-named group occupies the analysis-**forward** slot.  All
-    GPS presets here declare that analysis convention directly in their
-    ``forward_group``/``backward_group`` (and projection legs) while keeping the
-    physical beam-referenced group *names* (F/B/U/D), so a preset is correct
-    standalone in the headless core — no GUI swap is needed to compensate.
-
-    **Spin rotator and the B+U / F+D preset.** GPS sits behind a spin rotator on
-    πM3.2 — crossed electric and magnetic fields (a Wien filter), GPS User Guide
-    Section 13.  In *longitudinal geometry* it acts as a velocity separator that
-    cleans positron contamination from the beam (and tips the polarization up by
-    ~7°).  In *transverse geometry* the field is raised so the muon spin is
-    rotated **up by ~50°**, giving a large transverse component for TF work.  The
-    initial polarization points toward **Backward** (−z, surface-muon geometry);
-    rotating it up by ~45–50° in the vertical plane leaves it pointing
-    up-and-*backward*, along the **Backward–Up diagonal**.  A plain
-    Forward/Backward asymmetry then only sees its cosine projection and loses
-    amplitude.  Summing **Backward+Up** (which sees the rotated spin) against
-    **Forward+Down** realigns one asymmetry axis with the rotated spin and
-    recovers the full amplitude — this is the ``Spin-rotated (B+U/F+D)`` preset.
-    (The bisector of musrfit's WEP phases below, B at −45° and U at +45°,
-    confirms the polarization lies along the B–U diagonal, not F–U.)
-
-    **WEP mode — follows musrfit.** musrfit ships a GPS setup named
-    ``WEP`` for exactly this spin-rotated configuration, and the
-    ``WEP (spin-rotated)`` preset reproduces its grouping convention so analyses
-    match what PSI users already expect.  Source:
-    ``musredit_qt5/musrWiz/instrument_defs/instrument_def_psi.xml``,
-    ``<instrument name="GPS"><tf name="WEP">``.  musrfit does **not** sum
-    detectors; it keeps F, B, U, D as four separate logic detectors, each given a
-    relative phase that encodes the ~45° rotation, and fits two asymmetry pairs::
-
-        logic_detector       B  rel_phase=-45   forward=2  (histogram 1)
-        logic_detector       U  rel_phase=+45   forward=3  (histogram 2)
-        logic_detector       F  rel_phase=+135  forward=1  (histogram 0)
-        logic_detector       D  rel_phase=+225  forward=4  (histogram 3)
-        logic_asym_detector  FB forward=2 backward=1  alpha=0.75
-        logic_asym_detector  UD forward=3 backward=4  alpha=1.0
-
-    The preset here maps F/B/U/D to four groups exposed as the **FB** and **UD**
-    projections, following musrfit's leg order: **FB** has forward = B (group 2),
-    backward = F (group 1) so it reduces to (B − 0.75 F)/(B + 0.75 F), and **UD**
-    has forward = U (group 3), backward = D (group 4).  The FB projection declares
-    musrfit's default ``alpha = 0.75`` and the UD projection ``alpha = 1.0``; the
-    reduction **applies each projection's own declared alpha**, so reducing or
-    fitting the FB pair uses 0.75 and the UD pair uses 1.0 (see
-    :meth:`asymmetry.gui.mainwindow.MainWindow._resolve_vector_alpha_values`).
-    The per-detector phase offsets musrfit uses to encode the rotation are a
-    fitting detail not stored in the layout — only the groupings.
-    (``Spin-rotated (B+U/F+D)`` above is *our* combined-pair alternative for the
-    same physics, not a musrfit construct.)
-    """
-    top = BankLayout(
-        name="Top view",
-        segments=(
-            _plan_rectangle(1, "Forward", 2.70, 0.0, 0.75, 1.70),
-            _plan_rectangle(2, "Backward", -2.70, 0.0, 0.75, 1.70),
-            _plan_rectangle(6, "Left", 0.0, 1.95, 1.70, 0.75),
-            _plan_rectangle(5, "Right", 0.0, -1.95, 1.70, 0.75),
-            _gps_endon(3, "Up", 0.0, 0.70, into=False),
-            _gps_endon(4, "Down", 0.0, -0.70, into=True),
-        ),
-    )
-    side = BankLayout(
-        name="Side view",
-        segments=(
-            _plan_rectangle(3, "Up", 0.0, 1.95, 1.70, 0.75),
-            _plan_rectangle(4, "Down", 0.0, -1.95, 1.70, 0.75),
-            _plan_rectangle(1, "Forward", 2.70, 0.0, 0.75, 1.70, read_only=True),
-            _plan_rectangle(2, "Backward", -2.70, 0.0, 0.75, 1.70, read_only=True),
-            _gps_endon(6, "Left", 0.0, 0.70, into=False),
-            _gps_endon(5, "Right", 0.0, -0.70, into=True),
-        ),
-    )
-
-    # Transverse directions map to single combined detectors in the BIN export:
-    # U=3, D=4, L=6, R=5.
-    presets = _gps_presets((3,), (4,), (6,), (5,))
-
-    return InstrumentLayout(
-        name="GPS",
-        n_detectors=6,
-        banks=(top, side),
-        presets=presets,
-        view="plan",
-    )
-
-
-def _build_gps_subdetectors() -> InstrumentLayout:
-    """Build the PSI GPS **ROOT sub-detector** layout (11 histograms).
-
-    GPS ``deltat_tdc_gps_*.root`` (MusrRoot) files expose the *raw* sub-detectors
-    rather than the six combined detectors of the PSI-BIN export.  The
-    transverse detectors are each physically split into a backward (upstream,
-    ``_B``) and forward (downstream, ``_F``) part, and a Mobile detector is
-    added.  The histograms appear in this fixed order (verified on 2025 data):
-
-    ``Forw, Back, Up_B, Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F,
-    Mob-RL`` → detector IDs 1…11 (detector *N* → histogram ``N − 1``).
-
-    Source: Amato *et al.*, *Rev. Sci. Instrum.* 88, 093301 (2017),
-    `arXiv:1705.10687 <https://arxiv.org/abs/1705.10687>`_, Section IIA:
-    ``R = R_back + R_forw (+ P_mob)``, ``L = L_back + L_forw (+ P_mob)``, and
-    "the detectors U and D are also physically split between a forward and a
-    backward part".
-
-    The **Mobile** detector (``P_mob`` / ``Mob-RL``) is mounted on the two
-    cryostat ports on the horizontal axis ⊥ to the beam; it is added to ``R``
-    (first port) *or* ``L`` (second port) depending on which port is in use —
-    information **not recorded in the data file**.  It is therefore left
-    *ungrouped* by default (matching musrfit, whose GPS definition does not
-    group it); the user assigns it to the side matching their setup.
-
-    This is the 11-detector variant of :func:`_build_gps`; both share the
-    display name "GPS" (see :class:`InstrumentLayout.display_name`) and the same
-    two-panel (top + side) presentation.  Each transverse plate is split along
-    the beam into a backward (``_B``, upstream/−z) and forward (``_F``,
-    downstream/+z) half, so split detectors render as two boxes side by side.
-    The **Mobile** detector rides on the horizontal Left–Right axis between the
-    cryostat ports; following Amato *et al.* Fig. 2 it is drawn as a bar at the
-    top of the chamber, just above the sample, and is left ungrouped (added to R
-    or L per the cryo port, which the file does not record).
-    """
-    top = BankLayout(
-        name="Top view",
-        segments=(
-            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70),
-            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70),
-            # In-plane Left (top) / Right (bottom), each split _B (−z) / _F (+z).
-            _plan_rectangle(9, "Left_B", -0.50, 1.95, 0.85, 0.75),
-            _plan_rectangle(10, "Left_F", 0.50, 1.95, 0.85, 0.75),
-            _plan_rectangle(7, "Right_B", -0.50, -1.95, 0.85, 0.75),
-            _plan_rectangle(8, "Right_F", 0.50, -1.95, 0.85, 0.75),
-            # Mobile bar at the top of the chamber, above the sample (Fig. 2).
-            _plan_rectangle(11, "Mob-RL", 0.0, 1.18, 0.95, 0.42),
-            # Up/Down point out of the page here -> end-on context markers.
-            _gps_endon(3, "Up_B", -0.48, 0.45, into=False),
-            _gps_endon(4, "Up_F", 0.48, 0.45, into=False),
-            _gps_endon(5, "Down_B", -0.48, -0.45, into=True),
-            _gps_endon(6, "Down_F", 0.48, -0.45, into=True),
-        ),
-    )
-    side = BankLayout(
-        name="Side view",
-        segments=(
-            # In-plane Up (top) / Down (bottom), each split _B (−z) / _F (+z).
-            _plan_rectangle(3, "Up_B", -0.50, 1.95, 0.85, 0.75),
-            _plan_rectangle(4, "Up_F", 0.50, 1.95, 0.85, 0.75),
-            _plan_rectangle(5, "Down_B", -0.50, -1.95, 0.85, 0.75),
-            _plan_rectangle(6, "Down_F", 0.50, -1.95, 0.85, 0.75),
-            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70, read_only=True),
-            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70, read_only=True),
-            # Left/Right point out of the page here; Mobile rides this same axis.
-            _gps_endon(9, "Left_B", -0.48, 0.45, into=False),
-            _gps_endon(10, "Left_F", 0.48, 0.45, into=False),
-            _gps_endon(7, "Right_B", -0.48, -0.45, into=True),
-            _gps_endon(8, "Right_F", 0.48, -0.45, into=True),
-            _gps_endon(11, "Mob-RL", 0.0, 1.30, into=False),
-        ),
-    )
-
-    # Each transverse direction combines its two _B/_F sub-detectors:
-    # U=(3,4), D=(5,6), L=(9,10), R=(7,8). Mob-RL (11) is left ungrouped.
-    presets = _gps_presets((3, 4), (5, 6), (9, 10), (7, 8))
-
-    return InstrumentLayout(
-        name="GPS-RD",
-        n_detectors=11,
-        banks=(top, side),
-        presets=presets,
-        view="plan",
-        display_name="GPS",
-    )
-
-
-def _build_gps_combined_and_subdetectors() -> InstrumentLayout:
-    """Build the PSI GPS **combined + sub-detector ROOT** layout (15 histograms).
-
-    Some GPS MusrRoot exports ship *both* views of the same events: the six
-    combined counters of :func:`_build_gps` **and** the eight half-counters and
-    mobile detector of :func:`_build_gps_subdetectors`, in this fixed order::
-
-        Forw, Back, Up, Down, Right, Left,          -> detector IDs 1…6
-        Up_B, Up_F, Down_B, Down_F,                 -> detector IDs 7…10
-        Right_B, Right_F, Left_B, Left_F,           -> detector IDs 11…14
-        Mob-RL                                      -> detector ID 15
-
-    (Detector *N* → histogram ``N − 1``, as everywhere in this module.)
-
-    **The combined counters (3–6) are separate electronics roads that track the
-    summed halves (7–14)** — in real files the combined total matches the sum
-    of its two halves to within a handful of counts, except that the combined
-    counter on whichever cryostat port carries the Mobile detector also folds
-    ``Mob-RL``'s counts in.  **The split halves are the analysis groups**,
-    structurally identical to :func:`_build_gps_subdetectors` (GPS-RD): this
-    keeps the transverse groups free of the silently-included Mobile counts,
-    and identical in meaning across the 11- and 15-histogram eras::
-
-        Up    = (Up_B, Up_F)       = (7, 8)
-        Down  = (Down_B, Down_F)   = (9, 10)
-        Right = (Right_B, Right_F) = (11, 12)
-        Left  = (Left_B, Left_F)   = (13, 14)
-
-    This also matches the ROOT loader's default grouping and keeps alphas
-    consistent between eras.  The combined counters (3–6) stay ungrouped by
-    default but remain individually selectable — for diagnostics against the
-    split view, or for a user who deliberately wants the Mobile-inclusive
-    combined road.  ``Mob-RL`` (15) stays ungrouped exactly as in GPS-RD: the
-    metadata does not record which port it is mounted on (though the combined
-    counter that includes it betrays the port by its excess counts).
-
-    This is the 15-detector variant of :func:`_build_gps`; all three GPS layouts
-    share the display name "GPS" (see :class:`InstrumentLayout.display_name`) and
-    the same two-panel (top + side) presentation.  Each combined counter is drawn
-    as the full plate with its two halves as smaller boxes immediately outboard,
-    which is exactly the redundancy the file carries.
-    """
-    top = BankLayout(
-        name="Top view",
-        segments=(
-            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70),
-            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70),
-            # In-plane Left (top) / Right (bottom): the combined plate, with its
-            # _B (−z) / _F (+z) halves drawn just outboard of it.
-            _plan_rectangle(6, "Left", 0.0, 1.95, 1.70, 0.75),
-            _plan_rectangle(13, "Left_B", -0.50, 2.80, 0.85, 0.62),
-            _plan_rectangle(14, "Left_F", 0.50, 2.80, 0.85, 0.62),
-            _plan_rectangle(5, "Right", 0.0, -1.95, 1.70, 0.75),
-            _plan_rectangle(11, "Right_B", -0.50, -2.80, 0.85, 0.62),
-            _plan_rectangle(12, "Right_F", 0.50, -2.80, 0.85, 0.62),
-            # Mobile bar at the top of the chamber, above the sample (it rides the
-            # horizontal Left-Right axis between the two cryostat ports).
-            _plan_rectangle(15, "Mob-RL", 0.0, 1.25, 0.95, 0.42),
-            # Up/Down point out of the page here -> end-on context markers, each
-            # combined counter flanked by its two halves.
-            _gps_endon(7, "Up_B", -0.62, 0.62, into=False),
-            _gps_endon(3, "Up", 0.0, 0.62, into=False),
-            _gps_endon(8, "Up_F", 0.62, 0.62, into=False),
-            _gps_endon(9, "Down_B", -0.62, -0.62, into=True),
-            _gps_endon(4, "Down", 0.0, -0.62, into=True),
-            _gps_endon(10, "Down_F", 0.62, -0.62, into=True),
-        ),
-    )
-    side = BankLayout(
-        name="Side view",
-        segments=(
-            # In-plane Up (top) / Down (bottom), each with its halves outboard.
-            _plan_rectangle(3, "Up", 0.0, 1.95, 1.70, 0.75),
-            _plan_rectangle(7, "Up_B", -0.50, 2.80, 0.85, 0.62),
-            _plan_rectangle(8, "Up_F", 0.50, 2.80, 0.85, 0.62),
-            _plan_rectangle(4, "Down", 0.0, -1.95, 1.70, 0.75),
-            _plan_rectangle(9, "Down_B", -0.50, -2.80, 0.85, 0.62),
-            _plan_rectangle(10, "Down_F", 0.50, -2.80, 0.85, 0.62),
-            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70, read_only=True),
-            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70, read_only=True),
-            # Left/Right point out of the page here; Mobile rides this same axis.
-            _gps_endon(13, "Left_B", -0.62, 0.62, into=False),
-            _gps_endon(6, "Left", 0.0, 0.62, into=False),
-            _gps_endon(14, "Left_F", 0.62, 0.62, into=False),
-            _gps_endon(11, "Right_B", -0.62, -0.62, into=True),
-            _gps_endon(5, "Right", 0.0, -0.62, into=True),
-            _gps_endon(12, "Right_F", 0.62, -0.62, into=True),
-            _gps_endon(15, "Mob-RL", 0.0, 1.25, into=False),
-        ),
-    )
-
-    # The split halves are the analysis groups, exactly as in the 11-histogram
-    # GPS-RD layout: U=(7,8), D=(9,10), L=(13,14), R=(11,12). The combined
-    # counters 3-6 track the summed halves (plus Mob-RL on its mounting port)
-    # and, like Mob-RL (15), stay ungrouped but individually selectable.
-    presets = _gps_presets((7, 8), (9, 10), (13, 14), (11, 12))
-
-    return InstrumentLayout(
-        name="GPS-RD15",
-        n_detectors=15,
-        banks=(top, side),
-        presets=presets,
-        view="plan",
-        display_name="GPS",
-    )
-
-
-# ---------------------------------------------------------------------------
-# HAL-9500 layout builder
-# ---------------------------------------------------------------------------
-
-
-def _build_hal() -> InstrumentLayout:
-    """Build the HAL-9500 detector layout (PSI high-field spectrometer).
-
-    HAL-9500 (πE3 beamline) has 16 positron detectors arranged as two
-    octagonal rings of eight — a **forward** ring (F1–F8) and a **backward**
-    ring (B1–B8) — plus a central muon-veto detector (MV).  Viewed along the
-    beam axis the two rings project onto the same octagon.
-
-    This is a distinct instrument from the ISIS *HiFi* spectrometer
-    (:func:`_build_hifi`); the shared ``hifi`` token in PSI run names
-    (``tdc_hifi_*``) is a legacy naming collision.
-
-    PSI data files store the histograms in the fixed order
-    ``MV, F1…F8, B1…B8``.  Because detector IDs in this module map positionally
-    to histogram indices (detector *N* → histogram ``N − 1``), the IDs are:
-
-    * MV → 1   (histogram 0, the muon veto)
-    * F1–F8 → 2–9   (histograms 1–8, forward ring)
-    * B1–B8 → 10–17 (histograms 9–16, backward ring)
-
-    Source: `PSI HAL-9500 instrument page
-    <https://www.psi.ch/en/smus/hal-9500>`_; musrfit ``instrument_def_psi.xml``
-    (``<instrument name="HAL9500">``) and the shipped ``tdc_hifi_2014_00153``
-    example data (see ``tests/test_psi_loader.py``).
-    """
-    pitch = 45.0  # degrees per sector (360/8)
-    # Each detector is a rectangular bar lying along one edge of the octagon
-    # (constant-width slabs forming the perimeter), matching the schematic.
-    apothem = math.cos(math.radians(22.5))  # distance to an octagon edge midpoint
-    thickness = 0.26  # radial depth of each bar
-    bar_width = 0.54  # tangential length; small gaps at the octagon vertices
-    center_r = apothem - thickness / 2.0  # bar centre; outer face sits on the octagon
-
-    def _ring(start_id: int, prefix: str) -> list[DetectorSegment]:
-        segs: list[DetectorSegment] = []
-        for k in range(8):
-            # k = 0 at the top (90°), numbering clockwise to match the schematic.
-            angle = (90.0 - k * pitch) % 360.0
-            rad = math.radians(angle)
-            segs.append(
-                DetectorSegment(
-                    detector_id=start_id + k,
-                    sector_index=k,
-                    ring_index=0,
-                    angle_center_deg=angle,
-                    angle_half_width_deg=0.0,
-                    r_inner=0.0,
-                    r_outer=0.0,
-                    shape="rectangle",  # edge-aligned bar forming one octagon side
-                    label=f"{prefix}{k + 1}",
-                    x_center=center_r * math.cos(rad),
-                    y_center=center_r * math.sin(rad),
-                    width=bar_width,
-                    height=thickness,
-                    rotation_deg=angle - 90.0,  # long edge tangential to the ring
-                )
-            )
-        return segs
-
-    fwd_segs = _ring(2, "F")  # F1–F8 -> detector IDs 2–9
-    bwd_segs = _ring(10, "B")  # B1–B8 -> detector IDs 10–17
-
-    # Central muon veto (MV) -> detector ID 1, drawn as a disc at the ring centre.
-    # half_width 180° is rendered/hit-tested as a full circle by the widget.
-    mv = DetectorSegment(
-        detector_id=1,
-        sector_index=0,
-        ring_index=0,
-        angle_center_deg=90.0,
-        angle_half_width_deg=180.0,
-        r_inner=0.0,
-        r_outer=0.26,
-        label="MV",
-    )
-
-    banks = (
-        BankLayout(name="Forward", segments=(mv, *fwd_segs)),
-        BankLayout(name="Backward", segments=tuple(bwd_segs)),
-    )
-
-    fwd_ring = tuple(range(2, 10))  # F1–F8
-    bwd_ring = tuple(range(10, 18))  # B1–B8
-
-    presets: dict[str, PresetGrouping] = {}
-
-    # Per-octant (default): one group per azimuthal sector, combining the
-    # forward and backward wedge at that angle.  HAL-9500 is a high-field (TF)
-    # spectrometer in practice, and this is the grouping used for that work
-    # (e.g. the AFM-transition high-TF corpus) — angle-resolved, but with the
-    # combined F+B wedge giving better statistics than a lone opposed pair.
-    presets["Per-octant"] = PresetGrouping(
-        name="Per-octant",
-        groups={k + 1: GroupDefinition(f"Octant {k + 1}", (2 + k, 10 + k)) for k in range(8)},
-        forward_group=1,  # octant 1 (top)
-        backward_group=5,  # octant 5 (bottom, 180° opposite)
-    )
-
-    # Longitudinal: forward ring vs backward ring.  HAL-9500 is a PSI
-    # instrument, so the rings are named by *beam* direction; for surface muons
-    # the initial polarization points toward the Backward ring.  Declare the
-    # analysis-forward slot as the Backward ring (group 2) so the preset follows
-    # the PSI convention A = (B − αF)/(B + αF) standalone — matching the GPS/FLAME
-    # presets.  (The Transverse/Per-octant presets below use opposed detector
-    # pairs, not a beam F/B split, so their pairing is left as musrfit's.)
-    presets["Longitudinal"] = PresetGrouping(
-        name="Longitudinal",
-        groups={
-            1: GroupDefinition("Forward", fwd_ring),
-            2: GroupDefinition("Backward", bwd_ring),
-        },
-        forward_group=2,  # analysis-forward = beam-Backward ring (sees polarization)
-        backward_group=1,  # analysis-backward = beam-Forward ring
-    )
-
-    # Transverse (opposed pairs): musrfit's high-field scheme — each forward
-    # detector is its own group so any diametrically-opposed pair (F_k vs
-    # F_{k+4}, 180° apart) can form the asymmetry.  Defaults to F1 vs F5 (0°).
-    presets["Transverse (opposed pairs)"] = PresetGrouping(
-        name="Transverse (opposed pairs)",
-        groups={k + 1: GroupDefinition(f"F{k + 1}", (2 + k,)) for k in range(8)},
-        forward_group=1,  # F1
-        backward_group=5,  # F5 (180° opposite F1)
-    )
-
-    return InstrumentLayout(
-        name="HAL",
-        n_detectors=17,
-        banks=banks,
-        presets=presets,
-        # HAL-9500 loads straight into the Per-octant grouping: it is a
-        # high-field spectrometer whose analysis is angle-resolved, so the plain
-        # forward/backward split the labels imply is not the grouping users want.
-        # Applying the default preset on load makes the per-group analysis
-        # available immediately, without opening the grouping window.
-        apply_default_preset_on_load=True,
-    )
-
-
 #: Layout name of :func:`generic_layout`. It is not a registry key: the layout
 #: depends on the run's detector count, so callers build it per run.
 
@@ -998,11 +278,11 @@ def _build_registry() -> dict[str, InstrumentLayout]:
         "HiFi": layout_from_profile(HIFI_PROFILE, "nexus64"),
         "MuSR": layout_from_profile(MUSR_PROFILE, "nexus64"),
         "EMU": layout_from_profile(EMU_PROFILE, "nexus96"),
-        "FLAME": _build_flame(),
-        "HAL": _build_hal(),
-        "GPS": _build_gps(),
-        "GPS-RD": _build_gps_subdetectors(),
-        "GPS-RD15": _build_gps_combined_and_subdetectors(),
+        "FLAME": layout_from_profile(FLAME_PROFILE, "eight_channel"),
+        "HAL": layout_from_profile(HAL_PROFILE, "full17"),
+        "GPS": layout_from_profile(GPS_PROFILE, "bin_combined"),
+        "GPS-RD": layout_from_profile(GPS_PROFILE, "root_split"),
+        "GPS-RD15": layout_from_profile(GPS_PROFILE, "root_combined_split"),
     }
 
 
@@ -1036,13 +316,8 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
     A pure helper the Grouping / Detector-Layout dialog uses to nudge the user
     away from a grouping that washes out the signal — never to auto-apply one.
 
-    Motivating case (B8a, live testing): PSI GPS transverse-field (TF) runs
-    default to the ``Longitudinal`` (Forward/Backward) preset, but the spin
-    rotator on πM3.2 tips the muon spin ~50° up (see :func:`_build_gps`), so a
-    plain Forward/Backward asymmetry only sees the cosine projection and the
-    time-domain fit collapses.  The remedy is the ``Spin-rotated (B+U/F+D)``
-    preset, which realigns one asymmetry axis with the rotated spin.  Nothing in
-    the GUI hinted at this, which caused a long dead-end in live testing.
+    Geometry selects a recommendation only. Applying a preset remains an explicit
+    user action and preserves its declared channel memberships and leg order.
 
     Parameters
     ----------
@@ -1393,17 +668,9 @@ def _canonical_instrument_name(raw: object, *, filename: bool = False) -> str | 
     if not token:
         return None
 
-    compact = re.sub(r"[^a-z0-9]+", "", token.lower())
-    if "flame" in compact:
-        return "FLAME"
-    if "gps" in compact:
-        return "GPS"
-    if matches_name(HIFI_PROFILE.recognition, raw, filename=filename):
-        return HIFI_PROFILE.identity.layout_key
-    if matches_name(MUSR_PROFILE.recognition, raw, filename=filename):
-        return MUSR_PROFILE.identity.layout_key
-    if matches_name(EMU_PROFILE.recognition, raw, filename=filename):
-        return EMU_PROFILE.identity.layout_key
+    for profile in (FLAME_PROFILE, GPS_PROFILE, HIFI_PROFILE, MUSR_PROFILE, EMU_PROFILE):
+        if matches_name(profile.recognition, raw, filename=filename):
+            return profile.identity.layout_key
     return None
 
 
@@ -1454,17 +721,12 @@ def _is_psi_hal(metadata: dict, source_file: str | None) -> bool:
     ``tdc_hifi_*``; both carry the ``hifi`` token. Caller must already have
     established that the data is from PSI.
     """
-    tokens = [
-        str(metadata.get(key, ""))
+    return any(
+        matches_name(HAL_PROFILE.recognition, metadata.get(key))
         for key in ("instrument", "instrument_name", "spectrometer", "name")
-    ]
-    if source_file:
-        tokens.append(Path(source_file).stem)
-    compact = re.sub(r"[^a-z0-9]+", "", " ".join(tokens).lower())
-    # Match the legacy "hifi" run-name/instrument token and the explicit
-    # "hal9500" name; avoid a bare "hal" substring that would catch unrelated
-    # words (e.g. a sample name like "halite").
-    return "hifi" in compact or "hal9500" in compact
+    ) or bool(
+        source_file and matches_name(HAL_PROFILE.recognition, Path(source_file).stem, filename=True)
+    )
 
 
 def _labels_match_gps(labels: list[str], n_histograms: int) -> bool:
@@ -1607,14 +869,12 @@ def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> b
     fifteen-counter ROOT combined+sub-detector set.  Caller must already have
     established that the data is from PSI.
     """
-    tokens = [
-        str(metadata.get(key, ""))
+    if any(
+        matches_name(GPS_PROFILE.recognition, metadata.get(key))
         for key in ("instrument", "instrument_name", "beamline", "spectrometer", "name")
-    ]
-    if source_file:
-        tokens.append(Path(source_file).stem)
-    compact = re.sub(r"[^a-z0-9]+", "", " ".join(tokens).lower())
-    if "gps" in compact:
+    ) or (
+        source_file and matches_name(GPS_PROFILE.recognition, Path(source_file).stem, filename=True)
+    ):
         return True
     labels = _metadata_labels(metadata)
     return (

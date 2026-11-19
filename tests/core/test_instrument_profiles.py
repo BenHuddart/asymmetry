@@ -4,6 +4,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
+import pytest
+
+from asymmetry.core.instruments import ALC, DOLLY, FLAME, GPD, GPS, HAL9500, LEM, LTF
 from asymmetry.core.instruments.isis_emu import PROFILE
 from asymmetry.core.instruments.resolve import layout_from_profile
 
@@ -281,3 +284,115 @@ def test_acquired_histogram_numbers_are_integers_at_construction():
                 PROFILE.detectors, acquisitions=(replace(config, channels=channels),)
             ),
         )
+
+
+def test_acquisition_preserves_legacy_variant_identity_and_declared_arrows():
+    from dataclasses import replace
+
+    import pytest
+
+    from asymmetry.core.instruments.layout import ReferenceArrow
+    from tests._instrument_profiles import synthetic_profiles
+
+    profile = synthetic_profiles()["multiview"]
+    original = profile.detectors.acquisitions[0]
+    arrows = (ReferenceArrow("Synthetic direction", (-2.0, 0.0), (2.0, 0.0)),)
+    config = replace(original, layout_key="Fixture-split", reference_arrows=arrows)
+    variant = replace(profile, detectors=replace(profile.detectors, acquisitions=(config,)))
+    layout = layout_from_profile(variant, "test")
+    assert layout.name == "Fixture-split"
+    assert layout.display_name == "Fixture"
+    assert layout.reference_arrows == arrows
+    inherited = layout_from_profile(profile, "test")
+    assert inherited.name == "Fixture"
+    assert inherited.display_name is None
+    assert inherited.reference_arrows == ()
+    with pytest.raises(ValueError, match="layout key"):
+        replace(original, layout_key=" ")
+    with pytest.raises(ValueError, match="finite"):
+        replace(original, reference_arrows=(ReferenceArrow("Bad", (float("nan"), 0), (1, 0)),))
+
+
+@pytest.mark.parametrize(
+    "profile, acquisition, legacy",
+    (
+        (GPS, "bin_combined", "GPS"),
+        (GPS, "root_split", "GPS-RD"),
+        (GPS, "root_combined_split", "GPS-RD15"),
+        (FLAME, "eight_channel", "FLAME"),
+        (HAL9500, "full17", "HAL"),
+    ),
+)
+def test_psi_layouts_preserve_channel_geometry_and_scientific_presets(profile, acquisition, legacy):
+    # End-on width0 means radius0.16 in the legacy renderer; snapshots encode that radius explicitly.
+    expected = json.loads(
+        (Path(__file__).parents[1] / f"data/instruments/{legacy.lower()}-layout.json").read_text()
+    )
+    actual = json.loads(json.dumps(asdict(layout_from_profile(profile, acquisition))))
+    assert actual == expected
+
+
+@pytest.mark.parametrize("acquisition", ("bin_combined", "root_split", "root_combined_split"))
+def test_gps_paper_sign_and_configuration_limits_are_independent_anchors(acquisition):
+    import numpy as np
+
+    from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+    from asymmetry.core.workflow import apply_grouping_preset
+
+    config = next(config for config in GPS.detectors.acquisitions if config.key == acquisition)
+    assert next(channel for channel in config.channels if channel.key == "F").physical == ()
+    if acquisition != "bin_combined":
+        assert next(channel for channel in config.channels if channel.key == "M").physical == ()
+    # Amato et al. (2017), Eq2: A=(B-alpha F)/(B+alpha F); choose B30,F10.
+    run = Run(
+        42,
+        [
+            Histogram(np.full(8, 30.0 if channel.key == "B" else 10.0), 0.1, 0, 0, 7)
+            for channel in config.channels
+        ],
+        metadata={"facility": "PSI", "instrument": "GPS"},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "good_frames": 1000,
+            "background_correction": False,
+        },
+    )
+    dataset = MuonDataset(np.array([]), np.array([]), np.array([]), metadata=run.metadata, run=run)
+    result = apply_grouping_preset(dataset, "Longitudinal")
+    assert result.run.grouping["forward_group"] == 2
+    np.testing.assert_allclose(result.asymmetry, 50.0, atol=1e-12)
+    assert result.run.grouping["alpha"] == 1.0
+    # Figure2/TableI distinguish hardware and acquired roads, not independent counts.
+    assert len(GPS.detectors.elements) == 12
+    assert all("independent" in channel.relationship for channel in config.channels)
+
+
+@pytest.mark.parametrize("profile", (LTF, GPD, DOLLY, ALC, LEM))
+def test_psi_metadata_only_identities_preserve_generic_unknown_geometry(profile):
+    assert profile.identity.facility == "PSI"
+    assert profile.detectors.acquisitions == profile.presets == ()
+    layout = layout_from_profile(profile, n_histograms=5)
+    assert layout.name == "Generic"
+    assert len(layout.active_segments) == 5
+    assert layout.presets == {}
+
+
+@pytest.mark.parametrize(
+    "raw, facility, expected",
+    (
+        ("HAL", "PSI", None),
+        ("hal", "PSI", None),
+        ("halite", "PSI", None),
+        ("HIFI", "PSI", "HAL"),
+        ("HiFi", "ISIS", "HiFi"),
+        ("HAL9500", "PSI", "HAL"),
+        ("HAL", "ISIS", None),
+    ),
+)
+def test_psi_hal_alias_migration_preserves_existing_recognition_boundary(raw, facility, expected):
+    from asymmetry.core.instrument import detect_instrument
+
+    assert detect_instrument(17, metadata={"facility": facility, "instrument": raw}) == expected

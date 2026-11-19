@@ -42,6 +42,11 @@ Serialization only fills missing projections. Project restoration and lazy view
 regeneration preserve existing historical snapshots while transient curves carry
 the execution that actually regenerated them.
 
+Instrument profiles distinguish hardware, acquired channels and drawing views.
+Acquisition-specific legacy keys preserve file-layout identities under a shared
+instrument display name. Declared reference arrows are schematic direction cues;
+they neither determine scientific grouping nor override recorded run settings.
+
 ## 3. Architecture
 
 ```

@@ -41,3 +41,23 @@ def test_reconcile_unknown_count_preserves_authored_musr_grouping(n_hist, tmp_pa
     assert payload == snapshot
     assert run.grouping == run_grouping
     assert run.metadata["instrument"] == "Unknown"
+
+
+def test_inconclusive_bare_hal_preserves_authored_groups():
+    run = _run(instrument="HAL", n_hist=17, metadata={"facility": "PSI", "instrument": "HAL"})
+    run.source_file = "neutral.root"
+    payload = {
+        "instrument": "GPS",
+        "groups": {1: [2, 4], 2: [6, 8]},
+        "group_names": {1: "Authored positive", 2: "Authored negative"},
+        "forward_group": 2,
+        "backward_group": 1,
+        "alpha": 1.23,
+        "grouping_preset": "Custom",
+    }
+    before = copy.deepcopy(payload)
+    reconciled, note = reconcile_instrument_for_payload(run, payload)
+    assert note is None
+    assert reconciled is payload
+    assert payload == before
+    assert run.metadata["instrument"] == "HAL"
