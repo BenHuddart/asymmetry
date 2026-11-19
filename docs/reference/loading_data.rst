@@ -26,6 +26,11 @@ For an end-to-end walk-through that starts with loading, see
 Instrument recognition uses metadata, recognised detector labels, or the source
 filename. Detector count alone does not identify an instrument: an unidentified
 64- or 96-detector run uses a generic layout with no instrument presets.
+The generated :doc:`HiFi <instruments/isis_hifi>`,
+:doc:`MuSR <instruments/isis_musr>`, and :doc:`EMU <instruments/isis_emu>`
+definitions separate manual memberships from unverified export mappings and
+schematic coordinates. Declared pulsed-source facts do not replace acquired
+timing information or apply analysis defaults.
 Stored grouping choices are retained when recognition is inconclusive; see
 :ref:`instruments-without-layout` for manual grouping and layout selection.
 

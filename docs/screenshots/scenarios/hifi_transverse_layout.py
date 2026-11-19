@@ -5,7 +5,8 @@ Drives the visual Detector Layout editor directly with HiFi's built-in
 groups overlap at their boundary detectors. The schematic renders each
 overlapping detector as several thin membership slices rather than a single
 solid colour, which is the multi-membership rendering this screenshot is
-meant to demonstrate. Companion to :doc:`/reference/detector_grouping`.
+meant to demonstrate. Companion to :doc:`/reference/detector_grouping` and the
+sourced :doc:`/reference/instruments/isis_hifi` definition.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ class HiFiTransverseLayoutScenario(Scenario):
             backward_group=preset.backward_group,
             projections=projections,
         )
+        dialog._preset_combo.setCurrentText(preset.name)
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()

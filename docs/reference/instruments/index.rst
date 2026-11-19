@@ -18,3 +18,5 @@ for applying presets and :doc:`../../contributing` for maintaining definitions.
    :maxdepth: 1
 
    isis_emu
+   isis_hifi
+   isis_musr

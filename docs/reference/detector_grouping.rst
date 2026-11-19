@@ -31,6 +31,9 @@ The :doc:`instrument definition pages <instruments/index>` identify the sources,
 unknown channel-map assumptions and schematic conventions behind migrated
 layouts. :doc:`EMU <instruments/isis_emu>` distinguishes its physical axial layers
 from the concentric drawing bands and labels the authored vector preset.
+:doc:`HiFi <instruments/isis_hifi>` identifies the inferred half-sector offset
+and overlapping manual RF groups; :doc:`MuSR <instruments/isis_musr>` records
+the longitudinal sign and manual transverse memberships.
 
 
 Scripted preset application
@@ -1663,6 +1666,13 @@ one action, undoing exclude-mode edits without re-clicking each one.
 HiFi
 ~~~~
 
+The :doc:`HiFi definition <instruments/isis_hifi>` records the manual group lists
+and distinguishes the diagram-inferred backward-bank offset from measured
+angles. Normalised radii are schematic; the manual RF groups intentionally
+share boundary detectors. The ``Transverse (Vector)`` presentation retains
+experiment-specific balance coefficients and does not establish quantitative
+vector sensitivity or detector timing calibration.
+
 .. figure:: images/hifi-program-schematic.png
    :width: 90%
    :align: center
@@ -1672,6 +1682,18 @@ HiFi
 
 MuSR
 ~~~~
+
+The :doc:`MuSR definition <instruments/isis_musr>` records forward histograms
+33–64 and backward histograms 1–32 for the ``Longitudinal`` preset.
+``Transverse (Vector)`` retains both manual detector pairs. Instrument rotation
+and applied-field orientation remain facts of the run, rather than consequences
+of its instrument name.
+
+.. figure:: /_generated/screenshots/musr_transverse_layout.png
+   :width: 100%
+   :alt: MuSR transverse manual Top-Bottom and Fwd-Back detector memberships.
+
+   MuSR manual transverse memberships displayed as two ordered projections.
 
 .. figure:: images/musr-program-schematic.png
    :width: 90%
@@ -1690,15 +1712,13 @@ EMU
 
    EMU schematic matching the in-app detector arrangement.
 
-Numbering follows the *EMU User Guide*, Section 8.1: sector-major triplets
-(inner/middle/outer ring of one sector before moving to the next sector),
-sector 0 at 12 o'clock, numbers increasing clockwise looking upstream from
-downstream. The three radial rings exist for stray-count rejection (Giblin
-*et al.*, *Nucl. Instrum. Methods Phys. Res. A* **751**, 70 (2014)), not for
-the ``Vector Polarization`` preset. That preset (:math:`P_x`/:math:`P_y`/
-:math:`P_z` octant composition) is an **Asymmetry construct** with no
-facility-documented equivalent; see :doc:`vector_polarization` and the
-module docstring in ``core/instrument.py::_build_emu``.
+Numbering follows the *EMU User Guide*, Section 8.1: sector-major triplets,
+sector zero at 12 o'clock, and numbers increasing clockwise looking upstream
+from downstream. Three physical axial layers are shown as concentric schematic
+bands, not measured radial rings. The ``Vector Polarization`` preset
+(:math:`P_x`/:math:`P_y`/:math:`P_z` composition) is an **Asymmetry construct**,
+not a facility-validated quantitative vector measurement. See the
+:doc:`EMU definition <instruments/isis_emu>` and :doc:`vector_polarization`.
 
 PSI FLAME
 ~~~~~~~~~
