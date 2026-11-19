@@ -488,8 +488,8 @@ lattice, whose distribution :math:`p(B)` is strongly **non-Gaussian** — a shar
 low-field cutoff, a most-probable field below the mean, and
 a long tail to high field near the vortex cores (a positively skewed line). The
 relaxation :math:`R(t)=\langle e^{i 2\pi\gamma_\mu(B-\bar B)t}\rangle` is the
-characteristic function of the *modified-London* field distribution of an ideal
-triangular lattice. It is an explicit modified-London approximation with a
+characteristic function of the *Gaussian-cutoff London* field distribution of an ideal
+triangular lattice. It is an explicit London approximation with a
 Gaussian reciprocal-space core cutoff
 :math:`\exp(-\xi^2G^2/2)/(1+\lambda^2G^2)`, where
 :math:`\xi^2=\Phi_0/(2\pi B_{c2})`. The field deviations are rescaled to
@@ -503,7 +503,7 @@ for a highly anisotropic powder, not an orientation average of an anisotropic
 vortex-lattice distribution. Pratt *et al.*, Eq. (3), give the conversion in
 the London limit :math:`B_{c1}\ll B\ll B_{c2}`. Brandt's Eq. (13) describes
 the second moment for :math:`\kappa\geq5` over its stated reduced-field range;
-using it to calibrate a modified-London shape does not extend that physical
+using it to calibrate a Gaussian-cutoff London shape does not extend that physical
 domain (see :doc:`../sc_penetration_depth`). Multiply by a ``Gaussian`` for the
 nuclear dipolar background and add ``Oscillatory + Constant`` for the
 (weakly relaxing) sample-holder signal:
@@ -512,17 +512,53 @@ nuclear dipolar background and add ``Oscillatory + Constant`` for the
 
    VortexLatticePowder * Gaussian + Oscillatory + Constant
 
-The time transform also approximates the chosen spatial field map using a
-cached histogram. For the unpowdered variant at :math:`\lambda=195` nm,
-:math:`B=400` G and :math:`B_{c2}=25` T, 500 times over 0–8 μs show a maximum
-complex-envelope difference of :math:`0.0023846` from the direct mean over
-the same :math:`96^2` cell samples. Including the carrier at zero phase gives
-a maximum normalised real-signal difference of :math:`0.0023688`.
-This comparison isolates histogram discretisation; it is not a converged
-continuum reference. Powder-kernel checks at :math:`\lambda_{ab}=195,240`
-nm, 400 G and 25 T bound the same comparison by :math:`2\times10^{-3}`.
-Neither check establishes the general :math:`10^{-5}` polarisation target
-for these approximations.
+**Numerical evaluation**
+
+The default calculation uses reciprocal extent 80, a :math:`384^2` midpoint
+unit-cell grid and 512 uniform field bins. Each bin retains local moments
+through fourth order, so the transform includes the field variation within
+the bin. Compact cached moments and exact lattice symmetries bound memory
+without retaining a collection of spatial maps.
+
+Independent field averages test the following parameter scales in both
+implementation powder modes:
+
+===============  =================  =====================  =============
+Case             Depth and field    Cutoff input           Time interval
+===============  =================  =====================  =============
+Re₃Ta scale      599 nm, 30 mT      :math:`B_{c2}=7.3` T   0–4 μs
+YB₆ stress case  153 nm, 150 mT     :math:`\xi_c=25.6` nm  0–6 μs
+Low-field cases  195/240 nm, 40 mT  :math:`B_{c2}=25` T    0–8 μs
+===============  =================  =====================  =============
+
+At each scale the checks also change one parameter at a time:
+:math:`\lambda` by factors 0.9 and 1.1, :math:`|B|` by 0.8 and 1.2,
+and the cutoff :math:`B_{c2}` by 0.8 and 1.2. The 56 sampled cases have
+normalised complex-envelope and real-signal differences below
+:math:`4.5\times10^{-7}` from the independently refined reference.
+This provides headroom against the :math:`10^{-5}` evaluation target at
+those sampled points; it does not certify a continuous parameter box,
+arbitrary time windows or coarser explicit resolution overrides.
+
+The reference constructs the Fourier field directly and averages its complex
+exponentials. At the hard nearby cases, separate reciprocal and spatial
+refinements change the sampled reference by less than :math:`10^{-7}`.
+The local-moment expansion has a separate compression bound below
+:math:`5.5\times10^{-7}` over the sampled time intervals. That bound does
+not include field-map discretisation or floating-point transform error.
+The envelope uses :math:`|B|`; the precession carrier uses the signed field.
+Nonuniform, shifted and descending times and both signed carriers are checked.
+
+Barker *et al.* use the raw Gaussian-cutoff kernel for an isotropic hexagonal
+fit to polycrystalline Re₃Ta; their low-temperature depth scale is
+:math:`\lambda(0)=599` nm. Kadono *et al.* fit the YB₆ single crystal at
+2 K and 150 mT with :math:`\lambda=153` nm and
+:math:`\xi_c=25.6` nm. Its equivalent cutoff input is approximately
+0.50 T, distinct from their bulk :math:`B_{c2}(0)=0.31` T. Here the same
+cutoff input also sets the Brandt rescaling, so this numerical stress case
+does not reproduce their independently specified cutoff and bulk field.
+Their higher-field comparison favours a GL description. Neither raw-kernel
+application validates the additional RMS rescaling or the scalar powder shape.
 
 ==============  ===================  =====  =====================================
 Name            Symbol               Unit   Description
@@ -542,6 +578,11 @@ from a normal-state (above :math:`T_c`) measurement at the same field.
 
 **References**
 
+- R. Kadono *et al.*, `Phys. Rev. B **76**, 094501 (2007)
+  <https://doi.org/10.1103/PhysRevB.76.094501>`_, Eqs. (5)–(7) and Fig. 4.
+- J. A. T. Barker *et al.*, `Phys. Rev. B **98**, 104506 (2018)
+  <https://doi.org/10.1103/PhysRevB.98.104506>`_, Eqs. (32)–(35), Tables V–VI
+  and Fig. 10.
 - E. H. Brandt, Phys. Rev. B **68**, 054506 (2003).
 - J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000).
 - F. L. Pratt *et al.*, Phys. Rev. B **79**, 052508 (2009).
