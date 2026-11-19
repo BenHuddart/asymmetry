@@ -6,7 +6,7 @@
 > partitions all remaining WiMDA functionality into a 12-project parallel
 > portfolio (absorbing `simulate-mode`, `moments-analysis`, `rrf-transform`,
 > `python-user-functions`, `minos-error-analysis`, the WiMDA slice of
-> `phase-auto-calibration`, and the `period-arithmetic` remainder).
+> `phase-auto-calibration`).
 > Non-WiMDA entries (`msr-import`, `lem-depth-profiling`,
 > `structural-transitions`, `bpp-relaxation`) are unaffected.
 
@@ -57,7 +57,6 @@ higher-impact candidate.
 | 7 | [python-user-functions](candidates/python-user-functions/) | 4 | 3 | 12 | Next |
 | 9 | [bpp-relaxation](candidates/bpp-relaxation/) | 2 | 5 | 10 | Later |
 | 10 | [phase-auto-calibration](candidates/phase-auto-calibration/) | 3 | 3 | 9 | Next |
-| 11 | [period-arithmetic](candidates/period-arithmetic/) | 3 | 3 | 9 | Next |
 | 12 | [msr-import](candidates/msr-import/) | 3 | 3 | 9 | Next |
 | 13 | [muonium-radical-hyperfine](candidates/muonium-radical-hyperfine/) | 3 | 3 | 9 | Next |
 | 14 | [alc-avoided-level-crossing](candidates/alc-avoided-level-crossing/) | 3 | 2 | 6 | Later |

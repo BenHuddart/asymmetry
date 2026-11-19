@@ -135,7 +135,7 @@ when-to-use register.
 
 Touch list: `docs/user_guide/**`, `docs/ARCHITECTURE.md`,
 `docs/porting/wimda-parity-gap/projects/python-user-functions.md` and
-`projects/run-arithmetic.md`.
+`docs/reference/run_arithmetic.rst`.
 
 Verification: `python tools/harness.py docs`; link check via the docs build.
 

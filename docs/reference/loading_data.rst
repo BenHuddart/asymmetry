@@ -376,9 +376,11 @@ HDF4 container (legacy ``.nxs``)
 The V1 ``/run`` ``muonTD`` schema is the format WiMDA reads natively, and ISIS
 historically wrote it inside an **HDF4** container (pre-~2015 runs) rather than
 HDF5. Asymmetry detects the container from the file magic and reads HDF4 V1
-files directly — no manual pre-conversion to HDF5 is required. The same schema
-reader is used for both containers, so an HDF4 ``.nxs`` and its HDF5-converted
-twin reduce to identical asymmetry, counts, grouping, and metadata.
+files directly — no manual pre-conversion to HDF5 is required. Both containers
+use the same V1 schema reader. That shared reader does not establish fidelity
+of an independent conversion: counts, timing declarations and other scientific
+metadata must still be compared. The bounded reference comparisons above retain
+coordinate differences rather than assuming every converted twin is identical.
 
 HDF4 reading needs the optional ``pyhdf`` dependency, installed with the
 ``hdf4`` extra::

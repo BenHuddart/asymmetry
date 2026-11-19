@@ -1,7 +1,6 @@
 """Alpha is estimated on corrected (deadtime + background) counts.
 
-Pins the physics fix from ``docs/porting/correction-order-alpha-estimation``:
-the alpha estimate must consume the same deadtime-corrected, grouped,
+The alpha estimate consumes the same deadtime-corrected, grouped,
 background-subtracted forward/backward counts the reduction forms the asymmetry
 from, so a calibrated alpha centres the *background-subtracted* asymmetry rather
 than the raw totals.

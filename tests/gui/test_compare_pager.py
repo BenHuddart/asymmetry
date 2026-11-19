@@ -1,14 +1,7 @@
-"""Tests for the Corrections-tab compare pager (M3 of the corrections-tab UX plan).
+"""The compare pager and pipeline chips share one preview-stage selection.
 
-The pager (`◀`/`▶` + a muted label, built by
-:meth:`GroupingDialog._build_compare_pager`) steps ``_compare_stage`` through the
-cycle ``[None, "deadtime", "background", "alpha", "beta"]``, skipping stages
-:meth:`GroupingDialog._compare_stage_available` rejects. It rides the same
-``_compare_stage`` the pipeline chips drive, and is refreshed from the single
-:meth:`GroupingDialog._sync_compare_surfaces` sync seam — see
-``docs/porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md``
-(M3; per-section checkboxes retired by the correction-cards milestone, the
-compound "vs raw" compare by ``docs/plans/grouping-preview.md`` D6).
+Only available correction stages enter the cycle. Changing the selected
+comparison does not change the reduction settings represented by the solid curve.
 """
 
 from __future__ import annotations

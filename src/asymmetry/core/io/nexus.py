@@ -1050,7 +1050,7 @@ class NexusLoader(BaseLoader):
         This describes where the detector banks physically sit (an
         instrument-build property), not the applied-field geometry of the run.
         It is surfaced as ``detector_orientation`` and must not be conflated
-        with ``field_direction`` (see docs/porting/field-geometry/).
+        with the independently recorded ``field_direction``.
         """
         text = (raw or "").strip().upper()
         if text.startswith("L"):
@@ -1076,7 +1076,7 @@ class NexusLoader(BaseLoader):
         NOT used as a fallback: the banks read ``"L"`` regardless of the applied
         field, so deriving a direction from orientation would be a misleading
         guess. When the field state is absent the geometry is reported as
-        unknown (empty). See docs/porting/field-geometry/ for the rationale.
+        unknown (empty).
         """
         return {
             "TF": "Transverse",
@@ -1199,9 +1199,8 @@ class NexusLoader(BaseLoader):
         advanced/debug display only. It is deliberately **not** used to infer
         TF/LF geometry anywhere in this loader or in
         :mod:`asymmetry.core.fitting.wizard_scope` — deriving a field
-        direction from a hardware axis vector is the same forbidden
-        orientation-based guess that ``docs/porting/field-geometry/`` rejected
-        for detector orientation. Returns ``None`` when the node is absent,
+        direction from a hardware axis vector would conflate hardware and field
+        orientation. Returns ``None`` when the node is absent,
         unreadable, or marked unavailable.
         """
         if sample is None or not hasattr(sample, "get"):

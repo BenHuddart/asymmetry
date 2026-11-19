@@ -699,10 +699,9 @@ Treat this list as a seed, not a bound — the audit's value is finding the ones
 3. Prefer a **core-first** unification (a single series-fit orchestration + one
    coordinate resolver + one "when is it a series?" rule), with GUI recorders
    collapsing onto it — matching the existing core/GUI split invariant.
-4. Land behind the study-first workflow: keep this README as the study index and
-   add `comparison.md` / `implementation-options.md` / `verification-plan.md`
-   siblings as the design firms up (mirroring
-   `docs/porting/asymmetry-error-propagation/`).
+4. Record plans and decisions in a GitHub issue. Lasting definitions belong in
+   the owning reference and regression tests, as in the maintained
+   [asymmetry error conventions](https://benhuddart.github.io/asymmetry/explanation/conventions.html#asymmetry-counting-errors).
 
 ---
 

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarify derived-observable model definitions, frequency and width conventions,
   independent checks, and unresolved negative-muon lifetime sources.
 
+- Keep loading and reduction conventions in the maintained reference pages,
+  with histogram-first co-add guidance and conditional uncertainty limits.
+
 - Retain CI test-worker timeout and native-crash evidence without masking failed tests.
 
 - Clarify built-in fit-model sources, amplitude conventions and approximation
@@ -3212,7 +3215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Data-driven β estimator.** The β (asymmetry balance) card's "Measure from
   run" section can now fit β from a weak-TF calibration run instead of only
   entering it by hand. **Count fit (recommended)** — the endorsed protocol
-  after expert consultation (`docs/porting/beta-correction/`) — fits the
+  in the [beta calibration reference](https://benhuddart.github.io/asymmetry/reference/data_reduction/beta_calibration.html) — fits the
   forward and backward count histograms simultaneously with a single β free
   on the backward amplitude, and reports the fitted α and the α–β correlation
   alongside it; **Single-histogram ratio** instead fits each side
@@ -3238,7 +3241,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preview, and is scalar-only: in vector (per-projection) mode the card hides
   and reductions stay at β = 1. A data-driven β estimate — equivalently a
   fittable β in the count-domain F/B fit — is deferred
-  (`docs/porting/beta-correction/`).
+  in this release; see the [current beta calibration protocol](https://benhuddart.github.io/asymmetry/reference/data_reduction/beta_calibration.html).
 - **Multiple grouping profiles per project, with explicit run assignment.**
   Several grouping profiles per instrument can now be in concurrent use —
   typically one per sample, each with its own background, α, and deadtime
@@ -3380,8 +3383,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   background mode. The calibration dialog reports which corrections the estimate
   reflects and warns, in amber, when a requested correction could not be applied
   to the selected run — so a flattened "after" curve never misrepresents a
-  calibration the reduction will not reproduce. Study:
-  `docs/porting/correction-order-alpha-estimation`.
+  calibration the reduction will not reproduce. Current contract:
+  [alpha calibration](https://benhuddart.github.io/asymmetry/reference/data_reduction/alpha_calibration.html).
 - **Toggling the frequency Overlay checkbox off and back on no longer
   discards a manually-set view window.** The overlay's re-render always
   auto-ranged the axes because switching between the multi-run overlay and

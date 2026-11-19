@@ -308,10 +308,8 @@ def prepare_grouped_corrections(
     Applies the detector-first reduction order: deadtime correction
     (per-detector, on raw histograms), forward/backward grouping onto a common
     t0, then optional background subtraction on the grouped counts. The returned
-    forward/backward counts are exactly what :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
-    feeds to :func:`~asymmetry.core.transform.rebin.binned_fb_asymmetry`, and what the alpha estimate must
-    consume so ``alpha`` balances the corrected spectra rather than the raw
-    totals (see ``docs/porting/correction-order-alpha-estimation``).
+    counts feed :func:`reduce_grouped_asymmetry` and the calibration operation;
+    alpha therefore balances the same corrected observations used for reduction.
 
     Only required output samples and active background estimators are
     deadtime-corrected. ``output_window`` selects native bins;

@@ -35,28 +35,6 @@
       "notes": "IMPLEMENTED 2026-06-16 (Option B, signed off). core/fitting/mu_kinetics.py: fit_mu_relaxation_series (shared-A_Mu global fit over the 2 G series \u2014 globals A_1[=A_Mu]+phase, frequency fixed=f_mu, locals Lambda_2[=\u03bb_Mu],A_3,Lambda_3; wraps fit_global on 'Oscillatory*Exponential+Exponential'), fit_bimolecular_rate (weighted-LSQ \u03bb=\u03bb0+k_Mu\u00b7[x]), fit_arrhenius (weighted-LSQ on the guide's log10 k vs 1/T \u2192 E_a, slope=\u2212E/(ln10\u00b7R), default kJ/mol), mu_relaxation_from_amplitude (single-run cross-check: \u03bb_Mu with A_Mu FIXED to a reference = analytic limit). All exported from asymmetry.core.fitting + cookbook recipe + docs/user_guide/muonium_kinetics.rst (closes DG-C6). KEY IMPLEMENTATION FINDING: the shared-amplitude fit needs \u22651 slow, well-surviving member (the deox-water [x]=0 run) to PIN A_Mu \u2014 a {quarter,half,full}-only triplet has no good anchor and the fit is under-determined (negative slope / \u03c7\u00b2r\u226b1); adding the water reference fixes it. Encoded in the env-gated real-corpus test + documented as an .. important:: in the guide. VERIFIED: 8 synthetic planted-truth tests (simulate.py, no binary fixtures) pass deterministically in ~3.5s (degeneracy reproduced with share_amplitude=False \u2192 fast-member \u03bb error \u226b shared; shared fit recovers planted \u03bb_Mu/k_Mu/E_a; amplitude-inversion cross-check agrees). REAL CORPUS (env-gated ASYMMETRY_MALEIC_DIR, EMU 78251-78302): room-T line k_Mu=0.68\u00b10.02 \u00b5s\u207b\u00b9/rel-conc, \u03bb0=0.63 \u00b5s\u207b\u00b9, all four \u03bb_Mu finite+monotonic (half/full no longer rail = the S5 \u274c\u2192\u2705 flip); Arrhenius 278/298/338 K \u2192 E_a=10.5\u00b10.6 kJ/mol (diffusion-controlled order; lit \u224817.6). \u03c7\u00b2r is high (13-28) \u2014 single-frequency model approximates the 4-line Mu\u2070 TF spectrum + diamagnetic precession; slope/E_a robust regardless. k_Mu absolute not gradeable (no stock molarity \u2192 relative units only, GT \u00a79). ---- ORIGINAL STUDY NOTE: closes the only S5 API \u274c (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Closes the only S5 API \u274c (wimda-corpus windows-api maleic-acid kinetics; doc-gap DG-C6). Gap: at a pulsed source the 2 G TF Mu signal decays before first_good_bin (t_g\u22480.203 \u00b5s, EMU 78251-78302), so per-run A_Mu & \u03bb_Mu are degenerate (A_Mu\u00b7exp(\u2212\u03bb\u00b7t_g) conserved) and a free fit rails \u2014 only water (\u03bb\u22480.47) and quarter (\u03bb\u22482.87) fit; half/full diverge; integrate_run is flat (TF oscillation averages to zero). Physical key: A_Mu(0) is the beam/solvent Mu fraction, common across the concentration/T series (FFT corroborates: water Mu amp 62.9 vs maleic ~12-14 = same A_Mu, different survival); maleic changes only \u03bb_Mu. Rescue: SHARE A_Mu (+\u03c6; f_Mu fixed) across the series, \u03bb_Mu local \u2014 slow members pin A_Mu, which then forces \u03bb for the truncated fast members. Seam is COMPOSITION of implemented parts: fit_global (asymmetry_global.py:174 shared globals/locals) + 'Oscillatory*Exponential+Exponential' (or MuoniumTF*Exponential) + Linear (\u03bb=\u03bb0+k_Mu\u00b7[x]) + built-in Arrhenius/log10-2.3R (E_a). MISSING: (1) encoded shared-A_Mu recipe; (2) discoverable kinetics entry point (series\u2192\u03bb_Mu\u2192k_Mu/\u03bb0\u2192E_a); (3) concentration axis ([x] not in .nxs \u2014 caller-supplied vector); (4) amplitude/fraction inversion cross-check; (5) user-guide page. RECOMMENDED Option B: thin Qt-free core/fitting/mu_kinetics.py (fit_mu_relaxation_series + fit_bimolecular_rate + fit_arrhenius) + Option-C amplitude inversion as RED-test cross-check + docs. Reference programs ship NO turnkey fast-Mu kinetics workflow and NO fit log for this example (verification is synthetic-planted-truth-led + env-gated real-corpus physics check; no binary fixtures). CAVEAT: $WIMDA_SRC/$MUSRFIT_SRC/$MANTID_SRC not checked out locally \u2014 comparison rests on the teaching docx (read), Asymmetry's prior porting studies, and the muon-chemistry literature; WiMDA/Mantid muon-school recipe needs source re-trace before contracts harden. Arrhenius unit note: built-in component uses per-particle k_B; emit molar E_a (kJ/mol) via the guide's log10 k vs 1/T linear form (slope=\u2212E/2.3R). k_Mu absolute not gradeable (no stock molarity) \u2192 relative-conc units + \u03bb0 only."
     },
     {
-      "slug": "hdf4-nexus-v1",
-      "feature_name": "HDF4 NeXus v1 (.nxs) read support",
-      "status": "study",
-      "path": "docs/porting/hdf4-nexus-v1",
-      "references": [
-        "WiMDA",
-        "Mantid (LoadMuonNexus1)",
-        "WiMDA-muon-school nxs4to5 converter (hdf4tree.py / v1_to_v2.py)"
-      ],
-      "docs": {
-        "readme": "docs/porting/hdf4-nexus-v1/README.md",
-        "comparison": "docs/porting/hdf4-nexus-v1/comparison.md",
-        "implementation_options": "docs/porting/hdf4-nexus-v1/implementation-options.md",
-        "test_data": "docs/porting/hdf4-nexus-v1/test-data.md",
-        "verification_plan": "docs/porting/hdf4-nexus-v1/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-06-16",
-      "notes": "PROPOSES REVERSING the standing exclusion in wimda-parity-gap/decision-record.md \u00a71 ('HDF4 .nxs \u2014 Out, coverage boundary'). New grounds: HDF4 is WiMDA's native on-disk format (direct parity/usability); pyhdf is a pure-Python optional dep with wheels (asymmetry[hdf4] extra, like h5py); and the in-corpus nxs4to5 reader (hdf4tree.py+v1_to_v2.py) already reads all 1,913 corpus HDF4 files. KEY FINDING: the gap is the CONTAINER not the schema \u2014 NexusLoader._detect_layout/_load_v1 already parse the v1 /run muonTD schema; only h5py.File() fails on the HDF4 container (magic 0e031301). RECOMMENDED Option B: port hdf4tree.read_tree+is_hdf4 into core/io/hdf4.py, wrap in a thin h5py-compatible adapter (__contains__/__getitem__/keys/get/attrs/asarray) and branch load() on the HDF4 magic to feed the existing _load_v1 unchanged \u2014 reuses both Asymmetry's v1 reader and the corpus HDF4 reader; lighter than porting full v1\u2192v2 (Option A) and avoids duplicating _load_v1 (Option C). Cross-format .nxs_v2/.RAW explicitly NOT a goal. Ready-made oracle: corpus ships every HDF4 file beside its converted data_hdf5/ twin \u2192 direct parity test. Write/export to v2 deferred. Surfaced by API session-5 (TRSB ships HDF4)."
-    },
-    {
       "slug": "rf-resonance-gui",
       "feature_name": "RF-\u00b5SR resonance: GUI surface (time-domain/scan picker + RF field-difference scan)",
       "status": "study",
@@ -123,29 +101,6 @@
       "notes": "Ergonomics/discoverability port of an existing internal capability: FitEngine.global_fit already does asymmetry-domain simultaneous least-squares (concatenates ds.asymmetry/ds.error, iminuit LeastSquares, shared globals + per-dataset locals); the count-domain fit_grouped_* family wraps it with a Cash factory. Gap was no first-class asymmetry-domain entry point and an undiscoverable contract (datasets must carry unique run_number; runless datasets collide on key 0). IMPLEMENTED (Option A): fit_global + GlobalFitResult in asymmetry_global.py wrap engine.global_fit with synthetic keying (sequence->positional, mapping->keys), single-ParameterSet broadcast, boundary validation (disjoint global/local, names present, finite positive errors), and a combined reduced chi2 (Sigma chi2_d over Sigma N_d - N_free_global - Sigma N_free_local_d). No minimiser duplication. Asymmetry-domain LSQ is the convenience default; count-domain Poisson/Cash remains statistically preferred for low counts (documented). Wizard left untouched (recommend vs execute separated)."
     },
     {
-      "slug": "asymmetry-error-propagation",
-      "feature_name": "Asymmetry statistical error: exact Poisson vs Mantid independent-propagation",
-      "status": "implemented",
-      "path": "docs/porting/asymmetry-error-propagation",
-      "references": [
-        "Mantid",
-        "WiMDA",
-        "musrfit",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/asymmetry-error-propagation/README.md",
-        "comparison": "docs/porting/asymmetry-error-propagation/comparison.md",
-        "implementation_options": "docs/porting/asymmetry-error-propagation/implementation-options.md",
-        "test_data": "docs/porting/asymmetry-error-propagation/test-data.md",
-        "verification_plan": "docs/porting/asymmetry-error-propagation/verification-plan.md"
-      },
-      "tests_path": "tests/test_transforms.py",
-      "src_path": "src/asymmetry/core/transform/asymmetry.py",
-      "updated": "2026-06-10",
-      "notes": "Follow-on from the simulate-mode verification suite (verification \u00a72). compute_asymmetry shipped Mantid AsymmetryCalc's independent-N/D error (1+A\u00b2)/(F+B), which over-estimates \u03c3_A by (1+A\u00b2)/(1-A\u00b2) vs exact Poisson 4\u03b1\u00b2FB(F+B)/(F+\u03b1B)\u2074 = (1-A\u00b2)/(F+B). Derivation verified analytically + Monte Carlo; oracle: Mantid is the outlier, WiMDA/musrfit/textbook use 1-A\u00b2. Measured fit impact: amplitude \u03c3 +3.2%, \u03c7\u00b2\u1d63 biased low. IMPLEMENTED (Option A): compute_asymmetry now uses 2|\u03b1|\u221a(FB(F+B))/(F+\u03b1B)\u00b2 with one-sided F\u00b7B=0 bins kept at the 1.0 no-information sentinel. Tests updated: test_transforms \u221a2->1.0 pin (renamed) + 3 new exact-form unit tests; TestRefitRecovery chi2r re-centred on 1.0. Other 'recompute' tests derive expected error by calling compute_asymmetry and stayed green. validate green (2000 passed). compute_asymmetry_with_count_errors and the simulate builder already used the exact form."
-    },
-    {
       "slug": "muonium-triplet",
       "feature_name": "Muonium triplet model component",
       "status": "study",
@@ -184,27 +139,6 @@
       "src_path": null,
       "updated": "2026-06-09",
       "notes": "WiMDA link groups are equality-only (each follower takes its main's value); 4 groups; main=first non-fixed member; followers drop out of the free set. No offset/linear tie exists in WiMDA. The CdS docx 'Use Ties to keep the lines equally spaced' is loose wording: equal spacing comes either from the muonium model (ZFmuonium/TFMuonium: splitting is one parameter) or from three free frequencies recovered from the data. Chosen port: equality link groups + free frequencies (matches WiMDA, no offset ties), with the improvement that a follower reports the propagated (=main's) uncertainty. Follow-on: a MuoniumTriplet model component that enforces symmetry via a single splitting parameter."
-    },
-    {
-      "slug": "deadtime-correction",
-      "feature_name": "Deadtime correction",
-      "status": "study",
-      "path": "docs/porting/deadtime-correction",
-      "references": [
-        "WiMDA",
-        "musrfit",
-        "Mantid"
-      ],
-      "docs": {
-        "readme": "docs/porting/deadtime-correction/README.md",
-        "comparison": "docs/porting/deadtime-correction/comparison.md",
-        "implementation_options": "docs/porting/deadtime-correction/implementation-options.md",
-        "test_data": "docs/porting/deadtime-correction/test-data.md",
-        "verification_plan": "docs/porting/deadtime-correction/verification-plan.md"
-      },
-      "tests_path": "tests/porting/deadtime-correction",
-      "src_path": "src/porting/deadtime-correction",
-      "updated": "2026-05-14"
     },
     {
       "slug": "multi-group-time-domain-fitting",
@@ -342,24 +276,6 @@
       "updated": "2026-05-23"
     },
     {
-      "slug": "period-arithmetic",
-      "feature_name": "Pulsed-source multi-period arithmetic",
-      "status": "candidate",
-      "tier": "next",
-      "score": 9,
-      "path": "docs/porting/candidates/period-arithmetic",
-      "references": [
-        "Mantid",
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/candidates/period-arithmetic/README.md",
-        "comparison": "docs/porting/candidates/period-arithmetic/comparison.md",
-        "scoring": "docs/porting/candidates/period-arithmetic/scoring.md"
-      },
-      "updated": "2026-05-23"
-    },
-    {
       "slug": "msr-import",
       "feature_name": "musrfit .msr file import",
       "status": "candidate",
@@ -486,51 +402,6 @@
       "updated": "2026-06-07"
     },
     {
-      "slug": "period-selection",
-      "feature_name": "Period (red/green) selection",
-      "status": "study",
-      "path": "docs/porting/period-selection",
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "musrfit"
-      ],
-      "docs": {
-        "readme": "docs/porting/period-selection/README.md",
-        "comparison": "docs/porting/period-selection/comparison.md",
-        "implementation_options": "docs/porting/period-selection/implementation-options.md",
-        "test_data": "docs/porting/period-selection/test-data.md",
-        "verification_plan": "docs/porting/period-selection/verification-plan.md"
-      },
-      "tests_path": "tests/test_period_selection.py",
-      "src_path": "src/asymmetry/core/io/periods.py",
-      "supersedes_candidate": "period-arithmetic",
-      "notes": "Moves the GUI 'RG box' (Red/Green/G-R/G+R) into core and adds scriptable per-period access. Realises the 'period-arithmetic' candidate (red/green selection slice). Validated against photo-uSR silicon runs 103277-103298.",
-      "updated": "2026-06-07"
-    },
-    {
-      "slug": "field-geometry",
-      "feature_name": "Experimental field geometry (TF/LF/ZF) determination",
-      "status": "study",
-      "path": "docs/porting/field-geometry",
-      "references": [
-        "Mantid",
-        "musrfit",
-        "WiMDA"
-      ],
-      "docs": {
-        "readme": "docs/porting/field-geometry/README.md",
-        "comparison": "docs/porting/field-geometry/comparison.md",
-        "implementation_options": "docs/porting/field-geometry/implementation-options.md",
-        "test_data": "docs/porting/field-geometry/test-data.md",
-        "verification_plan": "docs/porting/field-geometry/verification-plan.md"
-      },
-      "tests_path": "tests/test_nexus_loader.py",
-      "src_path": "src/asymmetry/core/io/nexus.py",
-      "updated": "2026-06-07",
-      "notes": "IMPLEMENTED in nexus.py (_load_v1/_load_v2): adds field_state (TF/LF/ZF raw) + detector_orientation (instrument axis) metadata; field_direction repurposed to the user-facing geometry derived ONLY from field_state (words: Transverse/Longitudinal/Zero field), blank when absent, NO orientation fallback. GUI: run-info dialog 'Detector Orientation' row + selectable browser column. Tests in test_nexus_loader.py; verified vs real corpus files. KEY FINDING (study): none of Mantid/musrfit/WiMDA reads sample/magnetic_field_state for geometry. Mantid derives main_field_direction from detector orientation (same source Asymmetry uses) but names it as the instrument axis and uses it only for default MUSR/CHRONUS grouping, not fitting. musrfit stores free-text Setup/Orientation + numeric field (informational); user declares TF/LF/ZF in .msr THEORY. WiMDA: user picks grouping/mode; reads field value + ISIS a_selected_magnet L/T/A for logbook only. Asymmetry's bug is a labelling conflation: it derives field_direction from detector orientation and presents it as the experiment geometry. Ground truth corpus (2050 pulsedTD files): 1731 TF runs mislabelled Longitudinal (orientation=L); MUSR00044991 is TF at 0 G (do NOT infer ZF from field magnitude); no 'ZF' string appears in any file; 137 EMU files lack magnetic_field_state (need orientation fallback). RECOMMENDATION (Option C, refines candidate fix): keep orientation as a separate detector_orientation field, add field_state from magnetic_field_state, user-facing geometry comes from field_state else None/unknown (decision 2026-06-07: NO orientation fallback - it would reintroduce the conflation; affects 137 files = all ARGUS + EMU nickel set + all PSI/HDF4), never synthesise ZF. NeXus NXmuon spec not available locally - confirm enum before relying on edge wording."
-    },
-    {
       "slug": "time-integral-asymmetry",
       "feature_name": "Time-integral asymmetry / field-scan observable (ALC / repolarisation / QLCR)",
       "status": "study",
@@ -550,9 +421,7 @@
       },
       "tests_path": "tests/test_time_integral_asymmetry.py",
       "src_path": "src/asymmetry/core/transform/integral.py",
-      "depends_on": [
-        "period-selection"
-      ],
+      "depends_on": [],
       "notes": "CORE API IMPLEMENTED (Qt-free; GUI deferred) in src/asymmetry/core/transform/integral.py, tests in tests/test_time_integral_asymmetry.py. Per-run reduction: integrate_asymmetry(forward,backward,...,method) [low-level on grouped counts, 'integral'=sum-counts-then-(F-aB)/(F+aB) and 'differential'=per-bin-asymmetry-then-mean], integrate_curve(time,asym,err) [mean of an already-formed curve e.g. combined G-R], integrate_run(dataset_or_run) [reduces via run.grouping mirroring TimeFBAsymmetry, default window = good-bin range]. Field-scan: build_field_scan(runs,order_key) -> FieldScan(sorted x/value/error + excluded list), order_key in {field,temperature,run}; runs missing the log are skipped with a reason (Mantid parity). differentiate_scan(scan,max_gap) = WiMDA dA/dB. 'integral' path reuses compute_asymmetry so integral + time-domain share ONE error model (Mantid-compatible); alpha=1.0 reproduces WiMDA exactly. LAYERING: transform takes NO io dependency - period selection is upstream (periods.select_period). Validated end-to-end on corpus EMU LF series 10-100 G @350 K (repolarisation recovery curve). DEFERRED follow-ups: GUI scan representation + trend panel, .asymp persistence as a representation type, and ALC baseline+peak-fit (alc-avoided-level-crossing candidate, depends on this). ---- STUDY: Flagged by WiMDA Muon School corpus testing: unblocks ALC/repolarisation/QLCR. Two-layer feature: (1) per-run reduction counts/asymmetry over [t_min,t_max] -> one (value,error) scalar; (2) series assembly across runs ordered by field/temperature/run -> scan curve. FINDINGS: WiMDA ALC mode = count-integral (F-B)/(F+B) over full good-bin window, NO alpha, Poisson error, plus dA/dB differential transform (muondata.pas:807-815, FitTableUnit.pas:322-402). Mantid PlotAsymmetryByLogValue is the most complete + most portable reference: alpha-aware, two Types - Integral (integrate counts THEN form (F-aB)/(F+aB)) and Differential (form A(t) per bin THEN integrate) - single [TimeMin,TimeMax], Red/Green periods, LogValue sample-log x-axis + Function(Mean/Min/Max/First/Last); feeds 3-step ALC interface (load->baseline->peak fit). musrfit NEGATIVE RESULT: no native integral observable; ALC is just a filename instrument tag fitted as ordinary fittype-2 asymmetry; mupp plots FITTED params vs field, never integrates counts. RECOMMENDATION (Option A): port Mantid model as behavioural contract with WiMDA count-integral as default Integral formula (alpha=1.0 reproduces WiMDA exactly); reject musrfit param-only approach for core observable. Realise as Qt-free core/transform/integral.py reusing compute_asymmetry kernel (shared Mantid-compatible error model) + good-bin windowing + periods.py red/green, plus a FIELD_SCAN_INTEGRAL representation/series reusing FitSeries order_key + fit_parameters_panel trend surface. Mantid GPL-3 = oracle only, do NOT vendor (same rule as maxent study). ALC baseline-subtraction + peak-fitting DEFERRED to follow-up alc-avoided-level-crossing candidate (depends on this). Asymmetry already has every primitive (alpha-aware asymmetry, good-bin window, period selection, field/T metadata, series ordering, trend plot) - port is mostly composition.",
       "updated": "2026-06-07"
     },
@@ -614,30 +483,6 @@
       "src_path": null,
       "updated": "2026-06-10",
       "notes": "Parameter-trending model functions + Model-layer machinery (umbrella wimda-parity-gap, Wave A). All 8 fitfunctions.pas functions and the Model.pas machinery verified against the Pascal source. Phase 1: Polynomial, PowerLawQuadBG, MuRepolarisation (A_hf-parameterised, B0=A/(gamma_e+gamma_mu) from constants.py) + documented composite recipes (Arrhenius+Arrhenius eV->meV delta 0.089%; OrderParameter+Constant; 2xLorentzianLCR+Polynomial with coefficient non-transfer warning). Phase 2: error-mode selector (Column/Percent/Absolute/None + estimate-from-scatter as the one-pass fixed point of WiMDA's Estimate iteration), union multi-range windows on ModelFitRange, shared chi2-quality helper (core/fitting/fit_quality.py, reused by fit-workflow-diagnostics). Session-only (no .asymp changes); GUI in ModelFitDialog only. OUT: x2 second variable (requirements recorded; cross-group fitting covers it), *fit.dll (-> python-user-functions), .mfit ReloadFit, GLE. IMPLEMENTED 2026-06-10: Phases 1+2 shipped (validate green, 1810 passed); EuO regression Tc=69.24(9)/beta=0.409(7)/alpha=1.18(4) matches PR #15 within combined sigma; arbitrary-X stretch not reached (follow-on; GUI-only, core is x-agnostic)."
-    },
-    {
-      "slug": "data-reduction-parity",
-      "feature_name": "Data-reduction parity (alpha estimation, backgrounds, binning modes, t0 search, detector exclusion, period mapping)",
-      "status": "implemented",
-      "path": "docs/porting/data-reduction-parity",
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "musrfit",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/data-reduction-parity/README.md",
-        "comparison": "docs/porting/data-reduction-parity/comparison.md",
-        "implementation_options": "docs/porting/data-reduction-parity/implementation-options.md",
-        "test_data": "docs/porting/data-reduction-parity/test-data.md",
-        "verification_plan": "docs/porting/data-reduction-parity/verification-plan.md"
-      },
-      "tests_path": "tests/test_alpha_estimation.py",
-      "src_path": "src/asymmetry/core/transform/asymmetry.py",
-      "supersedes_candidate": "period-arithmetic",
-      "updated": "2026-06-10",
-      "notes": "Wave A project 1 of the wimda-parity-gap umbrella. Three phases: (1) diamagnetic + General alpha estimators with uncertainties; (2) tail-fit background for pulsed sources + frame-ratio background-run subtraction; (3) variable/constant-error binning, automatic t0 search, per-detector exclusion, multi-period subset->red/green mapping. Phase 3 period mapping realises the REMAINDER of the period-arithmetic candidate (period-selection shipped the red/green selection slice; this adds arbitrary subset summation with Ignore). WiMDA arithmetic transcribed as test oracles; divergences recorded in comparison.md."
     },
     {
       "slug": "model-fit-followons",
@@ -723,28 +568,6 @@
       },
       "updated": "2026-06-12",
       "notes": "Promoted to full study: see slug 'python-user-functions' (docs/porting/python-user-functions). Candidate docs retained for scoring history; the study supersedes their technical content."
-    },
-    {
-      "slug": "run-arithmetic",
-      "feature_name": "Histogram-level run arithmetic (WiMDA co-add / co-subtract)",
-      "status": "implemented",
-      "path": "docs/porting/run-arithmetic",
-      "references": [
-        "WiMDA",
-        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
-      ],
-      "docs": {
-        "readme": "docs/porting/run-arithmetic/README.md",
-        "comparison": "docs/porting/run-arithmetic/comparison.md",
-        "implementation_options": "docs/porting/run-arithmetic/implementation-options.md",
-        "test_data": "docs/porting/run-arithmetic/test-data.md",
-        "verification_plan": "docs/porting/run-arithmetic/verification-plan.md"
-      },
-      "tests_path": "tests/test_combine.py",
-      "src_path": "src/asymmetry/core/data/combine.py",
-      "depends_on": [],
-      "updated": "2026-06-12",
-      "notes": "Wave B proj 2. Verified vs WiMDA muondata.pas:2418-2491 (cosign=-1 subtract, frame/spill+period accumulation, ACC tshift align) and BatchFit.pas:300-324 (in-batch coadd reuses same machinery, OUT of scope here). F9: co-subtract built ON subtract_scaled_counts + resolve_background_reference. W3: scalar event-weighted T/field + temperature_spread/field_spread + nested combination block (combined_from kept). W11: rewire _coadd_datasets/rebuild_combined_dataset onto combine_runs, keep negative ids + combined_datasets schema. W12: per-period sum via periods.sum_period_histograms. W1: no schema bump. KEY DIVERGENCE: WiMDA keeps master run's T/field (no averaging in code); Asymmetry event-weights + records spread. Decisions: ref-run-only co-subtract; first-class combined rows where it just works; per-detector t0 align (apply_grouping_aligned); silent recompute on .asymp load; flat menu action."
     },
     {
       "slug": "negative-muon-analysis",
@@ -924,76 +747,6 @@
       "notes": "Study + 5-PR phased plan complete, decision-ready. PR1 golden-verdict harness (gate, <10min via frozen-baseline cache + P<=5 cases), PR2 free wins (layer/cross-template bounds + no-Hesse screening + escalation-on-anomaly, target 7-12x, all tiers), PR3 engine G-scaling (profiled/nested locals + VarPro, Ben-requested, own PR), PR4 search+surrogate (greedy _search_parameter_roles + Q pre-tests + Wald surrogate + template racing), PR5 effort slider + GUI (Sonnet). Spine PR1->PR2->PR4->PR5; PR2//PR3 parallel (share only fit_global sig, mitigate w/ stub commit). Dropped: per-node B&B (redundant w/ layer bound), _staged_globalization as search, GlobalSearchOrchestrator on slider (park behind post-delivery bake-off), G subsetting, simplex-first."
     },
     {
-      "slug": "musrroot-tdirectory",
-      "feature_name": "MusrRoot TDirectory-based RunHeader parsing",
-      "status": "implemented",
-      "path": "docs/porting/musrroot-tdirectory",
-      "references": [
-        "musrfit ($MUSRFIT_SRC: TMusrRunHeader.cpp/.h, PRunDataHandler.cpp)"
-      ],
-      "docs": {
-        "readme": "docs/porting/musrroot-tdirectory/README.md",
-        "comparison": "docs/porting/musrroot-tdirectory/comparison.md",
-        "implementation_options": "docs/porting/musrroot-tdirectory/implementation-options.md",
-        "test_data": "docs/porting/musrroot-tdirectory/test-data.md",
-        "verification_plan": "docs/porting/musrroot-tdirectory/verification-plan.md"
-      },
-      "tests_path": "tests/io/test_root_loader.py",
-      "src_path": "src/asymmetry/core/io/root.py",
-      "updated": "2026-07-13",
-      "notes": "PSI's 2026 FLAME DAQ writes MusrRoot RunHeader as nested TDirectorys of labelled, globally-numbered TObjString leaves ('NNN - Label: Value -@type'), per musrfit's 2025 TDirectory commit series (e38fa479 skeleton, 7e28402e infrastructure, 4917e5c7 reader, ea646e01 MusrRoot v2.0, df7b8433 PRunDataHandler::ReadRootFile TDirectory+TFolder, dbbaf554 unrelated XML-schema DOI move). RootLoader already detected the TDirectory layout but never decoded the per-leaf encoding, so such files loaded with blank title, 0.0 temperature/field, a filename-guessed run number, and verbose histogram-title detector labels. Fix decodes each leaf with the existing _parse_musrroot_string regex (verified to match musrfit's first-'-'/first-':'/last-' -@' delimiter semantics, internal hyphens preserved), keyed on label (NNN is a single counter shared across all subfolders, so numbering is non-contiguous per subfolder and must never be used as a key); encoded-vs-clean discrimination uses the TKey name, since clean payloads like dates false-parse. Asymmetry-specific divergences: RunSummary (free text; musrfit ignores this block \u2014 its ring-anode-HV mining reads the legacy LEM run summary, not MusrRoot's) is attached verbatim as metadata['musrroot_run_summary'] provenance rather than discarded; instrument matching is now case-insensitive (FLAME writes lowercase 'flame'); a backward-compatible 'Label: Value' clean-form fallback is accepted for synthetic fixtures. Legacy TFolder MusrRoot and pre-2011 LEM ROOT are unaffected. Validation is synthetic encoded fixtures (no real PSI data committed); a 2026 FLAME commissioning-era file was checked locally only, and no path/filename/run number/sample/proposal detail from it appears anywhere in this repository."
-    },
-    {
-      "slug": "correction-order-alpha-estimation",
-      "feature_name": "Correction order vs. alpha estimation (deadtime + background before the wTF alpha estimate; unified corrected preview)",
-      "status": "study",
-      "path": "docs/porting/correction-order-alpha-estimation",
-      "depends_on": [
-        "data-reduction-parity",
-        "deadtime-correction"
-      ],
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "musrfit"
-      ],
-      "docs": {
-        "readme": "docs/porting/correction-order-alpha-estimation/README.md",
-        "comparison": "docs/porting/correction-order-alpha-estimation/comparison.md",
-        "implementation_options": "docs/porting/correction-order-alpha-estimation/implementation-options.md",
-        "test_data": "docs/porting/correction-order-alpha-estimation/test-data.md",
-        "verification_plan": "docs/porting/correction-order-alpha-estimation/verification-plan.md"
-      },
-      "tests_path": null,
-      "src_path": null,
-      "updated": "2026-07-16",
-      "notes": "Physics bug + WiMDA fidelity divergence: alpha is estimated on raw grouped counts while the reduction applies deadtime+background first, so a calibrated alpha does not centre the background-subtracted wTF asymmetry. Approved direction (domain consult + reference cross-check): estimate alpha on deadtime-corrected -> t0-aligned -> grouped -> background-subtracted counts (one step before binned_fb_asymmetry), for all three methods; reference-run background pre-corrected before scaling. UI direction: unify to a single corrected-reduction preview (Corrections panel) with staleness badge, retiring the deadtime/background/alpha modals."
-    },
-    {
-      "slug": "beta-correction",
-      "feature_name": "Beta correction (musrfit asymmetry fit type 2: intrinsic detector-asymmetry balance)",
-      "status": "implemented",
-      "path": "docs/porting/beta-correction",
-      "depends_on": [
-        "correction-order-alpha-estimation",
-        "asymmetry-error-propagation"
-      ],
-      "references": [
-        "musrfit"
-      ],
-      "docs": {
-        "readme": "docs/porting/beta-correction/README.md",
-        "comparison": "docs/porting/beta-correction/comparison.md",
-        "implementation_options": "docs/porting/beta-correction/implementation-options.md",
-        "test_data": "docs/porting/beta-correction/test-data.md",
-        "verification_plan": "docs/porting/beta-correction/verification-plan.md"
-      },
-      "tests_path": "tests/core/test_beta_correction.py",
-      "src_path": null,
-      "updated": "2026-07-19",
-      "notes": "Port of musrfit's beta (A0_b/A0_f intrinsic-asymmetry balance) applied with alpha in one formula: ours A=(F-alphaB)/(betaF+alphaB), beta identical in both conventions. Determination is independent of alpha (beta invisible to count-ratio estimators; beta does not move the corrected asymmetry's zero), so the GUI gets a separate blue Corrections card. v1: fixed user-entered scalar only, default 1, key emitted only when != 1 (no schema bump); exact Poisson error generalizes 2|a| -> |a|(1+b) with denominator betaF+alphaB. Deferred pending expert consult: data-driven estimator == fittable beta in the count-domain FB model; per-projection vector beta."
-    },
-    {
       "depends_on": [],
       "docs": {
         "comparison": "docs/porting/fermi-step-transition/comparison.md",
@@ -1034,32 +787,6 @@
       "status": "implemented",
       "tests_path": "tests/core/test_helical.py",
       "updated": "2026-09-15"
-    },
-    {
-      "depends_on": [
-        "data-reduction-parity"
-      ],
-      "docs": {
-        "comparison": "docs/porting/t0-determination/comparison.md",
-        "implementation_options": "docs/porting/t0-determination/implementation-options.md",
-        "readme": "docs/porting/t0-determination/README.md",
-        "test_data": "docs/porting/t0-determination/test-data.md",
-        "verification_plan": "docs/porting/t0-determination/verification-plan.md"
-      },
-      "feature_name": "Time-zero (t0) determination: file default, always-visible detected value, divergence warning",
-      "notes": "Implemented on feat/t0-determination per docs/plans/t0-determination.md (six phases, one PR), landing decisions D1-D12: T0Policy.mode is an explicit stored field (from_file default), never inferred from a value comparison, fixing the fresh-draft Manual mislabelling; every per-detector alignment consumer (reduction, grouped Fourier, MaxEnt, count-domain fits, deadtime window, plot mask) routes through one effective_detector_t0_bins resolver, harness-enforced; the count-fit t0 promotion sign is corrected; Manual is a signed offset from each run's own file t0 (schema v21), with project-open healing of pre-v21 absolute values and mislabelled zero-offset policies; ISIS header bins (t0_bin, first_good_bin, last_good_bin) decode as 1-based deterministically per the corpus survey, and the exact time_zero / MusrRoot Time Zero Bin sets the time-axis stamp (bin centre minus t0) rather than the nearest integer bin, moving some existing TF fit phases by up to half a bin, correctly; a missing header t0 is recorded as such and resolved against the automatic search; the grouping window shows the file value beside the detected one in every mode with a verdict, using the survey-calibrated tolerances (2 bins continuous, 3 pulsed).",
-      "path": "docs/porting/t0-determination",
-      "references": [
-        "WiMDA",
-        "Mantid",
-        "musrfit",
-        "Literature"
-      ],
-      "slug": "t0-determination",
-      "src_path": "src/asymmetry/core/transform/t0.py",
-      "status": "implemented",
-      "tests_path": "tests/porting/t0-determination",
-      "updated": "2026-09-17"
     }
   ]
 }
