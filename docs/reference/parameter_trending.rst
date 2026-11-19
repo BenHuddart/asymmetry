@@ -338,7 +338,8 @@ Axis transforms
 Some of the most common µSR presentations are *linearisations* of a curved
 trend: the **Redfield** analysis plots :math:`1/\lambda` against
 :math:`(\mu_0 H)^2` so a straight line's slope and intercept give the
-fluctuation rate and field width; the **Arrhenius** analysis plots
+fluctuation rate and field width under the chosen
+:ref:`frequency convention <derived-redfield-convention>`; the **Arrhenius** analysis plots
 :math:`\ln\lambda` against :math:`1/T` so the slope is an activation energy.
 The **ƒ** button applies such a transform to an axis: one sits on the x rail,
 beside the abscissa picker, and one sits on every parameter card's header.
@@ -1347,7 +1348,7 @@ oscillation leaves the repolarisation curve
 
    y(B) = a_{\mathrm{Mu}}\,
    \frac{\tfrac{1}{2} + (B/B_0)^2}{1 + (B/B_0)^2} + a_{\mathrm{Dia}},
-   \qquad B_0 = \frac{A_{\mathrm{hf}}}{\gamma_e + \gamma_\mu},
+   \qquad B_0 = \frac{A_{\mathrm{hf}}}{g_e + g_\mu},
 
 rising from half the muonium amplitude at :math:`B = 0` (the other half is
 lost to the unobserved oscillation) to the full amplitude once
@@ -1355,7 +1356,8 @@ lost to the unobserved oscillation) to the full amplitude once
 :math:`a_{\mathrm{Dia}}`. The component is parameterised directly by the
 hyperfine constant :math:`A_{\mathrm{hf}}` (MHz) — the quantity the
 experiment is designed to extract — with :math:`B_0` derived internally
-from CODATA gyromagnetic ratios. For vacuum muonium
+from CODATA gyromagnetic ratios, with cyclic :math:`g=\gamma/(2\pi)` in
+MHz/G. For vacuum muonium
 (:math:`A_{\mathrm{hf}} = 4463\;\mathrm{MHz}`), :math:`B_0 \approx 1585` G,
 and the curve reaches three quarters of the muonium amplitude at exactly
 :math:`B = B_0`.
@@ -1419,15 +1421,76 @@ References
 4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
+.. _derived-empirical-definitions:
+
+Definitions and physical interpretation
+---------------------------------------
+
+``Constant``, ``Linear``, the polynomial components, ``PowerLaw``,
+``PowerLawQuadBG``, ``ExponentialDecay``, ``Arrhenius``, ``CriticalDivergence``,
+``OrderParameter`` and ``FermiStep`` define trend shapes. Their independent
+landmarks establish polynomial coefficients, plateaus, widths and limiting
+values; fitting one does not establish a microscopic mechanism. In particular,
+a fitted step is a volume fraction only after background and missing-asymmetry
+calibration. ``Lambda_bg`` is an additive constant. Quadrature combines variances
+only when the corresponding independent Gaussian broadening assumptions apply;
+it is not a general rule for adding relaxation rates.
+
+``Lorentzian``, ``GaussianLCR``, ``LorentzianLCR`` and ``LorentzianLCRPair``
+are defined peak shapes and a shifted difference of peaks. ALC literature
+motivates their use, but does not make these shapes exact solutions of a
+quadrupolar spin Hamiltonian or identify the broadening mechanism from width
+alone. The paired component uses the declared field-step sign and separation.
+
+``KnightAnisotropy`` and ``AngularCos2`` define second-harmonic angle laws;
+``AngularFourier2`` adds a first harmonic. Angles are degrees. Orthogonal
+Fourier projections check those coefficients, but a first harmonic alone does
+not uniquely establish sample misalignment. Interpretation requires a tensor,
+rotation geometry and other possible angle-dependent contributions.
+
+.. image:: /_generated/screenshots/redfield_component_info.png
+   :alt: Component Info for Redfield, showing Model Expression and Parameters
+   :width: 100%
+
+.. _derived-redfield-convention:
+
+Redfield frequency convention
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Redfield`` defines
+
+.. math::
+
+   \lambda(B)=\frac{D^2}{2\nu}\,
+   \frac{1}{1+(f_\mu/\nu)^m},\qquad
+   f_\mu=(\gamma_\mu/2\pi)|B|.
+
+Here :math:`D` and :math:`\nu` are stored frequency scales in MHz and field is
+in Gauss. The denominator uses cyclic frequency, not angular frequency.
+For :math:`m=2`, compare the exponential angular-frequency correlation
+:math:`C(t)=\Delta^2 e^{-rt}`:
+
+.. math::
+
+   2\int_0^\infty C(t)\cos(\omega_\mu t)\,dt
+   =\frac{2\Delta^2r}{r^2+\omega_\mu^2},\qquad
+   r=2\pi\nu,\quad \Delta=\sqrt{\pi/2}\,D.
+
+Thus the physical correlation time is :math:`1/(2\pi\nu)`, not
+:math:`1/\nu`. Keren, Phys. Rev. B **50**, 10039 (1994), Eqs. (2),(5),
+uses angular :math:`\omega_\mu`, inverse-time :math:`r` and the
+motional-narrowing limit. The independent cosine-transform check establishes
+the parameter conversion; it does not validate Redfield theory outside that
+limit. Other :math:`m` values are empirical denominator exponents.
+
 RF-μSR resonance (muon + electron + proton)
 -------------------------------------------
 
 ``RFResonanceMuP`` fits a **field-swept RF-μSR resonance scan** of a muoniated
 radical — muon plus electron plus one dominant proton, such as the
 cyclohexadienyl radical C₆H₆Mu formed in benzene — and extracts the **muon and
-proton hyperfine couplings** :math:`A_\mu` and :math:`A_p` simultaneously. This
-is the Asymmetry counterpart of WiMDA's ``RigiWorkshopFit`` exact-diagonalisation
-RF model.
+proton hyperfine couplings** :math:`A_\mu` and :math:`A_p` simultaneously. The model uses an isotropic three-spin Hamiltonian and a declared two-branch
+resonance selection.
 
 At a fixed applied RF frequency :math:`\nu_{\mathrm{RF}}`, the static field is
 swept and the (Red − Green) integral asymmetry shows two resonance features.
@@ -1436,13 +1499,15 @@ three-spin Hamiltonian
 
 .. math::
 
-   H = A_\mu\,\mathbf{S}_e\!\cdot\!\mathbf{S}_\mu
+   H/h = A_\mu\,\mathbf{S}_e\!\cdot\!\mathbf{S}_\mu
      + A_p\,\mathbf{S}_e\!\cdot\!\mathbf{S}_p
-     + (\gamma_e S_{e,z} - \gamma_\mu S_{\mu,z} - \gamma_p S_{p,z})\,B
+     + (g_e S_{e,z} - g_\mu S_{\mu,z} - g_p S_{p,z})\,B
 
-matches :math:`\nu_{\mathrm{RF}}`. The two resonance fields :math:`B_1, B_2` are
+has an energy difference divided by :math:`h` equal to :math:`\nu_{\mathrm{RF}}`.
+Hyperfine coefficients are cyclic frequencies in MHz. The Zeeman coefficients
+are cyclic :math:`g=\gamma/(2\pi)` in MHz/G, with field in Gauss. The two resonance fields :math:`B_1, B_2` are
 found by **exact diagonalisation** of the 8×8 Hamiltonian (the high-field-limit
-linear relation :math:`B_\mathrm{res} = (\nu_{\mathrm{RF}} \pm \tfrac{1}{2}A_\mu)/\gamma_\mu`
+linear relation :math:`B_\mathrm{res} = (\nu_{\mathrm{RF}} \pm \tfrac{1}{2}A_\mu)/g_\mu`
 is inaccurate at the few-hundred-G fields these scans use), and the model is two
 Lorentzians on a flat background:
 
@@ -1451,6 +1516,22 @@ Lorentzians on a flat background:
    y(B) = \mathrm{BG}
      + \sum_{i=1,2} \mathrm{ampl}_i\,
        \frac{\mathrm{wid}_i^2}{\mathrm{wid}_i^2 + (B - B_i)^2}.
+
+.. image:: /_generated/screenshots/rf_resonance_component_info.png
+   :alt: Component Info for RFResonanceMuP, showing Model Expression and Parameters
+   :width: 100%
+
+.. _derived-rf-branches:
+
+The implementation selects the sorted energy gaps :math:`(E_7-E_5)/h` and
+:math:`(E_8-E_6)/h` (one-based labels). These are definitions of the fitted
+branches, not a calculation of RF matrix elements, state populations, linewidths
+or all visible transitions. Branch identities can change near level crossings;
+use the two-line interpretation only where those selected gaps describe the
+observed resonances. Independent equal-coupling, zero-field multiplets check
+the three-spin Hamiltonian; the decoupled-proton check is a composition check
+against the two-spin implementation. Neither proves visibility of both branches
+throughout the root-search interval.
 
 The resonance **mean** tracks :math:`A_\mu` and the **splitting** tracks
 :math:`A_p`. Set the amplitudes negative to fit resonance dips (the usual
@@ -1506,65 +1587,47 @@ constant control against Mantid 6.16.1 and musrfit 1.12.1 checks a separate
 three-point Gaussian objective; it does not certify the complete model library.
 See :doc:`/explanation/comparison` for versions, settings, and limits.
 
-Migrating WiMDA model functions
--------------------------------
+Model recipes and parameter conventions
+---------------------------------------
 
-Every function in WiMDA's Model-layer library ("Standard fit models") has a
-direct counterpart or a composite recipe. Parameter names map as follows:
+The following recipes define Asymmetry compositions. Agreement with a
+closed-form identity does not establish agreement with an independently
+executed program.
 
 .. list-table::
    :header-rows: 1
    :widths: 28 36 36
 
-   * - WiMDA function
-     - Asymmetry equivalent
-     - Notes
-   * - Polynomial fit up to fifth order
+   * - Shape
+     - Components
+     - Convention
+   * - Polynomial through fifth order
      - ``Polynomial``
-     - Identical (coefficients c₀–c₅).
-   * - Power law
-     - ``PowerLaw``
-     - Identical on :math:`x > 0`; Asymmetry evaluates :math:`|x|^n` so
-       negative-:math:`x` points cannot fault the fit.
-   * - Power law (BG quad)
+     - Coefficients c₀–c₅ multiply powers of the absolute coordinate.
+   * - Power law with independent Gaussian background
      - ``PowerLawQuadBG``
-     - Identical.
-   * - 2 Lorentzians + cubic BG
+     - Square root of the sum of squared power-law and background terms.
+   * - Two peaks plus cubic background
      - ``LorentzianLCR + LorentzianLCR + Polynomial``
-     - Peak terms map exactly (Ampl → f, Pos → B₀, Wid → B_wid; fix
-       :math:`c_4, c_5` at 0 for the cubic). **Background coefficients do
-       not transfer**: WiMDA's cubic is in powers of :math:`(x - \mathrm{Pos}\,1)`,
-       Asymmetry's in absolute :math:`x` — refit rather than copying values.
-   * - Thermal activation (2 component)
+     - Fix :math:`c_4,c_5=0`. A background centred on a peak requires a
+       coefficient translation; copying centred coefficients is not equivalent.
+   * - Two activated contributions
      - ``Arrhenius + Arrhenius``
-     - WiMDA uses eV, Asymmetry meV: :math:`E_a[\mathrm{meV}] = 1000
-       \times E_a[\mathrm{eV}]`. WiMDA's hard-coded :math:`e/k_B` is
-       0.089 % below the CODATA value, so refitted activation energies are
-       expected to come out very slightly higher than WiMDA's.
-   * - Internal field vs T for ordered magnet
+     - Activation energies are meV; convert energies supplied in eV by 1000.
+   * - Ordered-phase signal plus baseline
      - ``OrderParameter + Constant``
-     - Identical on the physical domain, including the clamp to the
-       background value above :math:`T_c` (B₀ → y₀, B_bg → the Constant).
-   * - Divergence of relaxation rate
+     - The ordered contribution vanishes above :math:`T_c`.
+   * - Critical divergence
      - ``CriticalDivergence``
-     - Identical away from :math:`T = T_c` (Tc → Tc, alpha → ν,
-       Min rate → c, scaling → a). Exclude the critical region from the
-       fit window rather than relying on the singular point.
-   * - Repolarisation of isotropic Mu
+     - Exclude the singular point from the fit domain.
+   * - Isotropic muonium repolarisation
      - ``MuRepolarisation``
-     - Same curve; WiMDA fits :math:`B_0` in G, Asymmetry fits
-       :math:`A_{\mathrm{hf}}` in MHz with
-       :math:`B_0 = A_{\mathrm{hf}}/(\gamma_e + \gamma_\mu)` derived
-       (:math:`A_{\mathrm{hf}}[\mathrm{MHz}] = 2.816 \times B_0[\mathrm{G}]`).
-   * - RF resonance Mu+p (exact diag.)
+     - :math:`B_0=A_{\mathrm{hf}}/(g_e+g_\mu)`, with cyclic
+       :math:`g=\gamma/(2\pi)` in MHz/G and :math:`A_{\mathrm{hf}}` in MHz.
+   * - Selected radical RF branches
      - ``RFResonanceMuP``
-     - Port of ``RigiWorkshopFit``'s ``RFresonanceMuPlusProtonExact`` (the
-       analytic ``RFresonanceMuPlusProton`` variant is intentionally not a
-       separate component — it is inaccurate at low field). Parameters map
-       A → A_mu, Ap → A_p, RF → nu_RF, ampl1/wid1/ampl2/wid2/BG identical.
-       WiMDA's eigensolver is replaced by
-       :func:`numpy.linalg.eigvalsh` (basis-independent spectrum, identical
-       level differences).
+     - Couplings and applied RF frequency are MHz; the two fitted peaks
+       follow the declared sorted-energy gaps, with separate heights and widths.
 
 Composite parameters in the Fit Parameters panel
 ------------------------------------------------
@@ -1712,7 +1775,7 @@ fitted in is not always recoverable).
 
 * **Applied field** — the precession is referenced to the bare applied field. For
   a frequency-parameterised component (MHz) the reference is the free-muon Larmor
-  frequency :math:`\nu_{\mathrm{ref}} = \gamma_\mu B`
+  frequency :math:`\nu_{\mathrm{ref}} = (\gamma_\mu/2\pi) B`
   (:math:`\gamma_\mu/2\pi = 135.5\ \mathrm{MHz\,T^{-1}}`); for a component
   parameterised directly by the local field :math:`B_\mu` (Gauss, as in the
   ``OscillatoryField`` family) the reference is the applied field itself, giving
@@ -1849,16 +1912,12 @@ K_{\mathrm{avg}}`, :math:`3K_{\mathrm{ax}}/4 = K_{\mathrm{amp}}`, sharing
    K(\theta) = K_{\mathrm{avg}} + K_1\cos(\theta - \theta_1) + K_{\mathrm{amp}}\cos 2(\theta - \theta_2)
    \qquad\text{(}\texttt{AngularFourier2}\text{)}
 
-which adds a first-harmonic term to ``AngularCos2``. A perfectly aligned
-rotation axis gives a pure second harmonic; a tilted axis leaks a first
-harmonic whose amplitude grows with the tilt, so a fitted :math:`K_1`
-significantly different from zero is fit-level evidence that the rotation
-axis is not exactly where the goniometer says it is. This is a
-phenomenological Fourier form — it does not itself solve for the physical
-tilt angle from :math:`K_1` and :math:`\theta_1` — and, with five free
-parameters, needs at least five shared angles per curve to fit. See *Suggest
-next angle*, below, for using it to test for misalignment directly rather
-than assuming an aligned axis.
+which adds a first-harmonic term to ``AngularCos2``. A tilted rotation axis
+can introduce this harmonic, but so can other angle-dependent contributions.
+The fit compares Fourier descriptions; it does not uniquely identify a tilt
+or solve its physical angle. With five free parameters it needs at least five
+shared angles per curve. See *Suggest next angle* below for comparing the
+alternative against a second-harmonic model.
 
 ``KnightAnisotropy`` and ``AngularCos2`` both carry a :math:`\theta_0` term —
 the goniometer/mount misalignment between the zero of the angle scale and the
@@ -1947,10 +2006,10 @@ exactly as in :doc:`suggest_next_point`, down to the result line's phrasing:
    Measure at θ = 48.2° × 0.6 of a typical run's statistics
    → σ ≈ 0.018 (approximate)
 
-**Test misalignment** asks a different question: is the scan actually
-consistent with a perfectly aligned rotation axis, or is there evidence of a
-tilt? On **Suggest** it fits the ``AngularFourier2`` alternative (above)
-automatically, off-thread — cached against the joint fit's model, unit, and
+**Test misalignment** compares the second-harmonic fit with a description
+that includes a first harmonic; a preferred first harmonic does not uniquely
+identify its physical cause. On **Suggest** it fits the ``AngularFourier2``
+alternative (above) automatically, off-thread — cached against the joint fit's model, unit, and
 Lorentz/demag correction, so repeat clicks do not refit — and ranks candidate
 angles by the disagreement between the current model and that alternative,
 summed over every branch (the same model-discrimination utility

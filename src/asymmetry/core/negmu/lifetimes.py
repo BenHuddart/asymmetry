@@ -1,32 +1,11 @@
-"""EXPERIMENTAL — WORK IN PROGRESS. Negative-muon (μ⁻) capture-lifetime analysis.
+"""Element-keyed total disappearance lifetimes for synthetic capture analysis.
 
-This API is UNVALIDATED against real μ⁻ elemental-analysis data. No μ⁻ corpus
-exists in this project; every result here has been exercised only against
-synthetic histograms. The element lifetime values are literature-anchored
-(Suzuki, Measday & Roalsvig, Phys. Rev. C 35, 2212 (1987), via Blundell et al.,
-Muon Spectroscopy: An Introduction, OUP 2022, Table C.1), but the fitting,
-capture-ratio, and background machinery have NOT been checked against an
-established tool (WiMDA, Mantid) on measured data. The API, parameter names, and
-return shapes MAY CHANGE without notice. Do not rely on results for publication
-without independent verification. This feature is deliberately NOT exposed in the
-GUI fit builders. Promotion trigger for a GUI: real ISIS μ⁻ data AND a user.
-
-Negative-muon capture lifetimes: an element-keyed table of muonic-atom total
-disappearance lifetimes τ(Z) = 1/(Λ_capture + Λ_bound-decay), the seeds for the
-multi-exponential capture fit.
-
-Source: Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An
-Introduction* (OUP, 2022), Appendix C, Table C.1 — values combined from
-T. Suzuki, D. F. Measday & J. P. Roalsvig, Phys. Rev. C 35, 2212 (1987).
-A few entries marked WiMDA-provisional are from WiMDA's older table where
-Table C.1 has no value. WiMDA's table is NOT trusted for values (see the
-porting study, comparison.md §5).
-
-Provenance note: WiMDA's ``mystrings`` table was
-the workflow reference, **not** the value source. It has a 69-vs-67 length
-mismatch, the ``'Ti'``→``'Tl'`` symbol bug, and several value divergences
-(Ne 1.520→1.461, Zn 0.169→0.161, Sr 0.142→0.132, Ba 0.072→0.0949).
-Adopt Table C.1; cite Suzuki/Measday/Roalsvig 1987.
+The stored source labels describe the table's attribution, not verification
+of every row. Suzuki, Measday and Roalsvig, Phys. Rev. C 35, 2212 (1987),
+Tables III-IV distinguish isotope-specific capture rates from mean lifetimes.
+Their Eq. (4) includes bound decay: tau^-1 = capture rate + Q/tau_free.
+Unconfirmed source associations and provisional values must be checked before
+physical interpretation; see the owning negative-muon reference page.
 """
 
 from __future__ import annotations
@@ -52,12 +31,11 @@ DECAY_BACKGROUND_LABEL: str = "decayBG"
 _S = "SuzukiMeasdayRoalsvig1987"
 _W = "WiMDA-provisional"
 
-#: Element symbol → ElementLifetime. Transcribed from plan.md §2.
-#: ⚠confirm rows (period-5 transition cluster and lanthanides/actinides) are
-#: included at the plan's stated values; they have not been independently
-#: verified against the textbook table layout and are NOT test-spot-check anchors.
+#: Element symbol → ElementLifetime; numeric defaults include unverified rows.
+#: Source labels alone do not resolve measurement selection, isotope identity
+#: or aggregation. Rows marked ⚠confirm are not independent source anchors.
 ELEMENT_LIFETIMES: dict[str, ElementLifetime] = {
-    # --- Confident rows (cross-validated vs WiMDA to ≤ rounding) ---
+    # --- Rows outside the explicitly unconfirmed cluster ---
     "H": ElementLifetime("H", 1, "Hydrogen", 2.19480, 0.00006, _S),
     "He": ElementLifetime("He", 2, "Helium", 2.188, None, _W),
     "Li": ElementLifetime("Li", 3, "Lithium", 2.1869, 0.0004, _S),
@@ -123,7 +101,7 @@ ELEMENT_LIFETIMES: dict[str, ElementLifetime] = {
     "Ho": ElementLifetime("Ho", 67, "Holmium", 0.079, 0.001, _S),
     "Er": ElementLifetime("Er", 68, "Erbium", 0.0749, 0.0006, _S),
     "Tm": ElementLifetime("Tm", 69, "Thulium", 0.074, 0.002, _S),
-    # --- Confident rows (continued) ---
+    # --- Remaining rows outside the explicitly unconfirmed cluster ---
     "Hf": ElementLifetime("Hf", 72, "Hafnium", 0.075, 0.001, _S),
     "Ta": ElementLifetime("Ta", 73, "Tantalum", 0.0755, 0.0006, _S),
     "W": ElementLifetime("W", 74, "Tungsten", 0.0765, 0.0008, _S),

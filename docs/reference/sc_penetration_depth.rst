@@ -81,6 +81,20 @@ Subtract the non-superconducting contribution before converting to penetration
 depth. A width-convention conversion does not account for vortex-lattice
 asymmetry, disorder, or anisotropic powder geometry.
 
+.. _derived-sc-field-width:
+
+Field-width domain
+------------------
+
+The Brandt field-width models use the triangular-lattice second moment and
+its reduced-field correction; their independent limits and width-conversion
+checks concern :math:`\sigma_2`, not an entire time-domain field distribution.
+The powder conversion :math:`\lambda_\mathrm{eff}=3^{1/4}\lambda_{ab}`
+therefore reduces the width by :math:`\sqrt3` in its high-anisotropy London
+approximation. It does not integrate arbitrary crystallite orientations or
+vortex disorder. The full time-envelope models have separate accuracy and
+shape assumptions in :doc:`fit_functions/oscillation`.
+
 Core equations
 --------------
 
@@ -125,6 +139,41 @@ tensor and the per-symmetry gap-amplitude constants used by each model — is
 collapsed below; the practical starting point for most users is the
 model-selection table that follows.
 
+.. image:: /_generated/screenshots/sc_gap_component_info.png
+   :alt: Component Info for SC_NonmonotonicD, showing Model Expression and Parameters
+   :width: 100%
+
+.. _derived-sc-definitions:
+
+Gap-basis and interpretation limits
+-----------------------------------
+
+The gap coefficient :math:`\Delta_0` multiplies the declared basis
+:math:`g(\mathbf{k})`; it is a maximum gap only when
+:math:`\max|g|=1`. A change of basis normalisation requires a corresponding
+change of gap coefficient and, for the generalised interpolation, its shape
+factor. The angular thermal kernel tests numerical integration of the declared
+basis; they do not establish a pairing symmetry from a fit alone.
+
+``SC_NonmonotonicD`` defines
+:math:`g_\beta=\beta\cos2\phi+(1-\beta)\cos6\phi`, with the declared
+:math:`a=4/3` temperature interpolation. The example on p. 5 of Prozorov and
+Giannetta [1] prints :math:`1.43\cos2\phi+0.43\cos6\phi`, gap ratio 1.19
+and :math:`a=0.38`. The literal printed angular expression equals :math:`1.86g_\beta` at
+:math:`\beta=1.43/1.86`. Matching that complete example would require a gap
+coefficient scaled by 1.86 and :math:`a=1.86^2\times0.38=1.314648`;
+the component's fixed :math:`4/3` is a fitting convention, not that exact example.
+The review also describes a unit-maximum basis, whereas its printed plus-form
+has value 1.86 at zero angle. This comparison follows the literal expression;
+it does not resolve that source-normalisation discrepancy or infer a sign change.
+
+``SC_PWaveAxial`` uses a two-dimensional :math:`\cos\phi` magnitude example,
+not a full three-dimensional axial response tensor. ``SC_ExtendedS`` and
+``SC_DWave`` can have identical thermal responses where their gap magnitudes
+coincide: this kernel does not measure the sign of the order parameter.
+Two-gap weights define a linear mixture of the component densities; an inferred
+band assignment needs independent evidence.
+
 Model selection at a glance
 ---------------------------
 
@@ -152,9 +201,9 @@ Model selection at a glance
      - Intermediate between simple s and d
      - Anisotropic singlet systems not captured by pure d-wave
    * - ``SC_NonmonotonicD``
-     - d-wave with shifted angular maximum
-     - Can show sub-linear curvature
-     - Electron-doped cuprate phenomenology
+     - Mixed cos2φ/cos6φ; nodes and maxima depend on β
+     - Depends on the chosen basis and interpolation
+     - Defined harmonic-mixture comparison; not the source's full material example
    * - ``SC_TwoGap_SS``
      - Two nodeless gaps
      - Curvature from two energy scales
@@ -317,8 +366,11 @@ Nonmonotonic d-wave
 
    g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
 
-Use when monotonic d-wave cannot reproduce curvature and an electron-doped
-cuprate-like nonmonotonic form is physically plausible [1].
+This component compares a defined mixture of second and sixth angular
+harmonics. Nodes and extrema depend on β; the default β=0.8 is monotonic
+between an antinode and the adjacent node. The name does not establish a
+nonmonotonic material gap. See :ref:`derived-sc-definitions` for the basis
+normalisation and temperature-interpolation limits of comparison with [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_nonmonotonic_d
    :noindex:

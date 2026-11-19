@@ -37,11 +37,11 @@ def test_fermi_step_plateaus_midpoint_and_width() -> None:
     assert hi == pytest.approx(0.9)
 
 
-def test_fermi_step_matches_mantid_smooth_transition_code() -> None:
+def test_fermi_step_matches_logistic_plateau_identity() -> None:
     a1, a2, midpoint, growth_rate = 3.0, -1.5, 120.0, 7.0
     x = np.linspace(60.0, 180.0, 41)
-    mantid = a2 + (a1 - a2) / (np.exp((x - midpoint) / growth_rate) + 1)
-    np.testing.assert_allclose(_fermi_step(x, a1, a2, midpoint, growth_rate), mantid, rtol=1e-12)
+    expected = a2 + (a1 - a2) / (np.exp((x - midpoint) / growth_rate) + 1)
+    np.testing.assert_allclose(_fermi_step(x, a1, a2, midpoint, growth_rate), expected, rtol=1e-12)
 
 
 def test_fermi_step_matches_khasanov_wtf_form() -> None:

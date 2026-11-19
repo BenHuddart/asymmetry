@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify derived-observable model definitions, frequency and width conventions,
+  independent checks, and unresolved negative-muon lifetime sources.
+
 - Retain CI test-worker timeout and native-crash evidence without masking failed tests.
 
 - Clarify built-in fit-model sources, amplitude conventions and approximation
