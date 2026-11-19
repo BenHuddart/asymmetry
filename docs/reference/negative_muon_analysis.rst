@@ -88,35 +88,56 @@ material's capture physics.
 The lifetime table
 ------------------
 
-The table contains 79 element keys. Its source strings retain the attribution
-``SuzukiMeasdayRoalsvig1987`` or ``WiMDA-provisional``; these strings are not
-per-row verification certificates. Seven provisional entries carry no published
-uncertainty. The claimed textbook aggregation has not been independently
-reconciled with every source measurement.
+The authority contains 79 element-labelled defaults, with mean life and quoted
+uncertainty stored in microseconds. Mean life is the **total disappearance
+lifetime**, including capture and bound decay; it is not the inverse capture
+rate. Each :class:`~asymmetry.core.negmu.lifetimes.ElementLifetime` records
+``source`` and a separate ``status``:
 
-Direct inspection of Suzuki et al. Table IV confirms source-association
-problems: its Pd row is 96.0 ± 0.6 ns, Ho is 74.9 ± 0.6 ns and Er is
-74.4 ± 1.5 ns; these differ from the stored defaults. Ru and Tm have no rows
-there. The compendium reports individual measurements, including isotope and
-particle-channel distinctions for actinides; it does not prescribe one weighted
-mean for every element. Source selection, uncertainties and isotope semantics
-remain unresolved in `issue 661 <https://github.com/BenHuddart/asymmetry/issues/661>`_.
-Check any lifetime used for interpretation against its reported measurement.
+* ``selected_measurement`` identifies a directly checked published mean-life
+  row, with ``source_location`` and ``selection_note``;
+* ``unverified`` retains a source-labelled transcription without certifying
+  which measurement or combination it represents;
+* ``unconfirmed`` identifies an unresolved source association or selection;
+* ``provisional`` retains one of seven provisional entries with no quoted
+  uncertainty.
 
-Access lifetimes programmatically via
-:func:`~asymmetry.core.negmu.lifetimes.tau_us` and
-:func:`~asymmetry.core.negmu.lifetimes.lifetime`:
+The selected measurements for Rh, Pd, Ag, Ho and Er are printed in Suzuki,
+Measday and Roalsvig (1987), Table IV, pages 2219–2220. Rh and Pd use ref. 49
+(Eckhause *et al.*, 1966); Ho uses ref. 54 (Filippas *et al.*, 1963).
+Their target isotope composition and detection channel are unspecified in
+this authority; the original experiments' full texts are not independently
+verified here. Ag and Er use Suzuki's own measurements, labelled ref. a.
+Section II describes elemental self-supporting targets and decay-electron
+timing for these measurements, without resolving isotope composition.
+Ag is selected for that directly documented material and timing context;
+the other Table IV Ag measurements remain alternatives. No smallest-error
+rule or weighted average is applied, and isotope/channel measurements are
+not pooled into an elemental recommendation.
+
+The remaining unconfirmed and provisional values stay available with their
+explicit status. Ru and Tm have no mean-life row in Suzuki Table IV;
+this does not establish that no measurement exists elsewhere. Actinide
+isotope and detection-channel alternatives remain unresolved. A ``source``
+identifier alone is not evidence that every stored value was verified.
+
+Access the single authority programmatically:
 
 .. code-block:: python
 
    from asymmetry.core.negmu.lifetimes import tau_us, lifetime
 
-   tau_us("Fe")             # → 0.206 μs
-   lifetime("Fe").sigma_us  # → 0.001 μs
+   tau_us("Fe")             # 0.206 μs
+   lifetime("Fe").sigma_us  # 0.001 μs, quoted uncertainty
+   selected = lifetime("Ag")
+   selected.status          # "selected_measurement"
+   selected.source_location
+   selected.selection_note
 
-Lifetimes are **fixed** at their table values by default. Free a specific
-element's lifetime by including its symbol in
-:class:`~asymmetry.core.negmu.fit.CaptureModelSpec`\ ``.free_tau``:
+Lifetimes are **fixed** at their defaults unless their symbols occur in
+:class:`~asymmetry.core.negmu.fit.CaptureModelSpec`\ ``.free_tau``. The source
+uncertainty is retained as metadata; it is not automatically propagated into
+a fit with fixed lifetimes.
 
 .. code-block:: python
 
@@ -125,8 +146,22 @@ element's lifetime by including its symbol in
    spec = CaptureModelSpec(
        elements=("Ca", "Fe"),
        include_decay_background=True,
-       free_tau=frozenset({"Fe"}),   # fit the Fe lifetime as a free parameter
+       free_tau=frozenset({"Fe"}),
    )
+
+A model specification resolves the current authority when creating components
+or default parameters. Constructed components and explicit fit parameters
+retain their numerical lifetimes. Saved fit parameters retain both the
+``tau_<element>`` value and its fixed flag; evaluation and refitting give
+those explicit values precedence over component defaults. To repeat a fit
+with stored lifetime choices, pass its parameter set explicitly:
+
+.. code-block:: python
+
+   from asymmetry.core.negmu.fit import fit_capture_histogram
+
+   result = fit_capture_histogram(time, counts, spec,
+                                  parameters=stored_result.parameters)
 
 *When to use this.* Reach for the negative-muon capture-lifetime API when:
 
@@ -259,8 +294,10 @@ the two sides report identical ratios and differ only in the side label.
 References
 ----------
 
-* T. Suzuki, D. F. Measday, and J. P. Roalsvig, Phys. Rev. C **35**, 2212
-  (1987) — primary lifetime compilation used for the element table.
+* T. Suzuki, D. F. Measday, and J. P. Roalsvig,
+  `Phys. Rev. C **35**, 2212 (1987)
+  <https://doi.org/10.1103/PhysRevC.35.2212>`_, Section II and Table IV,
+  pages 2219–2220 — directly checked mean-life selections and context.
 * D. F. Measday, Phys. Rep. **354**, 243 (2001) — review of the nuclear
   physics of μ⁻ capture; Λ\ :sub:`cap`\ (Z) systematics.
 * S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
