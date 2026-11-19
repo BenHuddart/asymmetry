@@ -86,13 +86,13 @@ def test_resolved_primitive_extents_are_visible_in_actual_axes(qapp, case):
     else:
         mode = "plan"
         placements = (
-            Placement(a, Rectangle(0.2, 4.0, 90.0)),
-            Placement(b, Rectangle(0.4, 0.4), 0.5, 0.0),
+            Placement(a, Rectangle(0.2, 4.0, 90.0), 0.0, 1.0),
+            Placement(b, Rectangle(0.4, 0.4), 0.5, -0.5),
         )
         if case == "plan_context":
             placements = (
-                Placement(a, Rectangle(0.4, 0.4)),
-                placements[1],
+                Placement(a, Rectangle(0.4, 0.4), -0.5, 0.0),
+                Placement(b, Rectangle(0.4, 0.4), 0.5, 0.0),
                 Placement(Occurrence(hardware="h", editable=False), EndOn(radius=0.75), 4.0, 3.0),
             )
     profile = synthetic_profile(
@@ -121,10 +121,26 @@ def test_resolved_primitive_extents_are_visible_in_actual_axes(qapp, case):
                 if isinstance(patch, Circle) and patch.center == (4.0, 3.0)
             )
         )
+    title = axes.title.get_window_extent()
+    assert widget._fig.bbox.contains(title.xmin, title.ymin)
+    assert widget._fig.bbox.contains(title.xmax, title.ymax)
     for patch in primitives:
         bounds = patch.get_window_extent()
         assert axes.bbox.contains(bounds.xmin, bounds.ymin)
         assert axes.bbox.contains(bounds.xmax, bounds.ymax)
+    if mode == "plan":
+        sample = next(
+            patch for patch in axes.patches if isinstance(patch, Circle) and patch.center == (0, 0)
+        )
+        for label in (text for text in axes.texts if text.get_text() in {"1", "2"}):
+            assert not sample.contains_point(axes.transData.transform(label.get_position()))
+    for size in ((600, 600), (1200, 800)):
+        widget.resize(*size)
+        qapp.processEvents()
+        widget._canvas.draw()
+        title = axes.title.get_window_extent()
+        assert widget._fig.bbox.contains(title.xmin, title.ymin)
+        assert widget._fig.bbox.contains(title.xmax, title.ymax)
 
 
 def test_emu_retains_its_existing_radial_display_limits(qapp):

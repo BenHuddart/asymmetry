@@ -10,7 +10,8 @@ beamline is identified as unverified rather than inferred from the instrument na
 The schematic identifies acquired channels for grouping; its dimensions do not
 establish a detector acceptance model or calibrated vector sensitivity. Recorded
 scientific settings retain their own provenance. The editor retains established
-framing and expands it when transformed detector shapes would extend outside it. See :doc:`../detector_grouping`
+framing and expands it when transformed detector shapes would extend outside it.
+Resizing refits titles and other annotations if they would be clipped by the canvas. See :doc:`../detector_grouping`
 for applying presets and :doc:`../../contributing` for maintaining definitions.
 
 .. toctree::

@@ -109,39 +109,27 @@ class DetectorSchematicWidget(QWidget):
         super().__init__(parent)
         self._instrument = instrument
 
-        # State -------------------------------------------------------
         # groups[gid] = set of included detector_ids (1-based)
         self._groups: dict[int, set[int]] = {}
         self._active_group: int = 1
-        # Optional gid -> display name, used only to make hover tooltips read
-        # "Forward" rather than "Group 1"; purely cosmetic, set by the caller
-        # (the layout dialog keeps the authoritative name mapping).
+        # Hover names are supplied by the layout dialog.
         self._group_names: dict[int, str] = {}
 
         # Patch map: detector_id → clickable (active) matplotlib patch
         self._patches: dict[int, Wedge | Rectangle] = {}
-        # Read-only context rectangles (a detector shown in a panel where it is
-        # edited elsewhere); kept so exclusion hatching stays consistent across
-        # both panels. Entries are (detector_id, patch).
+        # Context copies share exclusion hatching with their editable channel.
         self._readonly_patches: list[tuple[int, Wedge | Rectangle]] = []
-        # Extra membership-slice patches drawn on top of the primary patch when a
-        # detector belongs to more than one group (see `_paint_detector`).  Kept
-        # separate from `_patches` so hit-testing / hover highlighting still
-        # resolves through the single primary patch per detector.
+        # Membership slices leave one primary hit target per detector.
         self._membership_patches: dict[int, list[Wedge | Rectangle]] = {}
-        # "+N" ellipsis text artists for detectors in more than
-        # `_MAX_RENDERED_MEMBERSHIPS` groups at once.
+        # Overflow text counts memberships beyond the rendered slices.
         self._overflow_labels: dict[int, object] = {}
-        # Axis map: bank index → polar axes
         self._axes: list = []
 
         self._excluded: set[int] = set()
         self._exclude_mode = False
-        # Group IDs temporarily emphasised (e.g. hovering a group row in the
-        # layout dialog); purely visual, does not affect click behaviour.
+        # Highlighting never changes group membership.
         self._highlighted_groups: set[int] = set()
-        # Detector id currently under the cursor, so hover doesn't re-issue the
-        # same tooltip text on every motion event within one segment.
+        # Repeated motion within one detector does not reissue its tooltip.
         self._hovered_detector: int | None = None
         self._setup_ui()
         self._build_schematic()
@@ -166,6 +154,7 @@ class DetectorSchematicWidget(QWidget):
         layout.addWidget(self._canvas)
         self._canvas.setMouseTracking(True)
 
+        self._canvas.mpl_connect("resize_event", self._fit_schematic_on_resize)
         self._canvas.mpl_connect("button_press_event", self._on_click)
         self._canvas.mpl_connect("motion_notify_event", self._on_hover)
         self._canvas.mpl_connect("figure_leave_event", lambda _event: QToolTip.hideText())
@@ -173,6 +162,16 @@ class DetectorSchematicWidget(QWidget):
     # ------------------------------------------------------------------
     # Schematic construction
     # ------------------------------------------------------------------
+
+    def _fit_schematic_on_resize(self, event) -> None:
+        """Refit only decorations clipped by the canvas's actual size."""
+        renderer = event.canvas.get_renderer()
+        if any(
+            not self._fig.bbox.contains(*point)
+            for axes in self._axes
+            for point in axes.get_tightbbox(renderer).get_points()
+        ):
+            self._fig.tight_layout(pad=0.4)
 
     def _build_schematic(self) -> None:
         """Draw all detector banks onto the figure."""
