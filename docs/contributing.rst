@@ -142,9 +142,11 @@ preset and a source-backed grouping have different evidence status; neither is
 an instrument-scientist review. Record the exact revision/scope and obtain
 consent before publishing a reviewer's name.
 
-The Sphinx instrument directive generates review prose and labelled diagrams
-from the resolved declaration and tracks its sources for incremental builds. Check them with the actual Detector Layout
-editor, along with independent manual anchors and a separately labelled old
-output comparison. Source-profile updates preserve recorded scientific settings;
+Instrument review pages and their index entries are generated from the bundled
+catalogue; adding a definition needs no separate page registration. The pages
+retain stable URLs and track their declaration and generator for incremental
+builds. Check the generated prose and labelled diagrams with the actual Detector
+Layout editor, along with independent manual anchors and a separately labelled
+old output comparison. Source-profile updates preserve recorded scientific settings;
 new defaults require a separate scientific decision. See the
 :doc:`instrument definitions <reference/instruments/index>`.

@@ -37,6 +37,7 @@ htmlcov/
 docs/_build/
 docs/build/
 docs/_generated/
+docs/reference/instruments/*_*.rst
 
 # Local API scratch scripts (not committed)
 _api_scratch/
