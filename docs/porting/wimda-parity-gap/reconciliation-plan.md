@@ -134,7 +134,7 @@ when-to-use register.
 | Promote docs | `alpha_calibration.rst` gains count-fit α as the fourth route; t0/background promote paragraphs beside it |
 
 Touch list: `docs/user_guide/**`, `docs/ARCHITECTURE.md`,
-`docs/porting/wimda-parity-gap/projects/python-user-functions.md` and
+`docs/reference/user_functions.rst` and
 `docs/reference/run_arithmetic.rst`.
 
 Verification: `python tools/harness.py docs`; link check via the docs build.

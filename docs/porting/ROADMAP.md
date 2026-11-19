@@ -50,11 +50,8 @@ higher-impact candidate.
 
 | Rank | Slug | Impact | Ease | Score | Tier |
 |---:|---|---:|---:|---:|---|
-| 1 | [minos-error-analysis](candidates/minos-error-analysis/) | 4 | 5 | 20 | Now |
-| 2 | [dynamic-kubo-toyabe](candidates/dynamic-kubo-toyabe/) | 5 | 4 | 20 | Now |
 | 3 | [theory-library-expansion](candidates/theory-library-expansion/) | 4 | 4 | 16 | Now |
 | 4 | [simulate-mode](simulate-mode/) | 4 | 4 | 16 | Now — **implemented** (study + port at `docs/porting/simulate-mode/`; candidate docs at `simulate-mode/candidate/`) |
-| 7 | [python-user-functions](candidates/python-user-functions/) | 4 | 3 | 12 | Next |
 | 9 | [bpp-relaxation](candidates/bpp-relaxation/) | 2 | 5 | 10 | Later |
 | 10 | [phase-auto-calibration](candidates/phase-auto-calibration/) | 3 | 3 | 9 | Next |
 | 12 | [msr-import](candidates/msr-import/) | 3 | 3 | 9 | Next |

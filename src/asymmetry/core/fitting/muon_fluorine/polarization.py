@@ -394,11 +394,9 @@ def fmuf_triangle_polarization(
     16-dimensional muon + 3F Hilbert space with **all** pairwise dipolar
     couplings (mu-F and F-F) and a proper powder average.
 
-    This supersedes WiMDA's ``F-u-F-F ZF PCR``, which neglects the F-F
-    couplings and approximates the powder average by (P_z + 2 P_x)/3 for a
-    single crystal orientation pair; see
-    ``docs/porting/wimda-fit-function-parity/comparison.md``.  As
-    ``r3 -> infinity`` the result approaches the linear F-mu-F polarization.
+    The powder average includes the full pairwise Hamiltonian rather than a
+    single pair of crystal orientations. As ``r3 -> infinity`` the result
+    approaches the linear F-mu-F polarization.
     """
     t_arr = np.asarray(t, dtype=float)
 

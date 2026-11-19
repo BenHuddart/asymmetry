@@ -433,8 +433,9 @@ New module `src/asymmetry/core/fitting/global_search/partition.py`:
 - `CHANGELOG.md` `[Unreleased]`: Added (transitions, phases), Changed
   (separable search default, series alphabet), Fixed (all-local anchor
   refit; timeout on real series).
-- `docs/PLANS.md` entry; `docs/porting/global-fit-wizard-efficiency/README.md`
-  gets a pointer to this plan's §5 outcome.
+- `docs/PLANS.md` entry; describe current behaviour in the
+  [global wizard reference](https://benhuddart.github.io/asymmetry/reference/global_fit_wizard.html).
+  Retirement and outstanding ideas are tracked in issue #414.
 
 ### Phase F — integration, gates, PR (lead)
 

@@ -145,7 +145,7 @@ def test_fit_wizard_recommends_damped_oscillation_for_oscillatory_spectrum(
     assert recommendation.recommended_key == "oscillatory_exp_constant"
 
 
-# ── selectively adopted wimda-fit-function-parity candidates (Item 5) ─────────
+# ── specialised candidate selection ─────────
 
 
 def test_fit_wizard_recommends_risch_kehr_for_1d_diffusion_spectrum(
@@ -229,7 +229,7 @@ def test_fit_wizard_recommends_gbkt_for_broadened_kt_spectrum(
 #: needs field or geometry context the deterministic fingerprint cannot supply —
 #: must never leak into the portfolio. An allowlist (not a denylist) makes the
 #: guard leak-proof: a future _add() of any unlisted component fails the test.
-#: See docs/porting/wimda-fit-function-parity/.
+#: Each specialised component keeps its own shape and parameter contract.
 _ALLOWED_WIZARD_COMPONENTS = {
     "Exponential",
     "Constant",

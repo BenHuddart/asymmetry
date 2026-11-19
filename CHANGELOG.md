@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Keep model and fit-method evidence in maintained references and synthetic controls;
+  clarify shared-amplitude kinetics assumptions and conditional uncertainties.
+
 - Clarify derived-observable model definitions, frequency and width conventions,
   independent checks, and unresolved negative-muon lifetime sources.
 

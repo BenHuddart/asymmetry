@@ -1,16 +1,8 @@
-"""Pulsed-source fast-muonium reaction kinetics.
+"""Planted muonium kinetics, conditional reference fits and optional corpus checks.
 
-RED gate for the ``pulsed-fast-mu-kinetics`` port (docs/porting/). The transverse
--field Mu signal of a fast-reacting sample has decayed before the first good bin
-at a pulsed source, so a per-run fit cannot separate the Mu amplitude ``A_Mu``
-from its relaxation ``lambda_Mu``. The kinetics module breaks the degeneracy by
-*sharing* ``A_Mu`` across the concentration/temperature series (slow members pin
-it; fast members then yield lambda_Mu), then fits the pseudo-first-order line
-``lambda_Mu = lambda0 + k_Mu*[x]`` and the Arrhenius ``log10 k_Mu = log10 A -
-E/(2.3 R T)``.
-
-Truth is planted and synthetic (``core.simulate``); no binary fixtures. See
-``docs/porting/pulsed-fast-mu-kinetics/verification-plan.md``.
+Synthetic signals exercise shared-amplitude rate fits and the concentration
+and Arrhenius line fits. Their known generating values test recovery under the
+supplied sharing and observation assumptions, not general experimental coverage.
 """
 
 from __future__ import annotations
@@ -32,6 +24,7 @@ from asymmetry.core.simulate import (
     reduce_run_to_dataset,
     simulate_run,
 )
+from tests.corpus import corpus_path, requires_corpus
 
 R_GAS = 8.314462618  # J / mol / K
 
@@ -148,8 +141,8 @@ class TestBimolecularRate:
 
 class TestArrhenius:
     def test_recovers_activation_energy_kjmol(self):
-        # log10 k = log10 A - E/(2.3 R T); plant E and recover it.
-        ea_j = 17600.0  # 17.6 kJ/mol (diffusion-controlled, GROUND_TRUTH section 6)
+        # Plant exp(-E/(R T)) and recover the energy through the log10 line fit.
+        ea_j = 17600.0  # Planted activation energy, J/mol.
         pre = 3700.0
         temperatures = [278.0, 288.0, 298.0, 308.0, 318.0, 328.0, 338.0, 358.0]
         k_values = [pre * math.exp(-ea_j / (R_GAS * T)) for T in temperatures]
@@ -188,24 +181,22 @@ class TestEndToEndPipeline:
         assert arr.activation_energy == pytest.approx(17.6, rel=0.3)  # kJ/mol
 
 
-import os  # noqa: E402
-
-_MALEIC_DIR = os.environ.get("ASYMMETRY_MALEIC_DIR")
+_MALEIC_DIR = corpus_path("Chemistry/Muonium reaction with maleic acid")
 
 
 def _load_maleic(run_number):
     from asymmetry.core.io import load
 
-    path = os.path.join(_MALEIC_DIR, "Data_hdf5", f"emu{run_number:08d}.nxs")
-    return load(path)
+    assert _MALEIC_DIR is not None
+    return load(_MALEIC_DIR / "Data" / f"emu{run_number:08d}.nxs")
 
 
-@pytest.mark.skipif(_MALEIC_DIR is None, reason="ASYMMETRY_MALEIC_DIR not set")
+@requires_corpus(_MALEIC_DIR)
 class TestRealCorpusSweep:
     """End-to-end on the real EMU maleic-acid corpus (env-gated, not in CI).
 
-    Grades the physics (linearity, positive slope, finite fast-member rates,
-    Arrhenius order) — no reference fit log exists for this example (GT §7).
+    These broad fit diagnostics do not establish parameter coverage or agreement
+    with an independently measured activation energy.
     """
 
     # Room-T (~290 K) 2 G Mu runs, relative [x] = {0, 1, 2, 4}.
@@ -227,7 +218,7 @@ class TestRealCorpusSweep:
         relax = fit_mu_relaxation_series(datasets, f_mu=F_MU, share_amplitude=True, t_max=8.0)
 
         assert relax.success
-        # The half/full rates are now finite and physical (the S5 ❌ -> ✅ flip).
+        # The selected members yield finite positive fitted rates.
         assert all(0.0 < lam < 50.0 for lam in relax.lambda_mu)
         # Monotonic rise with concentration.
         assert relax.lambda_mu == sorted(relax.lambda_mu)
@@ -253,7 +244,7 @@ class TestRealCorpusSweep:
             k_errors.append(max(rate.k_mu_error, 1e-3))
 
         arr = fit_arrhenius(temperatures, k_per_temperature, k_errors)
-        # Diffusion-controlled order of magnitude (literature ~17.6 kJ/mol).
+        # Broad diagnostic range; this is not a literature-agreement assertion.
         assert 3.0 < arr.activation_energy < 60.0
 
 

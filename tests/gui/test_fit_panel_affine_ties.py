@@ -3,7 +3,7 @@
 Covers the fit-panel surface of the affine-ties feature: the per-row Tie editor,
 the dialog, the get_state/restore_state round-trip of the ``tie`` field, and the
 preservation of auxiliary (non-model) parameters an API-authored tie references
-(so a GUI save/re-fit does not silently drop them). See docs/porting/link-groups/.
+(so a GUI save/re-fit does not silently drop them).
 """
 
 from __future__ import annotations

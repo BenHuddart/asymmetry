@@ -1,40 +1,16 @@
-"""Pulsed-source fast-muonium reaction kinetics.
+"""Pulsed-source muonium reaction kinetics on percent-scale asymmetry.
 
-At a pulsed source the small-transverse-field muonium (Mu) precession signal of a
-*fast-reacting* sample has decayed before the first good bin (EMU: t_good ≈ 0.203
-µs). Over the surviving window the signal is
+A truncated relaxing oscillation has surviving amplitude
+``A_Mu * exp(-lambda_Mu * t_good)``. A resolved decay slope can distinguish
+amplitude and rate; weak surviving signals can leave them strongly correlated.
+Sharing amplitude and phase pools information from slower members, conditional
+on a common formation amplitude and comparable calibration across the series.
 
-    A(t) = A_Mu · exp(−λ_Mu·t) · cos(2π f_Mu t + φ)   [+ slow diamagnetic]
-
-and, re-centred on the first good time t_g, the initial amplitude and the rate
-trade off through the conserved product ``A_Mu·exp(−λ_Mu·t_g)`` — a per-run fit
-cannot separate them and rails to the amplitude bound. See
-``docs/porting/pulsed-fast-mu-kinetics/`` for the study.
-
-The physical key: ``A_Mu`` is the **initial muonium fraction**, a property of muon
-thermalisation in the solvent — *common across the concentration/temperature
-series*; the maleic-acid scavenger changes only the rate ``λ_Mu``. So this module
-**shares ``A_Mu`` (and the phase) across the series** while letting ``λ_Mu`` vary
-per run: the slow members pin the shared amplitude, which then forces ``λ_Mu`` for
-the truncated fast members. This is the standard muonium-chemistry "fraction"
-method, realised over the implemented asymmetry-domain global fit
-(:func:`asymmetry.core.fitting.asymmetry_global.fit_global`).
-
-The kinetics are pseudo-first-order, ``λ_Mu = λ₀ + k_Mu·[x]`` (slope = the
-bimolecular rate constant ``k_Mu``; intercept = the water background ``λ₀``), and
-``k_Mu(T)`` follows the Arrhenius form the muon-school guide states verbatim,
-``log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)`` → activation energy ``E``.
-
-Public surface:
-
-* :func:`fit_mu_relaxation_series` — per-run ``λ_Mu`` from a 2 G Mu series with
-  ``A_Mu`` shared (the degeneracy break).
-* :func:`fit_bimolecular_rate` — the ``λ_Mu = λ₀ + k_Mu·[x]`` line.
-* :func:`fit_arrhenius` — the activation energy from ``k_Mu(T)``.
-* :func:`mu_relaxation_from_amplitude` — single-run cross-check: ``λ_Mu`` with
-  ``A_Mu`` *fixed* to a reference (the analytic limit of the shared fit).
-
-All functions are Qt-free and work on percent-scale asymmetry ``MuonDataset``\\s.
+The concentration fit uses ``lambda_Mu = lambda0 + k_Mu * concentration``.
+The temperature fit uses ``log10(k_Mu) = log10(A) - E / (ln(10) * R * T)``.
+These line fits accept pointwise errors, not the between-member covariance
+introduced by a shared-amplitude fit. Fixed-reference inversion conditions its
+uncertainty on the supplied amplitude; it does not propagate reference error.
 """
 
 from __future__ import annotations
@@ -76,7 +52,7 @@ class MuRelaxationSeriesResult:
 
     ``lambda_mu`` / ``lambda_mu_error`` are aligned with the input dataset order.
     A non-finite ``lambda_mu_error`` entry flags a member whose rate iminuit could
-    not bound (the degenerate case when ``A_Mu`` is *not* shared).
+    not bound under the supplied parameter-sharing assumptions.
     """
 
     success: bool
@@ -94,8 +70,8 @@ class MuRelaxationSeriesResult:
 class BimolecularRateResult:
     """Pseudo-first-order line ``λ_Mu = λ₀ + k_Mu·[x]``.
 
-    ``k_mu`` is in µs⁻¹ per relative-concentration unit (the corpus supplies no
-    molarity — see GROUND_TRUTH §9); ``lambda0`` is the water background in µs⁻¹.
+    ``k_mu`` is in µs⁻¹ per supplied concentration unit; ``lambda0`` is the
+    solvent background in µs⁻¹. Absolute rate units require absolute concentration.
     ``reduced_chi_squared`` is ``nan`` when the fit was unweighted (no point
     errors supplied).
     """
@@ -109,7 +85,7 @@ class BimolecularRateResult:
 
 @dataclass
 class ArrheniusResult:
-    """Activation energy from ``log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)``.
+    """Activation energy from ``log₁₀ k_Mu = log₁₀ A − E/(ln(10)·R·T)``.
 
     ``reduced_chi_squared`` is ``nan`` when the fit was unweighted (no ``k_errors``).
     """
@@ -123,7 +99,7 @@ class ArrheniusResult:
 
 
 # ---------------------------------------------------------------------------
-# Shared-amplitude per-run λ_Mu (the degeneracy break)
+# Shared-amplitude per-run relaxation rates
 # ---------------------------------------------------------------------------
 
 
@@ -193,14 +169,13 @@ def fit_mu_relaxation_series(
     initial: dict[str, float] | None = None,
     minos: bool = False,
 ) -> MuRelaxationSeriesResult:
-    """Fit a 2 G Mu series, recovering per-run ``λ_Mu`` past the truncation degeneracy.
+    """Fit Mu relaxation rates with optional shared amplitude and phase.
 
-    The series is fitted simultaneously (one shared muonium amplitude ``A_Mu`` and,
-    by default, one shared phase) while ``λ_Mu`` and the diamagnetic background are
-    estimated per run. The slow members pin the shared ``A_Mu``; that pinned value
-    then forces ``λ_Mu`` for the fast members whose Mu signal decayed before the
-    first good bin — which a free per-run fit cannot do (set ``share_amplitude=
-    False`` to reproduce that degenerate baseline).
+    Rates and diamagnetic backgrounds are estimated per run. Slower members can
+    constrain a common amplitude when formation and calibration are comparable.
+    Fast members still need measurable surviving signal; sharing does not itself
+    establish rate identifiability. Set ``share_amplitude=False`` for independent
+    amplitudes. Returned errors are marginal fit errors under the chosen roles.
 
     Parameters
     ----------
@@ -291,12 +266,10 @@ def mu_relaxation_from_amplitude(
 ) -> tuple[float, float]:
     """Single-run ``λ_Mu`` with ``A_Mu`` *fixed* to a reference amplitude.
 
-    The analytic limit of the shared fit: fixing ``A_Mu`` to a known muonium
-    amplitude (``reference_amplitude``, e.g. the shared value from
-    :func:`fit_mu_relaxation_series`) breaks the per-run degeneracy directly, so a
-    single truncated run yields ``λ_Mu``. Returns ``(λ_Mu, σ_λ)`` in µs⁻¹. Use as
-    an independent cross-check of the series fit, or as a manual fallback when a
-    full series is unavailable but the Mu amplitude is known.
+    Fixing ``A_Mu`` to ``reference_amplitude`` constrains the surviving-amplitude
+    and rate trade-off when enough signal remains. Returns ``(λ_Mu, σ_λ)`` in
+    µs⁻¹, conditional on the supplied reference. Reusing an amplitude estimated
+    from the same series is not an independent uncertainty check.
 
     Parameters
     ----------
@@ -304,8 +277,7 @@ def mu_relaxation_from_amplitude(
         Amplitude to pin ``A_Mu`` at, **in percent (0–100)** — the same scale as
         ``dataset.asymmetry`` and as
         :attr:`~asymmetry.core.fitting.mu_kinetics.MuRelaxationSeriesResult.shared_amplitude`, which is what this
-        normally receives. (Earlier wording called it the muonium "fraction",
-        which reads as the 0–1 scale; the code has always treated it as percent.)
+        normally receives. The uncertainty conditions on this supplied value.
     """
     model_fn = CompositeModel.from_expression(_MU_MODEL_EXPRESSION).function
     params = [
@@ -437,9 +409,9 @@ def fit_arrhenius(
     *,
     energy_unit: str = "kJ/mol",
 ) -> ArrheniusResult:
-    """Fit ``log₁₀ k_Mu = log₁₀ A − E/(2.3·R·T)`` → activation energy ``E``.
+    """Fit ``log₁₀ k_Mu = log₁₀ A − E/(ln(10)·R·T)`` → activation energy ``E``.
 
-    Linearises in ``(1/T, log₁₀ k)`` (the guide's exact form); the slope is
+    Linearises in ``(1/T, log₁₀ k)``; the slope is
     ``−E/(ln10·R)``. ``E`` is returned in ``energy_unit`` — ``"kJ/mol"`` (default)
     or ``"J/mol"``. Point errors ``k_errors`` are propagated as
     ``σ(log₁₀ k) = σ_k/(k·ln10)``.

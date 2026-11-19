@@ -1,4 +1,4 @@
-"""Tests for the Model-fit follow-ons (docs/porting/model-fit-followons).
+"""Parameter-trend selection, effective variance and result-series controls.
 
 Phase 1: arbitrary-X param-vs-param trending + opt-in effective-variance
 x-uncertainty. Phase 2 (cross-group error modes + windows) and Phase 3

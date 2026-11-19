@@ -79,11 +79,14 @@ User-defined functions remain the responsibility of their authors.
 Migrating from WiMDA
 --------------------
 
-Asymmetry's time-domain catalogue covers everything WiMDA's fitting menu
-offers (built-in oscillation/relaxation grid plus the muonium and dipolar
-user-function libraries; see ``docs/porting/wimda-fit-function-parity/``).
-A few WiMDA conveniences are deliberately *not* separate components because
-parameter constraints already express them:
+The time-domain pages define the available oscillation, relaxation, muonium
+and dipolar components and their parameter conventions. See the
+:doc:`scoped comparisons </explanation/comparison>` for named reference-program
+methods and observations. Mathematical identities and independent Hamiltonian
+checks are distinct from executing another program.
+
+Some scaled or shared-parameter forms can be expressed using constraints rather
+than separate components:
 
 **Scaled frequency rotation** (``otScaledFRotation``) — a cosine at
 ``frequency × scale``. Use ``Oscillatory`` and tie the frequency with an
