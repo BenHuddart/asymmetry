@@ -253,17 +253,16 @@ def test_grouped_tab_preview_emits_curves_for_each_group(
     qapp,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
-
     from PySide6.QtCore import Qt
 
     from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.fitting.grouped_time_domain import GroupedTimeDomainGroup
     from asymmetry.gui.panels.fit.global_tab import GlobalFitTab
 
     dataset = causal_dataset()
     grouped_groups = [
-        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
-        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+        GroupedTimeDomainGroup(1, "Forward", np.arange(2.0), np.array([120.0, 118.0]), np.ones(2)),
+        GroupedTimeDomainGroup(2, "Backward", np.arange(2.0), np.array([80.0, 79.0]), np.ones(2)),
     ]
     grouped_datasets = [
         MuonDataset(

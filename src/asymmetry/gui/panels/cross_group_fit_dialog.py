@@ -7,6 +7,7 @@ cross-group workflow aligned with the standard model-parameter fit UI.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 from PySide6.QtCore import Qt
@@ -21,6 +22,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.cross_group import (
+    CrossGroupFitInputError,
+    CrossGroupFitRun,
+    prepare_cross_group_fit,
+    run_cross_group_fit,
+)
 from asymmetry.core.fitting.cross_group_roles import (
     CrossGroupRoleRecommendation,
     suggest_cross_group_roles,
@@ -32,10 +39,7 @@ from asymmetry.core.fitting.parameter_models import (
     ErrorMode,
     ParameterCompositeModel,
     ParameterGroupData,
-    global_fit_parameter_model,
     parse_fit_windows,
-    validate_fit_windows,
-    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
@@ -815,141 +819,25 @@ class CrossGroupFitDialog(ModelFitDialog):
             return
 
         self._commit_param_table(notify_adjustments=True)
-        fit_range = self._fit.ranges[idx]
-        windows = list(fit_range.windows) if fit_range.windows else None
-        x_min = float(fit_range.x_min if fit_range.x_min is not None else -float("inf"))
-        x_max = float(fit_range.x_max if fit_range.x_max is not None else float("inf"))
-        if windows:
-            try:
-                validate_fit_windows(windows)
-            except ValueError as exc:
-                _show_warning(self, "Invalid window", str(exc))
-                return
-        elif np.isfinite(x_min) and np.isfinite(x_max) and x_max <= x_min:
-            _show_warning(self, "Invalid range", "x max must be greater than x min.")
-            return
-
-        # Slice each group to the window union (or the [x_min, x_max] range) here,
-        # so the masking lives in one place; the shared model is then fitted
-        # across the surviving points.
-        fitted_groups: list[ParameterGroupData] = []
-        for group in self._groups:
-            x = np.asarray(group.x, dtype=float)
-            if windows:
-                mask = np.isfinite(x) & windows_mask(x, windows)
-            else:
-                mask = np.isfinite(x)
-                if np.isfinite(x_min):
-                    mask &= x >= x_min
-                if np.isfinite(x_max):
-                    mask &= x <= x_max
-            if np.count_nonzero(mask) < 2:
-                continue
-            group_xe = getattr(group, "xerr", None)
-            fitted_groups.append(
-                ParameterGroupData(
-                    group_id=group.group_id,
-                    group_name=group.group_name,
-                    width_context=group.width_context.select(mask) if group.width_context else None,
-                    x=np.asarray(group.x, dtype=float)[mask],
-                    y=np.asarray(group.y, dtype=float)[mask],
-                    yerr=np.asarray(group.yerr, dtype=float)[mask],
-                    group_variable_value=float(group.group_variable_value),
-                    xerr=(None if group_xe is None else np.asarray(group_xe, dtype=float)[mask]),
-                )
-            )
-
-        if len(fitted_groups) < 2:
-            _show_warning(
-                self,
-                "Insufficient data",
-                "Not enough groups have at least two points in the selected fitting range.",
-            )
-            return
-
-        roles = self._range_roles[idx] if idx < len(self._range_roles) else {}
-        global_params: list[str] = []
-        local_params: list[str] = []
-        fixed_params: dict[str, float] = {}
-        initial_params: dict[str, float] = {}
-        parameter_bounds: dict[str, tuple[float, float]] = {}
-
-        for p in fit_range.parameters:
-            pname = p.name
-            initial_params[pname] = float(p.value)
-            parameter_bounds[pname] = (float(p.min), float(p.max))
-            default_role = "Fixed" if p.fixed else "Global"
-            role = roles.get(pname, default_role)
-            if role == "Local":
-                local_params.append(pname)
-            elif role == "Fixed":
-                fixed_params[pname] = float(p.value)
-            else:
-                global_params.append(pname)
-
-        model_snapshot = ParameterCompositeModel(
-            component_names=list(fit_range.model.component_names),
-            operators=list(fit_range.model.operators),
-        )
-        groups_snapshot = [
-            ParameterGroupData(
-                group_id=group.group_id,
-                group_name=group.group_name,
-                width_context=group.width_context,
-                x=np.asarray(group.x, dtype=float).copy(),
-                y=np.asarray(group.y, dtype=float).copy(),
-                yerr=np.asarray(group.yerr, dtype=float).copy(),
-                group_variable_value=float(group.group_variable_value),
-                xerr=(
-                    None
-                    if getattr(group, "xerr", None) is None
-                    else np.asarray(group.xerr, dtype=float).copy()
-                ),
-            )
-            for group in fitted_groups
-        ]
-        self._fit_progress_label.setText("Cross-group fit in progress...")
-        error_mode = self._error_mode()
-        error_value = self._error_value()
-        # Effective variance requires physical point errors.
-        xerr_map: dict[str, object] | None = None
-        if self._use_x_errors():
-            xerr_map = {
-                group.group_id: np.asarray(group.xerr, dtype=float)
-                for group in groups_snapshot
-                if getattr(group, "xerr", None) is not None
+        try:
+            inputs = prepare_cross_group_fit(self._groups, self._collect_config())
+        except CrossGroupFitInputError as exc:
+            titles = {
+                "windows": "Invalid window",
+                "range": "Invalid range",
+                "groups": "Insufficient data",
             }
-            if not xerr_map:
-                xerr_map = None
+            _show_warning(self, titles[exc.reason], str(exc))
+            return
+        self._fit_progress_label.setText("Cross-group fit in progress...")
 
-        def _task():
-            # Groups are already sliced to the window/range above, so the window
-            # mask is not re-applied here (windows omitted to avoid double-masking).
-            return global_fit_parameter_model(
-                groups=groups_snapshot,
-                model=model_snapshot,
-                global_params=list(global_params),
-                local_params=list(local_params),
-                fixed_params=dict(fixed_params),
-                initial_params=dict(initial_params),
-                parameter_bounds=dict(parameter_bounds),
-                error_mode=error_mode,
-                error_value=error_value,
-                xerr=xerr_map,
-            )
-
-        def _on_done(result: object) -> None:
-            fit_result = result
+        def _on_done(run: CrossGroupFitRun) -> None:
+            fit_result = run.result
             self._result = fit_result
-            self._fitted_groups = fitted_groups
+            self._fitted_groups = run.fitted_groups
             self._range_results[idx] = fit_result
-            self._last_config = self._collect_config()
+            self._last_config = run.config
 
-            # Item 4.3: no per-fit success MODAL. _select_range refreshes the
-            # shared χ² label (inline success/failure text) and tints the result
-            # box green on success. The failure case is surfaced inline too; the
-            # blocking pre-check modals above (invalid window/range, <2 groups)
-            # stay modal.
             self._select_range(idx)
             if not fit_result.success:
                 _show_warning(
@@ -958,7 +846,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                     fit_result.message or "Cross-group model fit failed",
                 )
 
-        self._start_fit_task(_task, _on_done)
+        self._start_fit_task(partial(run_cross_group_fit, inputs), _on_done)
 
     @staticmethod
     def _result_param_names(result: CrossGroupFitResult) -> set[str]:

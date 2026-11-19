@@ -134,6 +134,12 @@ here. Each member's fitted curve is drawn over that same fit range, so a
 series whose range starts at 0 has its curve reach back to t = 0 even when
 the first data point sits later.
 
+For scripts,
+:func:`~asymmetry.core.fitting.recipe_inputs.build_recipe_engine_inputs`
+resolves a series recipe into parameter partitions, per-run ``ParameterSet``
+objects and the fit range. Optional per-run seed overrides have the same
+precedence as the Batch tab; File rows retain their run-specific values.
+
 .. _joint-fit-initial-asymmetry-caveat:
 
 **The initial-asymmetry caveat.** "Initial asymmetry" is shareable only when

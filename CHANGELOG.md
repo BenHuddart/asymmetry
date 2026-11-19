@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Expose grouped count seeding and series-recipe fit preparation through Qt-free
+  core APIs shared with the desktop fit controls.
+- Prepare and replay recorded cross-group parameter fits through the same Qt-free
+  core API as the desktop dialog and Refit action.
+
 - Add an isolated desktop diagnostic for synthetic ROOT/HDF4 reduction, fitting,
   checked text export, and meaningful project replay with analytic anchors.
 

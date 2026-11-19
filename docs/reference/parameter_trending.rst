@@ -1057,6 +1057,32 @@ For jointly fitting multiple groups with shared and local parameters, use
    )
    print(result.success)
 
+A recorded cross-group configuration can be replayed without the desktop:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.cross_group import run_cross_group_fit_from_config
+
+   run = run_cross_group_fit_from_config(groups, recorded_config)
+   print(run.result.success)
+
+The configuration contains the model, parameter rows (initial value, bounds and
+Global/Local/Fixed type), shared range or window union, error mode and x-error
+choice. The desktop dialog and **Refit** use the same preparation. For separate
+preparation and execution, call
+:func:`~asymmetry.core.fitting.cross_group.prepare_cross_group_fit` and
+:func:`~asymmetry.core.fitting.cross_group.run_cross_group_fit`. Prepared arrays
+and configuration attribution are detached from subsequent editor changes.
+
+At the configuration boundary, rows for removed parameters are discarded and
+missing model parameters start as Global with the model default and open
+bounds. Existing rows retain their roles, initial values and bounds; the first
+row for a duplicate name wins. ``run.config`` carries the resolved configuration
+and preserves extra attribution keys. Groups retaining fewer than two points
+inside the selected range or window union are omitted; at least two groups
+must remain. A solver result that does not converge is returned with
+``success=False`` so the caller can inspect it.
+
 The cross-group fit honours the same **error modes** and **fit windows** as a
 single-series fit. The cross-group dialog now shows the **Errors** selector and
 **+ Window** controls, and ``global_fit_parameter_model`` accepts the matching

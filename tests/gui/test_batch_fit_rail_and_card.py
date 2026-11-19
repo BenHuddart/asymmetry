@@ -8,7 +8,6 @@ the windows they open, and the ``seeded from <run>`` tag.
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.grouped_time_domain import GroupedTimeDomainGroup  # noqa: E402
 from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.member_quality import member_quality_flags  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
@@ -145,8 +145,12 @@ def test_two_value_columns_share_the_leftover_width(qapp, settings, monkeypatch)
     tab = GlobalFitTab(member_kind="groups", grouped_single=True, settings=settings)
     try:
         groups = [
-            SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
-            SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+            GroupedTimeDomainGroup(
+                1, "Forward", np.arange(2.0), np.array([120.0, 118.0]), np.ones(2)
+            ),
+            GroupedTimeDomainGroup(
+                2, "Backward", np.arange(2.0), np.array([80.0, 79.0]), np.ones(2)
+            ),
         ]
         monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (groups, [], "ready"))
         tab.resize(char_width(70), 1000)

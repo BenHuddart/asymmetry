@@ -80,6 +80,7 @@ from asymmetry.core.fitting import (
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.cross_group import CrossGroupFitRun, run_cross_group_fit_from_config
 from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
 from asymmetry.core.fitting.input_attribution import saved_fit_matches
 from asymmetry.core.fitting.knight_analysis import (
@@ -264,7 +265,6 @@ from asymmetry.gui.fit_settings import (
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.moment_tasks import MomentBatch, MomentInput, MomentReadout, MomentRecipe
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
-from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit import (
     BATCH_SEEDING_LABELS,
@@ -13950,18 +13950,12 @@ class MainWindow(QMainWindow):
             on_error=lambda message: self._on_global_fit_refit_error(message),
         )
 
-    def _on_global_fit_refit_done(self, study_id: str, run: object) -> None:
+    def _on_global_fit_refit_done(self, study_id: str, run: CrossGroupFitRun) -> None:
         """Fold a completed refit back into the study and re-display it."""
         study = self._global_fit_studies.get(study_id)
         if study is None:
             return
-        # Persist the config the run actually used, not the one requested:
-        # run_cross_group_fit_from_config self-heals parameter_rows against
-        # the model's current param_names (dropping removed params, defaulting
-        # newly-added ones), so saving the healed config lets a corrupted
-        # study config repair itself in place instead of re-failing next time.
-        healed_config = getattr(run, "config", None)
-        config = dict(healed_config) if healed_config else dict(study.config)
+        config = dict(run.config)
         self._upsert_global_fit_study(
             study_id=study_id,
             parameter_name=study.parameter_name,

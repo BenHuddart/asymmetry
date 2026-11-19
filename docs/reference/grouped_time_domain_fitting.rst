@@ -232,6 +232,15 @@ The ``relationship`` argument selects the sharing mode. The valid values are
   per-group nuisance parameters ``N0``, ``background``, ``amplitude``,
   ``relative_phase``) stay free per group.
 
+Programmatic callers can use
+:func:`~asymmetry.core.fitting.grouped_seeding.seed_group_background_and_n0`
+for the same heuristic background, normalization and amplitude starts as the
+GUI. It takes lifetime-corrected counts and their time axis in microseconds.
+:func:`~asymmetry.core.fitting.grouped_seeding.seed_group_absolute_phases`
+takes grouped traces and returns their absolute FFT peak phases in radians;
+the shared model phase stays fixed at zero. These are starting estimates,
+not fitted observables.
+
 Build each run's grouped count traces with
 :func:`~asymmetry.core.fitting.grouped_time_domain.build_grouped_time_domain_groups`
 (it returns a list of ``GroupedTimeDomainGroup`` objects per dataset), assemble

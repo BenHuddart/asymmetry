@@ -1,26 +1,8 @@
-"""The joint-fit window: compose recorded series, share parameters, run one fit.
+"""Compose recorded series and fit shared parameters without editing their recipes.
 
-A joint fit couples several :class:`~asymmetry.core.representation.series.FitSeries`
-that the user has already made in the Batch tab — different models, different
-runs — by holding named parameters equal across them
-(``docs/plans/joint-fit.md``). This window is the only surface for that: an
-undocked, menu-launched window owned by :class:`~asymmetry.gui.mainwindow.MainWindow`,
-modelled on :class:`~asymmetry.gui.windows.global_parameter_fit_window.GlobalParameterFitWindow`.
-
-It deliberately holds **no project model**. The host hands it two callables —
-one that lists the active representation's series as plain
-:class:`JointSeriesEntry` records, one that crops a series' member datasets to
-that series' own recipe window — and gets back a launch context plus a result
-on :attr:`JointFitWindow.joint_fit_completed`. Everything the window decides on
-its own is decidable from the entries: which series may be ticked together (a
-run may belong to exactly one member, D3), what the shared table can say (only
-a series' Global parameters, D4), and what a shared row is seeded with (the
-first contributing series' recipe row, D6).
-
-The window edits **no recipe** (D2): per-series seeds, bounds, roles and fit
-ranges belong to the Batch tab, and a joint run resolves them exactly as a solo
-run of that series would — through
-:func:`~asymmetry.gui.panels.fit.recipe_inputs.build_recipe_engine_inputs`.
+The host supplies series entries and member datasets; the window owns selection,
+shared rows and worker presentation. Per-series seeds, bounds and fit ranges
+are resolved by the core series-recipe input boundary.
 """
 
 from __future__ import annotations
@@ -58,10 +40,10 @@ from asymmetry.core.fitting.joint import (
     fit_joint,
     suggest_shared_parameters,
 )
+from asymmetry.core.fitting.recipe_inputs import build_recipe_engine_inputs
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.joint_fit import JointFit
 from asymmetry.core.representation.naming import default_joint_fit_label, fit_window_label
-from asymmetry.gui.panels.fit.recipe_inputs import build_recipe_engine_inputs
 from asymmetry.gui.panels.fit.tab_base import _sample_fit_curve
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style

@@ -1,26 +1,4 @@
-"""One series' recipe → the engine inputs a coupled fit takes.
-
-A :class:`~asymmetry.core.representation.series.FitSeries` recipe already says
-everything a coupled fit needs to know about that series: which parameter is
-Global, Local, Fixed or File, each one's seed and limits, and the fit window
-(D2 of ``docs/plans/series-workflow.md``). Turning that into the engine's
-argument shape — the two name lists plus one :class:`ParameterSet` per run —
-used to live inline in ``GlobalFitTab._run_global_fit``, which is fine while
-the Batch tab is the only thing that launches a coupled fit. A joint fit runs
-several series at once (``docs/plans/joint-fit.md`` D6) and must resolve each
-member's recipe *exactly* as the Batch tab resolves it when running that series
-alone, or the same series would fit differently inside and outside the joint
-fit. So the step lives here, once, and both callers go through it.
-
-The one thing this module does **not** do is per-run seed precedence: the Batch
-tab's inherited single-fit seeds and its Initial-values dialog are live form
-state, not recipe, and D6 excludes them from a joint run. The Batch tab passes
-them in as *values_by_run*; the joint window passes nothing and gets the recipe
-values.
-
-Qt-free itself; the file-pinned lookup and the bounds-string split are imported
-from the fit tabs' shared base so there is one spelling of each.
-"""
+"""Resolve a persisted fit-series recipe into coupled fitting inputs."""
 
 from __future__ import annotations
 
@@ -36,10 +14,6 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.representation.series import normalise_recipe
-from asymmetry.gui.panels.fit.tab_base import (
-    _get_file_value_for_parameter,
-    _split_bounds_text,
-)
 
 __all__ = ["RecipeEngineInputs", "build_recipe_engine_inputs"]
 
@@ -51,7 +25,7 @@ class RecipeEngineInputs:
     ``global_params``/``local_params`` are the engine's partition; Fixed and
     File rows appear in neither, because a pinned parameter has no column —
     it reaches the engine only as a ``fixed=True`` entry of every run's
-    :class:`ParameterSet`. The two pinned lists are carried anyway so a caller
+    :class:`~asymmetry.core.fitting.parameters.ParameterSet`. The two pinned lists are carried anyway so a caller
     can tell *why* a name is absent (the Batch tab reports the free-Global
     count to decide between the chained and the tied path).
     """
@@ -69,7 +43,7 @@ class RecipeEngineInputs:
 def _bound(text: str, unbounded: float) -> float:
     """One limit as a float; an unparseable or blank limit means "no bound".
 
-    Mirrors ``tab_base._read_bounds_cells``: a half-typed or empty limit is a
+    A half-typed or empty limit is a
     real "unbounded on this side" case, not a reason to refuse the fit.
     """
     try:
@@ -126,11 +100,11 @@ def build_recipe_engine_inputs(
         params = ParameterSet()
         for pname in model.param_names:
             row = rows[pname]
-            minimum, maximum = _split_bounds_text(row["bounds"])
+            minimum, maximum = split_bounds_text(row["bounds"])
             value = float(run_values.get(pname, row["value"]))
             if pname in file_set:
                 base_name, _index = split_parameter_name(pname)
-                file_value = _get_file_value_for_parameter(dataset, base_name)
+                file_value = file_parameter_value(dataset, base_name)
                 if file_value is not None:
                     value = file_value
             params.add(
@@ -154,3 +128,38 @@ def build_recipe_engine_inputs(
         t_min=window["min"],
         t_max=window["max"],
     )
+
+
+def file_parameter_value(
+    dataset: MuonDataset | None,
+    param_base_name: str,
+) -> float | None:
+    """Get the file-specific value for a parameter from dataset metadata.
+
+    Returns the value in Gauss for field-like parameters, or None if not available.
+    """
+    if dataset is None:
+        return None
+    if param_base_name in {"field", "B_L"}:
+        if dataset.run is not None:
+            return float(dataset.run.field)
+        # Fall back to dataset-level metadata (e.g. datasets without a Run object).
+        raw = dataset.metadata.get("field")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def split_bounds_text(text: object) -> tuple[str, str]:
+    """Split a stored ``"<min>, <max>"`` bounds string into its two cell texts.
+
+    The saved project shape and the tables' carried row state both describe a
+    parameter's limits as one string; the Batch tab's tables show them as a Min
+    and a Max cell. A string with no comma is read as a lower bound alone, which
+    is what a half-typed cell means.
+    """
+    minimum, _, maximum = str(text).partition(",")
+    return minimum.strip() or "-inf", maximum.strip() or "inf"
