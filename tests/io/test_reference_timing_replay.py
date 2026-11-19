@@ -17,6 +17,8 @@ from asymmetry.core.project.schema import (
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from tests.core.test_reference_timing import reduce_reference, timing_runs
 
+UNKNOWN_LEGACY_SOURCE = {"pulsed": None, "reason": "absent", "origin": "legacy:metadata"}
+
 
 def reference_dataset(run):
     return MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
@@ -70,7 +72,10 @@ def test_live_policy_edits_update_request_and_disk_replay_ignores_stale_cache(mo
     live.grouping["t0_policy"]["offset_bins"] = 4
     second = resolve_background_reference(payload, datasets=[reference_dataset(live)], cache=cache)
     assert second.timing.offset_bins == 4
-    assert payload["timing"] == {"t0_policy": {"mode": "manual", "offset_bins": 4}}
+    assert payload["timing"] == {
+        "t0_policy": {"mode": "manual", "offset_bins": 4},
+        "source": UNKNOWN_LEGACY_SOURCE,
+    }
     disk = resolve_background_reference(payload, cache=cache)
     assert disk.timing.request() == second.timing.request()
     np.testing.assert_array_equal(
@@ -135,7 +140,7 @@ def test_selected_green_reference_keeps_own_manual_timing(identity_mapping, monk
     assert (
         live.timing.request()
         == disk.timing.request()
-        == {"t0_policy": {"mode": "manual", "offset_bins": 2}}
+        == {"t0_policy": {"mode": "manual", "offset_bins": 2}, "source": UNKNOWN_LEGACY_SOURCE}
     )
     assert live.period_number == disk.period_number == 2
     assert live.deadtime_normaliser == disk.deadtime_normaliser == 20
@@ -174,7 +179,8 @@ def test_number_only_live_request_refreshes_timing_without_choosing_ambiguity():
     datasets = [reference_dataset(run) for run in (sample, reference)]
     assert refresh_reference_timing_requests(datasets) == [1]
     assert sample.grouping["background_run"]["timing"] == {
-        "t0_policy": {"mode": "manual", "offset_bins": 4}
+        "t0_policy": {"mode": "manual", "offset_bins": 4},
+        "source": UNKNOWN_LEGACY_SOURCE,
     }
     reference.grouping["t0_policy"]["offset_bins"] = 6
     datasets.append(reference_dataset(copy.deepcopy(reference)))
@@ -202,7 +208,8 @@ def test_advisory_refresh_preserves_an_invalid_live_timing_request_for_editing()
     datasets = [reference_dataset(run) for run in (sample, reference)]
     assert refresh_reference_timing_requests(datasets) == [1]
     assert sample.grouping["background_run"]["timing"] == {
-        "t0_policy": reference.grouping["t0_policy"]
+        "t0_policy": reference.grouping["t0_policy"],
+        "source": UNKNOWN_LEGACY_SOURCE,
     }
     with pytest.raises(ValueError, match="Manual timing"):
         resolve_background_reference(sample.grouping["background_run"], datasets=datasets)

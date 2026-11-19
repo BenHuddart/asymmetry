@@ -149,7 +149,7 @@ def test_invalid_grouping_keeps_the_all_detector_t0_base(qapp):
     dataset.run.histograms[1].t0_bin = 9
     profile = GroupingProfile(
         name="sample",
-        fingerprint=ProfileFingerprint("TESTINST", 2),
+        fingerprint=ProfileFingerprint("", 2),
         groups={1: [0], 2: [2]},
         t0_policy=T0Policy(mode="manual", offset_bins=2),
     )
@@ -221,8 +221,8 @@ def test_saved_overlap_keeps_fixed_options_and_can_be_repaired(window, monkeypat
     for hist, counts in zip(restored.run.histograms, original_counts):
         np.testing.assert_array_equal(hist.counts, counts)
     saved = window.collect_project_state()["datasets"][0]["grouping_overrides"]
+    assert {int(key): value for key, value in saved["groups"].items()} == requested["groups"]
     for key in (
-        "groups",
         "alpha",
         "beta",
         "deadtime_mode",

@@ -12,7 +12,7 @@ from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 from asymmetry.core.instruments.isis_hifi import PROFILE as HIFI
 from asymmetry.core.instruments.isis_musr import PROFILE as MUSR
 from asymmetry.core.instruments.resolve import layout_from_profile
-from asymmetry.core.project.profiles import profile_fingerprint_for_run
+from asymmetry.core.project.profiles import ProfileFingerprint, profile_fingerprint_for_run
 from asymmetry.core.transform.t0 import source_is_pulsed
 from asymmetry.core.workflow.grouping import apply_grouping_preset
 
@@ -87,7 +87,9 @@ def test_synthetic_recognition_and_explicit_preset_reduction_keep_existing_setti
     )
     data = MuonDataset(np.array([]), np.array([]), np.array([]), metadata=run.metadata, run=run)
     assert detect_instrument(64, metadata=run.metadata) == key
-    assert profile_fingerprint_for_run(run).instrument == key
+    assert profile_fingerprint_for_run(run) == ProfileFingerprint(
+        profile.identity.key, 64, "nexus64"
+    )
     result = apply_grouping_preset(data, "Longitudinal")
     assert result.run.grouping["groups"] == {1: list(range(1, 33)), 2: list(range(33, 65))}
     np.testing.assert_allclose(

@@ -35,7 +35,7 @@ def test_overlap_is_unavailable_at_production_boundaries(groups, boundary):
         elif boundary.startswith("profile"):
             profile = GroupingProfile(
                 name="sample",
-                fingerprint=ProfileFingerprint("test", 3),
+                fingerprint=ProfileFingerprint("", 3),
                 groups={int(k): v for k, v in groups.items()},
                 alpha_policy=AlphaPolicy(
                     mode="per_run_estimate" if boundary.endswith("estimate") else "fixed", value=1.7

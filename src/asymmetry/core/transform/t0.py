@@ -6,7 +6,6 @@ certification. Selected automatic requests require each channel's own estimate.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from numbers import Integral
@@ -16,9 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-
-_PULSED_TOKENS = ("isis", "ral", "rutherford", "j-parc", "jparc", "kek", "riken")
-_CONTINUOUS_TOKENS = ("psi", "triumf", "lem")
+from asymmetry.core.instruments.source import assess_source
 
 #: How far the detected t0 may sit from the file's before it is worth a warning,
 #: per source family (D8, from the ISIS/PSI header survey). Continuous sources
@@ -275,18 +272,7 @@ def shift_statistics(shifts: Sequence[int | None]) -> tuple[int, int]:
 
 def source_is_pulsed(metadata: dict[str, Any] | None) -> bool | None:
     """Established source hints, or None when no supported strategy is known."""
-    metadata = metadata if isinstance(metadata, dict) else {}
-    if isinstance(metadata.get("source_pulsed"), bool):
-        return metadata["source_pulsed"]
-    text = " ".join(
-        str(metadata.get(key, "")) for key in ("facility", "instrument", "source", "area")
-    ).lower()
-    matches = [
-        pulsed
-        for pulsed, tokens in ((False, _CONTINUOUS_TOKENS), (True, _PULSED_TOKENS))
-        if re.search(r"(?<![a-z0-9])(?:" + "|".join(tokens) + r")(?![a-z0-9])", text)
-    ]
-    return matches[0] if len(matches) == 1 else None
+    return assess_source(metadata).pulsed
 
 
 def _peak_fwhm_bins(c: NDArray[np.float64], peak: int) -> int:

@@ -14,10 +14,15 @@ from copy import deepcopy
 from numbers import Integral, Real
 from pathlib import Path
 
+from asymmetry.core.project.instrument_migration import (
+    LegacyProfileFingerprint,
+    legacy_histogram_count,
+    migrate_instrument_identities,
+)
 from asymmetry.core.project.json_values import encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 40
+CURRENT_SCHEMA_VERSION: int = 41
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -158,6 +163,9 @@ def migrate_to_current(data: dict) -> dict:
         from asymmetry.core.project.scan_migration import migrate_scan_fit_history
 
         migrated = migrate_scan_fit_history(migrated) | {"schema_version": 40}
+        version = 40
+    if version == 40:
+        migrated = migrate_instrument_identities(migrated) | {"schema_version": 41}
     return migrated
 
 
@@ -677,10 +685,7 @@ def _migrate_v9_to_v10(data: dict) -> dict:
 
 def _migrate_v11_to_v12(data: dict) -> dict:
     """Lift valid shared grouping choices into profiles; retain unresolved overrides."""
-    from asymmetry.core.project.profiles import (
-        ProfileFingerprint,
-        profile_from_payload,
-    )
+    from asymmetry.core.project.profiles import profile_from_payload
     from asymmetry.core.transform.grouping import InvalidGroupingError, effective_group_indices
 
     migrated = dict(data)
@@ -691,10 +696,9 @@ def _migrate_v11_to_v12(data: dict) -> dict:
     if not isinstance(datasets, list):
         return migrated
 
-    # Bucket dataset indices by fingerprint. Datasets whose overrides lack the
-    # metadata needed to fingerprint them are left untouched (conservative path).
+    # Only saved acquired-channel tables establish count; group IDs cannot supply it.
     buckets: dict[tuple[str, int], list[int]] = {}
-    fingerprints: dict[tuple[str, int], ProfileFingerprint] = {}
+    fingerprints: dict[tuple[str, int], LegacyProfileFingerprint] = {}
     for index, entry in enumerate(datasets):
         if not isinstance(entry, dict):
             continue
@@ -702,7 +706,7 @@ def _migrate_v11_to_v12(data: dict) -> dict:
         if not isinstance(overrides, dict):
             continue
         instrument = str(overrides.get("instrument", "") or "").strip()
-        histogram_count = _histogram_count_from_overrides(overrides)
+        histogram_count = legacy_histogram_count(overrides)
         if not instrument or histogram_count is None:
             continue  # Conservative: keep grouping_overrides, no profile.
         try:
@@ -714,7 +718,7 @@ def _migrate_v11_to_v12(data: dict) -> dict:
             continue
         key = (instrument.lower(), int(histogram_count))
         buckets.setdefault(key, []).append(index)
-        fingerprints.setdefault(key, ProfileFingerprint(instrument, int(histogram_count)))
+        fingerprints.setdefault(key, LegacyProfileFingerprint(instrument, int(histogram_count)))
 
     updated = [dict(entry) if isinstance(entry, dict) else entry for entry in datasets]
     profiles: list[dict] = list(migrated.get("grouping_profiles") or [])
@@ -945,7 +949,7 @@ def _migrate_v16_to_v17(data: dict) -> dict:
         overrides = entry.get("grouping_overrides")
         if "profile" not in entry and isinstance(overrides, dict):
             instrument = str(overrides.get("instrument", "") or "").strip().lower()
-            histogram_count = _histogram_count_from_overrides(overrides)
+            histogram_count = legacy_histogram_count(overrides)
             if instrument and histogram_count is not None:
                 base = default_by_fingerprint.get((instrument, int(histogram_count)))
                 if base:
@@ -953,15 +957,6 @@ def _migrate_v16_to_v17(data: dict) -> dict:
         updated.append(entry)
     migrated["datasets"] = updated
     return migrated
-
-
-def _histogram_count_from_overrides(overrides: dict) -> int | None:
-    """Read acquired-channel count from stored file tables, never authored IDs."""
-    for key in ("detector_t0_bins", "detector_first_good_bins", "histogram_labels"):
-        value = overrides.get(key)
-        if isinstance(value, (list, tuple)) and value:
-            return len(value)
-    return None
 
 
 #: Shareable grouping payload keys that define a profile's identity for the

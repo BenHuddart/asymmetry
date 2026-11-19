@@ -1,5 +1,7 @@
 """Saved combination definitions preserve conditions, diagnostics, and fit history."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -77,14 +79,17 @@ def test_project_restores_target_override_or_unavailable_definition_with_history
     assert historical.result_metadata == original
     saved = restored.collect_project_state()
     if conflict:
-        assert saved["combined_datasets"] == state["combined_datasets"]
+        assert json.loads(json.dumps(saved["combined_datasets"])) == json.loads(
+            json.dumps(state["combined_datasets"])
+        )
     else:
         current = saved["combined_datasets"][0]
-        assert {key: value for key, value in current.items() if key != "representations"} == {
-            key: value
-            for key, value in state["combined_datasets"][0].items()
-            if key != "representations"
-        }
+        expected = json.loads(json.dumps(state["combined_datasets"][0]))
+        expected["grouping_overrides"]["histogram_labels"] = ["Forward", "Backward"]
+        expected["grouping_overrides"]["deadtime_file_us"] = []
+        assert json.loads(
+            json.dumps({key: value for key, value in current.items() if key != "representations"})
+        ) == {key: value for key, value in expected.items() if key != "representations"}
         records = current["representations"]["time_fb_asymmetry"]["result_metadata"][
             "effective_recipes"
         ]
@@ -158,7 +163,9 @@ def test_unavailable_weighted_definition_survives_rebuild(
         "Saved combination terms cannot be reconstructed"
         in unavailable.metadata["correction_error"]
     )
-    assert restored.collect_project_state()["combined_datasets"] == state["combined_datasets"]
+    assert json.loads(
+        json.dumps(restored.collect_project_state()["combined_datasets"])
+    ) == json.loads(json.dumps(state["combined_datasets"]))
     assert restored._project_model.batch("history").results_by_run[-1] == {"parameters": {"A": 0.2}}
 
 
@@ -199,7 +206,9 @@ def test_supported_saved_terms_survive_rebuild(qapp, tmp_path, monkeypatch, oper
     for actual, expected in zip((row.time, row.asymmetry, row.error), before, strict=True):
         np.testing.assert_array_equal(actual, expected)
     assert row.metadata["constituent_source_expectations"] == terms
-    assert restored.collect_project_state()["combined_datasets"] == state["combined_datasets"]
+    expected = json.loads(json.dumps(state["combined_datasets"]))
+    expected[0]["grouping_overrides"]["deadtime_file_us"] = []
+    assert json.loads(json.dumps(restored.collect_project_state()["combined_datasets"])) == expected
 
 
 def test_registered_core_weighted_result_cannot_rebuild_as_unit_sum(qapp):

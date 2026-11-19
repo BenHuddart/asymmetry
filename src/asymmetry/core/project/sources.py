@@ -246,9 +246,14 @@ class ProjectSourceApplication:
         from asymmetry.core.io.reference_selection import select_reference_run
 
         for i, fact in enumerate(self.verification):
-            if not fact.source.owner.active or fact.source.owner.address[:2] != (
-                "combined_datasets",
-                index,
+            if (
+                fact.source.role != "constituent"
+                or not fact.source.owner.active
+                or fact.source.owner.address[:2]
+                != (
+                    "combined_datasets",
+                    index,
+                )
             ):
                 continue
             source = fact.source

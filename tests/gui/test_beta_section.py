@@ -58,7 +58,7 @@ def test_beta_label_uses_recorded_constraint_at_unity(fit_beta):
     result = candidate(fit_beta=fit_beta)
     parameters = (result.fit.parameters[0], replace(result.fit.parameters[1], value=1.0))
     result = replace(result, fit=replace(result.fit, parameters=parameters))
-    profile = GroupingProfile("beta", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("beta", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("unity", result))
     assert beta_provenance_text(profile.beta_policy) == (
         "TF calibration fit" if fit_beta else "fixed"

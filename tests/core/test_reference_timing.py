@@ -365,7 +365,13 @@ def test_resolved_reference_snapshot_cannot_supply_unresolved_new_cohort(monkeyp
     counts = np.arange(64) + 30.0
     counts[8] = 1000
     run.histograms.append(Histogram(counts, 0.016, t0_bin=2))
-    timing = ReferenceTiming(mode="auto_detect", file_sources=("file",) * 3, pulsed=False)
+    from asymmetry.core.instruments.source import SourceAssessment
+
+    timing = ReferenceTiming(
+        mode="auto_detect",
+        file_sources=("file",) * 3,
+        source=SourceAssessment(False, "known", "explicit"),
+    )
     grouping = timing.resolve(run.histograms, [[0], [1]])
     reference = BackgroundReference(
         run.histograms,

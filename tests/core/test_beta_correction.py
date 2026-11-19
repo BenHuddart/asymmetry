@@ -14,8 +14,8 @@ from asymmetry.core.project.profiles import (
     BetaPolicy,
     GroupingProfile,
     ProfileFingerprint,
+    choose_instrument_for_run,
     profile_from_payload,
-    reconcile_instrument_for_payload,
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.asymmetry import (
@@ -249,7 +249,7 @@ def _profile(**kwargs) -> GroupingProfile:
         kwargs["beta_policy"] = BetaPolicy(mode="fixed", value=beta)
     return GroupingProfile(
         name="Default (EMU)",
-        fingerprint=ProfileFingerprint(instrument="EMU", histogram_count=4),
+        fingerprint=ProfileFingerprint(instrument="isis.emu", histogram_count=4),
         groups={1: [1, 2], 2: [3, 4]},
         forward_group=1,
         backward_group=2,
@@ -276,7 +276,7 @@ class TestBetaPersistence:
 
     def test_profile_from_payload_lifts_beta(self):
         payload = {"groups": {1: [1], 2: [2]}, "beta": 1.2}
-        fingerprint = ProfileFingerprint(instrument="EMU", histogram_count=4)
+        fingerprint = ProfileFingerprint(instrument="isis.emu", histogram_count=4)
         assert profile_from_payload(payload, "p", fingerprint).beta == pytest.approx(1.2)
         payload_no_beta = {"groups": {1: [1], 2: [2]}}
         assert profile_from_payload(payload_no_beta, "p", fingerprint).beta == 1.0
@@ -310,15 +310,14 @@ class TestBetaPersistence:
         assert resolved["beta"] == 0.9
         assert group_forward_backward(run.histograms, resolved).beta == 1.0
 
-    def test_instrument_heal_keeps_beta(self):
-        """β is instrument-independent, so a stale-identity heal keeps it."""
-        run = _run(grouping={"instrument": "FLAME"})
-        payload = {"instrument": "GPS", "groups": {1: [1], 2: [2]}, "beta": 0.9}
-        reconciled, note = reconcile_instrument_for_payload(run, payload)
-        if note is not None:  # heal fired (detection disagreed with "GPS")
-            assert reconciled.get("beta") == pytest.approx(0.9)
-        else:  # detection inconclusive on the synthetic run — payload untouched
-            assert reconciled is payload
+    def test_explicit_identity_change_keeps_beta_without_regrouping(self):
+        from asymmetry.core.instruments.resolution import choice_for_layout
+
+        run = _run(grouping={"beta": 0.9})
+        updated, released = choose_instrument_for_run(run, choice_for_layout(run, "FLAME"))
+        assert not released
+        assert updated.grouping == run.grouping
+        assert updated.grouping["beta"] == pytest.approx(0.9)
 
 
 class TestBetaPolicy:
@@ -400,7 +399,7 @@ class TestBetaPolicyProfileIntegration:
         """A v0.15.0 profile dict (plain scalar, no provenance) still loads."""
         legacy_data = {
             "name": "Default (EMU)",
-            "fingerprint": ProfileFingerprint(instrument="EMU", histogram_count=4).to_dict(),
+            "fingerprint": ProfileFingerprint(instrument="isis.emu", histogram_count=4).to_dict(),
             "groups": {1: [1, 2], 2: [3, 4]},
             "forward_group": 1,
             "backward_group": 2,
@@ -454,7 +453,7 @@ class TestBetaPolicyProfileIntegration:
             "beta_error": 0.004,
             "beta_reference_run": 3039,
         }
-        fingerprint = ProfileFingerprint(instrument="EMU", histogram_count=4)
+        fingerprint = ProfileFingerprint(instrument="isis.emu", histogram_count=4)
         profile = profile_from_payload(payload, "p", fingerprint)
         assert profile.beta_policy.mode == "calibrated"
         assert profile.beta_policy.method == "count_fit"
@@ -464,7 +463,7 @@ class TestBetaPolicyProfileIntegration:
 
     def test_profile_from_payload_bare_beta_is_fixed(self):
         payload = {"groups": {1: [1], 2: [2]}, "beta": 0.9}
-        fingerprint = ProfileFingerprint(instrument="EMU", histogram_count=4)
+        fingerprint = ProfileFingerprint(instrument="isis.emu", histogram_count=4)
         profile = profile_from_payload(payload, "p", fingerprint)
         assert profile.beta_policy.mode == "fixed"
         assert profile.beta == pytest.approx(0.9)

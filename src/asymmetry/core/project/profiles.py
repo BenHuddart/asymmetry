@@ -78,12 +78,21 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from numbers import Integral
 from typing import Any
 
 from asymmetry.core.data.dataset import Run
-from asymmetry.core.instrument import detect_instrument, instrument_display_name
+from asymmetry.core.instruments.recognition import ACQUIRED_LABEL_KEYS
+from asymmetry.core.instruments.resolution import (
+    InstrumentConflictError,
+    InstrumentSelection,
+    RecordedInstrumentChoice,
+    UnresolvedInstrumentIdentity,
+    accept_instrument_choice,
+    resolve_instrument,
+)
 from asymmetry.core.project.calibration import (
     CalibratedCoefficient,
     CalibrationRecord,
@@ -555,193 +564,132 @@ class BackgroundPolicy:
 
 @dataclass(frozen=True)
 class ProfileFingerprint:
-    """Identity a profile applies to: ``(instrument, histogram_count)``.
-
-    A profile only applies to runs whose instrument name and detector-histogram
-    count both match. ``instrument`` is compared case-insensitively after
-    trimming; ``histogram_count`` is the number of detector histograms.
-    """
+    """Canonical instrument/configuration owner and its acquired channel count."""
 
     instrument: str
     histogram_count: int
+    acquisition: str | None = None
+    unresolved_identity: str | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.instrument, str) or (self.instrument and "." not in self.instrument):
+            raise ValueError("Grouping fingerprint requires a canonical instrument key")
+        if (
+            isinstance(self.histogram_count, bool)
+            or not isinstance(self.histogram_count, int)
+            or self.histogram_count < 0
+        ):
+            raise ValueError("Grouping fingerprint requires a nonnegative acquired channel count")
+        if self.acquisition is not None and (
+            not self.instrument or not isinstance(self.acquisition, str) or not self.acquisition
+        ):
+            raise ValueError("A grouping acquisition requires its canonical instrument")
+        if self.unresolved_identity is not None and (
+            self.instrument
+            or not isinstance(self.unresolved_identity, str)
+            or not self.unresolved_identity.strip()
+        ):
+            raise ValueError("Unresolved grouping identity must retain its nonempty opaque label")
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
-        return {"instrument": self.instrument, "histogram_count": int(self.histogram_count)}
+        return {
+            "instrument": self.instrument,
+            "histogram_count": self.histogram_count,
+            "acquisition": self.acquisition,
+            **(
+                {"unresolved_identity": self.unresolved_identity}
+                if self.unresolved_identity is not None
+                else {}
+            ),
+        }
 
     @classmethod
     def from_dict(cls, data: Any) -> ProfileFingerprint:
-        """Reconstruct a fingerprint from :meth:`to_dict` output (lenient)."""
+        if data is None:
+            return cls("", 0)
         if not isinstance(data, dict):
-            return cls(instrument="", histogram_count=0)
+            raise ValueError("Grouping fingerprint requires its owned object")
         return cls(
-            instrument=str(data.get("instrument", "")),
-            histogram_count=_as_int(data.get("histogram_count"), 0) or 0,
+            data.get("instrument", ""),
+            data.get("histogram_count", 0),
+            data.get("acquisition"),
+            data.get("unresolved_identity"),
         )
 
     def matches(self, other: ProfileFingerprint) -> bool:
-        """Return whether *other* names the same instrument and histogram count."""
-        return self.instrument.strip().lower() == other.instrument.strip().lower() and int(
-            self.histogram_count
-        ) == int(other.histogram_count)
+        return (
+            self.instrument == other.instrument
+            and self.acquisition == other.acquisition
+            and self.histogram_count == other.histogram_count
+            and (self.unresolved_identity or "").strip().casefold()
+            == (other.unresolved_identity or "").strip().casefold()
+        )
+
+
+def grouping_request_payload(grouping: dict) -> dict:
+    """Persist scientific requests and acquired tables, excluding raw held-period caches."""
+    return deepcopy(
+        {
+            key: value
+            for key, value in grouping.items()
+            if key not in {"instrument", "period_inputs", "period_histograms", "period_reduced"}
+        }
+    )
+
+
+def profile_grouping_request(profile: GroupingProfile, run: Run) -> dict[str, Any]:
+    """Detach authored profile policies and acquired facts without resolving corrections.
+
+    Captured effective values remain available when a reference or reduction is unavailable.
+    """
+    declaration = profile.to_dict()
+    declaration.pop("name")
+    declaration.pop("fingerprint")
+    declaration.pop("active")
+    declaration.pop("color", None)
+    extra = declaration.pop("extra", {})
+    request = deepcopy(run.grouping | declaration | extra)
+    request["t0_policy"] = profile.t0_policy.to_dict()
+    request["good_window_policy"] = profile.good_window_policy.to_dict()
+    _apply_background_policy(request, profile.background_policy)
+    if profile.alpha_policy.mode != "per_run_estimate":
+        _apply_alpha_policy(request, profile.alpha_policy, run, len(run.histograms))
+    _apply_beta_policy(request, profile.beta_policy)
+    resolve_projection_calibrations(profile.projection_alpha_policies, request)
+    return request
+
+
+def choose_instrument_for_run(
+    run: Run, choice: RecordedInstrumentChoice, following: GroupingProfile | None = None
+) -> tuple[Run, bool]:
+    """Apply identity alone; an incompatible follower retains its authored per-run request."""
+    selected = accept_instrument_choice(run, choice.selection)
+    updated = replace(run, instrument_choice=selected)
+    release = following is not None and not following.fingerprint.matches(
+        profile_fingerprint_for_run(updated)
+    )
+    if release:
+        updated = replace(updated, grouping=profile_grouping_request(following, run))
+    return updated, release
 
 
 def profile_fingerprint_for_run(run: Run) -> ProfileFingerprint:
-    """Return the :class:`ProfileFingerprint` a run matches.
-
-    The instrument name is read from ``run.grouping['instrument']`` when present
-    (the loaders store it there) and otherwise from ``run.metadata['instrument']``.
-    The histogram count is ``len(run.histograms)``.
-    """
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    instrument = grouping.get("instrument")
-    if not instrument:
-        instrument = (run.metadata or {}).get("instrument", "")
+    """Use the recorded identity independently of current contrary file evidence."""
+    context = resolve_instrument(run)
+    selected = context.recorded.selection if context.recorded is not None else context.selection
+    if isinstance(selected, InstrumentSelection):
+        return ProfileFingerprint(
+            selected.profile_key,
+            len(run.histograms),
+            selected.acquisition if isinstance(selected.acquisition, str) else None,
+        )
     return ProfileFingerprint(
-        instrument=str(instrument or ""),
-        histogram_count=len(run.histograms),
-    )
-
-
-def fingerprint_from_payload(
-    payload: dict[str, Any], *, histogram_count: int
-) -> ProfileFingerprint:
-    """Build a fingerprint from a stored grouping payload + a histogram count."""
-    payload = payload if isinstance(payload, dict) else {}
-    return ProfileFingerprint(
-        instrument=str(payload.get("instrument", "") or ""),
-        histogram_count=int(histogram_count),
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Instrument self-healing on re-detection
-# --------------------------------------------------------------------------- #
-
-#: Detector membership and geometry belong to the detected layout. Acquisition
-#: facts and instrument-independent correction policies survive identity repair.
-_INSTRUMENT_DEPENDENT_STRUCTURE_KEYS: tuple[str, ...] = (
-    "groups",
-    "group_names",
-    "included_groups",
-    "forward_group",
-    "backward_group",
-    "grouping_preset",
-    "projections",
-    "excluded_detectors",
-    "vector_axis",
-    "forward_indices",
-    "backward_indices",
-    "alpha_x",
-    "alpha_y",
-    "alpha_z",
-    "alpha_x_error",
-    "alpha_x_reference_run",
-    "alpha_y_error",
-    "alpha_y_reference_run",
-    "alpha_z_error",
-    "alpha_z_reference_run",
-)
-
-
-def _same_instrument_family(a: str, b: str) -> bool:
-    """Whether two instrument names denote the same physical instrument.
-
-    Compared by *display name* so layout variants of one instrument — e.g. the
-    6-detector ``"GPS"`` (PSI-BIN) and 11-detector ``"GPS-RD"`` (ROOT) — count as
-    the same family and never trigger a spurious "heal". Falls back to a plain
-    case-insensitive comparison for names outside the registry.
-    """
-    a_norm, b_norm = str(a or "").strip(), str(b or "").strip()
-    if a_norm.lower() == b_norm.lower():
-        return True
-    return instrument_display_name(a_norm).lower() == instrument_display_name(b_norm).lower()
-
-
-def detect_instrument_for_run(run: Run) -> str | None:
-    """Detection result for a freshly loaded *run* (a fact about the data).
-
-    Thin wrapper over :func:`~asymmetry.core.instrument.detect_instrument` that
-    feeds it the run's own histogram count, metadata, and source file — the
-    inputs a loader used when it first identified the instrument. Returns the
-    canonical instrument name, or ``None`` when detection is inconclusive.
-    """
-    metadata = run.metadata if isinstance(run.metadata, dict) else None
-    return detect_instrument(
+        "",
         len(run.histograms),
-        metadata=metadata,
-        source_file=run.source_file or None,
+        unresolved_identity=selected.label
+        if isinstance(selected, UnresolvedInstrumentIdentity)
+        else None,
     )
-
-
-def reconcile_instrument_for_payload(
-    run: Run, payload: dict[str, Any] | None
-) -> tuple[dict[str, Any], str | None]:
-    """Self-heal a stale persisted instrument identity against fresh detection.
-
-    A freshly loaded run is the ground truth for its own instrument: the
-    instrument is a fact about the data, not a user preference. An earlier app
-    version with broken detection may have persisted the *wrong*
-    ``grouping["instrument"]`` (e.g. a real FLAME run saved as "GPS"); re-applying
-    that stale payload over the fresh run would pin the wrong profile fingerprint
-    and paste the wrong instrument's group names/geometry onto the run.
-
-    Given the freshly loaded *run* and a persisted grouping *payload* about to be
-    applied to it, this compares the payload's stored ``instrument`` with
-    :func:`detect_instrument_for_run`:
-
-    * **Detection positive and disagrees** with the stored value (different
-      physical instrument): detection wins. ``run.grouping["instrument"]`` and, if
-      the loader set one, ``run.metadata["instrument"]`` are updated to the
-      detected name, and the payload's stale *structural* fields
-      (:data:`_INSTRUMENT_DEPENDENT_STRUCTURE_KEYS` — groups, group names,
-      forward/backward, preset, projections, per-axis vector alphas) are discarded
-      in favour of the loader defaults. Instrument-independent settings (per-run
-      facts, deadtime/background policy, scalar alpha, binning) are kept.
-    * **Detection returns None** (inconclusive): the stored value is kept and the
-      payload is returned unchanged.
-    * **Detection agrees** with the stored value: the payload is returned
-      unchanged (byte-identical).
-
-    Returns ``(reconciled_payload, note)`` where *note* is a human-readable log
-    line when a heal occurred, else ``None``. The returned payload is always a new
-    dict when a heal occurred (the input is never mutated); otherwise it is the
-    input payload object unchanged.
-    """
-    payload = payload if isinstance(payload, dict) else {}
-    detected = detect_instrument_for_run(run)
-    if not detected:
-        return payload, None
-
-    stored = str(payload.get("instrument", "") or "").strip()
-    if stored and _same_instrument_family(stored, detected):
-        return payload, None
-    if not stored:
-        # No stored identity to contradict — nothing to heal. (Resolution/loader
-        # will fill instrument in via the normal fingerprint path.)
-        return payload, None
-
-    # Detection disagrees: the freshly loaded data wins. Correct the run's own
-    # identity in place so the fingerprint recomputes to the detected instrument.
-    if isinstance(run.grouping, dict):
-        run.grouping["instrument"] = detected
-    if isinstance(run.metadata, dict) and run.metadata.get("instrument"):
-        run.metadata["instrument"] = detected
-
-    # Drop the stale payload's instrument-dependent structural fields so the wrong
-    # instrument's groups/names/preset cannot survive; keep the rest.
-    reconciled = {
-        key: value
-        for key, value in payload.items()
-        if key not in _INSTRUMENT_DEPENDENT_STRUCTURE_KEYS
-    }
-    reconciled["instrument"] = detected
-    note = (
-        f"Corrected stale instrument identity '{stored}' -> '{detected}' for "
-        f"{run.source_file or 'run'} (detected from the freshly loaded data); "
-        "discarded the stale grouping structure in favour of the loader defaults."
-    )
-    return reconciled, note
 
 
 # --------------------------------------------------------------------------- #
@@ -1163,6 +1111,11 @@ def resolve_effective_grouping(
         alpha_mode=profile.alpha_policy.mode,
         deadtime_mode=profile.deadtime_policy.mode,
     ) as perf:
+        context = resolve_instrument(run)
+        if context.requires_choice:
+            raise InvalidGroupingError(
+                str(InstrumentConflictError(context)), profile_grouping_request(profile, run)
+            )
         run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
         from asymmetry.core.io.periods import (
             acquired_period_histograms,
@@ -1218,9 +1171,6 @@ def resolve_effective_grouping(
 
         resolve_projection_calibrations(profile.projection_alpha_policies, grouping)
 
-        if profile.fingerprint.instrument:
-            grouping["instrument"] = profile.fingerprint.instrument
-
         _copy_per_run_facts(grouping, run_grouping, run)
         if profile.period_mode is not None:
             grouping["period_mode"] = str(profile.period_mode)
@@ -1269,8 +1219,7 @@ def _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist):
     _apply_background_policy(grouping, profile.background_policy)
 
 
-#: Per-run, file-derived keys copied straight through from the run's own
-#: grouping (never stored on a profile).
+#: Acquired facts belong to each run, never to its shared profile.
 _PER_RUN_FACT_KEYS = (
     "t0_bin",
     "t0_time_us",
@@ -1283,7 +1232,7 @@ _PER_RUN_FACT_KEYS = (
     "detector_t0_sources",
     "detector_first_good_bins",
     "detector_last_good_bins",
-    "histogram_labels",
+    *ACQUIRED_LABEL_KEYS,
     "root_histo_numbers",
     "good_frames",
     "reference_exposure",
@@ -1759,6 +1708,8 @@ def default_profile_for_run(profiles: list[GroupingProfile], run: Run) -> Groupi
     a single default per fingerprint). Runs already in the project follow
     their own recorded assignment; see :func:`assigned_profile_for_run`.
     """
+    if resolve_instrument(run).requires_choice:
+        return None
     fingerprint = profile_fingerprint_for_run(run)
     for profile in profiles:
         if profile.active and profile.fingerprint.matches(fingerprint):
@@ -1775,6 +1726,8 @@ def named_profile_for_run(
     instrument (or histogram count) that happens to share the name never
     resolves onto the run.
     """
+    if resolve_instrument(run).requires_choice:
+        return None
     fingerprint = profile_fingerprint_for_run(run)
     for profile in profiles:
         if profile.name == name and profile.fingerprint.matches(fingerprint):
@@ -1785,17 +1738,9 @@ def named_profile_for_run(
 def assigned_profile_for_run(
     profiles: list[GroupingProfile], run: Run, assigned_name: str | None = None
 ) -> GroupingProfile | None:
-    """Resolve the profile *run* should follow: its assignment, else the default.
-
-    *assigned_name* is the run's recorded assignment (schema v17). A missing or
-    stale assignment — the named profile was deleted, or the run's fingerprint
-    no longer matches it — falls back to the fingerprint's default profile, so
-    a project whose profile list changed underneath a run still resolves.
-    """
+    """Resolve an assigned name without replacing an unavailable assignment with a default."""
     if assigned_name:
-        profile = named_profile_for_run(profiles, str(assigned_name), run)
-        if profile is not None:
-            return profile
+        return named_profile_for_run(profiles, str(assigned_name), run)
     return default_profile_for_run(profiles, run)
 
 
@@ -1831,9 +1776,6 @@ __all__ = [
     "ProfileFingerprint",
     "GroupingProfile",
     "profile_fingerprint_for_run",
-    "fingerprint_from_payload",
-    "detect_instrument_for_run",
-    "reconcile_instrument_for_payload",
     "profile_from_payload",
     "resolve_effective_grouping",
     "aligned_n_bins",

@@ -27,7 +27,6 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
-from asymmetry.core.instrument import instrument_display_name
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
@@ -4210,7 +4209,7 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["forward_group"] == 5
         assert dataset.run.grouping["backward_group"] == 6
         assert dataset.run.grouping["vector_axis"] == "P_x"
-        assert dataset.run.grouping["instrument"] == "EMU"
+        assert "instrument" not in dataset.run.grouping
         assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
         assert dataset.run.grouping["alpha_x"] == pytest.approx(1.7)
         assert dataset.run.grouping["alpha_y"] == pytest.approx(1.3)
@@ -4432,7 +4431,7 @@ class TestMainWindowBasic:
 
         assert payload is not None
         assert payload["vector_axis"] == "P_y"
-        assert payload["instrument"] == "MuSR"
+        assert "instrument" not in payload
         assert payload["alpha_x"] == pytest.approx(1.05)
         assert payload["alpha_y"] == pytest.approx(1.15)
         assert payload["alpha_z"] == pytest.approx(1.25)
@@ -5639,8 +5638,8 @@ class TestMainWindowBasic:
         mainwindow._load_files(["/tmp/new_run.nxs"])
 
         assert len(applied_payloads) == 1
-        assert applied_payloads[0]["forward_group"] == 1
-        assert applied_payloads[0]["backward_group"] == 2
+        assert applied_payloads[0].payload["forward_group"] == 1
+        assert applied_payloads[0].payload["backward_group"] == 2
 
     def test_load_files_auto_applies_existing_manual_deadtime_grouping(
         self,
@@ -5676,9 +5675,9 @@ class TestMainWindowBasic:
         mainwindow._load_files(["/tmp/new_run_with_manual_deadtime.nxs"])
 
         assert len(applied_payloads) == 1
-        assert applied_payloads[0]["deadtime_mode"] == "manual"
-        assert applied_payloads[0]["deadtime_method"] == "manual"
-        assert applied_payloads[0]["dead_time_us"] == pytest.approx([0.02, 0.02])
+        assert applied_payloads[0].payload["deadtime_mode"] == "manual"
+        assert applied_payloads[0].payload["deadtime_method"] == "manual"
+        assert applied_payloads[0].payload["dead_time_us"] == pytest.approx([0.02, 0.02])
 
     def test_load_files_auto_applies_grouping_from_highest_run_dataset(
         self,
@@ -5727,9 +5726,9 @@ class TestMainWindowBasic:
         mainwindow._load_files(["/tmp/new_run_uses_highest_grouping.nxs"])
 
         assert len(applied_payloads) == 1
-        assert applied_payloads[0]["forward_group"] == 5
-        assert applied_payloads[0]["backward_group"] == 6
-        assert applied_payloads[0]["alpha"] == pytest.approx(2.5)
+        assert applied_payloads[0].payload["forward_group"] == 5
+        assert applied_payloads[0].payload["backward_group"] == 6
+        assert applied_payloads[0].payload["alpha"] == pytest.approx(2.5)
 
     def test_load_files_does_not_auto_apply_grouping_without_template(
         self,
@@ -7662,11 +7661,11 @@ def test_released_run_persists_grouping_overrides(mainwindow: MainWindow, tmp_pa
     mainwindow._data_browser.add_dataset(ds)
     profile = _grouping_profile_from(ds, "P", alpha=1.3)
     mainwindow._store_grouping_profile(profile)
+    mainwindow._assign_dataset_profile(ds, profile.name)
 
     state = mainwindow.collect_project_state()
     entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7401)
-    # The override payload stays authoritative for resolution; the profile
-    # names the base the run can be reattached to.
+    # The override owns the request; the profile remains its reattach target.
     assert entry.get("profile") == "P"
     assert isinstance(entry.get("grouping_overrides"), dict)
 
@@ -7689,8 +7688,7 @@ def test_assignment_to_non_default_profile_persists(mainwindow: MainWindow) -> N
     assert "grouping_overrides" not in entry
 
 
-def test_stale_assignment_falls_back_to_default_profile(mainwindow: MainWindow) -> None:
-    """An assignment naming a deleted profile persists via the default instead."""
+def test_unavailable_assignment_stays_pending(mainwindow: MainWindow) -> None:
     ds = _make_dataset(7412, with_grouping=True)
     mainwindow._data_browser.add_dataset(ds)
     mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Sample A", alpha=1.1))
@@ -7698,7 +7696,7 @@ def test_stale_assignment_falls_back_to_default_profile(mainwindow: MainWindow) 
 
     state = mainwindow.collect_project_state()
     entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7412)
-    assert entry.get("profile") == "Sample A"
+    assert entry.get("profile") == "Deleted sample"
 
 
 def test_reconcile_grouping_overrides_flags_metadata(mainwindow: MainWindow) -> None:
@@ -7831,25 +7829,12 @@ def _stale_gps_overrides() -> dict:
     }
 
 
-def test_heal_run_instrument_corrects_stale_grouping(mainwindow: MainWindow) -> None:
-    """_heal_run_instrument rewrites a FLAME run mis-carried as GPS."""
-    dataset = _flame_dataset(9101, grouping_instrument="GPS")
-    mainwindow._heal_run_instrument(dataset.run)
-    assert dataset.run.grouping["instrument"] == "FLAME"
-    fingerprint = profile_fingerprint_for_run(dataset.run)
-    assert (fingerprint.instrument, fingerprint.histogram_count) == ("FLAME", 8)
-
-
-def test_project_restore_heals_stale_instrument_override(
+def test_project_restore_retains_conflicting_instrument_override(
     mainwindow: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A FLAME run persisted as a (GPS, 8) override self-heals on project reload.
-
-    After restore the run reports the FLAME fingerprint, does NOT inherit the
-    stored (GPS, 8) profile, and the stale GPS group names/structure are gone.
-    """
+    """Fresh contrary evidence leaves the saved request available for explicit repair."""
     source_file = tmp_path / "run_flame_9102.bin"
     source_file.write_text("placeholder", encoding="utf-8")
 
@@ -7889,17 +7874,15 @@ def test_project_restore_heals_stale_instrument_override(
     dataset = mainwindow._data_browser.get_dataset(9102)
     assert dataset is not None
     grouping = dataset.run.grouping
-    # Healed to FLAME.
-    assert grouping["instrument"] == "FLAME"
+    assert grouping["groups"] == {1: [1], 2: [2]}
+    assert grouping["group_names"] == {1: "Up", 2: "Down"}
     fingerprint = profile_fingerprint_for_run(dataset.run)
-    assert (fingerprint.instrument, fingerprint.histogram_count) == ("FLAME", 8)
-    # Must NOT have inherited the (GPS, 8) profile: no GPS Up/Down names survive.
-    group_names = grouping.get("group_names") or {}
-    assert "Up" not in group_names.values()
-    assert "Down" not in group_names.values()
-    # The display identity reflects FLAME with 8 detectors.
-    assert instrument_display_name(fingerprint.instrument) == "FLAME"
-    assert fingerprint.histogram_count == 8
+    assert (fingerprint.instrument, fingerprint.histogram_count) == ("psi.gps", 8)
+    from asymmetry.core.instruments.resolution import resolve_instrument
+
+    assert resolve_instrument(dataset.run).requires_choice
+    assert "Instrument identity conflicts" in dataset.metadata["correction_error"]
+    assert dataset.run.metadata["instrument"] == "PSI"
 
 
 def _fake_flame_loader(mainwindow: MainWindow, monkeypatch, source_file, run_number: int):
@@ -7974,7 +7957,7 @@ def test_project_restore_released_run_applies_override_not_base_profile(
     assert dataset.metadata.get("grouping_profile") == "Sample A"
 
 
-def test_project_restore_stale_profile_name_falls_back_to_default(
+def test_project_restore_unavailable_profile_name_stays_pending(
     mainwindow: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -8000,9 +7983,10 @@ def test_project_restore_stale_profile_name_falls_back_to_default(
 
     dataset = mainwindow._data_browser.get_dataset(9104)
     assert dataset is not None
-    assert dataset.run.grouping["alpha"] == pytest.approx(1.4)
+    assert dataset.run.grouping.get("alpha") != 1.4
+    assert "recorded grouping profile is unavailable" in dataset.metadata["correction_error"]
     assert dataset.metadata.get("grouping_overrides") in (None, False)
-    assert dataset.metadata.get("grouping_profile") == "Sample A"
+    assert dataset.metadata.get("grouping_profile") == "Ghost"
 
 
 def _forward_ring_hal_dataset(run_number: int = 3687) -> MuonDataset:
@@ -8191,7 +8175,7 @@ def _project_state_with_t0_policy(
 
     profile = GroupingProfile(
         name="Stored (EMU)",
-        fingerprint=ProfileFingerprint("EMU", 2),
+        fingerprint=ProfileFingerprint("isis.emu", 2),
         groups={1: [1], 2: [2]},
         forward_group=1,
         backward_group=2,

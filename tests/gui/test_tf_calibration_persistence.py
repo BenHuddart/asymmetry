@@ -13,7 +13,7 @@ pytestmark = pytest.mark.gui
 
 @pytest.mark.parametrize("manual_beta", [False, True])
 def test_form_capture_preserves_history_and_authored_beta(manual_beta):
-    profile = GroupingProfile("TF", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("TF", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("frozen", candidate()))
     payload = {"groups": {1: [1], 2: [2]}, "alpha": 1.2, "beta": 1.1}
     if not manual_beta:
@@ -52,7 +52,7 @@ def test_vector_form_capture_keeps_unedited_base_calibration():
             ),
         ),
     )
-    profile = GroupingProfile("vector", ProfileFingerprint("test", 2))
+    profile = GroupingProfile("vector", ProfileFingerprint("", 2))
     apply_calibration(profile, CalibrationRecord("vector-base", result))
     payload = {
         "groups": {1: [1], 2: [2]},

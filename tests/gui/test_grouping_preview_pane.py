@@ -425,16 +425,14 @@ def test_grouping_apply_matches_the_core_reducer(qapp: QApplication) -> None:
         window.close()
 
 
-# --------------------------------------------------------------------------- #
-# Profile-mode requests: resolution stays off the GUI thread (audit finding #1)
-# --------------------------------------------------------------------------- #
+# Profile requests resolve on the worker thread.
 
 
 def _draft_profile(*, groups: dict[int, list[int]] | None = None) -> GroupingProfile:
     """A minimal draft matching :func:`_histogram_dataset`'s two-detector run."""
     return GroupingProfile(
         name="draft",
-        fingerprint=ProfileFingerprint("TESTINST", 2),
+        fingerprint=ProfileFingerprint("", 2),
         groups={1: [1], 2: [2]} if groups is None else groups,
         forward_group=1,
         backward_group=2,

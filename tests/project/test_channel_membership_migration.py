@@ -68,5 +68,9 @@ def test_old_project_keeps_override_when_acquired_count_is_unknown():
     loaded = migrate_to_current(
         {"schema_version": 11, "datasets": [{"grouping_overrides": grouping}]}
     )
-    assert loaded["datasets"][0]["grouping_overrides"] == grouping
+    entry = loaded["datasets"][0]
+    assert entry["grouping_overrides"] == {
+        key: value for key, value in grouping.items() if key != "instrument"
+    }
+    assert entry["instrument_choice"]["selection"]["profile_key"] == "isis.emu"
     assert loaded["grouping_profiles"] == []

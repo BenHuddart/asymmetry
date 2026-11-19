@@ -84,7 +84,11 @@ def test_identical_runs_collapse_to_single_active_profile():
     profile = profiles[0]
     assert profile["name"] == "Default (EMU)"
     assert profile["active"] is True
-    assert profile["fingerprint"] == {"instrument": "EMU", "histogram_count": 4}
+    assert profile["fingerprint"] == {
+        "instrument": "isis.emu",
+        "histogram_count": 4,
+        "acquisition": None,
+    }
     assert profile["alpha_policy"] == {"mode": "fixed", "value": 1.2}
 
     # Each dataset now references the profile and drops its per-run copy.
@@ -233,7 +237,10 @@ def test_authored_groups_do_not_establish_acquired_histogram_count():
     state = _v11_state([{"run_number": 1, "source_file": "a.nxs", "grouping_overrides": overrides}])
     migrated = migrate_to_current(copy.deepcopy(state))
     assert migrated["grouping_profiles"] == []
-    assert migrated["datasets"][0]["grouping_overrides"] == overrides
+    assert migrated["datasets"][0]["grouping_overrides"] == {
+        key: value for key, value in overrides.items() if key != "instrument"
+    }
+    assert migrated["datasets"][0]["instrument_choice"]["selection"]["profile_key"] == "isis.emu"
 
 
 def test_dataset_without_grouping_overrides_is_untouched():
@@ -269,6 +276,8 @@ def test_migrated_profile_resolves_to_original_shareable_grouping():
     import numpy as np
 
     from asymmetry.core.data.dataset import Histogram, Run
+    from asymmetry.core.instruments.resolution import RecordedInstrumentChoice
+    from asymmetry.core.project.profiles import profile_fingerprint_for_run
 
     original = _overrides(alpha=1.35)
     state = _v11_state(
@@ -291,12 +300,10 @@ def test_migrated_profile_resolves_to_original_shareable_grouping():
     run = Run(
         run_number=1,
         histograms=[Histogram(counts=np.ones(20), bin_width=0.016, t0_bin=5) for _ in range(4)],
-        grouping={
-            "instrument": "EMU",
-            "t0_bin": 5,
-            "first_good_bin": 6,
-            "last_good_bin": 19,
-        },
+        grouping={"t0_bin": 5, "first_good_bin": 6, "last_good_bin": 19},
+        instrument_choice=RecordedInstrumentChoice.from_dict(
+            migrated["datasets"][0]["instrument_choice"]
+        ),
     )
     resolved = resolve_effective_grouping(profile, run)
     assert resolved["alpha"] == 1.35
@@ -304,7 +311,8 @@ def test_migrated_profile_resolves_to_original_shareable_grouping():
     assert resolved["forward_group"] == 1
     assert resolved["backward_group"] == 2
     # Fingerprint carries through so a reload re-inherits the profile.
-    assert profile.fingerprint == ProfileFingerprint("EMU", 4)
+    assert profile.fingerprint == ProfileFingerprint("isis.emu", 4)
+    assert profile.fingerprint.matches(profile_fingerprint_for_run(run))
 
 
 # --------------------------------------------------------------------------- #
@@ -535,13 +543,13 @@ def test_v12_project_with_no_studies_key_migrates_additively():
 def _serialized_profile(
     name: str, *, instrument: str = "EMU", n_hist: int = 4, active: bool = True
 ):
-    return GroupingProfile(
-        name=name,
-        fingerprint=ProfileFingerprint(instrument, n_hist),
-        active=active,
-        groups={1: [1, 2], 2: [3, 4]},
-        group_names={1: "Forward", 2: "Backward"},
-    ).to_dict()
+    return {
+        "name": name,
+        "fingerprint": {"instrument": instrument, "histogram_count": n_hist},
+        "active": active,
+        "groups": {"1": [1, 2], "2": [3, 4]},
+        "group_names": {"1": "Forward", "2": "Backward"},
+    }
 
 
 def _v16_state(*, profiles: list[dict], datasets: list[dict]) -> dict:
@@ -572,9 +580,11 @@ def test_v17_released_dataset_gains_base_profile_link():
     # The following dataset's existing reference is simply kept.
     assert by_run[1]["profile"] == "Sample A"
     assert "grouping_overrides" not in by_run[1]
-    # The released dataset keeps its payload verbatim and gains the base link.
     assert by_run[2]["profile"] == "Sample A"
-    assert by_run[2]["grouping_overrides"] == overrides
+    assert by_run[2]["grouping_overrides"] == {
+        key: value for key, value in overrides.items() if key != "instrument"
+    }
+    assert by_run[2]["instrument_choice"]["selection"]["profile_key"] == "isis.emu"
 
 
 def test_v17_base_link_requires_matching_active_profile():
@@ -614,11 +624,14 @@ def test_v17_dataset_with_existing_profile_and_overrides_is_unchanged():
     entry = migrated["datasets"][0]
     # The recorded base is honoured — never overwritten with the default.
     assert entry["profile"] == "Sample B"
-    assert entry["grouping_overrides"] == overrides
+    assert entry["grouping_overrides"] == {
+        key: value for key, value in overrides.items() if key != "instrument"
+    }
+    assert entry["instrument_choice"]["selection"]["profile_key"] == "isis.emu"
 
 
 def test_v17_profiles_block_and_junk_entries_survive():
-    """The grouping_profiles block is never rewritten; junk is tolerated."""
+    """Only owned fingerprint fields change; unrelated profiles and junk stay intact."""
     profiles = [_serialized_profile("Sample A"), {"name": None}, "junk"]
     state = _v16_state(
         profiles=list(profiles),
@@ -630,7 +643,11 @@ def test_v17_profiles_block_and_junk_entries_survive():
     )
     migrated = migrate_to_current(copy.deepcopy(state))
     assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
-    assert migrated["grouping_profiles"] == profiles
+    assert migrated["grouping_profiles"][0] == {
+        **profiles[0],
+        "fingerprint": {"instrument": "isis.emu", "histogram_count": 4, "acquisition": None},
+    }
+    assert migrated["grouping_profiles"][1:] == profiles[1:]
     assert migrated["datasets"][0] == "not-a-dict"
     # No payload → no fingerprint → no stamp; entry otherwise untouched.
     assert "profile" not in migrated["datasets"][1]

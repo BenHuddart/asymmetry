@@ -16,6 +16,7 @@ from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.instruments.resolution import InstrumentConflictError, resolve_instrument
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
@@ -63,6 +64,9 @@ def prepare_histogram_asymmetry(
         cancel_check()
     if not run.histograms:
         raise ValueError("Histogram preparation requires raw histograms.")
+    context = resolve_instrument(run)
+    if context.requires_choice:
+        raise InstrumentConflictError(context)
     grouping = run.grouping
     forward_idx, backward_idx = (
         effective_group_indices(

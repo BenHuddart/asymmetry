@@ -20,8 +20,10 @@ from asymmetry.core import computation
 from asymmetry.core.data.acquisition import SourceBinding
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.instruments.source import SourceAssessment
 
 if TYPE_CHECKING:
+    from asymmetry.core.instruments.resolution import RecordedInstrumentChoice
     from asymmetry.core.transform.counting_noise import CountingNoise, CountingObservation
     from asymmetry.core.transform.preparation import HistogramObservation
 
@@ -127,6 +129,8 @@ class Run:
     grouping: dict[str, Any] = field(default_factory=dict)
     source_file: str = ""
     source_binding: SourceBinding = SourceBinding()
+    source_assessment: SourceAssessment | None = None
+    instrument_choice: RecordedInstrumentChoice | None = None
 
     # --- convenience accessors ------------------------------------------
 

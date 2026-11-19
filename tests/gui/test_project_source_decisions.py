@@ -166,7 +166,7 @@ def test_inactive_retained_reference_is_informational(qapp, tmp_path, monkeypatc
         stream.write(b"owned annotation")
     profile = GroupingProfile(
         "inactive",
-        ProfileFingerprint("test", 2),
+        ProfileFingerprint("", 2),
         background_policy=BackgroundPolicy(
             mode,
             {
@@ -306,7 +306,7 @@ def test_profile_reference_classification_uses_actual_fingerprint(
     profile = GroupingProfile("same", fingerprint, groups={1: [1], 2: [2]}, active=True)
     unrelated = GroupingProfile(
         "same",
-        ProfileFingerprint("unrelated", 99),
+        ProfileFingerprint("", 99),
         background_policy=BackgroundPolicy(
             "reference_run",
             {

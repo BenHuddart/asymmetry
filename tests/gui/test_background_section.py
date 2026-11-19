@@ -281,7 +281,10 @@ def test_reference_candidate_snapshots_own_policy_without_count_search(qapp, mon
 
     monkeypatch.setattr("asymmetry.core.transform.t0.find_t0_for_run", no_search)
     candidate = BackgroundReferenceRunCandidate.from_run(reference, 1, "Reference")
-    assert candidate.timing == {"t0_policy": {"mode": "auto_detect"}}
+    assert candidate.timing == {
+        "t0_policy": {"mode": "auto_detect"},
+        "source": {"pulsed": None, "reason": "absent", "origin": "metadata"},
+    }
     section = BackgroundSectionWidget(lambda: [candidate])
     monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("Reference", True))
     section._pick_background_run()
@@ -314,3 +317,17 @@ def test_manual_scale_controls_preserve_invalid_draft_and_reopen(qapp):
     section._scale_mode.setCurrentIndex(0)
     assert section.background_run_payload()["scale_request"] == {"mode": "automatic"}
     assert not section._scale_coefficient.isEnabled()
+
+
+def test_reference_picker_keeps_selected_unknown_source_over_new_raw_hints(qapp):
+    from asymmetry.core.instruments.source import SourceAssessment
+    from asymmetry.gui.windows.grouping.background_section import BackgroundReferenceRunCandidate
+    from tests.core.test_reference_timing import timing_runs
+
+    _, reference = timing_runs()
+    selected = SourceAssessment(None, "absent", "manual")
+    reference.source_assessment = selected
+    reference.metadata["source_pulsed"] = True
+    candidate = BackgroundReferenceRunCandidate.from_run(reference, 1, "Reference")
+    assert candidate.timing["source"] == selected.to_dict()
+    assert reference.source_assessment is selected

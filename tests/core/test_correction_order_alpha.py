@@ -179,7 +179,7 @@ def test_per_run_estimate_alpha_uses_background_subtracted_counts():
         "last_good_bin": N_BINS - 1,
         "good_frames": 1000.0,
     }
-    fingerprint = ProfileFingerprint("EMU", 2)
+    fingerprint = ProfileFingerprint("isis.emu", 2)
     base = dict(
         name="Default (EMU)",
         fingerprint=fingerprint,

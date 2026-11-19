@@ -22,12 +22,9 @@ is the responsibility of the caller.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Final
 
-from asymmetry.core.instruments.isis_emu import PROFILE as EMU_PROFILE
-from asymmetry.core.instruments.isis_hifi import PROFILE as HIFI_PROFILE
-from asymmetry.core.instruments.isis_musr import PROFILE as MUSR_PROFILE
+from asymmetry.core.instruments.catalog import PROFILES
 from asymmetry.core.instruments.layout import (
     GENERIC_INSTRUMENT,
     PROJECTION_TINTS,
@@ -41,11 +38,9 @@ from asymmetry.core.instruments.layout import (
     ReferenceArrow,
     generic_layout,
 )
-from asymmetry.core.instruments.psi_flame import PROFILE as FLAME_PROFILE
-from asymmetry.core.instruments.psi_gps import PROFILE as GPS_PROFILE
-from asymmetry.core.instruments.psi_hal9500 import PROFILE as HAL_PROFILE
+from asymmetry.core.instruments.recognition import canonical_layout_name, recognize_layout
+from asymmetry.core.instruments.resolution import assess_instrument, layout_key_for_selection
 from asymmetry.core.instruments.resolve import layout_from_profile
-from asymmetry.core.instruments.schema import matches_name
 from asymmetry.core.transform.grouping import resolve_group_indices
 
 __all__ = [
@@ -250,7 +245,7 @@ def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
 #: sub-detectors) are three variants of the one physical GPS instrument; they
 #: share the display name "GPS" and are collapsed to a single dropdown entry by
 #: :func:`~asymmetry.core.instrument.instrument_choices_for`.
-INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
+_DISPLAY_ORDER: Final[tuple[str, ...]] = (
     "HiFi",
     "MuSR",
     "EMU",
@@ -259,6 +254,16 @@ INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
     "GPS",
     "GPS-RD",
     "GPS-RD15",
+)
+
+
+_LAYOUT_KEYS = tuple(
+    config.layout_key or profile.identity.layout_key
+    for profile in PROFILES
+    for config in profile.detectors.acquisitions
+)
+INSTRUMENT_NAMES: Final[tuple[str, ...]] = tuple(
+    dict.fromkeys((*[name for name in _DISPLAY_ORDER if name in _LAYOUT_KEYS], *_LAYOUT_KEYS))
 )
 
 
@@ -275,14 +280,9 @@ _LAYOUTS: dict[str, InstrumentLayout] | None = None
 
 def _build_registry() -> dict[str, InstrumentLayout]:
     return {
-        "HiFi": layout_from_profile(HIFI_PROFILE, "nexus64"),
-        "MuSR": layout_from_profile(MUSR_PROFILE, "nexus64"),
-        "EMU": layout_from_profile(EMU_PROFILE, "nexus96"),
-        "FLAME": layout_from_profile(FLAME_PROFILE, "eight_channel"),
-        "HAL": layout_from_profile(HAL_PROFILE, "full17"),
-        "GPS": layout_from_profile(GPS_PROFILE, "bin_combined"),
-        "GPS-RD": layout_from_profile(GPS_PROFILE, "root_split"),
-        "GPS-RD15": layout_from_profile(GPS_PROFILE, "root_combined_split"),
+        config.layout_key or profile.identity.layout_key: layout_from_profile(profile, config.key)
+        for profile in PROFILES
+        for config in profile.detectors.acquisitions
     }
 
 
@@ -304,7 +304,7 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
         _LAYOUTS = _build_registry()
     if name in _LAYOUTS:
         return _LAYOUTS[name]
-    resolved = _canonical_instrument_name(name)
+    resolved = canonical_layout_name(name)
     if resolved is not None:
         return _LAYOUTS[resolved]
     return _LAYOUTS[name]
@@ -433,12 +433,30 @@ def recommend_grouping_preset_for_run(
     return recommended
 
 
+def detect_instrument(n_histograms, *, metadata=None, source_file=None) -> str | None:
+    """Return the public recognized layout name; map compatibility is assessed separately."""
+    selected = assess_instrument(n_histograms, metadata=metadata, source_file=source_file).selection
+    if selected is None:
+        return None
+    profile = next(item for item in PROFILES if item.identity.key == selected.profile_key)
+    if not profile.detectors.acquisitions:
+        return None
+    return (
+        layout_key_for_selection(selected, int(n_histograms))
+        or recognize_layout(n_histograms, metadata=metadata, source_file=source_file)
+        or profile.identity.layout_key
+    )
+
+
 def instrument_display_name(name: str) -> str:
     """Return the user-facing dropdown name for a layout registry key.
 
     Variant keys (e.g. ``"GPS-RD"``) map to their shared display name
     (``"GPS"``); every other key maps to itself.
     """
+    profile = next((item for item in PROFILES if item.identity.key == name), None)
+    if profile is not None:
+        return profile.identity.name
     try:
         return get_instrument_layout(name).display
     except KeyError:
@@ -658,324 +676,3 @@ def preset_grouping_for_run(
         if detector_ids:
             groups[int(gid)] = detector_ids
     return groups
-
-
-def _canonical_instrument_name(raw: object, *, filename: bool = False) -> str | None:
-    """Normalize free-form instrument text to a canonical instrument name."""
-    if raw is None:
-        return None
-    token = str(raw).strip()
-    if not token:
-        return None
-
-    for profile in (FLAME_PROFILE, GPS_PROFILE, HIFI_PROFILE, MUSR_PROFILE, EMU_PROFILE):
-        if matches_name(profile.recognition, raw, filename=filename):
-            return profile.identity.layout_key
-    return None
-
-
-def _metadata_labels(metadata: dict) -> list[str]:
-    """Return detector-label hints from metadata-like dictionaries."""
-    raw = metadata.get("histogram_labels") or metadata.get("detector_labels")
-    labels: list[str] = []
-    if isinstance(raw, (list, tuple)):
-        labels.extend(str(label) for label in raw)
-    group_names = metadata.get("group_names")
-    if isinstance(group_names, dict):
-        labels.extend(str(label) for label in group_names.values())
-    return labels
-
-
-def _labels_match_flame(labels: list[str], n_histograms: int) -> bool:
-    """Return True when detector labels match the FLAME eight-counter layout.
-
-    Matching requires *positive* FLAME-specific evidence — exactly eight
-    positron histograms *and* the four split-plate corner labels
-    (``R_F/R_B/L_F/L_B``) — so it can never be satisfied by the GPS
-    (F/B/U/D/R[/L]), DOLLY (F/B/L/R) or GPD (F/B/U/D) label sets, which have
-    no corner plates and fewer than eight histograms.
-    """
-    if n_histograms != 8:
-        return False
-    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
-    if not compact:
-        return False
-    # The split-plate corners are the FLAME signature; without all four this is
-    # not FLAME regardless of what the main-axis labels say.
-    has_corners = {"rf", "rb", "lf", "lb"}.issubset(compact)
-    if not has_corners:
-        return False
-    has_main = (
-        bool({"forw", "forward"} & compact)
-        and bool({"back", "backward"} & compact)
-        and "left" in compact
-        and bool({"right", "righ"} & compact)
-    )
-    return has_main
-
-
-def _is_psi_hal(metadata: dict, source_file: str | None) -> bool:
-    """Return True when PSI metadata/filename identifies a HAL-9500 run.
-
-    HAL-9500 files report ``instrument = "HIFI"`` and run names of the form
-    ``tdc_hifi_*``; both carry the ``hifi`` token. Caller must already have
-    established that the data is from PSI.
-    """
-    return any(
-        matches_name(HAL_PROFILE.recognition, metadata.get(key))
-        for key in ("instrument", "instrument_name", "spectrometer", "name")
-    ) or bool(
-        source_file and matches_name(HAL_PROFILE.recognition, Path(source_file).stem, filename=True)
-    )
-
-
-def _labels_match_gps(labels: list[str], n_histograms: int) -> bool:
-    """Return True when detector labels match the GPS six-counter layout.
-
-    GPS ``deltat_tdc_gps_*.bin`` files store exactly six histograms labelled
-    ``Forw, Back, Up, Down, Righ, Left`` (the muon and veto counters are not
-    stored as histograms).
-    """
-    if n_histograms != 6:
-        return False
-    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
-    if not compact:
-        return False
-    return (
-        bool({"forw", "forward"} & compact)
-        and bool({"back", "backward"} & compact)
-        and "up" in compact
-        and "down" in compact
-        and bool({"righ", "right"} & compact)
-        and "left" in compact
-    )
-
-
-def _labels_match_gps_classic(labels: list[str], n_histograms: int) -> bool:
-    """Return True when detector labels match a classic GPS BIN counter set.
-
-    The canonical six-counter GPS BIN export is ``Forw, Back, Up, Down, Righ,
-    Left``, but older / partial GPS ``.bin`` files omit the ``Left`` counter and
-    ship only five histograms (``Forw, Back, Up, Down, Righ``). Both are
-    identified positively by the presence of the forward/backward *and*
-    up/down axes together with at least one transverse (right/left) counter,
-    across a 4–6 histogram run.
-
-    The up/down requirement excludes DOLLY (``Forw/Back/Left/Right`` — no
-    up/down), and the right/left requirement excludes GPD (``Back/Forw/Up/Down``
-    — no transverse counter), so neither can be misread as GPS.
-    """
-    if not 4 <= n_histograms <= 6:
-        return False
-    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
-    if not compact:
-        return False
-    return (
-        bool({"forw", "forward"} & compact)
-        and bool({"back", "backward"} & compact)
-        and "up" in compact
-        and "down" in compact
-        and bool({"righ", "right", "left"} & compact)
-    )
-
-
-#: The eight ``_B``/``_F`` half-counter labels of the GPS ROOT exports, compacted.
-_GPS_HALF_COUNTER_TOKENS: Final[frozenset[str]] = frozenset(
-    {"upb", "upf", "downb", "downf", "rightb", "rightf", "leftb", "leftf"}
-)
-
-
-def _gps_label_tokens(labels: list[str]) -> set[str]:
-    """Return the compacted (lower-case, alphanumeric-only) label token set."""
-    return {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
-
-
-def _has_gps_forward_backward(compact: set[str]) -> bool:
-    """Return True when the token set carries both beam-axis counters."""
-    return bool({"forw", "forward"} & compact) and bool({"back", "backward"} & compact)
-
-
-def _has_gps_combined_transverse(compact: set[str]) -> bool:
-    """Return True when the token set carries all four *combined* transverse counters."""
-    return (
-        "up" in compact
-        and "down" in compact
-        and bool({"righ", "right"} & compact)
-        and "left" in compact
-    )
-
-
-def _labels_match_gps_subdetectors(labels: list[str]) -> bool:
-    """Return True when detector labels match the GPS ROOT sub-detector layout.
-
-    The 11-histogram GPS ``deltat_tdc_gps_*.root`` (MusrRoot) export stores the
-    raw sub-detectors and nothing else: ``Forw, Back, Up_B, Up_F, Down_B, Down_F,
-    Right_B, Right_F, Left_B, Left_F, Mob-RL``.  Matching is on the label set
-    alone (not the histogram count) so it also serves as a fallback when the count
-    is reported unexpectedly.
-
-    The *combined* counters must be **absent**: an export that carries both views
-    is the 15-histogram layout (:func:`_labels_match_gps_combined_subdetectors`),
-    whose detector ids mean something different, and matching it here is what
-    silently mis-assigned Up/Down before.
-    """
-    compact = _gps_label_tokens(labels)
-    if not compact:
-        return False
-    if _has_gps_combined_transverse(compact):
-        return False
-    has_mobile = any("mob" in token for token in compact)
-    return (
-        _has_gps_forward_backward(compact)
-        and _GPS_HALF_COUNTER_TOKENS.issubset(compact)
-        and has_mobile
-    )
-
-
-def _labels_match_gps_combined_subdetectors(labels: list[str]) -> bool:
-    """Return True when detector labels match the 15-histogram GPS ROOT export.
-
-    That export carries *both* views of the same events — the six combined
-    counters and the eight half-counters plus the mobile detector::
-
-        Forw, Back, Up, Down, Right, Left, Up_B, Up_F, Down_B, Down_F,
-        Right_B, Right_F, Left_B, Left_F, Mob-RL
-
-    so it is identified by requiring the combined transverse labels *and* the
-    half-counter labels together (plus the beam-axis pair and the mobile
-    detector).  Like the other GPS label matchers this is count-independent, so it
-    still resolves when the histogram count is reported unexpectedly.
-    """
-    compact = _gps_label_tokens(labels)
-    if not compact:
-        return False
-    has_mobile = any("mob" in token for token in compact)
-    return (
-        _has_gps_forward_backward(compact)
-        and _has_gps_combined_transverse(compact)
-        and _GPS_HALF_COUNTER_TOKENS.issubset(compact)
-        and has_mobile
-    )
-
-
-def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> bool:
-    """Return True when PSI metadata/filename identifies a GPS run.
-
-    GPS files report a ``GPS`` instrument string (BIN: ``"GPS"``; ROOT:
-    ``"LMU_BULKMUSR_GPS"``) and run names of the form ``deltat_tdc_gps_*``; both
-    carry the ``gps`` token (distinct from the GPD decay-channel instrument's
-    ``gpd`` token).  As a fallback, any of the GPS label sets identifies GPS: the
-    six-counter BIN set, the eleven-counter ROOT sub-detector set, or the
-    fifteen-counter ROOT combined+sub-detector set.  Caller must already have
-    established that the data is from PSI.
-    """
-    if any(
-        matches_name(GPS_PROFILE.recognition, metadata.get(key))
-        for key in ("instrument", "instrument_name", "beamline", "spectrometer", "name")
-    ) or (
-        source_file and matches_name(GPS_PROFILE.recognition, Path(source_file).stem, filename=True)
-    ):
-        return True
-    labels = _metadata_labels(metadata)
-    return (
-        _labels_match_gps(labels, n_histograms)
-        or _labels_match_gps_classic(labels, n_histograms)
-        or _labels_match_gps_subdetectors(labels)
-        or _labels_match_gps_combined_subdetectors(labels)
-    )
-
-
-def _gps_variant(metadata: dict, n_histograms: int) -> str:
-    """Return the GPS layout registry key for a recognised GPS run.
-
-    Three exports exist and their detector ids mean different things, so picking
-    the wrong one silently mis-assigns counters:
-
-    * **15 histograms** — the ROOT export carrying the six combined counters
-      *and* the eight half-counters plus the mobile detector → ``"GPS-RD15"``.
-    * **11 histograms** — the ROOT sub-detector-only export → ``"GPS-RD"``.
-    * **6 histograms** — the PSI-BIN combined-counter export → ``"GPS"``.
-
-    The histogram count decides when it is one of the three known values; a count
-    reported unexpectedly falls back to the label sets, **most specific first**
-    (the 15-histogram set contains the 11-histogram one, so the order matters).
-    """
-    if n_histograms == 15:
-        return "GPS-RD15"
-    if n_histograms == 11:
-        return "GPS-RD"
-    labels = _metadata_labels(metadata)
-    if _labels_match_gps_combined_subdetectors(labels):
-        return "GPS-RD15"
-    if _labels_match_gps_subdetectors(labels):
-        return "GPS-RD"
-    return "GPS"
-
-
-def detect_instrument(
-    n_histograms: int,
-    *,
-    metadata: dict | None = None,
-    source_file: str | None = None,
-) -> str | None:
-    """Identify an instrument from metadata, detector labels, or its filename.
-
-    Histogram count alone does not identify an instrument. It selects a layout
-    variant only after instrument-specific evidence identifies the instrument.
-    The caller should allow the user to override the returned value.
-
-    Parameters
-    ----------
-    n_histograms:
-        Total number of histograms / raw-detector channels in the run.
-    metadata:
-        Optional run metadata containing instrument names or detector labels.
-    source_file:
-        Optional source filename/path used as a final lightweight hint.
-
-    Returns
-    -------
-    str or None
-        Canonical instrument name when detection succeeds, else ``None``.
-    """
-    psi_data = False
-    if isinstance(metadata, dict):
-        facility = str(metadata.get("facility", "")).strip().lower()
-        psi_data = facility == "psi" or bool(metadata.get("psi_format"))
-        # PSI HAL-9500 (high-field): its run files carry the legacy "hifi"
-        # token / "HIFI" instrument string, but it is a distinct instrument
-        # from the ISIS HiFi spectrometer. Route it to the HAL layout before
-        # the generic ISIS-name resolution below (which would mis-map it).
-        if psi_data and _is_psi_hal(metadata, source_file):
-            return "HAL"
-        # PSI GPS (General Purpose Spectrometer): route by its "gps" token or the
-        # GPS label sets, before the generic PSI return-None path below would
-        # discard it.  Pick the 6-detector BIN ("GPS"), 11-detector ROOT
-        # sub-detector ("GPS-RD") or 15-detector ROOT combined+sub-detector
-        # ("GPS-RD15") variant by histogram count / label set.
-        if psi_data and _is_psi_gps(metadata, source_file, n_histograms):
-            return _gps_variant(metadata, n_histograms)
-        for key in (
-            "instrument",
-            "instrument_name",
-            "beamline",
-            "spectrometer",
-            "facility_instrument",
-            "name",
-        ):
-            resolved = _canonical_instrument_name(metadata.get(key))
-            if resolved is not None:
-                if psi_data and resolved not in {"FLAME", "GPS"}:
-                    return None
-                return resolved
-        if _labels_match_flame(_metadata_labels(metadata), n_histograms):
-            return "FLAME"
-
-    if source_file:
-        path_token = _canonical_instrument_name(Path(source_file).stem, filename=True)
-        if path_token is not None:
-            if psi_data and path_token not in {"FLAME", "GPS"}:
-                return None
-            return path_token
-
-    return None
