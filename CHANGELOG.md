@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Publish reviewable PSI instrument profiles, preserving GPS readout variants, FLAME direction cues, and HAL grouping conventions.
+
 ### Added
 
 - Expose sourced HiFi and MuSR instrument definitions and review diagrams, keeping

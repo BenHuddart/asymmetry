@@ -98,14 +98,16 @@ def layout_from_profile(
         )
         for preset in entry.presets
     }
+    layout_key = config.layout_key or profile.identity.layout_key
     return InstrumentLayout(
-        profile.identity.layout_key,
+        layout_key,
         max(channel.ordinal for channel in config.channels),
         tuple(banks),
         presets,
         view=config.views[0].mode,
         display_name=None
-        if profile.identity.display_name == profile.identity.layout_key
+        if profile.identity.display_name == layout_key
         else profile.identity.display_name,
+        reference_arrows=config.reference_arrows,
         apply_default_preset_on_load=profile.defaults.apply_default_preset_on_load,
     )

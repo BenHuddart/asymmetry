@@ -1723,6 +1723,15 @@ not a facility-validated quantitative vector measurement. See the
 PSI FLAME
 ~~~~~~~~~
 
+.. figure:: /_generated/screenshots/psi_flame_layout.png
+   :width: 100%
+   :alt: FLAME detector editor with declared schematic direction cues.
+
+   The editor uses the profile's explicit arrows and longitudinal grouping.
+
+See :doc:`instruments/psi_flame` for the acquisition map, declared direction cues,
+and separate source and review status. The arrows depict a schematic setting.
+
 .. figure:: images/flame-program-schematic.png
    :width: 90%
    :align: center
@@ -1737,6 +1746,9 @@ PSI FLAME
 
 PSI HAL-9500
 ~~~~~~~~~~~~
+
+See :doc:`instruments/psi_hal9500` for the published bank structure and the
+separately qualified channel order, angular convention, and grouping defaults.
 
 .. figure:: images/hal-program-schematic.png
    :width: 90%
@@ -1767,6 +1779,16 @@ PSI HAL-9500
 
 PSI GPS
 ~~~~~~~
+
+.. figure:: /_generated/screenshots/psi_gps_readout_layout.png
+   :width: 100%
+   :alt: GPS combined and split acquired channels in two drawing views.
+
+   The combined-plus-split readout retains one editable occurrence per channel.
+
+See :doc:`instruments/psi_gps` for all three acquisition maps, shared hardware
+affiliations, and explicit preset balances. Combined and split readouts do not
+establish exact count sums or independent observations.
 
 .. figure:: images/gps-program-schematic.png
    :width: 95%

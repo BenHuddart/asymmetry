@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from asymmetry.core.instruments.geometry import View, expand_view
-from asymmetry.core.instruments.layout import AsymmetryProjection
+from asymmetry.core.instruments.layout import AsymmetryProjection, ReferenceArrow
 
 
 class EvidenceStatus(str, Enum):
@@ -104,6 +104,17 @@ class Acquisition:
     label: str
     channels: tuple[Channel, ...]
     views: tuple[View, ...]
+    layout_key: str | None = None
+    reference_arrows: tuple[ReferenceArrow, ...] = ()
+
+    def __post_init__(self):
+        if self.layout_key is not None and not self.layout_key.strip():
+            raise ValueError("Acquisition layout key cannot be blank")
+        for arrow in self.reference_arrows:
+            if not arrow.label or not all(
+                math.isfinite(value) for value in (*arrow.start, *arrow.end)
+            ):
+                raise ValueError("Reference arrows need a label and finite endpoints")
 
 
 @dataclass(frozen=True)
@@ -250,7 +261,10 @@ class InstrumentProfile:
             raise ValueError("Name consent requires a reviewer name")
         if any(
             not token.strip()
-            for token in (*self.recognition.aliases, *self.recognition.filename_tokens)
+            for token in (
+                *self.recognition.aliases,
+                *self.recognition.filename_tokens,
+            )
         ):
             raise ValueError("Recognition tokens cannot be blank")
         banks = _unique(tuple(bank.key for bank in self.detectors.banks), "physical bank IDs")
@@ -264,6 +278,12 @@ class InstrumentProfile:
             raise ValueError("Physical element references an unknown bank")
         configurations = _unique(
             tuple(config.key for config in self.detectors.acquisitions), "acquisition keys"
+        )
+        _unique(
+            tuple(
+                config.layout_key or identity.layout_key for config in self.detectors.acquisitions
+            ),
+            "effective layout keys",
         )
         preset_configs = _unique(
             tuple(entry.acquisition for entry in self.presets), "preset configurations"

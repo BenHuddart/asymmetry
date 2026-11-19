@@ -205,7 +205,11 @@ def synthetic_profiles():
         )
         acquisitions.append(
             Acquisition(
-                f"channels{len(order)}", f"{len(order)} channel illustration", configured, (view,)
+                f"channels{len(order)}",
+                f"{len(order)} channel illustration",
+                configured,
+                (view,),
+                layout_key=f"Fixture-{len(order)}",
             )
         )
     result["combined_split"] = synthetic_profile(tuple(acquisitions), elements=physical)

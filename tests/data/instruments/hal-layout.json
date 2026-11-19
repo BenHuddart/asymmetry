@@ -1,0 +1,465 @@
+{
+  "name": "HAL",
+  "n_detectors": 17,
+  "banks": [
+    {
+      "name": "Forward",
+      "segments": [
+        {
+          "detector_id": 1,
+          "sector_index": 0,
+          "ring_index": 0,
+          "angle_center_deg": 90.0,
+          "angle_half_width_deg": 180.0,
+          "r_inner": 0.0,
+          "r_outer": 0.26,
+          "shape": "wedge",
+          "label": "MV",
+          "x_center": 0.0,
+          "y_center": 0.0,
+          "width": 0.0,
+          "height": 0.0,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 2,
+          "sector_index": 0,
+          "ring_index": 0,
+          "angle_center_deg": 90.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F1",
+          "x_center": 4.861110141992722e-17,
+          "y_center": 0.7938795325112867,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 3,
+          "sector_index": 1,
+          "ring_index": 0,
+          "angle_center_deg": 45.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F2",
+          "x_center": 0.5613576008839372,
+          "y_center": 0.561357600883937,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": -45.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 4,
+          "sector_index": 2,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F3",
+          "x_center": 0.7938795325112867,
+          "y_center": 0.0,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": -90.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 5,
+          "sector_index": 3,
+          "ring_index": 0,
+          "angle_center_deg": 315.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F4",
+          "x_center": 0.5613576008839369,
+          "y_center": -0.5613576008839372,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 225.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 6,
+          "sector_index": 4,
+          "ring_index": 0,
+          "angle_center_deg": 270.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F5",
+          "x_center": -1.4583330425978166e-16,
+          "y_center": -0.7938795325112867,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 180.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 7,
+          "sector_index": 5,
+          "ring_index": 0,
+          "angle_center_deg": 225.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F6",
+          "x_center": -0.5613576008839372,
+          "y_center": -0.561357600883937,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 135.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 8,
+          "sector_index": 6,
+          "ring_index": 0,
+          "angle_center_deg": 180.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F7",
+          "x_center": -0.7938795325112867,
+          "y_center": 9.722220283985444e-17,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 90.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 9,
+          "sector_index": 7,
+          "ring_index": 0,
+          "angle_center_deg": 135.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "F8",
+          "x_center": -0.561357600883937,
+          "y_center": 0.5613576008839372,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 45.0,
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "name": "Backward",
+      "segments": [
+        {
+          "detector_id": 10,
+          "sector_index": 0,
+          "ring_index": 0,
+          "angle_center_deg": 90.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B1",
+          "x_center": 4.861110141992722e-17,
+          "y_center": 0.7938795325112867,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 0.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 11,
+          "sector_index": 1,
+          "ring_index": 0,
+          "angle_center_deg": 45.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B2",
+          "x_center": 0.5613576008839372,
+          "y_center": 0.561357600883937,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": -45.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 12,
+          "sector_index": 2,
+          "ring_index": 0,
+          "angle_center_deg": 0.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B3",
+          "x_center": 0.7938795325112867,
+          "y_center": 0.0,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": -90.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 13,
+          "sector_index": 3,
+          "ring_index": 0,
+          "angle_center_deg": 315.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B4",
+          "x_center": 0.5613576008839369,
+          "y_center": -0.5613576008839372,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 225.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 14,
+          "sector_index": 4,
+          "ring_index": 0,
+          "angle_center_deg": 270.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B5",
+          "x_center": -1.4583330425978166e-16,
+          "y_center": -0.7938795325112867,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 180.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 15,
+          "sector_index": 5,
+          "ring_index": 0,
+          "angle_center_deg": 225.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B6",
+          "x_center": -0.5613576008839372,
+          "y_center": -0.561357600883937,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 135.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 16,
+          "sector_index": 6,
+          "ring_index": 0,
+          "angle_center_deg": 180.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B7",
+          "x_center": -0.7938795325112867,
+          "y_center": 9.722220283985444e-17,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 90.0,
+          "read_only": false
+        },
+        {
+          "detector_id": 17,
+          "sector_index": 7,
+          "ring_index": 0,
+          "angle_center_deg": 135.0,
+          "angle_half_width_deg": 0.0,
+          "r_inner": 0.0,
+          "r_outer": 0.0,
+          "shape": "rectangle",
+          "label": "B8",
+          "x_center": -0.561357600883937,
+          "y_center": 0.5613576008839372,
+          "width": 0.54,
+          "height": 0.26,
+          "rotation_deg": 45.0,
+          "read_only": false
+        }
+      ]
+    }
+  ],
+  "presets": {
+    "Per-octant": {
+      "name": "Per-octant",
+      "groups": {
+        "1": {
+          "name": "Octant 1",
+          "detector_ids": [
+            2,
+            10
+          ]
+        },
+        "2": {
+          "name": "Octant 2",
+          "detector_ids": [
+            3,
+            11
+          ]
+        },
+        "3": {
+          "name": "Octant 3",
+          "detector_ids": [
+            4,
+            12
+          ]
+        },
+        "4": {
+          "name": "Octant 4",
+          "detector_ids": [
+            5,
+            13
+          ]
+        },
+        "5": {
+          "name": "Octant 5",
+          "detector_ids": [
+            6,
+            14
+          ]
+        },
+        "6": {
+          "name": "Octant 6",
+          "detector_ids": [
+            7,
+            15
+          ]
+        },
+        "7": {
+          "name": "Octant 7",
+          "detector_ids": [
+            8,
+            16
+          ]
+        },
+        "8": {
+          "name": "Octant 8",
+          "detector_ids": [
+            9,
+            17
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 5,
+      "projections": []
+    },
+    "Longitudinal": {
+      "name": "Longitudinal",
+      "groups": {
+        "1": {
+          "name": "Forward",
+          "detector_ids": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        "2": {
+          "name": "Backward",
+          "detector_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17
+          ]
+        }
+      },
+      "forward_group": 2,
+      "backward_group": 1,
+      "projections": []
+    },
+    "Transverse (opposed pairs)": {
+      "name": "Transverse (opposed pairs)",
+      "groups": {
+        "1": {
+          "name": "F1",
+          "detector_ids": [
+            2
+          ]
+        },
+        "2": {
+          "name": "F2",
+          "detector_ids": [
+            3
+          ]
+        },
+        "3": {
+          "name": "F3",
+          "detector_ids": [
+            4
+          ]
+        },
+        "4": {
+          "name": "F4",
+          "detector_ids": [
+            5
+          ]
+        },
+        "5": {
+          "name": "F5",
+          "detector_ids": [
+            6
+          ]
+        },
+        "6": {
+          "name": "F6",
+          "detector_ids": [
+            7
+          ]
+        },
+        "7": {
+          "name": "F7",
+          "detector_ids": [
+            8
+          ]
+        },
+        "8": {
+          "name": "F8",
+          "detector_ids": [
+            9
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 5,
+      "projections": []
+    }
+  },
+  "view": "radial",
+  "reference_arrows": [],
+  "display_name": null,
+  "apply_default_preset_on_load": true
+}
