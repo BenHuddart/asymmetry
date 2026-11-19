@@ -24,6 +24,10 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import brentq
 
+from asymmetry.core.instruments.resolution import (
+    RecordedInstrumentChoice,
+    UnresolvedInstrumentIdentity,
+)
 from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
 from asymmetry.core.transform.counting_noise import combine_noise
 from asymmetry.core.transform.fb_counts import (
@@ -106,19 +110,13 @@ def resolve_facility(
     *,
     metadata: dict[str, Any] | None = None,
     grouping: dict[str, Any] | None = None,
+    instrument_choice: RecordedInstrumentChoice | None = None,
 ) -> str:
-    """Resolve the facility label from run metadata, or ``""`` when unknown.
+    """Resolve the established RF-period hint with explicit metadata precedence.
 
-    The single place this resolution lives. The loaders record the facility in
-    ``metadata["facility"]`` (``"PSI"`` for the PSI reader, the MusrRoot
-    ``Laboratory`` header for ROOT files); ``metadata["instrument"]`` is the
-    fallback, since the facility can be read off an instrument name where the
-    label is missing, and ``metadata["psi_format"]`` is decisive on its own. A
-    grouping payload's ``instrument`` — the canonical registry identity the
-    loaders stamp there — is the last resort.
-
-    This label guides period adjustment of automatic pre-t0 defaults only;
-    explicit intervals remain exactly as authored.
+    A retained opaque identity supplies the last-resort label when raw hints are
+    absent. A canonical instrument's facility does not select a new RF period.
+    Explicit intervals and a caller's explicit empty facility remain unchanged.
     """
     metadata = metadata if isinstance(metadata, dict) else {}
     grouping = grouping if isinstance(grouping, dict) else {}
@@ -130,7 +128,14 @@ def resolve_facility(
     instrument = str(metadata.get("instrument", "") or "").strip()
     if instrument:
         return instrument
-    return str(grouping.get("instrument", "") or "").strip()
+    legacy = str(grouping.get("instrument", "") or "").strip()
+    if legacy:
+        return legacy
+    if instrument_choice is not None and isinstance(
+        instrument_choice.selection, UnresolvedInstrumentIdentity
+    ):
+        return instrument_choice.selection.label
+    return str(metadata.get("background_facility", "") or "").strip()
 
 
 def supports_background_correction(

@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from asymmetry.core.data.acquisition import (
@@ -19,6 +19,8 @@ from asymmetry.core.data.acquisition import (
     SourceOwner,
 )
 from asymmetry.core.data.reduction_recipe import recipe_source_declarations
+from asymmetry.core.instruments.resolution import RecordedInstrumentChoice
+from asymmetry.core.instruments.source import SourceAssessment
 from asymmetry.core.project.calibration import PreparedGrouping, calibration_values
 from asymmetry.core.project.json_values import decode_non_finite
 from asymmetry.core.project.profiles import GroupingProfile
@@ -49,6 +51,8 @@ class PreparedProject:
     studies: dict[str, GlobalFitStudy]
     groupings: dict[int, PreparedGrouping]
     sources: tuple[SourceDeclaration, ...] = ()
+    instrument_choices: dict[int, RecordedInstrumentChoice] = field(default_factory=dict)
+    source_assessments: dict[int, SourceAssessment] = field(default_factory=dict)
 
 
 def _shape(value, expected, path):
@@ -365,6 +369,9 @@ def _grouping_shape(record, path, sources, address, *, active=True, reference_re
             )
         )
         _fields(reference, ("timing", "scale_request", "historical_scale"), dict, ref_path)
+        timing = reference.get("timing") or {}
+        if "source" in timing:
+            _construct(SourceAssessment.from_dict, timing["source"], f"{ref_path}.timing.source")
         for key in ("run_number", "period_number", "legacy_run_number"):
             if reference.get(key) is not None:
                 _identity(reference[key], int, f"{ref_path}.{key}")
@@ -602,6 +609,8 @@ def _prepare_canonical(state, checkpoint):
     _ui_shape(state)
     model = ProjectModel()
     groupings = {}
+    instrument_choices = {}
+    source_assessments = {}
     sources = []
     runs = set()
     for key in ("datasets", "combined_datasets"):
@@ -613,6 +622,18 @@ def _prepare_canonical(state, checkpoint):
             path = f"project.{key}[{index}]"
             number = _identity(entry.get(id_key), int, f"{path}.{id_key}")
             _unique(number, runs, f"{path}.{id_key}")
+            if "instrument_choice" in entry:
+                instrument_choices[number] = _construct(
+                    RecordedInstrumentChoice.from_dict,
+                    entry["instrument_choice"],
+                    f"{path}.instrument_choice",
+                )
+            if "source_assessment" in entry:
+                source_assessments[number] = _construct(
+                    SourceAssessment.from_dict,
+                    entry["source_assessment"],
+                    f"{path}.source_assessment",
+                )
             if "source_file" in entry:
                 _shape(entry["source_file"], str, f"{path}.source_file")
             binding = _construct(
@@ -762,7 +783,7 @@ def _prepare_canonical(state, checkpoint):
         profile = _construct(GroupingProfile.from_dict, raw, path)
         fingerprint = profile.fingerprint
         _unique(
-            (name, fingerprint.instrument.strip().lower(), fingerprint.histogram_count),
+            (name, fingerprint),
             names,
             f"{path}.name",
         )
@@ -833,7 +854,16 @@ def _prepare_canonical(state, checkpoint):
             )
     model.active_series = dict(active)
     checkpoint()
-    return PreparedProject(state, profiles, model, studies, groupings, tuple(sources))
+    return PreparedProject(
+        state,
+        profiles,
+        model,
+        studies,
+        groupings,
+        tuple(sources),
+        instrument_choices,
+        source_assessments,
+    )
 
 
 def load_prepared_project(path: str | Path, *, checkpoint: Callable[[], None] = lambda: None):

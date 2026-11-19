@@ -8,6 +8,7 @@ from numbers import Integral
 from typing import TYPE_CHECKING
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.instruments.source import SourceAssessment, assess_source
 from asymmetry.core.transform.t0 import (
     acquired_t0_sources,
     detector_t0_overrides,
@@ -16,21 +17,29 @@ from asymmetry.core.transform.t0 import (
     require_selected_timing,
     resolve_selected_timing,
     selected_t0_reference,
-    source_is_pulsed,
 )
 
 if TYPE_CHECKING:
     from asymmetry.core.transform.fb_counts import AlignmentCrop
 
 
-def reference_timing_request(grouping):
-    """Copy authored source intent without validating an advisory save/refresh boundary."""
+def reference_timing_request(grouping, source: SourceAssessment | None = None, *, previous=None):
+    """Copy timing intent; ordinary refresh retains its captured source, including unknown."""
     policy = grouping.get("t0_policy")
     if policy is not None:
-        return {"t0_policy": deepcopy(policy)}
-    if "effective_detector_t0_bins" in grouping:
-        return {"effective_detector_t0_bins": deepcopy(grouping["effective_detector_t0_bins"])}
-    return {"t0_policy": {"mode": "from_file"}}
+        request = {"t0_policy": deepcopy(policy)}
+    elif "effective_detector_t0_bins" in grouping:
+        request = {"effective_detector_t0_bins": deepcopy(grouping["effective_detector_t0_bins"])}
+    else:
+        request = {"t0_policy": {"mode": "from_file"}}
+    captured = previous if previous is not None and "source" in previous else grouping
+    if "source" in captured:
+        request["source"] = deepcopy(captured["source"])
+    elif source is not None:
+        if previous is not None:
+            source = replace(source, origin=f"legacy:{source.origin}")
+        request["source"] = source.to_dict()
+    return request
 
 
 @dataclass(frozen=True)
@@ -70,7 +79,7 @@ class ReferenceTiming:
     offset_bins: int = 0
     absolute_bins: tuple[int, ...] | None = None
     file_sources: tuple[str, ...] = ()
-    pulsed: bool | None = None
+    source: SourceAssessment = SourceAssessment(None, "absent", "unrecorded")
 
     def __post_init__(self):
         if self.mode not in {"from_file", "manual", "auto_detect"}:
@@ -79,8 +88,8 @@ class ReferenceTiming:
             raise ValueError("Reference Manual timing requires an integer source-relative offset")
         if self.mode != "manual" and self.offset_bins != 0:
             raise ValueError("Only Reference Manual timing carries an offset")
-        if self.pulsed is not None and not isinstance(self.pulsed, bool):
-            raise ValueError("Reference timing source must be pulsed, continuous, or unknown")
+        if not isinstance(self.source, SourceAssessment):
+            raise ValueError("Reference timing requires a captured source assessment")
         if self.absolute_bins is not None:
             if self.mode != "from_file":
                 raise ValueError("Reference timing requires a policy or an absolute table")
@@ -90,10 +99,17 @@ class ReferenceTiming:
             object.__setattr__(self, "absolute_bins", tuple(bins))
         object.__setattr__(self, "file_sources", tuple(self.file_sources))
 
+    @property
+    def pulsed(self) -> bool | None:
+        """Effective strategy value owned by the captured source record."""
+        return self.source.pulsed
+
     @classmethod
-    def from_grouping(cls, histograms, grouping, metadata):
+    def from_grouping(cls, histograms, grouping, metadata, *, source=None):
         """Capture only timing facts and intent, without searching count arrays."""
-        request = reference_timing_request(grouping)
+        request = reference_timing_request(
+            grouping, assess_source(metadata) if source is None else source
+        )
         policy = request.get("t0_policy")
         mode, offset, absolute = "from_file", 0, None
         if policy is None:
@@ -110,19 +126,22 @@ class ReferenceTiming:
             offset,
             absolute,
             tuple(acquired_t0_sources(grouping, len(histograms))),
-            source_is_pulsed(metadata),
+            SourceAssessment.from_dict(request["source"]),
         )
 
     def request(self) -> dict:
         """Export authored intent for source-bound project replay."""
-        if self.absolute_bins is not None:
-            return {"effective_detector_t0_bins": list(self.absolute_bins)}
-        return {
-            "t0_policy": {
-                "mode": self.mode,
-                **({"offset_bins": self.offset_bins} if self.mode == "manual" else {}),
+        grouping = (
+            {"effective_detector_t0_bins": list(self.absolute_bins)}
+            if self.absolute_bins is not None
+            else {
+                "t0_policy": {
+                    "mode": self.mode,
+                    **({"offset_bins": self.offset_bins} if self.mode == "manual" else {}),
+                }
             }
-        }
+        )
+        return reference_timing_request(grouping, self.source)
 
     def search_indices(self, indices):
         """Raw channels whose complete count records determine effective anchors."""

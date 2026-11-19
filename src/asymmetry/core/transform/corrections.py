@@ -15,6 +15,7 @@ import numpy as np
 
 from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.instruments.resolution import UnresolvedInstrumentIdentity
 from asymmetry.core.transform.reference_scale import ResolvedReferenceScale
 from asymmetry.core.transform.reference_timing import (
     ReferenceTiming,
@@ -313,6 +314,12 @@ def reference_observation_metadata(run: Run) -> dict[str, Any]:
         run.metadata,
         source_file=run.source_file,
         run_number=run.run_number,
+        **(
+            {"background_facility": run.instrument_choice.selection.label}
+            if run.instrument_choice is not None
+            and isinstance(run.instrument_choice.selection, UnresolvedInstrumentIdentity)
+            else {}
+        ),
         content_identity=run.source_binding.observed.to_dict()
         if run.source_binding.observed is not None
         else None,

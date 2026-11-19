@@ -24,7 +24,11 @@ def test_v11_missing_or_malformed_group_map_stays_an_editable_override(fragment)
     migrated = migrate_to_current(
         {"schema_version": 11, "datasets": [{"grouping_overrides": grouping}]}
     )
-    assert migrated["datasets"][0]["grouping_overrides"] == grouping
+    entry = migrated["datasets"][0]
+    assert entry["grouping_overrides"] == {
+        key: value for key, value in grouping.items() if key != "instrument"
+    }
+    assert entry["instrument_choice"]["selection"]["profile_key"] == "psi.gps"
     assert migrated["grouping_profiles"] == []
 
 
@@ -44,7 +48,7 @@ def test_background_details_keep_their_position_after_timing_resolution():
     )
     profile = GroupingProfile(
         name="sample",
-        fingerprint=ProfileFingerprint("test", 2),
+        fingerprint=ProfileFingerprint("", 2),
         groups={1: [1], 2: [2]},
         good_window_policy=GoodWindowPolicy(
             mode="manual", first_offset_bins=2, last_offset_bins=15
@@ -62,7 +66,7 @@ def test_unavailable_profile_still_exposes_fixed_correction_configuration(member
     run = Run(histograms=[Histogram(np.full(20, 20.0), 0.1) for _ in range(2)])
     profile = GroupingProfile(
         name="sample",
-        fingerprint=ProfileFingerprint("test", 2),
+        fingerprint=ProfileFingerprint("", 2),
         groups={1: members, 2: [2]},
         alpha_policy=AlphaPolicy(value=1.7),
         beta_policy=BetaPolicy(value=1.3),
@@ -84,7 +88,7 @@ def test_unavailable_profile_still_exposes_fixed_correction_configuration(member
 def test_unavailable_pair_preserves_selected_period(from_profile):
     profile = GroupingProfile(
         name="sample",
-        fingerprint=ProfileFingerprint("test", 2),
+        fingerprint=ProfileFingerprint("", 2),
         groups={1: [1, 2], 2: [2]},
         period_mode="green" if from_profile else None,
     )

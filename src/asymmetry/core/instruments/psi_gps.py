@@ -299,7 +299,7 @@ PROFILE = InstrumentProfile(
         "continuous",
         "Continuous surface-muon source; beam preparation and recorded timing remain run-specific.",
     ),
-    recognition=Recognition(("GPS",), ("gps",)),
+    recognition=Recognition(("GPS", "LMU_BULKMUSR_GPS"), ("gps",)),
     detectors=Detectors(
         (
             PhysicalBank(

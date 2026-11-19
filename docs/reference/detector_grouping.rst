@@ -93,7 +93,8 @@ Instrument and scope
 ~~~~~~~~~~~~~~~~~~~~~~
 
 A profile applies to every run of one **instrument** — matched, internally, on
-the pair ``(instrument, histogram count)``. The histogram count disambiguates
+the facility-qualified instrument identity, acquisition configuration and histogram count.
+The acquired configuration disambiguates
 layout variants of the same physical instrument, such as PSI GPS's
 six-detector PSI-BIN export and its eleven- and fifteen-detector MusrRoot
 exports (see `PSI GPS`_ below): all are shown as one instrument, but a GPS
@@ -115,14 +116,41 @@ to another profile, from the Grouping window's scope panel or the Data
 Browser's **Assign Grouping Profile** context menu (`Assigning runs to
 profiles`_ below).
 
-Because a run's instrument is a fact about its data rather than a user
-preference, a **stale persisted instrument identity self-heals on reload**: if a
-project saved the wrong instrument for a run (for example, a FLAME run stored as
-"GPS" by an older version), re-detection from the freshly loaded file overrides
-the stored value, the run is re-matched to the correct instrument's profile (or
-kept on the loader defaults if none exists), and the mismatched preset's group
-names are discarded. Saved profiles themselves are never altered — only runs
-heal.
+Instrument identity and saved scientific settings are separate. Contrary file
+evidence does not overwrite saved detector groups, calibrations, timing or
+reference requests. An unresolved conflict prevents a new reduction and automatic
+profile attachment; saved analysis history remains inspectable.
+
+Choose **Instrument identity…** in the toolbar or Analysis menu to review the
+**Retained identity**, **Observed candidates** and **Current file evidence**.
+The **Instrument Identity** dialog records the explicit choice and its evidence.
+**Cancel** leaves the run and profiles unchanged. Choosing an incompatible
+identity stops following the assigned grouping profile while retaining its base
+profile and complete per-run settings, including an unavailable reference request.
+It does not apply a preset or run a calibration. Open **Grouping** to apply the
+retained settings or deliberately select another grouping.
+
+Changing the instrument in **Detector Layout** preserves the current groups.
+Accepting a changed identity opens confirmation of that fixed proposal; use
+**Instrument identity…** to review other choices. Clicking **Apply Grouping**
+remains a separate scientific action: its chosen preset and any detector edits
+are retained for the selected run when the identity is confirmed. An incompatible
+choice changes the pending scope to **Editing override for run N — this run only**;
+subsequent edits affect that run while other followers retain their shared
+profile. Canceling the Grouping window discards the pending choice and edits.
+Canceling the identity confirmation discards the layout editor's proposed changes.
+
+.. figure:: /_generated/screenshots/instrument_identity_conflict.png
+   :alt: Explicit review of a retained GPS identity against FLAME file evidence
+
+   Synthetic conflict showing the saved choice, acquired evidence and the
+   consequence for a following grouping profile.
+
+A known instrument may have no declared or compatible channel map. Its identity
+can be retained, but the drawing uses the acquired-channel generic layout and an
+instrument preset cannot be applied until a compatible map is available. The
+public recognition helper reports an instrument name separately from this map
+availability check.
 
 A run can be explicitly **released** from its profile, freezing its current
 grouping as a per-run override that further profile edits do not touch. The

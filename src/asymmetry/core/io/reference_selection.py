@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.instruments.source import assess_source, source_for_run
 from asymmetry.core.io.periods import (
     acquired_period_histograms,
     reference_mapping_requires_replay,
@@ -177,8 +178,13 @@ def refresh_reference_timing_requests(
     for payload, _ in requests:
         selected = resolve_loaded_reference(runs, payload, advisory=True)
         if selected is not None:
-            payload["timing"] = reference_timing_request(selected.grouping)
-            if resolve_loaded_reference(changed_sources, payload, advisory=True) is not None:
+            edited = resolve_loaded_reference(changed_sources, payload, advisory=True) is not None
+            payload["timing"] = reference_timing_request(
+                selected.grouping,
+                source_for_run(selected) if edited else assess_source(selected.metadata),
+                previous=None if edited else payload.get("timing") or {},
+            )
+            if edited:
                 dependants.add(id(payload))
     changed = {id(payload) for payload, previous in requests if payload.get("timing") != previous}
     return [

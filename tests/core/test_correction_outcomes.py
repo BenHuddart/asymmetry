@@ -163,7 +163,10 @@ def test_reference_provenance_records_scale_and_public_identity(histograms):
         "scaling": reference.scaling.provenance(),
         "scale_summary": "Manual: 2",
         "deadtime_normaliser": 500.0,
-        "timing": {"t0_policy": {"mode": "from_file"}},
+        "timing": {
+            "t0_policy": {"mode": "from_file"},
+            "source": {"pulsed": None, "reason": "absent", "origin": "unrecorded"},
+        },
     }
 
 
@@ -315,7 +318,7 @@ def test_authored_coefficients_cannot_be_relabeled_file(histograms, requested):
         "dead_time_us": [0.0, 0.0],
         "deadtime_correction": True,
     }
-    profile = profile_from_payload(grouping, "test", ProfileFingerprint("generic_layout", 2))
+    profile = profile_from_payload(grouping, "test", ProfileFingerprint("", 2))
     profile.deadtime_policy = DeadtimePolicy(mode="from_file")
     effective = resolve_effective_grouping(profile, Run(histograms=histograms, grouping=grouping))
     assert effective["dead_time_us"] == []

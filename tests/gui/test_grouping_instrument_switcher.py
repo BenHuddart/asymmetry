@@ -28,7 +28,11 @@ def _dataset(run_number: int, *, instrument: str, n_hist: int = 2) -> MuonDatase
     run = Run(
         run_number=run_number,
         histograms=histograms,
-        metadata={"run_number": run_number, "title": f"{instrument} {run_number}"},
+        metadata={
+            "run_number": run_number,
+            "title": f"{instrument} {run_number}",
+            "instrument": instrument,
+        },
         grouping={
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
@@ -36,7 +40,6 @@ def _dataset(run_number: int, *, instrument: str, n_hist: int = 2) -> MuonDatase
             "alpha": 1.0,
             "first_good_bin": 0,
             "last_good_bin": 3,
-            "instrument": instrument,
         },
     )
     t = np.array([0.0, 0.01, 0.02, 0.03])
@@ -82,14 +85,14 @@ def test_switch_swaps_fingerprint_scope_and_preview(qapp: QApplication) -> None:
             _dataset(3, instrument="GPS"),
         ]
     )
-    assert dialog._fingerprint.instrument == "MuSR"
+    assert dialog._fingerprint.instrument == "isis.musr"
     assert dialog._scope_panel.inheriting_run_numbers() == {1, 2}
 
     # Activate the GPS entry (index 1).
     dialog._instrument_combo.setCurrentIndex(1)
     dialog._on_instrument_combo_activated(1)
 
-    assert dialog._fingerprint.instrument == "GPS"
+    assert dialog._fingerprint.instrument == "psi.gps"
     assert int(dialog._reference_dataset.run_number) == 3
     assert dialog._scope_panel.inheriting_run_numbers() == {3}
     # The scope panel (the window's selector) now lists only the GPS run, and it
@@ -111,7 +114,7 @@ def test_switch_swaps_draft_and_presets(qapp: QApplication) -> None:
     # the switch is proven to adopt that instrument's own draft, not the MuSR one.
     from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
 
-    gps_fp = ProfileFingerprint(instrument="GPS", histogram_count=6)
+    gps_fp = ProfileFingerprint(instrument="psi.gps", histogram_count=6, acquisition="bin_combined")
     dialog._project_profiles.append(
         GroupingProfile(name="GPS silver", fingerprint=gps_fp, active=True)
     )
@@ -156,7 +159,7 @@ def test_dirty_draft_prompts_before_switch(qapp: QApplication, monkeypatch) -> N
     )
     dialog._instrument_combo.setCurrentIndex(1)
     dialog._on_instrument_combo_activated(1)
-    assert dialog._fingerprint.instrument == "MuSR"
+    assert dialog._fingerprint.instrument == "isis.musr"
     # The combo selection is restored to the current instrument.
     assert dialog._instrument_combo.currentIndex() == 0
 
@@ -168,4 +171,4 @@ def test_dirty_draft_prompts_before_switch(qapp: QApplication, monkeypatch) -> N
     )
     dialog._draft_dirty = True
     dialog._on_instrument_combo_activated(1)
-    assert dialog._fingerprint.instrument == "GPS"
+    assert dialog._fingerprint.instrument == "psi.gps"

@@ -11,6 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.instruments.resolution import (
+    InstrumentConflictError,
+    RecordedInstrumentChoice,
+    resolve_instrument,
+)
+from asymmetry.core.instruments.source import assess_source
 from asymmetry.core.io.base import BaseLoader, LoaderRegistry, LoadResult
 from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.io.periods import (
@@ -27,7 +33,7 @@ from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.reference_scale import ReferenceExposure, ReferenceScaleRequest
-from asymmetry.core.transform.reference_timing import ReferenceTiming
+from asymmetry.core.transform.reference_timing import ReferenceTiming, reference_timing_request
 
 # Register built-in loaders
 LoaderRegistry.register(NexusLoader)
@@ -100,6 +106,19 @@ def load(
     result = loader.load(filepath, **callbacks)
     if opaque_checkpoint:
         checkpoint()
+    for dataset in result if isinstance(result, list) else [result]:
+        run = dataset.run
+        if run is not None:
+            run.grouping.pop("instrument", None)
+            context = resolve_instrument(run)
+            if context.requires_choice:
+                dataset.metadata["correction_error"] = str(InstrumentConflictError(context))
+            if run.instrument_choice is None and context.selection is not None:
+                run.instrument_choice = RecordedInstrumentChoice(
+                    context.selection, context.observed.evidence
+                )
+            if run.source_assessment is None:
+                run.source_assessment = assess_source(run.metadata)
     if period is None:
         return result
     return select_period(result, period)
@@ -229,18 +248,25 @@ def resolve_background_reference(
     )
 
     timing_grouping = dict(reference_run.grouping)
-    if not live and payload.get("timing") is not None:
-        request = payload["timing"]
-        if not isinstance(request, dict) or set(request) not in (
+    previous = payload.get("timing")
+    if previous is not None:
+        if not isinstance(previous, dict) or set(previous) - {"source"} not in (
             {"t0_policy"},
             {"effective_detector_t0_bins"},
         ):
             raise ValueError("Reference timing request requires one policy or absolute table")
-        if "t0_policy" in request and not isinstance(request["t0_policy"], dict):
+        if "t0_policy" in previous and not isinstance(previous["t0_policy"], dict):
             raise ValueError("Reference timing requires an explicit policy mode")
-        for key in ("t0_policy", "effective_detector_t0_bins"):
-            timing_grouping.pop(key, None)
-        timing_grouping.update(request)
+        if not live:
+            for key in ("t0_policy", "effective_detector_t0_bins"):
+                timing_grouping.pop(key, None)
+            timing_grouping.update(previous)
+    request = reference_timing_request(
+        timing_grouping,
+        assess_source(reference_run.metadata),
+        previous=previous if previous is not None else {},
+    )
+    timing_grouping["source"] = request["source"]
     timing = ReferenceTiming.from_grouping(
         reference_run.histograms, timing_grouping, reference_run.metadata
     )

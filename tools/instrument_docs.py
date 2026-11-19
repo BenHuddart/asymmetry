@@ -7,28 +7,12 @@ import textwrap
 from pathlib import Path
 
 from asymmetry.core import instruments
+from asymmetry.core.instruments.catalog import PROFILES as BUNDLED_PROFILES
 from asymmetry.core.instruments.isis_emu import PROFILE as EMU
-from asymmetry.core.instruments.isis_hifi import PROFILE as HIFI
-from asymmetry.core.instruments.isis_musr import PROFILE as MUSR
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import InstrumentProfile
 
-PROFILES = {
-    profile.identity.key: profile
-    for profile in (
-        EMU,
-        HIFI,
-        MUSR,
-        instruments.GPS,
-        instruments.FLAME,
-        instruments.HAL9500,
-        instruments.LTF,
-        instruments.GPD,
-        instruments.DOLLY,
-        instruments.ALC,
-        instruments.LEM,
-    )
-}
+PROFILES = {profile.identity.key: profile for profile in BUNDLED_PROFILES}
 
 
 def _table(headers, rows):

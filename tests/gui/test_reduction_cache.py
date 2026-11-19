@@ -1,16 +1,6 @@
-"""Unit + wiring tests for the GUI reduction cache (audit D1).
+"""Reduction caches key scientific inputs and isolate mutable returned arrays.
 
-Two layers:
-
-* ``TestReductionCacheClass`` exercises the pure :class:`ReductionCache` — hit/miss
-  semantics, the byte budget, the oversized-entry bypass, the ``None``-not-cached
-  contract, weakref lifetime, the per-``(run, kind)`` cap, and invalidation.
-* ``TestWiredCallSites`` drives the two ``MainWindow`` wrappers and asserts that the
-  underlying reduction runs exactly once per distinct recipe, and re-runs when a
-  key component changes — including the three confirmed digest gaps (alpha,
-  per-detector t0 overrides, good_frames) plus the additional keyed-but-undigested
-  fields (included_groups, deadtime_mode, period_mode). Copy-on-handout is checked
-  so a mutated result cannot poison the next hit.
+Wired GUI tests pin computation counts, worker execution and captured reference sources.
 """
 
 from __future__ import annotations
@@ -670,7 +660,8 @@ def test_live_reference_timing_refreshes_warm_rebunch_and_spectral_request(mainw
     reference.grouping["t0_policy"]["offset_bins"] = 4
     mainwindow._invalidate_fft_after_regroup([2])
     assert sample.grouping["background_run"]["timing"] == {
-        "t0_policy": {"mode": "manual", "offset_bins": 4}
+        "t0_policy": {"mode": "manual", "offset_bins": 4},
+        "source": {"pulsed": None, "reason": "absent", "origin": "metadata"},
     }
     second = rebunch_current_operation(mainwindow, datasets[0], 2)
     assert not np.array_equal(first[1], second[1])
@@ -679,6 +670,7 @@ def test_live_reference_timing_refreshes_warm_rebunch_and_spectral_request(mainw
 def test_final_reference_auto_search_runs_on_worker_and_reuses_bound_cache(mainwindow, monkeypatch):
     from PySide6.QtCore import QThread
 
+    from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
     from asymmetry.core.transform import t0
     from tests.core.test_reference_timing import timing_runs
 
@@ -705,7 +697,11 @@ def test_final_reference_auto_search_runs_on_worker_and_reuses_bound_cache(mainw
         return original(*args, **kwargs)
 
     monkeypatch.setattr(t0, "find_t0_for_run", scan)
+    datasets = mainwindow._data_browser.get_all_datasets()
+    refresh_reference_timing_requests(datasets)
     first = mainwindow._resolve_background_reference(sample.grouping)
+    assert first.timing.source.pulsed is False
+    assert first.timing.source.origin == "legacy:metadata"
     second = mainwindow._resolve_background_reference(sample.grouping)
     assert len(scans) == 1
     assert first.resolved_timing.bins == second.resolved_timing.bins == (6, 6)
@@ -714,8 +710,16 @@ def test_final_reference_auto_search_runs_on_worker_and_reuses_bound_cache(mainw
     assert len(scans) == 2
     assert third.resolved_timing.bins[0] == 16
     reference.metadata["facility"] = "ISIS"
+    refresh_reference_timing_requests(datasets)
+    retained = mainwindow._resolve_background_reference(sample.grouping)
+    assert len(scans) == 2
+    assert retained.timing.source == first.timing.source
+    assert retained.resolved_timing.strategy == "prompt_peak"
+    refresh_reference_timing_requests(datasets, changed_run_numbers=[2])
     fourth = mainwindow._resolve_background_reference(sample.grouping)
     assert len(scans) == 3
+    assert fourth.timing.source.pulsed is True
+    assert fourth.timing.source.origin == "metadata"
     assert fourth.resolved_timing.strategy == "pulse_edge"
 
 
@@ -796,7 +800,10 @@ def test_save_captures_live_reference_timing_without_an_intermediate_reduction(
         saved = next(ds for ds in state["datasets"] if ds["run_number"] == 1)["grouping_overrides"][
             "background_run"
         ]
-    assert saved["timing"] == {"t0_policy": {"mode": "manual", "offset_bins": 4}}
+    assert saved["timing"] == {
+        "t0_policy": {"mode": "manual", "offset_bins": 4},
+        "source": {"pulsed": None, "reason": "absent", "origin": "legacy:metadata"},
+    }
     assert resolve_background_reference(saved).timing.offset_bins == 4
 
 
@@ -979,5 +986,6 @@ def test_live_reference_resolution_does_not_edit_submitted_observation(mainwindo
     assert dataset.histogram_observation.source.grouping["background_run"] == before
     assert dataset.histogram_observation.identity == identity
     assert result.histogram_observation.reference.timing.request() == {
-        "t0_policy": {"mode": "manual", "offset_bins": 4}
+        "t0_policy": {"mode": "manual", "offset_bins": 4},
+        "source": {"pulsed": None, "reason": "absent", "origin": "legacy:metadata"},
     }

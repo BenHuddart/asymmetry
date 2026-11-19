@@ -614,7 +614,7 @@ Grouping profiles and assignments
 The project's named grouping profiles (see :doc:`detector_grouping`) are
 stored in a top-level ``grouping_profiles`` list. Each entry is a serialized
 profile — its ``name``, ``fingerprint`` (``{"instrument": ...,
-"histogram_count": ...}``), the grouping structure, and the alpha, deadtime,
+"histogram_count": ..., "acquisition": ...}``), the grouping structure, and the alpha, deadtime,
 background, and t0 policies. The ``active`` flag marks each fingerprint's
 **default-for-new-runs** profile (exactly one per fingerprint); several
 profiles of the same fingerprint may be in concurrent use. An optional
@@ -633,8 +633,23 @@ Each dataset entry records which profile it follows (schema v17):
     ``grouping_overrides`` is *released*: the override payload below is
     authoritative for resolution, and ``profile`` names the base profile the
     run stays assigned to (the reattach target). A dataset with neither key
-    follows its fingerprint's default profile, as does one whose assigned
-    name no longer resolves.
+    follows its fingerprint's default profile. An unavailable recorded assignment
+    remains pending with its original name and settings; another default is not
+    substituted.
+
+Each dataset may carry ``instrument_choice`` separately from its grouping
+settings. It retains a facility-qualified identity and acquisition configuration,
+the profile revision and choice origin, and the file evidence accepted with that
+choice. An explicitly retained unknown identity keeps its original label. New
+contradictory evidence requires another explicit decision; a later profile
+revision alone does not invalidate the recorded choice. Neither conflict detection
+nor project replay clears the scientific request or detaches a follower.
+
+The optional ``source_assessment`` records the selected pulsed/continuous value
+or explicit unknown, its reason and origin. An explicit unknown is distinct from
+an omitted legacy record. Background reference timing requests retain their own
+source record alongside their timing intent; see
+:doc:`data_reduction/backgrounds`.
 
 .. _t0-policy-schema:
 
@@ -845,11 +860,6 @@ loading preserves authored bounds without requiring a new project schema.
 
 ``grouping_preset``
     Name of the last applied preset (e.g. ``"Vector Polarization"``).
-
-``instrument``
-    Instrument name set in the Detector Layout Editor (e.g. ``"EMU"``).
-    Saved so the correct detector schematic is shown on reopen without
-    re-running instrument detection.
 
 ``vector_axis``
     Active polarisation axis at save time (``P_x``, ``P_y``, ``P_z``, or ``ALL``).

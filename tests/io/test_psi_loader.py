@@ -1010,29 +1010,22 @@ def test_hal_full_run_loads_per_octant_preset_by_default() -> None:
     assert grouping["grouping_preset"] == layout.default_preset_name
 
 
-def test_hal_loaded_grouping_survives_instrument_self_heal() -> None:
-    """The freshly loaded HAL grouping is not discarded by the stale-identity heal.
+def test_hal_loaded_grouping_and_raw_header_survive_canonical_resolution() -> None:
+    from copy import deepcopy
 
-    Regression: HAL files report ``instrument = "HIFI"``. If the loader stamped
-    that raw string into ``grouping["instrument"]``, the on-load self-heal
-    (:func:`reconcile_instrument_for_payload`) would see it disagree with fresh
-    detection ("HAL"), treat it as a stale identity, and discard the grouping
-    structure — wiping the auto-applied Per-octant grouping so the grouping
-    window fell back to a two-group half-split. Stamping the canonical "HAL"
-    keeps the heal a no-op.
-    """
-    from asymmetry.core.project.profiles import reconcile_instrument_for_payload
+    from asymmetry.core.instruments.resolution import resolve_instrument
 
     path = _musrfit_example_file("tdc_hifi_2014_00153.mdu")
-    ds = PsiLoader().load(str(path))
-    run = ds.run
-
-    reconciled, note = reconcile_instrument_for_payload(run, run.grouping)
-
-    assert note is None  # no heal fired
-    assert reconciled is run.grouping  # payload returned unchanged
-    assert reconciled["grouping_preset"] == "Per-octant"
-    assert reconciled["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
+    run = PsiLoader().load(str(path)).run
+    before = deepcopy(run.grouping)
+    context = resolve_instrument(run)
+    assert not context.requires_choice
+    assert context.selection.profile_key == "psi.hal9500"
+    assert context.selection.acquisition == "full17"
+    assert run.metadata["instrument"] == "HIFI"
+    assert run.grouping == before
+    assert run.grouping["grouping_preset"] == "Per-octant"
+    assert run.grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
 
 
 def test_hal_forward_ring_only_run_retains_unavailable_per_octant(tmp_path) -> None:

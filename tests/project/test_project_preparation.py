@@ -24,7 +24,9 @@ def project():
     state = {
         "schema_version": CURRENT_SCHEMA_VERSION,
         "datasets": [{"run_number": 11, "source_file": "missing.nxs", "profile": "sample"}],
-        "grouping_profiles": [GroupingProfile("sample", ProfileFingerprint("EMU", 2)).to_dict()],
+        "grouping_profiles": [
+            GroupingProfile("sample", ProfileFingerprint("isis.emu", 2)).to_dict()
+        ],
     }
     model = ProjectModel()
     rep = model.ensure_dataset(11).ensure(RepresentationType.TIME_FB_ASYMMETRY)
@@ -331,7 +333,7 @@ def test_combined_released_slot_uses_the_same_migration_owner():
 def test_profile_names_are_scoped_by_the_instrument_fingerprint():
     state = project()
     other = deepcopy(state["grouping_profiles"][0])
-    other["fingerprint"]["instrument"] = "MUSR"
+    other["fingerprint"]["instrument"] = "isis.musr"
     state["grouping_profiles"].append(other)
     assert len(prepare_project(state).profiles) == 2
 

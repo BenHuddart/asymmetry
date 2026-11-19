@@ -310,6 +310,8 @@ def period_run(combined: Run, index: int) -> Run:
         grouping=period_grouping,
         source_file=combined.source_file,
         source_binding=combined.source_binding,
+        instrument_choice=combined.instrument_choice,
+        source_assessment=combined.source_assessment,
     )
 
     # Per-detector file facts follow the selected period; scalar-only requests
@@ -780,6 +782,8 @@ def combine_mapped_periods(
         metadata=metadata,
         grouping=grouping,
         source_file=source_file or base_run.source_file,
+        instrument_choice=base_run.instrument_choice,
+        source_assessment=base_run.source_assessment,
         source_binding=base_run.source_binding
         if all(r.source_binding == base_run.source_binding for r in runs)
         else SourceBinding(),
