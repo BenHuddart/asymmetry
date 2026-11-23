@@ -1,7 +1,6 @@
 """Fitting the rotated projections P′_x and P′_y (synthetic data).
 
-docs/plans/rotating-frame-projection.md D7: a rotated subplot is a Single and
-Batch fit target like any projection; the fit records the frame its data were
+A rotated subplot is a Single and Batch fit target; the fit records the frame its data were
 rotated in and reads stale once the run's frame no longer gives that data.
 """
 

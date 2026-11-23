@@ -4,8 +4,7 @@ Covers the two things Phase 3 adds around the skill: that it ships as package
 data with valid frontmatter (:mod:`asymmetry.cli.skill`'s
 :func:`~asymmetry.cli.skill.skill_source_dir`, located exactly as the module
 documents — via :mod:`importlib.resources`), and that ``install``/``check``/
-``uninstall`` behave as :doc:`docs/plans/agent-cli-skill.md` specifies. No
-research data or private paths — everything here is a ``tmp_path``.
+``uninstall`` preserve the packaged manifest. Everything uses a ``tmp_path``.
 """
 
 from __future__ import annotations

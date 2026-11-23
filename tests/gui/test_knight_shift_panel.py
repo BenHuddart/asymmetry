@@ -329,8 +329,7 @@ def test_config_round_trips_through_state(qapp):
 
 
 def test_knight_window_button_visible_when_series_has_knight_observables(qapp):
-    # bed-next-angle-knight-shift.md §4.3: the rail "+" menu's shortcut action is
-    # the main-GUI shortcut, shown only when the active series' model has a
+    # The rail "+" shortcut is shown only when the active series' model has a
     # Knight-convertible component (non-empty _knight_observables), unlike the
     # always-available "⋯" menu entry.
     panel = FitParametersPanel()

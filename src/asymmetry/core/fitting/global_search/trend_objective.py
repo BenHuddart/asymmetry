@@ -3,8 +3,7 @@
 Every candidate here is a rung of a template's sharing ladder
 (:mod:`~asymmetry.core.fitting.global_search.sharing_ladder`). The templates
 that compete are those that fit about as well as the best one; among their
-pre-selected rungs the one whose local parameters trend best wins. Design:
-``docs/plans/global-wizard-trend-objective.md`` (D1, D7–D9, D13–D14, D18).
+pre-selected rungs the one whose local parameters trend best wins.
 """
 
 from __future__ import annotations

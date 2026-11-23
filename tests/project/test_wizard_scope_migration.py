@@ -1,4 +1,4 @@
-"""Tests for the v22->v23 wizard scope migration (docs/plans/model-family-picker.md D2).
+"""The v22->v23 migration converts wizard scope into physics declarations.
 
 A v22 project stores fit-wizard scopes as version-1 preset payloads in the
 fit-panel wizard caches: a cache ``signature``'s ``"scope"`` and the

@@ -1,8 +1,7 @@
 # Scoring brief for an evaluation wave
 
 The brief handed to a scoring agent (or followed by a person) for the runs of
-one wave (`run_wave.py`). It keeps scoring consistent across passes: every
-2026-09-23/24 pass in `docs/plans/agent-cli-skill.md` was scored with it.
+one wave (`run_wave.py`). It keeps scoring consistent across attempts.
 
 Give the scorer this file plus: the run directories, a line or two of the
 physics each dataset is expected to show (its rubric's "Experiment" section is

@@ -351,8 +351,7 @@ class FitWizardWindow(WizardWindowBase):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        # The Compare panel owns the selection: its candidate A is what the
-        # answer card draws and applies (docs/plans/fit-wizard-compare.md D1).
+        # Candidate A owns both the answer-card display and applied selection.
         self._model_compare = ModelComparePanel(continue_text="Apply A to the fit panel")
         self._model_compare.setMinimumHeight(metrics.row_height() * _COMPARE_ROWS)
         self._answer_card = WizardAnswerCard(self._model_compare.a_key)

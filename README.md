@@ -344,8 +344,8 @@ was copied or translated. We gratefully acknowledge:
 - **Mantid** — *Nuclear Instruments and Methods A* **764**, 156 (2014). Licensed under the GNU GPLv3.
 
 Where a model or file format follows one of these tools, the source files cite it directly. See
-[NOTICE](NOTICE) for the full attribution statement, and `docs/porting/` for the study notes that
-underpin each reimplementation. Physical constants and model formulae are cited to the μSR
+[NOTICE](NOTICE) for attribution and the [comparison reference](https://benhuddart.github.io/asymmetry/explanation/comparison.html)
+for documented conventions and bounded comparisons. Physical constants and model formulae are cited to the μSR
 literature (notably Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*).
 
 ## Contributing

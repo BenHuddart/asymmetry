@@ -5,7 +5,7 @@ grouping) exposes several asymmetry *projections* of the same run. This bar
 gives one toggle chip per declared projection, tinted with the projection's
 fixed identity colour, so the user can show any subset as stacked subplots.
 
-Design (see ``docs/porting/unified-asymmetry-projections/``):
+Selection contract:
 
 * Multi-select with a **floor of one** — the last selected chip will not
   release, because an empty selection would mean zero subplots.

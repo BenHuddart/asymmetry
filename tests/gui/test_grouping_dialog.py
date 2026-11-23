@@ -3361,8 +3361,7 @@ def test_t0_line_and_verdict_agree_on_the_index_base(qapp: QApplication) -> None
 
 
 # ---------------------------------------------------------------------------
-# The good window as a profile policy (GoodWindowPolicy; see
-# docs/plans/good-window-policy.md)
+# The good window as a profile policy (GoodWindowPolicy)
 # ---------------------------------------------------------------------------
 
 

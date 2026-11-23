@@ -1,7 +1,6 @@
 """The Batch tab's parameter rail, results card and outcome chip.
 
-Phase 4 of the Fit tab refresh (``docs/plans/fit-tab-refresh.md``): the ``Bounds``
-chip over the split Min/Max columns, the pop-out, the per-member verdict chips and
+Covers the ``Bounds`` chip over split Min/Max columns, the pop-out, verdict chips and
 the windows they open, and the ``seeded from <run>`` tag.
 """
 

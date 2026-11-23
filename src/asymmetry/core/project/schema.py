@@ -327,9 +327,9 @@ def _migrate_v24_to_v25(data: dict) -> dict:
 
     A representation's one single fit per projection (``fit`` and
     ``projection_fits``) becomes the sole, open fit of that projection's
-    ``single_fits`` set (docs/plans/single-fit-compare.md D4). The default
+    ``single_fits`` set. The default
     set is keyed ``""``. A migrated fit has no recorded window, so it is never
-    ranked against another fit (D7).
+    ranked against another fit.
     """
     migrated = dict(data)
     migrated["schema_version"] = 25
@@ -413,8 +413,7 @@ def _migrate_v23_to_v24(data: dict) -> dict:
     Every stored Global Fit Wizard recommendation was ranked by an information
     criterion over the role search, so it becomes a ``statistical`` one whose
     assessments carry no ladder rung, and the deleted trace diagnostics leave
-    its parameter recommendations (docs/plans/global-wizard-trend-objective.md
-    D1, D14). The recommendations live in the fit-panel global wizard caches;
+    its parameter recommendations. They live in the fit-panel global wizard caches;
     the whole tree is walked, as for v23, so no copy of a cache is missed.
     """
     migrated = _v24_rewrite_recommendations(dict(data))
@@ -1346,8 +1345,7 @@ def _v23_build_signature(signature: str) -> str:
 def _migrate_v22_to_v23(data: dict) -> dict:
     """Migrate schema v22 project state to v23.
 
-    Every persisted wizard scope becomes the version-2 physics payload
-    (docs/plans/model-family-picker.md D2), mapped through
+    Every persisted wizard scope becomes the version-2 physics payload, mapped through
     :data:`_V23_PRESET_PHYSICS`. The scopes live in the fit-panel wizard caches:
     a single-run cache (``wizard_state``) and each global cache
     (``wizard_state``, ``wizard_state_by_run_set``), found in fit slots'
@@ -1366,7 +1364,7 @@ def _migrate_v22_to_v23(data: dict) -> dict:
 def _migrate_v21_to_v22(data: dict) -> dict:
     """Migrate schema v21 project state to v22.
 
-    v22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13).
+    v22 adds a top-level ``joint_fits`` list.
     Purely additive, exactly like the v12->v13 ``global_fit_studies`` step:
     a pre-v22 project never had joint fits, so the only change is the version
     bump plus an empty default for the new list. Series stamps

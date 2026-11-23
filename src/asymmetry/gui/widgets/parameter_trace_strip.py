@@ -3,8 +3,7 @@
 Each plot is a parameter's fitted value ± error against the series axis, titled
 with its trend quality; hovering one names the three factors behind the number.
 Runs that keep their own amplitude are drawn as hollow diamonds, and phase
-boundaries as dashed lines. Design:
-``docs/plans/global-wizard-trend-objective.md`` (D6, Phase 5).
+boundaries as dashed lines.
 """
 
 from __future__ import annotations

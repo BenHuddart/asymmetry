@@ -352,16 +352,12 @@ compound.
 
 Plans and review decisions belong in GitHub issues. The structural check rejects
 new files under `docs/plans/`, `docs/porting/`, `docs/studies/`, `docs/audit/`,
-`docs/investigations/`, and at `docs/PLANS.md`. Existing files are frozen in
-`tools/baselines/retired_docs.txt`, one strictly sorted repository-relative POSIX
-file path per line. Editing an existing file is allowed while its supported
-content is rescued into the owning Sphinx page, a regression test, or an invariant
-comment.
-
-When deleting a retired file, delete its baseline line in the same change. A stale
-entry fails structural checks, and a file reintroduced after removal fails as a
-new plan. Emptying the baseline is allowed; no placeholder study or index entry
-is required. Hidden files and `__pycache__` directories are ignored.
+`docs/investigations/`, and at `docs/PLANS.md`. The retirement baseline at
+`tools/baselines/retired_docs.txt` stays empty: any recreated file fails the
+check. Hidden files and `__pycache__` directories are ignored. Lasting content
+belongs in the owning Sphinx page, a regression test, or an invariant comment.
+Local Markdown/RST links into retired locations are also rejected; historical
+external links and prohibition/test fixtures are not active local references.
 
 ## Test user-state isolation
 

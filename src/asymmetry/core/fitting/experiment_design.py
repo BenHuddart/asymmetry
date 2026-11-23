@@ -12,11 +12,10 @@ to most constrain the model's parameters. The acquisition is the Laplace
 
 where g(x) is the model's parameter sensitivity at the fitted values and
 Sigma the fit covariance. The rank-one c-optimal update is exact for a
-linear model; for strongly nonlinear models (critical exponents) it ranks
-candidates correctly but *underestimates* the realised post-fit variance —
-see ``docs/studies/prototype-results.md`` — so the counting recommendation
-must be calibrated with ``calibrate_suggestion`` before being shown to a
-user.
+linear model. Nonlinear model boundaries can make both ranking and predicted
+precision sensitive to the local approximation; calibrate the counting
+recommendation with ``calibrate_suggestion`` before display. See
+``docs/reference/suggest_next_point.rst`` for the planning assumptions.
 
 Everything here is GUI-free and pure numpy; refits happen only inside
 ``calibrate_suggestion``.
@@ -646,8 +645,7 @@ def calibrate_suggestion(
     from the fitted values, and records the post-fit sigma of ``target``.
     The median over trials is the calibrated post-measurement sigma — the
     honest counterpart of the rank-one ``predicted_post_sigma``, which is
-    known to be optimistic near critical points (see
-    ``docs/studies/prototype-results.md``).
+    optimistic near critical points (``docs/reference/suggest_next_point.rst``).
 
     ``y_err`` must be the effective per-point sigmas the trend fit was
     weighted with (already resolved through the fit's error mode).

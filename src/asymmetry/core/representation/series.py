@@ -216,8 +216,7 @@ class FitSeries:
         #: freshly-created series that has not been fit yet; the v14→v15 migration
         #: seeds it from ``member_run_numbers`` so a loaded series is not stale.
         self.last_fitted_members: list[int] = [int(r) for r in (last_fitted_members or [])]
-        #: Joint-fit stamps (docs/plans/joint-fit.md D5/D8): written by a joint
-        #: run to say this series currently honours a shared-parameter
+        #: Joint-fit stamps record that this series honours a shared-parameter
         #: constraint, and cleared by a solo run of this series (which detaches
         #: it — the joint fit's own record goes stale, per D9) or by deleting
         #: the joint fit (D10). Never edited directly by a caller — go through
@@ -236,7 +235,7 @@ class FitSeries:
         #: ``None`` for a series on its members' own axis — every other series.
         self.projection: str | None = projection
         #: The rotating frame each member's result was fitted in, for a series
-        #: on a rotated projection (docs/plans/rotating-frame-projection.md D7).
+        #: on a rotated projection.
         self.member_frames: dict[int, FrameSnapshot] = {
             int(run): snapshot for run, snapshot in (member_frames or {}).items()
         }

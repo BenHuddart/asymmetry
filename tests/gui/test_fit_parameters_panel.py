@@ -3080,9 +3080,7 @@ def test_model_fit_serialization_round_trips_covariance_and_params_at_bound(
     panel: FitParametersPanel,
 ) -> None:
     """``covariance`` and ``params_at_bound`` must survive a save/reload cycle:
-    both feed the ill-conditioning warning banner (BED next-point suggestion,
-    docs/studies/bed-next-point-suggestion.md §3.4/§5.2), and params_at_bound
-    was previously silently dropped by the serializer."""
+    both feed next-point design warnings, so serialization must retain them."""
     import json
 
     model = ParameterCompositeModel(["Linear"])

@@ -1,7 +1,7 @@
 """The persisted *joint fit* record: several series coupled by shared parameters.
 
 A :class:`JointFit` composes :class:`~asymmetry.core.representation.series.FitSeries`
-already made in the Batch tab (D2 of ``docs/plans/joint-fit.md``) — it never
+already made in the Batch tab — it never
 holds curves or per-run state of its own, only which series belong to it, the
 shared-parameter table that couples them, and a summary of the last run. The
 per-run and per-series results of a joint run live exactly where a solo run's

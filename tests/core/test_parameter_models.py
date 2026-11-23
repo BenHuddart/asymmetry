@@ -571,8 +571,7 @@ def test_fit_parameter_model_linear_recovers_parameters() -> None:
 
 def test_fit_parameter_model_covariance_present_for_free_parameters() -> None:
     # Success path: covariance names match the free parameters, the matrix is
-    # symmetric, and the diagonal is consistent with the marginal uncertainties
-    # (BED next-point suggestion needs this, docs/studies/bed-next-point-suggestion.md §5.2).
+    # symmetric, and the diagonal matches marginal uncertainties for design inputs.
     rng = np.random.default_rng(123)
     x = np.linspace(0.0, 10.0, 120)
     true_m = 2.0
@@ -2099,8 +2098,8 @@ def test_suggest_model_seeds_mu_repolarisation_single_term() -> None:
 
 
 def test_suggest_model_seeds_mu_repolarisation_two_terms() -> None:
-    # Benzene-radical-shaped: A_hf ~= 943 and 5311 MHz (docs/plans/cli-open-items.md
-    # D5) -> B0 a factor of ~5.6 apart, close enough that the transitions'
+    # Synthetic A_hf ~= 943 and 5311 MHz gives B0 a factor of ~5.6 apart:
+    # close enough that the transitions'
     # derivative bumps overlap and only the linear amplitude refit separates them.
     from asymmetry.core.fitting.parameter_models import _mu_repolarisation
 

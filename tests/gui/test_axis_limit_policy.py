@@ -1,8 +1,7 @@
 """Unit tests for :class:`AxisLimitPolicy`, the per-axis Auto/Hold resolver.
 
 The policy is the single decision point for "does this axis follow the data".
-These tests pin the contract the plot, frequency and ALC panels build on in
-later phases of ``docs/plans/axis-limit-policy.md``: Auto follows the bounds,
+For plot, frequency and ALC panels, Auto follows the bounds,
 Held ignores them, an axis with no held value frames itself (there is no
 first-paint latch), a quantity change refits a held axis exactly once, and a
 resolved value is always the new held value so the fields, the axes and the

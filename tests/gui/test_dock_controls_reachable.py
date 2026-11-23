@@ -132,9 +132,7 @@ def test_reset_layout_restores_controls_fitting_width(shown_window) -> None:
 @pytest.mark.parametrize(
     ("panel_attr", "owns_scroll_area"),
     [
-        # FitParametersPanel dropped its private QScrollArea in Phase 3 of
-        # docs/plans/parameters-panel-cards.md ("no scroll area or splitter of
-        # its own") — the dock's shared _inspector_scroll_area now supplies it.
+        # The dock's shared inspector scroll area owns scrolling for this panel.
         ("_fit_parameters_panel", False),
         ("_maxent_panel", True),
     ],

@@ -31,7 +31,6 @@ because the fields and the Auto buttons are a view of it: every limit a
 panel applies to its axes is a value returned by :meth:`AxisLimitPolicy.resolve`
 (a render resolves x, then each y axis inside that window), and the fields
 display what came back, so the fields, the axes and the policy cannot disagree.
-See ``docs/plans/axis-limit-policy.md`` for the design.
 """
 
 from __future__ import annotations
@@ -420,7 +419,7 @@ class AxisLimitPolicy:
     existence Auto, so a panel never has to register an axis before using it.
     The policy stores what it is given (as a sorted pair) and does not pad,
     clamp or otherwise second-guess it: producing sane bounds is the caller's
-    job. See ``docs/plans/axis-limit-policy.md``.
+    job.
     """
 
     def __init__(self) -> None:

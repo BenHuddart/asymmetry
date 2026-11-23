@@ -853,8 +853,7 @@ def test_execute_assessment_task_caps_only_screening_stage(
 
 
 def test_execute_assessment_task_times_the_fit() -> None:
-    # The row carries the task's wall time and the fitted record's length (D1 of
-    # docs/plans/measured-fit-times.md); only its sign is asserted, never a duration.
+    # The row carries wall time and record length; assert positivity, not duration.
     task = _real_spawn_tasks()[1]
     assessment = fit_wizard_module._execute_assessment_task(task)
     assert assessment.timing is not None

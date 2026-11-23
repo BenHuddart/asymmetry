@@ -1,8 +1,7 @@
 """Tests for Bayesian next-point suggestion (experiment_design.py).
 
-Oracles from docs/studies/bed-next-point-suggestion.md §6 and the numeric
-prototype in docs/studies/prototype-results.md: D-optimal designs for a
-straight line sit at the interval extremes; c-optimal for a parameter
+Independent linear-design oracles: D-optimal straight-line designs sit at
+the interval extremes; c-optimal design for a parameter
 concentrates where that parameter's sensitivity is largest (the intercept
 near x=0, an Arrhenius activation energy at the low-T/high-1/T extreme, an
 order parameter's T_c just below the fitted T_c); event-count solves are
@@ -756,9 +755,9 @@ def test_cost_weighted_utility_non_finite_x_current_returns_utility_unchanged() 
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 (§3.1–3.3): multi-series acquisition, risk mask, set matching
+# Multi-series acquisition, risk mask, set matching
 #
-# Oracles from docs/studies/bed-next-angle-knight-shift.md §5: cos 2θ geometry
+# Independent cos 2θ geometry oracles:
 # (c-optimal antinodes/nodes, 90°-periodic D-optimal), the vector-observable
 # information sum, the assignment-risk flag near predicted crossings, and the
 # Hungarian set-matching divergence (reduces to the labelled integrand at N=1,

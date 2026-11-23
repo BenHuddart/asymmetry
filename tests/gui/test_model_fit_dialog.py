@@ -2436,8 +2436,7 @@ def test_add_range_with_bounds_ignores_degenerate(qapp: QApplication) -> None:
 
 
 # ---------------------------------------------------------------------------
-# "Suggest next point" section (BED, Phase 2 — docs/studies/bed-next-point-
-# suggestion.md §5.4). _make_dialog's default range is an exact linear
+# "Suggest next point": _make_dialog's default range is an exact linear
 # y = 2x + 1 fit under Column errors, so Run Fit converges with a real
 # covariance — the section's enable gate.
 # ---------------------------------------------------------------------------
@@ -2607,9 +2606,7 @@ def test_calibration_completion_updates_result_line(qapp: QApplication) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Model discrimination + cost weighting (Phase 3 — docs/studies/
-# bed-next-point-suggestion.md §8.1/§8.2). Reuses _make_dialog's exact linear
-# y = 2x + 1 fixture.
+# Model discrimination and cost weighting use the exact y = 2x + 1 fixture.
 # ---------------------------------------------------------------------------
 
 

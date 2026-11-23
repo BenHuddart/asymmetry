@@ -1,7 +1,6 @@
 """The results card's ``Trends →`` hand-off (GUI).
 
-Phase 4 of the Fit tab refresh (``docs/plans/fit-tab-refresh.md``): a completed
-batch arms the hand-off, and pressing it brings the Parameters dock forward on
+A completed batch arms the hand-off, which brings the Parameters dock forward on
 that batch's own series rather than leaving the user to find the pill.
 """
 

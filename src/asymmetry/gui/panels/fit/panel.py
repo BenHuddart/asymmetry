@@ -1,7 +1,5 @@
 """Fit panel container (``FitPanel``) hosting the single and global tabs.
 
-Split out of ``fit_panel.py`` (Phase 2 mechanical split).
-
 What lives here: ``_CurrentPageTabWidget`` (a ``QTabWidget`` that only
 size-hints its current page, avoiding oversized minimums from hidden tabs) and
 ``FitPanel(QWidget)``, the dockable container that owns a ``QTabWidget`` with
@@ -1271,7 +1269,7 @@ class FitPanel(QWidget):
         """Active single-fit range as a provenance string (see SingleFitTab)."""
         return self._single_tab.current_fit_range_text()
 
-    # ── Saved single fits (docs/plans/single-fit-compare.md) ──────────────
+    # ── Saved single fits ──────────────────────────────────────────────
 
     def set_saved_fit_catalogue_provider(self, provider: Callable[[], SavedFitCatalogue]) -> None:
         """Install the host callback that answers the bound run's saved fits."""

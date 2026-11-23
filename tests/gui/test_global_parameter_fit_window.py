@@ -1521,8 +1521,7 @@ def test_local_model_fit_serialization_round_trips_covariance_and_params_at_boun
 ) -> None:
     """``covariance`` and ``params_at_bound`` must survive a save/reload cycle
     on the group-fit-window's local model-fit serializer, the same as the
-    plain ``FitParametersPanel`` serializer (BED next-point suggestion,
-    docs/studies/bed-next-point-suggestion.md §3.4/§5.2)."""
+    plain ``FitParametersPanel`` serializer, preserving next-point design inputs."""
     import json
 
     window = GlobalParameterFitWindow()

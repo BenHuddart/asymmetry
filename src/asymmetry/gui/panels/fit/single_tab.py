@@ -334,8 +334,6 @@ class SingleFitTab(FitTabBase):
         self._set_composite_model(self._composite_model)
         self._update_card_actions()
 
-    # ── Saved fits (docs/plans/single-fit-compare.md) ──────────────────────
-
     def _build_saved_fits_section(self) -> PanelSection:
         """The row above Model naming the bound run's open saved fit.
 

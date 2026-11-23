@@ -5,8 +5,7 @@ Toyabe 1966, Blundell et al. Ch 5.2) is fitted three times on the Single tab
 with the real engine: ``StaticGKT_ZF + Constant`` and ``Gaussian + Constant``
 over 0.05–8 μs, then the Kubo–Toyabe again over 0.5–6 μs. The two full-window
 fits have verified matching observations and objectives, so Compare ranks them; the narrow one saw
-different data and is listed without a Δ (docs/plans/single-fit-compare.md
-D7). A Gaussian cannot recover to 1/3 after the Kubo–Toyabe dip near
+different data and is listed without a Δ. A Gaussian cannot recover to 1/3 after the Kubo–Toyabe dip near
 t = √3/Δ ≈ 4.4 μs, so its residuals against the data carry that structure.
 
 The Saved fits row and the Compare window are two windows, so the figure is

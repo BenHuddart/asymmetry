@@ -278,9 +278,7 @@ def synthetic_cases() -> tuple[SyntheticCase, ...]:
 
 
 def trend_cases() -> tuple[SyntheticCase, ...]:
-    """The trend objective's planted cases (docs/plans/global-wizard-trend-objective.md).
-
-    Asymmetry in percent with errors that grow as the muons decay, on a
+    """Planted trend cases use percent asymmetry and muon-decay errors on a
     zero-field temperature scan. ``planted_roles`` names the parameters of the
     model the recommended rung is fitted in, so the shared-total case plants a
     total and a fraction.
