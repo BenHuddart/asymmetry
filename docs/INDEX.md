@@ -16,12 +16,12 @@ This directory contains all project documentation.
 
 ### Developer Documentation
 - **[README.md](README.md)**: Documentation build instructions
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: System design, architecture, and specifications
+- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Current layer ownership, scientific data flow, and compatibility boundaries
 - **[GUI_GUIDELINES.md](GUI_GUIDELINES.md)**: How to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and what the harness enforces
 - **[HARNESS.md](HARNESS.md)**: Agent harness workflow and validation commands
 - **[QUALITY.md](QUALITY.md)**: Current quality map, risk areas, and validation paths
 - **Retired, do not add to**: [porting/](porting/README.md), [plans/](plans/), [studies/](studies/), [audit/](audit/), [investigations/](investigations/), [PLANS.md](PLANS.md). Planned work lives in GitHub issues.
-- **[contributing.rst](contributing.rst)**: Contributing guidelines (Sphinx format)
+- **[contributing.rst](contributing.rst)**: Contributor workflow and instrument-authoring example (Sphinx format)
 
 ### Additional Resources
 - **[Logo](logo.png)**: Project logo for use in documentation

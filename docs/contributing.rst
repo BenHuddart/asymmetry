@@ -18,13 +18,13 @@ Development setup
 
    .. code-block:: bash
 
-      pip install -e ".[dev]"
+      pip install -c constraints.txt -e ".[all]"
 
 4. Create a branch for your changes:
 
    .. code-block:: bash
 
-      git checkout -b feature-name
+      git checkout -b feature/my-change
 
 Code style
 ----------
@@ -39,17 +39,17 @@ Run checks:
 
 .. code-block:: bash
 
-   ruff check src/
-   ruff format src/
+   python tools/harness.py lint
 
 Testing
 -------
 
-Write tests for new features using pytest:
+Place tests beside the owning layer and run them through the repository harness:
 
 .. code-block:: bash
 
-   pytest tests/
+   python tools/harness.py test -- tests/core/test_instrument_profiles.py
+   python tools/harness.py validate
 
 Ensure all tests pass before submitting.
 
@@ -126,27 +126,109 @@ current.
 Instrument definitions
 ----------------------
 
-Keep each migrated instrument as frozen data in its facility-qualified module
-under ``asymmetry.core.instruments``. Declare physical elements, acquisition
-channels and display occurrences separately; unknown affiliations remain
-unknown. Use the shared circular, grid or explicit arrangements and preserve
-acquired ordinals. Record a beamline only when known; otherwise leave it unknown.
-Scientific memberships and ordered asymmetry legs are
-explicit data, independent of drawing positions. An acquisition can declare a
-legacy layout key while sharing its instrument's display name, and can carry
-schematic reference arrows. Metadata substring aliases and filename tokens are distinct; facility evidence retains precedence.
+A profile is the reviewable authority for instrument assumptions. Add one frozen
+``InstrumentProfile`` in a facility-qualified module under
+``asymmetry.core.instruments``. Keep its fields in this order: identity, source,
+recognition, detectors, presets, quirks, defaults, sources, and review. The
+catalogue discovers bundled declarations; generated review pages need no manual
+registration. Do not add loader or GUI branches for an instrument name.
 
-Attach evidence to named facts or coherent tables, with a primary source and
-locator where known. Schematic radii are not physical dimensions. An authored
-preset and a source-backed grouping have different evidence status; neither is
-an instrument-scientist review. Record the exact revision/scope and obtain
-consent before publishing a reviewer's name.
+Declare facts before drawing them
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Instrument review pages and their index entries are generated from the bundled
-catalogue; adding a definition needs no separate page registration. The pages
-retain stable URLs and track their declaration and generator for incremental
-builds. Check the generated prose and labelled diagrams with the actual Detector
-Layout editor, along with independent manual anchors and a separately labelled
-old output comparison. Source-profile updates preserve recorded scientific settings;
-new defaults require a separate scientific decision. See the
-:doc:`instrument definitions <reference/instruments/index>`.
+Keep physical banks/elements, acquisition channels, and display occurrences
+separate. ``Channel`` supplies a stable key and the real recorded histogram
+ordinal; a physical association may be empty or multiple. Facility evidence has
+precedence during recognition. Aliases match metadata names; filename tokens are
+a separate source of evidence. Unknown identity or geometry must remain unknown.
+
+Each ``Acquisition`` declares its compatible channel map and ``View`` records.
+Use ``Composite`` to combine flat arrangements: ``Directional`` holds ordered
+``BankRow`` objects, while ``Circular``, ``Grid``, and ``Explicit`` cover other
+placements. Shape and arrangement are independent. Every selectable channel has
+one editable occurrence across its views/auxiliary strip; repeats are read-only
+context. Put an unlocated channel in ``auxiliary`` rather than invent a position.
+
+``BeamDirection`` and ``ViewOrientation`` define a common arrangement frame and
+screen basis explicitly. Placements remain view-local. Positive toward-viewer
+projection means out of the screen; a missing toward basis retains unknown axial
+sense. Schematic distances are not detector dimensions, acceptance weights, or
+run-specific field/spin settings. Scientific presets specify channel keys,
+ordered asymmetry legs, and nominal balances independently of geometry.
+
+An acquisition can declare alternative ``ReadoutSet`` selections using real
+channel keys. ``CombinedReadout`` records known shared-event constituents;
+``ConditionalContribution`` records an unresolved contributor and its possible
+destinations. These are not exact count equations or a covariance model. The
+core checks the effective requested channels, including their own references
+and original periods; do not reproduce that eligibility rule in the front end.
+A set transition must not silently remap saved groups or fitted calibration.
+
+Work through the GPS declaration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GPS's fifteen-channel acquisition is a compact example of alternative readout
+sets with shared Forward/Backward and unlocated Mobile. Its declaration derives
+memberships from the acquired channel order; the following excerpt is included
+directly from the bundled profile, rather than maintained as another definition:
+
+.. literalinclude:: ../src/asymmetry/core/instruments/psi_gps.py
+   :language: python
+   :start-at:         readout_sets=tuple(
+   :end-before:         combined_readouts=tuple(
+   :dedent: 8
+   :caption: GPS acquisition readout-set declaration (excerpt)
+
+Check a declaration through the same resolver and numbering API that feed the
+editor and generated review material. This executable example inspects the
+bundled profile; it does not assign new hardware facts:
+
+.. code-block:: python
+   :name: instrument-authoring-example
+
+   from asymmetry.core.instruments.psi_gps import PROFILE
+   from asymmetry.core.instruments.geometry import BeamDirection, ViewOrientation
+   from asymmetry.core.instruments.numbering import numbering_template
+   from asymmetry.core.instruments.readouts import layout_for_readout_set
+   from asymmetry.core.instruments.resolve import layout_from_profile
+
+   acquisition = next(c for c in PROFILE.detectors.acquisitions
+                      if c.key == "root_combined_split")
+   assert acquisition.beam == BeamDirection((1, 0, 0))
+   assert acquisition.views[0].orientation == ViewOrientation((1, 0, 0), (0, 1, 0))
+   layout = layout_from_profile(PROFILE, acquisition.key)
+   individual = layout_for_readout_set(layout, "individual")
+   slots = numbering_template(PROFILE, acquisition.key)
+   assert len(slots) == 15
+   assert len(individual.active_segments) == 11
+   assert individual.banks[0].beam.screen == (1.0, 0.0)
+   assert all(slot.id.startswith(f"{PROFILE.identity.key}/{acquisition.key}/")
+              for slot in slots)
+   facts = {item.fact for item in PROFILE.sources.evidence}
+   assert set(PROFILE.fact_keys) <= facts
+
+A numbering slot is qualified by profile, acquisition, and channel. Changing
+view order or filtering a set does not renumber the stored histograms. Check the
+labelled diagram, blank numbering diagram, and editable table for every acquired
+configuration, and compare them with the actual Detector Layout editor.
+
+Evidence and review
+~~~~~~~~~~~~~~~~~~~
+
+Attach ``Evidence`` to every named fact or coherent table. Cite a primary
+``Reference`` and locator where known; mark unavailable evidence ``unverified``
+rather than inferring it from a label or count. Published hardware evidence and
+unverified exported channel associations can have different statuses. Preserve
+those distinctions in readout relationships and source/default declarations.
+
+The generated :doc:`instrument definitions <reference/instruments/index>` expose
+the declarations, diagrams, numbering downloads, and evidence. An authored preset
+is not an instrument-scientist review. Record the exact profile revision and
+scope checked, and obtain consent before publishing the reviewer's name.
+Maintainer acceptance of a GUI diagram does not certify its physical map.
+
+Add a synthetic recognition/default-grouping test, independent source anchors for
+scientific conventions, and controls for unknown or conflicting evidence. Use
+existing schema, geometry, readout, and generated-doc tests for the shared
+contract. Source-profile updates preserve recorded scientific choices; introducing
+new defaults requires its own scientific decision and replay controls.

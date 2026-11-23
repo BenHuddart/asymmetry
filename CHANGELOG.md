@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Clarify the shipped architecture and instrument-authoring workflow, with an
+  executable profile example and explicit GUI lifetime and experiment-planning limits.
+
 - Publish reviewable PSI instrument profiles, preserving GPS readout variants, FLAME direction cues, and HAL grouping conventions.
 
 ### Added
