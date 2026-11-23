@@ -647,7 +647,22 @@ nor project replay clears the scientific request or detaches a follower.
 
 The optional ``source_assessment`` records the selected pulsed/continuous value
 or explicit unknown, its reason and origin. An explicit unknown is distinct from
-an omitted legacy record. Background reference timing requests retain their own
+an omitted legacy record. Replay installs the retained authority before loader
+quick-look timing and grouping preparation. An omitted legacy source uses raw
+hints without fresh profile defaults. Sample and reference captures are separate,
+even when they refer to the same file and acquired period.
+
+Extensions implementing only ``BaseLoader.load(filepath)`` retain their decoded
+arrays and existing source capture, or raw source-hint inference if uncaptured.
+They receive no fresh profile source default. Declaring an explicit ``replay``
+parameter opts into preparation before quick-look; accepting arbitrary
+``**kwargs`` alone does not. Captured replay is supported when
+its effective source value and canonical identity/acquisition leave the decoded
+result unchanged; historical revision or provenance differences alone are safe.
+A decision requiring different decoding reports an unsupported-loader error and
+retains the existing unavailable/history handling.
+
+Background reference timing requests retain their own
 source record alongside their timing intent; see
 :doc:`data_reduction/backgrounds`.
 

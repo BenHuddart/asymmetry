@@ -41,7 +41,8 @@ def test_invalid_timing_request_survives_save_reopen_and_repair(tmp_path, overri
 
 @pytest.mark.parametrize("kind", ["root", "nexus"])
 def test_loader_keeps_raw_histograms_when_default_pair_is_unavailable(tmp_path, monkeypatch, kind):
-    from asymmetry.core.io.nexus import NexusLoader, _GroupingSelection
+    from asymmetry.core.io.nexus import NexusLoader
+    from asymmetry.core.io.nexus_grouping import GroupingSelection
     from asymmetry.core.io.root import RootLoader
     from tests.io.test_nexus_loader import _write_v2_file
     from tests.io.test_root_loader import _write_musrroot_directory
@@ -58,9 +59,8 @@ def test_loader_keeps_raw_histograms_when_default_pair_is_unavailable(tmp_path, 
         _write_v2_file(path)
         loader = NexusLoader()
         monkeypatch.setattr(
-            loader,
-            "_resolve_grouping",
-            lambda *a: _GroupingSelection([0], [0], {1: [0], 2: [0]}, 1, 2),
+            "asymmetry.core.io.nexus.nexus_grouping",
+            lambda *a: GroupingSelection({1: [1], 2: [1]}, (1, 2)),
         )
     loaded = loader.load(str(path))
     assert loaded.time.size == loaded.asymmetry.size == 0

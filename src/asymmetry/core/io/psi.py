@@ -24,6 +24,8 @@ from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, comment_field_gauss, field_direction_from_text
 from asymmetry.core.io.psi_units import read_header_quantities
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+from asymmetry.core.io.run_preparation import ReplayState, prepare_loaded_run
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.perf import perf_timer
@@ -183,7 +185,7 @@ class PsiLoader(BaseLoader):
     format_name = "PSI BIN/MDU (.bin, .mdu)"
 
     @capture_acquisition
-    def load(self, filepath: str) -> MuonDataset:
+    def load(self, filepath: str, *, replay: ReplayState | None = None) -> MuonDataset:
         path = Path(filepath)
         with perf_timer("core.load.psi", filename=path.name) as perf:
             with path.open("rb") as handle:
@@ -195,7 +197,7 @@ class PsiLoader(BaseLoader):
                 raw = self._read_mdu(path)
             else:
                 raise ValueError(f"Unsupported PSI file signature {fmt!r}: {filepath}")
-            dataset = self._build_dataset(raw)
+            dataset = self._build_dataset(raw, replay=replay)
             perf.detail(detectors=len(raw.counts), bins=dataset.n_points)
             return dataset
 
@@ -975,7 +977,7 @@ class PsiLoader(BaseLoader):
     # Dataset construction
     # ------------------------------------------------------------------
 
-    def _build_dataset(self, raw: _PsiRawRun) -> MuonDataset:
+    def _build_dataset(self, raw: _PsiRawRun, *, replay=None) -> MuonDataset:
         n_hist = len(raw.counts)
         if n_hist == 0:
             raise ValueError("PSI file does not contain any histograms")
@@ -1024,21 +1026,6 @@ class PsiLoader(BaseLoader):
             groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
                 preset_override
             )
-        selection = {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid}
-        selection["t0_source"] = "missing" if not any(int(v) for v in t0_bins) else "file"
-        quick = quick_asymmetry(histograms, selection, metadata={"facility": "PSI"})
-        asymmetry, error, alignment = quick.asymmetry, quick.error, quick.alignment
-        common_t0 = quick.common_t0
-        first_good, last_good = 0, n_bins - 1
-        if quick.window is not None:
-            first_good = quick.window.first + alignment.first_bin
-            last_good = quick.window.last + alignment.first_bin
-        alpha = 1.0
-        window = quick.window.slice if quick.window is not None else slice(0, 0)
-        time_axis = quick.time[window]
-        asymmetry = asymmetry[window]
-        error = error[window]
-
         metadata = {
             "run_number": raw.run_number,
             "title": raw.title,
@@ -1051,9 +1038,8 @@ class PsiLoader(BaseLoader):
             "orientation": raw.orientation,
             "setup": raw.setup,
             "comment": raw.comment,
-            # PSI files carry no structured field-state code; the geometry is an
-            # explicit TF/LF/ZF tag in the free-text comment/setup/title (e.g.
-            # "FeSe 9p4 TF100"). "" when absent or ambiguous — never guessed.
+            # Only explicit TF/LF/ZF text establishes the applied-field direction;
+            # detector/sample orientation does not establish that geometry.
             "field_direction": field_direction_from_text(
                 raw.comment, raw.setup, raw.title, raw.orientation
             ),
@@ -1067,7 +1053,6 @@ class PsiLoader(BaseLoader):
             "histogram_labels": list(raw.histogram_labels),
             "source_file": raw.source_file,
         }
-        metadata.update(quick.metadata)
         if raw.temperature_logs is not None:
             metadata["nexus_time_series"] = raw.temperature_logs.time_series
             metadata["psi_temperature_log"] = {
@@ -1080,10 +1065,8 @@ class PsiLoader(BaseLoader):
             }
             metadata["psi_temperature_log_file"] = raw.temperature_logs.source_file
             metadata["psi_temperature_log_channels"] = list(raw.temperature_logs.channels)
-        # Sidecars that matched by run number but not by date, and a header
-        # sensor that failed its gates: recorded so a run without a logged
-        # temperature says why instead of silently carrying another
-        # experiment's temperatures or none.
+        # Rejected run/date matches remain provenance; they cannot supply
+        # a sample temperature for this acquisition.
         rejections = [dict(entry) for entry in raw.temperature_log_rejections]
         if raw.sensor_temperatures:
             metadata["psi_sensor_temperatures"] = list(raw.sensor_temperatures)
@@ -1111,12 +1094,7 @@ class PsiLoader(BaseLoader):
             },
             "forward_group": forward_gid,
             "backward_group": backward_gid,
-            "alpha": alpha,
-            **quick.file_grouping,
-            "t0_bin": int(common_t0),
-            "t_good_offset": int(first_good) - int(common_t0),
-            "first_good_bin": int(first_good),
-            "last_good_bin": int(last_good),
+            "alpha": 1.0,
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
@@ -1143,6 +1121,25 @@ class PsiLoader(BaseLoader):
             grouping=grouping,
             source_file=raw.source_file,
         )
+        run = prepare_loaded_run(run, replay)
+        quick = quick_asymmetry(
+            histograms,
+            {
+                key: grouping[key]
+                for key in ("groups", "forward_group", "backward_group", "t0_source")
+            },
+            metadata=reference_observation_metadata(run),
+        )
+        window = quick.window.slice if quick.window is not None else slice(0, 0)
+        time_axis, asymmetry, error = (
+            a[window] for a in (quick.time, quick.asymmetry, quick.error)
+        )
+        metadata.update(quick.metadata)
+        grouping.update(quick.file_grouping)
+        if quick.window is None:
+            grouping.update(
+                first_good_bin=0, last_good_bin=n_bins - 1, t_good_offset=-quick.common_t0
+            )
         from asymmetry.core.transform.preparation import histogram_observation
 
         return MuonDataset(

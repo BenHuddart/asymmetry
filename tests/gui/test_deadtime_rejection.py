@@ -10,6 +10,7 @@ from asymmetry.core.transform import DeadtimeCorrectionError
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests._qt_helpers import wait_for
+from tests.gui.source_replay import sample_decoder
 
 pytestmark = pytest.mark.gui
 
@@ -74,7 +75,7 @@ def test_project_restore_keeps_a_run_with_rejected_deadtime(qapp, dataset, monke
     state = window.collect_project_state()
     restored = MainWindow()
     messages = []
-    monkeypatch.setattr(restored, "_load_file", lambda path: fresh)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(lambda path: fresh))
     monkeypatch.setattr(
         restored._log_panel, "log", lambda message, **kwargs: messages.append(message)
     )

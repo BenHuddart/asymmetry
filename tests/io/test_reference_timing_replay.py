@@ -17,7 +17,7 @@ from asymmetry.core.project.schema import (
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from tests.core.test_reference_timing import reduce_reference, timing_runs
 
-UNKNOWN_LEGACY_SOURCE = {"pulsed": None, "reason": "absent", "origin": "legacy:metadata"}
+UNKNOWN_CAPTURED_SOURCE = {"pulsed": None, "reason": "absent", "origin": "metadata"}
 
 
 def reference_dataset(run):
@@ -74,7 +74,7 @@ def test_live_policy_edits_update_request_and_disk_replay_ignores_stale_cache(mo
     assert second.timing.offset_bins == 4
     assert payload["timing"] == {
         "t0_policy": {"mode": "manual", "offset_bins": 4},
-        "source": UNKNOWN_LEGACY_SOURCE,
+        "source": UNKNOWN_CAPTURED_SOURCE,
     }
     disk = resolve_background_reference(payload, cache=cache)
     assert disk.timing.request() == second.timing.request()
@@ -135,12 +135,19 @@ def test_selected_green_reference_keeps_own_manual_timing(identity_mapping, monk
     live = resolve_background_reference(
         payload, datasets=[green], allow_file=False, sample_exposure=ReferenceExposure(40, "user")
     )
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+
+    def decode_reference(path, *, replay):
+        assert replay.run_number == 12345
+        assert replay.period_number == 2
+        assert replay.source.to_dict() == UNKNOWN_CAPTURED_SOURCE
+        return combined
+
+    monkeypatch.setattr("asymmetry.core.io.load", decode_reference)
     disk = resolve_background_reference(payload, sample_exposure=ReferenceExposure(40, "user"))
     assert (
         live.timing.request()
         == disk.timing.request()
-        == {"t0_policy": {"mode": "manual", "offset_bins": 2}, "source": UNKNOWN_LEGACY_SOURCE}
+        == {"t0_policy": {"mode": "manual", "offset_bins": 2}, "source": UNKNOWN_CAPTURED_SOURCE}
     )
     assert live.period_number == disk.period_number == 2
     assert live.deadtime_normaliser == disk.deadtime_normaliser == 20
@@ -180,7 +187,7 @@ def test_number_only_live_request_refreshes_timing_without_choosing_ambiguity():
     assert refresh_reference_timing_requests(datasets) == [1]
     assert sample.grouping["background_run"]["timing"] == {
         "t0_policy": {"mode": "manual", "offset_bins": 4},
-        "source": UNKNOWN_LEGACY_SOURCE,
+        "source": UNKNOWN_CAPTURED_SOURCE,
     }
     reference.grouping["t0_policy"]["offset_bins"] = 6
     datasets.append(reference_dataset(copy.deepcopy(reference)))
@@ -209,7 +216,7 @@ def test_advisory_refresh_preserves_an_invalid_live_timing_request_for_editing()
     assert refresh_reference_timing_requests(datasets) == [1]
     assert sample.grouping["background_run"]["timing"] == {
         "t0_policy": reference.grouping["t0_policy"],
-        "source": UNKNOWN_LEGACY_SOURCE,
+        "source": UNKNOWN_CAPTURED_SOURCE,
     }
     with pytest.raises(ValueError, match="Manual timing"):
         resolve_background_reference(sample.grouping["background_run"], datasets=datasets)

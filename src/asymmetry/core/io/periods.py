@@ -23,6 +23,7 @@ from asymmetry.core.data.reduction_recipe import field_scan_recipe
 from asymmetry.core.io.frame_exposure import summed_period_exposures
 from asymmetry.core.io.period_counts import sum_period_histograms
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.transform.integral import (
@@ -175,30 +176,10 @@ def select_period(
     data: MuonDataset | list[MuonDataset],
     period: int | str | PeriodMode,
 ) -> MuonDataset:
-    """Return a reduced :class:`~asymmetry.core.data.dataset.MuonDataset` for a single period.
+    """Select acquired-period counts, timing, exposure and default reduction.
 
-    Parameters
-    ----------
-    data
-        A loaded run: either a single :class:`~asymmetry.core.data.dataset.MuonDataset` (single-period file,
-        or a combined two-period file) or the ``list`` returned for 3+ period
-        files.
-    period
-        Period selector — see :func:`resolve_period_index`.
-
-    Returns
-    -------
-    MuonDataset
-        The requested period with its own ``time``/``asymmetry``/``error`` and
-        per-period provenance (``period_number``, ``run_label``, ``good_frames``,
-        ``dead_time_us``). t0, good-bin window, grouping, field and temperature
-        are preserved from the parent run.
-
-    Notes
-    -----
-    The arrays returned are the loader's default reduction (``alpha = 1.0``,
-    no deadtime/background correction), identical to what the loader produces
-    for a single-period file.
+    Accept a single/combined dataset or a list of acquired periods. Default
+    curves use alpha one with no deadtime/background correction.
     """
     if isinstance(data, list):
         index = resolve_period_index(period, len(data))
@@ -261,6 +242,17 @@ def select_period(
     )
 
 
+def period_acquisition_owner(run: Run, index: int) -> Run:
+    """A single original owns its capture; pooled views retain aggregate authority."""
+    inputs = run.grouping.get("period_inputs")
+    if inputs is None:
+        return run
+    members = _periods_for_target(
+        {int(k): v for k, v in run.grouping["period_mapping"].items()}, ("red", "green")[index]
+    )
+    return inputs[members[0] - 1] if len(members) == 1 else run
+
+
 def period_run(combined: Run, index: int) -> Run:
     """Extract a held period with its acquired timing, exposure, and corrections."""
     grouping = combined.grouping
@@ -291,15 +283,12 @@ def period_run(combined: Run, index: int) -> Run:
     metadata["period_number"] = index + 1
     metadata["period_count"] = count
     metadata["run_label"] = f"{source_run}/{index + 1}"
-    inputs = grouping.get("period_inputs")
-    if inputs is not None:
-        members = _periods_for_target(
-            {int(k): v for k, v in grouping["period_mapping"].items()}, ("red", "green")[index]
-        )
+    owner = period_acquisition_owner(combined, index)
+    if "period_inputs" in grouping:
         for key in ("data_period_number", "dae_period_number"):
             metadata.pop(key, None)
-            if len(members) == 1 and key in inputs[members[0] - 1].metadata:
-                metadata[key] = inputs[members[0] - 1].metadata[key]
+            if owner is not combined and key in owner.metadata:
+                metadata[key] = owner.metadata[key]
     if count == 2:
         metadata["period_label"] = str((PeriodMode.RED, PeriodMode.GREEN)[index])
 
@@ -309,9 +298,9 @@ def period_run(combined: Run, index: int) -> Run:
         metadata=metadata,
         grouping=period_grouping,
         source_file=combined.source_file,
-        source_binding=combined.source_binding,
-        instrument_choice=combined.instrument_choice,
-        source_assessment=combined.source_assessment,
+        source_binding=owner.source_binding,
+        instrument_choice=owner.instrument_choice,
+        source_assessment=owner.source_assessment,
     )
 
     # Per-detector file facts follow the selected period; scalar-only requests
@@ -322,9 +311,11 @@ def period_run(combined: Run, index: int) -> Run:
         and GoodWindowPolicy.from_dict(period_grouping.get("good_window_policy")).mode
         == "from_file"
     ):
-        quick = quick_asymmetry(histograms, period_grouping, metadata=metadata)
+        quick = quick_asymmetry(
+            histograms, period_grouping, metadata=reference_observation_metadata(run)
+        )
         run.grouping.pop("t0_time_us", None)
-        run.grouping.update(quick.file_grouping)
+        run.grouping.update(quick.acquired_grouping(histograms))
         metadata.pop("correction_error", None)
         metadata.update(quick.metadata)
     return run
@@ -798,9 +789,14 @@ def _quick_period_dataset(
     if cancel_check is not None:
         cancel_check()
     grouping, metadata = run.grouping, run.metadata
-    quick = quick_asymmetry(run.histograms, grouping, metadata=metadata, cancel_check=cancel_check)
+    quick = quick_asymmetry(
+        run.histograms,
+        grouping,
+        metadata=reference_observation_metadata(run),
+        cancel_check=cancel_check,
+    )
     grouping.pop("t0_time_us", None)
-    grouping.update(quick.file_grouping)
+    grouping.update(quick.acquired_grouping(run.histograms))
     metadata.update(quick.metadata)
     window = quick.window.slice if quick.window is not None else slice(0, 0)
     from asymmetry.core.transform.preparation import histogram_observation

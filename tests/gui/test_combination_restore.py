@@ -8,6 +8,7 @@ import pytest
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.representation import FitSeries, RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
+from tests.gui.source_replay import sample_decoder
 from tests.gui.test_data_browser_combine import _dataset
 
 pytestmark = [pytest.mark.gui]
@@ -52,7 +53,7 @@ def test_project_restores_target_override_or_unavailable_definition_with_history
         )
         return dataset
 
-    monkeypatch.setattr(restored, "_load_file", load_source)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(load_source))
     restored.restore_project_state(load_project(project), str(project))
     result = restored._data_browser.get_dataset(-1)
     assert result is not None
@@ -147,7 +148,7 @@ def test_unavailable_weighted_definition_survives_rebuild(
         dataset.run.source_file = path
         return dataset
 
-    monkeypatch.setattr(restored, "_load_file", load_source)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(load_source))
     restored.restore_project_state(load_project(project), str(project))
     browser = restored._data_browser
     unavailable = browser.get_dataset(-1)
@@ -197,7 +198,7 @@ def test_supported_saved_terms_survive_rebuild(qapp, tmp_path, monkeypatch, oper
         dataset.run.source_file = path
         return dataset
 
-    monkeypatch.setattr(restored, "_load_file", load_source)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(load_source))
     restored.restore_project_state(load_project(project), str(project))
     row = restored._data_browser.get_dataset(-1)
     before = tuple(array.copy() for array in (row.time, row.asymmetry, row.error))

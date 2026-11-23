@@ -349,10 +349,12 @@ def test_profile_preflight_propagates_one_shot_checkpoint_cancel(tmp_path, monke
             calls.append("cancelled")
             raise InterruptedError("one-shot cancellation")
 
-    def decode(path, *, checkpoint):
+    def decode(path, *, checkpoint, replay, period):
+        assert replay.run_number == 7
+        assert period == replay.period_number
         calls.append("inside")
         checkpoint()
-        return load(path)
+        return load(path, replay=replay, period=period)
 
     monkeypatch.setattr(io, "load", decode)
     with pytest.raises(InterruptedError, match="one-shot"):

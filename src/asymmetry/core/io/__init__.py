@@ -16,7 +16,7 @@ from asymmetry.core.instruments.resolution import (
     RecordedInstrumentChoice,
     resolve_instrument,
 )
-from asymmetry.core.instruments.source import assess_source
+from asymmetry.core.instruments.source import assess_source, source_for_run
 from asymmetry.core.io.base import BaseLoader, LoaderRegistry, LoadResult
 from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.io.periods import (
@@ -27,6 +27,7 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
+from asymmetry.core.io.run_preparation import ReplayState, prepare_legacy_loaded_run
 from asymmetry.core.io.run_range import resolve_run_range, scan_run_files
 from asymmetry.core.io.unit_report import unit_report as unit_report
 from asymmetry.core.transform.corrections import BackgroundReference
@@ -48,6 +49,7 @@ def load(
     *,
     checkpoint=None,
     progress=None,
+    replay: ReplayState | None = None,
 ) -> LoadResult:
     """Load a μSR data file and return a :class:`~asymmetry.core.data.dataset.MuonDataset`.
 
@@ -81,25 +83,25 @@ def load(
     loader = LoaderRegistry.get_loader(filepath, fmt=fmt)
     callbacks = {
         key: value
-        for key, value in (("checkpoint", checkpoint), ("progress", progress))
+        for key, value in (("checkpoint", checkpoint), ("progress", progress), ("replay", replay))
         if value is not None
     }
-    if callbacks:
-        from inspect import Parameter, signature
+    from inspect import Parameter, signature
 
-        try:
-            parameters = signature(loader.load, follow_wrapped=False).parameters
-        except (TypeError, ValueError):
-            callbacks = {}
-        else:
-            if not any(p.kind is Parameter.VAR_KEYWORD for p in parameters.values()):
-                callbacks = {
-                    key: value
-                    for key, value in callbacks.items()
-                    if key in parameters
-                    and parameters[key].kind
-                    in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
-                }
+    try:
+        parameters = signature(loader.load, follow_wrapped=False).parameters
+    except (TypeError, ValueError):
+        supported = set()
+    else:
+        supported = {
+            key
+            for key, parameter in parameters.items()
+            if parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+        }
+        if any(p.kind is Parameter.VAR_KEYWORD for p in parameters.values()):
+            supported |= {"checkpoint", "progress"}
+    callbacks = {key: value for key, value in callbacks.items() if key in supported}
+    opaque_replay = "replay" not in supported
     opaque_checkpoint = checkpoint is not None and "checkpoint" not in callbacks
     if opaque_checkpoint:
         checkpoint()
@@ -109,6 +111,8 @@ def load(
     for dataset in result if isinstance(result, list) else [result]:
         run = dataset.run
         if run is not None:
+            if opaque_replay:
+                prepare_legacy_loaded_run(run, replay)
             run.grouping.pop("instrument", None)
             context = resolve_instrument(run)
             if context.requires_choice:
@@ -118,7 +122,17 @@ def load(
                     context.selection, context.observed.evidence
                 )
             if run.source_assessment is None:
-                run.source_assessment = assess_source(run.metadata)
+                run.source_assessment = source_for_run(run)
+    if (
+        period is None
+        and replay is not None
+        and not isinstance(result, list)
+        and result.run is not None
+    ):
+        originals = result.run.grouping.get("period_inputs", ())
+        matches = [index for index, original in enumerate(originals) if replay.selects(original)]
+        if len(matches) == 1:
+            period = matches[0] + 1
     if period is None:
         return result
     return select_period(result, period)
@@ -126,12 +140,24 @@ def load(
 
 def load_background_run(payload: dict, *, checkpoint=None) -> MuonDataset:
     """Load exactly the declared reference acquisition and acquired period."""
+    from asymmetry.core.instruments.source import SourceAssessment
     from asymmetry.core.io.reference_selection import reference_selection, resolve_loaded_reference
 
     if not isinstance(payload, dict) or not payload.get("source_file"):
         raise ValueError("background_run payload has no source_file")
+    timing = payload.get("timing")
+    if timing is not None and not isinstance(timing, dict):
+        raise ValueError("Reference timing must be a source-bound request")
+    source = SourceAssessment.from_dict(timing["source"]) if timing and "source" in timing else None
+    number = payload.get("run_number", payload.get("legacy_run_number"))
+    replay = ReplayState(
+        source=source,
+        run_number=int(number) if number is not None else None,
+        period_number=payload.get("period_number"),
+    )
     result = load(
         str(payload["source_file"]),
+        replay=replay,
         **({"checkpoint": checkpoint} if checkpoint is not None else {}),
     )
     if isinstance(result, list) and len(result) == 1:
@@ -261,10 +287,11 @@ def resolve_background_reference(
             for key in ("t0_policy", "effective_detector_t0_bins"):
                 timing_grouping.pop(key, None)
             timing_grouping.update(previous)
+    fresh_live = live and "timing" not in payload
     request = reference_timing_request(
         timing_grouping,
-        assess_source(reference_run.metadata),
-        previous=previous if previous is not None else {},
+        source_for_run(reference_run) if fresh_live else assess_source(reference_run.metadata),
+        previous=previous if previous is not None else None if fresh_live else {},
     )
     timing_grouping["source"] = request["source"]
     timing = ReferenceTiming.from_grouping(

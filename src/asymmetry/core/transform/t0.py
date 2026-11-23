@@ -15,7 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.instruments.source import assess_source
+from asymmetry.core.instruments.source import SourceAssessment, assess_source
 
 #: How far the detected t0 may sit from the file's before it is worth a warning,
 #: per source family (D8, from the ISIS/PSI header survey). Continuous sources
@@ -77,6 +77,7 @@ def good_window_for_groups(
     *,
     common_t0_bin: int,
     n_bins: int,
+    allow_empty: bool = False,
 ) -> tuple[int, int]:
     """The good window of the *aligned* group sums, in grouped-bin indices (F13).
 
@@ -96,7 +97,8 @@ def good_window_for_groups(
 
     ``n_bins`` is the length of the aligned group sums, the last index the
     window may name. ``group_indices`` are 0-based; an empty list yields the
-    full range.
+    full range. Raw acquisition records may retain reversed bounds with
+    ``allow_empty``; numerical preparation requires nonempty support.
     """
     if n_bins < 1:
         raise ValueError("Selected channels have empty observed support.")
@@ -105,7 +107,7 @@ def good_window_for_groups(
     lasts = [int(detector_last_good_bins[i]) - int(detector_t0_bins[i]) for i in group_indices]
     first_good = max(0, int(common_t0_bin) + max(firsts, default=-common_t0_bin))
     last_good = min(last_bin, int(common_t0_bin) + min(lasts, default=last_bin - common_t0_bin))
-    if first_good > last_good:
+    if first_good > last_good and not allow_empty:
         raise ValueError("Selected channels have empty good-bin support.")
     return first_good, last_good
 
@@ -380,9 +382,15 @@ def find_t0_for_run(
     """
     if pulsed is not None and not isinstance(pulsed, bool):
         raise ValueError("pulsed must be True, False, or None for metadata inference.")
-    if pulsed is None:
-        pulsed = source_is_pulsed(metadata)
     metadata = metadata or {}
+    if pulsed is None:
+        if "source_assessment" in metadata:
+            captured = metadata["source_assessment"]
+            if not isinstance(captured, SourceAssessment):
+                raise ValueError("Timing context source must be a typed SourceAssessment")
+            pulsed = captured.pulsed
+        else:
+            pulsed = source_is_pulsed(metadata)
     if pulsed is None or metadata.get("raw_period_histograms_available") is False:
         strategy = "unknown" if pulsed is None else "pulse_edge" if pulsed else "prompt_peak"
         message = (
@@ -777,4 +785,14 @@ def assess_t0(
         delta_bins=delta,
         messages=tuple(messages),
         outlier_detectors=outliers,
+    )
+
+
+def timing_requires_source(grouping: dict) -> bool:
+    """Source authority affects explicit searches and missing acquired anchors."""
+    policy = grouping.get("t0_policy")
+    return (
+        (isinstance(policy, dict) and policy.get("mode") == "auto_detect")
+        or grouping.get("t0_source") == "missing"
+        or "missing" in grouping.get("detector_t0_sources", [])
     )

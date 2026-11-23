@@ -12,6 +12,23 @@ from asymmetry.core.data.acquisition import SourceBinding, SourceVerification, v
 from asymmetry.core.project.preparation import PreparedProject, prepare_project
 
 
+def sample_load_request(prepared, fact):
+    """Bind one current sample owner to its retained pre-decoding authority."""
+    from asymmetry.core.io.run_preparation import ReplayState
+
+    source = fact.source
+    return (
+        source.owner,
+        fact.candidate_file,
+        ReplayState(
+            prepared.instrument_choices.get(source.run_number),
+            prepared.source_assessments.get(source.run_number),
+            source.run_number,
+            source.period_number,
+        ),
+    )
+
+
 def source_candidates(prepared, project_path, *, directory=None):
     """Resolve project-relative locators; an optional directory only proposes basenames."""
     import ntpath
@@ -50,7 +67,6 @@ def verify_project_sources(
     Decoded facts remain detached, and a capture mismatch aborts before application.
     """
     from asymmetry.core.io import load
-    from asymmetry.core.io.periods import source_run_of
     from asymmetry.core.project.profiles import default_profile_for_run, named_profile_for_run
 
     facts = verify_sources(
@@ -78,15 +94,18 @@ def verify_project_sources(
             entry = source_record(prepared.state, fact.source.owner.address)
             if entry.get("grouping_overrides") is not None:
                 continue
-            path = fact.candidate_file
-            if path not in loaded:
+            request = sample_load_request(prepared, fact)
+            _, path, replay = request
+            if request not in loaded:
                 try:
-                    loaded[path] = load(path, checkpoint=checkpoint)
+                    loaded[request] = load(
+                        path, checkpoint=checkpoint, replay=replay, period=replay.period_number
+                    )
                 except InterruptedError:
                     raise
                 except (OSError, ValueError):
-                    loaded[path] = None
-            value = loaded[path]
+                    loaded[request] = None
+            value = loaded[request]
             datasets = value if isinstance(value, list) else [value]
             for dataset in datasets:
                 if dataset is None or dataset.run is None:
@@ -97,11 +116,7 @@ def verify_project_sources(
                     raise ValueError(
                         "Source changed after verification; project application cancelled"
                     )
-                if (
-                    len(datasets) != 1
-                    and dataset.run_number != fact.source.run_number
-                    and source_run_of(dataset.run) != fact.source.run_number
-                ):
+                if not replay.selects(dataset.run):
                     continue
                 profile = named_profile_for_run(
                     prepared.profiles, entry.get("profile", ""), dataset.run
@@ -217,14 +232,15 @@ class ProjectSourceApplication:
                 or not self.available(i)
             ):
                 continue
-            value = checked.get(fact.candidate_file)
+            request = sample_load_request(self.prepared, fact)
+            value = checked.get(request)
             candidates = value if isinstance(value, list) else [value]
             for dataset in candidates:
                 if dataset is None or isinstance(dataset, Exception):
                     continue
                 observed = dataset.run.source_binding.observed if dataset.run is not None else None
                 if not self.capture_matches(i, observed):
-                    checked[fact.candidate_file] = ValueError(
+                    checked[request] = ValueError(
                         "Source changed after verification; reopen to choose its replacement"
                     )
         return checked

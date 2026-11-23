@@ -5,6 +5,7 @@ import pytest
 
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+from tests.gui.source_replay import sample_method
 from tests.gui.test_grouping_preview_pane import _histogram_dataset, _wait_until
 
 pytestmark = pytest.mark.gui
@@ -42,7 +43,7 @@ def test_project_restore_retains_invalid_request_and_raw_data(
     dataset = _histogram_dataset()
     source = tmp_path / "synthetic.nxs"
     source.touch()
-    monkeypatch.setattr(type(window), "_load_file", lambda self, path: dataset)
+    monkeypatch.setattr(type(window), "_load_file", sample_method(lambda path: dataset))
     state = window.collect_project_state()
     requested = dict(dataset.run.grouping, groups={1: members, 2: [2]}, alpha=1.7)
     state["datasets"] = [
@@ -194,7 +195,7 @@ def test_saved_overlap_keeps_fixed_options_and_can_be_repaired(window, monkeypat
     original_counts = [h.counts.copy() for h in dataset.run.histograms]
     source = tmp_path / "synthetic.nxs"
     source.touch()
-    monkeypatch.setattr(type(window), "_load_file", lambda self, path: dataset)
+    monkeypatch.setattr(type(window), "_load_file", sample_method(lambda path: dataset))
     requested = dict(
         dataset.run.grouping,
         groups={1: [1, 2], 2: [2]},

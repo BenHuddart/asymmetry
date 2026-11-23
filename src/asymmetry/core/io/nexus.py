@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -11,16 +11,21 @@ import numpy as np
 
 from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.instruments.defaults import absent_file_grouping_default
+from asymmetry.core.instruments.resolution import resolve_instrument
 from asymmetry.core.io.acquisition import capture_acquisition
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
+from asymmetry.core.io.nexus_grouping import nexus_grouping
 from asymmetry.core.io.nexus_periods import logged_data_periods, period_declaration
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.io.physical_units import nexus_physical_unit, nexus_quantity, physical_unit
 from asymmetry.core.io.quick_asymmetry import quick_asymmetry
+from asymmetry.core.io.run_preparation import ReplayState, prepare_loaded_run
+from asymmetry.core.transform.corrections import reference_observation_metadata
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -171,17 +176,6 @@ def _logged_samples(entry: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-@dataclass
-class _GroupingSelection:
-    """Resolved detector-group selection used for asymmetry reduction."""
-
-    forward_indices: list[int]
-    backward_indices: list[int]
-    groups: dict[int, list[int]]
-    forward_group_id: int
-    backward_group_id: int
-
-
 class NexusLoader(BaseLoader):
     """Read ISIS muon ``.nxs`` files and return one or more datasets."""
 
@@ -189,7 +183,7 @@ class NexusLoader(BaseLoader):
     format_name = "ISIS NeXus (.nxs, .nexus)"
 
     @capture_acquisition
-    def load(self, filepath: str) -> LoadResult:
+    def load(self, filepath: str, *, replay: ReplayState | None = None) -> LoadResult:
         """Load a NeXus file and return reduced asymmetry dataset(s).
 
         Parameters
@@ -209,17 +203,17 @@ class NexusLoader(BaseLoader):
         # reads). The file magic disambiguates; h5py cannot open HDF4 at all.
         if is_hdf4(str(path)):
             handle = open_hdf4(str(path))  # raises ImportError if pyhdf absent
-            result = self._reduce_handle(handle, str(path))
+            result = self._reduce_handle(handle, str(path), replay=replay)
         else:
             self._require_h5py()
             with h5py.File(path, "r") as handle:
-                result = self._reduce_handle(handle, str(path))
+                result = self._reduce_handle(handle, str(path), replay=replay)
 
         if len(result) == 1:
             return result[0]
         return result
 
-    def _reduce_handle(self, handle: Any, source_file: str) -> list[MuonDataset]:
+    def _reduce_handle(self, handle: Any, source_file: str, *, replay=None) -> list[MuonDataset]:
         """Detect the layout behind a handle and reduce to dataset(s).
 
         The handle is either an ``h5py.File`` or the HDF4 adapter from
@@ -229,8 +223,8 @@ class NexusLoader(BaseLoader):
         """
         version, entry = self._detect_layout(handle)
         if version == "v1":
-            return self._load_v1(handle, entry, source_file)
-        return self._load_v2(handle, entry, source_file)
+            return self._load_v1(handle, entry, source_file, replay=replay)
+        return self._load_v2(handle, entry, source_file, replay=replay)
 
     def _require_h5py(self) -> None:
         """Ensure ``h5py`` is available before trying to read HDF5 content."""
@@ -264,7 +258,9 @@ class NexusLoader(BaseLoader):
 
         raise ValueError("Unsupported NeXus file: could not detect ISIS muon V1/V2 layout")
 
-    def _load_v1(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
+    def _load_v1(
+        self, handle: Any, entry_name: str, source_file: str, *, replay=None
+    ) -> list[MuonDataset]:
         """Read legacy ``/run`` muon NeXus content and reduce to asymmetry."""
         entry = handle[entry_name]
         h_data = self._require_group(entry, "histogram_data_1")
@@ -278,10 +274,7 @@ class NexusLoader(BaseLoader):
             counts = counts.reshape(n_switching, n_spectra, counts.shape[-1])
         counts_periods = self._split_period_counts(counts)
 
-        grouping_array = np.asarray(
-            self._read_optional(h_data, "grouping", default=[]),
-            dtype=np.int64,
-        )
+        grouping_array = self._read_optional(h_data, "grouping")
         frame_metadata = read_nexus_frames(entry, self._read_optional, legacy=True)
         dead_time_values = np.asarray(
             self._read_optional(h_data, "dead_time", default=[]),
@@ -386,6 +379,7 @@ class NexusLoader(BaseLoader):
             bin_width=bin_width,
             decodes=decodes,
             grouping_array=grouping_array,
+            replay=replay,
             frame_metadata=frame_metadata,
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
@@ -394,7 +388,9 @@ class NexusLoader(BaseLoader):
             source_file=source_file,
         )
 
-    def _load_v2(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
+    def _load_v2(
+        self, handle: Any, entry_name: str, source_file: str, *, replay=None
+    ) -> list[MuonDataset]:
         """Read modern V2 muon NeXus content on one validated acquisition grid."""
         entry = handle[entry_name]
         detector = self._require_group(self._require_group(entry, "instrument"), "detector_1")
@@ -402,9 +398,7 @@ class NexusLoader(BaseLoader):
         counts = np.asarray(self._require_dataset(detector, "counts"), dtype=np.float64)
         counts_periods = self._split_period_counts(counts)
 
-        grouping_array = np.asarray(
-            self._read_optional(detector, "grouping", default=[]), dtype=np.int64
-        )
+        grouping_array = self._read_optional(detector, "grouping")
         frame_metadata = read_nexus_frames(entry, self._read_optional, legacy=False)
         dead_time_values = np.asarray([], dtype=np.float64)
         for dead_time_key in ("dead_time", "deadtime", "deadtimes"):
@@ -517,6 +511,7 @@ class NexusLoader(BaseLoader):
             bin_width=bin_width,
             decodes=decodes,
             grouping_array=grouping_array,
+            replay=replay,
             frame_metadata=frame_metadata,
             dead_time_values=dead_time_values,
             metadata_base=metadata_base,
@@ -531,7 +526,8 @@ class NexusLoader(BaseLoader):
         counts_periods: list[np.ndarray],
         bin_width: float,
         decodes: list[T0Decode],
-        grouping_array: np.ndarray,
+        grouping_array: np.ndarray | None,
+        replay: ReplayState | None,
         frame_metadata: NexusFrames,
         dead_time_values: np.ndarray,
         metadata_base: dict[str, Any],
@@ -567,74 +563,73 @@ class NexusLoader(BaseLoader):
                 good_windows=good_windows[period_idx - 1],
             )
 
-            grouping = self._resolve_grouping(grouping_array, n_detectors)
-            quick = quick_asymmetry(
-                histograms,
-                {
-                    "groups": {
-                        gid: [i + 1 for i in indices] for gid, indices in grouping.groups.items()
-                    },
-                    "t0_source": decode.source,
-                    "forward_group": grouping.forward_group_id,
-                    "backward_group": grouping.backward_group_id,
-                },
-                metadata=metadata_base,
+            period_run_number = (
+                run_number
+                if n_periods == 1
+                else self._encode_period_run_number(run_number, period_idx)
             )
-            alpha = 1.0
-            window = quick.window.slice if quick.window is not None else slice(0, 0)
-            time_axis, asymmetry, error = (
-                a[window] for a in (quick.time, quick.asymmetry, quick.error)
+            run_meta = dict(
+                metadata_base,
+                run_number=period_run_number,
+                source_run_number=run_number,
+                run_label=str(run_number) if n_periods == 1 else f"{run_number}/{period_idx}",
+                period_number=period_idx,
+                data_period_number=period_idx,
+                period_count=n_periods,
             )
-
-            period_run_number = run_number
-            run_label = str(run_number)
-            if n_periods > 1:
-                period_run_number = self._encode_period_run_number(run_number, period_idx)
-                run_label = f"{run_number}/{period_idx}"
-
-            run_meta = dict(metadata_base)
-            run_meta.update(quick.metadata)
-            run_meta["run_number"] = period_run_number
-            run_meta["source_run_number"] = run_number
-            run_meta["run_label"] = run_label
-            run_meta["period_number"] = period_idx
-            run_meta["data_period_number"] = period_idx
             slots = metadata_base["period_declaration"]["data_dae_slots"]
             if slots:
                 run_meta["dae_period_number"] = slots[period_idx - 1]
-            run_meta["period_count"] = n_periods
-
+            deadtimes = np.asarray(dead_time_periods[period_idx - 1], dtype=np.float64).tolist()
             run_grouping = {
-                "groups": {gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()},
-                "forward_group": grouping.forward_group_id,
-                "backward_group": grouping.backward_group_id,
-                "alpha": alpha,
-                **quick.file_grouping,
+                "alpha": 1.0,
                 "bin_index_base": 1,
                 "bunching_factor": 1,
                 "deadtime_correction": False,
-                "detector_t0_bins": [int(hist.t0_bin) for hist in histograms],
-                "detector_first_good_bins": [int(hist.good_bin_start) for hist in histograms],
-                "detector_last_good_bins": [int(hist.good_bin_end) for hist in histograms],
+                "detector_t0_bins": [int(h.t0_bin) for h in histograms],
+                "detector_first_good_bins": [int(h.good_bin_start) for h in histograms],
+                "detector_last_good_bins": [int(h.good_bin_end) for h in histograms],
                 "t0_source": decode.source,
-                "dead_time_us": [
-                    float(v)
-                    for v in np.asarray(
-                        dead_time_periods[period_idx - 1], dtype=np.float64
-                    ).tolist()
-                ],
+                "dead_time_us": deadtimes,
+                "deadtime_file_us": list(deadtimes),
+                "reference_exposure": exposures[period_idx - 1],
             }
-            run_grouping["reference_exposure"] = exposures[period_idx - 1]
-            run_grouping["deadtime_file_us"] = list(run_grouping["dead_time_us"])
             if good_frames_periods[period_idx - 1] is not None:
                 run_grouping["good_frames"] = good_frames_periods[period_idx - 1]
-
-            run = Run(
-                run_number=period_run_number,
-                histograms=histograms,
-                metadata=run_meta,
-                grouping=run_grouping,
-                source_file=source_file,
+            run = prepare_loaded_run(
+                Run(
+                    run_number=period_run_number,
+                    histograms=histograms,
+                    metadata=run_meta,
+                    grouping=run_grouping,
+                    source_file=source_file,
+                ),
+                replay,
+            )
+            identity = resolve_instrument(run).selection
+            default = (
+                absent_file_grouping_default(identity, run_meta)
+                if replay is None and grouping_array is None
+                else None
+            )
+            selected = nexus_grouping(grouping_array, n_detectors, default)
+            run_grouping.update(selected.payload)
+            if default is not None:
+                run_grouping["grouping_preset"] = default.name
+                run_grouping["grouping_provenance"] = {
+                    "origin": "profile",
+                    "profile_key": identity.profile_key,
+                    "profile_revision": identity.profile_revision,
+                    "acquisition": identity.acquisition,
+                }
+            quick = quick_asymmetry(
+                histograms, run_grouping, metadata=reference_observation_metadata(run)
+            )
+            run_grouping.update(quick.acquired_grouping(histograms))
+            run_meta.update(quick.metadata)
+            window = quick.window.slice if quick.window is not None else slice(0, 0)
+            time_axis, asymmetry, error = (
+                array[window] for array in (quick.time, quick.asymmetry, quick.error)
             )
 
             from asymmetry.core.transform.preparation import histogram_observation
@@ -715,40 +710,6 @@ class NexusLoader(BaseLoader):
             )
             for i in range(period_counts.shape[0])
         ]
-
-    def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
-        """Resolve forward/backward detector sets from file grouping or defaults."""
-        groups: dict[int, list[int]] = {}
-        if grouping_array.size >= n_detectors:
-            vals = np.asarray(grouping_array[:n_detectors], dtype=np.int64)
-            for i, gid in enumerate(vals):
-                if gid <= 0:
-                    continue
-                groups.setdefault(int(gid), []).append(i)
-
-        if len(groups) >= 2:
-            group_ids = sorted(groups)
-            forward_group_id = int(group_ids[0])
-            backward_group_id = int(group_ids[1])
-            forward_indices = groups[forward_group_id]
-            backward_indices = groups[backward_group_id]
-        else:
-            split = max(1, n_detectors // 2)
-            forward_indices = list(range(0, split))
-            backward_indices = list(range(split, n_detectors))
-            if not backward_indices:
-                backward_indices = list(range(0, n_detectors))
-            groups = {1: forward_indices, 2: backward_indices}
-            forward_group_id = 1
-            backward_group_id = 2
-
-        return _GroupingSelection(
-            forward_indices=forward_indices,
-            backward_indices=backward_indices,
-            groups=groups,
-            forward_group_id=forward_group_id,
-            backward_group_id=backward_group_id,
-        )
 
     def _split_period_counts(self, counts: np.ndarray) -> list[np.ndarray]:
         """Normalise detector counts into a list of ``[detectors, bins]`` arrays."""

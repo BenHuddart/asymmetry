@@ -12,6 +12,7 @@ from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
 from asymmetry.core.transform.grouping import (
     independent_pair_indices,
+    resolve_alignment,
     resolve_forward_backward_layout,
 )
 from asymmetry.core.transform.t0 import (
@@ -22,6 +23,25 @@ from asymmetry.core.transform.t0 import (
     selected_t0_reference,
 )
 from asymmetry.core.transform.units import PERCENT_PER_FRACTION
+
+
+def acquired_window_grouping(histograms: list[Histogram]) -> dict:
+    """Retain the acquired intersection without requiring an independent pair."""
+    indices = list(range(len(histograms)))
+    crop = resolve_alignment(histograms, indices)
+    common = max(hist.t0_bin for hist in histograms)
+    first, last = good_window_for_groups(
+        indices,
+        [hist.t0_bin for hist in histograms],
+        [hist.good_bin_start for hist in histograms],
+        [hist.good_bin_end if hist.good_bin_end >= 0 else hist.n_bins - 1 for hist in histograms],
+        common_t0_bin=common,
+        n_bins=crop.first_bin + crop.length,
+        allow_empty=True,
+    )
+    return dict(
+        t0_bin=common, first_good_bin=first, last_good_bin=last, t_good_offset=first - common
+    )
 
 
 @dataclass(frozen=True)
@@ -45,7 +65,10 @@ class QuickAsymmetry:
         """Canonical uncropped bounds, including an explicitly unavailable window."""
         start = self.alignment.first_bin if self.alignment is not None else 0
         first, last = (
-            (start + 1, start)
+            (
+                self.timing.get("first_good_bin", start + 1),
+                self.timing.get("last_good_bin", start),
+            )
             if self.window is None
             else (self.window.first + start, self.window.last + start)
         )
@@ -57,6 +80,12 @@ class QuickAsymmetry:
             "last_good_bin": last,
             "t_good_offset": first - self.common_t0,
         }
+
+    def acquired_grouping(self, histograms: list[Histogram]) -> dict:
+        """Keep resolved timing and raw bounds when an independent ratio is unavailable."""
+        return self.file_grouping | (
+            acquired_window_grouping(histograms) if self.alignment is None else {}
+        )
 
     @property
     def metadata(self) -> dict:
@@ -71,6 +100,7 @@ def quick_asymmetry(
 ) -> QuickAsymmetry:
     """Validate the default pair before exposing independent-count uncertainties."""
     alignment = None
+    acquired_bounds = None
     common_t0 = max((hist.t0_bin for hist in histograms), default=0)
     t0_time_us = None
     timing = dict(grouping)
@@ -120,7 +150,11 @@ def quick_asymmetry(
             ],
             common_t0_bin=layout.common_t0_bin + alignment.first_bin,
             n_bins=alignment.first_bin + alignment.length,
+            allow_empty=True,
         )
+        acquired_bounds = {"first_good_bin": first, "last_good_bin": last}
+        if first > last:
+            raise ValueError("Selected channels have empty good-bin support.")
         window = alignment.window({"first_good_bin": first, "last_good_bin": last})
         from asymmetry.core.transform.fb_deadtime import fb_deadtime_domain
 
@@ -158,7 +192,8 @@ def quick_asymmetry(
                 for k, v in timing.items()
                 if "period_inputs" not in grouping
                 and k.startswith(("effective_", "t0_search", "t0_policy"))
-            },
+            }
+            | (acquired_bounds or {}),
         )
     asymmetry, error, validity = ratio_with_count_errors(
         forward.counts,
