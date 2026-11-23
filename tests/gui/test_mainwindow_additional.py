@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.gui.source_replay import sample_decoder
+
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
@@ -2215,11 +2217,10 @@ class TestMainWindowFourier:
         def _fake_load_file(_path: str) -> MuonDataset:
             loaded = _make_fourier_ready_dataset(8853, with_grouping=True)
             assert loaded.run is not None
-            loaded.run.source_file = str(source_file)
-            loaded.metadata["source_file"] = str(source_file)
+            loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
             return loaded
 
-        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored_window, "_load_file", sample_decoder(_fake_load_file))
         restored_window.restore_project_state(loaded_state, str(project_path))
 
         assert restored_window._maxent_panel._points_spin.value() == 256
@@ -2504,11 +2505,10 @@ class TestMainWindowFourier:
         def _fake_load_file(_path: str) -> MuonDataset:
             loaded = _make_fourier_ready_dataset(8816, with_grouping=True)
             assert loaded.run is not None
-            loaded.run.source_file = str(source_file)
-            loaded.metadata["source_file"] = str(source_file)
+            loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
             return loaded
 
-        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored_window, "_load_file", sample_decoder(_fake_load_file))
 
         restored_window.restore_project_state(state, str(tmp_path / "restored.asymp"))
         # Restore syncs the frequency plot, which recomputes the run's spectrum
@@ -2598,11 +2598,10 @@ class TestMainWindowFourier:
         def _fake_load_file(_path: str) -> MuonDataset:
             loaded = _make_fourier_ready_dataset(8817, with_grouping=True)
             assert loaded.run is not None
-            loaded.run.source_file = str(source_file)
-            loaded.metadata["source_file"] = str(source_file)
+            loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
             return loaded
 
-        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored_window, "_load_file", sample_decoder(_fake_load_file))
 
         restored_window.restore_project_state(loaded_state, str(project_path))
         # Let the off-thread frequency recompute triggered by restore settle.
@@ -2669,12 +2668,11 @@ class TestMainWindowFourier:
         def _fake_load_file(_path: str) -> MuonDataset:
             loaded = _make_fourier_ready_dataset(8819, with_grouping=True)
             assert loaded.run is not None
-            loaded.run.source_file = str(source_file)
-            loaded.metadata["source_file"] = str(source_file)
+            loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
             return loaded
 
         restored = MainWindow()
-        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored, "_load_file", sample_decoder(_fake_load_file))
         restored.restore_project_state(loaded_state, str(project_path))
 
         panel = restored._frequency_plot_panel
@@ -3064,9 +3062,10 @@ class TestMainWindowBasic:
     ) -> None:
         dataset = _make_dataset(8831, with_grouping=True)
         monkeypatch.setenv("ASYMMETRY_PERF_LOGGING", "1")
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: dataset)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: dataset))
 
         mainwindow._load_files(["/tmp/run8831.nxs"])
+        assert mainwindow._data_browser.get_dataset(8831) is dataset
 
         log_text = mainwindow._log_panel.to_plain_text()
         assert "PERF load_files_batch:" in log_text
@@ -5623,7 +5622,7 @@ class TestMainWindowBasic:
         incoming = _make_dataset(7002, with_grouping=False)
         mainwindow._data_browser.add_dataset(existing)
 
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
 
         applied_payloads: list[dict] = []
@@ -5660,7 +5659,7 @@ class TestMainWindowBasic:
         )
         mainwindow._data_browser.add_dataset(existing)
 
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
 
         applied_payloads: list[dict] = []
@@ -5712,7 +5711,7 @@ class TestMainWindowBasic:
         mainwindow._data_browser.add_dataset(high_run)
         mainwindow._current_dataset = low_run
 
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
 
         applied_payloads: list[dict] = []
@@ -5738,7 +5737,7 @@ class TestMainWindowBasic:
         """No grouping should be auto-applied when project has no grouping template."""
         incoming = _make_dataset(7101, with_grouping=False)
 
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
 
         call_count = {"n": 0}
@@ -5750,6 +5749,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
         mainwindow._load_files(["/tmp/new_run_no_template.nxs"])
+        assert mainwindow._data_browser.get_dataset(7101) is incoming
 
         assert call_count["n"] == 0
 
@@ -5771,10 +5771,11 @@ class TestMainWindowBasic:
 
         assert 7201 in mainwindow._plot_panel._fit_curves
 
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
 
         mainwindow._load_files(["/tmp/new_run_keeps_fits.nxs"])
+        assert mainwindow._data_browser.get_dataset(7202) is incoming
 
         assert 7201 in mainwindow._plot_panel._fit_curves
         stored_t, stored_y, stored_label = mainwindow._plot_panel._fit_curves[7201]
@@ -5795,7 +5796,7 @@ class TestMainWindowBasic:
         incoming.metadata["comment"] = "NEW"
 
         mainwindow._data_browser.add_dataset(existing)
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
         monkeypatch.setattr(
             QMessageBox,
@@ -5822,7 +5823,7 @@ class TestMainWindowBasic:
         incoming.metadata["comment"] = "NEW"
 
         mainwindow._data_browser.add_dataset(existing)
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
         monkeypatch.setattr(
             QMessageBox,
@@ -5869,7 +5870,7 @@ class TestMainWindowBasic:
             prompt_calls["n"] += 1
             return QMessageBox.StandardButton.YesToAll
 
-        monkeypatch.setattr(mainwindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(_stub_load_file))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
         monkeypatch.setattr(QMessageBox, "question", _stub_question)
 
@@ -5906,7 +5907,7 @@ class TestMainWindowBasic:
             return QMessageBox.StandardButton.No
 
         mainwindow._data_browser.add_dataset(existing)
-        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(lambda _path: incoming))
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
         monkeypatch.setattr(QMessageBox, "question", _stub_question)
 
@@ -6338,7 +6339,7 @@ class TestMainWindowBasic:
             lambda *a, **k: mw_module.QMessageBox.StandardButton.No,
         )
 
-        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored, "_load_file", sample_decoder(_fake_load_file))
         restored.restore_project_state(loaded_state, str(project_path))
 
         restored_combined = [
@@ -6407,7 +6408,7 @@ class TestMainWindowBasic:
             loaded.metadata["source_file"] = path
             return loaded
 
-        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        monkeypatch.setattr(restored, "_load_file", sample_decoder(_fake_load_file))
         restored.restore_project_state(load_project(project_path), str(project_path))
 
         assert restored._data_browser._combined_datasets == {-2: [8433, 8434], -3: [8431, 9999]}
@@ -6643,7 +6644,7 @@ class TestPlotWorkspaceDomainPhase7:
         def _fake_load_file(_path: str) -> MuonDataset:
             return _make_fourier_ready_dataset(8861, with_grouping=True)
 
-        monkeypatch.setattr(mw, "_load_file", _fake_load_file)
+        monkeypatch.setattr(mw, "_load_file", sample_decoder(_fake_load_file))
         mw._load_files(["/tmp/run8861.nxs"])
 
         assert mw._current_dataset is not None
@@ -7840,11 +7841,10 @@ def test_project_restore_retains_conflicting_instrument_override(
 
     def _fake_load_file(_path: str) -> MuonDataset:
         loaded = _flame_dataset(9102, grouping_instrument="FLAME")
-        loaded.run.source_file = str(source_file)
-        loaded.metadata["source_file"] = str(source_file)
+        loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
         return loaded
 
-    monkeypatch.setattr(mainwindow, "_load_file", _fake_load_file)
+    monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(_fake_load_file))
 
     # The project persists a stale (GPS, 8) override AND a (GPS, 8) profile.
     state = {
@@ -7890,11 +7890,10 @@ def _fake_flame_loader(mainwindow: MainWindow, monkeypatch, source_file, run_num
 
     def _fake_load_file(_path: str) -> MuonDataset:
         loaded = _flame_dataset(run_number, grouping_instrument="FLAME")
-        loaded.run.source_file = str(source_file)
-        loaded.metadata["source_file"] = str(source_file)
+        loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
         return loaded
 
-    monkeypatch.setattr(mainwindow, "_load_file", _fake_load_file)
+    monkeypatch.setattr(mainwindow, "_load_file", sample_decoder(_fake_load_file))
 
 
 def _flame_profile_dict(name: str, *, alpha: float) -> dict:
@@ -8207,11 +8206,10 @@ def _restore_with_dataset(
     def _fake_load_file(_path: str) -> MuonDataset:
         loaded = _detector_t0_dataset_for_project(run_number)
         assert loaded.run is not None
-        loaded.run.source_file = str(source_file)
-        loaded.metadata["source_file"] = str(source_file)
+        loaded.run.source_file = loaded.metadata["source_file"] = str(source_file)
         return loaded
 
-    monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(_fake_load_file))
     restored.restore_project_state(state, str(project_path))
     return restored
 
@@ -8325,7 +8323,7 @@ def test_manual_good_window_survives_a_project_save_and_reopen(
     save_project(mainwindow.collect_project_state(), str(path))
 
     restored = MainWindow()
-    monkeypatch.setattr(restored, "_load_file", lambda _path: _dataset())
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(lambda _path: _dataset()))
     restored.restore_project_state(load_project(str(path)), str(path))
 
     assert restored._grouping_profiles[0].good_window_policy == GoodWindowPolicy(

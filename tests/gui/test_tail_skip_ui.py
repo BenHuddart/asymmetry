@@ -8,6 +8,7 @@ from asymmetry.core.transform.preparation import histogram_observation
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests._qt_helpers import wait_for
+from tests.gui.source_replay import sample_decoder
 from tests.gui.test_grouping_preview_pane import _histogram_dataset
 
 pytestmark = pytest.mark.gui
@@ -83,7 +84,7 @@ def test_tail_skip_project_restore_retains_request_and_outcome(qapp, tmp_path, m
         fresh = _histogram_dataset()
         fresh.run.source_file = str(source)
         fresh.metadata["source_file"] = str(source)
-        monkeypatch.setattr(restored, "_load_file", lambda _: fresh)
+        monkeypatch.setattr(restored, "_load_file", sample_decoder(lambda _: fresh))
         restored.restore_project_state(load_project(project), str(project))
         assert fresh.run.grouping["background_mode"] == "tail_fit"
         assert correction_warnings(fresh.metadata)

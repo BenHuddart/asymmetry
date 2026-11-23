@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core import computation
+from asymmetry.core.data.acquisition import SourceOwner
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
@@ -146,6 +147,7 @@ from asymmetry.core.io.periods import (
     selected_period_index,
 )
 from asymmetry.core.io.reference_selection import refresh_reference_timing_requests
+from asymmetry.core.io.run_preparation import ReplayState
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -189,6 +191,7 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
     resolve_run_good_window,
 )
+from asymmetry.core.project.sources import sample_load_request
 from asymmetry.core.representation import (
     FitSeries,
     FitSlot,
@@ -3754,16 +3757,10 @@ class MainWindow(QMainWindow):
         batch = getattr(self._data_browser, "batch_updates", None)
         return batch() if callable(batch) else nullcontext()
 
-    def _load_paths_with_progress(self, paths: list[str]) -> dict[str, object]:
-        """Read data files on a worker thread behind a cancellable progress dialog.
-
-        Returns ``{path: LoadResult | Exception}`` in *paths* order; on cancel
-        the mapping simply stops at the last completed file (already-loaded
-        results are kept). A nested event loop keeps this method synchronous
-        for its callers while the GUI stays painted and the Cancel button live.
-        File I/O is the only thing that runs off-thread — all dataset
-        bookkeeping stays with the caller on the GUI thread.
-        """
+    def _load_paths_with_progress(
+        self, paths: list[tuple[SourceOwner | None, str, ReplayState | None]]
+    ) -> dict[tuple, object]:
+        """Decode owner-bound file purposes on a cancellable worker; retain partial results."""
         global _bulk_load_owner
 
         if not paths:
@@ -3790,18 +3787,19 @@ class MainWindow(QMainWindow):
         dialog.setAutoReset(False)
 
         def task(worker, paths=tuple(paths)):
-            results: dict[str, object] = {}
+            results: dict[tuple, object] = {}
             total = len(paths)
-            for index, path in enumerate(paths):
+            for index, request in enumerate(paths):
+                _, path, replay = request
                 if worker.is_cancelled():
                     # Return the partial results instead of raising: files
                     # already read should still reach the browser.
                     break
                 worker.progress.emit(index, total, Path(path).name)
                 try:
-                    results[path] = self._load_file(path)
+                    results[request] = self._load_file(path, replay=replay)
                 except Exception as exc:
-                    results[path] = exc
+                    results[request] = exc
             return results
 
         loop = QEventLoop()
@@ -3990,14 +3988,16 @@ class MainWindow(QMainWindow):
 
         # File I/O runs on a worker thread; everything below stays on the
         # GUI thread (dialog prompts, grouping, browser/plot updates).
-        loaded_by_path = self._load_paths_with_progress(paths_to_load)
+        requests = [(None, path, None) for path in paths_to_load]
+        loaded_by_path = self._load_paths_with_progress(requests)
 
         with self._browser_batch():
-            for path in paths_to_load:
-                if path not in loaded_by_path:
+            for request in requests:
+                _, path, _ = request
+                if request not in loaded_by_path:
                     break  # load was cancelled before reaching this file
 
-                loaded = loaded_by_path[path]
+                loaded = loaded_by_path[request]
                 if isinstance(loaded, Exception):
                     self._log_panel.log(f"ERROR loading {path}: {loaded}")
                     failed += 1
@@ -4259,23 +4259,18 @@ class MainWindow(QMainWindow):
                     return PreparedGrouping(payload, choice)
         return None
 
-    def _load_file(self, path: str):
+    def _load_file(self, path: str, *, replay: ReplayState | None = None):
         started_at = time.perf_counter()
         from asymmetry.core.io import load
 
-        dataset = load(path)
-        metrics_target: MuonDataset | list[MuonDataset] | None
-        if dataset is None:
-            metrics_target = None
-        elif isinstance(dataset, list):
-            metrics_target = dataset
-        else:
-            metrics_target = dataset
+        dataset = load(
+            path, replay=replay, period=replay.period_number if replay is not None else None
+        )
         self._log_perf_event(
             "load_file",
             started_at,
             file=Path(path).name,
-            **self._perf_dataset_metrics(metrics_target),
+            **self._perf_dataset_metrics(dataset),
         )
         return dataset
 
@@ -5108,12 +5103,6 @@ class MainWindow(QMainWindow):
     def _restore_grouping_request(self, dataset, entry: dict, prepared) -> None:
         """Restore an owned request without replacing a pending assignment or identity."""
         number = int(dataset.run_number)
-        if dataset.run is not None:
-            dataset.run = restore_instrument_state(
-                dataset.run,
-                prepared.instrument_choices.get(number),
-                prepared.source_assessments.get(number),
-            )
         requested_grouping = entry.get("grouping_overrides")
         if not isinstance(requested_grouping, dict):
             requested_grouping = None
@@ -5257,7 +5246,7 @@ class MainWindow(QMainWindow):
         if context.requires_choice:
             raise InvalidGroupingError(str(InstrumentConflictError(context)), grouping_result)
         self._reduction_cache.invalidate_run(run)
-        existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        existing_grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
 
         groups_raw = grouping_result.get("groups", {})
         if not isinstance(groups_raw, dict):
@@ -5481,6 +5470,7 @@ class MainWindow(QMainWindow):
                 run.grouping["grouping_preset"] = str(preset_name)
             else:
                 run.grouping.pop("grouping_preset", None)
+            run.grouping.pop("grouping_provenance", None)
             run.grouping = merge_grouping_request(existing_grouping, grouping_result) | run.grouping
             self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
             dataset.metadata.pop("correction_error", None)
@@ -16617,27 +16607,25 @@ class MainWindow(QMainWindow):
         loaded_run_numbers: set[int] = set()
         datasets_info = state.get("datasets", [])
         self._grouping_profiles = prepared.profiles
-        resolved_paths = application.dataset_paths()
-
-        # ── load source files ──────────────────────────────────────────
-        # Prefetch unique sources on the worker; cached failures keep per-run warnings.
-        unique_paths: list[str] = []
-        for ds_info in datasets_info:
-            resolved = resolved_paths.get(ds_info.get("run_number"))
-            if resolved and resolved not in unique_paths:
-                unique_paths.append(resolved)
-        prefetched = application.checked_samples(self._load_paths_with_progress(unique_paths))
-        if len(prefetched) < len(unique_paths):
-            # Mark the session incomplete so a later save hard-confirms rather
-            # than silently writing a project file missing the unloaded runs.
+        requests_by_run = {
+            fact.source.run_number: sample_load_request(prepared, fact)
+            for index, fact in enumerate(application.verification)
+            if fact.source.owner.active
+            and fact.source.role == "sample"
+            and application.available(index)
+        }
+        requests = list(requests_by_run.values())
+        prefetched = application.checked_samples(self._load_paths_with_progress(requests))
+        if len(prefetched) < len(requests):
             self._project_load_incomplete = True
             self._log_panel.log(
                 "WARNING: project loading was cancelled before all data files were "
-                f"read ({len(prefetched)} of {len(unique_paths)}). The project is "
+                f"read ({len(prefetched)} of {len(requests)}). The project is "
                 "PARTIALLY loaded — saving it now would drop the missing runs."
             )
-        loaded_file_cache: dict[str, object] = {
-            path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
+        loaded_file_cache = {
+            request: prefetched.get(request, RuntimeError("file load cancelled"))
+            for request in requests
         }
         # Resolve persisted timing policies against acquired run facts.
         runs_by_number: dict[int, Run] = {}
@@ -16659,17 +16647,14 @@ class MainWindow(QMainWindow):
                     self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
                     return
 
-                resolved = resolved_paths.get(rn)
-                if not resolved:
+                request = requests_by_run.get(rn)
+                if request is None:
                     self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
                     return
 
+                resolved = request[1]
                 try:
-                    if resolved in loaded_file_cache:
-                        loaded_obj = loaded_file_cache[resolved]
-                    else:
-                        loaded_obj = self._load_file(resolved)
-                        loaded_file_cache[resolved] = loaded_obj
+                    loaded_obj = loaded_file_cache[request]
                     if isinstance(loaded_obj, Exception):
                         raise loaded_obj
 
@@ -16687,9 +16672,6 @@ class MainWindow(QMainWindow):
                                 break
                         except (TypeError, ValueError):
                             continue
-                    if dataset is None and len(candidates) == 1:
-                        dataset = candidates[0]
-
                     if dataset is None:
                         overrides = ds_info.get("grouping_overrides")
                         persisted_mapping = (
@@ -16779,6 +16761,12 @@ class MainWindow(QMainWindow):
                         )
                     ):
                         combined = self._data_browser.get_dataset(restored_id)
+                        if combined.run is not None:
+                            combined.run = restore_instrument_state(
+                                combined.run,
+                                prepared.instrument_choices.get(restored_id),
+                                prepared.source_assessments.get(restored_id),
+                            )
                         self._restore_grouping_request(combined, combined_info, prepared)
                 else:
                     self._restore_unavailable_combination(

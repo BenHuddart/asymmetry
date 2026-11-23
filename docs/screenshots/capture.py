@@ -362,6 +362,7 @@ def _import_scenarios() -> None:
         maxent_ybco,
         muon_fluorine_pbf2,
         muonium_lf_component_info,
+        musr_single_group,
         musr_transverse_layout,
         new_user_function_dialog,
         nonuniform_binning,

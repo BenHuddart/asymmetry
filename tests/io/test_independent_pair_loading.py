@@ -28,6 +28,8 @@ def test_raw_loading_survives_unavailable_default_pair(tmp_path, monkeypatch, lo
             timing = handle["raw_data_1/instrument/detector_1/time_zero"][...][:1]
             del handle["raw_data_1/instrument/detector_1/time_zero"]
             handle["raw_data_1/instrument/detector_1/time_zero"] = timing
+            del handle["raw_data_1/instrument/detector_1/grouping"]
+            handle["raw_data_1/instrument/detector_1/grouping"] = [7]
         dataset = NexusLoader().load(str(path))
     elif loader_kind == "root":
         path = tmp_path / "single.root"
@@ -45,8 +47,13 @@ def test_raw_loading_survives_unavailable_default_pair(tmp_path, monkeypatch, lo
     assert dataset.run.histograms
     assert np.sum(dataset.run.histograms[0].counts) > 0
     assert dataset.asymmetry.size == 0
-    assert "shared acquired channels" in dataset.metadata["correction_error"]
     grouping = dataset.run.grouping
+    if loader_kind == "nexus":
+        assert grouping["groups"] == {7: [1]}
+        assert "forward_group" not in grouping and "backward_group" not in grouping
+        assert "not defined" in dataset.metadata["correction_error"]
+        return
+    assert "shared acquired channels" in dataset.metadata["correction_error"]
     assert (
         grouping["groups"][grouping["forward_group"]]
         == grouping["groups"][grouping["backward_group"]]

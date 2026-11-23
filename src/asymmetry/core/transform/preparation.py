@@ -17,6 +17,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
 from asymmetry.core.instruments.resolution import InstrumentConflictError, resolve_instrument
+from asymmetry.core.instruments.source import capture_source_authority
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
@@ -207,6 +208,7 @@ def histogram_observation(
                         cancel_check()
                     digest.update(data[first : first + 1024 * 1024])
     source = deepcopy(replace(run, grouping=grouping), memo)
+    capture_source_authority(source)
     resolved_reference = deepcopy(reference, memo)
     # The small identity payload includes every setting and clock, but no counts.
     light_grouping = {
@@ -221,6 +223,7 @@ def histogram_observation(
             (
                 computation.without_revision(light_grouping),
                 count_metadata_identity(source.metadata),
+                source.source_assessment,
                 facility,
                 [
                     [

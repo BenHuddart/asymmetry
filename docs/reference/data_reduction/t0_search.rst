@@ -49,9 +49,14 @@ an API strategy. Valid file timing remains usable when an advisory search fails.
 Source and feature conventions
 ------------------------------
 
-Known source metadata selects the existing continuous or pulsed strategy.
-NeXus ``definition=pulsedTD`` supplies an explicit pulsed-source fact. Missing
-or ambiguous source facts remain unknown. A filename does not select a strategy.
+The effective source classification selects the existing continuous or pulsed
+strategy. NeXus ``definition=pulsedTD`` supplies an explicit pulsed-source fact.
+For fresh data with no source evidence, an unambiguous instrument's documented
+source may supply the classification, retaining its profile key and revision.
+Unsupported hints, contradictory evidence, unverified conventions and a captured
+unknown stay unknown. Saved replay retains its captured classification; an omitted
+legacy capture uses raw source hints without new profile defaults. Instrument
+recognition alone does not replace usable file anchors or a Manual offset.
 The API ``find_t0_for_run(..., pulsed=False)`` explicitly selects the continuous
 strategy; ``pulsed=True`` selects pulsed search and takes precedence over metadata.
 ``resolve_selected_timing`` accepts the same explicit argument when resolving a

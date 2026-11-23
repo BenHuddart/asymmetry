@@ -246,6 +246,12 @@ variance through the estimator's linearised influence. The fitted rate is report
 uncertainty, e.g. 0.23(11) counts/μs, and flagged when it is consistent
 with zero.
 
+The established automatic-range RF adjustment remains separate from source
+classification: instrument-only GPS keeps period zero, explicit PSI/``psi_format``
+hints retain 0.01975 μs, and TRIUMF retains 0.04337 μs. An explicit API
+``facility=""`` opts out. A profile source classification does not enable an
+additional RF adjustment or alter explicit intervals or pulse-response requests.
+
 This mode is useful for pulsed-source data analysed to long times. Persistent
 polarisation or another departure from the exponential-plus-flat model can
 change the estimated level even when the numerical optimum is well determined.
@@ -423,6 +429,9 @@ available, the saved request is replayed against the selected acquisition.
 **Manual** and **Auto-detect** requests cannot silently become **From file**.
 Edit timing on the reference's own row before selecting it with **Choose run…**;
 no second timing editor is required.
+
+Selecting a new live reference captures its effective source, including a
+documented fresh-load profile default or an explicitly captured unknown.
 
 The request also captures the reference's pulsed, continuous, or explicitly
 unknown source classification and its provenance. Saving, ordinary refresh, and

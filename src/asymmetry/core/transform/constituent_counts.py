@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.instruments.source import source_for_run
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
     CorrectionStatus,
@@ -22,6 +23,7 @@ from asymmetry.core.transform.t0 import (
     effective_t0_sources,
     resolve_selected_timing,
     selected_t0_reference,
+    timing_requires_source,
 )
 
 if TYPE_CHECKING:
@@ -295,7 +297,7 @@ def resolve_constituent_counts(histograms, grouping, pair, metadata=None, *, can
             resolve_selected_timing(
                 original.histograms,
                 effective,
-                original.metadata,
+                reference_observation_metadata(original),
                 mode=policy["mode"],
                 offset_bins=policy.get("offset_bins", 0),
                 selected_indices=sorted(sum(pair, ())),
@@ -502,6 +504,11 @@ def constituent_metadata(grouping: dict, *, active_only: bool = False) -> dict:
                 "deadtime_file_us": file_deadtime_table(run.grouping),
                 "t0_source": run.grouping.get("t0_source"),
                 "detector_t0_sources": run.grouping.get("detector_t0_sources"),
+                **(
+                    {"source_assessment": source_for_run(run).to_dict()}
+                    if timing_requires_source(grouping_for_acquisition(run, grouping))
+                    else {}
+                ),
             }
             for number, run in enumerate(grouping["period_inputs"], 1)
             if number in active

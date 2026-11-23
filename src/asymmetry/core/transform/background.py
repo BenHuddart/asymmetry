@@ -24,10 +24,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import brentq
 
-from asymmetry.core.instruments.resolution import (
-    RecordedInstrumentChoice,
-    UnresolvedInstrumentIdentity,
-)
+from asymmetry.core.instruments.source import beam_period_us
+from asymmetry.core.instruments.source import resolve_facility as resolve_facility
 from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
 from asymmetry.core.transform.counting_noise import combine_noise
 from asymmetry.core.transform.fb_counts import (
@@ -37,13 +35,6 @@ from asymmetry.core.transform.fb_counts import (
     validated_count_arrays,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
-
-_BEAM_PERIOD_US = {
-    "psi": 0.01975,
-    "triumf": 0.04337,
-    "ral": 0.0,
-    "isis": 0.0,
-}
 
 BACKGROUND_MODES = ("none", "fixed", "range", "tail_fit", "reference_run")
 
@@ -104,38 +95,6 @@ class TailFitResult:
             owned = np.array(array, copy=True)
             owned.setflags(write=False)
             object.__setattr__(self, name, owned)
-
-
-def resolve_facility(
-    *,
-    metadata: dict[str, Any] | None = None,
-    grouping: dict[str, Any] | None = None,
-    instrument_choice: RecordedInstrumentChoice | None = None,
-) -> str:
-    """Resolve the established RF-period hint with explicit metadata precedence.
-
-    A retained opaque identity supplies the last-resort label when raw hints are
-    absent. A canonical instrument's facility does not select a new RF period.
-    Explicit intervals and a caller's explicit empty facility remain unchanged.
-    """
-    metadata = metadata if isinstance(metadata, dict) else {}
-    grouping = grouping if isinstance(grouping, dict) else {}
-    facility = str(metadata.get("facility", "") or "").strip()
-    if facility:
-        return facility
-    if metadata.get("psi_format"):
-        return "PSI"
-    instrument = str(metadata.get("instrument", "") or "").strip()
-    if instrument:
-        return instrument
-    legacy = str(grouping.get("instrument", "") or "").strip()
-    if legacy:
-        return legacy
-    if instrument_choice is not None and isinstance(
-        instrument_choice.selection, UnresolvedInstrumentIdentity
-    ):
-        return instrument_choice.selection.label
-    return str(metadata.get("background_facility", "") or "").strip()
 
 
 def supports_background_correction(
@@ -374,7 +333,7 @@ def apply_grouped_background_correction(
         Facility label. Only automatic PSI/TRIUMF ``range`` defaults are shortened to
         the accelerator-period convention inspired by musrfit. The default
         ``None`` means *derive it* from ``metadata``/``grouping`` via
-        :func:`resolve_facility`. Pass ``""`` to opt out
+        ``resolve_facility``. Pass ``""`` to opt out
         explicitly (no facility, no trimming); any non-empty string overrides.
     metadata
         Run metadata, used only to resolve ``facility`` when it is not given.
@@ -782,14 +741,9 @@ def resolve_background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[Bi
 def _adjust_range_for_beam_period(
     value: BinWindow, *, bin_width_us: float, facility: str
 ) -> BinWindow:
-    period = _beam_period_us(facility)
+    period = beam_period_us(facility)
     if bin_width_us <= 0.0 or period <= 0.0:
         return value
     periods = int((value.last - value.first) * bin_width_us / period)
     bins = int(periods * period / bin_width_us)
     return value if bins == 0 else BinWindow(value.first, value.first + bins)
-
-
-def _beam_period_us(facility: str) -> float:
-    label = facility.lower()
-    return next((period for name, period in _BEAM_PERIOD_US.items() if name in label), 0.0)

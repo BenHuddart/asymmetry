@@ -116,8 +116,9 @@ def test_decode_race_never_stamps_new_bytes_on_old_counts(tmp_path, monkeypatch)
     path = acquisition(tmp_path)
     original = NexusLoader._reduce_handle
 
-    def racing_decode(self, handle, source_file):
-        result = original(self, handle, source_file)
+    def racing_decode(self, handle, source_file, *, replay):
+        assert replay is None
+        result = original(self, handle, source_file, replay=replay)
         status = path.stat()
         with path.open("r+b") as stream:
             stream.seek(-1, 2)

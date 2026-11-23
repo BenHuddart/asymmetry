@@ -75,7 +75,7 @@ def workflow(qapp, tmp_path, monkeypatch):
         InstrumentSelection("psi.gps", "bin_combined", "1", "legacy"), ()
     )
 
-    def load_source(path):
+    def load_source(path, *, replay=None):
         metadata = {
             "run_number": 17,
             "facility": "PSI",
@@ -89,6 +89,9 @@ def workflow(qapp, tmp_path, monkeypatch):
             metadata=deepcopy(metadata),
             grouping={"groups": {1: [1], 2: [2]}, "first_good_bin": 0, "last_good_bin": 7},
         )
+        from asymmetry.core.io.run_preparation import prepare_loaded_run
+
+        run = prepare_loaded_run(run, replay)
         return MuonDataset(
             np.arange(8) * 0.01, np.zeros(8), np.full(8, 0.01), metadata=metadata, run=run
         )
@@ -310,7 +313,7 @@ def test_combined_identity_source_and_released_request_survive_save_and_replay(
     window, state, profile, request, tmp_path = workflow
     original_loader = window._load_file
 
-    def load_constituent(path):
+    def load_constituent(path, *, replay=None):
         dataset = original_loader(path)
         number = 18 if Path(path).name == "second-flame.bin" else 17
         dataset.run.run_number = number
@@ -321,6 +324,11 @@ def test_combined_identity_source_and_released_request_survive_save_and_replay(
             dataset.run, InstrumentSelection("psi.flame", "eight_channel", "1", "metadata")
         )
         dataset.run.source_assessment = SourceAssessment(False, "known", "metadata")
+        if replay is not None:
+            from asymmetry.core.io.run_preparation import prepare_loaded_run
+
+            assert replay.run_number == number
+            dataset.run = prepare_loaded_run(dataset.run, replay)
         return dataset
 
     monkeypatch.setattr(window, "_load_file", load_constituent)

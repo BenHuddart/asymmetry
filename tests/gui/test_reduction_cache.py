@@ -701,7 +701,7 @@ def test_final_reference_auto_search_runs_on_worker_and_reuses_bound_cache(mainw
     refresh_reference_timing_requests(datasets)
     first = mainwindow._resolve_background_reference(sample.grouping)
     assert first.timing.source.pulsed is False
-    assert first.timing.source.origin == "legacy:metadata"
+    assert first.timing.source.origin == "metadata"
     second = mainwindow._resolve_background_reference(sample.grouping)
     assert len(scans) == 1
     assert first.resolved_timing.bins == second.resolved_timing.bins == (6, 6)
@@ -987,5 +987,5 @@ def test_live_reference_resolution_does_not_edit_submitted_observation(mainwindo
     assert dataset.histogram_observation.identity == identity
     assert result.histogram_observation.reference.timing.request() == {
         "t0_policy": {"mode": "manual", "offset_bins": 4},
-        "source": {"pulsed": None, "reason": "absent", "origin": "legacy:metadata"},
+        "source": {"pulsed": None, "reason": "absent", "origin": "metadata"},
     }

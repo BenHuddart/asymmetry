@@ -53,24 +53,25 @@ def _write_str(group: Any, name: str, value: str) -> None:
     group.create_dataset(name, data=np.bytes_(str(value).encode("utf-8")))
 
 
-def _detector_group_ids(grouping: dict, n_detectors: int) -> np.ndarray:
+def _detector_group_ids(grouping: dict, n_detectors: int) -> np.ndarray | None:
     """Per-detector group-id array with forward → 1 and backward → 2."""
     groups = grouping.get("groups")
     ids = np.zeros(n_detectors, dtype=np.int32)
-    if not isinstance(groups, dict) or not groups:
-        # No grouping recorded: loader falls back to a half/half split.
-        return ids
+    if groups is None or groups == {}:
+        return None
+    if not isinstance(groups, dict):
+        raise ValueError("NeXus grouping must be a dictionary of detector groups")
 
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     ordered: list[int] = []
     for key in groups:
-        try:
-            gid = int(key)
-        except (TypeError, ValueError):
-            continue
-        if gid not in ordered:
-            ordered.append(gid)
+        if type(key) not in (int, str) or (isinstance(key, str) and not key.isdecimal()):
+            raise ValueError("NeXus grouping IDs must be positive integers")
+        gid = int(key)
+        if gid < 1 or gid in ordered:
+            raise ValueError("NeXus grouping IDs must be distinct positive integers")
+        ordered.append(gid)
 
     id_map: dict[int, int] = {}
     if forward_gid in ordered:
@@ -85,8 +86,9 @@ def _detector_group_ids(grouping: dict, n_detectors: int) -> np.ndarray:
 
     for gid, mapped in id_map.items():
         for det in resolve_group_indices(groups, gid, n_histograms=n_detectors):
-            if ids[det] == 0:
-                ids[det] = mapped
+            if ids[det] != 0:
+                raise ValueError("A NeXus detector cannot belong to multiple file groups")
+            ids[det] = mapped
     return ids
 
 
@@ -224,7 +226,8 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
         h_data.create_dataset("resolution", data=bin_width * 1e6).attrs["units"] = np.bytes_(
             "picoseconds"
         )
-        h_data.create_dataset("grouping", data=detector_groups)
+        if detector_groups is not None:
+            h_data.create_dataset("grouping", data=detector_groups)
         if dead_time.size:
             h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
                 "microseconds"

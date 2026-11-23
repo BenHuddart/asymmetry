@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import math
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -332,4 +333,82 @@ def find_unit_comparison_violations(
             )
     for relative in baseline.keys() - counts.keys():
         failures.append(HarnessFailure(root / relative, 0, "Unit-comparison baseline is stale."))
+    return failures
+
+
+INSTRUMENT_DISPATCH_BASELINE = {
+    "src/asymmetry/core/io/nexus.py": {"str(instrument or '').strip().upper() != 'EMU'": 1},
+    "src/asymmetry/core/io/root.py": {
+        "metadata['instrument'] in {'LEM', 'FLAME'}": 1,
+        "metadata['instrument'] == 'LEM'": 1,
+    },
+    "src/asymmetry/gui/windows/grouping/dialog.py": {
+        "instrument.strip().upper() == 'PSI'": 1,
+        "facility == 'psi'": 1,
+    },
+}
+
+
+def find_instrument_dispatch_violations(
+    root: Path = ROOT, *, baseline: dict | None = None
+) -> list[HarnessFailure]:
+    """Freeze runtime instrument-name dispatch outside profiles and versioned migrations."""
+    baseline = INSTRUMENT_DISPATCH_BASELINE if baseline is None else baseline
+    profiles = root / "src/asymmetry/core/instruments"
+    names = {
+        literal.value.casefold()
+        for path in profiles.glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"Identity", "Recognition"}
+        for argument in (*node.args, *(keyword.value for keyword in node.keywords))
+        for literal in ast.walk(argument)
+        if isinstance(literal, ast.Constant)
+        and isinstance(literal.value, str)
+        and any(character.isalpha() for character in literal.value)
+    }
+    failures, found = [], set()
+    for path in sorted((root / "src/asymmetry").rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        if path.is_relative_to(profiles) or relative in {
+            "src/asymmetry/core/project/instrument_migration.py",
+            "src/asymmetry/core/project/schema.py",
+        }:
+            continue
+        found.add(relative)
+        comparisons = [
+            node
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Compare)
+            and any(
+                key in ast.unparse(node).casefold()
+                for key in ("instrument", "facility", "beamline", "profile_key", "layout_key")
+            )
+            and any(
+                isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and value.value.casefold() in names
+                for operand in (node.left, *node.comparators)
+                for value in (
+                    operand.elts
+                    if isinstance(operand, (ast.Tuple, ast.List, ast.Set))
+                    else [operand]
+                )
+            )
+        ]
+        counts = Counter(ast.unparse(node) for node in comparisons)
+        allowed = Counter(baseline.get(relative, {}))
+        if counts != allowed:
+            failures.append(
+                HarnessFailure(
+                    path,
+                    comparisons[0].lineno if comparisons else 0,
+                    "Instrument-name dispatch differs from its frozen expressions; use core/instruments and lower the baseline when comparisons are removed.",
+                )
+            )
+    for relative in baseline.keys() - found:
+        failures.append(
+            HarnessFailure(root / relative, 0, "Instrument-dispatch baseline is stale.")
+        )
     return failures

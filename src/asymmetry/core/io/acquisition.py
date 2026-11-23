@@ -19,7 +19,9 @@ def capture_acquisition(decode):
     """
 
     @wraps(decode)
-    def load(self, filepath, *, checkpoint=lambda: None, progress=lambda done, total: None):
+    def load(
+        self, filepath, *, checkpoint=lambda: None, progress=lambda done, total: None, replay=None
+    ):
         path = Path(filepath)
         checkpoint()
         try:
@@ -30,7 +32,7 @@ def capture_acquisition(decode):
             identity = ContentIdentity.read(path, checkpoint=checkpoint, progress=progress)
         except ContentReadError:
             identity = None
-        result = decode(self, filepath)
+        result = decode(self, filepath, **({"replay": replay} if replay is not None else {}))
         checkpoint()
         if identity is not None:
             try:

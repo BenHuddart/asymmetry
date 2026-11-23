@@ -13,6 +13,7 @@ from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.data_browser import _BADGE_ROLE
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests._qt_helpers import wait_for
+from tests.gui.source_replay import sample_decoder
 from tests.gui.test_grouping_preview_pane import _facts, _histogram_dataset
 from tests.gui.test_mainwindow_additional import _make_two_period_vector_dataset
 
@@ -121,7 +122,7 @@ def test_missing_reference_restore_keeps_request_and_badge(qapp, tmp_path, monke
     state = window.collect_project_state()
     fresh = deepcopy(dataset)
     restored = MainWindow()
-    monkeypatch.setattr(restored, "_load_file", lambda _: fresh)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(lambda _: fresh))
     restored.restore_project_state(state, str(tmp_path / "project.asymp"))
     assert fresh.run.grouping["background_run"] == {"run_number": 99}
     assert "reference" in fresh.metadata["correction_error"]
@@ -316,7 +317,7 @@ def test_released_project_zero_override_cannot_supply_absent_file_table(
     save_project(state, project)
     fresh = load(path)
     restored = MainWindow()
-    monkeypatch.setattr(restored, "_load_file", lambda _: fresh)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(lambda _: fresh))
     restored.restore_project_state(load_project(project), str(project))
     assert fresh.run.grouping["deadtime_file_us"] == []
     assert "correction_error" not in fresh.metadata

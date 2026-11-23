@@ -3,6 +3,7 @@
 from dataclasses import replace
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.instruments.defaults import retained_grouping_provenance
 from asymmetry.core.instruments.resolution import RecordedInstrumentChoice, resolve_instrument
 from asymmetry.core.instruments.source import assess_source, source_for_run
 from asymmetry.core.project.profiles import _PER_RUN_FACT_KEYS, grouping_request_payload
@@ -65,4 +66,8 @@ def merge_grouping_request(current: dict, requested: dict) -> dict:
     for key in _PER_RUN_FACT_KEYS:
         if key in current:
             incoming.pop(key, None)
-    return dict(current) | incoming
+    merged = dict(current) | incoming
+    if "grouping_provenance" not in incoming:
+        merged.pop("grouping_provenance", None)
+        merged.update(retained_grouping_provenance(merged, current))
+    return merged

@@ -22,7 +22,7 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
 from asymmetry.core.io.periods import held_period_count, period_run
 from asymmetry.core.transform.constituent_counts import constituent_metadata, held_period_grids
-from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
 from asymmetry.core.transform.counting_noise import COUNTING_NOISE_POLICY
 from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY, BinningSpec
@@ -174,7 +174,7 @@ def reduce_selected_projections(
             resolve_selected_timing(
                 source.histograms,
                 selected_grouping,
-                source.metadata,
+                reference_observation_metadata(source),
                 mode=policy["mode"],
                 cancel_check=cancel_check,
                 offset_bins=policy.get("offset_bins", 0),

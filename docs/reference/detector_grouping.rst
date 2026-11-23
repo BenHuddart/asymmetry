@@ -44,7 +44,8 @@ and an exact preset name. Instrument recognition and histogram-count variant
 resolution select the layout; preset membership and detector labels are checked
 against the acquired run. Unknown instruments or preset names, missing channels,
 and groups emptied by exclusions raise errors. Exclusions cannot hide a missing
-required channel. No preset is chosen automatically.
+required channel. Explicit application uses the named preset. The fresh-load
+absence-only MuSR default is described below.
 
 The helper returns a new dataset with complete groups, names, the preset pair,
 and projections, reduced through the same profile and histogram owners used by
@@ -1713,6 +1714,27 @@ MuSR
 
 The :doc:`MuSR definition <instruments/isis_musr>` records forward histograms
 33–64 and backward histograms 1–32 for the ``Longitudinal`` preset.
+For fresh NeXus data with an absent grouping table, unambiguous MuSR identity,
+a compatible 64-channel map and explicitly longitudinal detector orientation,
+these memberships are selected automatically. Their profile origin and revision
+travel with the effective reduction recipe while the memberships and selected
+legs remain unchanged. Applied-field state alone is insufficient. File tables,
+saved/custom groups, and present single-group tables retain their authority.
+
+A valid single-group declaration, such as group 7 containing all 64 detectors,
+loads as raw acquisition with an unavailable independent F/B preview. Open
+**Grouping**, choose **Longitudinal** from **Preset** when scientifically suitable,
+and review the groups before **Apply**. In the synthetic example, channels 1–32
+contain 1000 counts/bin and channels 33–64 contain 3000 counts/bin. The repaired
+preset gives +50% asymmetry, with the same raw counts and file-good bounds.
+
+.. figure:: /_generated/screenshots/musr_single_group.png
+   :width: 100%
+   :alt: Grouping retains an authored single group and shows an unavailable
+         independent F/B preview, with explicit preset repair available.
+
+   A declared single group remains editable without inventing a second group.
+
 ``Transverse (Vector)`` retains both manual detector pairs. Instrument rotation
 and applied-field orientation remain facts of the run, rather than consequences
 of its instrument name.
