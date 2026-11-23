@@ -26,6 +26,7 @@ from asymmetry.core.data.combine import (
 )
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import derive_projection_pairs
+from asymmetry.core.instruments.source import capture_source_authority
 from asymmetry.core.io import load
 from asymmetry.core.io.periods import (
     RED_INDEX,
@@ -461,6 +462,7 @@ def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
     their contributing raw samples plus active estimators. Authored merging does
     not request spectral analysis; sampling checks belong to spectral operations.
     """
+    capture_source_authority(run)
     if settings.period == GREEN_MINUS_RED and period_count(run) != 2:
         raise ValueError(
             f"Run {run.run_number} is not a two-period (red/green) run; there is no green − red difference."

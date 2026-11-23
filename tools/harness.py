@@ -238,7 +238,6 @@ SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
 
 
-# Import-by-path callers and the CLI share the same stdlib-only rule modules.
 def _load_rule_module(name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
     assert spec is not None and spec.loader is not None
@@ -250,8 +249,7 @@ def _load_rule_module(name: str):
 
 _numeric_checks = _load_rule_module("harness_checks")
 _owned_probes = _load_rule_module("owned_probes")
-_retired_docs = _load_rule_module("harness_retired_docs")
-find_retired_doc_violations = _retired_docs.find_retired_doc_violations
+find_retired_doc_violations = _load_rule_module("harness_retired_docs").find_retired_doc_violations
 _maintenance = _load_rule_module("harness_maintenance")
 find_maintenance_violations = _maintenance.find_maintenance_violations
 HarnessFailure = _numeric_checks.HarnessFailure
@@ -976,6 +974,7 @@ def run_structural_checks(
         *find_count_boundary_violations(),
         *find_binning_payload_violations(),
         *find_unit_comparison_violations(),
+        *_numeric_checks.find_instrument_dispatch_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),

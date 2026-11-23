@@ -16,6 +16,7 @@ import numpy as np
 from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.instruments.resolution import UnresolvedInstrumentIdentity
+from asymmetry.core.instruments.source import source_for_run
 from asymmetry.core.transform.reference_scale import ResolvedReferenceScale
 from asymmetry.core.transform.reference_timing import (
     ReferenceTiming,
@@ -312,6 +313,7 @@ def reference_observation_metadata(run: Run) -> dict[str, Any]:
     """Carry canonical Run identity even when optional acquisition metadata is empty."""
     return dict(
         run.metadata,
+        source_assessment=source_for_run(run),
         source_file=run.source_file,
         run_number=run.run_number,
         **(

@@ -53,6 +53,7 @@ def test_empty_window_retains_selected_alignment_and_exact_origin(tmp_path, exac
     assert quick.common_t0 == 14
     assert quick.alignment.first_bin == 3
     assert quick.file_grouping["t0_bin"] == 14
+    assert (quick.file_grouping["first_good_bin"], quick.file_grouping["last_good_bin"]) == (20, 17)
     if exact:
         assert quick.t0_time_us == pytest.approx(0.287, abs=1e-15)
     else:

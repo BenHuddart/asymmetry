@@ -3,6 +3,7 @@
 from asymmetry.core.instruments.geometry import Circular, Occurrence, View, Wedge
 from asymmetry.core.instruments.layout import TRANSVERSE_PROJECTION_TINTS, AsymmetryProjection
 from asymmetry.core.instruments.schema import (
+    AbsentGroupingDefault,
     Acquisition,
     Channel,
     ChannelGroup,
@@ -27,7 +28,7 @@ BACKWARD = tuple(f"c{number}" for number in range(1, 33))
 FORWARD = tuple(f"c{number}" for number in range(33, 65))
 
 PROFILE = InstrumentProfile(
-    identity=Identity("isis.musr", "ISIS", "MuSR", "1", "MuSR", "MuSR"),
+    identity=Identity("isis.musr", "ISIS", "MuSR", "2", "MuSR", "MuSR"),
     source=Source(
         "pulsed", "Second source bunch routed toward MuSR; no pulse-response default is inferred."
     ),
@@ -122,7 +123,9 @@ PROFILE = InstrumentProfile(
         ),
     ),
     quirks=(),
-    defaults=Defaults(),
+    defaults=Defaults(
+        absent_file_grouping=AbsentGroupingDefault("nexus64", "Longitudinal", "Longitudinal")
+    ),
     sources=Sources(
         references=(
             Reference(
@@ -201,14 +204,16 @@ PROFILE = InstrumentProfile(
             Evidence(
                 "quirks",
                 EvidenceStatus.UNVERIFIED,
-                "No instrument-specific file quirk is declared; absent-file-group handling is a separate loader contract.",
+                "No instrument-specific file-format quirk is declared.",
             ),
             Evidence(
                 "defaults",
                 EvidenceStatus.AUTHORED,
-                "Longitudinal is the first preset; no automatic preset or source-based analysis default is applied on load. File-defined groups retain their existing loader behavior.",
+                "Absent-table eligibility is an Asymmetry policy: only fresh, unconfigured nexus64 acquisitions with explicit longitudinal detector orientation use the existing Longitudinal preset. Its forward/backward membership follows the manual. Present file tables and recorded scientific requests retain precedence.",
+                "musr-guide",
+                "Section 2.6.1, p.12",
             ),
         ),
     ),
-    review=Review("1", "Profile definition and schematic."),
+    review=Review("2", "Profile definition and schematic."),
 )

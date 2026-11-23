@@ -41,7 +41,11 @@ def run(args: argparse.Namespace) -> None:
     # The names `--pair` takes, and the pair the file reduces on by default.
     groups = group_names(run_result.run)
     grouping = run_result.run.grouping
-    pair = (int(grouping["forward_group"]), int(grouping["backward_group"]))
+    pair = (
+        (int(grouping["forward_group"]), int(grouping["backward_group"]))
+        if "forward_group" in grouping and "backward_group" in grouping
+        else None
+    )
     units = unit_report(run_result) if args.units else None
     if args.units and not args.json:
         if units:
@@ -59,7 +63,11 @@ def run(args: argparse.Namespace) -> None:
         print(
             "  Groups      : "
             + ", ".join(f"{gid} {name}" for gid, name in groups.items())
-            + f"  (default pair {groups[pair[0]]}/{groups[pair[1]]})"
+            + (
+                f"  (default pair {groups[pair[0]]}/{groups[pair[1]]})"
+                if pair is not None
+                else "  (independent pair unavailable)"
+            )
         )
         return
 
@@ -69,7 +77,7 @@ def run(args: argparse.Namespace) -> None:
             run_number=int(run_result.run_number),
             n_points=int(run_result.n_points),
             groups={str(gid): name for gid, name in groups.items()},
-            default_pair=list(pair),
+            default_pair=list(pair) if pair is not None else None,
             metadata=_metadata(run_result.metadata),
             summary=run_result.summary(),
             **({"units": [record.to_dict() for record in units]} if units is not None else {}),

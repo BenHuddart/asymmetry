@@ -13,9 +13,11 @@ from asymmetry.core.io.periods import (
     acquired_period_histograms,
     held_period_histograms,
     histogram_grouping_facts,
+    period_acquisition_owner,
     select_period_grouping,
     selected_period_index,
 )
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.grouping import InvalidGroupingError, common_t0_for_groups
 from asymmetry.core.transform.t0 import (
     RunT0Search,
@@ -24,7 +26,6 @@ from asymmetry.core.transform.t0 import (
     find_t0_for_run,
     resolve_selected_timing,
     selected_t0_diagnostics,
-    source_is_pulsed,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import check_task_cancelled
@@ -47,9 +48,13 @@ class TimingControls:
                 else run
             )
         histograms = held_period_histograms(run.histograms, run.grouping, index)
+        owner = period_acquisition_owner(run, index)
         return replace(
             run,
             histograms=histograms,
+            instrument_choice=owner.instrument_choice,
+            source_assessment=owner.source_assessment,
+            source_binding=owner.source_binding,
             metadata=dict(
                 run.metadata,
                 raw_period_histograms_available=acquired_period_histograms(run.grouping, index)
@@ -90,7 +95,11 @@ class TimingControls:
         run = self._t0_preview_run()
         grouping = self._t0_assessment_grouping()
         resolve_selected_timing(
-            run.histograms, grouping, run.metadata, mode="auto_detect", search=search
+            run.histograms,
+            grouping,
+            reference_observation_metadata(run),
+            mode="auto_detect",
+            search=search,
         )
         return int(grouping["t0_bin"])
 
@@ -116,10 +125,12 @@ class TimingControls:
             resolve_selected_timing(
                 run.histograms,
                 grouping,
-                run.metadata,
+                reference_observation_metadata(run),
                 search_provider=partial(
                     self._cached_t0_search,
-                    acquisition_key=self._raw_timing_key(run.histograms, run.metadata),
+                    acquisition_key=self._raw_timing_key(
+                        run.histograms, reference_observation_metadata(run)
+                    ),
                 ),
             )
         except ValueError:
@@ -163,7 +174,7 @@ class TimingControls:
         """Acquired arrays are unchanged by editing; source facts and anchors may change."""
         return (
             id(self._run),
-            source_is_pulsed(metadata),
+            metadata["source_assessment"],
             metadata.get("raw_period_histograms_available", True),
             tuple((id(hist.counts), hist.t0_bin, hist.bin_width) for hist in histograms),
         )
@@ -171,7 +182,7 @@ class TimingControls:
     def _t0_cache_key(self, period_mode: str | None = None) -> tuple:
         """Cache identity of the selected acquired period and strategy facts."""
         run = self._t0_preview_run(period_mode)
-        return self._raw_timing_key(run.histograms, run.metadata)
+        return self._raw_timing_key(run.histograms, reference_observation_metadata(run))
 
     def _schedule_t0_detection(self) -> None:
         """Queue the preview run's detection unless it is cached or in flight."""
@@ -200,7 +211,7 @@ class TimingControls:
             return
         run = self._t0_preview_run(pending[0])
         self._t0_detection_key = self._t0_cache_key(pending[0])
-        histograms, metadata = list(run.histograms), dict(run.metadata)
+        histograms, metadata = list(run.histograms), reference_observation_metadata(run)
         policy, displayed_t0 = self._current_t0_policy(), self._t0_spin.value()
         self._tasks.start(
             lambda worker: find_t0_for_run(

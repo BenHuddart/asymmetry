@@ -4,10 +4,20 @@ import numpy as np
 import pytest
 
 from asymmetry.core.io import load_background_run, resolve_background_reference, select_period
+from asymmetry.core.io.run_preparation import ReplayState
 from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from tests.io.test_background_reference_resolution import _dataset, _run
 from tests.io.test_period_selection import _combined_two_period
+
+
+def mock_reference_decoder(monkeypatch, result, expected_replay, *, path="synthetic.nxs"):
+    def decode(filepath, *, replay):
+        assert filepath == path
+        assert replay == expected_replay
+        return result
+
+    monkeypatch.setattr("asymmetry.core.io.load", decode)
 
 
 def test_declared_source_wins_over_run_number_collision():
@@ -43,7 +53,7 @@ def test_disk_and_loaded_selected_period_agree(monkeypatch, identity_mapping):
         for facts in (combined.run.grouping, combined.run.metadata):
             facts["period_mapping"] = {"1": "red", "2": "green"}
     green = select_period(combined, 2)
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345, period_number=2))
     payload = {"source_file": combined.run.source_file, "run_number": 12345, "period_number": 2}
     disk = resolve_background_reference(payload, sample_exposure=ReferenceExposure(40, "user"))
     live = resolve_background_reference(
@@ -57,8 +67,11 @@ def test_disk_and_loaded_selected_period_agree(monkeypatch, identity_mapping):
 
 
 def test_disk_wrong_acquisition_is_rejected(monkeypatch):
-    monkeypatch.setattr(
-        "asymmetry.core.io.load", lambda _: _dataset(_run(8, good_frames=1, level=4))
+    mock_reference_decoder(
+        monkeypatch,
+        _dataset(_run(8, good_frames=1, level=4)),
+        ReplayState(run_number=7),
+        path="ref.nxs",
     )
     with pytest.raises(ValueError, match="acquisition"):
         load_background_run({"source_file": "ref.nxs", "run_number": 7})
@@ -96,7 +109,7 @@ def test_released_project_encoded_reference_is_recovered_from_source_facts(monke
     }
     migrated = migrate_to_current(old)
     payload = migrated["datasets"][0]["grouping_overrides"]["background_run"]
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345002))
     actual = resolve_background_reference(payload)
     assert actual.period_number == 2
     assert payload == {
@@ -117,7 +130,7 @@ def test_distinct_acquired_periods_in_one_source_are_eligible(monkeypatch):
     combined = _combined_two_period()
     sample = select_period(combined, 1).run
     sample.metadata["source_file"] = sample.source_file
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345, period_number=2))
     reference = resolve_background_reference(
         {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
     )
@@ -195,7 +208,7 @@ def test_historical_reference_shapes_round_trip(number, period, shape, tmp_path,
     else:
         request = reopened["grouping_profiles"][0]["background_policy"]["details"]["background_run"]
     combined = _combined_two_period()
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=number))
     result = resolve_background_reference(request, sample_exposure=ReferenceExposure(40, "user"))
     assert (result.run_number, result.period_number) == (12345, period)
     assert result.deadtime_normaliser == (10 if period == 1 else 20)
@@ -215,11 +228,14 @@ def test_legacy_key_is_not_divided_without_acquisition_evidence(monkeypatch):
     )["background_run"]
     actual = _run(12345002, good_frames=100, level=7)
     actual.source_file = "synthetic.nxs"
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: _dataset(actual))
+    mock_reference_decoder(monkeypatch, _dataset(actual), ReplayState(run_number=12345002))
     selected = resolve_background_reference(legacy)
     assert selected.run_number == 12345002
     assert selected.period_number == 1
     actual.run_number = 99
+    mock_reference_decoder(
+        monkeypatch, _dataset(actual), ReplayState(run_number=12345002, period_number=1)
+    )
     with pytest.raises(ValueError, match="cannot be established|unavailable"):
         resolve_background_reference(legacy)
 
@@ -228,7 +244,7 @@ def test_same_source_same_period_from_disk_is_rejected(monkeypatch):
     combined = _combined_two_period()
     sample = select_period(combined, 2).run
     sample.metadata["source_file"] = sample.source_file
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345, period_number=2))
     reference = resolve_background_reference(
         {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
     )
@@ -271,7 +287,7 @@ def test_parent_view_cannot_hide_a_different_acquisition_collision():
 def test_live_selected_period_overrides_parent_view_and_cached_disk(monkeypatch):
     combined = _combined_two_period()
     payload = {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345, period_number=2))
     cache = {}
     resolve_background_reference(payload, cache=cache)
     green = select_period(combined, 2)
@@ -348,7 +364,7 @@ def test_released_identity_mapping_keeps_acquired_reference_available(monkeypatc
         "background_run": {"run_number": 12345002, "source_file": "synthetic.nxs"},
     }
     request = migrate_to_current(state)["background_run"]
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: combined)
+    mock_reference_decoder(monkeypatch, combined, ReplayState(run_number=12345002))
     reference = resolve_background_reference(request)
     assert reference.period_number == 2
 
@@ -426,7 +442,7 @@ def test_mapped_match_cannot_hide_another_acquisition_collision(same_source, rev
 
 def test_wrapped_combined_file_reference_selects_the_acquired_period(monkeypatch):
     combined = _combined_two_period()
-    monkeypatch.setattr("asymmetry.core.io.load", lambda _: [combined])
+    mock_reference_decoder(monkeypatch, [combined], ReplayState(run_number=12345, period_number=2))
     result = load_background_run(
         {"source_file": "synthetic.nxs", "run_number": 12345, "period_number": 2}
     )

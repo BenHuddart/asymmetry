@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.gui.source_replay import sample_method
+
 pytestmark = [pytest.mark.gui]
 
 from asymmetry.core.instruments.resolution import choice_for_layout
@@ -1920,11 +1922,11 @@ class TestMainWindowProjectState:
         loaded_state = load_project(path)
 
         # Restore-side window: load fresh dataset from file and restore state.
-        def _stub_load_file(self_inner, path_str: str):
-            assert path_str == str(source_file)
-            return _make_groupable_dataset()
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_load_file",
+            sample_method(lambda path: _make_groupable_dataset(), expected_path=source_file),
+        )
         window2 = mw_module.MainWindow()
         if not getattr(window2._plot_panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
@@ -2017,7 +2019,7 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(
             mw_module.MainWindow,
             "_load_file",
-            lambda self_inner, path_str: _loaded(runs_by_file[path_str]),
+            sample_method(lambda path_str: _loaded(runs_by_file[path_str])),
         )
         window2 = mw_module.MainWindow()
         window2.restore_project_state(loaded_state, str(path))
@@ -2097,10 +2099,9 @@ class TestMainWindowProjectState:
         loaded_state = load_project(path)
 
         # The reloaded file yields the per-period siblings, not the combined run.
-        def _stub_load_file(self_inner, path_str: str):
-            return _periods()
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow, "_load_file", sample_method(lambda path_str: _periods())
+        )
         window2 = mw_module.MainWindow()
         if not getattr(window2._plot_panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
@@ -2193,11 +2194,11 @@ class TestMainWindowProjectState:
         save_project(state, path)
         loaded_state = load_project(path)
 
-        def _stub_load_file(self_inner, path_str: str):
-            assert path_str == str(source_file)
-            return _make_nexus_dataset()
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_load_file",
+            sample_method(lambda path: _make_nexus_dataset(), expected_path=source_file),
+        )
         window2 = mw_module.MainWindow()
         window2.restore_project_state(loaded_state, str(path))
 
@@ -2295,11 +2296,11 @@ class TestMainWindowProjectState:
                 run=run,
             )
 
-        def _stub_load_file(self_inner, path_str: str):
-            assert path_str == str(source_file)
-            return _make_vector_dataset()
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_load_file",
+            sample_method(lambda path: _make_vector_dataset(), expected_path=source_file),
+        )
 
         window = mw_module.MainWindow()
         if not getattr(window._plot_panel, "_has_mpl", False):
@@ -2583,11 +2584,11 @@ class TestMainWindowProjectState:
         ds1 = _make_dataset(51001)
         ds2 = _make_dataset(51002)
 
-        def _stub_load_file(self_inner, path):
+        def _stub_load_file(path):
             assert path == str(file_path)
             return [ds1, ds2]
 
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", sample_method(_stub_load_file))
 
         window = mw_module.MainWindow()
         state = _minimal_state()
@@ -2628,7 +2629,7 @@ class TestMainWindowProjectState:
             "deadtime_correction": False,
         }
 
-        def _stub_load_file(self_inner, path):
+        def _stub_load_file(path):
             assert path == str(file_path)
             return _make_dataset(42)
 
@@ -2638,7 +2639,7 @@ class TestMainWindowProjectState:
             applied_payloads.append(payload)
             return True, False
 
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", sample_method(_stub_load_file))
         monkeypatch.setattr(
             mw_module.MainWindow,
             "_apply_grouping_settings_to_dataset",
@@ -2677,11 +2678,11 @@ class TestMainWindowProjectState:
         file_path = tmp_path / "run43.nxs"
         file_path.write_bytes(b"\x00")
 
-        def _stub_load_file(self_inner, path):
+        def _stub_load_file(path):
             assert path == str(file_path)
             return _make_dataset(43)
 
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", sample_method(_stub_load_file))
 
         window = mw_module.MainWindow()
         state = _minimal_state()
@@ -2777,11 +2778,7 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(QFileDialog, "exec", lambda dialog: QFileDialog.DialogCode.Accepted)
         loaded_paths: list[str] = []
 
-        def _stub_load_file(self_inner, path):
-            loaded_paths.append(path)
-            return None  # return None so nothing is added to the browser
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", sample_method(loaded_paths.append))
 
         window = mw_module.MainWindow()
         state = _minimal_state()
@@ -2832,11 +2829,7 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(QFileDialog, "exec", lambda dialog: QFileDialog.DialogCode.Accepted)
         loaded_paths: list[str] = []
 
-        def _stub_load_file(self_inner, path):
-            loaded_paths.append(path)
-            return None
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", sample_method(loaded_paths.append))
 
         window = mw_module.MainWindow()
         state = _minimal_state()
@@ -3134,10 +3127,11 @@ class TestRestoreChunkedProgress:
 
         runs_by_path = {str(path): rn for rn, path in source_files.items()}
 
-        def _stub_load_file(self_inner, path_str: str):
-            return _make_run(runs_by_path[path_str])
-
-        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_load_file",
+            sample_method(lambda path_str: _make_run(runs_by_path[path_str])),
+        )
         return mw_module, state
 
     def test_restore_runs_items_in_order_through_progress_runner(

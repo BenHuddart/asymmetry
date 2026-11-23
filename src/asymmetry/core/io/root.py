@@ -30,6 +30,8 @@ from asymmetry.core.io.root_header import (
     read_directory_header,
     read_lem_header,
 )
+from asymmetry.core.io.run_preparation import ReplayState, prepare_loaded_run
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.core.utils.perf import perf_timer
@@ -62,7 +64,7 @@ class RootLoader(BaseLoader):
     format_name = "MusrRoot / LEM ROOT (.root)"
 
     @capture_acquisition
-    def load(self, filepath: str) -> MuonDataset:
+    def load(self, filepath: str, *, replay: ReplayState | None = None) -> MuonDataset:
         path = Path(filepath)
         try:
             import uproot
@@ -101,6 +103,7 @@ class RootLoader(BaseLoader):
                 quantities,
                 slow_control_logs,
                 run_summary,
+                replay=replay,
             )
             perf.detail(detectors=len(root_histograms), bins=dataset.n_points)
             return dataset
@@ -514,6 +517,8 @@ class RootLoader(BaseLoader):
         quantities: dict[str, tuple[float, UnitDeclaration | None]],
         slow_control_logs: _RootSlowControlLogs | None = None,
         run_summary: str | None = None,
+        *,
+        replay=None,
     ) -> MuonDataset:
         bin_width_us = quantities["Time Resolution"][0]
         if not np.isfinite(bin_width_us) or bin_width_us <= 0:
@@ -577,39 +582,12 @@ class RootLoader(BaseLoader):
             slow_control_logs,
             run_summary,
         )
-        quick = quick_asymmetry(
-            histograms,
-            {
-                "groups": groups,
-                "forward_group": forward_gid,
-                "backward_group": backward_gid,
-                "detector_t0_sources": t0_sources,
-            },
-            metadata=metadata,
-        )
-        common_t0 = quick.common_t0
-        alpha = 1.0
-        first_good, last_good = first_good_bins[0], last_good_bins[0]
-        if quick.window is not None:
-            first_good = quick.window.first + quick.alignment.first_bin
-            last_good = quick.window.last + quick.alignment.first_bin
-        window = quick.window.slice if quick.window is not None else slice(0, 0)
-        time_axis, asymmetry, error = (
-            a[window] for a in (quick.time, quick.asymmetry, quick.error)
-        )
-
-        metadata.update(quick.metadata)
         grouping = {
             "groups": groups,
             "group_names": group_names,
             "forward_group": forward_gid,
             "backward_group": backward_gid,
-            "alpha": alpha,
-            **quick.file_grouping,
-            "t0_bin": int(common_t0),
-            "t_good_offset": int(first_good) - int(common_t0),
-            "first_good_bin": int(first_good),
-            "last_good_bin": int(last_good),
+            "alpha": 1.0,
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
@@ -631,6 +609,26 @@ class RootLoader(BaseLoader):
             metadata=metadata,
             grouping=grouping,
             source_file=str(path),
+        )
+        run = prepare_loaded_run(run, replay)
+        quick = quick_asymmetry(histograms, grouping, metadata=reference_observation_metadata(run))
+        common_t0 = quick.common_t0
+        first_good, last_good = first_good_bins[0], last_good_bins[0]
+        if quick.window is not None:
+            first_good = quick.window.first + quick.alignment.first_bin
+            last_good = quick.window.last + quick.alignment.first_bin
+        window = quick.window.slice if quick.window is not None else slice(0, 0)
+        time_axis, asymmetry, error = (
+            a[window] for a in (quick.time, quick.asymmetry, quick.error)
+        )
+
+        metadata.update(quick.metadata)
+        grouping.update(
+            quick.file_grouping,
+            t0_bin=int(common_t0),
+            first_good_bin=int(first_good),
+            last_good_bin=int(last_good),
+            t_good_offset=int(first_good) - int(common_t0),
         )
         from asymmetry.core.transform.preparation import histogram_observation
 

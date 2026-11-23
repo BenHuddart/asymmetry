@@ -8,6 +8,7 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.instruments.source import assess_source, source_for_run
 from asymmetry.core.io.periods import (
     acquired_period_histograms,
+    period_acquisition_owner,
     reference_mapping_requires_replay,
     select_period_grouping,
     selected_period_index,
@@ -94,12 +95,16 @@ def select_reference_run(run: Run, payload: dict, *, advisory: bool = False) -> 
         # Reference resolution reads acquired counts; it never reduces a preview
         # or copies detector arrays on the GUI thread.
         grouping = select_period_grouping(run.grouping, period - 1)
+        owner = period_acquisition_owner(run, period - 1)
         for key in ("period_histograms", "period_reduced", "period_mode", "period_inputs"):
             grouping.pop(key, None)
         return replace(
             run,
             histograms=histograms,
             grouping=grouping,
+            instrument_choice=owner.instrument_choice,
+            source_assessment=owner.source_assessment,
+            source_binding=owner.source_binding,
             metadata=dict(run.metadata, source_run_number=source_run_of(run), period_number=period),
         )
     if period != run.metadata.get("period_number", 1):
@@ -179,10 +184,11 @@ def refresh_reference_timing_requests(
         selected = resolve_loaded_reference(runs, payload, advisory=True)
         if selected is not None:
             edited = resolve_loaded_reference(changed_sources, payload, advisory=True) is not None
+            fresh = edited or "timing" not in payload
             payload["timing"] = reference_timing_request(
                 selected.grouping,
-                source_for_run(selected) if edited else assess_source(selected.metadata),
-                previous=None if edited else payload.get("timing") or {},
+                source_for_run(selected) if fresh else assess_source(selected.metadata),
+                previous=None if fresh else payload.get("timing") or {},
             )
             if edited:
                 dependants.add(id(payload))

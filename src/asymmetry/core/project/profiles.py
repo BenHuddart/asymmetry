@@ -84,6 +84,7 @@ from numbers import Integral
 from typing import Any
 
 from asymmetry.core.data.dataset import Run
+from asymmetry.core.instruments.defaults import retained_grouping_provenance
 from asymmetry.core.instruments.recognition import ACQUIRED_LABEL_KEYS
 from asymmetry.core.instruments.resolution import (
     InstrumentConflictError,
@@ -102,6 +103,7 @@ from asymmetry.core.project.calibration import (
     resolved_calibration_payload,
     restore_profile_calibrations,
 )
+from asymmetry.core.transform import corrections
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.deadtime import deadtime_request_mode, file_deadtime_table
 from asymmetry.core.transform.fb_counts import AlignmentCrop
@@ -132,8 +134,7 @@ from asymmetry.core.utils.perf import perf_timer
 #: Alpha policy modes.
 ALPHA_POLICY_MODES = ("fixed", "calibrated", "per_run_estimate")
 
-#: Beta policy modes — no ``per_run_estimate`` (not meaningful for β in v1;
-#: it is an instrument/detector-pair property, not a per-run quantity).
+#: Beta calibration belongs to its detector pair.
 BETA_POLICY_MODES = ("fixed", "calibrated")
 
 #: Deadtime policy modes (mirror the grouping dialog's deadtime modes).
@@ -763,7 +764,6 @@ class GroupingProfile:
     # Periods ----------------------------------------------------------------
     period_mode: str | None = None
 
-    # Free structure keys (grouping_preset, vector_axis, per-axis alphas) -----
     extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -1148,7 +1148,6 @@ def resolve_effective_grouping(
 
         grouping: dict[str, Any] = {
             "groups": {int(gid): list(dets) for gid, dets in profile.groups.items()},
-            # Fixed alpha remains visible if membership prevents policy resolution.
             "alpha": profile.alpha_policy.value,
             "group_names": {int(gid): str(name) for gid, name in profile.group_names.items()},
             "forward_group": int(profile.forward_group),
@@ -1256,6 +1255,7 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
     for key in _PER_RUN_FACT_KEYS:
         if key in run_grouping:
             grouping[key] = run_grouping[key]
+    grouping.update(retained_grouping_provenance(grouping, run_grouping))
     grouping["deadtime_file_us"] = list(file_deadtime_table(run_grouping))
     if "t0_bin" not in grouping and run.histograms:
         grouping["t0_bin"] = int(run.histograms[0].t0_bin)
@@ -1431,7 +1431,7 @@ def _apply_t0_policy(
     resolve_selected_timing(
         run.histograms,
         grouping,
-        run.metadata,
+        corrections.reference_observation_metadata(run),
         mode=policy.mode,
         offset_bins=policy.offset_bins or 0,
         search_provider=timing_search or find_t0_for_run,
@@ -1525,8 +1525,6 @@ def _estimate_run_alpha(
     reference_resolver: ReferenceResolver | None = None,
 ) -> float:
     """Estimate native-window alpha from corrected contributing-period counts."""
-    from asymmetry.core.transform.corrections import reference_observation_metadata
-
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
@@ -1542,7 +1540,7 @@ def _estimate_run_alpha(
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        metadata=reference_observation_metadata(run),
+        metadata=corrections.reference_observation_metadata(run),
         reference_resolver=reference_resolver,
     )
     from asymmetry.core.transform.reduce import estimate_prepared_alpha

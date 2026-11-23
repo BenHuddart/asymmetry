@@ -19,6 +19,7 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from tests.core.test_workflow_reduction import _continuous_run
+from tests.gui.source_replay import sample_decoder
 
 pytestmark = pytest.mark.gui
 
@@ -273,7 +274,7 @@ def test_project_load_resave_preserves_snapshot_until_explicit_reduction(
     path = tmp_path / "owned.asymp"
     save_project(window.collect_project_state(), path)
     restored = MainWindow()
-    monkeypatch.setattr(restored, "_load_file", load_owned)
+    monkeypatch.setattr(restored, "_load_file", sample_decoder(load_owned))
     restored.restore_project_state(load_project(path), str(path))
     current = restored._data_browser.get_dataset(7)
     assert current.computation_revision == computation.COMPUTATION_REVISION

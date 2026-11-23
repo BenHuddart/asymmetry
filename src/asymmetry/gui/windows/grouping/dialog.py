@@ -1,14 +1,4 @@
-"""Shared grouping profile editor with alpha estimation and live preview.
-
-The dialog edits the grouping profile for an instrument (and per-run overrides
-for released runs) and applies the changes across the active project's
-datasets.
-
-This module holds the :class:`GroupingDialog` shell. The alpha-estimate display
-helpers live in :mod:`asymmetry.gui.windows.grouping.format`; the module-level
-``_format_value_with_uncertainty``/``_ALPHA_METHOD_ITEMS`` names alias that
-module so the historical module API is unchanged after the package split.
-"""
+"""Shared grouping profile editor with calibration, timing and live preview."""
 
 from __future__ import annotations
 
@@ -106,6 +96,7 @@ from asymmetry.core.transform import (
     resolve_facility,
     resolve_selected_timing,
 )
+from asymmetry.core.transform.corrections import reference_observation_metadata
 from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import InvalidGroupingError, independent_pair_indices
 from asymmetry.core.transform.reference_scale import ReferenceExposure
@@ -1667,7 +1658,7 @@ class GroupingDialog(TimingControls, QDialog):
             index = selected_period_index(self._run.grouping, seed_profile.period_mode)
             if index is not None:
                 raw = held_period_histograms(raw, self._run.grouping, index)
-            key = self._raw_timing_key(raw, self._run.metadata)
+            key = self._raw_timing_key(raw, reference_observation_metadata(self._run))
             try:
                 payload = payload_from_profile_for_preview(
                     seed_profile,
@@ -2588,8 +2579,7 @@ class GroupingDialog(TimingControls, QDialog):
             "groups": {
                 gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
             },
-            "forward_group": int(self._forward_combo.currentData() or 1),
-            "backward_group": int(self._backward_combo.currentData() or 2),
+            **self._selected_pair_payload(),
         } | self._exclusion_payload()
         for key in (
             "detector_t0_bins",
@@ -2607,7 +2597,7 @@ class GroupingDialog(TimingControls, QDialog):
             resolve_selected_timing(
                 run.histograms,
                 grouping,
-                run.metadata,
+                reference_observation_metadata(run),
                 mode=self._current_t0_mode(),
                 offset_bins=int(self._t0_spin.value())
                 - self._bin_index_base()
@@ -2624,8 +2614,13 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _file_good_window_for_preview_run(self) -> tuple[int, int]:
         """Map the selected period file limits through current effective timing."""
+        run = self._t0_preview_run()
+        if len(self._selected_pair_payload()) < 2:
+            return run.grouping.get("first_good_bin", 0), run.grouping.get(
+                "last_good_bin", run.histograms[0].n_bins - 1
+            )
         return run_file_good_window(
-            self._t0_preview_run(),
+            run,
             self._good_window_grouping(),
             common_t0_bin=self._effective_t0_for_preview_run(),
         )
@@ -3864,6 +3859,8 @@ class GroupingDialog(TimingControls, QDialog):
             return
         try:
             payload = self._current_grouping_payload()
+            if not {"forward_group", "backward_group"} <= payload.keys():
+                raise ValueError("Select two independent groups or choose an appropriate preset.")
             profile = profile_from_form_payload(
                 payload,
                 name=self._draft_name,
@@ -4274,19 +4271,7 @@ class GroupingDialog(TimingControls, QDialog):
 
     @staticmethod
     def _is_canonical_vector_pairs(pairs: dict[str, tuple[int, int]]) -> bool:
-        """True when the per-axis alpha table (P_x/P_y/P_z rows) can render *pairs*.
-
-        The vector-alpha table and the vector branches of the grouping payload
-        are hardcoded to the canonical EMU axes. A transverse-field dual-grouping
-        preset declares non-canonical projections (e.g. ``Top-Bottom`` /
-        ``Fwd-Back``); those drive the plot chip bar but are handled here with the
-        ordinary single-alpha control, so the canonical table is skipped to avoid
-        empty rows and a stale P_z-spin alpha. The reduction still consumes each
-        projection's own declared alpha (see
-        :meth:`MainWindow._resolve_vector_alpha_values`); the single-alpha control
-        only supplies the base alpha those projections fall back to when they do
-        not declare one of their own.
-        """
+        """Canonical EMU axes use the per-axis table; other projections use scalar controls."""
         return any(axis in pairs for axis in CANONICAL_VECTOR_AXES)
 
     def _update_vector_mode_controls(self, grouping_values: dict[str, Any] | None = None) -> None:
@@ -4576,7 +4561,7 @@ class GroupingDialog(TimingControls, QDialog):
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
         idx = combo.findData(group_id)
-        if idx >= 0:
+        if idx >= 0 or combo.count() < 2:
             combo.setCurrentIndex(idx)
 
     def _set_alpha_method(self, method_key: str) -> None:
@@ -5196,6 +5181,17 @@ class GroupingDialog(TimingControls, QDialog):
                 return key
         return str(PeriodMode.RED)
 
+    def _selected_pair_payload(self) -> dict[str, int]:
+        """Unselected legs stay absent until the user authors a pair."""
+        return {
+            key: int(combo.currentData())
+            for key, combo in (
+                ("forward_group", self._forward_combo),
+                ("backward_group", self._backward_combo),
+            )
+            if combo.currentData() is not None
+        }
+
     def _current_grouping_payload(self) -> dict[str, Any]:
         """Build the current grouping payload from UI controls."""
         forward_gid = int(self._forward_combo.currentData() or 1)
@@ -5243,8 +5239,7 @@ class GroupingDialog(TimingControls, QDialog):
                 "included_groups": self._current_included_groups(),
                 "group_names": dict(self._group_names),
                 "grouping_preset": self._grouping_preset_name,
-                "forward_group": forward_gid,
-                "backward_group": backward_gid,
+                **self._selected_pair_payload(),
                 "forward_indices": list(self._groups.get(forward_gid, [])),
                 "backward_indices": list(self._groups.get(backward_gid, [])),
                 "alpha": alpha_value,

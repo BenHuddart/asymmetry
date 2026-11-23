@@ -8,6 +8,7 @@ import json
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fourier.conditioning import CONDITIONING_REVISION
 from asymmetry.core.fourier.group_preparation import histogram_grid_identity
+from asymmetry.core.instruments.source import source_for_run
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.background import (
     background_range_is_explicit,
@@ -20,7 +21,7 @@ from asymmetry.core.transform.deadtime import file_deadtime_table
 from asymmetry.core.transform.grouping import grouping_balances
 from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BINNING_POLICY, binning_spec
-from asymmetry.core.transform.t0 import detector_t0_overrides
+from asymmetry.core.transform.t0 import detector_t0_overrides, timing_requires_source
 
 
 def _digest_groups(groups: object) -> dict[int, list[int]] | None:
@@ -77,8 +78,16 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         "tail_background_policy": TAIL_BACKGROUND_POLICY_REVISION,
         "binning_policy": BINNING_POLICY,
         "histogram_grid": histogram_grid_identity(run.histograms),
+        **(
+            {"grouping_provenance": grouping["grouping_provenance"]}
+            if "grouping_provenance" in grouping
+            else {}
+        ),
         **run_arithmetic_policy(run.metadata),
     }
+
+    if timing_requires_source(grouping):
+        payload["source_assessment"] = source_for_run(run).to_dict()
 
     if (groups := _digest_groups(grouping.get("groups"))) is not None:
         payload["groups"] = groups

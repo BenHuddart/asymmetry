@@ -29,10 +29,24 @@ filename. Detector count alone does not identify an instrument: an unidentified
 The generated :doc:`HiFi <instruments/isis_hifi>`,
 :doc:`MuSR <instruments/isis_musr>`, and :doc:`EMU <instruments/isis_emu>`
 definitions separate manual memberships from unverified export mappings and
-schematic coordinates. Declared pulsed-source facts do not replace acquired
-timing information or apply analysis defaults.
+schematic coordinates. For a fresh load with genuinely absent source evidence,
+an unambiguous instrument may supply its documented pulsed or continuous source
+classification. Unsupported or contradictory hints and unverified source
+conventions stay unresolved. This source default needs no detector-map assumption;
+usable file timing and explicit timing choices retain precedence. The selected
+value records its profile key and revision without changing raw metadata.
 Stored grouping choices are retained when recognition is inconclusive; see
 :ref:`instruments-without-layout` for manual grouping and layout selection.
+
+NeXus grouping-table absence is distinct from an authored table. Only fresh,
+identified MuSR data with a compatible 64-channel map and explicit longitudinal
+detector orientation receive the documented **Longitudinal** default: forward
+channels 33–64, backward channels 1–32. Applied-field state alone does not establish
+bank orientation. Explicit tables and saved/custom groups retain precedence.
+A valid single-group table retains its raw counts, per-detector timing, good
+windows, exposure and deadtime. Its independent F/B quick look is unavailable;
+choose an appropriate preset or edit groups in **Grouping** to create a valid pair.
+Present empty, short or malformed tables are errors, not missing declarations.
 
 Acquisition shape and alignment
 -------------------------------

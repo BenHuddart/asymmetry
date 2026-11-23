@@ -166,3 +166,12 @@ def test_shared_psi_assumptions_are_summarised_once_with_complete_fact_evidence(
     qualified = replace(GPS, sources=replace(GPS.sources, evidence=evidence))
     summary = profile_rst(qualified, {}).split("Key assumptions\n", 1)[1].split("\nSource\n", 1)[0]
     assert summary.count(acquisition_detail) == 2
+
+
+def test_musr_page_describes_its_conditional_absent_table_default():
+    from asymmetry.core.instruments.isis_musr import PROFILE as MUSR
+
+    text = profile_rst(MUSR, {})
+    assert "absent file grouping table on fresh **nexus64**" in text
+    assert "explicit **Longitudinal** detector orientation" in text
+    assert "Present file tables and saved requests retain precedence" in text

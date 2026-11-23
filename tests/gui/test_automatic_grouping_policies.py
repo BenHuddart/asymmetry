@@ -25,6 +25,7 @@ from asymmetry.core.transform.reference_scale import ReferenceExposure
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping import preview_pane as preview_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+from tests.gui.source_replay import sample_decoder, sample_method
 from tests.gui.test_grouping_dialog import _vector_dataset_with_ratio
 from tests.gui.test_grouping_preview_pane import _facts, _histogram_dataset, _wait_until
 from tests.project.test_automatic_grouping_policies import automatic_profile, policy_run
@@ -113,12 +114,7 @@ def test_failed_t0_policy_save_reopen_and_file_timing_recovery(
     profile.t0_policy = T0Policy(mode=mode)
     window = MainWindow()
     window._grouping_profiles = [profile]
-    monkeypatch.setattr(
-        type(window),
-        "_load_paths_with_progress",
-        lambda self, paths: {str(source): deepcopy(original)},
-    )
-    monkeypatch.setattr(type(window), "_load_file", lambda self, path: deepcopy(original))
+    monkeypatch.setattr(type(window), "_load_file", sample_method(lambda path: deepcopy(original)))
     window._load_files([str(source)])
     project = tmp_path / "timing.asymp"
     save_project(window.collect_project_state(), project)
@@ -218,9 +214,7 @@ def test_fresh_inheritance_resolves_its_loaded_reference(qapp, monkeypatch, tmp_
     window._grouping_profiles = [profile]
     source = tmp_path / "sample.nxs"
     source.touch()
-    monkeypatch.setattr(
-        type(window), "_load_paths_with_progress", lambda self, paths: {str(source): sample}
-    )
+    monkeypatch.setattr(window, "_load_file", sample_decoder(lambda path: sample))
     window._load_files([str(source)])
     assert "correction_error" not in sample.metadata
     assert sample.run.grouping["alpha"] == pytest.approx(30 / 55)
@@ -426,10 +420,7 @@ def test_failed_inherited_policy_keeps_raw_data_and_profile_on_save_reopen(
     profile.fingerprint = profile_fingerprint_for_run(dataset.run)
     window = MainWindow()
     window._grouping_profiles = [profile]
-    monkeypatch.setattr(
-        type(window), "_load_paths_with_progress", lambda self, paths: {str(source): dataset}
-    )
-    monkeypatch.setattr(type(window), "_load_file", lambda self, path: dataset)
+    monkeypatch.setattr(type(window), "_load_file", sample_method(lambda path: dataset))
     window._load_files([str(source)])
     restored = window._data_browser.get_dataset(dataset.run_number)
     assert restored.metadata["correction_error"]

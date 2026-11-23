@@ -187,6 +187,11 @@ def source_reference(metadata: dict | None) -> dict:
         "data_period_number": metadata.get("data_period_number", metadata.get("period_number")),
         "dae_period_number": metadata.get("dae_period_number"),
         "content_identity": metadata.get("content_identity"),
+        **(
+            {"source_assessment": metadata["source_assessment"].to_dict()}
+            if "source_assessment" in metadata
+            else {}
+        ),
     }
 
 
@@ -263,6 +268,11 @@ def preparation_recipe(
             **run_arithmetic_policy(metadata or {}),
             "constituents": members,
             "groups": {"forward": list(observation.pair[0]), "backward": list(observation.pair[1])},
+            **(
+                {"grouping_provenance": grouping["grouping_provenance"]}
+                if "grouping_provenance" in grouping
+                else {}
+            ),
             "excluded_detectors": sorted(grouping.get("excluded_detectors", [])),
             "alignment": layout.alignment.to_dict(),
             "good_window": asdict(layout.window),
