@@ -412,5 +412,26 @@
       "read_only": false,
       "row_label": null
     }
+  ],
+  "readout_sets": [
+    {
+      "key": "individual",
+      "label": "Individual",
+      "detector_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "default_preset": "Longitudinal",
+      "notice": ""
+    }
   ]
 }

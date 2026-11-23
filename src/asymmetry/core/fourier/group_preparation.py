@@ -14,6 +14,8 @@ from asymmetry.core.fourier.group_background import (
     group_background_payload,
 )
 from asymmetry.core.fourier.group_time import group_time_grid, time_range_mask
+from asymmetry.core.instruments.readouts import require_run_readouts
+from asymmetry.core.instruments.resolution import InstrumentContext, resolve_instrument
 from asymmetry.core.transform.background import (
     BackgroundCorrectionResult,
     grouped_background_ranges,
@@ -57,7 +59,11 @@ def histogram_grid_identity(histograms: list[Histogram]) -> tuple:
 
 
 def preparation_identity(
-    run: Run, reference: ScopedCounts | None = None, timing: ReferenceTiming | None = None
+    run: Run,
+    reference: ScopedCounts | None = None,
+    timing: ReferenceTiming | None = None,
+    *,
+    reference_identity: InstrumentContext | None = None,
 ) -> tuple:
     """Bind products to their actual arrays, period and authored reduction settings."""
     from asymmetry.core.io import reference_file_identity
@@ -113,6 +119,11 @@ def preparation_identity(
         )
         if reference is not None
         else None,
+        resolve_instrument(run),
+        tuple(resolve_instrument(source) for _, source, _ in active_acquisitions(run.grouping))
+        if retained
+        else (),
+        reference_identity,
     )
 
 
@@ -141,6 +152,7 @@ class GroupPreparation:
     reference_scale: float | None
     time_range: tuple | None
     backgrounds: dict[int, BackgroundCorrectionResult]
+    reference_identity: InstrumentContext | None = None
 
     def correction_metadata(self) -> dict:
         """Expose actual outcomes for every contributing group, including skips."""
@@ -158,7 +170,13 @@ class GroupPreparation:
             self.reference.require_source()
         if (
             self.time_range != time_range
-            or self.identity != preparation_identity(run, self.reference, self.reference_timing)
+            or self.identity
+            != preparation_identity(
+                run,
+                self.reference,
+                self.reference_timing,
+                reference_identity=self.reference_identity,
+            )
             or group_id not in self.layouts
             or self.use_deadtime != use_deadtime
             or reference_t0_bin is not None
@@ -187,6 +205,10 @@ def prepare_group_counts(
     identity_run = run
     observation = None
     group_ids = list(group_ids)
+    for gid in group_ids:
+        require_run_readouts(
+            run, (effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms)),)
+        )
     if "period_inputs" in run.grouping:
         specs = [
             (gid, effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms)))
@@ -436,6 +458,7 @@ def prepare_group_counts(
             identity_run,
             products[1] if reference is not None else None,
             reference.timing if reference is not None else None,
+            reference_identity=reference.instrument_context if reference is not None else None,
         ),
         apply_deadtime,
         common,
@@ -446,4 +469,5 @@ def prepare_group_counts(
         reference.scale if reference is not None else None,
         time_range,
         backgrounds,
+        reference_identity=reference.instrument_context if reference is not None else None,
     )

@@ -165,8 +165,15 @@ def make_pull_request(
         raise ValueError(
             "Pull Diagnostic requires one uncombined detector acquisition, not period/run arithmetic."
         )
-    pair = independent_pair_indices(grouping, n_histograms=len(template.histograms))
-    layout = resolve_forward_backward_layout(template.histograms, grouping, resolved_indices=pair)
+    from asymmetry.core.transform.corrections import reference_observation_metadata
+
+    metadata = reference_observation_metadata(template)
+    pair = independent_pair_indices(
+        grouping, n_histograms=len(template.histograms), metadata=metadata
+    )
+    layout = resolve_forward_backward_layout(
+        template.histograms, grouping, resolved_indices=pair, metadata=metadata
+    )
     origins = {i: layout.common_t0_bin - offset for i, offset in layout.alignment.detector_offsets}
     matched = total_events is None or background_per_bin is None
     if matched:

@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.data.ratio_validity import RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe, preparation_recipe
+from asymmetry.core.instruments.readouts import require_independent_readouts
 from asymmetry.core.transform.asymmetry import ratio_with_count_errors
 from asymmetry.core.transform.fb_counts import AlignmentCrop, BinWindow, linear_combination_variance
 from asymmetry.core.transform.grouping import (
@@ -110,10 +111,14 @@ def quick_asymmetry(
             resolve_constituent_counts,
         )
 
-        pair = independent_pair_indices(grouping, n_histograms=len(histograms))
+        pair = independent_pair_indices(grouping, n_histograms=len(histograms), metadata=metadata)
         observation = resolve_constituent_counts(
             histograms, grouping, pair, metadata, cancel_check=cancel_check
         )
+        for member in observation.members:
+            require_independent_readouts(
+                len(member.histograms), member.grouping, pair, member.metadata
+            )
         histograms, timing = observation.histograms, dict(observation.grouping)
         timing["good_window_policy"] = {"mode": "from_file"}
         if "effective_detector_t0_bins" not in timing:
@@ -137,7 +142,11 @@ def quick_asymmetry(
             for key, value in timing.items()
             if key not in {"first_good_bin", "last_good_bin", "good_window_policy"}
         }
-        layout = resolve_forward_backward_layout(histograms, file_grouping)
+        layout = resolve_forward_backward_layout(
+            histograms,
+            file_grouping,
+            metadata=metadata if len(observation.members) == 1 else {"instrument_context": None},
+        )
         alignment = observation.acquired_alignment(layout.alignment)
         common_t0 = layout.common_t0_bin + alignment.first_bin
         first, last = good_window_for_groups(

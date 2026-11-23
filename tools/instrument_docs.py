@@ -12,6 +12,7 @@ from asymmetry.core import instruments
 from asymmetry.core.instruments.catalog import PROFILES as BUNDLED_PROFILES
 from asymmetry.core.instruments.isis_emu import PROFILE as EMU
 from asymmetry.core.instruments.numbering import numbering_template
+from asymmetry.core.instruments.readouts import layout_for_readout_set
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import InstrumentProfile
 from asymmetry.gui.utils import detector_drawing
@@ -40,6 +41,20 @@ def _channel_ranges(keys, ordinals):
 
 
 def _review_figure(profile, config, uri):
+    if config.readout_sets:
+        return "".join(
+            f"**{readouts.label}**\n\n"
+            + _readout_figure(
+                profile,
+                config,
+                uri if index == 0 else uri.removesuffix(".svg") + f"-{readouts.key}.svg",
+            )
+            for index, readouts in enumerate(config.readout_sets)
+        )
+    return _readout_figure(profile, config, uri)
+
+
+def _readout_figure(profile, config, uri):
     text = f".. figure:: {uri}\n   :width: 100%\n   :alt: {profile.identity.name} labelled {config.label} schematic\n\n   {config.label}; numbers identify the recorded histograms.\n\n"
     text += f":download:`Full-size labelled diagram (SVG) <{uri}>`\n\n"
     stem = uri.removesuffix(".svg")
@@ -131,6 +146,23 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
         text += f"{heading}\n{'-' * len(heading)}\n\nConfiguration key: ``{config.key}``. Histogram numbers identify the recorded channels; geometry does not redefine them. Shared hardware affiliations do not establish an exact count equation or statistical independence.\n\n"
         layout = layout_from_profile(profile, config.key)
         text += f"Legacy layout key: ``{layout.name}``; displayed instrument: **{layout.display_name or layout.name}**.\n\n"
+        if config.readout_sets:
+            text += _table(
+                ("Readout set", "Acquired channels", "Default preset"),
+                ((r.label, ", ".join(r.channels), r.default_preset) for r in config.readout_sets),
+            )
+            text += "These are alternative analysis selections, not count equations or independent copies of shared events.\n\n"
+        if config.combined_readouts:
+            text += _table(
+                ("Combined channel", "Known constituents"),
+                ((r.channel, ", ".join(r.constituents)) for r in config.combined_readouts),
+            )
+        if config.conditional_contributions:
+            text += _table(
+                ("Conditional contributor", "Possible destinations"),
+                ((r.channel, ", ".join(r.destinations)) for r in config.conditional_contributions),
+            )
+            text += "An unresolved contributor conflicts with either possible combined destination when selected together; no port is inferred.\n\n"
         if config.reference_arrows:
             text += _table(
                 ("Schematic direction cue", "Start", "End"),
@@ -272,6 +304,7 @@ def render_profile_diagram(
     *,
     n_histograms: int | None = None,
     blank: bool = False,
+    readout_set: str | None = None,
 ) -> None:
     """Render the same resolved primitive coordinates as the detector editor."""
     import matplotlib as mpl
@@ -279,6 +312,8 @@ def render_profile_diagram(
     from matplotlib.patches import Circle, Rectangle, Wedge
 
     layout = layout_from_profile(profile, acquisition, n_histograms=n_histograms)
+    if layout.readout_sets:
+        layout = layout_for_readout_set(layout, readout_set or layout.readout_sets[0].key)
     figure = Figure(figsize=(max(6, 5 * len(layout.banks)), 6.5 if layout.auxiliary else 5.3))
     bank_axes, auxiliary_axes = detector_drawing.schematic_axes(figure, layout)
     slots = (
@@ -437,27 +472,33 @@ def generate_profile(
     stem = profile.identity.key.replace(".", "_")
     diagrams = {}
     for config in profile.detectors.acquisitions:
-        name = f"{stem}-{config.key}.svg"
-        render_profile_diagram(profile, config.key, directory / name)
-        render_profile_diagram(
-            profile, config.key, directory / name.replace(".svg", "-numbering.svg"), blank=True
-        )
-        with (directory / name.replace(".svg", "-numbering.csv")).open(
-            "w", newline="", encoding="utf-8"
-        ) as stream:
-            writer = csv.writer(stream)
-            writer.writerow(
-                (
-                    "Slot ID",
-                    "Readout label",
-                    "Histogram ordinal",
-                    "Physical association / detector label(s), if known",
+        for index, readouts in enumerate(config.readout_sets or (None,)):
+            suffix = f"-{readouts.key}" if index else ""
+            name = f"{stem}-{config.key}{suffix}.svg"
+            key = readouts.key if readouts else None
+            slots = numbering_template(profile, config.key)
+            if readouts is not None:
+                slots = tuple(slot for slot in slots if slot.channel in readouts.channels)
+            for blank in (False, True):
+                output = name.replace(".svg", "-numbering.svg") if blank else name
+                render_profile_diagram(
+                    profile, config.key, directory / output, blank=blank, readout_set=key
                 )
-            )
-            writer.writerows(
-                (slot.id, "", "", "") for slot in numbering_template(profile, config.key)
-            )
-        diagrams[config.key] = f"{image_prefix}/{name}" if image_prefix else name
+            with (directory / name.replace(".svg", "-numbering.csv")).open(
+                "w", newline="", encoding="utf-8"
+            ) as stream:
+                writer = csv.writer(stream)
+                writer.writerow(
+                    (
+                        "Slot ID",
+                        "Readout label",
+                        "Histogram ordinal",
+                        "Physical association / detector label(s), if known",
+                    )
+                )
+                writer.writerows((slot.id, "", "", "") for slot in slots)
+            if index == 0:
+                diagrams[config.key] = f"{image_prefix}/{name}" if image_prefix else name
     page = directory / f"{stem}.rst"
     page.write_text(profile_rst(profile, diagrams), encoding="utf-8")
     return page

@@ -28,6 +28,7 @@ from asymmetry.core.instrument import (
     PresetGrouping,
     instrument_display_name,
 )
+from asymmetry.core.instruments.readouts import readout_presets
 from asymmetry.core.project.calibration import (
     CALIBRATION_PAYLOAD_KEYS,
     CalibratedCoefficient,
@@ -176,7 +177,9 @@ def profile_from_form_payload(
     return profile
 
 
-def preset_payload(instrument: InstrumentLayout, preset_name: str) -> dict[str, Any] | None:
+def preset_payload(
+    instrument: InstrumentLayout, preset_name: str, *, readout_set: str | None = None
+) -> dict[str, Any] | None:
     """Return the groups/names/slots/projections a preset assigns, or ``None``.
 
     The returned dict has the payload keys the grouping form consumes when a
@@ -187,6 +190,16 @@ def preset_payload(instrument: InstrumentLayout, preset_name: str) -> dict[str, 
     preset = instrument.presets.get(preset_name)
     if preset is None:
         return None
+    chosen = readout_set
+    if instrument.readout_sets:
+        if chosen is None:
+            chosen = next(
+                r.key
+                for r in instrument.readout_sets
+                if preset_name in readout_presets(instrument, r.key)
+            )
+        if preset_name not in readout_presets(instrument, chosen):
+            raise ValueError("Preset is unavailable for the selected readout set")
     groups: dict[int, list[int]] = {}
     group_names: dict[int, str] = {}
     for gid, gdef in preset.groups.items():
@@ -201,6 +214,7 @@ def preset_payload(instrument: InstrumentLayout, preset_name: str) -> dict[str, 
         "forward_group": int(preset.forward_group),
         "backward_group": int(preset.backward_group),
         "grouping_preset": preset_name,
+        **({"readout_set": chosen} if chosen is not None else {}),
         "instrument": instrument.name,
         "projections": [dict(p.to_payload()) for p in preset.projections],
     }

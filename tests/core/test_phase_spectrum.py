@@ -51,10 +51,13 @@ def _phase_run(monkeypatch, *, count_scale=1.0):
         histograms=[Histogram(counts=np.ones(n), bin_width=dt, t0_bin=0)],
         grouping={"groups": {1: [1], 2: [1]}, "group_names": {1: "F", 2: "B"}},
     )
+    from asymmetry.core.fourier.group_preparation import prepare_group_counts
+
+    prepared = prepare_group_counts(run, [1, 2])
     monkeypatch.setattr(
         spectrum_module,
         "precompute_group_fourier_inputs",
-        lambda run, selected=None, **kwargs: (None, 0),
+        lambda run, selected=None, **kwargs: (prepared, 0),
     )
     monkeypatch.setattr(
         spectrum_module, "build_group_signal_dataset", lambda run, gid, **kwargs: signals[gid]

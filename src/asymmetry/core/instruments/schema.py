@@ -110,6 +110,67 @@ class Channel:
     selectable: bool = True
 
 
+def _readout_members(keys: tuple[str, ...], minimum: int = 1) -> None:
+    if (
+        not isinstance(keys, tuple)
+        or len(keys) < minimum
+        or any(not isinstance(key, str) or not key.strip() for key in keys)
+    ):
+        raise ValueError("Readout relationships require immutable nonempty channel keys")
+    if len(set(keys)) != len(keys):
+        raise ValueError("Readout relationships require distinct channel keys")
+
+
+@dataclass(frozen=True)
+class ReadoutSet:
+    """Allowed acquired channels; the first set is the default for new settings."""
+
+    key: str
+    label: str
+    channels: tuple[str, ...]
+    default_preset: str
+
+    def __post_init__(self):
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in (self.key, self.label, self.default_preset)
+        ):
+            raise ValueError("Readout sets require a key, label and default preset")
+        _readout_members(self.channels)
+
+
+@dataclass(frozen=True)
+class CombinedReadout:
+    """Shared event content, without an exact-bin sum or covariance assertion."""
+
+    channel: str
+    constituents: tuple[str, ...]
+
+    def __post_init__(self):
+        if not isinstance(self.channel, str) or not self.channel.strip():
+            raise ValueError("Combined readouts require a channel key")
+        _readout_members(self.constituents, 2)
+
+
+@dataclass(frozen=True)
+class ConditionalContribution:
+    """One contributor may enter one of the mutually exclusive destinations."""
+
+    channel: str
+    destinations: tuple[str, ...]
+    label: str
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.channel, str)
+            or not self.channel.strip()
+            or not isinstance(self.label, str)
+            or not self.label.strip()
+        ):
+            raise ValueError("Conditional contributions require a label")
+        _readout_members(self.destinations)
+
+
 @dataclass(frozen=True)
 class Acquisition:
     key: str
@@ -120,8 +181,20 @@ class Acquisition:
     reference_arrows: tuple[ReferenceArrow, ...] = ()
     beam: BeamDirection | None = None
     auxiliary: tuple[Occurrence, ...] = ()
+    readout_sets: tuple[ReadoutSet, ...] = ()
+    combined_readouts: tuple[CombinedReadout, ...] = ()
+    conditional_contributions: tuple[ConditionalContribution, ...] = ()
 
     def __post_init__(self):
+        if any(
+            not isinstance(values, tuple)
+            for values in (
+                self.readout_sets,
+                self.combined_readouts,
+                self.conditional_contributions,
+            )
+        ):
+            raise ValueError("Acquisition readout declarations require immutable tuples")
         if self.beam is not None and not isinstance(self.beam, BeamDirection):
             raise ValueError("Acquisition beam requires a typed BeamDirection")
         if self.layout_key is not None and not self.layout_key.strip():
@@ -269,6 +342,21 @@ class InstrumentProfile:
                 for view in config.views
             ),
             *(
+                f"readout_set.{c.key}.{r.key}"
+                for c in self.detectors.acquisitions
+                for r in c.readout_sets
+            ),
+            *(
+                f"combined_readout.{c.key}.{r.channel}"
+                for c in self.detectors.acquisitions
+                for r in c.combined_readouts
+            ),
+            *(
+                f"conditional_contribution.{c.key}.{r.channel}"
+                for c in self.detectors.acquisitions
+                for r in c.conditional_contributions
+            ),
+            *(
                 f"preset.{entry.acquisition}.{preset.name}"
                 for entry in self.presets
                 for preset in entry.presets
@@ -367,6 +455,35 @@ class InstrumentProfile:
             expected = {channel.key for channel in config.channels if channel.selectable}
             if set(editable) != expected or len(editable) != len(expected):
                 raise ValueError("Each selectable channel needs exactly one editable occurrence")
+            _unique(tuple(r.key for r in config.readout_sets), "readout-set keys")
+            combined = _unique(
+                tuple(r.channel for r in config.combined_readouts), "combined readouts"
+            )
+            _unique(
+                tuple(r.channel for r in config.conditional_contributions),
+                "conditional contributors",
+            )
+            if (
+                config.readout_sets
+                and set().union(*(set(r.channels) for r in config.readout_sets)) != expected
+            ):
+                raise ValueError("Readout sets must cover exactly the selectable acquired channels")
+            for road in config.combined_readouts:
+                if (
+                    road.channel not in expected
+                    or not set(road.constituents) <= expected
+                    or combined.intersection(road.constituents)
+                ):
+                    raise ValueError("Combined readouts require acquired non-combined constituents")
+            for contribution in config.conditional_contributions:
+                if (
+                    contribution.channel not in expected
+                    or not set(contribution.destinations) <= combined
+                    or contribution.channel in contribution.destinations
+                ):
+                    raise ValueError(
+                        "Conditional contributions require acquired channels and combined destinations"
+                    )
             entry = next(entry for entry in self.presets if entry.acquisition == config.key)
             _unique(tuple(preset.name for preset in entry.presets), "preset names")
             for preset in entry.presets:
@@ -387,6 +504,16 @@ class InstrumentProfile:
                         raise ValueError("Projection legs must name distinct existing groups")
                     if not math.isfinite(projection.alpha) or projection.alpha <= 0:
                         raise ValueError("Projection alpha must be finite and positive")
+            for readouts in config.readout_sets:
+                default = next(
+                    (p for p in entry.presets if p.name == readouts.default_preset), None
+                )
+                if default is None or not {
+                    key for group in default.groups for key in group.channels
+                } <= set(readouts.channels):
+                    raise ValueError(
+                        "Readout-set default preset must use channels available in that set"
+                    )
         references = _unique(
             tuple(reference.key for reference in self.sources.references), "source IDs"
         )

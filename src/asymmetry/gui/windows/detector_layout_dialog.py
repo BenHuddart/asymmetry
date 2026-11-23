@@ -32,13 +32,17 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QStyle,
     QStyleOptionButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -51,7 +55,10 @@ from asymmetry.core.instrument import (
     instrument_choices_for,
     recommend_grouping_preset,
 )
+from asymmetry.core.instruments.readouts import layout_for_readout_set, readout_presets
+from asymmetry.core.transform.grouping import format_detector_list, parse_group_detectors
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import row_height
 from asymmetry.gui.widgets.detector_schematic import _GROUP_COLOURS, DetectorSchematicWidget
 
 __all__ = ["DetectorLayoutDialog"]
@@ -109,6 +116,7 @@ class DetectorLayoutDialog(QDialog):
         projections: list[dict] | None = None,
         field_direction: str | None = None,
         n_histograms: int | None = None,
+        readout_set: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -116,6 +124,7 @@ class DetectorLayoutDialog(QDialog):
         self.resize(1020, 560)
 
         self._instrument = instrument
+        self._readout_set = readout_set
         self._generic = generic_layout(
             instrument.n_detectors if n_histograms is None else n_histograms
         )
@@ -155,7 +164,7 @@ class DetectorLayoutDialog(QDialog):
         # ------------------------------------------------------------------
         # Left: schematic
         # ------------------------------------------------------------------
-        self._schematic = DetectorSchematicWidget(self._instrument, parent=self)
+        self._schematic = DetectorSchematicWidget(self._drawing_layout(), parent=self)
         self._schematic.setMinimumWidth(360)
         self._schematic.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._schematic.detector_toggled.connect(self._on_detector_toggled)
@@ -280,6 +289,32 @@ class DetectorLayoutDialog(QDialog):
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         preset_layout.addWidget(sep)
+
+        self._readout_heading = QLabel("Readout set")
+        self._readout_combo = QComboBox()
+        self._readout_combo.setPlaceholderText("Not recorded")
+        self._readout_name = QLabel()
+        self._readout_notice = QLabel()
+        self._readout_notice.setWordWrap(True)
+        self._outside_heading = QLabel("Outside this set")
+        self._outside_readouts = QPlainTextEdit()
+        self._outside_readouts.setReadOnly(True)
+        self._outside_readouts.setMaximumHeight(row_height() * 4)
+        self._edit_members = QPushButton("Edit grouping…")
+        self._edit_members.setAutoDefault(False)
+        self._edit_members.clicked.connect(self._edit_grouping)
+        for widget in (
+            self._readout_heading,
+            self._readout_combo,
+            self._readout_name,
+            self._readout_notice,
+            self._outside_heading,
+            self._outside_readouts,
+            self._edit_members,
+        ):
+            preset_layout.addWidget(widget)
+        self._refresh_readout_controls()
+        self._readout_combo.currentIndexChanged.connect(self._on_readout_changed)
 
         preset_layout.addWidget(QLabel("Preset grouping:"))
         self._preset_combo = QComboBox()
@@ -439,13 +474,177 @@ class DetectorLayoutDialog(QDialog):
     def _populate_preset_combo(self) -> None:
         """Fill the preset combo from the current instrument's presets."""
         self._preset_combo.clear()
-        for name in self._instrument.presets:
+        key = self._view_readout_key()
+        presets = (
+            readout_presets(self._instrument, key) if key is not None else self._instrument.presets
+        )
+        for name in presets:
             self._preset_combo.addItem(name)
         # A generic layout has none: groups are built by clicking detectors.
-        has_presets = bool(self._instrument.presets)
+        has_presets = bool(presets)
         self._preset_combo.setPlaceholderText("No presets for this instrument")
         self._preset_combo.setEnabled(has_presets)
         self._apply_preset_btn.setEnabled(has_presets)
+
+    def _view_readout_key(self) -> str | None:
+        sets = self._instrument.readout_sets
+        if self._readout_set is not None:
+            return self._readout_set if any(r.key == self._readout_set for r in sets) else None
+        assigned = set().union(*self._groups.values())
+        compatible = [r.key for r in sets if assigned <= set(r.detector_ids)]
+        return compatible[0] if len(compatible) == 1 else sets[0].key if sets else None
+
+    def _drawing_layout(self):
+        key = self._view_readout_key()
+        if key is not None:
+            return layout_for_readout_set(self._instrument, key)
+        return (
+            generic_layout(self._instrument.n_detectors)
+            if self._readout_set is not None
+            else self._instrument
+        )
+
+    def _refresh_readout_controls(self) -> None:
+        sets = self._instrument.readout_sets
+        self._readout_combo.blockSignals(True)
+        self._readout_combo.clear()
+        for readouts in sets:
+            self._readout_combo.addItem(readouts.label, readouts.key)
+        invalid = self._readout_set is not None and not any(
+            r.key == self._readout_set for r in sets
+        )
+        if invalid:
+            self._readout_combo.addItem(f"Unavailable: {self._readout_set}", self._readout_set)
+        self._readout_combo.setCurrentIndex(self._readout_combo.findData(self._readout_set))
+        self._readout_combo.blockSignals(False)
+        self._readout_heading.setVisible(bool(sets) or invalid)
+        self._readout_combo.setVisible(len(sets) > 1 or invalid)
+        self._readout_name.setText(sets[0].label if sets else "")
+        self._readout_name.setVisible(len(sets) == 1 and not invalid)
+        self._edit_members.setVisible(bool(sets) or invalid)
+
+    def _refresh_readout_summary(self) -> None:
+        key = self._view_readout_key()
+        readouts = next((r for r in self._instrument.readout_sets if r.key == key), None)
+        allowed = set(readouts.detector_ids) if readouts is not None else set()
+        labels = {
+            s.detector_id: s.label or str(s.detector_id) for s in self._instrument.active_segments
+        }
+        hidden = (
+            sorted({i for ids in self._groups.values() for i in ids} - allowed)
+            if self._instrument.readout_sets or self._readout_set is not None
+            else []
+        )
+        self._outside_readouts.setPlainText(
+            "\n".join(
+                f"{i} {labels.get(i, str(i))}: groups {', '.join(str(gid) for gid, ids in self._groups.items() if i in ids)}"
+                for i in hidden
+            )
+        )
+        self._outside_heading.setVisible(bool(hidden))
+        self._outside_readouts.setVisible(bool(hidden))
+        notice = (
+            readouts.notice
+            if readouts is not None
+            else "Readout set unavailable"
+            if self._readout_set is not None
+            else ""
+        )
+        self._readout_notice.setText(notice)
+        self._readout_notice.setVisible(bool(notice))
+        self._readout_combo.setToolTip(
+            "Readouts describe shared hardware events, not independent detectors or exact histogram sums. Changing the set never translates custom groups. Conditional contributions depend on recorded configuration; see the instrument definition."
+        )
+
+    def _on_readout_changed(self, _index: int) -> None:
+        proposed = self._readout_combo.currentData()
+        if proposed is None or proposed == self._readout_set:
+            return
+        readouts = next(r for r in self._instrument.readout_sets if r.key == proposed)
+        outside = set().union(*self._groups.values()) - set(readouts.detector_ids)
+        preset_name = None
+        if outside:
+            question = QMessageBox(self)
+            question.setWindowTitle("Readout set")
+            question.setText("Some assignments are outside this set.")
+            apply = question.addButton("Apply preset", QMessageBox.ButtonRole.AcceptRole)
+            edit = question.addButton("Edit grouping", QMessageBox.ButtonRole.ActionRole)
+            question.addButton(QMessageBox.StandardButton.Cancel)
+            question.exec()
+            if question.clickedButton() is apply:
+                names = list(readout_presets(self._instrument, proposed))
+                preset_name, accepted = QInputDialog.getItem(
+                    self,
+                    "Readout set",
+                    "Preset",
+                    names,
+                    names.index(readouts.default_preset),
+                    False,
+                )
+                if not accepted:
+                    self._refresh_readout_controls()
+                    return
+            elif question.clickedButton() is edit:
+                if not self._edit_grouping():
+                    self._refresh_readout_controls()
+                    return
+            else:
+                self._refresh_readout_controls()
+                return
+        self._readout_set = proposed
+        excluded = self._schematic.get_excluded_detectors()
+        self._schematic.set_instrument(self._drawing_layout())
+        self._schematic.set_excluded_detectors(excluded)
+        self._populate_preset_combo()
+        self._refresh_readout_controls()
+        if preset_name is not None:
+            self._preset_combo.setCurrentText(preset_name)
+            self._on_apply_preset()
+        self._sync_schematic()
+
+    def _edit_grouping(self) -> bool:
+        editor = QDialog(self)
+        editor.setWindowTitle("Edit grouping")
+        layout = QVBoxLayout(editor)
+        gids = sorted(set(self._groups) | set(range(1, _MAX_GROUPS + 1)))
+        table = QTableWidget(len(gids), 2)
+        table.setHorizontalHeaderLabels(["Group", "Channels"])
+        for row, gid in enumerate(gids):
+            item = QTableWidgetItem(str(gid))
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            table.setItem(row, 0, item)
+            table.setItem(
+                row, 1, QTableWidgetItem(format_detector_list(list(self._groups.get(gid, ()))))
+            )
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(editor.accept)
+        buttons.rejected.connect(editor.reject)
+        layout.addWidget(buttons)
+        while editor.exec() == QDialog.DialogCode.Accepted:
+            try:
+                groups = {
+                    gid: set(
+                        parse_group_detectors(
+                            table.item(row, 1).text(), self._instrument.n_detectors
+                        )
+                    )
+                    if table.item(row, 1).text().strip()
+                    else set()
+                    for row, gid in enumerate(gids)
+                }
+            except ValueError as error:
+                QMessageBox.warning(editor, "Channels", str(error))
+                continue
+            self._groups = groups
+            self._applied_preset_name = None
+            self._sync_schematic()
+            self._update_preset_status_label()
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Schematic synchronisation
@@ -459,6 +658,7 @@ class DetectorLayoutDialog(QDialog):
         )
         self._schematic.set_group_names(self._current_group_names_from_edits())
         self._refresh_group_button_labels()
+        self._refresh_readout_summary()
 
     # Buttons wider than this are elided; pathologically long custom group
     # names should not be allowed to blow out the centre panel's layout.
@@ -594,9 +794,10 @@ class DetectorLayoutDialog(QDialog):
         key = str(self._instrument_combo.currentData())
         new_layout = self._generic if key == GENERIC_INSTRUMENT else get_instrument_layout(key)
         self._instrument = new_layout
+        self._refresh_readout_controls()
         self._applied_preset_name = None
         self._populate_preset_combo()
-        self._schematic.set_instrument(new_layout)
+        self._schematic.set_instrument(self._drawing_layout())
         self._sync_schematic()
         self._update_preset_status_label()
         self._update_grouping_recommendation(preselect=True)
@@ -611,6 +812,16 @@ class DetectorLayoutDialog(QDialog):
         preset = self._instrument.presets.get(preset_name)
         if preset is None:
             return
+        if not self._instrument.readout_sets:
+            self._readout_set = None
+            self._refresh_readout_controls()
+        elif self._view_readout_key() is None or self._readout_set is None:
+            self._readout_set = next(
+                r.key
+                for r in self._instrument.readout_sets
+                if preset_name in readout_presets(self._instrument, r.key)
+            )
+            self._refresh_readout_controls()
 
         # Clear all groups then apply preset
         self._groups = {}
@@ -637,7 +848,11 @@ class DetectorLayoutDialog(QDialog):
         self._backward_group = preset.backward_group
         self._applied_preset_name = preset_name
         self._applied_projections = [p.to_payload() for p in preset.projections]
-
+        excluded = self._schematic.get_excluded_detectors()
+        self._schematic.set_instrument(self._drawing_layout())
+        self._schematic.set_excluded_detectors(excluded)
+        self._populate_preset_combo()
+        self._preset_combo.setCurrentText(preset_name)
         self._sync_schematic()
         self._update_preset_status_label()
         self._update_grouping_recommendation()
@@ -667,6 +882,7 @@ class DetectorLayoutDialog(QDialog):
     def _on_clear_excluded(self) -> None:
         """Remove every detector from the exclusion set."""
         self._schematic.set_excluded_detectors(set())
+        self._refresh_readout_summary()
 
     # ------------------------------------------------------------------
     # Slot: OK
@@ -724,6 +940,7 @@ class DetectorLayoutDialog(QDialog):
                 self._group_names.pop(gid, None)
 
         return {
+            **({"readout_set": self._readout_set} if self._readout_set is not None else {}),
             "groups": non_empty,
             "group_names": dict(self._group_names),
             "forward_group": self._forward_group,

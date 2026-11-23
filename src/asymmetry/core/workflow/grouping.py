@@ -9,6 +9,7 @@ from asymmetry.core.instrument import (
     get_instrument_layout,
     preset_grouping_for_run,
 )
+from asymmetry.core.instruments.readouts import readout_presets
 from asymmetry.core.instruments.resolution import (
     InstrumentConflictError,
     layout_key_for_selection,
@@ -27,11 +28,15 @@ from asymmetry.core.transform.preparation import (
 )
 
 
-def apply_grouping_preset(dataset: MuonDataset, preset_name: str) -> MuonDataset:
+def apply_grouping_preset(
+    dataset: MuonDataset, preset_name: str, *, readout_set: str | None = None
+) -> MuonDataset:
     """Return a newly reduced dataset with an explicitly selected instrument preset.
 
     Recognition and histogram-count variant resolution select the layout; the
-    caller selects the exact preset name. All preset groups must have acquired,
+    caller selects the exact preset name. ``readout_set`` selects a declared
+    acquired-channel alternative; omission retains an applied choice or resolves
+    the first compatible set for this explicit preset request. All preset groups must have acquired,
     non-excluded members. Existing exclusions, timing, binning, and correction
     policies are retained. Preset projections replace the previous projections
     and their manually authored balances; scalar balance policies are retained.
@@ -64,6 +69,23 @@ def apply_grouping_preset(dataset: MuonDataset, preset_name: str) -> MuonDataset
     if key is None:
         raise ValueError("The selected instrument has no compatible acquired channel map.")
     layout = get_instrument_layout(key)
+    if preset_name not in layout.presets:
+        raise ValueError(f"Unknown preset {preset_name!r}")
+    chosen_set = readout_set if readout_set is not None else run.grouping.get("readout_set")
+    if layout.readout_sets:
+        if chosen_set is None:
+            chosen_set = next(
+                (
+                    r.key
+                    for r in layout.readout_sets
+                    if preset_name in readout_presets(layout, r.key)
+                ),
+                None,
+            )
+        if chosen_set is None or preset_name not in readout_presets(layout, chosen_set):
+            raise ValueError("Preset is unavailable for the selected readout set")
+    elif chosen_set is not None:
+        raise ValueError("This acquisition has no declared readout-set choice")
     groups = preset_grouping_for_run(
         layout,
         preset_name,
@@ -82,7 +104,10 @@ def apply_grouping_preset(dataset: MuonDataset, preset_name: str) -> MuonDataset
         forward_group=preset.forward_group,
         backward_group=preset.backward_group,
         projections=projections,
-        extra={"grouping_preset": preset_name},
+        extra={
+            "grouping_preset": preset_name,
+            **({"readout_set": chosen_set} if chosen_set is not None else {}),
+        },
     )
     changed = (
         previous.groups != profile.groups

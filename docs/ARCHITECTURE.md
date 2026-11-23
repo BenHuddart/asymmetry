@@ -25,7 +25,8 @@ The name reflects the fundamental observable in μSR: the time-dependent asymmet
 versions, project/work-directory storage schemas, and detailed numerical policy
 identifiers. Bump it when algorithms or numerical interpretation can change a
 scientific result: reduction, loader timing/count interpretation, calibration,
-uncertainty propagation, fitting objectives, or fitted semantics. Documentation,
+uncertainty propagation, fitting objectives, fitted semantics, or eligibility
+for independent-noise analysis of shared-event acquired readouts. Documentation,
 labels, package-only releases, and storage-only migrations do not require a bump.
 The revision is an explicit compatibility promise, not a correctness proof.
 

@@ -25,6 +25,7 @@ from asymmetry.core.instrument import (
     projection_memberships,
     variant_for_histograms,
 )
+from asymmetry.core.instruments.readouts import readout_presets
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -468,18 +469,16 @@ class TestGpsCombinedSubdetectorLayout:
             assert abs(front.y_center) > abs(combined.y_center)
 
     def test_presets_group_beam_counters_and_halves_only(self, layout):
-        # The split halves are the analysis groups here, exactly as in GPS-RD:
-        # only the beam counters (1, 2) and the halves (7-14) may appear in a
-        # preset group. The combined transverse counters (3-6) are an
-        # independent electronics road, not a sum of the halves, and stay
-        # ungrouped; Mob-RL (15) stays ungrouped too.
+        # Individual presets use acquired halves; hardware sharing does not imply
+        # an exact exported-bin sum or statistically independent combined roads.
+        presets = readout_presets(layout, "individual")
         allowed = {1, 2} | set(range(7, 15))
-        for preset in layout.presets.values():
+        for preset in presets.values():
             for gdef in preset.groups.values():
                 assert all(det in allowed for det in gdef.detector_ids), gdef
         used = {
             det
-            for preset in layout.presets.values()
+            for preset in presets.values()
             for gdef in preset.groups.values()
             for det in gdef.detector_ids
         }

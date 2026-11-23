@@ -59,7 +59,12 @@ class ConstituentCounts:
     def layout(self):
         """Resolve common support using the ordinary detector alignment owner."""
         layout = resolve_forward_backward_layout(
-            self.histograms, self.grouping, resolved_indices=self.pair
+            self.histograms,
+            self.grouping,
+            resolved_indices=self.pair,
+            metadata=self.members[0].metadata
+            if len(self.members) == 1
+            else {"instrument_context": None},
         )
         from asymmetry.core.transform.background import resolve_background_mode
 
@@ -397,6 +402,8 @@ def pool_constituents(members, grouping, pair):
         for indices in pair
     )
     effective = dict(grouping)
+    if len(members) > 1:
+        effective.pop("readout_set", None)
     effective["alpha"], effective["beta"] = grouping_balances(grouping)
     for key in ("projections", "vector_axis", "effective_t0_period"):
         effective.pop(key, None)

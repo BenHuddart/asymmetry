@@ -8,6 +8,7 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.instrument import get_instrument_layout, layout_detector_labels
+from asymmetry.core.instruments.readouts import readout_presets
 from asymmetry.core.project.profiles import (
     GroupingProfile,
     profile_fingerprint_for_run,
@@ -72,7 +73,17 @@ def test_complete_preset_matches_supported_profile_preparation(instrument, prese
         backward_group=preset.backward_group,
         projections=[p.to_payload() for p in preset.projections],
         excluded_detectors=data.run.grouping["excluded_detectors"],
-        extra={"grouping_preset": preset_name},
+        extra={
+            "grouping_preset": preset_name,
+            **next(
+                (
+                    {"readout_set": r.key}
+                    for r in get_instrument_layout(instrument).readout_sets
+                    if preset_name in readout_presets(get_instrument_layout(instrument), r.key)
+                ),
+                {},
+            ),
+        },
     )
     expected_grouping = resolve_effective_grouping(profile, data.run)
     expected_run = replace(data.run, grouping=expected_grouping)
@@ -246,3 +257,36 @@ def test_automatic_alpha_retains_loaded_background_reference():
     np.testing.assert_array_equal(prepared.asymmetry, direct.asymmetry)
     np.testing.assert_array_equal(prepared.error, direct.error)
     assert prepared.histogram_observation.reference.run_number == 43
+
+
+@pytest.mark.parametrize(
+    "choice,preset", [("individual", "WEP (spin-rotated)"), ("hardware_combined", "WEP (combined)")]
+)
+def test_explicit_readout_set_prepares_new_request_without_mutating_source(choice, preset):
+    data = source("GPS-RD15")
+    before = pickle.dumps(data)
+    prepared = apply_grouping_preset(data, preset, readout_set=choice)
+    assert prepared.run.grouping["readout_set"] == choice
+    assert prepared.run.grouping["groups"][3] == ([7, 8] if choice == "individual" else [3])
+    assert prepared.run.histograms is data.run.histograms
+    assert pickle.dumps(data) == before
+    with pytest.raises(ValueError, match="unavailable"):
+        apply_grouping_preset(data, preset, readout_set="missing")
+
+
+def test_readout_choice_does_not_transfer_captured_calibration_to_changed_pair():
+    prepared = apply_grouping_preset(source("GPS-RD15"), "Longitudinal", readout_set="individual")
+    outcome = calibrate_run(prepared, ReductionSettings(), CalibrationOptions("ratio"))
+    calibrated = replace(
+        prepared,
+        run=replace(
+            prepared.run,
+            grouping=resolve_reduction_grouping(
+                prepared.run, ReductionSettings(alpha=outcome.result)
+            ),
+        ),
+    )
+    same_pair = apply_grouping_preset(calibrated, "Longitudinal", readout_set="hardware_combined")
+    assert same_pair.run.grouping["alpha_policy"] == calibrated.run.grouping["alpha_policy"]
+    with pytest.raises(ValueError, match="active captured calibration"):
+        apply_grouping_preset(calibrated, "WEP (combined)", readout_set="hardware_combined")

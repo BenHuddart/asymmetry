@@ -164,10 +164,7 @@ _BACKGROUND_DETAIL_KEYS = (
 )
 
 #: Shareable grouping-structure keys copied verbatim into a profile.
-_STRUCTURE_KEYS = (
-    "grouping_preset",
-    "vector_axis",
-)
+_STRUCTURE_KEYS = ("grouping_preset", "vector_axis", "readout_set")
 
 #: Per-axis vector alpha keys and their provenance companions.
 _VECTOR_ALPHA_KEYS = (
@@ -954,7 +951,7 @@ def profile_from_payload(
 
     extra: dict[str, Any] = {}
     for key in _STRUCTURE_KEYS:
-        if payload.get(key):
+        if key in payload and (key == "readout_set" or payload[key]):
             extra[key] = payload[key]
     for key in _ALPHA_EXTRA_KEYS:
         if key in payload:

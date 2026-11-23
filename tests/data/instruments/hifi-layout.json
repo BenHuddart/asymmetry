@@ -1370,5 +1370,6 @@
   "reference_arrows": [],
   "display_name": null,
   "apply_default_preset_on_load": false,
-  "auxiliary": []
+  "auxiliary": [],
+  "readout_sets": []
 }
