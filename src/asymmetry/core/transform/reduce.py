@@ -23,6 +23,7 @@ from asymmetry.core.data.reduction_recipe import (
     preparation_recipe,
     ratio_recipe,
 )
+from asymmetry.core.instruments.readouts import require_independent_readouts
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
@@ -225,6 +226,8 @@ def grouped_correction_plan(
         observation = resolve_constituent_counts(
             histograms, grouping, pair, metadata, cancel_check=cancel_check
         )
+    for member in observation.members:
+        require_independent_readouts(len(member.histograms), member.grouping, pair, member.metadata)
     grouped = observation.layout if layout is None else layout
     automatic = shared_automatic_alpha(grouping, metadata)
     domain = fb_deadtime_domain(
@@ -335,6 +338,7 @@ def prepare_grouped_corrections(
             grouping,
             n_histograms=len(histograms),
             resolved_indices=(forward_idx, backward_idx),
+            metadata=metadata,
         )
         if plan is None:
             plan = grouped_correction_plan(

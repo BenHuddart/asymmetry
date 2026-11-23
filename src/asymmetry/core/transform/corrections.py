@@ -15,7 +15,12 @@ import numpy as np
 
 from asymmetry.core.data.acquisition import ContentIdentity
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.instruments.resolution import UnresolvedInstrumentIdentity
+from asymmetry.core.instruments.readouts import require_independent_readouts
+from asymmetry.core.instruments.resolution import (
+    InstrumentContext,
+    UnresolvedInstrumentIdentity,
+    resolve_instrument,
+)
 from asymmetry.core.instruments.source import source_for_run
 from asymmetry.core.transform.reference_scale import ResolvedReferenceScale
 from asymmetry.core.transform.reference_timing import (
@@ -209,6 +214,7 @@ class BackgroundReference:
     timing: ReferenceTiming = ReferenceTiming()
     resolved_timing: ResolvedReferenceTiming | None = None
     content_identity: ContentIdentity | None = None
+    instrument_context: InstrumentContext | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "file_dead_time_us", tuple(self.file_dead_time_us))
@@ -260,8 +266,19 @@ class BackgroundReference:
             "deadtime_normaliser": self.deadtime_normaliser,
         }
 
+    def require_readouts(self, *groups) -> None:
+        """Reference selections use this reference's own acquired identity."""
+        selected = sorted({index for group in groups for index in group})
+        require_independent_readouts(
+            len(self.histograms),
+            {},
+            (selected,),
+            {"instrument_context": self.instrument_context},
+        )
+
     def alignment(self, sample, grouping, crop, *groups, timing_grouping=None, cancel_check=None):
         """Resolve this acquisition's timing on the requested sample grid."""
+        self.require_readouts(*groups)
         if timing_grouping is None and self.resolved_timing is not None:
             timing_grouping = self.resolved_timing.grouping()
         return reference_alignment(
@@ -314,6 +331,7 @@ def reference_observation_metadata(run: Run) -> dict[str, Any]:
     return dict(
         run.metadata,
         source_assessment=source_for_run(run),
+        instrument_context=resolve_instrument(run),
         source_file=run.source_file,
         run_number=run.run_number,
         **(

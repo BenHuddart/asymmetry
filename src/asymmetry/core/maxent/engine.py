@@ -24,6 +24,7 @@ from asymmetry.core.fitting.spectral import (
 from asymmetry.core.fourier.group_preparation import GroupPreparation, prepare_group_counts
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.instruments.readouts import require_independent_readouts, require_run_readouts
 from asymmetry.core.maxent.backend import (
     BACKEND_CHOICES,
     ProjectionBackend,
@@ -38,6 +39,7 @@ from asymmetry.core.maxent.pulse import (
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.maxent.state_identity import state_signature
 from asymmetry.core.transform.grouping import (
+    effective_group_indices,
     group_names,
     group_reference_t0,
     grouping_balances,
@@ -975,14 +977,7 @@ def _estimate_group_phase_seeds(
 
 
 def _require_run(obj: object) -> Run:
-    """Return *obj* if it is a :class:`~asymmetry.core.data.dataset.Run`, else raise a pointing TypeError.
-
-    MaxEnt is a grouped raw-count algorithm: it needs the raw detector
-    histograms held by a :class:`~asymmetry.core.data.dataset.Run`, not the reduced asymmetry curve held by a
-    :class:`~asymmetry.core.data.dataset.MuonDataset`. Passing the dataset is the single most-repeated
-    discoverability miss, and previously failed with a bare
-    ``AttributeError: 'MuonDataset' object has no attribute 'grouping'``.
-    """
+    """Require acquired histograms rather than an already reduced dataset."""
     if isinstance(obj, Run):
         return obj
     if isinstance(obj, MuonDataset):
@@ -1017,7 +1012,6 @@ def build_maxent_input(
         raise ValueError("MaxEnt requires detector groups.")
     if not run.histograms:
         raise ValueError("MaxEnt requires raw detector histograms.")
-
     all_ids = sorted(names_by_group)
     if resolved_config.selected_group_ids is None:
         selected = all_ids
@@ -1026,7 +1020,11 @@ def build_maxent_input(
         selected = [gid for gid in all_ids if gid in wanted]
     if not selected:
         raise ValueError("MaxEnt requires at least one selected group.")
-
+    selections = tuple(
+        effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms))
+        for gid in selected
+    )
+    require_run_readouts(run, selections)
     if prepared is None:
         prepared = prepare_group_counts(
             run,
@@ -1039,7 +1037,13 @@ def build_maxent_input(
         )
     elif set(prepared.layouts) != set(selected):
         raise ValueError("Prepared grouped counts do not match the requested cohort")
-
+    if prepared.reference is not None:
+        require_independent_readouts(
+            len(prepared.reference.histograms),
+            {},
+            selections,
+            {"instrument_context": prepared.reference_identity},
+        )
     zf_lf_phase_map: dict[int, float] = {}
     zf_lf_alpha: float | None = None
     if resolved_config.mode == "zf_lf":
@@ -1058,7 +1062,6 @@ def build_maxent_input(
             selected = [int(forward_group)] + [gid for gid in selected if gid != forward_group]
         zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
         zf_lf_alpha, _ = grouping_balances(grouping, pair=tuple(selected))
-
     group_signals: list[GroupCountSignal] = []
     for group_id in selected:
         dataset = build_group_signal_dataset(
@@ -1081,7 +1084,6 @@ def build_maxent_input(
                 sigma=np.asarray(dataset.error, dtype=np.float64),
             )
         )
-
     result = _maxent_input_from_group_signals(
         group_signals,
         resolved_config,
@@ -1091,7 +1093,6 @@ def build_maxent_input(
         zf_lf_phase_map=zf_lf_phase_map,
         steered_fields=steered_fields,
     )
-
     return replace(
         result,
         metadata={
@@ -1108,11 +1109,7 @@ def build_maxent_input(
 
 @dataclass(frozen=True)
 class GroupCountSignal:
-    """One detector group's lifetime-corrected count signal, before normalisation.
-
-    The seam between "where the counts came from" (a :class:`~asymmetry.core.data.dataset.Run`'s histograms,
-    or arrays handed straight in) and the MaxEnt input builder proper.
-    """
+    """One acquired group's lifetime-corrected count signal before normalisation."""
 
     group_id: int
     group_name: str
@@ -1131,11 +1128,7 @@ def _maxent_input_from_group_signals(
     zf_lf_phase_map: dict[int, float],
     steered_fields: dict[str, Any],
 ) -> MaxEntInput:
-    """Normalise counts on the resolved observation clock.
-
-    Run and array requests share masking, 1/σ² baseline normalisation,
-    frequency/phase preparation, exclusion weighting and pulse response here.
-    """
+    """Share masking, weighted normalisation and pulse response on one observation clock."""
     if resolved_config.pulse_mode not in _PULSE_N_PULSES:
         raise PulseRequestError(
             "Choose Ignore, Single pulse or Double pulse for the MaxEnt response."

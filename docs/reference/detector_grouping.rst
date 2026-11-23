@@ -1891,9 +1891,9 @@ PSI GPS
 
 .. figure:: /_generated/screenshots/psi_gps_readout_layout.png
    :width: 100%
-   :alt: GPS combined and split acquired channels in two drawing views.
+   :alt: GPS Individual readouts in two drawing views.
 
-   The combined-plus-split readout retains one editable occurrence per channel.
+   The Individual readout set shows acquired halves, shared beam counters and Mobile.
 
 See :doc:`instruments/psi_gps` for all three acquisition maps, shared hardware
 affiliations, and explicit preset balances. Combined and split readouts do not
@@ -1904,10 +1904,46 @@ above Right and **Side view** has Up above Down; both have the beam pointing
 right. Forward/Backward are editable in the top view and repeated as grey
 read-only context in the side view. Each panel has one **Beam** direction cue;
 detectors perpendicular to that view have no directional marker or label.
-The fifteen-channel map displays distinct **combined** and **split** rows in
-each directional bank. Those combined readouts are acquired channels, not
-collapsed representations of the split channels. Mobile remains selectable in
-**Auxiliary — position unspecified**, outside the spatial views.
+**Readout set** is an applied analysis choice, not a count transformation.
+The fifteen-channel acquisition offers **Individual** and **Hardware-combined**;
+new explicit preset choices start with Individual. The six-channel acquisition
+has Hardware-combined only and the eleven-channel acquisition has Individual
+only. The diagram shows one set at a time. Mobile stays selectable in
+**Auxiliary — position unspecified**.
+
+Switching with assignments outside the proposed set offers **Apply preset**,
+**Edit grouping** or **Cancel**. Preset selection replaces groups explicitly;
+Edit grouping accepts recorded histogram numbers. **Outside this set** lists
+retained assignments that the diagram cannot show. Opening or accepting a saved
+legacy grouping does not select a set or change its channels. An unavailable
+saved set remains visible until explicitly repaired. Cancel leaves the parent
+draft unchanged; Apply commits the edited grouping and set together.
+
+.. figure:: /_generated/screenshots/psi_gps_combined_layout.png
+   :width: 100%
+   :alt: GPS Hardware-combined readouts with a separate selectable Mobile channel.
+
+   Hardware-combined uses its own acquired transverse channels.
+
+.. figure:: /_generated/screenshots/psi_gps_retained_layout.png
+   :width: 100%
+   :alt: Legacy shared-event assignments retained in the Outside this set list.
+
+   Legacy assignments stay visible until explicitly repaired.
+
+Saved settings and historical results remain inspectable. Analysis rejects
+an effective selection that combines known shared-event roads, including a
+combined counter with its acquired constituents within or across the actual
+analysis groups. Excluded channels and unused diagnostic groups do not enter
+that check. Separate Fourier diagnostics can inspect each road; averaging
+shared-event roads together is rejected. Background references use their own
+acquisition identity and the same eligibility rules.
+
+Preset changes use their declared projection balances when the underlying
+ordered detector pair changes. A fitted balance is not transferred by matching
+projection labels. Unchanged shared F/B pairs retain their calibration. A custom
+change to calibrated readouts requires clearing the active calibration or
+applying a preset; historical calibration records remain available.
 
 
 GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
@@ -1983,29 +2019,28 @@ Presets:
   offsets musrfit uses to encode the rotation are a
   fitting detail and are not stored in the layout.
 
-In the eleven-histogram export the Mobile sub-detector (``Mob-RL``) is left
-ungrouped by default: it is added to either the Right or Left detector depending
-on the cryostat port in use, which the data file does not record.
+The published GPS hardware description identifies combined transverse counters
+and their constituent halves, with Mobile contributing to Left or Right
+according to the cryostat port (Amato et al., *Review of Scientific Instruments*
+**88**, 093301, sections II A–B; `primary paper
+<https://arxiv.org/abs/1705.10687>`_). These shared-event relationships do not
+establish exact exported-bin sums or statistical independence. The exported
+channel associations are marked unverified in the instrument review page.
 
-In the fifteen-histogram export, the four hardware-combined transverse counters
-(IDs 3–6, ``Up, Down, Right, Left``) are separate electronics roads that track
-the sums of the split halves (IDs 7–14, ``Up_B, Up_F, Down_B, Down_F, Right_B,
-Right_F, Left_B, Left_F``): in real files each combined total matches its two
-halves to within a handful of counts — except that the combined counter on
-whichever cryostat port carries the Mobile detector also folds ``Mob-RL``'s
-counts in. Rather than pick one view over the other and discard information,
-Asymmetry keeps both, loaded and selectable, but only one can be the *default*
-analysis grouping. Following the same convention used for the eleven-histogram
-export, the presets group the **split halves** (``Up = Up_B + Up_F``,
-``Down = Down_B + Down_F``, ``Right = Right_B + Right_F``,
-``Left = Left_B + Left_F``), which keeps the transverse groups free of the
-silently-included Mobile counts and identical in meaning between the eleven-
-and fifteen-histogram eras. The combined counters (IDs 3–6; Forward and
-Backward have no split-half counterpart and are used directly) and the Mobile
-detector stay individually selectable and ungrouped by default — for
-diagnostics against the split view, or for a user who deliberately wants the
-Mobile-inclusive combined road. This matches the ROOT loader's own default
-grouping for a 15-histogram file (see :doc:`loading_data`).
+For the fifteen-channel map, Hardware-combined selects IDs 3–6 and Individual
+selects IDs 7–14; both permit shared Forward/Backward and Mobile. The port is
+not inferred: selecting Mobile together with either combined Left or combined
+Right is blocked with **May include Mobile counts** shown in the editor.
+Combined Left plus Right without Mobile, or Individual plus Mobile, is allowed
+by these declared relationships. Mobile remains outside stock presets. The
+ROOT loader can retain it in a separate default group; this does not exclude
+it from later analysis automatically.
+
+All acquired histograms remain stored. Hardware-combined has explicitly named
+counterparts of the transverse, spin-rotated and WEP presets; Individual keeps
+its existing memberships. Longitudinal uses the same shared Forward/Backward
+channels in either set. No readout-set transition silently remaps custom groups,
+changes exclusions or assumes a count equation.
 
 .. _Beam vs analysis convention (ISIS):
 

@@ -16,13 +16,14 @@ from asymmetry.core import computation
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.data.ratio_validity import RATIO_OBSERVATION_POLICY, RatioValidity
 from asymmetry.core.data.reduction_recipe import EffectiveReductionRecipe
+from asymmetry.core.instruments.readouts import require_run_readouts
 from asymmetry.core.instruments.resolution import InstrumentConflictError, resolve_instrument
 from asymmetry.core.instruments.source import capture_source_authority
 from asymmetry.core.io import background_reference_for_grouping
 from asymmetry.core.io.period_counts import run_arithmetic_policy
 from asymmetry.core.transform.constituent_counts import CONSTITUENT_PREPARATION_POLICY
 from asymmetry.core.transform.corrections import BackgroundReference, reference_observation_metadata
-from asymmetry.core.transform.grouping import effective_group_indices, grouping_balances
+from asymmetry.core.transform.grouping import grouping_balances, independent_pair_indices
 from asymmetry.core.transform.period_reduction import period_statistic_policy
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
@@ -69,12 +70,10 @@ def prepare_histogram_asymmetry(
     if context.requires_choice:
         raise InstrumentConflictError(context)
     grouping = run.grouping
-    forward_idx, backward_idx = (
-        effective_group_indices(
-            grouping, int(grouping.get(key, default)), n_histograms=len(run.histograms)
-        )
-        for key, default in (("forward_group", 1), ("backward_group", 2))
+    forward_idx, backward_idx = independent_pair_indices(
+        grouping, n_histograms=len(run.histograms), metadata=reference_observation_metadata(run)
     )
+    require_run_readouts(run, (forward_idx, backward_idx))
     alpha, beta = grouping_balances(grouping)
     flags = correction_flags_from_grouping(grouping)
     return reduce_period_asymmetry(

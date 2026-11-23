@@ -494,5 +494,6 @@
       "read_only": false,
       "row_label": null
     }
-  ]
+  ],
+  "readout_sets": []
 }

@@ -62,6 +62,17 @@ def synthetic_profile(acquisitions=(), *, elements=()):
         "defaults",
         *(f"acquisition.{config.key}" for config in acquisitions),
         *(f"view.{config.key}.{view.key}" for config in acquisitions for view in config.views),
+        *(f"readout_set.{c.key}.{r.key}" for c in acquisitions for r in c.readout_sets),
+        *(
+            f"combined_readout.{c.key}.{r.channel}"
+            for c in acquisitions
+            for r in c.combined_readouts
+        ),
+        *(
+            f"conditional_contribution.{c.key}.{r.channel}"
+            for c in acquisitions
+            for r in c.conditional_contributions
+        ),
         *(f"preset.{config.key}.Pair" for config in acquisitions),
     )
     return InstrumentProfile(

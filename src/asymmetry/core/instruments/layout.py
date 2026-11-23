@@ -208,6 +208,17 @@ class ReferenceArrow:
 
 
 @dataclass(frozen=True)
+class ReadoutSetDefinition:
+    """Resolved real-channel choice; numbers retain acquisition identity."""
+
+    key: str
+    label: str
+    detector_ids: tuple[int, ...]
+    default_preset: str
+    notice: str = ""
+
+
+@dataclass(frozen=True)
 class InstrumentLayout:
     """Complete detector layout description for one muon instrument.
 
@@ -253,6 +264,7 @@ class InstrumentLayout:
     display_name: str | None = None
     apply_default_preset_on_load: bool = False
     auxiliary: tuple[DetectorSegment, ...] = ()
+    readout_sets: tuple[ReadoutSetDefinition, ...] = ()
 
     @property
     def display(self) -> str:
