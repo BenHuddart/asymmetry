@@ -137,6 +137,35 @@ def profile_rst(profile: InstrumentProfile, diagrams: dict[str, str]) -> str:
             ("View", "Coordinate status", "Units", "Viewing convention"),
             ((view.label, view.scale, view.units, view.convention) for view in config.views),
         )
+        if config.beam is not None:
+            text += f"Beam direction in the common arrangement frame: ``{config.beam.vector}``.\n\n"
+            beam_rows = []
+            for view, bank in zip(config.views, layout.banks, strict=True):
+                orientation, beam = view.orientation, bank.beam
+                beam_rows.append(
+                    (
+                        view.label,
+                        orientation.right if orientation else "Unknown",
+                        orientation.up if orientation else "Unknown",
+                        orientation.toward
+                        if orientation and orientation.toward is not None
+                        else "Unknown",
+                        beam.screen if beam else "Unknown",
+                        beam.toward if beam and beam.toward is not None else "Unknown",
+                    )
+                )
+            text += _table(
+                (
+                    "View",
+                    "Screen right",
+                    "Screen up",
+                    "Toward viewer",
+                    "Beam screen components",
+                    "Beam toward component",
+                ),
+                beam_rows,
+            )
+            text += "Toward components are positive out of the screen and negative into it. Unknown viewing sense remains unknown. Basis vectors describe the declared arrangement frame, independently of view-local detector placements.\n\n"
         entry = next(entry for entry in profile.presets if entry.acquisition == config.key)
         ordinals = {channel.key: channel.ordinal for channel in config.channels}
         if not entry.presets:

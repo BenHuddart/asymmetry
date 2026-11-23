@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from asymmetry.core.instruments.geometry import BeamProjection
+
 
 @dataclass(frozen=True)
 class DetectorSegment:
@@ -87,10 +89,13 @@ class BankLayout:
         Human-readable bank name (e.g. ``"Forward"``).
     segments:
         All detector segments that belong to this bank.
+    beam:
+        Optional beam projection onto this drawing view; unknown declarations remain None.
     """
 
     name: str
     segments: tuple[DetectorSegment, ...]
+    beam: BeamProjection | None = None
 
 
 @dataclass(frozen=True)

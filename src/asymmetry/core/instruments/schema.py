@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from asymmetry.core.instruments.geometry import View, expand_view
+from asymmetry.core.instruments.geometry import BeamDirection, View, expand_view
 from asymmetry.core.instruments.layout import AsymmetryProjection, ReferenceArrow
 
 
@@ -118,8 +118,11 @@ class Acquisition:
     views: tuple[View, ...]
     layout_key: str | None = None
     reference_arrows: tuple[ReferenceArrow, ...] = ()
+    beam: BeamDirection | None = None
 
     def __post_init__(self):
+        if self.beam is not None and not isinstance(self.beam, BeamDirection):
+            raise ValueError("Acquisition beam requires a typed BeamDirection")
         if self.layout_key is not None and not self.layout_key.strip():
             raise ValueError("Acquisition layout key cannot be blank")
         for arrow in self.reference_arrows:

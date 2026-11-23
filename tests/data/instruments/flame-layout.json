@@ -141,7 +141,8 @@
           "rotation_deg": 0.0,
           "read_only": false
         }
-      ]
+      ],
+      "beam": null
     }
   ],
   "presets": {

@@ -175,3 +175,24 @@ def test_musr_page_describes_its_conditional_absent_table_default():
     assert "absent file grouping table on fresh **nexus64**" in text
     assert "explicit **Longitudinal** detector orientation" in text
     assert "Present file tables and saved requests retain precedence" in text
+
+
+def test_declared_beam_review_uses_resolved_view_projection_and_retains_unknown_sense():
+    from asymmetry.core.instruments.geometry import BeamDirection, ViewOrientation
+
+    profile = synthetic_profiles()["multiview"]
+    original = profile.detectors.acquisitions[0]
+    views = (
+        replace(original.views[0], orientation=ViewOrientation((1, 0, 0), (0, 1, 0))),
+        replace(original.views[1], orientation=ViewOrientation((1, 0, 0), (0, 1, 0), (0, 0, -1))),
+    )
+    acquisition = replace(original, beam=BeamDirection((0, 0, 1)), views=views)
+    declared = replace(profile, detectors=replace(profile.detectors, acquisitions=(acquisition,)))
+    text = profile_rst(declared, {})
+    assert "common arrangement frame: ``(0.0, 0.0, 1.0)``" in text
+    assert "Beam screen components" in text
+    assert "Beam toward component" in text
+    assert "Unknown viewing sense remains unknown" in text
+    assert "     - (0.0, 0.0)\n     - Unknown" in text
+    assert "     - (0.0, 0.0)\n     - -1.0" in text
+    assert "common arrangement frame" not in profile_rst(profile, {})

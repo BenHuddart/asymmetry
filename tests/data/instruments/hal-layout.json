@@ -158,7 +158,8 @@
           "rotation_deg": 45.0,
           "read_only": false
         }
-      ]
+      ],
+      "beam": null
     },
     {
       "name": "Backward",
@@ -299,7 +300,8 @@
           "rotation_deg": 45.0,
           "read_only": false
         }
-      ]
+      ],
+      "beam": null
     }
   ],
   "presets": {
