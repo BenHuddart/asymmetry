@@ -103,9 +103,10 @@ target statistics), refits, and repeats a few dozen times. The median
 realised sigma is what the result line reports, labelled **(MC-calibrated)**;
 if that pass has not finished yet the line briefly reads "calibrating…" and
 falls back to the analytic figure (labelled **(approximate)**) if the
-calibration itself fails. The *ranking* of candidates — which :math:`x` is
-better than which — is reliable either way; it is only the absolute
-predicted sigma and event count that the calibration corrects.
+calibration itself fails. The *ranking* of candidates is conditional on the fitted model, covariance,
+and empirical noise model. A Monte Carlo pass at the proposed point calibrates
+its predicted precision; it does not validate every candidate's ranking or remove
+sensitivity near a model boundary.
 
 Warnings you may see
 ---------------------
@@ -194,7 +195,7 @@ magnet up and down, rarely take equally long. Supplying a counting time per
 point, a move-time rate for increasing and decreasing :math:`x`, and the
 instrument's current position re-weights the utility curve by a cost model
 (:math:`\mathrm{utility}^{0.7}/\mathrm{time}`, following the exponent used
-in the autonomous-scattering literature this method draws on) and moves the
+in Ratcliff’s TAS-AI refinement policy [Ratcliff2026]_) and moves the
 marker to whichever :math:`x` is most informative *per unit time*, not per
 measurement.
 
@@ -218,7 +219,7 @@ Limitations
   approximation, and is known to be optimistic near the sharp features
   (critical points, boundaries) that these models often have — this is
   exactly why the Monte Carlo calibration pass exists, and the calibrated
-  figure is the one to trust for planning.
+  figure remains a planning estimate under the fitted model and noise assumptions.
 - Errors set to **None** or **Estimate from scatter** disable the section
   entirely (the target selector, goal field, and **Suggest** button are all
   greyed out). Both modes carry no real per-point noise estimate to
@@ -237,3 +238,10 @@ Limitations
    on, including the ``OrderParameter`` form used above and the :math:`\chi^2`
    quality verdict for judging whether a fit is trustworthy enough to
    suggest from in the first place.
+
+References
+----------
+
+.. [Ratcliff2026] W. Ratcliff II, *Accelerating Quantum Materials Characterization:
+   Hybrid Active Learning for Autonomous Spin Wave Spectroscopy*, section 3.2,
+   `arXiv:2604.23821 <https://arxiv.org/abs/2604.23821>`_.
