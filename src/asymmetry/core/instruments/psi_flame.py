@@ -1,7 +1,14 @@
 """PSI FLAME: explicit acquired channels and qualified schematic conventions."""
 
-from asymmetry.core.instruments.geometry import Explicit, Occurrence, Placement, Rectangle, View
-from asymmetry.core.instruments.layout import ReferenceArrow
+from asymmetry.core.instruments.geometry import (
+    BankRow,
+    BeamDirection,
+    Composite,
+    Directional,
+    Occurrence,
+    View,
+    ViewOrientation,
+)
 from asymmetry.core.instruments.schema import (
     Acquisition,
     Channel,
@@ -46,80 +53,25 @@ ACQUISITION = Acquisition(
             "FLAME top view",
             "plan",
             "Readout schematic; positions and sizes are dimensionless drawing choices. Viewed from above; beam points right.",
-            Explicit(
-                (
-                    Placement(
-                        Occurrence(channel="F"),
-                        Rectangle(0.74, 1.72, 0.0),
-                        3.55,
-                        0.0,
-                        angle=0.0,
-                        sector=0,
-                    ),
-                    Placement(
-                        Occurrence(channel="B"),
-                        Rectangle(0.74, 1.72, 0.0),
-                        -3.55,
-                        0.0,
-                        angle=0.0,
-                        sector=1,
-                    ),
-                    Placement(
-                        Occurrence(channel="R"),
-                        Rectangle(2.18, 0.82, 0.0),
-                        0.0,
-                        -2.18,
-                        angle=0.0,
-                        sector=2,
-                    ),
-                    Placement(
-                        Occurrence(channel="L"),
-                        Rectangle(2.18, 0.82, 0.0),
-                        0.0,
-                        2.18,
-                        angle=0.0,
-                        sector=3,
-                    ),
-                    Placement(
-                        Occurrence(channel="RF"),
-                        Rectangle(0.82, 0.82, 0.0),
-                        1.55,
-                        -2.18,
-                        angle=0.0,
-                        sector=4,
-                    ),
-                    Placement(
-                        Occurrence(channel="RB"),
-                        Rectangle(0.82, 0.82, 0.0),
-                        -1.55,
-                        -2.18,
-                        angle=0.0,
-                        sector=5,
-                    ),
-                    Placement(
-                        Occurrence(channel="LF"),
-                        Rectangle(0.82, 0.82, 0.0),
-                        1.55,
-                        2.18,
-                        angle=0.0,
-                        sector=6,
-                    ),
-                    Placement(
-                        Occurrence(channel="LB"),
-                        Rectangle(0.82, 0.82, 0.0),
-                        -1.55,
-                        2.18,
-                        angle=0.0,
-                        sector=7,
-                    ),
+            Composite(
+                tuple(
+                    Directional(
+                        direction,
+                        (BankRow(tuple(Occurrence(channel=key) for key in keys), widths),),
+                        distance,
+                    )
+                    for direction, keys, widths, distance in (
+                        ("right", ("F",), (1.7,), 3.55),
+                        ("left", ("B",), (1.7,), 3.55),
+                        ("up", ("LB", "L", "LF"), (0.82, 2.18, 0.82), 2.18),
+                        ("down", ("RB", "R", "RF"), (0.82, 2.18, 0.82), 2.18),
+                    )
                 )
             ),
+            orientation=ViewOrientation((1, 0, 0), (0, 1, 0)),
         ),
     ),
-    reference_arrows=(
-        ReferenceArrow("beam, main magnetic field", (-2.55, -0.82), (2.55, -0.82), "#202020"),
-        ReferenceArrow("initial muon spin", (0.0, 0.25), (-2.75, 0.25), "#5b2ea6"),
-    ),
+    beam=BeamDirection((1, 0, 0)),
 )
 
 PRESETS = (
@@ -162,7 +114,7 @@ PROFILE = InstrumentProfile(
     ),
     presets=(ConfigurationPresets("eight_channel", PRESETS),),
     quirks=(
-        "Eight-channel positional map; the spin/field arrows are schematic cues, not measurements of a run setting.",
+        "Eight-channel positional map; beam and detector positions are schematic conventions.",
     ),
     defaults=Defaults(apply_default_preset_on_load=False),
     sources=Sources(
@@ -208,7 +160,7 @@ PROFILE = InstrumentProfile(
             Evidence(
                 "quirks",
                 EvidenceStatus.UNVERIFIED,
-                "Preserved file conventions; schematic arrows and MV labels do not certify run-specific instrumentation.",
+                "Preserved file conventions; schematic beam and readout labels do not certify run-specific instrumentation.",
             ),
             Evidence("defaults", EvidenceStatus.AUTHORED, "Explicit preset application."),
             Evidence(

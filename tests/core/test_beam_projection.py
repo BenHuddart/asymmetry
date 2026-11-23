@@ -119,13 +119,14 @@ def test_actual_profile_resolution_projects_each_view_without_changing_grouping_
     assert all(bank.beam is None for bank in layout_from_profile(unknown_profile, "test").banks)
 
 
-def test_bundled_layouts_do_not_infer_new_beam_authority_from_existing_arrows():
+def test_only_explicitly_declared_profiles_gain_beam_authority():
     for profile in PROFILES:
         for config in profile.detectors.acquisitions:
-            assert config.beam is None
-            assert all(view.orientation is None for view in config.views)
+            declared = profile.identity.key in {"psi.gps", "psi.flame", "psi.hal9500"}
+            assert (config.beam is not None) is declared
+            assert all((view.orientation is not None) is declared for view in config.views)
             layout = layout_from_profile(profile, config.key)
-            assert all(bank.beam is None for bank in layout.banks)
+            assert all((bank.beam is not None) is declared for bank in layout.banks)
             assert layout.reference_arrows == config.reference_arrows
 
 

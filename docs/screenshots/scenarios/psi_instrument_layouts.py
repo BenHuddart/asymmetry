@@ -8,7 +8,7 @@ from ._base import Scenario, register
 
 class PsiFlameLayoutScenario(Scenario):
     name = "psi_flame_layout"
-    description = "FLAME's declared schematic spin and field arrows with its longitudinal preset."
+    description = "FLAME's declared beam direction with its longitudinal preset."
     size = (1100, 680)
 
     def build(self):
@@ -27,7 +27,7 @@ class PsiFlameLayoutScenario(Scenario):
 class PsiGpsReadoutLayoutScenario(Scenario):
     name = "psi_gps_readout_layout"
     description = (
-        "GPS combined/split acquisition with editable channels and repeated view contexts."
+        "GPS combined/split readout rows, one beam cue per view, and a separate Mobile readout."
     )
     size = (1280, 780)
 
@@ -49,3 +49,26 @@ class PsiGpsReadoutLayoutScenario(Scenario):
 
 register(PsiFlameLayoutScenario())
 register(PsiGpsReadoutLayoutScenario())
+
+
+class PsiHalLayoutScenario(Scenario):
+    name = "psi_hal_layout"
+    description = (
+        "HAL tangent readouts and selectable unlocated MV; axial viewing sense unspecified."
+    )
+    size = (1180, 760)
+
+    def build(self):
+        layout = get_instrument_layout("HAL")
+        preset = layout.presets["Per-octant"]
+        return DetectorLayoutDialog(
+            layout,
+            {gid: list(group.detector_ids) for gid, group in preset.groups.items()},
+            group_names={gid: group.name for gid, group in preset.groups.items()},
+            initial_preset_name=preset.name,
+            forward_group=preset.forward_group,
+            backward_group=preset.backward_group,
+        )
+
+
+register(PsiHalLayoutScenario())

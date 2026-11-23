@@ -71,11 +71,7 @@ GPS_ROOT15_LABELS = [
 
 def _all_detector_ids(layout: InstrumentLayout) -> list[int]:
     """Return all detector IDs across all banks of *layout*."""
-    ids = []
-    for bank in layout.banks:
-        for seg in bank.segments:
-            ids.append(seg.detector_id)
-    return ids
+    return [seg.detector_id for seg in layout.all_segments]
 
 
 def _preset_all_ids(preset: PresetGrouping) -> list[int]:
@@ -130,7 +126,8 @@ class TestFlameLayout:
     def test_plan_view(self, layout):
         assert layout.view == "plan"
         assert len(layout.banks) == 1
-        assert layout.reference_arrows
+        assert layout.reference_arrows == ()
+        assert layout.banks[0].beam.screen == (1.0, 0.0)
 
     def test_detector_ids_and_labels(self, layout):
         labels = {seg.detector_id: seg.label for seg in layout.all_segments}
@@ -154,12 +151,6 @@ class TestFlameLayout:
         assert segments[4].height == pytest.approx(segments[8].height)
         assert segments[3].width > segments[5].width * 2
         assert segments[4].width > segments[7].width * 2
-
-    def test_spin_arrow_points_toward_backward_detector(self, layout):
-        spin_arrow = next(arrow for arrow in layout.reference_arrows if "spin" in arrow.label)
-        backward = next(seg for seg in layout.all_segments if seg.detector_id == 2)
-        assert spin_arrow.end[0] < spin_arrow.start[0]
-        assert abs(spin_arrow.end[1] - backward.y_center) < backward.height / 2
 
     def test_longitudinal_preset(self, layout):
         # PSI convention: analysis-forward = beam-Backward group (group 2), which
@@ -226,14 +217,11 @@ class TestGpsLayout:
         assert top_active == {1, 2, 5, 6}
         assert side_active == {3, 4}
 
-    def test_perpendicular_pairs_shown_end_on(self, layout):
-        top = next(b for b in layout.banks if b.name == "Top view")
-        side = next(b for b in layout.banks if b.name == "Side view")
-        top_endon = {s.detector_id for s in top.segments if s.shape.startswith("endon")}
-        side_endon = {s.detector_id for s in side.segments if s.shape.startswith("endon")}
-        assert top_endon == {3, 4}  # Up, Down point out of the top-view plane
-        assert side_endon == {5, 6}  # Right, Left point out of the side-view plane
-        assert all(s.read_only for s in layout.all_segments if s.shape.startswith("endon"))
+    def test_only_forward_backward_context_is_repeated(self, layout):
+        assert not any(s.shape.startswith("endon") for s in layout.all_segments)
+        contexts = [s for s in layout.all_segments if s.read_only]
+        assert {s.detector_id for s in contexts} == {1, 2}
+        assert all(s.shape == "rectangle" for s in contexts)
 
     def test_default_preset_is_longitudinal(self, layout):
         assert layout.default_preset_name == "Longitudinal"
@@ -340,10 +328,10 @@ class TestGpsSubdetectorLayout:
         ]:
             assert segs[back].x_center < 0 < segs[front].x_center
 
-    def test_mobile_active_in_top_view(self, layout):
-        top = next(b for b in layout.banks if b.name == "Top view")
-        mob = next(s for s in top.segments if s.detector_id == 11)
-        assert not mob.read_only and mob.shape == "rectangle"
+    def test_mobile_is_selectable_unlocated_auxiliary(self, layout):
+        assert [(s.detector_id, s.label, s.read_only) for s in layout.auxiliary] == [
+            (11, "Mob-RL", False)
+        ]
 
     def test_longitudinal_preset(self, layout):
         # PSI convention: analysis-forward = beam-Backward group (group 2).
@@ -955,9 +943,9 @@ class TestHALLayout:
         assert layout.banks[0].name == "Forward"
         assert layout.banks[1].name == "Backward"
 
-    def test_forward_bank_contains_mv_and_eight_wedges(self, layout):
+    def test_forward_bank_contains_eight_readouts(self, layout):
         ids = {s.detector_id for s in layout.banks[0].segments}
-        assert ids == {1} | set(range(2, 10))  # MV + F1..F8
+        assert ids == set(range(2, 10))  # F1..F8; MV is unlocated auxiliary
 
     def test_backward_bank_eight_wedges(self, layout):
         ids = {s.detector_id for s in layout.banks[1].segments}
@@ -977,11 +965,10 @@ class TestHALLayout:
         assert [by_id[i].label for i in range(2, 10)] == [f"F{k}" for k in range(1, 9)]
         assert [by_id[i].label for i in range(10, 18)] == [f"B{k}" for k in range(1, 9)]
 
-    def test_mv_is_central_disc(self, layout):
-        mv = next(s for s in layout.all_segments if s.detector_id == 1)
-        assert mv.r_inner < 0.3
-        # Effectively a full disc so the radial hit-test selects it anywhere.
-        assert mv.angle_half_width_deg > 179.0
+    def test_mv_is_unlocated_selectable_auxiliary(self, layout):
+        assert [(s.detector_id, s.label, s.shape) for s in layout.auxiliary] == [
+            (1, "MV", "rectangle")
+        ]
 
     def test_forward_wedges_are_octagonal(self, layout):
         fwd = [s for s in layout.banks[0].segments if s.detector_id != 1]

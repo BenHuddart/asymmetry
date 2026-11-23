@@ -1,12 +1,13 @@
 """PSI GPS: configuration-specific readouts of shared detector hardware."""
 
 from asymmetry.core.instruments.geometry import (
-    EndOn,
-    Explicit,
+    BankRow,
+    BeamDirection,
+    Composite,
+    Directional,
     Occurrence,
-    Placement,
-    Rectangle,
     View,
+    ViewOrientation,
 )
 from asymmetry.core.instruments.layout import TRANSVERSE_PROJECTION_TINTS, AsymmetryProjection
 from asymmetry.core.instruments.schema import (
@@ -79,130 +80,64 @@ CHANNEL_ORDERS = (
     ),
 )
 
-READOUT_VIEWS = {
-    "bin_combined": (
-        (
-            "Top view",
-            (
-                ("F", Rectangle(0.75, 1.7), 2.7, 0.0, True),
-                ("B", Rectangle(0.75, 1.7), -2.7, 0.0, True),
-                ("L", Rectangle(1.7, 0.75), 0.0, 1.95, True),
-                ("R", Rectangle(1.7, 0.75), 0.0, -1.95, True),
-                ("U", EndOn(toward=True), 0.0, 0.7, False),
-                ("D", EndOn(toward=False), 0.0, -0.7, False),
-            ),
-        ),
-        (
-            "Side view",
-            (
-                ("U", Rectangle(1.7, 0.75), 0.0, 1.95, True),
-                ("D", Rectangle(1.7, 0.75), 0.0, -1.95, True),
-                ("F", Rectangle(0.75, 1.7), 2.7, 0.0, False),
-                ("B", Rectangle(0.75, 1.7), -2.7, 0.0, False),
-                ("L", EndOn(toward=True), 0.0, 0.7, False),
-                ("R", EndOn(toward=False), 0.0, -0.7, False),
-            ),
-        ),
-    ),
-    "root_split": (
-        (
-            "Top view",
-            (
-                ("F", Rectangle(0.78, 1.7), 2.95, 0.0, True),
-                ("B", Rectangle(0.78, 1.7), -2.95, 0.0, True),
-                ("LB", Rectangle(0.85, 0.75), -0.5, 1.95, True),
-                ("LF", Rectangle(0.85, 0.75), 0.5, 1.95, True),
-                ("RB", Rectangle(0.85, 0.75), -0.5, -1.95, True),
-                ("RF", Rectangle(0.85, 0.75), 0.5, -1.95, True),
-                ("M", Rectangle(0.95, 0.42), 0.0, 1.18, True),
-                ("UB", EndOn(toward=True), -0.48, 0.45, False),
-                ("UF", EndOn(toward=True), 0.48, 0.45, False),
-                ("DB", EndOn(toward=False), -0.48, -0.45, False),
-                ("DF", EndOn(toward=False), 0.48, -0.45, False),
-            ),
-        ),
-        (
-            "Side view",
-            (
-                ("UB", Rectangle(0.85, 0.75), -0.5, 1.95, True),
-                ("UF", Rectangle(0.85, 0.75), 0.5, 1.95, True),
-                ("DB", Rectangle(0.85, 0.75), -0.5, -1.95, True),
-                ("DF", Rectangle(0.85, 0.75), 0.5, -1.95, True),
-                ("F", Rectangle(0.78, 1.7), 2.95, 0.0, False),
-                ("B", Rectangle(0.78, 1.7), -2.95, 0.0, False),
-                ("LB", EndOn(toward=True), -0.48, 0.45, False),
-                ("LF", EndOn(toward=True), 0.48, 0.45, False),
-                ("RB", EndOn(toward=False), -0.48, -0.45, False),
-                ("RF", EndOn(toward=False), 0.48, -0.45, False),
-                ("M", EndOn(toward=True), 0.0, 1.3, False),
-            ),
-        ),
-    ),
-    "root_combined_split": (
-        (
-            "Top view",
-            (
-                ("F", Rectangle(0.78, 1.7), 2.95, 0.0, True),
-                ("B", Rectangle(0.78, 1.7), -2.95, 0.0, True),
-                ("L", Rectangle(1.7, 0.75), 0.0, 1.95, True),
-                ("LB", Rectangle(0.85, 0.62), -0.5, 2.8, True),
-                ("LF", Rectangle(0.85, 0.62), 0.5, 2.8, True),
-                ("R", Rectangle(1.7, 0.75), 0.0, -1.95, True),
-                ("RB", Rectangle(0.85, 0.62), -0.5, -2.8, True),
-                ("RF", Rectangle(0.85, 0.62), 0.5, -2.8, True),
-                ("M", Rectangle(0.95, 0.42), 0.0, 1.25, True),
-                ("UB", EndOn(toward=True), -0.62, 0.62, False),
-                ("U", EndOn(toward=True), 0.0, 0.62, False),
-                ("UF", EndOn(toward=True), 0.62, 0.62, False),
-                ("DB", EndOn(toward=False), -0.62, -0.62, False),
-                ("D", EndOn(toward=False), 0.0, -0.62, False),
-                ("DF", EndOn(toward=False), 0.62, -0.62, False),
-            ),
-        ),
-        (
-            "Side view",
-            (
-                ("U", Rectangle(1.7, 0.75), 0.0, 1.95, True),
-                ("UB", Rectangle(0.85, 0.62), -0.5, 2.8, True),
-                ("UF", Rectangle(0.85, 0.62), 0.5, 2.8, True),
-                ("D", Rectangle(1.7, 0.75), 0.0, -1.95, True),
-                ("DB", Rectangle(0.85, 0.62), -0.5, -2.8, True),
-                ("DF", Rectangle(0.85, 0.62), 0.5, -2.8, True),
-                ("F", Rectangle(0.78, 1.7), 2.95, 0.0, False),
-                ("B", Rectangle(0.78, 1.7), -2.95, 0.0, False),
-                ("LB", EndOn(toward=True), -0.62, 0.62, False),
-                ("L", EndOn(toward=True), 0.0, 0.62, False),
-                ("LF", EndOn(toward=True), 0.62, 0.62, False),
-                ("RB", EndOn(toward=False), -0.62, -0.62, False),
-                ("R", EndOn(toward=False), 0.0, -0.62, False),
-                ("RF", EndOn(toward=False), 0.62, -0.62, False),
-                ("M", EndOn(toward=True), 0.0, 1.25, False),
-            ),
-        ),
-    ),
-}
-
+# Beam, Left and Up define this schematic frame; positions remain view-local.
 VIEWS = {
     key: tuple(
         View(
-            label.lower().replace(" ", "_"),
+            name,
             label,
             "plan",
-            "Dimensionless readout schematic: beam points right, top view upward is Left and side view upward is Up. Repeated contexts are not extra channels; sizes/positions are drawing choices.",
-            Explicit(
-                tuple(
-                    Placement(
-                        Occurrence(channel=channel, editable=editable),
-                        shape,
-                        x,
-                        y,
-                        sector=order.index(channel),
-                    )
-                    for channel, shape, x, y, editable in rows
+            "Dimensionless readout schematic: beam points right, top view upward is Left and side view upward is Up. Combined and split rows are distinct acquired readouts, not a sum equation. Grey Forward/Backward rectangles in the side view are read-only context, not extra channels.",
+            Composite(
+                (
+                    *(
+                        Directional(
+                            direction,
+                            (BankRow((Occurrence(channel=channel, editable=editable),), (1.7,)),),
+                            2.2,
+                        )
+                        for direction, channel in (("right", "F"), ("left", "B"))
+                    ),
+                    *(
+                        Directional(
+                            direction,
+                            tuple(
+                                BankRow(
+                                    tuple(Occurrence(channel=channel) for channel in row),
+                                    (2.05,) if len(row) == 1 else (1.05, 1.05),
+                                    label=kind if key == "root_combined_split" else "",
+                                )
+                                for kind, row in (
+                                    ("combined", (bank,)),
+                                    ("split", (bank + "B", bank + "F")),
+                                )
+                                if all(channel in order for channel in row)
+                            ),
+                        )
+                        for direction, bank in (("up", upper), ("down", lower))
+                    ),
                 )
             ),
+            orientation=orientation,
         )
-        for label, rows in READOUT_VIEWS[key]
+        for name, label, upper, lower, editable, orientation in (
+            (
+                "top_view",
+                "Top view",
+                "L",
+                "R",
+                True,
+                ViewOrientation((1, 0, 0), (0, 1, 0)),
+            ),
+            (
+                "side_view",
+                "Side view",
+                "U",
+                "D",
+                False,
+                ViewOrientation((1, 0, 0), (0, 0, 1)),
+            ),
+        )
     )
     for key, order, labels, legacy_key in CHANNEL_ORDERS
 }
@@ -228,6 +163,8 @@ ACQUISITIONS = tuple(
         ),
         VIEWS[key],
         layout_key=legacy_key,
+        beam=BeamDirection((1, 0, 0)),
+        auxiliary=(Occurrence(channel="M"),) if "M" in order else (),
     )
     for key, order, labels, legacy_key in CHANNEL_ORDERS
 )
@@ -399,7 +336,7 @@ PROFILE = InstrumentProfile(
                 Evidence(
                     f"view.{config.key}.{view.key}",
                     EvidenceStatus.SCHEMATIC,
-                    "Dimensionless readout drawing; repeated contexts do not duplicate hardware. Outboard half boxes are not additional detector plates.",
+                    "Dimensionless readout drawing; repeated contexts do not duplicate hardware. Rows identify readouts, not additional detector plates. Mobile is auxiliary with unspecified position.",
                 )
                 for config in ACQUISITIONS
                 for view in config.views
