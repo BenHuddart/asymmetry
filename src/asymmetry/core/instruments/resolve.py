@@ -13,6 +13,7 @@ from asymmetry.core.instruments.layout import (
     GroupDefinition,
     InstrumentLayout,
     PresetGrouping,
+    ReadoutSetDefinition,
     generic_layout,
 )
 from asymmetry.core.instruments.schema import InstrumentProfile
@@ -113,6 +114,20 @@ def layout_from_profile(
         else profile.identity.display_name,
         reference_arrows=config.reference_arrows,
         apply_default_preset_on_load=profile.defaults.apply_default_preset_on_load,
+        readout_sets=tuple(
+            ReadoutSetDefinition(
+                readouts.key,
+                readouts.label,
+                tuple(channels[key].ordinal for key in readouts.channels),
+                readouts.default_preset,
+                "; ".join(
+                    f"May include {contribution.label} counts"
+                    for contribution in config.conditional_contributions
+                    if set(contribution.destinations).intersection(readouts.channels)
+                ),
+            )
+            for readouts in config.readout_sets
+        ),
         auxiliary=tuple(
             DetectorSegment(
                 channels[target.channel].ordinal,

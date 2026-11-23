@@ -156,7 +156,7 @@ def test_shared_psi_assumptions_are_summarised_once_with_complete_fact_evidence(
     assert summary.count(acquisition_detail) == 1
     assert summary.count(preset_detail) == 1
     assert text.count(acquisition_detail) == 4
-    assert text.count(preset_detail) == 13
+    assert text.count(preset_detail) == 16
     for fact in GPS.fact_keys:
         assert fact in text
     evidence = tuple(
@@ -209,16 +209,23 @@ def test_blank_templates_have_one_editable_table_row_per_acquired_slot(tmp_path)
     for profile in (GPS, FLAME, HAL9500):
         page = generate_profile(profile, tmp_path / profile.identity.key)
         for config in profile.detectors.acquisitions:
-            stem = f"{profile.identity.key.replace('.', '_')}-{config.key}-numbering"
-            table = page.with_name(stem + ".csv")
-            with table.open(newline="") as stream:
-                rows = list(csv.reader(stream))
-            slots = numbering_template(profile, config.key)
-            assert [row[0] for row in rows[1:]] == [slot.id for slot in slots]
-            assert len(set(row[0] for row in rows[1:])) == len(slots)
-            assert all(row[1:] == ["", "", ""] for row in rows[1:])
-            assert rows[0][-1] == "Physical association / detector label(s), if known"
-            labels = list(ElementTree.parse(page.with_name(stem + ".svg")).getroot().itertext())
-            assert sum(label == "# ___" for label in labels) == len(slots)
-            assert f"Slot prefix: {profile.identity.key}/{config.key}/" in " ".join(labels)
-            assert all(slot.channel in labels for slot in slots)
+            all_ids = set()
+            for index, readouts in enumerate(config.readout_sets or (None,)):
+                suffix = f"-{readouts.key}" if index else ""
+                stem = f"{profile.identity.key.replace('.', '_')}-{config.key}{suffix}-numbering"
+                table = page.with_name(stem + ".csv")
+                with table.open(newline="") as stream:
+                    rows = list(csv.reader(stream))
+                slots = numbering_template(profile, config.key)
+                if readouts is not None:
+                    slots = tuple(slot for slot in slots if slot.channel in readouts.channels)
+                assert [row[0] for row in rows[1:]] == [slot.id for slot in slots]
+                assert len(set(row[0] for row in rows[1:])) == len(slots)
+                assert all(row[1:] == ["", "", ""] for row in rows[1:])
+                assert rows[0][-1] == "Physical association / detector label(s), if known"
+                labels = list(ElementTree.parse(page.with_name(stem + ".svg")).getroot().itertext())
+                assert sum(label == "# ___" for label in labels) == len(slots)
+                assert f"Slot prefix: {profile.identity.key}/{config.key}/" in " ".join(labels)
+                assert all(slot.channel in labels for slot in slots)
+                all_ids.update(slot.id for slot in slots)
+            assert all_ids == {slot.id for slot in numbering_template(profile, config.key)}

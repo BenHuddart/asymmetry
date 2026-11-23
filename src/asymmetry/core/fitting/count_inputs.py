@@ -14,6 +14,7 @@ from asymmetry.core.fitting.count_corrections import (
     require_count_background,
 )
 from asymmetry.core.fitting.likelihood import CountSource, FitInputError
+from asymmetry.core.instruments.readouts import require_run_readouts
 from asymmetry.core.transform.constituent_counts import (
     PreparedConstituents,
     acquired_source_descriptors,
@@ -118,6 +119,7 @@ def _count_group_context(
         raise FitInputError(
             "G−R has no grouped-count observation; select Red or Green, or use an asymmetry fit."
         )
+    require_run_readouts(run, tuple(indices for _, indices in group_specs))
     observation = None
     if "period_inputs" in grouping:
         observation, run, expanded = resolve_group_observation(

@@ -302,6 +302,7 @@ def resolve_background_reference(
     return BackgroundReference(
         histograms=list(reference_run.histograms),
         timing=timing,
+        instrument_context=resolve_instrument(reference_run),
         file_dead_time_us=tuple(file_deadtime_table(reference_run.grouping)),
         scaling=scaling,
         source_file=reference_run.source_file or source_file,

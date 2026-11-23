@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Select GPS Individual or Hardware-combined readouts explicitly, retaining saved
+  groups and blocking analysis of declared shared-event or unresolved Mobile overlaps.
+
 - Show generated GPS, FLAME, and HAL readout arrangements with beam-only cues,
   selectable unlocated auxiliaries, and downloadable blank numbering templates.
 

@@ -213,13 +213,17 @@ def test_preset_apply_refreshes_preview_exactly_once_after_repopulation(
         "forward_group": 1,
         "backward_group": 2,
     }
+
     # Preset resolution itself (instrument layout lookup, preset table) is
     # exercised elsewhere; stub it here so the test isolates the
     # populate-then-refresh contract under B2.
-    monkeypatch.setattr(dialog, "_current_instrument_layout", lambda: object())
-    monkeypatch.setattr(
-        grouping_dialog_dialog_module, "preset_payload", lambda layout, name: payload
-    )
+    def selected_preset(layout, name, *, readout_set):
+        assert layout.n_detectors == len(dialog._run.histograms)
+        assert name == "test-preset"
+        assert readout_set is None
+        return payload
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "preset_payload", selected_preset)
     dialog._preset_combo.addItem("Test Preset", "test-preset")
     index = dialog._preset_combo.count() - 1
 

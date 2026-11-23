@@ -40,8 +40,9 @@ from asymmetry.core.fourier.phase_fit import (
     fit_fft_phase,
 )
 from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.instruments.readouts import require_independent_readouts, require_run_readouts
 from asymmetry.core.maxent.pulse import pulse_input_float, pulse_provenance
-from asymmetry.core.transform.grouping import group_names
+from asymmetry.core.transform.grouping import effective_group_indices, group_names
 from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
@@ -526,6 +527,12 @@ def compute_average_group_spectrum(
         if not selected:
             return None
 
+    if not is_fb_asymmetry:
+        selections = tuple(
+            effective_group_indices(run.grouping, gid, n_histograms=len(run.histograms))
+            for gid in selected
+        )
+        require_run_readouts(run, selections)
     display = config.display
     apply_phase = fourier_mode_uses_phase_correction(display)
     is_auto_phase = fourier_mode_uses_phase_fit(display)
@@ -546,6 +553,13 @@ def compute_average_group_spectrum(
         elif set(prepared.layouts) != set(selected):
             raise ValueError("Prepared grouped counts do not match the requested cohort")
 
+    if not is_fb_asymmetry and prepared.reference is not None:
+        require_independent_readouts(
+            len(prepared.reference.histograms),
+            {},
+            selections,
+            {"instrument_context": prepared.reference_identity},
+        )
     averaged_values: list[np.ndarray] = []
     imag_values: list[np.ndarray] = []
     phase_reports: dict[str, dict] = {}

@@ -446,12 +446,12 @@ def selected_t0_diagnostics(
     resolved_indices: tuple[list[int], list[int]] | None = None,
 ) -> tuple[int, int, int]:
     """Selected median shift, shift range, and median feature width; diagnostics only."""
-    from asymmetry.core.transform.grouping import independent_pair_indices
+    from asymmetry.core.transform.grouping import acquired_pair_indices
 
-    forward, backward = independent_pair_indices(
+    pair = acquired_pair_indices(
         grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
     )
-    indices = sorted(set(forward) | set(backward))
+    indices = sorted(set().union(*pair))
     shifts = detector_t0_shifts(histograms, search.estimates)
     delta, spread = shift_statistics([shifts[i] for i in indices])
     widths = [search.estimates[i].width_bins for i in indices if search.estimates[i].ok]
@@ -526,10 +526,10 @@ def resolve_selected_timing(
     only when required file timing is absent; no failed estimate borrows a delay.
     A supplied search is reusable across selections of the same raw acquisition.
     """
-    from asymmetry.core.transform.grouping import independent_pair_indices
+    from asymmetry.core.transform.grouping import acquired_pair_indices
 
     if selected_indices is None:
-        forward, backward = independent_pair_indices(
+        forward, backward = acquired_pair_indices(
             grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
         )
         selected_indices = forward + backward
@@ -696,14 +696,13 @@ def assess_t0(
     """
     # Imported here, not at module scope: grouping.py imports this module for
     # the resolver, so a top-level import would close the cycle.
-    from asymmetry.core.transform.grouping import common_t0_for_groups, independent_pair_indices
+    from asymmetry.core.transform.grouping import acquired_pair_indices, common_t0_for_groups
 
     grouping = grouping if isinstance(grouping, dict) else {}
-    n_hist = len(histograms)
     base = int(grouping.get("bin_index_base", 0))
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
     try:
-        forward_idx, backward_idx = independent_pair_indices(grouping, n_histograms=n_hist)
+        forward_idx, backward_idx = acquired_pair_indices(grouping, n_histograms=len(histograms))
     except ValueError as exc:
         return T0Assessment("error", None, (str(exc),), ())
     file_common = common_t0_for_groups(

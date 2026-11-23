@@ -14,6 +14,8 @@ from asymmetry.core.instruments.schema import (
     Acquisition,
     Channel,
     ChannelGroup,
+    CombinedReadout,
+    ConditionalContribution,
     ConfigurationPresets,
     Defaults,
     Detectors,
@@ -24,6 +26,7 @@ from asymmetry.core.instruments.schema import (
     PhysicalBank,
     PhysicalElement,
     Preset,
+    ReadoutSet,
     Recognition,
     Reference,
     Review,
@@ -165,10 +168,42 @@ ACQUISITIONS = tuple(
         layout_key=legacy_key,
         beam=BeamDirection((1, 0, 0)),
         auxiliary=(Occurrence(channel="M"),) if "M" in order else (),
+        readout_sets=tuple(
+            ReadoutSet(
+                set_key,
+                label,
+                tuple(channel for channel in order if channel in selected),
+                "Longitudinal",
+            )
+            for set_key, label, selected in (
+                (
+                    "individual",
+                    "Individual",
+                    ("F", "B", "UB", "UF", "DB", "DF", "RB", "RF", "LB", "LF", "M"),
+                ),
+                ("hardware_combined", "Hardware-combined", ("F", "B", "U", "D", "R", "L", "M")),
+            )
+            if (set_key == "individual" and "UB" in order)
+            or (set_key == "hardware_combined" and "U" in order)
+        ),
+        combined_readouts=tuple(
+            CombinedReadout(channel, (channel + "B", channel + "F"))
+            for channel in ("U", "D", "R", "L")
+            if all(key in order for key in (channel, channel + "B", channel + "F"))
+        ),
+        conditional_contributions=(ConditionalContribution("M", ("R", "L"), "Mobile"),)
+        if all(key in order for key in ("M", "R", "L"))
+        else (),
     )
     for key, order, labels, legacy_key in CHANNEL_ORDERS
 )
 
+PRESET_NAMES = ("Transverse (Vector)", "Spin-rotated (B+U/F+D)", "WEP (spin-rotated)")
+COMBINED_PRESET_NAMES = (
+    "Transverse (Vector, combined)",
+    "Spin-rotated (combined)",
+    "WEP (combined)",
+)
 PRESETS = tuple(
     ConfigurationPresets(
         key,
@@ -179,54 +214,68 @@ PRESETS = tuple(
                 2,
                 1,
             ),
-            Preset(
-                "Transverse (Vector)",
-                (
-                    ChannelGroup(1, "Up-Down Up", up),
-                    ChannelGroup(2, "Up-Down Down", down),
-                    ChannelGroup(3, "Left-Right Right", right),
-                    ChannelGroup(4, "Left-Right Left", left),
-                ),
-                1,
-                2,
-                (
-                    AsymmetryProjection(
-                        "Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
+            *(
+                preset
+                for names, up, down, right, left in choices
+                for preset in (
+                    Preset(
+                        names[0],
+                        (
+                            ChannelGroup(1, "Up-Down Up", up),
+                            ChannelGroup(2, "Up-Down Down", down),
+                            ChannelGroup(3, "Left-Right Right", right),
+                            ChannelGroup(4, "Left-Right Left", left),
+                        ),
+                        1,
+                        2,
+                        (
+                            AsymmetryProjection(
+                                "Up-Down", 1, 2, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
+                            ),
+                            AsymmetryProjection(
+                                "Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]
+                            ),
+                        ),
                     ),
-                    AsymmetryProjection(
-                        "Left-Right", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Left-Right"]
+                    Preset(
+                        names[1],
+                        (ChannelGroup(1, "B+U", ("B", *up)), ChannelGroup(2, "F+D", ("F", *down))),
+                        1,
+                        2,
                     ),
-                ),
-            ),
-            Preset(
-                "Spin-rotated (B+U/F+D)",
-                (ChannelGroup(1, "B+U", ("B", *up)), ChannelGroup(2, "F+D", ("F", *down))),
-                1,
-                2,
-            ),
-            Preset(
-                "WEP (spin-rotated)",
-                (
-                    ChannelGroup(1, "F", ("F",)),
-                    ChannelGroup(2, "B", ("B",)),
-                    ChannelGroup(3, "U", up),
-                    ChannelGroup(4, "D", down),
-                ),
-                2,
-                1,
-                (
-                    AsymmetryProjection(
-                        "FB", 2, 1, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
+                    Preset(
+                        names[2],
+                        (
+                            ChannelGroup(1, "F", ("F",)),
+                            ChannelGroup(2, "B", ("B",)),
+                            ChannelGroup(3, "U", up),
+                            ChannelGroup(4, "D", down),
+                        ),
+                        2,
+                        1,
+                        (
+                            AsymmetryProjection(
+                                "FB", 2, 1, alpha=0.75, tint=TRANSVERSE_PROJECTION_TINTS["Fwd-Back"]
+                            ),
+                            AsymmetryProjection(
+                                "UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]
+                            ),
+                        ),
                     ),
-                    AsymmetryProjection("UD", 3, 4, tint=TRANSVERSE_PROJECTION_TINTS["Top-Bottom"]),
-                ),
+                )
             ),
         ),
     )
-    for key, up, down, right, left in (
-        ("bin_combined", ("U",), ("D",), ("R",), ("L",)),
-        ("root_split", ("UB", "UF"), ("DB", "DF"), ("RB", "RF"), ("LB", "LF")),
-        ("root_combined_split", ("UB", "UF"), ("DB", "DF"), ("RB", "RF"), ("LB", "LF")),
+    for key, choices in (
+        ("bin_combined", ((PRESET_NAMES, ("U",), ("D",), ("R",), ("L",)),)),
+        ("root_split", ((PRESET_NAMES, ("UB", "UF"), ("DB", "DF"), ("RB", "RF"), ("LB", "LF")),)),
+        (
+            "root_combined_split",
+            (
+                (PRESET_NAMES, ("UB", "UF"), ("DB", "DF"), ("RB", "RF"), ("LB", "LF")),
+                (COMBINED_PRESET_NAMES, ("U",), ("D",), ("R",), ("L",)),
+            ),
+        ),
     )
 )
 
@@ -268,7 +317,7 @@ PROFILE = InstrumentProfile(
     quirks=(
         "Six-channel BIN, eleven-channel split ROOT and fifteen-channel combined-plus-split ROOT maps retain separate legacy layout identities GPS, GPS-RD and GPS-RD15.",
         "Partial classic BIN files may omit Left; unavailable preset channels are not invented.",
-        "Mobile and, in the fifteen-channel map, combined transverse channels remain selectable but absent from stock presets.",
+        "Mobile remains selectable but absent from all stock presets; fifteen-channel combined transverse channels have explicit Hardware-combined presets and are absent from Individual presets.",
     ),
     defaults=Defaults(),
     sources=Sources(
@@ -331,6 +380,35 @@ PROFILE = InstrumentProfile(
                     "Preserved ordinal/label map; combined/split roads are descriptive, not an exact count equation or independence claim.",
                 )
                 for config in ACQUISITIONS
+            ),
+            *(
+                Evidence(
+                    f"readout_set.{config.key}.{readouts.key}",
+                    EvidenceStatus.AUTHORED,
+                    "Analysis readout choice preserving acquired channels. Individual is the first/default set where available; no saved choice is inferred.",
+                )
+                for config in ACQUISITIONS
+                for readouts in config.readout_sets
+            ),
+            *(
+                Evidence(
+                    f"combined_readout.{config.key}.{road.channel}",
+                    EvidenceStatus.UNVERIFIED,
+                    "Historical export road shares event content with its split constituent roads. Published hardware definitions support shared coverage; exact exported-bin arithmetic and covariance are unverified.",
+                )
+                for config in ACQUISITIONS
+                for road in config.combined_readouts
+            ),
+            *(
+                Evidence(
+                    f"conditional_contribution.{config.key}.{contribution.channel}",
+                    EvidenceStatus.INFERRED,
+                    "Published Mobile hardware contributes to Right or Left depending on the cryogenic port. Association with the preserved M/R/L export roads is not independently verified; no port is inferred for a recorded run.",
+                    "gps-paper",
+                    "Section II A, page 4; Section II B, page 5",
+                )
+                for config in ACQUISITIONS
+                for contribution in config.conditional_contributions
             ),
             *(
                 Evidence(

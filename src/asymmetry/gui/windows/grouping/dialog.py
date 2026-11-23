@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
 from numbers import Integral
 from typing import Any
@@ -48,10 +48,9 @@ from asymmetry.core.instrument import (
     get_instrument_layout,
     instrument_display_name,
 )
+from asymmetry.core.instruments.readouts import readout_presets
 from asymmetry.core.instruments.resolution import (
     InstrumentSelection,
-    RecordedInstrumentChoice,
-    choice_for_layout,
     layout_key_for_selection,
     resolve_instrument,
 )
@@ -88,7 +87,6 @@ from asymmetry.core.transform import (
     effective_detector_t0_bins,
     effective_group_indices,
     excluded_detector_indices,
-    format_detector_list,
     good_frames,
     parse_detector_list,
     parse_group_detectors,
@@ -153,6 +151,11 @@ from asymmetry.gui.windows.grouping.format import (
 )
 from asymmetry.gui.windows.grouping.format import (
     format_value_with_uncertainty as _format_value_with_uncertainty,
+)
+from asymmetry.gui.windows.grouping.layout_editor import (
+    InstrumentEdit,
+    edit_detector_layout,
+    prepare_readout_change,
 )
 from asymmetry.gui.windows.grouping.preview_pane import (
     COMPARE_STAGE_LABELS,
@@ -254,15 +257,6 @@ def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
         + verdict_button.sizeHint().width()
         + _T0_ROW_SPACING_PX
     )
-
-
-@dataclass(frozen=True)
-class InstrumentEdit:
-    """An accepted identity draft and the profile settings authored before that change."""
-
-    choice: RecordedInstrumentChoice
-    profile: GroupingProfile
-    run_number: int
 
 
 class GroupingDialog(TimingControls, QDialog):
@@ -2175,7 +2169,15 @@ class GroupingDialog(TimingControls, QDialog):
     def _rebuild_preset_combo(self) -> None:
         """Populate the preset dropdown from the preview run's instrument."""
         combo = self._preset_combo
-        presets = self._current_instrument_layout().presets
+        instrument = self._current_instrument_layout()
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        chosen = owner.extra.get("readout_set")
+        presets = (
+            readout_presets(instrument, chosen)
+            if chosen is not None and any(r.key == chosen for r in instrument.readout_sets)
+            else instrument.presets
+        )
         combo.blockSignals(True)
         combo.clear()
         for name in presets:
@@ -2192,10 +2194,20 @@ class GroupingDialog(TimingControls, QDialog):
         preset_name = self._preset_combo.itemData(index)
         if not preset_name:
             return
-        payload = preset_payload(self._current_instrument_layout(), str(preset_name))
+        instrument = self._current_instrument_layout()
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
+        chosen = owner.extra.get("readout_set")
+        payload = preset_payload(
+            instrument,
+            str(preset_name),
+            readout_set=chosen if any(r.key == chosen for r in instrument.readout_sets) else None,
+        )
         if payload is None:
             return
-        self._apply_preset_payload_to_form(payload)
+        if self._apply_preset_payload_to_form(payload) is False:
+            self._refresh_preset_selection()
+            return
         self._mark_dirty()
         # _apply_preset_payload_to_form repopulates the group table with its
         # itemChanged signal blocked (see _populate_group_table), so the preview
@@ -2205,6 +2217,8 @@ class GroupingDialog(TimingControls, QDialog):
 
     def _apply_preset_payload_to_form(self, payload: dict[str, Any]) -> None:
         """Adopt a preset's groups/names/slots/projections into the form state."""
+        if prepare_readout_change(self, payload) is None:
+            return False
         self._groups = {
             int(gid): shift_channel_entries(dets, -1)
             for gid, dets in payload.get("groups", {}).items()
@@ -2224,6 +2238,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._populate_group_table()
         self._update_vector_mode_controls()
         self._refresh_preset_selection()
+        return True
 
     def _refresh_preset_selection(self, *_args: object) -> None:
         """Select the draft's preset in the dropdown, or ``Custom`` once it drifts.
@@ -4450,113 +4465,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._mark_dirty()
         self._refresh_preview()
 
-    def _on_detector_layout(self) -> None:
-        """Open the interactive detector layout editor as a sub-dialog."""
-        from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
-
-        n_histo = len(self._run.histograms) if self._run is not None else 0
-        grouping = self._run.grouping if self._run is not None else {}
-        instrument = self._current_instrument_layout()
-
-        forward_gid = int(grouping.get("forward_group", self._forward_combo.currentData() or 1))
-        backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))
-
-        # Convert internal 0-based indices to 1-based for the layout editor
-        groups_1based = {gid: shift_channel_entries(idxs, 1) for gid, idxs in self._groups.items()}
-
-        current_exclusion = self._current_excluded_detectors() or []
-        dlg = DetectorLayoutDialog(
-            instrument=instrument,
-            groups=groups_1based,
-            group_names=dict(self._group_names),
-            initial_preset_name=self._grouping_preset_name,
-            forward_group=forward_gid,
-            backward_group=backward_gid,
-            excluded_detectors=current_exclusion,
-            projections=self._projection_specs,
-            field_direction=self._reference_field_direction(),
-            n_histograms=n_histo,
-            parent=self,
-        )
-        if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
-            return
-
-        result = dlg.get_result()
-        key = result["instrument"]
-        if key != instrument.name:
-            from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
-
-            self._sync_draft_from_form()
-            chosen = choice_for_layout(self._run, key)
-            confirmation = InstrumentIdentityDialog(
-                self._run, following_profile=self._draft, selection=chosen.selection, parent=self
-            )
-            if confirmation.exec() != confirmation.DialogCode.Accepted:
-                return
-            before = (
-                self._instrument_edit.profile if self._instrument_edit is not None else self._draft
-            )
-            self._instrument_edit = InstrumentEdit(
-                confirmation.get_choice(),
-                GroupingProfile.from_dict(before.to_dict()),
-                int(self._reference_dataset.run_number),
-            )
-            selected_run = replace(self._run, instrument_choice=self._instrument_edit.choice)
-            if not self._fingerprint.matches(profile_fingerprint_for_run(selected_run)):
-                number = self._instrument_edit.run_number
-                if not self._run_is_overridden(number):
-                    self._override_profiles[number] = GroupingProfile.from_dict(before.to_dict())
-                    self._override_drafts[number] = profile_grouping_request(before, self._run)
-                    self._scope_panel.set_released(number, True)
-        self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
-        self._exclude_edit.setModified(True)
-        # Surviving projections retain the user's unsaved alpha edits.
-        edited_alpha = {
-            label: float(spin.value()) for label, spin in self._vector_alpha_spins.items()
-        }
-        result_projections = result.get("projections")
-        if result_projections:
-            merged: list[dict[str, Any]] = []
-            for proj in result_projections:
-                proj = dict(proj)
-                label = str(proj.get("label"))
-                if label in edited_alpha:
-                    proj["alpha"] = edited_alpha[label]
-                merged.append(proj)
-            self._projection_specs = merged
-        else:
-            self._projection_specs = None
-
-        # Write back: convert 1-based IDs back to 0-based internal indices
-        new_groups_0based: dict[int, list[int]] = {}
-        for gid, det_ids in result["groups"].items():
-            new_groups_0based[gid] = sorted(max(0, d - 1) for d in det_ids)
-
-        # Keep any previously defined groups that are not in the result
-        # (preserves groups beyond the 8 shown in the editor)
-        self._groups = new_groups_0based
-        previous_included = dict(self._included_groups)
-        self._included_groups = {
-            int(gid): bool(previous_included.get(int(gid), True)) for gid in self._groups
-        }
-        self._group_names = result.get("group_names", {})
-        preset_name = result.get("grouping_preset")
-        # Preset matching is recomputed from the authored detector groups.
-        if preset_name:
-            self._grouping_preset_name = str(preset_name)
-        # Update forward/backward combos
-        new_fwd = result.get("forward_group", forward_gid)
-        new_bwd = result.get("backward_group", backward_gid)
-        new_fwd, new_bwd = self._analysis_pair_for_reference(int(new_fwd), int(new_bwd))
-        self._refresh_group_combo_items(forward_gid=int(new_fwd), backward_gid=int(new_bwd))
-
-        self._populate_group_table()
-        self._update_vector_mode_controls()
-        self._mark_dirty()
-        # The editor may have switched instrument, so the preset list too.
-        self._rebuild_preset_combo()
-        self._refresh_editing_strip()
-        self._refresh_preview()
+    _on_detector_layout = edit_detector_layout
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
@@ -5213,6 +5122,8 @@ class GroupingDialog(TimingControls, QDialog):
             self._set_combo_to_group(self._forward_combo, int(forward_gid))
             self._set_combo_to_group(self._backward_combo, int(backward_gid))
 
+        target = self._editing_target()
+        owner = self._draft if target == "profile" else self._override_profiles[int(target)]
         alpha_value = float(self._alpha_spin.value())
         if canonical and "P_z" in self._vector_alpha_spins:
             alpha_value = float(self._vector_alpha_spins["P_z"].value())
@@ -5239,6 +5150,11 @@ class GroupingDialog(TimingControls, QDialog):
                 "included_groups": self._current_included_groups(),
                 "group_names": dict(self._group_names),
                 "grouping_preset": self._grouping_preset_name,
+                **(
+                    {"readout_set": owner.extra["readout_set"]}
+                    if "readout_set" in owner.extra
+                    else {}
+                ),
                 **self._selected_pair_payload(),
                 "forward_indices": list(self._groups.get(forward_gid, [])),
                 "backward_indices": list(self._groups.get(backward_gid, [])),

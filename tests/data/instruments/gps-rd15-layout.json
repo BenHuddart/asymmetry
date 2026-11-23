@@ -531,6 +531,122 @@
           "tint": "#B0436E"
         }
       ]
+    },
+    "Transverse (Vector, combined)": {
+      "name": "Transverse (Vector, combined)",
+      "groups": {
+        "1": {
+          "name": "Up-Down Up",
+          "detector_ids": [
+            3
+          ]
+        },
+        "2": {
+          "name": "Up-Down Down",
+          "detector_ids": [
+            4
+          ]
+        },
+        "3": {
+          "name": "Left-Right Right",
+          "detector_ids": [
+            5
+          ]
+        },
+        "4": {
+          "name": "Left-Right Left",
+          "detector_ids": [
+            6
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 2,
+      "projections": [
+        {
+          "label": "Up-Down",
+          "forward_group": 1,
+          "backward_group": 2,
+          "alpha": 1.0,
+          "tint": "#B0436E"
+        },
+        {
+          "label": "Left-Right",
+          "forward_group": 3,
+          "backward_group": 4,
+          "alpha": 1.0,
+          "tint": "#3F6FA0"
+        }
+      ]
+    },
+    "Spin-rotated (combined)": {
+      "name": "Spin-rotated (combined)",
+      "groups": {
+        "1": {
+          "name": "B+U",
+          "detector_ids": [
+            2,
+            3
+          ]
+        },
+        "2": {
+          "name": "F+D",
+          "detector_ids": [
+            1,
+            4
+          ]
+        }
+      },
+      "forward_group": 1,
+      "backward_group": 2,
+      "projections": []
+    },
+    "WEP (combined)": {
+      "name": "WEP (combined)",
+      "groups": {
+        "1": {
+          "name": "F",
+          "detector_ids": [
+            1
+          ]
+        },
+        "2": {
+          "name": "B",
+          "detector_ids": [
+            2
+          ]
+        },
+        "3": {
+          "name": "U",
+          "detector_ids": [
+            3
+          ]
+        },
+        "4": {
+          "name": "D",
+          "detector_ids": [
+            4
+          ]
+        }
+      },
+      "forward_group": 2,
+      "backward_group": 1,
+      "projections": [
+        {
+          "label": "FB",
+          "forward_group": 2,
+          "backward_group": 1,
+          "alpha": 0.75,
+          "tint": "#2E8B74"
+        },
+        {
+          "label": "UD",
+          "forward_group": 3,
+          "backward_group": 4,
+          "alpha": 1.0,
+          "tint": "#B0436E"
+        }
+      ]
     }
   },
   "view": "plan",
@@ -555,6 +671,42 @@
       "rotation_deg": 0.0,
       "read_only": false,
       "row_label": null
+    }
+  ],
+  "readout_sets": [
+    {
+      "key": "individual",
+      "label": "Individual",
+      "detector_ids": [
+        1,
+        2,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "default_preset": "Longitudinal",
+      "notice": ""
+    },
+    {
+      "key": "hardware_combined",
+      "label": "Hardware-combined",
+      "detector_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        15
+      ],
+      "default_preset": "Longitudinal",
+      "notice": "May include Mobile counts"
     }
   ]
 }

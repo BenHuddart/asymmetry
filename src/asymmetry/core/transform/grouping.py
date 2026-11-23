@@ -13,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.instruments.readouts import require_independent_readouts
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
     BinWindow,
@@ -487,7 +488,7 @@ def effective_group_indices(
     return effective
 
 
-def independent_pair_indices(
+def acquired_pair_indices(
     grouping: dict,
     *,
     n_histograms: int,
@@ -527,6 +528,21 @@ def independent_pair_indices(
             "or exclude shared channels while keeping both sides nonempty.",
             grouping,
         )
+    return pair
+
+
+def independent_pair_indices(
+    grouping: dict,
+    *,
+    n_histograms: int,
+    resolved_indices: tuple[list[int], list[int]] | None = None,
+    metadata: dict | None = None,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Require disjoint acquired channels and declared shared-event eligibility."""
+    pair = acquired_pair_indices(
+        grouping, n_histograms=n_histograms, resolved_indices=resolved_indices
+    )
+    require_independent_readouts(n_histograms, grouping, pair, metadata)
     return pair
 
 
@@ -678,6 +694,7 @@ def resolve_forward_backward_layout(
     grouping: dict,
     *,
     resolved_indices: tuple[list[int], list[int]] | None = None,
+    metadata: dict | None = None,
 ) -> ForwardBackwardLayout:
     """Resolve a selected pair onto common observations and one typed window.
 
@@ -688,7 +705,7 @@ def resolve_forward_backward_layout(
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     forward_indices, backward_indices = independent_pair_indices(
-        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices, metadata=metadata
     )
     alpha, beta = grouping_balances(grouping)
 
@@ -760,9 +777,11 @@ def group_forward_backward(
 ) -> GroupedForwardBackward:
     """Resolve the selected pair's layout, then sum its observed counts."""
     pair = independent_pair_indices(
-        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices
+        grouping, n_histograms=len(histograms), resolved_indices=resolved_indices, metadata=metadata
     )
-    layout = resolve_forward_backward_layout(histograms, grouping, resolved_indices=pair)
+    layout = resolve_forward_backward_layout(
+        histograms, grouping, resolved_indices=pair, metadata=metadata
+    )
     groups = [
         group_counts_aligned(histograms, list(indices), alignment=layout.alignment)
         for indices in pair

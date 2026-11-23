@@ -16,7 +16,9 @@ def build_fb_signal_dataset(run, *, cancel_check=None):
     """Preserve F/B coordinates, correction outcomes and atomic held-period fallback."""
     grouping = run.grouping
     histograms = list(run.histograms)
-    pair = independent_pair_indices(grouping, n_histograms=len(histograms))
+    pair = independent_pair_indices(
+        grouping, n_histograms=len(histograms), metadata=reference_observation_metadata(run)
+    )
     alpha, beta = grouping_balances(grouping)
     flags = correction_flags_from_grouping(grouping)
     cache = {}

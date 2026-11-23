@@ -56,7 +56,13 @@ def test_editor_open_ok_preserves_custom_groups_and_exact_pair(qapp, name):
     assert result["groups"] == {1: [1, layout.n_detectors], 2: [2], 3: [1]}
     assert (result["forward_group"], result["backward_group"]) == (2, 1)
     assert result["group_names"] == {1: "Custom one", 2: "Custom two", 3: "Shared"}
-    assert set(dialog._schematic._patches) == set(range(1, layout.n_detectors + 1))
+    visible = (
+        layout.readout_sets[0].detector_ids
+        if layout.readout_sets
+        else range(1, layout.n_detectors + 1)
+    )
+    assert set(dialog._schematic._patches) == set(visible)
+    assert "readout_set" not in result
     assert len(dialog._schematic._axes) == len(layout.banks)
     dialog.close()
 
