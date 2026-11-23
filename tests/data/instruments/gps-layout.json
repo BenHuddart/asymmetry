@@ -15,16 +15,17 @@
           "r_outer": 0.0,
           "shape": "rectangle",
           "label": "Forward",
-          "x_center": 2.7,
+          "x_center": 2.2,
           "y_center": 0.0,
           "width": 0.75,
           "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 2,
-          "sector_index": 1,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -32,16 +33,17 @@
           "r_outer": 0.0,
           "shape": "rectangle",
           "label": "Backward",
-          "x_center": -2.7,
+          "x_center": -2.2,
           "y_center": 0.0,
           "width": 0.75,
           "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 6,
-          "sector_index": 5,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -50,15 +52,16 @@
           "shape": "rectangle",
           "label": "Left",
           "x_center": 0.0,
-          "y_center": 1.95,
-          "width": 1.7,
+          "y_center": 2.4,
+          "width": 2.05,
           "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 5,
-          "sector_index": 4,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -67,86 +70,25 @@
           "shape": "rectangle",
           "label": "Right",
           "x_center": 0.0,
-          "y_center": -1.95,
-          "width": 1.7,
+          "y_center": -2.4,
+          "width": 2.05,
           "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
-        },
-        {
-          "detector_id": 3,
-          "sector_index": 2,
-          "ring_index": 0,
-          "angle_center_deg": 0.0,
-          "angle_half_width_deg": 0.0,
-          "r_inner": 0.0,
-          "r_outer": 0.0,
-          "shape": "endon_out",
-          "label": "Up",
-          "x_center": 0.0,
-          "y_center": 0.7,
-          "width": 0.32,
-          "height": 0.32,
-          "rotation_deg": 0.0,
-          "read_only": true
-        },
-        {
-          "detector_id": 4,
-          "sector_index": 3,
-          "ring_index": 0,
-          "angle_center_deg": 0.0,
-          "angle_half_width_deg": 0.0,
-          "r_inner": 0.0,
-          "r_outer": 0.0,
-          "shape": "endon_in",
-          "label": "Down",
-          "x_center": 0.0,
-          "y_center": -0.7,
-          "width": 0.32,
-          "height": 0.32,
-          "rotation_deg": 0.0,
-          "read_only": true
+          "read_only": false,
+          "row_label": null
         }
       ],
-      "beam": null
+      "beam": {
+        "screen": [
+          1.0,
+          0.0
+        ],
+        "toward": null
+      }
     },
     {
       "name": "Side view",
       "segments": [
-        {
-          "detector_id": 3,
-          "sector_index": 2,
-          "ring_index": 0,
-          "angle_center_deg": 0.0,
-          "angle_half_width_deg": 0.0,
-          "r_inner": 0.0,
-          "r_outer": 0.0,
-          "shape": "rectangle",
-          "label": "Up",
-          "x_center": 0.0,
-          "y_center": 1.95,
-          "width": 1.7,
-          "height": 0.75,
-          "rotation_deg": 0.0,
-          "read_only": false
-        },
-        {
-          "detector_id": 4,
-          "sector_index": 3,
-          "ring_index": 0,
-          "angle_center_deg": 0.0,
-          "angle_half_width_deg": 0.0,
-          "r_inner": 0.0,
-          "r_outer": 0.0,
-          "shape": "rectangle",
-          "label": "Down",
-          "x_center": 0.0,
-          "y_center": -1.95,
-          "width": 1.7,
-          "height": 0.75,
-          "rotation_deg": 0.0,
-          "read_only": false
-        },
         {
           "detector_id": 1,
           "sector_index": 0,
@@ -157,16 +99,17 @@
           "r_outer": 0.0,
           "shape": "rectangle",
           "label": "Forward",
-          "x_center": 2.7,
+          "x_center": 2.2,
           "y_center": 0.0,
           "width": 0.75,
           "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": true
+          "read_only": true,
+          "row_label": null
         },
         {
           "detector_id": 2,
-          "sector_index": 1,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -174,49 +117,58 @@
           "r_outer": 0.0,
           "shape": "rectangle",
           "label": "Backward",
-          "x_center": -2.7,
+          "x_center": -2.2,
           "y_center": 0.0,
           "width": 0.75,
           "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": true
+          "read_only": true,
+          "row_label": null
         },
         {
-          "detector_id": 6,
-          "sector_index": 5,
+          "detector_id": 3,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
-          "shape": "endon_out",
-          "label": "Left",
+          "shape": "rectangle",
+          "label": "Up",
           "x_center": 0.0,
-          "y_center": 0.7,
-          "width": 0.32,
-          "height": 0.32,
+          "y_center": 2.4,
+          "width": 2.05,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": true
+          "read_only": false,
+          "row_label": null
         },
         {
-          "detector_id": 5,
-          "sector_index": 4,
+          "detector_id": 4,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
-          "shape": "endon_in",
-          "label": "Right",
+          "shape": "rectangle",
+          "label": "Down",
           "x_center": 0.0,
-          "y_center": -0.7,
-          "width": 0.32,
-          "height": 0.32,
+          "y_center": -2.4,
+          "width": 2.05,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": true
+          "read_only": false,
+          "row_label": null
         }
       ],
-      "beam": null
+      "beam": {
+        "screen": [
+          1.0,
+          0.0
+        ],
+        "toward": null
+      }
     }
   ],
   "presets": {
@@ -360,5 +312,6 @@
   "view": "plan",
   "reference_arrows": [],
   "display_name": null,
-  "apply_default_preset_on_load": false
+  "apply_default_preset_on_load": false,
+  "auxiliary": []
 }

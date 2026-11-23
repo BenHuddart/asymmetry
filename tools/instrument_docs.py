@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import textwrap
 from functools import partial
 from pathlib import Path
@@ -10,8 +11,10 @@ from pathlib import Path
 from asymmetry.core import instruments
 from asymmetry.core.instruments.catalog import PROFILES as BUNDLED_PROFILES
 from asymmetry.core.instruments.isis_emu import PROFILE as EMU
+from asymmetry.core.instruments.numbering import numbering_template
 from asymmetry.core.instruments.resolve import layout_from_profile
 from asymmetry.core.instruments.schema import InstrumentProfile
+from asymmetry.gui.utils import detector_drawing
 
 PROFILES = {profile.identity.key: profile for profile in BUNDLED_PROFILES}
 GENERATED_REVIEW_MARKER = ".. Generated instrument review page; do not edit."
@@ -39,6 +42,9 @@ def _channel_ranges(keys, ordinals):
 def _review_figure(profile, config, uri):
     text = f".. figure:: {uri}\n   :width: 100%\n   :alt: {profile.identity.name} labelled {config.label} schematic\n\n   {config.label}; numbers identify the recorded histograms.\n\n"
     text += f":download:`Full-size labelled diagram (SVG) <{uri}>`\n\n"
+    stem = uri.removesuffix(".svg")
+    text += f":download:`Blank numbering diagram (SVG) <{stem}-numbering.svg>` · :download:`Editable numbering table (CSV) <{stem}-numbering.csv>`\n\n"
+    text += "Template slot IDs are acquisition/channel identities, independent of view order. Fill in readout labels and histogram numbers; optional physical associations can be unknown or multiple.\n\n"
     conventions = dict.fromkeys(view.convention for view in config.views)
     text += "\n\n".join(conventions) + "\n\n"
     return text
@@ -265,6 +271,7 @@ def render_profile_diagram(
     output: Path,
     *,
     n_histograms: int | None = None,
+    blank: bool = False,
 ) -> None:
     """Render the same resolved primitive coordinates as the detector editor."""
     import matplotlib as mpl
@@ -272,7 +279,13 @@ def render_profile_diagram(
     from matplotlib.patches import Circle, Rectangle, Wedge
 
     layout = layout_from_profile(profile, acquisition, n_histograms=n_histograms)
-    figure = Figure(figsize=(max(6, 5 * len(layout.banks)), 5.3))
+    figure = Figure(figsize=(max(6, 5 * len(layout.banks)), 6.5 if layout.auxiliary else 5.3))
+    bank_axes, auxiliary_axes = detector_drawing.schematic_axes(figure, layout)
+    slots = (
+        {slot.ordinal: slot for slot in numbering_template(profile, acquisition)}
+        if acquisition
+        else {}
+    )
     views = (
         next(config.views for config in profile.detectors.acquisitions if config.key == acquisition)
         if acquisition is not None
@@ -288,27 +301,20 @@ def render_profile_diagram(
         if preset
         else {}
     )
-    for index, bank in enumerate(layout.banks):
-        axes = figure.add_subplot(1, len(layout.banks), index + 1)
+    panels = [
+        (axes, bank.name, bank.segments, bank.beam)
+        for axes, bank in zip(bank_axes, layout.banks, strict=True)
+    ]
+    if auxiliary_axes is not None:
+        panels.append((auxiliary_axes, "Auxiliary — position unspecified", layout.auxiliary, None))
+    for index, (axes, name, segments, beam) in enumerate(panels):
         axes.set_aspect("equal")
         axes.axis("off")
-        axes.set_title(bank.name)
-        units = (
-            f"{views[index].scale}; {views[index].units}" if views else "dimensionless schematic"
-        )
-        axes.text(
-            0.5,
-            -0.06,
-            units,
-            transform=axes.transAxes,
-            ha="center",
-            va="top",
-            fontsize=11,
-        )
-        for segment in bank.segments:
+        axes.set_title(name)
+        for segment in segments:
             color = (
                 "0.93"
-                if segment.read_only or segment.detector_id not in memberships
+                if blank or segment.read_only or segment.detector_id not in memberships
                 else f"C{(memberships[segment.detector_id] - 1) % 10}"
             )
             if segment.shape == "wedge":
@@ -359,14 +365,22 @@ def render_profile_diagram(
             label = (
                 str(segment.detector_id) if segment.detector_id is not None else segment.label or ""
             )
+            if blank and segment.detector_id in slots:
+                slot = slots[segment.detector_id]
+                label = slot.channel if segment.read_only else f"{slot.channel}\n___\n# ___"
+            elif segment.shape == "rectangle" and segment.detector_id in slots:
+                label = f"{segment.detector_id}\n{slots[segment.detector_id].channel}"
             axes.text(
                 x,
                 y,
                 label,
                 ha="center",
                 va="top" if segment.shape.startswith("endon_") else "center",
-                fontsize=11,
+                fontsize=6.5 if blank else 9,
+                color="0.5" if segment.read_only else "0.15",
             )
+        detector_drawing.draw_beam(axes, beam)
+        detector_drawing.draw_readout_rows(axes, segments)
         for arrow in layout.reference_arrows:
             axes.annotate(
                 "",
@@ -393,6 +407,22 @@ def render_profile_diagram(
     figure.suptitle(
         f"{profile.identity.name}: {next(config.label for config in profile.detectors.acquisitions if config.key == acquisition) if acquisition is not None else 'Generic acquired channels'}"
     )
+    figure.text(
+        0.5,
+        0.055,
+        " · ".join(dict.fromkeys(f"{view.scale}; {view.units}" for view in views))
+        or "Dimensionless schematic",
+        ha="center",
+        fontsize=8,
+    )
+    if blank:
+        figure.text(
+            0.5,
+            0.02,
+            f"Slot prefix: {profile.identity.key}/{acquisition}/ · Blanks: readout label / histogram number; grey: repeated context",
+            ha="center",
+            fontsize=8,
+        )
     figure.subplots_adjust(left=0.03, right=0.97, bottom=0.12, top=0.88, wspace=0.1)
     output.parent.mkdir(parents=True, exist_ok=True)
     with mpl.rc_context({"svg.hashsalt": "asymmetry-instruments", "svg.fonttype": "none"}):
@@ -409,6 +439,24 @@ def generate_profile(
     for config in profile.detectors.acquisitions:
         name = f"{stem}-{config.key}.svg"
         render_profile_diagram(profile, config.key, directory / name)
+        render_profile_diagram(
+            profile, config.key, directory / name.replace(".svg", "-numbering.svg"), blank=True
+        )
+        with (directory / name.replace(".svg", "-numbering.csv")).open(
+            "w", newline="", encoding="utf-8"
+        ) as stream:
+            writer = csv.writer(stream)
+            writer.writerow(
+                (
+                    "Slot ID",
+                    "Readout label",
+                    "Histogram ordinal",
+                    "Physical association / detector label(s), if known",
+                )
+            )
+            writer.writerows(
+                (slot.id, "", "", "") for slot in numbering_template(profile, config.key)
+            )
         diagrams[config.key] = f"{image_prefix}/{name}" if image_prefix else name
     page = directory / f"{stem}.rst"
     page.write_text(profile_rst(profile, diagrams), encoding="utf-8")
@@ -488,7 +536,11 @@ def setup(app):
 
         def run(self):
             env = self.state.document.settings.env
-            for dependency in (Path(__file__), *Path(instruments.__file__).parent.glob("*.py")):
+            for dependency in (
+                Path(__file__),
+                Path(detector_drawing.__file__),
+                *Path(instruments.__file__).parent.glob("*.py"),
+            ):
                 env.note_dependency(str(dependency.resolve()))
             profile = PROFILES[self.arguments[0]]
             directory = Path(env.srcdir) / "_generated" / "instruments"

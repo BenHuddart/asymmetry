@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from asymmetry.core.instruments.geometry import BeamProjection
+from asymmetry.core.instruments.geometry import BeamProjection, RowLabel
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,7 @@ class DetectorSegment:
     height: float = 0.0
     rotation_deg: float = 0.0
     read_only: bool = False
+    row_label: RowLabel | None = None
 
     def __post_init__(self):
         if self.detector_id is None and not self.read_only:
@@ -251,6 +252,7 @@ class InstrumentLayout:
     reference_arrows: tuple[ReferenceArrow, ...] = ()
     display_name: str | None = None
     apply_default_preset_on_load: bool = False
+    auxiliary: tuple[DetectorSegment, ...] = ()
 
     @property
     def display(self) -> str:
@@ -269,7 +271,7 @@ class InstrumentLayout:
         segs: list[DetectorSegment] = []
         for bank in self.banks:
             segs.extend(bank.segments)
-        return segs
+        return segs + list(self.auxiliary)
 
     @property
     def active_segments(self) -> list[DetectorSegment]:

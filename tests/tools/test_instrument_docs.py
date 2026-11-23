@@ -97,6 +97,7 @@ def test_incremental_sphinx_rebuild_tracks_profile_and_generator_sources(tmp_pat
     dependencies = {Path(path).resolve() for path in first.env.dependencies["index"]}
     assert Path(isis_emu.__file__).resolve() in dependencies
     assert generator.resolve() in dependencies
+    assert Path(instrument_docs.detector_drawing.__file__).resolve() in dependencies
     assert "Changed fixture title" not in (output / "index.html").read_text()
     changed = replace(PROFILE, identity=replace(PROFILE.identity, name="Changed fixture title"))
     monkeypatch.setitem(instrument_docs.PROFILES, PROFILE.identity.key, changed)
@@ -132,13 +133,14 @@ def test_psi_review_preserves_legacy_variants_and_declared_direction_cues(tmp_pa
     assert "initial projection balances" in gps
     flame = generate_profile(FLAME, tmp_path / "flame")
     text = flame.read_text()
-    assert "beam, main magnetic field" in text
-    assert "(-2.55, -0.82)" in text
-    assert "not measured run-specific" in text
+    assert "Beam direction in the common arrangement frame" in text
+    assert "Blank numbering diagram" in text
+    assert "Editable numbering table" in text
     svg = flame.with_name("psi_flame-eight_channel.svg")
     labels = " ".join(ElementTree.parse(svg).getroot().itertext())
-    assert "initial muon spin" in labels
-    assert "beam, main magnetic field" in labels
+    assert "Beam" in labels
+    assert "initial muon spin" not in labels
+    assert "main magnetic field" not in labels
     assert "HIFI, HAL9500" in profile_rst(HAL9500, {})
     assert "HAL" in profile_rst(HAL9500, {})
 
@@ -196,3 +198,27 @@ def test_declared_beam_review_uses_resolved_view_projection_and_retains_unknown_
     assert "     - (0.0, 0.0)\n     - Unknown" in text
     assert "     - (0.0, 0.0)\n     - -1.0" in text
     assert "common arrangement frame" not in profile_rst(profile, {})
+
+
+def test_blank_templates_have_one_editable_table_row_per_acquired_slot(tmp_path):
+    import csv
+
+    from asymmetry.core.instruments import FLAME, GPS, HAL9500
+    from asymmetry.core.instruments.numbering import numbering_template
+
+    for profile in (GPS, FLAME, HAL9500):
+        page = generate_profile(profile, tmp_path / profile.identity.key)
+        for config in profile.detectors.acquisitions:
+            stem = f"{profile.identity.key.replace('.', '_')}-{config.key}-numbering"
+            table = page.with_name(stem + ".csv")
+            with table.open(newline="") as stream:
+                rows = list(csv.reader(stream))
+            slots = numbering_template(profile, config.key)
+            assert [row[0] for row in rows[1:]] == [slot.id for slot in slots]
+            assert len(set(row[0] for row in rows[1:])) == len(slots)
+            assert all(row[1:] == ["", "", ""] for row in rows[1:])
+            assert rows[0][-1] == "Physical association / detector label(s), if known"
+            labels = list(ElementTree.parse(page.with_name(stem + ".svg")).getroot().itertext())
+            assert sum(label == "# ___" for label in labels) == len(slots)
+            assert f"Slot prefix: {profile.identity.key}/{config.key}/" in " ".join(labels)
+            assert all(slot.channel in labels for slot in slots)

@@ -156,6 +156,22 @@ class Occurrence:
 
 
 @dataclass(frozen=True)
+class RowLabel:
+    """A readout-row caption anchored by the arrangement, not inferred by renderers."""
+
+    text: str
+    position: tuple[float, float]
+
+    def __post_init__(self):
+        if len(self.position) != 2:
+            raise ValueError("A row label needs two screen coordinates")
+        _finite(*self.position)
+        if not self.text:
+            raise ValueError("A row label needs text")
+        object.__setattr__(self, "position", tuple(self.position))
+
+
+@dataclass(frozen=True)
 class Placement:
     """Resolved shape at a Cartesian centre and a CCW angle from the right."""
 
@@ -166,6 +182,8 @@ class Placement:
     angle: float = 0.0
     sector: int = 0
     ring: int = 0
+    rotate: bool = True
+    row_label: RowLabel | None = None
 
     def __post_init__(self):
         _finite(self.x, self.y, self.angle)
@@ -243,6 +261,58 @@ class Grid:
 
 
 @dataclass(frozen=True)
+class BankRow:
+    """Left-to-right (or bottom-to-top) readouts, not physical detector sums."""
+
+    targets: tuple[Occurrence, ...]
+    widths: tuple[float, ...]
+    thickness: float = 0.75
+    label: str = ""
+
+    def __post_init__(self):
+        _finite(*self.widths, self.thickness)
+        if not self.targets or len(self.targets) != len(self.widths):
+            raise ValueError("A bank row needs one width per readout")
+        if min(*self.widths, self.thickness) <= 0:
+            raise ValueError("Bank row dimensions must be positive")
+
+
+@dataclass(frozen=True)
+class Directional:
+    """Ordered rows outward from the sample in one cardinal screen direction.
+
+    Within a horizontal bank readouts run left to right, and within a vertical
+    bank bottom to top. Thus backward/forward order does not flip across a view.
+    Dimensions and spacing are schematic, independent of acquired ordinals.
+    """
+
+    direction: str
+    rows: tuple[BankRow, ...]
+    distance: float = 2.4
+    gap: float = 0.15
+
+    def __post_init__(self):
+        _finite(self.distance, self.gap)
+        if self.direction not in {"right", "left", "up", "down"} or not self.rows:
+            raise ValueError("Directional banks need a cardinal direction and rows")
+        if self.distance <= 0 or self.gap < 0:
+            raise ValueError("Bank distance must be positive and gap nonnegative")
+
+
+@dataclass(frozen=True)
+class Composite:
+    """Flat collection of arrangements within one view, without scene hierarchy."""
+
+    parts: tuple[Directional | Circular | Grid | Explicit, ...]
+
+    def __post_init__(self):
+        if not self.parts or any(
+            not isinstance(part, (Directional, Circular, Grid, Explicit)) for part in self.parts
+        ):
+            raise ValueError("Composite requires nonempty flat drawing arrangements")
+
+
+@dataclass(frozen=True)
 class View:
     """Named schematic or dimensional view, independent of physical banks."""
 
@@ -250,7 +320,7 @@ class View:
     label: str
     mode: str
     convention: str
-    arrangement: Circular | Grid | Explicit
+    arrangement: Circular | Grid | Explicit | Directional | Composite
     scale: str = "schematic"
     units: str = "dimensionless"
     orientation: ViewOrientation | None = None
@@ -273,7 +343,50 @@ class View:
 
 def expand_view(view: View) -> tuple[Placement, ...]:
     """Expand validated arrangements into the same finite drawing primitives."""
-    arrangement = view.arrangement
+    return expand_arrangement(view.arrangement)
+
+
+def expand_arrangement(arrangement) -> tuple[Placement, ...]:
+    """Expand profile drawing data without changing readout identities."""
+    if isinstance(arrangement, Composite):
+        return tuple(element for part in arrangement.parts for element in expand_arrangement(part))
+    if isinstance(arrangement, Directional):
+        dx, dy = {"right": (1, 0), "left": (-1, 0), "up": (0, 1), "down": (0, -1)}[
+            arrangement.direction
+        ]
+        elements = []
+        edge = arrangement.distance - arrangement.rows[0].thickness / 2
+        for row_index, row in enumerate(arrangement.rows):
+            distance = edge + row.thickness / 2
+            half_span = (sum(row.widths) + arrangement.gap * (len(row.widths) - 1)) / 2
+            cursor = -half_span
+            caption = (
+                RowLabel(
+                    row.label,
+                    (
+                        dx * distance + abs(dy) * (half_span + 0.12),
+                        dy * distance + abs(dx) * (half_span + 0.12),
+                    ),
+                )
+                if row.label
+                else None
+            )
+            for column, (target, width) in enumerate(zip(row.targets, row.widths, strict=True)):
+                offset = cursor + width / 2
+                elements.append(
+                    Placement(
+                        target,
+                        Rectangle(width, row.thickness) if dy else Rectangle(row.thickness, width),
+                        dx * distance + abs(dy) * offset,
+                        dy * distance + abs(dx) * offset,
+                        sector=row_index,
+                        ring=column,
+                        row_label=caption,
+                    )
+                )
+                cursor += width + arrangement.gap
+            edge += row.thickness + arrangement.gap
+        return tuple(elements)
     if isinstance(arrangement, Explicit):
         return arrangement.elements
     elements = []
@@ -285,7 +398,11 @@ def expand_view(view: View) -> tuple[Placement, ...]:
                 radius = arrangement.radii[column]
                 x = radius * math.cos(math.radians(angle))
                 y = radius * math.sin(math.radians(angle))
-                elements.append(Placement(target, shape, x, y, angle, row_index, column))
+                elements.append(
+                    Placement(
+                        target, shape, x, y, angle, row_index, column, arrangement.radial_rotation
+                    )
+                )
             else:
                 elements.append(
                     Placement(

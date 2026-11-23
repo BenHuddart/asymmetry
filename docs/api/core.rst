@@ -141,6 +141,11 @@ Instrument geometry
 
 .. autofunction:: asymmetry.core.instruments.geometry.project_beam
 
+.. autofunction:: asymmetry.core.instruments.numbering.numbering_template
+
+.. autoclass:: asymmetry.core.instruments.numbering.NumberingSlot
+   :members:
+
 .. autofunction:: asymmetry.core.instrument.get_instrument_layout
 
 .. autofunction:: asymmetry.core.instrument.detect_instrument
