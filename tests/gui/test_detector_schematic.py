@@ -86,13 +86,19 @@ class TestConstruction:
         assert len(widget._axes) == 2
         assert set(widget._patches) == {1, 2, 3, 4, 5, 6}
 
-    def test_gps_endon_segments_not_clickable(self, qapp):
+    def test_gps_readonly_context_rectangles_are_not_clickable(self, qapp):
+        from types import SimpleNamespace
+
         layout = get_instrument_layout("GPS")
-        # The Up/Down end-on markers in the top view are read-only context.
-        top = next(b for b in layout.banks if b.name == "Top view")
-        endon = next(s for s in top.segments if s.shape.startswith("endon"))
-        assert endon.read_only
-        assert not DetectorSchematicWidget._point_in_segment(endon.x_center, endon.y_center, endon)
+        widget = DetectorSchematicWidget(layout)
+        context = next(s for s in layout.banks[1].segments if s.read_only)
+        assert context.shape == "rectangle"
+        event = SimpleNamespace(
+            inaxes=widget._axes[1], xdata=context.x_center, ydata=context.y_center
+        )
+        assert widget._hit_test_event(event) is None
+        event.inaxes = widget._axes[0]
+        assert widget._hit_test_event(event).detector_id == context.detector_id
 
     def test_gps_exclusion_hatches_readonly_ghost(self, qapp):
         layout = get_instrument_layout("GPS")
@@ -111,7 +117,7 @@ class TestConstruction:
         layout = get_instrument_layout("HAL")
         widget = DetectorSchematicWidget(layout)
         # The 16 positron detectors (ids 2-17) are edge-aligned rectangular bars;
-        # MV (id 1) stays a central disc wedge.
+        # MV (id 1) is a selectable auxiliary rectangle.
         for det_id in range(2, 18):
             assert isinstance(widget._patches[det_id], Rectangle)
 
@@ -127,13 +133,10 @@ class TestConstruction:
         ]
         assert hits == [2]
 
-    def test_hal_mv_disc_hit_test_is_full_circle(self, qapp):
-        layout = get_instrument_layout("HAL")
-        mv = next(s for s in layout.banks[0].segments if s.label == "MV")
-        # Any point inside the disc radius is inside MV, regardless of angle.
-        assert DetectorSchematicWidget._point_in_segment(0.0, 0.15, mv)
-        assert DetectorSchematicWidget._point_in_segment(0.15, 0.0, mv)
-        assert not DetectorSchematicWidget._point_in_segment(0.6, 0.0, mv)
+    def test_hal_mv_auxiliary_hit_test(self, qapp):
+        mv = get_instrument_layout("HAL").auxiliary[0]
+        assert DetectorSchematicWidget._point_in_segment(mv.x_center, mv.y_center, mv)
+        assert not DetectorSchematicWidget._point_in_segment(mv.width, mv.height, mv)
 
     def test_axes_count_matches_banks(self, qapp, instrument_name):
         layout = get_instrument_layout(instrument_name)
@@ -568,7 +571,7 @@ class TestRectangleLabelFit:
         layout = get_instrument_layout("GPS-RD")
         widget = DetectorSchematicWidget(layout)
         seg = next(s for s in layout.all_segments if s.detector_id == 11)  # Mob-RL
-        assert widget._fit_rectangle_name(seg) == "Mob"
+        assert widget._fit_rectangle_name(seg) == "Mob-RL"
 
     def test_narrow_tall_box_name_is_also_abbreviated(self, qapp):
         """Forward/Backward (0.78 wide, 1.7 tall) are narrower than the
@@ -589,81 +592,7 @@ class TestRectangleLabelFit:
         seg = next(s for s in layout.all_segments if s.detector_id == 3)  # "Right", 2.18 wide
         assert widget._fit_rectangle_name(seg) == "Right"
 
-    def test_short_box_fontsize_bounded_by_height(self, qapp):
-        layout = get_instrument_layout("GPS-RD")
-        widget = DetectorSchematicWidget(layout)
-        mob = next(s for s in layout.all_segments if s.detector_id == 11)
-        tall = next(
-            s
-            for s in layout.all_segments
-            if s.detector_id == 1 and s.label == "Forward" and not s.read_only
-        )
-        # Mob-RL (0.42 tall) is far shorter than Forward/Backward (1.7 tall),
-        # so its height-bounded font size must be smaller.
-        assert widget._rectangle_label_fontsize(mob) < widget._rectangle_label_fontsize(tall)
-
-
-# ---------------------------------------------------------------------------
-# Optional per-bank/instrument caption (problem 6)
-# ---------------------------------------------------------------------------
-
-
-class TestBankCaption:
-    def test_no_caption_attribute_draws_nothing(self, qapp):
-        layout = get_instrument_layout("HiFi")
-        assert not hasattr(layout, "caption")
-        widget = DetectorSchematicWidget(layout)
-        # No exception, and no stray caption text present on either axis.
-        for ax in widget._axes:
-            texts = [t.get_text() for t in ax.texts]
-            assert "viewed looking upstream" not in texts
-
-    def test_bank_caption_attribute_is_rendered(self, qapp):
-        import types
-
-        layout = get_instrument_layout("FLAME")
-        bank = layout.banks[0]
-        # BankLayout is frozen; simulate a future `caption` field with a
-        # lightweight namespace proxy rather than mutating the dataclass.
-        captioned_bank = types.SimpleNamespace(
-            name=bank.name, segments=bank.segments, caption="viewed looking upstream"
-        )
-        proxy_layout = types.SimpleNamespace(
-            name=layout.name,
-            n_detectors=layout.n_detectors,
-            banks=(captioned_bank,),
-            presets=layout.presets,
-            view=layout.view,
-            reference_arrows=layout.reference_arrows,
-            display_name=layout.display_name,
-            display=layout.display,
-            all_segments=list(bank.segments),
-            active_segments=[s for s in bank.segments if not s.read_only],
-        )
-        widget = DetectorSchematicWidget(proxy_layout)
-        ax = widget._axes[0]
-        texts = [t.get_text() for t in ax.texts]
-        assert "viewed looking upstream" in texts
-
-    def test_instrument_level_caption_attribute_is_rendered(self, qapp):
-        import types
-
-        layout = get_instrument_layout("FLAME")
-        bank = layout.banks[0]
-        proxy_layout = types.SimpleNamespace(
-            name=layout.name,
-            n_detectors=layout.n_detectors,
-            banks=(bank,),
-            presets=layout.presets,
-            view=layout.view,
-            reference_arrows=layout.reference_arrows,
-            display_name=layout.display_name,
-            display=layout.display,
-            all_segments=list(bank.segments),
-            active_segments=[s for s in bank.segments if not s.read_only],
-            caption="viewed looking upstream",
-        )
-        widget = DetectorSchematicWidget(proxy_layout)
-        ax = widget._axes[0]
-        texts = [t.get_text() for t in ax.texts]
-        assert "viewed looking upstream" in texts
+    def test_auxiliary_label_fontsize_is_bounded(self, qapp):
+        widget = DetectorSchematicWidget(get_instrument_layout("GPS-RD"))
+        auxiliary = widget._instrument.auxiliary[0]
+        assert 7 <= widget._rectangle_label_fontsize(auxiliary) <= 11

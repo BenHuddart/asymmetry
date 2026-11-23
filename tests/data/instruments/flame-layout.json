@@ -17,14 +17,15 @@
           "label": "Forward",
           "x_center": 3.55,
           "y_center": 0.0,
-          "width": 0.74,
-          "height": 1.72,
+          "width": 0.75,
+          "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 2,
-          "sector_index": 1,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -34,32 +35,34 @@
           "label": "Backward",
           "x_center": -3.55,
           "y_center": 0.0,
-          "width": 0.74,
-          "height": 1.72,
+          "width": 0.75,
+          "height": 1.7,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
-          "detector_id": 3,
-          "sector_index": 2,
+          "detector_id": 8,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
           "shape": "rectangle",
-          "label": "Right",
-          "x_center": 0.0,
-          "y_center": -2.18,
-          "width": 2.18,
-          "height": 0.82,
+          "label": "L_B",
+          "x_center": -1.6500000000000001,
+          "y_center": 2.18,
+          "width": 0.82,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 4,
-          "sector_index": 3,
-          "ring_index": 0,
+          "sector_index": 0,
+          "ring_index": 1,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
@@ -69,30 +72,32 @@
           "x_center": 0.0,
           "y_center": 2.18,
           "width": 2.18,
-          "height": 0.82,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
-          "detector_id": 5,
-          "sector_index": 4,
-          "ring_index": 0,
+          "detector_id": 7,
+          "sector_index": 0,
+          "ring_index": 2,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
           "shape": "rectangle",
-          "label": "R_F",
-          "x_center": 1.55,
-          "y_center": -2.18,
+          "label": "L_F",
+          "x_center": 1.65,
+          "y_center": 2.18,
           "width": 0.82,
-          "height": 0.82,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 6,
-          "sector_index": 5,
+          "sector_index": 0,
           "ring_index": 0,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
@@ -100,49 +105,58 @@
           "r_outer": 0.0,
           "shape": "rectangle",
           "label": "R_B",
-          "x_center": -1.55,
+          "x_center": -1.6500000000000001,
           "y_center": -2.18,
           "width": 0.82,
-          "height": 0.82,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
-          "detector_id": 7,
-          "sector_index": 6,
-          "ring_index": 0,
+          "detector_id": 3,
+          "sector_index": 0,
+          "ring_index": 1,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
           "shape": "rectangle",
-          "label": "L_F",
-          "x_center": 1.55,
-          "y_center": 2.18,
-          "width": 0.82,
-          "height": 0.82,
+          "label": "Right",
+          "x_center": 0.0,
+          "y_center": -2.18,
+          "width": 2.18,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
-          "detector_id": 8,
-          "sector_index": 7,
-          "ring_index": 0,
+          "detector_id": 5,
+          "sector_index": 0,
+          "ring_index": 2,
           "angle_center_deg": 0.0,
           "angle_half_width_deg": 0.0,
           "r_inner": 0.0,
           "r_outer": 0.0,
           "shape": "rectangle",
-          "label": "L_B",
-          "x_center": -1.55,
-          "y_center": 2.18,
+          "label": "R_F",
+          "x_center": 1.65,
+          "y_center": -2.18,
           "width": 0.82,
-          "height": 0.82,
+          "height": 0.75,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         }
       ],
-      "beam": null
+      "beam": {
+        "screen": [
+          1.0,
+          0.0
+        ],
+        "toward": null
+      }
     }
   ],
   "presets": {
@@ -192,32 +206,8 @@
     }
   },
   "view": "plan",
-  "reference_arrows": [
-    {
-      "label": "beam, main magnetic field",
-      "start": [
-        -2.55,
-        -0.82
-      ],
-      "end": [
-        2.55,
-        -0.82
-      ],
-      "color": "#202020"
-    },
-    {
-      "label": "initial muon spin",
-      "start": [
-        0.0,
-        0.25
-      ],
-      "end": [
-        -2.75,
-        0.25
-      ],
-      "color": "#5b2ea6"
-    }
-  ],
+  "reference_arrows": [],
   "display_name": null,
-  "apply_default_preset_on_load": false
+  "apply_default_preset_on_load": false,
+  "auxiliary": []
 }

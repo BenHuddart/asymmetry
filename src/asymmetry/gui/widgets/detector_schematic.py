@@ -26,7 +26,7 @@ from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QVBoxLayout, QWidget
 
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.utils.detector_drawing import draw_beam, draw_readout_rows, schematic_axes
 
 if TYPE_CHECKING:
     from asymmetry.core.instrument import DetectorSegment, InstrumentLayout
@@ -176,6 +176,8 @@ class DetectorSchematicWidget(QWidget):
     def _build_schematic(self) -> None:
         """Draw all detector banks onto the figure."""
         self._fig.clear()
+        self._beam_artists = []
+        self._auxiliary_axes = None
         self._patches.clear()
         self._readonly_patches.clear()
         self._membership_patches.clear()
@@ -186,9 +188,8 @@ class DetectorSchematicWidget(QWidget):
             self._build_plan_schematic()
             return
 
-        n_banks = len(self._instrument.banks)
-        for bi, bank in enumerate(self._instrument.banks):
-            ax = self._fig.add_subplot(1, n_banks, bi + 1)
+        axes, self._auxiliary_axes = schematic_axes(self._fig, self._instrument)
+        for ax, bank in zip(axes, self._instrument.banks, strict=True):
             ax.set_aspect("equal")
             ax.set_xlim(-1.25, 1.25)
             ax.set_ylim(-1.25, 1.25)
@@ -222,55 +223,38 @@ class DetectorSchematicWidget(QWidget):
                 ax.add_patch(hole)
 
             self._expand_primitive_bounds(ax, primitives)
-            self._add_bank_caption(ax, bank)
+            self._beam_artists.extend(draw_beam(ax, bank.beam))
 
+        self._draw_auxiliary()
         self._fig.tight_layout(pad=0.4)
         self._refresh_colours()
 
     def _build_plan_schematic(self) -> None:
-        """Draw one or more top-view (plan) detector panels side by side.
-
-        Single-panel instruments (FLAME) render one top view with their
-        reference arrows.  Multi-panel instruments (GPS: top + side view) render
-        one panel per bank; a detector is clickable in its home panel and shown
-        read-only (dashed box or end-on ⊙/⊗ marker) in the others.
-        """
+        """Draw profile-declared plan panels and their read-only context."""
         banks = self._instrument.banks
-        multi = len(banks) > 1
-        for bi, bank in enumerate(banks):
-            ax = self._fig.add_subplot(1, len(banks), bi + 1)
+        axes, self._auxiliary_axes = schematic_axes(self._fig, self._instrument)
+        for ax, bank in zip(axes, banks, strict=True):
             ax.set_aspect("equal")
             ax.axis("off")
             ax.set_title(bank.name, fontsize=10, fontweight="bold", pad=4)
             self._axes.append(ax)
-            self._draw_plan_panel(ax, bank, multi=multi)
-            self._add_bank_caption(ax, bank)
+            self._draw_plan_panel(ax, bank)
+            self._beam_artists.extend(draw_beam(ax, bank.beam))
 
+        self._draw_auxiliary()
         self._fig.tight_layout(pad=0.4)
         self._refresh_colours()
 
-    def _add_bank_caption(self, ax, bank) -> None:
-        """Draw a declared viewing-direction caption below the schematic."""
-        caption = getattr(bank, "caption", None) or getattr(self._instrument, "caption", None)
-        if not caption:
-            return
-        ax.text(
-            0.5,
-            -0.06,
-            caption,
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=7.5,
-            style="italic",
-            color=tokens.TEXT_MUTED,
-        )
+    def _draw_auxiliary(self) -> None:
+        if self._auxiliary_axes is not None:
+            self._draw_plan_segments(self._auxiliary_axes, self._instrument.auxiliary)
+            self._auxiliary_axes.autoscale_view()
+            self._auxiliary_axes.margins(0.15)
 
-    def _draw_plan_panel(self, ax, bank, *, multi: bool) -> None:
-        """Draw the detectors, sample and axis cues for one plan panel."""
-        bound_segs: list[DetectorSegment] = []
-        primitives = []
-        for seg in bank.segments:
+    def _draw_plan_segments(self, ax, segments):
+        """Use the same selectable patches for view and auxiliary readouts."""
+        bound_segs, primitives = [], []
+        for seg in segments:
             if seg.shape == "rectangle":
                 patch = self._make_rectangle(seg)
                 primitives.append(patch)
@@ -282,10 +266,14 @@ class DetectorSchematicWidget(QWidget):
                     if seg.detector_id is not None:
                         self._readonly_patches.append((seg.detector_id, patch))
                 else:
-                    # Only active (clickable) segments take a group colour.
                     self._patches[seg.detector_id] = patch
             elif seg.shape in ("endon_out", "endon_in"):
                 primitives.append(self._draw_endon(ax, seg))
+        return bound_segs, primitives
+
+    def _draw_plan_panel(self, ax, bank) -> None:
+        """Draw the detectors, sample and axis cues for one plan panel."""
+        bound_segs, primitives = self._draw_plan_segments(ax, bank.segments)
 
         ax.add_patch(
             Circle(
@@ -298,16 +286,12 @@ class DetectorSchematicWidget(QWidget):
             )
         )
 
+        draw_readout_rows(ax, bank.segments)
         min_x, max_x, min_y, max_y = self._plan_bounds(bound_segs or bank.segments)
 
-        # Declared reference arrows also apply to multi-panel layouts.
         if self._instrument.reference_arrows:
             self._draw_reference_arrows(ax)
-        else:
-            self._draw_beam_arrow(ax, min_x, max_x, min_y)
-        if not multi:
-            ax.text(0, -0.28, "sample", ha="center", va="top", fontsize=8, color="#333333")
-            self._draw_plan_axes(ax, min_x, max_x, min_y, max_y)
+        ax.text(0, -0.28, "sample", ha="center", va="top", fontsize=8)
 
         ax.set_xlim(min_x - 0.45, max_x + 0.8)
         ax.set_ylim(min_y - 0.55, max_y + 0.55)
@@ -405,24 +389,6 @@ class DetectorSchematicWidget(QWidget):
 
         return outline
 
-    def _draw_beam_arrow(self, ax, min_x: float, max_x: float, min_y: float) -> None:
-        """Draw the muon-beam (+z) arrow along the bottom of a plan panel."""
-        y = min_y - 0.30
-        x0 = min_x * 0.55
-        x1 = max_x * 0.55
-        ax.add_patch(
-            FancyArrowPatch(
-                (x0, y),
-                (x1, y),
-                arrowstyle="-|>",
-                mutation_scale=12,
-                linewidth=1.4,
-                color="#555555",
-                zorder=5,
-            )
-        )
-        ax.text(x0, y - 0.05, "beam  +z →", ha="left", va="top", fontsize=8, color="#555555")
-
     def _draw_reference_arrows(self, ax) -> None:
         """Draw the instrument-level reference arrows (single-panel plan)."""
         for arrow in self._instrument.reference_arrows:
@@ -451,47 +417,6 @@ class DetectorSchematicWidget(QWidget):
                 label_y = arrow.end[1] + 0.08
                 ha, va = "left", "bottom"
             ax.text(label_x, label_y, arrow.label, ha=ha, va=va, fontsize=8, color=arrow.color)
-
-    def _draw_plan_axes(
-        self,
-        ax,
-        min_x: float,
-        max_x: float,
-        min_y: float,
-        max_y: float,
-    ) -> None:
-        """Draw +z / +y coordinate indicator arrows for a single-panel plan view."""
-        axis_colour = "#555555"
-        z_y = min_y - 0.30
-        z_x_end = max_x - 0.05
-        z_x_start = z_x_end - 0.5
-        ax.add_patch(
-            FancyArrowPatch(
-                (z_x_start, z_y),
-                (z_x_end, z_y),
-                arrowstyle="-|>",
-                mutation_scale=10,
-                linewidth=1.0,
-                color=axis_colour,
-                zorder=5,
-            )
-        )
-        ax.text(z_x_start - 0.08, z_y, "+z", ha="right", va="center", fontsize=8, color=axis_colour)
-        y_x = min_x - 0.30
-        y_y_start = max_y - 0.65
-        y_y_end = max_y - 0.05
-        ax.add_patch(
-            FancyArrowPatch(
-                (y_x, y_y_start),
-                (y_x, y_y_end),
-                arrowstyle="-|>",
-                mutation_scale=10,
-                linewidth=1.0,
-                color=axis_colour,
-                zorder=5,
-            )
-        )
-        ax.text(y_x, y_y_start - 0.08, "+y", ha="center", va="top", fontsize=8, color=axis_colour)
 
     def _make_wedge(self, seg: DetectorSegment) -> Wedge:
         """Create a matplotlib :class:`~matplotlib.patches.Wedge` for *seg*."""
@@ -570,15 +495,15 @@ class DetectorSchematicWidget(QWidget):
         width = seg.width if seg.width > 0 else 1.0
         height = seg.height if seg.height > 0 else 1.0
         # Schematic-unit scales reserve room for two lines of text.
-        by_width = width * 9.5
-        by_height = height * 13.0
-        return max(5.5, min(9.0, by_width, by_height))
+        by_width = width * 12.0
+        by_height = height * 15.0
+        return max(7.0, min(11.0, by_width, by_height))
 
     #: Boxes narrower than this (data-units) can't comfortably fit a 6-8 char
     #: name at a legible font size, regardless of height — GPS-RD's
     #: Forward/Backward (0.78 wide) and Right/Left/Up/Down split plates (0.85
     #: wide) both fall under it; only FLAME/HAL's wider single plates clear it.
-    _NARROW_BOX_WIDTH = 1.0
+    _NARROW_BOX_WIDTH = 1.25
 
     def _fit_rectangle_name(self, seg: DetectorSegment) -> str:
         """Return *seg*'s physical label, abbreviated if it would overrun its box."""
@@ -599,7 +524,7 @@ class DetectorSchematicWidget(QWidget):
         if seg.shape == "rectangle":
             # Plan-view banks (FLAME) show "id + name"; radial edge-bars (HAL)
             # show just the physical label to stay uncluttered.
-            if self._instrument.view == "plan":
+            if self._instrument.view == "plan" or seg in self._instrument.auxiliary:
                 name = self._fit_rectangle_name(seg)
                 label = (
                     name
@@ -940,14 +865,17 @@ class DetectorSchematicWidget(QWidget):
         if event.inaxes is None:
             return None
         ax = event.inaxes
-        if ax not in self._axes:
+        if ax not in self._axes and ax is not self._auxiliary_axes:
             return None
 
-        bank_idx = self._axes.index(ax)
-        bank = self._instrument.banks[bank_idx]
+        segments = (
+            self._instrument.auxiliary
+            if ax is self._auxiliary_axes
+            else self._instrument.banks[self._axes.index(ax)].segments
+        )
 
         hit_seg: DetectorSegment | None = None
-        for seg in bank.segments:
+        for seg in segments:
             if seg.read_only:
                 continue
             if self._point_in_segment(event.xdata, event.ydata, seg):
@@ -995,11 +923,15 @@ class DetectorSchematicWidget(QWidget):
     def _on_hover(self, event) -> None:
         """Show a tooltip with detector id, label, group memberships, and
         exclusion status while the mouse hovers a clickable segment."""
+        for artist, tooltip in self._beam_artists:
+            if artist.contains(event)[0]:
+                self._hovered_detector = None
+                QToolTip.showText(QCursor.pos(), tooltip, self._canvas)
+                return
         hit_seg = self._hit_test_event(event)
         if hit_seg is None:
-            if self._hovered_detector is not None:
-                self._hovered_detector = None
-                QToolTip.hideText()
+            self._hovered_detector = None
+            QToolTip.hideText()
             return
 
         det_id = hit_seg.detector_id

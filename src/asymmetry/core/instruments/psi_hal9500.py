@@ -3,12 +3,12 @@
 import math
 
 from asymmetry.core.instruments.geometry import (
-    Explicit,
+    BeamDirection,
+    Circular,
     Occurrence,
-    Placement,
     Rectangle,
     View,
-    Wedge,
+    ViewOrientation,
 )
 from asymmetry.core.instruments.schema import (
     Acquisition,
@@ -63,31 +63,21 @@ ACQUISITION = Acquisition(
             bank.lower(),
             bank,
             "radial",
-            "Viewed along the beam axis; clockwise channel numbering from the top is an unverified export convention. The octagon is a dimensionless schematic.",
-            Explicit(
-                (
-                    *(
-                        (Placement(Occurrence(channel="MV"), Wedge(0.0, 0.26, 180.0), angle=90.0),)
-                        if prefix == "F"
-                        else ()
-                    ),
-                    *(
-                        Placement(
-                            Occurrence(channel=f"{prefix}{index + 1}"),
-                            Rectangle(0.54, 0.26, -90.0),
-                            (math.cos(math.radians(22.5)) - 0.13) * math.cos(math.radians(angle)),
-                            (math.cos(math.radians(22.5)) - 0.13) * math.sin(math.radians(angle)),
-                            angle=angle,
-                            sector=index,
-                        )
-                        for index in range(8)
-                        for angle in ((90.0 - index * 45.0) % 360.0,)
-                    ),
-                )
+            "Viewed along the beam axis; clockwise channel numbering from the top is an unverified export convention. The octagon is a dimensionless schematic. Axial viewing sense is unknown; MV has no declared physical position.",
+            Circular(
+                tuple((Occurrence(channel=f"{prefix}{index}"),) for index in range(1, 9)),
+                (Rectangle(0.54, 0.26, -90.0),),
+                (math.cos(math.radians(22.5)) - 0.13,),
+                90.0,
+                -45.0,
+                radial_rotation=True,
             ),
+            orientation=ViewOrientation((1, 0, 0), (0, 1, 0)),
         )
         for bank, prefix in (("Forward", "F"), ("Backward", "B"))
     ),
+    beam=BeamDirection((0, 0, 1)),
+    auxiliary=(Occurrence(channel="MV"),),
 )
 
 PRESETS = (

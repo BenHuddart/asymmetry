@@ -1633,11 +1633,32 @@ For example, let arrangement :math:`+z` be downstream, :math:`+y` be up, and
 An acquisition can declare ``beam`` and each ``View`` can declare
 ``orientation``. ``layout_from_profile`` exposes the corresponding projection
 as each ``BankLayout.beam``. Generated instrument review pages list declared
-beam vectors, view bases, and projected components. Bundled profiles leave these
-optional declarations unspecified. Existing two-dimensional detector placements
+beam vectors, view bases, and projected components. GPS and FLAME declare a
+rightward beam in their top/side schematics. HAL declares a beam normal to the
+view with unspecified axial viewing sense. Existing two-dimensional detector placements
 are view-local drawing coordinates, rather than three-dimensional positions in
 this common frame. Projection does not determine detector memberships or the
 sign of an asymmetry.
+
+The editor labels direction cues only **Beam**. The tooltips are ``Muon beam
+direction``, ``Muon beam into the screen``, and ``Muon beam out of the screen``.
+An unknown axial sense has no into/out-of-screen symbol. It does not acquire a
+sign from the circular shape of a bank.
+
+Numbering templates
+~~~~~~~~~~~~~~~~~~~
+
+Each :doc:`instrument definition <instruments/index>` provides a blank SVG
+numbering diagram and a matching editable CSV table for each acquisition.
+Readout slot IDs combine the profile, acquisition, and channel key. They survive
+view reordering and drawing changes; the acquired histogram ordinal is a
+separate value and can differ across acquisition maps. Repeated grey contexts
+reference the same slot and do not add table rows.
+
+Fill in the readout label and histogram number. The optional physical
+association can remain blank or name several detectors; a diagram slot does not
+assert a one-to-one physical detector association. Templates do not import or
+change grouping assignments. All schematic dimensions remain drawing choices.
 
 Editing groups in the Grouping table
 -------------------------------------
@@ -1819,22 +1840,16 @@ PSI FLAME
    :width: 100%
    :alt: FLAME detector editor with declared schematic direction cues.
 
-   The editor uses the profile's explicit arrows and longitudinal grouping.
+   The editor labels the declared beam direction **Beam**. Hover the arrow for
+   ``Muon beam direction``. Field and spin directions are run-specific and are
+   not depicted by this schematic.
 
-See :doc:`instruments/psi_flame` for the acquisition map, declared direction cues,
-and separate source and review status. The arrows depict a schematic setting.
+See :doc:`instruments/psi_flame` for the acquisition map, separate source and
+review status, and downloadable numbering templates. The ordered Left/Right
+rows put the backward readout to the left and the forward readout to the right
+of the wider middle readout. Ordinals remain 1 Forward, 2 Backward, 3 Right,
+4 Left, 5 R_F, 6 R_B, 7 L_F, and 8 L_B.
 
-.. figure:: images/flame-program-schematic.png
-   :width: 90%
-   :align: center
-   :alt: PSI FLAME detector schematic generated from the program layout model.
-
-   PSI FLAME top-view detector layout. The beam and main magnetic field are
-   drawn along +z, and the initial muon spin points toward the Backward
-   detector. FLAME detectors are rectangular plates: 1 Forward, 2 Backward,
-   3 Right, 4 Left, 5 R_F, 6 R_B, 7 L_F, and 8 L_B. The Left and Right banks
-   use equal-height rectangles with the central detector drawn wider than the
-   front/back side detectors.
 
 PSI HAL-9500
 ~~~~~~~~~~~~
@@ -1842,18 +1857,20 @@ PSI HAL-9500
 See :doc:`instruments/psi_hal9500` for the published bank structure and the
 separately qualified channel order, angular convention, and grouping defaults.
 
-.. figure:: images/hal-program-schematic.png
+.. figure:: /_generated/screenshots/psi_hal_layout.png
    :width: 90%
    :align: center
-   :alt: PSI HAL-9500 detector schematic generated from the program layout model.
+   :alt: HAL readout rings with a separate selectable auxiliary MV strip.
 
    PSI HAL-9500 detector layout, viewed along the beam axis. The 16 positron
    detectors form two octagonal rings of eight — a forward ring (F1–F8) and a
-   backward ring (B1–B8) — drawn as separate octagons. The central muon-veto
-   detector (MV) is shown at the centre of the forward ring. The histograms are
+   backward ring (B1–B8) — drawn as separate octagons of tangent rectangles.
+   MV is selectable in **Auxiliary — position unspecified**; its hardware
+   association and location are unverified. The beam is normal to the view,
+   but no into/out-of-screen sense is inferred. The histograms are
    stored in the order ``MV, F1…F8, B1…B8``, so detector IDs run MV → 1,
    F1–F8 → 2–9, and B1–B8 → 10–17. Presets include **Per-octant** (default —
-   each azimuthal sector combining its forward and backward wedge; HAL-9500 is
+   each azimuthal sector combining its forward and backward readout; HAL-9500 is
    a high-field spectrometer, and this is the grouping used for that work in
    practice), **Longitudinal** (forward ring vs backward ring), and
    **Transverse (opposed pairs)** (each forward detector as its own group,
@@ -1882,20 +1899,16 @@ See :doc:`instruments/psi_gps` for all three acquisition maps, shared hardware
 affiliations, and explicit preset balances. Combined and split readouts do not
 establish exact count sums or independent observations.
 
-.. figure:: images/gps-program-schematic.png
-   :width: 95%
-   :align: center
-   :alt: PSI GPS detector schematic generated from the program layout model.
+GPS uses two views for every acquisition configuration. **Top view** has Left
+above Right and **Side view** has Up above Down; both have the beam pointing
+right. Forward/Backward are editable in the top view and repeated as grey
+read-only context in the side view. Each panel has one **Beam** direction cue;
+detectors perpendicular to that view have no directional marker or label.
+The fifteen-channel map displays distinct **combined** and **split** rows in
+each directional bank. Those combined readouts are acquired channels, not
+collapsed representations of the split channels. Mobile remains selectable in
+**Auxiliary — position unspecified**, outside the spatial views.
 
-   PSI GPS layout, drawn as two plan panels. The beam runs along +z toward the
-   Forward detector. GPS surrounds the sample with six positron detectors on
-   three orthogonal axes — Forward/Backward (beam), Up/Down (vertical) and
-   Left/Right (horizontal-transverse) — so a single flat view cannot place all
-   six. The **Top view** shows the horizontal plane (Forward/Backward and
-   Left/Right in place; Up/Down drawn end-on, ⊙ toward you and ⊗ away); the
-   **Side view** shows the vertical plane (Up/Down in place; Forward/Backward
-   read-only; Left/Right end-on). Each detector is editable in its home panel and
-   shown read-only for context in the other.
 
 GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
 string or a ``deltat_tdc_gps_*`` run name. Three histogram conventions are

@@ -15,12 +15,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 2,
@@ -32,12 +33,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 3,
@@ -49,12 +51,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 4,
@@ -66,12 +69,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 5,
@@ -84,11 +88,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 6,
@@ -101,11 +106,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 7,
@@ -118,11 +124,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 8,
@@ -135,11 +142,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 9,
@@ -152,11 +160,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 10,
@@ -169,11 +178,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 11,
@@ -186,11 +196,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 12,
@@ -203,11 +214,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 13,
@@ -224,7 +236,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 14,
@@ -241,7 +254,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 15,
@@ -258,7 +272,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 16,
@@ -275,7 +290,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 17,
@@ -292,7 +308,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 18,
@@ -309,7 +326,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 19,
@@ -326,7 +344,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 20,
@@ -343,7 +362,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 21,
@@ -355,12 +375,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 22,
@@ -372,12 +393,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 23,
@@ -389,12 +411,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 24,
@@ -406,12 +429,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 25,
@@ -423,12 +447,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 26,
@@ -440,12 +465,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 27,
@@ -457,12 +483,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 28,
@@ -474,12 +501,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 29,
@@ -491,12 +519,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 30,
@@ -508,12 +537,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 31,
@@ -525,12 +555,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 32,
@@ -542,12 +573,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         }
       ],
       "beam": null
@@ -566,11 +598,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 34,
@@ -583,11 +616,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 35,
@@ -600,11 +634,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 36,
@@ -617,11 +652,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 37,
@@ -633,12 +669,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 38,
@@ -650,12 +687,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 39,
@@ -667,12 +705,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 40,
@@ -684,12 +723,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 41,
@@ -701,12 +741,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 42,
@@ -718,12 +759,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 43,
@@ -735,12 +777,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 44,
@@ -752,12 +795,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
-          "y_center": 0.0,
+          "x_center": -0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 45,
@@ -769,12 +813,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 46,
@@ -786,12 +831,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 47,
@@ -803,12 +849,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 48,
@@ -820,12 +867,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 49,
@@ -837,12 +885,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 50,
@@ -854,12 +903,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 51,
@@ -871,12 +921,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 52,
@@ -888,12 +939,13 @@
           "r_outer": 1.0,
           "shape": "wedge",
           "label": null,
-          "x_center": 0.0,
+          "x_center": -0.0,
           "y_center": 0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 53,
@@ -910,7 +962,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 54,
@@ -927,7 +980,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 55,
@@ -944,7 +998,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 56,
@@ -961,7 +1016,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 57,
@@ -978,7 +1034,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 58,
@@ -995,7 +1052,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 59,
@@ -1012,7 +1070,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 60,
@@ -1029,7 +1088,8 @@
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 61,
@@ -1042,11 +1102,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 62,
@@ -1059,11 +1120,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 63,
@@ -1076,11 +1138,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 64,
@@ -1093,11 +1156,12 @@
           "shape": "wedge",
           "label": null,
           "x_center": 0.0,
-          "y_center": 0.0,
+          "y_center": -0.0,
           "width": 0.0,
           "height": 0.0,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         }
       ],
       "beam": null
@@ -1297,5 +1361,6 @@
   "view": "radial",
   "reference_arrows": [],
   "display_name": null,
-  "apply_default_preset_on_load": false
+  "apply_default_preset_on_load": false,
+  "auxiliary": []
 }

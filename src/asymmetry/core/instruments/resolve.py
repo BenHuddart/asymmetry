@@ -1,7 +1,6 @@
 """Convert resolved profile data into the shared layout consumer interface."""
 
 from asymmetry.core.instruments.geometry import (
-    Circular,
     EndOn,
     Rectangle,
     Wedge,
@@ -47,7 +46,6 @@ def layout_from_profile(
                 if channel
                 else hardware[target.hardware].label
             )
-            radial = isinstance(view.arrangement, Circular) and view.arrangement.radial_rotation
             segments.append(
                 DetectorSegment(
                     detector_id=channel.ordinal if channel else None,
@@ -77,15 +75,11 @@ def layout_from_profile(
                     else 2 * shape.radius
                     if isinstance(shape, EndOn)
                     else 0.0,
-                    rotation_deg=shape.rotation
-                    + (
-                        element.angle
-                        if radial or not isinstance(view.arrangement, Circular)
-                        else 0.0
-                    )
+                    rotation_deg=shape.rotation + (element.angle if element.rotate else 0.0)
                     if isinstance(shape, Rectangle)
                     else 0.0,
                     read_only=not target.editable,
+                    row_label=element.row_label,
                 )
             )
         banks.append(
@@ -119,4 +113,21 @@ def layout_from_profile(
         else profile.identity.display_name,
         reference_arrows=config.reference_arrows,
         apply_default_preset_on_load=profile.defaults.apply_default_preset_on_load,
+        auxiliary=tuple(
+            DetectorSegment(
+                channels[target.channel].ordinal,
+                index,
+                0,
+                0,
+                0,
+                0,
+                0,
+                shape="rectangle",
+                label=target.label or channels[target.channel].label,
+                x_center=index * 1.6,
+                width=1.3,
+                height=0.8,
+            )
+            for index, target in enumerate(config.auxiliary)
+        ),
     )

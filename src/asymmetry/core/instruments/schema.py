@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from asymmetry.core.instruments.geometry import BeamDirection, View, expand_view
+from asymmetry.core.instruments.geometry import BeamDirection, Occurrence, View, expand_view
 from asymmetry.core.instruments.layout import AsymmetryProjection, ReferenceArrow
 
 
@@ -119,6 +119,7 @@ class Acquisition:
     layout_key: str | None = None
     reference_arrows: tuple[ReferenceArrow, ...] = ()
     beam: BeamDirection | None = None
+    auxiliary: tuple[Occurrence, ...] = ()
 
     def __post_init__(self):
         if self.beam is not None and not isinstance(self.beam, BeamDirection):
@@ -350,6 +351,10 @@ class InstrumentProfile:
             if not config.views or len({view.mode for view in config.views}) != 1:
                 raise ValueError("An acquisition needs views sharing one drawing mode")
             editable = []
+            for target in config.auxiliary:
+                if target.channel not in keys or not target.editable:
+                    raise ValueError("Auxiliary readouts must name editable acquired channels")
+                editable.append(target.channel)
             for view in config.views:
                 for element in expand_view(view):
                     target = element.target

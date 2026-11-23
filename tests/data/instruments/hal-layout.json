@@ -6,23 +6,6 @@
       "name": "Forward",
       "segments": [
         {
-          "detector_id": 1,
-          "sector_index": 0,
-          "ring_index": 0,
-          "angle_center_deg": 90.0,
-          "angle_half_width_deg": 180.0,
-          "r_inner": 0.0,
-          "r_outer": 0.26,
-          "shape": "wedge",
-          "label": "MV",
-          "x_center": 0.0,
-          "y_center": 0.0,
-          "width": 0.0,
-          "height": 0.0,
-          "rotation_deg": 0.0,
-          "read_only": false
-        },
-        {
           "detector_id": 2,
           "sector_index": 0,
           "ring_index": 0,
@@ -37,7 +20,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 3,
@@ -54,7 +38,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": -45.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 4,
@@ -71,7 +56,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": -90.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 5,
@@ -88,7 +74,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 225.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 6,
@@ -105,7 +92,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 180.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 7,
@@ -122,7 +110,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 135.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 8,
@@ -139,7 +128,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 90.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 9,
@@ -156,10 +146,17 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 45.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         }
       ],
-      "beam": null
+      "beam": {
+        "screen": [
+          0.0,
+          0.0
+        ],
+        "toward": null
+      }
     },
     {
       "name": "Backward",
@@ -179,7 +176,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 0.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 11,
@@ -196,7 +194,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": -45.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 12,
@@ -213,7 +212,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": -90.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 13,
@@ -230,7 +230,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 225.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 14,
@@ -247,7 +248,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 180.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 15,
@@ -264,7 +266,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 135.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 16,
@@ -281,7 +284,8 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 90.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         },
         {
           "detector_id": 17,
@@ -298,10 +302,17 @@
           "width": 0.54,
           "height": 0.26,
           "rotation_deg": 45.0,
-          "read_only": false
+          "read_only": false,
+          "row_label": null
         }
       ],
-      "beam": null
+      "beam": {
+        "screen": [
+          0.0,
+          0.0
+        ],
+        "toward": null
+      }
     }
   ],
   "presets": {
@@ -463,5 +474,25 @@
   "view": "radial",
   "reference_arrows": [],
   "display_name": null,
-  "apply_default_preset_on_load": true
+  "apply_default_preset_on_load": true,
+  "auxiliary": [
+    {
+      "detector_id": 1,
+      "sector_index": 0,
+      "ring_index": 0,
+      "angle_center_deg": 0,
+      "angle_half_width_deg": 0,
+      "r_inner": 0,
+      "r_outer": 0,
+      "shape": "rectangle",
+      "label": "MV",
+      "x_center": 0.0,
+      "y_center": 0.0,
+      "width": 1.3,
+      "height": 0.8,
+      "rotation_deg": 0.0,
+      "read_only": false,
+      "row_label": null
+    }
+  ]
 }

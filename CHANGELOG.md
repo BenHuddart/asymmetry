@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show generated GPS, FLAME, and HAL readout arrangements with beam-only cues,
+  selectable unlocated auxiliaries, and downloadable blank numbering templates.
+
 - Add a core API for geometry-relative beam directions and explicit view projection,
   retaining unknown axial viewing sense.
 

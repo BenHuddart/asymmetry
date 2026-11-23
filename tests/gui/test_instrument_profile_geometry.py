@@ -153,7 +153,7 @@ def test_emu_retains_its_existing_radial_display_limits(qapp):
 
 
 @pytest.mark.parametrize("acquisition", ("bin_combined", "root_split", "root_combined_split"))
-def test_gps_profile_context_uses_existing_marker_radius_and_one_pick_identity(qapp, acquisition):
+def test_gps_has_one_beam_cue_and_no_detector_direction_markers(qapp, acquisition):
     from matplotlib.patches import Circle
 
     from asymmetry.core.instruments.psi_gps import PROFILE
@@ -166,23 +166,17 @@ def test_gps_profile_context_uses_existing_marker_radius_and_one_pick_identity(q
     widget._canvas.draw()
     assert set(widget._patches) == set(range(1, layout.n_detectors + 1))
     for bank, axes in zip(layout.banks, widget._axes, strict=True):
-        for segment in bank.segments:
-            if segment.shape.startswith("endon_"):
-                markers = [
-                    patch
-                    for patch in axes.patches
-                    if isinstance(patch, Circle)
-                    and patch.center == (segment.x_center, segment.y_center)
-                ]
-                assert any(patch.radius == 0.16 for patch in markers)
-                assert segment.label in {text.get_text() for text in axes.texts}
-                assert segment.read_only
-                assert not widget._point_in_segment(segment.x_center, segment.y_center, segment)
+        assert not any(segment.shape.startswith("endon_") for segment in bank.segments)
+        assert [patch.radius for patch in axes.patches if isinstance(patch, Circle)] == [0.16]
+        labels = [text.get_text() for text in axes.texts]
+        assert labels.count("Beam") == labels.count("sample") == 1
+        assert not {"·", "×", "⊙", "⊗"} & set(labels)
+    assert {s.detector_id for b in layout.banks for s in b.segments if s.read_only} == {1, 2}
     widget.close()
     widget.deleteLater()
 
 
-def test_flame_profile_transfers_actual_direction_arrow_labels(qapp):
+def test_flame_profile_transfers_only_its_declared_beam_direction(qapp):
     from asymmetry.core.instruments.psi_flame import PROFILE
 
     widget = DetectorSchematicWidget(layout_from_profile(PROFILE, "eight_channel"))
@@ -192,9 +186,9 @@ def test_flame_profile_transfers_actual_direction_arrow_labels(qapp):
     widget._canvas.draw()
     axes = widget._axes[0]
     labels = {text.get_text() for text in axes.texts}
-    assert {"beam, main magnetic field", "initial muon spin"} <= labels
-    for arrow in PROFILE.detectors.acquisitions[0].reference_arrows:
-        assert axes.get_xlim()[0] <= min(arrow.start[0], arrow.end[0])
-        assert axes.get_xlim()[1] >= max(arrow.start[0], arrow.end[0])
+    assert "Beam" in labels
+    assert not any("spin" in label or "field" in label for label in labels)
+    assert PROFILE.detectors.acquisitions[0].reference_arrows == ()
+    assert {tooltip for artist, tooltip in widget._beam_artists} == {"Muon beam direction"}
     widget.close()
     widget.deleteLater()
