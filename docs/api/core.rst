@@ -130,6 +130,17 @@ Instrument geometry
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: asymmetry.core.instruments.geometry.BeamDirection
+   :members:
+
+.. autoclass:: asymmetry.core.instruments.geometry.ViewOrientation
+   :members:
+
+.. autoclass:: asymmetry.core.instruments.geometry.BeamProjection
+   :members:
+
+.. autofunction:: asymmetry.core.instruments.geometry.project_beam
+
 .. autofunction:: asymmetry.core.instrument.get_instrument_layout
 
 .. autofunction:: asymmetry.core.instrument.detect_instrument

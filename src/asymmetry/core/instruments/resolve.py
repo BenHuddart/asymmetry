@@ -1,6 +1,13 @@
 """Convert resolved profile data into the shared layout consumer interface."""
 
-from asymmetry.core.instruments.geometry import Circular, EndOn, Rectangle, Wedge, expand_view
+from asymmetry.core.instruments.geometry import (
+    Circular,
+    EndOn,
+    Rectangle,
+    Wedge,
+    expand_view,
+    project_beam,
+)
 from asymmetry.core.instruments.layout import (
     BankLayout,
     DetectorSegment,
@@ -81,7 +88,9 @@ def layout_from_profile(
                     read_only=not target.editable,
                 )
             )
-        banks.append(BankLayout(view.label, tuple(segments)))
+        banks.append(
+            BankLayout(view.label, tuple(segments), project_beam(config.beam, view.orientation))
+        )
     entry = next(entry for entry in profile.presets if entry.acquisition == acquisition)
     presets = {
         preset.name: PresetGrouping(

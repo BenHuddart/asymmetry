@@ -107,7 +107,8 @@
           "rotation_deg": 0.0,
           "read_only": true
         }
-      ]
+      ],
+      "beam": null
     },
     {
       "name": "Side view",
@@ -214,7 +215,8 @@
           "rotation_deg": 0.0,
           "read_only": true
         }
-      ]
+      ],
+      "beam": null
     }
   ],
   "presets": {

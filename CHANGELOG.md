@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a core API for geometry-relative beam directions and explicit view projection,
+  retaining unknown axial viewing sense.
+
 - Expose sourced HiFi and MuSR instrument definitions and review diagrams, keeping
   existing detector memberships, signs, and schematic behaviour.
 
