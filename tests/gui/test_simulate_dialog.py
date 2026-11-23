@@ -1,7 +1,5 @@
 """GUI tests for the simulate dialog and the Data Browser degrade action.
 
-Verification-plan §5 of docs/porting/simulate-mode/verification-plan.md.
-
 Generate runs on a :class:`~asymmetry.gui.tasks.TaskRunner` worker thread (see
 the module docstring of ``simulate_dialog.py``), so ``_on_generate()`` only
 *starts* the work — tests that need the result pump a real nested event loop

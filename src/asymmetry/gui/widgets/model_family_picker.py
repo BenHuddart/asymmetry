@@ -6,8 +6,7 @@ The window injects the describer (``lambda scope: describe_scope(datasets,
 scope, fit_times)``), applies a direction answer to its runs with
 :func:`~asymmetry.core.fitting.wizard_scope.set_user_field_direction`, then
 calls :meth:`ModelFamilyPicker.refresh`; it refreshes after a run's fit times
-are recorded too. Design: ``docs/plans/model-family-picker.md`` (D5) and
-``docs/plans/measured-fit-times.md`` (D5).
+are recorded too.
 """
 
 from __future__ import annotations

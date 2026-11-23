@@ -4,8 +4,7 @@ A local parameter is worth having when its values vary by more than their
 errors, are pinned by the data in most runs, and do not zigzag from one run to
 the next. :func:`trace_quality` scores one parameter's trace on those three
 counts; :class:`CandidateTrend` orders candidates by their worst parameter.
-The design and the rejected alternatives are in
-``docs/plans/global-wizard-trend-objective.md`` (D6, D15, D20).
+The measures and their limits are described in ``docs/reference/global_fit_wizard.rst``.
 """
 
 from __future__ import annotations

@@ -4,9 +4,7 @@ Starting from the all-local fits, the ladder shares the background, then the
 amplitudes, then one further parameter at a time, and keeps a parameter shared
 only while the fit stays adequate. Every rung is returned with its cost and the
 trend quality of what it leaves local, so a caller can show the whole climb and
-pre-select the rung that trends best. Design, evidence and the rejected
-alternatives: ``docs/plans/global-wizard-trend-objective.md`` (D3, D7–D9,
-D11–D12, D16).
+pre-select the rung that trends best; see ``docs/reference/global_fit_wizard.rst``.
 """
 
 from __future__ import annotations

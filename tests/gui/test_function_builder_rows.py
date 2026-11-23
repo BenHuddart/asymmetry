@@ -462,9 +462,8 @@ def test_row_param_summary_uses_formatted_labels(qapp: QApplication) -> None:
 
 # ------------------------------------------------------------------- origins
 # Origins track which component in the model the row list was seeded with
-# each row descends from (`None` for a component added since); see
-# `docs/plans/parameter-carry-over.md` design item 1 and the module docstring
-# of model_rows.py. Every test below seeds with `_seed_identity` (the
+# each row descends from (`None` for an added component); see model_rows.py.
+# Every test below seeds with `_seed_identity` (the
 # identity map `0..n-1`, matching what a real dialog passes for its initial
 # seed) so the origin under test is unambiguous.
 def test_initial_seed_with_explicit_origins_is_identity(qapp: QApplication) -> None:

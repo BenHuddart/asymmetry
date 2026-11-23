@@ -41,8 +41,8 @@ and provenance come before features: scientists read its results, commits, issue
 ## Issues hold the plans
 
 - Plans, roadmaps, studies, audits, decision logs, investigations and evaluation results live in
-  GitHub issues. Nothing new goes in `docs/plans/`, `docs/porting/`, `docs/studies/`,
-  `docs/audit/`, `docs/investigations/` or `docs/PLANS.md`; those are being retired.
+  GitHub issues. Retired planning locations stay empty; the structural check rejects
+  their reintroduction.
 - An issue states the problem, change, tests, docs and decisions taken, enough to start from.
 - What outlives the work moves into the repository as an invariant comment, a regression test
   or a paragraph in the owning doc. The reasoning behind a decision goes in the PR body.

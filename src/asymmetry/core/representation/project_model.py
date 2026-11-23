@@ -85,8 +85,7 @@ class ProjectModel:
         self.active_series: dict[str, str] = {
             str(rep): str(batch_id) for rep, batch_id in (active_series or {}).items()
         }
-        #: Joint fit registry (docs/plans/joint-fit.md D13), keyed by
-        #: ``joint_id``. Additive/optional like ``data_groups``: a project
+        #: Joint fit registry keyed by ``joint_id``. Like ``data_groups``, a project
         #: saved before schema v22 has no ``joint_fits`` block and loads with
         #: an empty registry. Each member series carries its own back-pointer
         #: (:attr:`FitSeries.joint_fit_id`) rather than this registry storing
@@ -155,7 +154,7 @@ class ProjectModel:
         """Return the active series id for *rep_type*, or ``None``."""
         return self.active_series.get(self._rep_key(rep_type))
 
-    # ── joint fits (docs/plans/joint-fit.md D2/D9/D10) ──────────────────────
+    # ── joint fits ───────────────────────────────────────────────────
 
     def joint_fit(self, joint_id: str) -> JointFit:
         """Return the joint fit with *joint_id*.
@@ -576,8 +575,7 @@ class ProjectModel:
         removed series is cleared — that representation simply has no active
         series until one is chosen.
 
-        The one exception is a series stamped into a joint fit
-        (docs/plans/joint-fit.md D10): deleting it also drops it from that
+        Deleting a series stamped into a joint fit also drops it from that
         joint fit's membership and shared table via :meth:`_drop_joint_member`,
         which removes the joint fit too once fewer than two members are left.
         """

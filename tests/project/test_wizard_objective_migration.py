@@ -1,4 +1,4 @@
-"""Tests for the v23->v24 global wizard migration (docs/plans/global-wizard-trend-objective.md).
+"""The v23->v24 migration preserves the statistical wizard objective.
 
 A v23 project stores Global Fit Wizard recommendations with no objective, no
 ladder rung on a candidate, and ``total_variation``/``roughness`` on every

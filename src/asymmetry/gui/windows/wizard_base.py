@@ -1,7 +1,6 @@
 """Shared skeleton for guided fit-wizard windows.
 
-See ``docs/audit/shared-foundations/wizard-base-design.md`` for the full
-contract this class implements. In short: the base owns the mechanism (one
+The base owns the mechanism (one
 ``TaskRunner``, the progress UI, request-id staleness, error handling, the
 signature cache, and closeEvent/cancel) plus the styled chrome (a header band
 with title/context chips/status line above a body of controls + content);

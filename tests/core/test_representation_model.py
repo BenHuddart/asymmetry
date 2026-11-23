@@ -384,7 +384,7 @@ def test_all_sentinel_maps_to_default_slot():
     assert not rep.has_projection_fits()
 
 
-# ── saved single fits (docs/plans/single-fit-compare.md) ───────────────────
+# ── saved single fits ───────────────────────────────────────────────────
 
 
 def test_refitting_the_same_analysis_replaces_the_open_fit_in_place():

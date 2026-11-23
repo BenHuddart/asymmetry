@@ -1,7 +1,6 @@
-"""Fit Parameters panel: phase swatches, plot colour, band and boundaries (D4).
+"""Fit Parameters panel: phase swatches, plot colour, band and boundaries.
 
-Covers Phase D4 of ``docs/plans/global-wizard-transitions.md``: a series bound
-to a phase group (Global Fit Wizard transitions, D1) carries a
+A series bound to a phase group carries a
 :class:`~asymmetry.gui.panels.fit_parameters_panel.PhaseDecoration` through
 ``load_representation_series`` — a swatch on its pill, its phase colour on the
 plotted trace (single and overlay modes), and a shaded range + boundary lines

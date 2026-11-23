@@ -1,5 +1,4 @@
-"""Contract: the per-axis Auto/Hold policy behaves the same on every plot
-representation (docs/plans/axis-limit-policy.md).
+"""Contract: Auto/Hold behaves identically on every plot representation.
 
 Each representation is wrapped in a small adapter exposing the same surface
 (render/buttons/fields/type_x/type_y/gesture/blank/teardown); one scenario

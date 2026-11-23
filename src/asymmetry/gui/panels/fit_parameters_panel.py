@@ -356,8 +356,7 @@ class _GroupFitData:
     #: and is not serialised. Empty means "no short form" and the full
     #: ``group_name`` stands in — see :meth:`__post_init__`.
     short_name: str = ""
-    #: The joint fit (``docs/plans/joint-fit.md``) this series is currently
-    #: stamped a member of, or ``None`` for a plain series — mirrors
+    #: The joint fit this series belongs to, or ``None`` — mirrors
     #: :attr:`~asymmetry.core.representation.series.FitSeries.joint_fit_id`.
     #: Derived display state, like ``phase``/``short_name``: supplied by
     #: :meth:`load_representation_series`, not round-tripped through
@@ -1502,8 +1501,7 @@ class FitParametersPanel(QWidget):
             today's layout.
         joint_fit_by_id:
             Optional ``batch_id → (joint_fit_id, joint_fit_label)`` map for a
-            series currently stamped a member of a joint fit
-            (``docs/plans/joint-fit.md`` D5/D8). A series absent from the map
+            series stamped a member of a joint fit. A series absent from the map
             gets ``joint_fit_id=None`` (plain series) — mirrors ``phase_by_id``.
         shared_params_by_id:
             Optional ``batch_id → {this series' parameter name: shared column

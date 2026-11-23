@@ -232,8 +232,7 @@ def test_global_param_hint_shown_for_shared_amplitude(qapp):
     # isHidden() reflects the explicit hidden flag (the offscreen panel has no
     # shown ancestor, so isVisible() is always False here).
     assert not panel._global_param_hint.isHidden()
-    # Phase 3 of docs/plans/parameters-panel-cards.md moved the footer note to
-    # a short form, with the full explanation (and the fix) on the tooltip.
+    # The footer stays short; its tooltip supplies the explanation and fix.
     text = panel._global_param_hint.text()
     assert "Global" in text
     tooltip = panel._global_param_hint.toolTip()

@@ -4,7 +4,7 @@ A row of step buttons (Scope → Screen → Compare → Phases → Apply in the 
 Fit Wizard), each a state disc, a bold title and a one-line summary. The step's
 :class:`StepState` says how far its work has got; which step is *current* (on
 screen) is held separately, because a done, stale or running step can each be
-the one being viewed. Design: ``docs/plans/global-wizard-stepper.md`` (D1, D10).
+the one being viewed.
 """
 
 from __future__ import annotations

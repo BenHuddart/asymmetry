@@ -2,8 +2,7 @@
 
 One :class:`~asymmetry.core.fitting.fit_time_store.FitTimeStore` per process,
 loaded once from the app data folder, so one wizard's update reaches the other
-and neither overwrites the other's samples. Design:
-``docs/plans/measured-fit-times.md`` (D3).
+and neither overwrites the other's samples.
 """
 
 from __future__ import annotations

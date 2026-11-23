@@ -4,7 +4,7 @@
 written two ways: an amplitude per signal term, or one total with each term's
 share of it. A series whose volume fraction changes through a transition has a
 constant total and no constant amplitude, so the second form is the one whose
-total can be shared (``docs/plans/global-wizard-trend-objective.md``, D11, D16).
+total can be shared.
 """
 
 from __future__ import annotations

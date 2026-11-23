@@ -1,7 +1,6 @@
 """Tests for the synthetic-run sampling core (asymmetry.core.simulate).
 
-Verification-plan §1 (forward model) and §4 (degrade statistics) of
-docs/porting/simulate-mode/verification-plan.md.
+Covers the forward model and statistical degradation with synthetic counts.
 """
 
 from __future__ import annotations

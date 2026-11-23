@@ -1,6 +1,6 @@
 """The v24 -> v25 migration: each representation's single fit becomes a saved-fit set.
 
-docs/plans/single-fit-compare.md D4: ``fit`` and each ``projection_fits`` entry
+``fit`` and each ``projection_fits`` entry
 become the sole, open fit of their projection's ``single_fits`` set; an empty
 slot holds no saved fit; the caller's dict is never rewritten.
 """

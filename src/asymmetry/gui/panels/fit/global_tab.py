@@ -4567,9 +4567,8 @@ class GlobalFitTab(FitTabBase):
                 log_text=log_text,
             )
 
-        # Exempt runs stay in the series' group, unticked, and out of the coupled fit
-        # (docs/plans/global-wizard-trend-objective.md, D17). The group must own them
-        # before the fit is recorded; minting it republishes the selection.
+        # Exempt runs stay in the group, unticked, and out of the coupled fit.
+        # The group must own them before recording; minting it republishes selection.
         pool = list(self._member_pool)
         if assessment.exempt_runs and self._bound_group_id is None:
             self.series_group_requested.emit(sorted(assessment.fit_results_by_run))

@@ -1,6 +1,4 @@
-"""Parameters panel joint-fit surfacing (``docs/plans/joint-fit.md`` phase 4).
-
-Covers the two phase-4 additions that survived the 2026-09-18 review:
+"""Parameters panel joint-fit sections and held-constant annotations:
 ``_GroupFitData``'s derived ``joint_fit_id``/``joint_fit_label``/
 ``shared_params`` fields (supplied by ``load_representation_series``, never
 serialised — mirrors ``phase``/``short_name``), and the "held constant"

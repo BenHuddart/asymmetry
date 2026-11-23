@@ -1296,8 +1296,7 @@ class MainWindow(QMainWindow):
         self._global_fit_studies_menu = analysis_menu.addMenu("Global parameter fits")
         self._rebuild_global_fit_studies_menu()
 
-        # Joint fits (docs/plans/joint-fit.md D11): a menu-launched, undocked
-        # window plus a registry submenu that mirrors the studies one above.
+        # Joint fits have an undocked window and a registry submenu.
         analysis_menu.addAction("New joint fit…", self._on_new_joint_fit)
         self._joint_fits_menu = analysis_menu.addMenu("Joint fits")
         self._rebuild_joint_fits_menu()
@@ -3180,7 +3179,7 @@ class MainWindow(QMainWindow):
         self._follow_fit_target_in_batch_draft()
         self._update_fit_block_state()
 
-    # ── rotating frame (docs/plans/rotating-frame-projection.md) ─────────
+    # ── rotating frame ───────────────────────────────────────────────
 
     def _render_rotating_frame(self, targets: list[MuonDataset]) -> list[MuonDataset]:
         """Draw available projections in the requested frame, retaining its safeguards."""
@@ -10840,8 +10839,7 @@ class MainWindow(QMainWindow):
     ) -> list[tuple[str, str | None, list[str], str | None]]:
         """Group a representation's series into the chip rail's sections.
 
-        A series currently stamped a member of a joint fit
-        (``docs/plans/joint-fit.md`` D5/D8/D11) is pulled out of its data-group
+        A series stamped a member of a joint fit is pulled out of its data-group
         section entirely and grouped instead under one section titled with the
         joint fit's display name — a joint fit composes series that may carry
         different models, or even belong to different data groups, so its own
@@ -11753,7 +11751,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.note_single_fit_saved()
         self._sync_saved_fit_overlays()
 
-    # ── Saved single fits (docs/plans/single-fit-compare.md) ─────────────────
+    # ── Saved single fits ─────────────────────────────────────────────────
 
     def _bound_saved_fits(self) -> tuple[int, Representation, str | None] | None:
         """``(run, representation, projection)`` the Single tab's saved fits live on.
@@ -14163,7 +14161,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction("Show window", self._on_global_parameter_fit)
 
-    # ── Joint fits (docs/plans/joint-fit.md) ─────────────────────────────────
+    # ── Joint fits ────────────────────────────────────────────────────────
 
     def _ensure_joint_fit_window(self) -> JointFitWindow:
         """The one joint-fit window, built and wired on first use (D11)."""

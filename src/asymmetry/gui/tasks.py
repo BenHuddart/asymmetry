@@ -261,8 +261,7 @@ class TaskWorker(QObject):
             # mutex(es). If that happens on the worker thread while the GUI thread
             # holds the GIL and enters ``connectImpl`` (e.g. ``QLabel.setText``
             # lazily building a ``QWidgetTextControl``) wanting the same mutex, the
-            # two deadlock (GIL <-> connection-mutex ABBA). See
-            # ``docs/investigations`` and the crash-capture stack.
+            # two deadlock (GIL <-> connection-mutex ABBA); see GUI_GUIDELINES.md.
             #
             # This runs on the worker thread (``run`` is invoked via a direct
             # ``started`` connection, before ``exec()``), so moving to the home

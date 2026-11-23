@@ -12,8 +12,8 @@ resolution (``QWidget::metric`` → ``QWidget::screen()`` →
 ``QGuiApplication::screenAt()`` → ``QScreen::virtualSiblings()``) walks the
 freed object: the byte-identical address faulted in the subsequent UAF. On
 Windows the same deletion empties the screen list instead (``Cannot create
-window: no screens available`` + fatal exit). Full evidence trail:
-``docs/investigations/tahoe-qscreen-uaf.md``.
+window: no screens available`` + fatal exit). Shared ownership is documented
+in ``docs/GUI_GUIDELINES.md``.
 
 The wrapper relationship that exposes the screen is created by the
 ``QWidget.screen()`` / ``QWindow.screen()`` bindings: shiboken's return-value

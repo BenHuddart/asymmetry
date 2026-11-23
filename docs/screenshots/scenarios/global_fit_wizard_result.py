@@ -51,7 +51,7 @@ class GlobalFitWizardResultScenario(Scenario):
         # γ_μB_L/Δ ≈ 0, 1, 2, 5: every run still constrains Δ on its own. Past
         # that (50, 100 G) the per-run fits the role search starts from are
         # ill-posed and their minimum moves with the host's SIMD floating point,
-        # and the verdict with it: docs/investigations/wizard-result-screenshot-flake.md.
+        # and the verdict with it.
         datasets = make_ag_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0))
 
         # Keep the screening portfolio small so the build is fast: LF dynamics

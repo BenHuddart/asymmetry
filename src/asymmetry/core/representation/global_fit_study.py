@@ -1,16 +1,10 @@
 """Core ``GlobalFitStudy``: the persisted entity for a cross-group global
 parameter fit ("fit λ(B) at eight temperatures with some parameters shared").
 
-Historically the GUI kept exactly one such fit in memory
-(``FitParametersPanel._last_cross_group_fit``, a bare dict of core objects
-serialized ad hoc into panel state — see
-:meth:`asymmetry.gui.panels.fit_parameters_panel.FitParametersPanel._serialize_last_cross_group_fit`).
-``GlobalFitStudy`` replaces that single slot with a named, persisted, and
-uniquely-identified entity so a project can carry several studies side by
-side (rename/duplicate/delete, per docs/PLANS.md "Global Parameter Fit
-Studies"). This module is pure core: no Qt, no matplotlib.
+A project carries named, persisted studies with independent identities and
+rename, duplicate and delete operations. This module has no Qt or matplotlib.
 
-Serialization delegates to the canonical (de)serializers added in Phase 1A:
+Serialization delegates to the canonical domain codecs:
 :meth:`ParameterGroupData.to_dict`/``from_dict``,
 :meth:`CrossGroupFitResult.to_dict`/``from_dict``, and
 :meth:`ParameterCompositeModel.to_dict`/``from_dict``.

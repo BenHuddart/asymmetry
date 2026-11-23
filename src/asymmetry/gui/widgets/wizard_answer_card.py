@@ -8,8 +8,7 @@ It is deliberately window- and dataset-agnostic. All prose comes from
 ``asymmetry.core.fitting.wizard_narrative`` (never re-worded here); plot data
 arrives as plain arrays via :meth:`set_plot_data` (no ``MuonDataset`` import).
 The card owns no selection: it reads the selected key through the callable its
-owner hands it (the Compare panel's candidate A, see
-``docs/plans/fit-wizard-compare.md`` D1), and is told to :meth:`redraw` when
+owner hands it (the Compare panel's candidate A), and is told to :meth:`redraw` when
 that moves. It emits :attr:`apply_requested` with the selected key and never
 reaches back into a window.
 """

@@ -41,7 +41,7 @@ gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.7.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
-# For an agent driving `asymmetry` headlessly (see docs/plans/agent-cli-skill.md):
+# Headless agent workflow dependencies (see docs/reference/agent_workflow.rst):
 # `--plot` PNGs plus the ISIS/PSI NeXus loader most agent datasets need. ROOT and
 # HDF4 stay separate extras — they are heavier and dataset-specific.
 agent = ["matplotlib>=3.7,<3.11", "h5py>=3.8,<4"]

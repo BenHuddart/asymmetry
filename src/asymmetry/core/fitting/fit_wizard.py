@@ -351,9 +351,8 @@ class CandidateAssessment:
     #: measured statement that this candidate's ranking is search-limited, and
     #: that any family compared against it at the shallower budget was too.
     under_converged: bool = False
-    #: How long the fit that produced this row took (``asymmetry.core.fitting.fit_wizard._execute_assessment_task``).
-    #: ``None`` on a row restored from a cache: it is never persisted, so a past
-    #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
+    #: Live fit duration is not persisted; restored rows carry ``None`` so a
+    #: past run's timing is not recorded twice.
     timing: FitTiming | None = None
 
     analysis_history: dict | None = None

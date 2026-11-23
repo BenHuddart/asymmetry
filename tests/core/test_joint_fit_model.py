@@ -1,5 +1,5 @@
 """Unit tests for :class:`JointFit`, its series stamp, and its ``ProjectModel``
-cascade (Phase 2 of ``docs/plans/joint-fit.md``).
+cascade.
 
 Pure-core: no Qt. Covers ``to_dict``/``from_dict`` round trips (including the
 tolerant file-boundary behaviour on a malformed entry), the D10 delete

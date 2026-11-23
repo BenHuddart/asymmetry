@@ -77,7 +77,6 @@ class FitTimeEstimates:
 
     Built by :meth:`~asymmetry.core.fitting.fit_time_store.FitTimeStore.estimates`;
     a component absent from ``seconds_per_run`` has never been timed here.
-    Design: ``docs/plans/measured-fit-times.md`` (D4).
     """
 
     seconds_per_run: Mapping[str, float]

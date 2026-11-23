@@ -1,4 +1,4 @@
-"""Joint fit (docs/plans/joint-fit.md, phase 3): the window, the menu, recording.
+"""Joint-fit window, menu and recording contracts.
 
 Covers what the GUI half of a joint fit has to get right: two series may only
 be members together when they share no run (D3), the shared table is proposed

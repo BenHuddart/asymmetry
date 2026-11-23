@@ -1,8 +1,7 @@
 """Deprecated shim — ``fit_panel`` was split into the ``fit`` package.
 
 Import from :mod:`asymmetry.gui.panels.fit` (or its submodules) instead. This
-module re-exports the public API for backward compatibility and will be retired
-once callers migrate (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``).
+module re-exports the public API for backward compatibility.
 """
 
 from __future__ import annotations

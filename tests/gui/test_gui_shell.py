@@ -85,8 +85,7 @@ class _StubFitPanel(QWidget):
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()
         self.trends_requested = _DummySignal()
-        # Series row (docs/plans/series-workflow.md, D1/D7/D8): the tab asks,
-        # the window answers. A stub panel edits no series, so it is always a
+        # The tab asks and the window answers. This stub edits no series, so it is a
         # draft over the selection and the window's series wiring is inert.
         self.series_open_requested = _DummySignal()
         self.series_new_from_selection_requested = _DummySignal()
@@ -94,7 +93,7 @@ class _StubFitPanel(QWidget):
         self.series_rename_requested = _DummySignal()
         self.series_delete_requested = _DummySignal()
         self.batch_fit_range_changed = _DummySignal()
-        # Saved fits row (docs/plans/single-fit-compare.md): likewise inert.
+        # Saved-fit request signals are inert on this stub.
         self.saved_fit_open_requested = _DummySignal()
         self.saved_fit_rename_requested = _DummySignal()
         self.saved_fit_delete_requested = _DummySignal()

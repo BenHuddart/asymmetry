@@ -1,9 +1,9 @@
 """Joint-fit window: two series, two models, a suggested shared table.
 
 Opens the standalone :class:`~asymmetry.gui.windows.joint_fit_window.
-JointFitWindow` directly (``docs/plans/joint-fit.md``) and feeds it two
+JointFitWindow` directly and feeds it two
 synthetic :class:`~asymmetry.gui.windows.joint_fit_window.JointSeriesEntry`
-records — the motivating example from the plan: a sample crossing a phase
+records representing a sample crossing a phase
 transition, fitted with an oscillating model in the magnetically ordered
 phase (``Oscillatory * Exponential + Constant``, runs 101-102) and a plain
 relaxation in the paramagnetic phase (``Exponential + Constant``, runs

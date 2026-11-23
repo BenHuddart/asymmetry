@@ -1,7 +1,7 @@
 """Exact rotation of the transverse projection pair into a rotating frame.
 
 With both transverse projections measured, the frame turning at ν about B₀ ∥ z
-is reached without a filter (docs/plans/rotating-frame-projection.md):
+is reached without a filter:
 
     z_phys = (P_x − b_x) + i·(−s)·(P_y − b_y)/g,    z′ = z_phys · e^{+i(2πνt + φ)}
 

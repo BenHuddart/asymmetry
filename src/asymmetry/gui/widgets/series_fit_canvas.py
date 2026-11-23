@@ -5,8 +5,7 @@ candidate A's curve solid and B's dashed, one colour per run along the series
 axis. Below, one strip per run shows the normalised residuals (y − f)/σ, A in
 the run colour over B in grey, clipped to ±4σ. A candidate whose dense curves
 are not built yet is drawn without its line or residuals until the owner answers
-:attr:`SeriesFitCanvas.curves_required`. Design:
-``docs/plans/global-wizard-stepper.md`` (D4) and ``docs/plans/fit-wizard-compare.md`` (D3).
+:attr:`SeriesFitCanvas.curves_required`.
 """
 
 from __future__ import annotations

@@ -4080,8 +4080,7 @@ class DataBrowserPanel(QWidget):
         """Resample *run_number*'s histograms by *factor*; add the derived run.
 
         Returns the new browser dataset, or ``None`` when the source has no
-        detector histograms or the factor is invalid. The source run is never
-        modified (WiMDA degraded in place; see docs/porting/simulate-mode/).
+        detector histograms or the factor is invalid. The source run is never modified.
         """
         from asymmetry.core.simulate import degrade_run, reduce_run_to_dataset
 

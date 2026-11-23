@@ -5,8 +5,7 @@ After a run, :meth:`FitTimeStore.record` adds one sample per component in
 seconds per 1000 fitted points, and :meth:`FitTimeStore.estimates` scales the
 rolling median to the selected runs for the slow judgement
 (:class:`~asymmetry.core.fitting.wizard_scope.FitTimeEstimates`). The store is a
-small JSON file the caller locates; it never travels in a project. Design:
-``docs/plans/measured-fit-times.md``.
+small JSON file the caller locates; it never travels in a project.
 """
 
 from __future__ import annotations

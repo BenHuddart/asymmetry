@@ -153,9 +153,8 @@ _DENSITY_YLABELS = {
 #: Fit id of the run's own Single-tab fit (D5). Every other fit id stored here
 #: is a :class:`~asymmetry.core.representation.series.FitSeries` ``batch_id``.
 SINGLE_FIT_ID = "single"
-#: Prefix of a saved single fit's id that is not the run's open fit: the open
-#: fit draws as :data:`SINGLE_FIT_ID`, every other saved fit as
-#: ``"single:<fit_id>"`` (docs/plans/single-fit-compare.md D6).
+#: The open fit draws as :data:`SINGLE_FIT_ID`; other saved fits use
+#: ``"single:<fit_id>"`` to preserve independent overlay identities.
 SAVED_FIT_ID_PREFIX = "single:"
 
 #: Colours for the *non-active* fits a run shows alongside the active series'

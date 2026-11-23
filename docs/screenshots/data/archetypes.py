@@ -292,8 +292,7 @@ def make_euo_composite(seed: int = 71) -> MuonDataset:
 
 # ---------------------------------------------------------------------------
 # Synthetic thread: a two-phase ZF scan for the Global Fit Wizard transitions
-# screenshots (no real material or run data — see docs/plans/
-# global-wizard-transitions.md).
+# screenshots; all runs and material parameters are synthetic.
 # ---------------------------------------------------------------------------
 
 
