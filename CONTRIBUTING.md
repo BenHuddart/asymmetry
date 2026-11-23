@@ -1,144 +1,68 @@
 # Contributing to Asymmetry
 
-Thank you for your interest in contributing to Asymmetry!
+Read [AGENTS.md](AGENTS.md) before changing code or documentation. It defines the
+scientific, compatibility, layer, and maintenance rules. The
+[contributor guide](docs/contributing.rst) covers instrument authoring and review;
+[architecture](docs/ARCHITECTURE.md) identifies current owners and data flow.
 
-## Development Setup
+## Development and checks
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/asymmetry.git
-   cd asymmetry
-   ```
-
-2. Install in development mode with all dependencies:
-   ```bash
-   pip install -c constraints.txt -e ".[all]"
-   ```
-
-3. Run tests to verify setup:
-   ```bash
-   python -m pytest tests/
-   ```
-
-4. Run the repository harness before larger pull requests:
-   ```bash
-   python tools/harness.py validate
-   ```
-   If `.venv` exists, the harness automatically uses that interpreter.
-
-## Code Style
-
-- Follow PEP 8 guidelines
-- Use type hints for function signatures
-- Run the full lint the way CI does — this checks **both** formatting and lint
-  rules over `src/`, `tests/`, and `tools/`:
-  ```bash
-  python tools/harness.py lint   # == ruff format --check + ruff check
-  ```
-  A plain `ruff check` is **not** enough: CI also runs `ruff format --check`, so
-  a file that lints clean can still fail CI on formatting. To auto-apply fixes:
-  ```bash
-  ruff format src tests tools && ruff check --fix src tests tools
-  ```
-
-### Git hooks
-
-A pre-commit hook in `.githooks/` runs `python tools/harness.py lint` before each
-commit, so a formatting slip never reaches CI. Enable it once per clone:
+Create a `feature/*` or `fix/*` branch from `main`. Install the development
+requirements using the repository constraints:
 
 ```bash
-git config core.hooksPath .githooks
+pip install -c constraints.txt -e ".[all]"
+python tools/harness.py structural
+python tools/harness.py lint
 ```
 
-It skips automatically where Ruff isn't installed (e.g. a worktree without a
-`.venv`), and you can bypass it for a single commit with `git commit --no-verify`.
+Run focused tests through the harness, then standard validation once the candidate
+is stable. Test placement and optional dependencies are described in
+[tests/README.md](tests/README.md) and [HARNESS.md](docs/HARNESS.md).
 
-## Testing
-
-- Write tests for new features in the `tests/` directory
-- Ensure all tests pass before submitting:
-  ```bash
-   python -m pytest tests/ --cov=src/asymmetry
-  ```
-- For focused iteration, pass pytest arguments through the harness:
-  ```bash
-  python tools/harness.py test -- tests/test_transforms.py
-  ```
-- Aim for comprehensive test coverage (current: 71%)
-- Use pytest fixtures for common test setup
-- GUI tests should use `pytest-qt` and `qtbot` fixture
-
-## Documentation
-
-- Add docstrings to all public functions and classes
-- Follow NumPy docstring format
-- Update Sphinx documentation in `docs/` for new features:
-  ```bash
-  cd docs
-  make html
-  ```
-
-## Submitting Changes
-
-1. Create a new branch for your feature:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-2. Make your changes and commit with clear messages:
-   ```bash
-   git commit -m "Add feature: description"
-   ```
-
-3. Push your branch and create a pull request
-
-4. Ensure all CI checks pass
-
-## Project Structure
-
-```
-asymmetry/
-├── src/asymmetry/       # Main source code
-│   ├── core/            # Pure-Python analysis engine
-│   └── gui/             # PySide6 GUI components
-├── tests/               # Test suite
-├── docs/                # Sphinx documentation
-└── pyproject.toml       # Project configuration
+```bash
+python tools/harness.py test -- tests/core/test_instrument_profiles.py
+python tools/harness.py validate
+python tools/harness.py docs --mode source
 ```
 
-## Adding New Features
+The harness uses the checkout's `.venv` when present. GUI tests use the shared
+`qapp` fixture and isolated settings; follow the existing owning-layer patterns.
+Do not substitute a bare pytest invocation for the harness. Enable the repository
+pre-commit hook with `git config core.hooksPath .githooks` to check formatting and
+lint on commits.
 
-### New File Loader
-1. Create a new loader in `src/asymmetry/core/io/`
-2. Inherit from `BaseLoader`
-3. Register in `src/asymmetry/core/io/__init__.py`
-4. Add tests in `tests/`
+## Documentation and scientific evidence
 
-### New Fit Model
-1. Add function to `src/asymmetry/core/fitting/models.py`
-2. Register in `MODELS` dictionary
-3. Add tests with known results
+Update the owning documentation, tests, and changelog with a behaviour change.
+Use [docs/README.md](docs/README.md) for source/publishing gates and screenshots,
+[STYLE.md](docs/STYLE.md) for prose, and
+[GUI_GUIDELINES.md](docs/GUI_GUIDELINES.md) for widgets, workers, and plotting.
+Instrument definitions are frozen data with scoped evidence and generated review
+pages; the [worked authoring example](docs/contributing.rst#work-through-the-gps-declaration)
+uses the bundled profile rather than a second authoritative definition.
 
-### New GUI Panel
-1. Create panel in `src/asymmetry/gui/panels/`
-2. Inherit from `QWidget`
-3. Add to MainWindow
-4. Add GUI tests using `pytest-qt`
+Cite primary scientific sources and distinguish analytic tests, recorded native
+outputs, and fresh comparisons. Preserve released projects through tested,
+versioned converters. Unavailable inputs and historical results stay inspectable;
+a successful serialization roundtrip does not establish numerical correctness.
 
-## Issues and planning
+## Issues and pull requests
 
-Use the [issue forms](https://github.com/BenHuddart/Asymmetry/issues/new/choose)
-before starting major changes. **Implementation** records the problem, evidence,
-scope, decisions, acceptance criteria, validation, and documentation.
-**Instrument review** records a profile version, checked sections, evidence, and
-credit consent. Reviewers can choose **Do not name me**; the issue and GitHub
-account remain public, and a maintainer can file on a reviewer's behalf.
+Use the [issue forms](https://github.com/BenHuddart/asymmetry/issues/new/choose)
+for work larger than a small fix. **Implementation** records the problem,
+evidence, scope, decisions, compatibility, acceptance criteria, validation, and
+documentation. Its **Blocked by** list is authoritative: prerequisites must be
+closed as completed before dependent work starts. Plans and investigations belong
+in issues, not new repository planning documents.
 
-The issue body's **Blocked by** list is authoritative. Start dependent work only
-when every listed issue is closed as completed; an open PR does not satisfy a
-prerequisite. For a two-PR issue, link the first with `Refs #n` and close the
-issue only in the final PR with `Closes #n`.
+**Instrument review** records the exact profile revision, checked sections,
+evidence, and credit consent. A reviewer can choose **Do not name me**; the issue
+and GitHub account remain public, and a maintainer can file on their behalf.
+Maintainer acceptance of a diagram is separate from instrument-scientist review.
 
-When filing through `gh` or the API, use the chosen form's field labels as `###`
-headings, in order. Fill the issue form in the browser or supply the equivalent
-body explicitly with `gh issue create --body-file` or the API.
+For CLI/API issue filing, use the form's field labels as third-level headings in
+order. Before pushing, inspect the complete diff and run the required gates.
+Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md), an
+imperative title, and the issue link. A first PR in a multi-PR issue uses
+`Refs #n`; only the final PR satisfying the whole issue uses `Closes #n`.

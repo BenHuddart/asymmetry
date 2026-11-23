@@ -185,6 +185,18 @@ signals, hold strong references to live threads, and shut them down in
 worker signal to a bare lambda/partial that touches widgets — route through a
 GUI-thread `QObject` method.
 
+`TaskRunner` owns worker QObject affinity and destruction. A Python-subclassed
+worker returns to its GUI home thread before deferred deletion; windows must not
+schedule its destruction on a live worker thread. Keep queued result delivery and
+bounded shutdown/reaper ownership together (`gui/tasks.py`); see
+`tests/gui/test_gui_tasks.py` for the destruction-thread regression.
+
+Screen lookup and wrapper lifetime belong to `gui/screen_guard.py`. Use
+`screen_for(widget)` instead of `QWidget.screen()` or `QWindow.screen()`;
+application startup installs the shared guard and pins screen wrappers. Window
+sizing must reuse this owner rather than create another wrapper-lifetime policy.
+These ownership rules do not certify every native Qt/platform failure mode.
+
 Project opening prepares detached core objects through `ProjectPreparation` and
 the existing `TaskRunner` before clearing active state. Its QObject-bound handlers
 ignore late results after cancellation. The existing bulk-load guard blocks
