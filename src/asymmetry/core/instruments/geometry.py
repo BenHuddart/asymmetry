@@ -11,6 +11,90 @@ def _finite(*values: float) -> None:
         raise ValueError("Schematic coordinates and dimensions must be finite")
 
 
+def _unit_direction(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    """Normalise a finite nonzero direction without overflow or subnormal underflow."""
+    if len(vector) != 3 or not all(math.isfinite(value) for value in vector):
+        raise ValueError("A direction requires three finite coordinates")
+    scale = max(abs(value) for value in vector)
+    if scale == 0:
+        raise ValueError("A direction must be nonzero")
+    scaled = tuple(value / scale for value in vector)
+    length = math.hypot(*scaled)
+    return tuple(value / length for value in scaled)
+
+
+@dataclass(frozen=True)
+class BeamDirection:
+    """Unit beam vector in the profile's declared common arrangement frame.
+
+    Coordinates specify direction only. Existing two-dimensional placements
+    remain local to each drawing view; they are not three-dimensional positions.
+    """
+
+    vector: tuple[float, float, float]
+
+    def __post_init__(self):
+        object.__setattr__(self, "vector", _unit_direction(self.vector))
+
+
+@dataclass(frozen=True)
+class ViewOrientation:
+    """Screen axes in the same arrangement frame as the beam.
+
+    ``right`` and ``up`` define the drawing plane. An explicit ``toward`` axis
+    points out of the screen; omission retains unknown axial viewing sense.
+    Axes are normalised and must be perpendicular within 1e-12. Either handedness
+    is accepted, including explicitly mirrored drawings, without inferring a
+    physical observer or requiring a proper rotation.
+    """
+
+    right: tuple[float, float, float]
+    up: tuple[float, float, float]
+    toward: tuple[float, float, float] | None = None
+
+    def __post_init__(self):
+        axes = ["right", "up"] + (["toward"] if self.toward is not None else [])
+        coordinates = (self.right, self.up) + ((self.toward,) if self.toward is not None else ())
+        directions = [_unit_direction(vector) for vector in coordinates]
+        for index, direction in enumerate(directions):
+            if any(
+                abs(sum(a * b for a, b in zip(direction, other, strict=True))) > 1e-12
+                for other in directions[:index]
+            ):
+                raise ValueError("View direction axes must be mutually perpendicular")
+        for axis, direction in zip(axes, directions, strict=True):
+            object.__setattr__(self, axis, direction)
+
+
+@dataclass(frozen=True)
+class BeamProjection:
+    """Unit beam's signed screen components and optional out-of-screen component.
+
+    Positive ``toward`` means out of the screen, negative means into it, and
+    ``None`` preserves unknown sense, including a beam with zero screen components.
+    """
+
+    screen: tuple[float, float]
+    toward: float | None
+
+
+def project_beam(
+    beam: BeamDirection | None, orientation: ViewOrientation | None
+) -> BeamProjection | None:
+    """Project a declared beam onto explicit screen axes; missing declarations stay unknown."""
+    if beam is None or orientation is None:
+        return None
+    return BeamProjection(
+        tuple(
+            sum(a * b for a, b in zip(beam.vector, axis, strict=True))
+            for axis in (orientation.right, orientation.up)
+        ),
+        sum(a * b for a, b in zip(beam.vector, orientation.toward, strict=True))
+        if orientation.toward is not None
+        else None,
+    )
+
+
 @dataclass(frozen=True)
 class Wedge:
     """Polar-origin annular sector with angles in degrees."""
@@ -169,8 +253,11 @@ class View:
     arrangement: Circular | Grid | Explicit
     scale: str = "schematic"
     units: str = "dimensionless"
+    orientation: ViewOrientation | None = None
 
     def __post_init__(self):
+        if self.orientation is not None and not isinstance(self.orientation, ViewOrientation):
+            raise ValueError("View orientation requires a typed ViewOrientation")
         if not self.key or not self.label or not self.convention:
             raise ValueError("View needs a key, label and viewing convention")
         if self.mode not in {"radial", "plan"} or self.scale not in {"schematic", "physical"}:

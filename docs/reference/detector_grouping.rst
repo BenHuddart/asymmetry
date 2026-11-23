@@ -1597,6 +1597,48 @@ Detector layout editor workflow
 A detector can belong to multiple groups. This is required for transverse and
 vector-polarisation workflows.
 
+Beam direction and view orientation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The core instrument API represents the beam as a direction in a profile's
+explicitly declared common arrangement frame. ``BeamDirection`` normalises a
+finite, nonzero three-component vector. ``ViewOrientation`` gives screen-right
+and screen-up axes in that same frame, with an optional axis pointing toward
+the viewer. The axes are normalised and must be perpendicular within
+:math:`10^{-12}`. Explicit mirrored bases are supported; this does not establish
+a physical observer handedness. The axes and their convention belong to the
+instrument declaration, rather than being inferred from the drawn detector shape.
+
+``project_beam`` returns the signed screen components and, when the toward axis
+is declared, the signed normal component. Positive means out of the screen;
+negative means into it. Missing beam or view orientation returns ``None``.
+With a known drawing plane but unspecified axial viewing sense, the normal
+component remains ``None``, even when the screen components are zero.
+
+For example, let arrangement :math:`+z` be downstream, :math:`+y` be up, and
+:math:`+x` be transverse. A side view can put downstream to screen-right:
+
+.. code-block:: python
+
+   from asymmetry.core.instruments.geometry import (
+       BeamDirection, ViewOrientation, project_beam,
+   )
+
+   beam = BeamDirection((0, 0, 1))
+   side = ViewOrientation(right=(0, 0, 1), up=(0, 1, 0))
+   projected = project_beam(beam, side)
+   assert projected.screen == (1.0, 0.0)
+   assert projected.toward is None
+
+An acquisition can declare ``beam`` and each ``View`` can declare
+``orientation``. ``layout_from_profile`` exposes the corresponding projection
+as each ``BankLayout.beam``. Generated instrument review pages list declared
+beam vectors, view bases, and projected components. Bundled profiles leave these
+optional declarations unspecified. Existing two-dimensional detector placements
+are view-local drawing coordinates, rather than three-dimensional positions in
+this common frame. Projection does not determine detector memberships or the
+sign of an asymmetry.
+
 Editing groups in the Grouping table
 -------------------------------------
 

@@ -549,7 +549,8 @@
           "rotation_deg": 0.0,
           "read_only": false
         }
-      ]
+      ],
+      "beam": null
     },
     {
       "name": "Forward",
@@ -1098,7 +1099,8 @@
           "rotation_deg": 0.0,
           "read_only": false
         }
-      ]
+      ],
+      "beam": null
     }
   ],
   "presets": {
