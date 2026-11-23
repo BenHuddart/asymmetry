@@ -7,8 +7,7 @@ after a project reload the mix-up got worse (F21). Carry-forward is useful
 but the panel must say so explicitly — a ``seeds from <run>`` tag on the
 results card, cleared the moment a real fit is recorded for the run.
 
-D5 (`docs/studies/datagroup-fitseries-unification.md`) later upgraded this to
-"refresh-unless-fitted": a run with a recorded fit result (single *or*
+Under "refresh-unless-fitted", a run with a recorded fit result (single *or*
 batch/global member) is PROTECTED and never auto-overwritten; everything else
 is REFRESHABLE and, on selection, refreshes from the session's most recently
 *fitted* single-tab state (superseding any stale cached carry for that run)

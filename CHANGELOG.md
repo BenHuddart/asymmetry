@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Consolidate current guidance in the maintained docs and GitHub issues; remove retired planning material.
+
 - Clarify the shipped architecture and instrument-authoring workflow, with an
   executable profile example and explicit GUI lifetime and experiment-planning limits.
 
@@ -3922,7 +3924,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (GIL ↔ connection-mutex ABBA). The worker now moves its thread affinity back
   to the GUI thread before ``run`` returns and is deleted there, so ``~QObject``
   always runs on the GUI thread. See
-  ``docs/investigations/gui-shard-gil-signalslot-deadlock.md``.
+  [GUI lifetime guidance](docs/GUI_GUIDELINES.md).
 
 - **Opening the Fit Wizard no longer stalls on long runs.** The wizard's
   fingerprint plot (and the result card's data overlay) drew a matplotlib
@@ -3960,7 +3962,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DPI lookup then walked freed memory. Asymmetry now resolves screens through
   a safe helper (``screen_for``), pins the screen wrappers so the GC can never
   reclaim them, and logs loudly if a screen is ever destroyed mid-session.
-  Full investigation: ``docs/investigations/tahoe-qscreen-uaf.md``.
+  Screen-wrapper ownership: [GUI guidelines](docs/GUI_GUIDELINES.md).
 
 ## [0.9.0] - 2026-07-08
 

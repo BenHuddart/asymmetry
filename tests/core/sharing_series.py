@@ -1,8 +1,7 @@
 """Simulated series for the sharing ladder and the trend objective's tests.
 
 Each is simulated from the repo's own components with muon-decay noise, on a
-zero-field temperature scan, and modelled on a case in
-``docs/plans/global-wizard-trend-objective.md``.
+zero-field temperature scan.
 """
 
 from __future__ import annotations

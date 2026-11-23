@@ -1,6 +1,6 @@
-"""The Batch tab edits one series (docs/plans/series-workflow.md, Phase 3).
+"""The Batch tab edits one series.
 
-D1/D7/D8 from the Batch tab's side: the tab always has an *open* series (a
+The tab always has an *open* series (a
 recorded one, or a draft that has never run), a browser click never rewrites it,
 opening a series restores its whole recipe, and a run either replaces the series
 it was editing or moves the tab onto the new one it recorded.

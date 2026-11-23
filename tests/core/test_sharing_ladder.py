@@ -1,7 +1,6 @@
 """The sharing ladder (plan D3, D7–D9, D11–D12) on synthetic series.
 
-Each series is simulated from the repo's own components with muon-decay noise
-and modelled on a case in ``docs/plans/global-wizard-trend-objective.md``.
+Each series is simulated from the repo's own components with muon-decay noise.
 """
 
 from __future__ import annotations

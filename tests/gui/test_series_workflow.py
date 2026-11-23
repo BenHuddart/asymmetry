@@ -1,4 +1,4 @@
-"""Series workflow (docs/plans/series-workflow.md, D3-D6): recording, overlays, delete.
+"""Series recording, overlays and deletion preserve independent fits.
 
 The GUI half of "the Batch tab edits one series": an identical re-run replaces
 its series in place, anything else records a new one beside it, the plot draws
@@ -374,8 +374,7 @@ def test_trend_panel_sections_nest_phase_series_under_their_parent(mw):
 def test_trend_panel_sections_group_joint_fit_members_ahead_of_data_groups(mw):
     """Joint-fit members share one, colour-less section ahead the data groups.
 
-    docs/plans/joint-fit.md D5/D8/D11: a joint fit composes series that may
-    carry different models — or, as here, belong to no data group at all — so
+    A joint fit composes series with different models or no data group, so
     it earns its own section rather than being read off any one member's data
     group, and it comes first so the coupling reads as one unit before the
     ordinary per-group rail.

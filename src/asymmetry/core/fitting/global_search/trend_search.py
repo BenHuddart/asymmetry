@@ -4,7 +4,6 @@ Where the statistical objective runs the separable role search, this climbs
 ``climb_sharing_ladder`` once per competing template, on the wizard's spawn
 pool, and turns every rung into a candidate the rest of the wizard reads. It
 imports the wizard's machinery, so the wizard imports it where it calls it.
-Design: ``docs/plans/global-wizard-trend-objective.md`` (D7–D9, D13, Phase 4).
 """
 
 from __future__ import annotations

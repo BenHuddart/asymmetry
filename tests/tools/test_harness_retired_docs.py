@@ -154,3 +154,42 @@ def test_required_knowledge_files_avoid_retired_locations() -> None:
             relative == location or relative.startswith(f"{location}/")
             for location in RETIRED_LOCATIONS
         )
+
+
+@pytest.mark.parametrize(
+    ("relative", "content"),
+    [
+        ("README.md", "[old](docs/plans/old.md#decision)"),
+        ("docs/reference/page.rst", ":doc:`Old <../studies/old>`"),
+        ("docs/reference/page.rst", ":doc:`/plans/old#decision`"),
+        ("docs/reference/page.rst", "`Old <../audit/old.md#decision>`_"),
+        ("tools/README.md", "[old]: ../docs/investigations/old.md"),
+        ("docs/page.rst", ".. literalinclude:: studies/old.py"),
+        ("docs/reference/page.rst", ":doc:`/PLANS`"),
+        (".github/guide.md", "[old](../docs/studies/old.md)"),
+        ("docs/reference/page.rst", ".. literalinclude:: /studies/old.py"),
+    ],
+)
+def test_local_links_into_retired_locations_are_rejected(tmp_path, relative, content):
+    _write_tree(tmp_path)
+    path = _add_file(tmp_path, relative)
+    path.write_text(content + "\n", encoding="utf-8")
+    failures = HARNESS["find_retired_doc_violations"](tmp_path)
+    assert [(failure.path, failure.line) for failure in failures] == [(path, 1)]
+    assert "local link" in failures[0].message.lower()
+
+
+def test_external_history_prohibition_text_and_live_porting_tests_are_allowed(tmp_path):
+    _write_tree(tmp_path)
+    page = _add_file(tmp_path, "README.md")
+    page.write_text(
+        "[history](https://github.com/example/repo/blob/commit/docs/plans/old.md)\n"
+        "Retired locations include `docs/PLANS.md` and `docs/plans/`.\n"
+        "[live test](tests/porting/example.py)\n"
+        "[owning page](docs/reference/fitting.rst#models)\n"
+        "[site route](/studies/old.py)\n",
+        encoding="utf-8",
+    )
+    fixture = _add_file(tmp_path, "tests/negative.py")
+    fixture.write_text('TARGET = "docs/plans/old.md"\n', encoding="utf-8")
+    assert HARNESS["find_retired_doc_violations"](tmp_path) == []

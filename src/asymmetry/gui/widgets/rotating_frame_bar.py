@@ -1,7 +1,6 @@
 """The rotating-frame bar: the frame's setup and run fields above the plot.
 
-Shown while the projection chips show the rotating frame
-(docs/plans/rotating-frame-projection.md, D3–D6):
+Shown while the projection chips show the rotating frame:
 
 - **Setup** fields (ν_RF, B₁ axis, φ_RF, sense) are shared by the displayed
   runs; an edit is written to every one of them, and a field they disagree on

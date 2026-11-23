@@ -27,8 +27,7 @@ _SUGGESTION_BAND_FRACTION = 0.18
 
 @dataclass
 class SuggestionOverlay:
-    """Bayesian-experimental-design "next point" overlay (see
-    ``docs/studies/bed-next-point-suggestion.md`` §5.4).
+    """Bayesian-experimental-design "next point" overlay.
 
     ``utility`` is the RAW (unnormalised) per-candidate utility from
     ``NextPointSuggestion`` — the drawing code normalises it for display so

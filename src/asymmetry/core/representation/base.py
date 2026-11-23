@@ -69,7 +69,7 @@ class FitSlot:
     or scan run records its results on its
     :class:`~asymmetry.core.representation.series.FitSeries`, never on its
     members' slots. A slot lives in a :class:`SingleFitSet`, beside the other
-    fits saved on the same data (docs/plans/single-fit-compare.md D4).
+    fits saved on the same data.
 
     ``model`` is a :meth:`CompositeModel.to_dict` payload (or ``None`` for an
     empty slot); ``result`` is a JSON-serialisable fit-result summary.

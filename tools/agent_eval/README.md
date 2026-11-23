@@ -3,9 +3,8 @@
 The two runners measure whether an agent, handed a folder of μSR runs and
 nothing else, produces a defensible analysis with the `asymmetry` CLI and the
 packaged `asymmetry-analysis` skill. `run_eval.py` drives Claude Code;
-`run_codex_eval.py` drives Codex. They implement the loop Phase 4 of
-[`docs/plans/agent-cli-skill.md`](../../docs/plans/agent-cli-skill.md) runs:
-run the agent, score its summary against the dataset's rubric, and improve
+`run_codex_eval.py` drives Codex. Run the agent, score its summary against
+the dataset's rubric, and improve
 general skill guidance or reusable CLI behavior. Keep the rubric fixed and
 record which skill, CLI and runner version each wave evaluated.
 
@@ -241,21 +240,16 @@ them to a scratch directory outside the repository.
 A scored wave produces a per-case record: Must/Should decisions with evidence,
 number and boundary checks, and hashes. Over an improvement loop these grow
 to hundreds of kilobytes per wave, and they mean nothing without the raw
-attempts they cite. So the repository keeps only a small amount of it:
+attempts they cite. Keep full per-case records and long execution logs in
+the private corpus repository under `eval-records/<campaign>/`, beside the
+corpus they score. Its README identifies the relevant commit and protocol.
+Do not commit scorecards, transcripts, private paths or corpus-derived results
+to this repository.
 
-- **One summary entry per wave**, in the campaign's `docs/plans/*-waves.json`.
-  The entry records the commit, host, model, concurrency, Must/Should and
-  science/copy/combined/boundary totals, and the cases that failed science or
-  exact copying.
-- **The latest full per-case record** of each campaign, beside that summary.
-  When a newer wave lands, move the older record out.
-- **Every other full record**, plus any long execution log, goes to the
-  private corpus repository under `eval-records/<campaign>/`, with a README
-  that names the branch and PR, so each record sits beside the corpus it
-  scores.
-
-The plan page links the summary, the latest record and the archive, and
-states its conclusions. It is not a running log of each wave.
+The campaign's GitHub issue records conclusions and concrete reusable follow-up
+work without republishing private evaluation material. Closed issues #374 and
+#375 own the evaluation-policy decisions; new campaigns do not reopen them
+merely by producing another wave.
 
 ## Ticking the rubric
 

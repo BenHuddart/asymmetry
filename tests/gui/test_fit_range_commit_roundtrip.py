@@ -4,7 +4,7 @@
 ``tests/test_fit_panel_phase5_range.py`` and is unchanged: the Single tab edits
 the project-wide range the plot owns. ``GlobalFitTab`` shares the same
 ``FloatLimitField`` widgets but no longer shares that range — its window is the
-open series' ``recipe["fit_range"]`` (docs/plans/series-workflow.md, D8), so a
+open series' ``recipe["fit_range"]``, so a
 commit there reports ``batch_fit_range_changed`` and moves only the plot's range
 *guides*, and a plot-side range change never writes back into the tab.
 """

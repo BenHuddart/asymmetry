@@ -1,8 +1,7 @@
 """The rotating frame as a projection of vector runs in the main window (synthetic data).
 
-Covers docs/plans/rotating-frame-projection.md Phase 2: the Lab | Rotating
-switch, the frame bar's writes into ``ProjectModel.rotating_frames``, the
-rotated subplots (rotated before bunching, D8), Auto-detect's review (D6), and
+Covers Lab | Rotating, writes into ``ProjectModel.rotating_frames``,
+rotation before bunching, Auto-detect review, and
 the filtered RRF bar staying out of vector mode (D2).
 """
 

@@ -46,9 +46,8 @@ Navigation map
    and its ``↗`` pop-out (``_build_parameters_rail`` over each tab's own
    ``_apply_column_group``), and fit-range display sync
    (``_apply_fit_range_domain``, ``set_fit_range_display``,
-   ``current_fit_range_text``). Deliberately thin — see
-   ``docs/audit/shared-foundations/FOLLOW-UPS.md`` (Phase 2 H3) for the
-   candidates considered and rejected for further hoisting into this base.
+   ``current_fit_range_text``). Worker selection, launch inputs and result
+   presentation remain owned by the concrete tabs.
 """
 
 import copy

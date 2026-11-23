@@ -276,7 +276,7 @@ class RRFControls(QWidget):
         """True on the FB-asymmetry time view, unless the exact frame is offered.
 
         Projections that include the transverse pair take the exact rotating
-        frame instead (D2 of docs/plans/rotating-frame-projection.md); other
+        frame instead; other
         multi-projection groupings keep the filtered one.
         """
         panel = self._panel

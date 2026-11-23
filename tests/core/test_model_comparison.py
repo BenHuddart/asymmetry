@@ -705,7 +705,7 @@ def test_compare_places_fitted_parameters_before_fixed_ones() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Saved single fits (docs/plans/single-fit-compare.md D7, D8)
+# Saved single fits
 # ---------------------------------------------------------------------------
 
 _EXP_MODEL = CompositeModel(["Exponential", "Constant"], operators=["+"]).to_dict()

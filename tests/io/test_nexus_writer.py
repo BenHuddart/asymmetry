@@ -1,6 +1,5 @@
 """NeXus V1 writer round-trip, refit-recovery and pull-distribution tests.
 
-Verification-plan §2 and §3 of docs/porting/simulate-mode/verification-plan.md.
 Corpus checks (skip-if-missing) exercise real instrument templates.
 """
 

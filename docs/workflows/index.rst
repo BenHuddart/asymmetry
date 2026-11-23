@@ -86,16 +86,12 @@ Quick chooser
 Further workflows
 -----------------
 
-The internal porting workspace
-(``docs/porting/practical-workflows/workflow-catalogue.md``)
-catalogues additional workflows that Asymmetry partially or
-fully supports — F–μ–F identification, spin-glass freezing,
-muonium-radical hyperfine, and others.
-ALC resonance scans have a worked example above
-(:doc:`alc_scan_tcnq`) and a full feature reference in
-:doc:`/reference/alc_mode`; the angle-dependent Knight shift has a
-worked example above (:doc:`knight_shift_angle`) and a feature
-reference at :ref:`knight-shift`. Workflows that Asymmetry does **not**
-yet support (e.g. multi-period arithmetic, LEM depth profiling) are
-catalogued there too and surface as candidates in
-``docs/porting/ROADMAP.md``.
+The :doc:`feature reference </reference/index>` describes the supported
+analysis operations and their limits, including F–μ–F identification,
+spin-glass fitting, and muonium/radical models. ALC resonance scans have a
+worked example above (:doc:`alc_scan_tcnq`) and a reference in
+:doc:`/reference/alc_mode`; the angle-dependent Knight shift has a worked
+example (:doc:`knight_shift_angle`) and a reference at :ref:`knight-shift`.
+
+Proposed workflows and unfinished work belong in
+`GitHub issues <https://github.com/BenHuddart/asymmetry/issues>`_.

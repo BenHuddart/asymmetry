@@ -1,5 +1,7 @@
 """Retired planning locations and their existing shrinking path baseline."""
 
+import posixpath
+import re
 from pathlib import Path
 
 from harness_checks import HarnessFailure
@@ -70,4 +72,51 @@ def find_retired_doc_violations(root: Path = ROOT) -> list[HarnessFailure]:
                         "New file in a retired planning location; plans go in a GitHub issue, lasting content in the owning Sphinx page, a regression test, or an invariant comment.",
                     )
                 )
+    return failures + find_retired_doc_links(root)
+
+
+def find_retired_doc_links(root: Path) -> list[HarnessFailure]:
+    """Reject explicit local Markdown/RST targets, not prose or historical URLs."""
+    targets = re.compile(
+        r"\]\(([^)\s]+)(?:\s+[^)]*)?\)|^\s*\[[^\]]+\]:\s*(\S+)"
+        r"|<([^<>\s]+)>|^\s*\.\.\s+(?:include|literalinclude)::\s*(\S+)"
+        r"|:doc:`([^`]+)`"
+    )
+    paths = list(root.glob("*"))
+    for directory in ("docs", "tools", "tests", "src", ".github", ".claude"):
+        paths.extend((root / directory).rglob("*"))
+    failures = []
+    for path in paths:
+        relative = path.relative_to(root)
+        if (
+            not path.is_file()
+            or path.suffix not in {".md", ".rst"}
+            or any(
+                (p.startswith(".") and p not in {".github", ".claude"})
+                or p in {"_build", "_generated", "__pycache__"}
+                for p in relative.parts
+            )
+        ):
+            continue
+        for line, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in targets.finditer(text):
+                target = next(value for value in match.groups() if value is not None)
+                target = target.rsplit("<", 1)[-1].rstrip(">")
+                if re.match(r"(?:[a-zA-Z][a-zA-Z0-9+.-]*:|//|#)", target):
+                    continue
+                target = target.split("#", 1)[0]
+                parent = relative.parent.as_posix()
+                if target.startswith("/"):
+                    parent = "docs" if match.group(4) or match.group(5) else "."
+                resolved = posixpath.normpath(posixpath.join(parent, target.lstrip("/")))
+                if match.group(5) and resolved == "docs/PLANS":
+                    resolved += ".md"
+                if any(resolved == p or resolved.startswith(p + "/") for p in RETIRED_DOC_PATHS):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            line,
+                            "Local link targets retired planning material; use its maintained owner or issue.",
+                        )
+                    )
     return failures

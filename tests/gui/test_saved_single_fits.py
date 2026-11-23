@@ -1,7 +1,6 @@
 """Saved single fits: the Single tab's Saved fits row, the recorder and the plot overlays.
 
-``docs/plans/single-fit-compare.md`` D1 (automatic recording), D5 (names) and D6
-(each saved fit draws under its own id). Fits run through the real Single tab
+Recording and naming retain each saved fit's own overlay id. Fits use the real Single tab
 against a stub engine, so the recorder sees the form exactly as a user leaves it.
 """
 

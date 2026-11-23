@@ -6,15 +6,13 @@ the series overlay (A solid, B dashed) over residual strips, the A-vs-B
 parameter table, and one local parameter's trend along the series. Every
 judgement shown comes from ``core/fitting/model_comparison.py``. The global
 wizard's series has N runs; the single-run wizard's has one, with no role chips
-and no trend. Design: ``docs/plans/global-wizard-stepper.md`` (D4, D8, D9) and
-``docs/plans/fit-wizard-compare.md`` (D1–D3).
+and no trend.
 
 Under the Global Fit Wizard's trend objective the candidates are rungs of
 sharing ladders (:meth:`ModelComparePanel.set_ladders`): each row shows its cost
 and trend quality in place of Δ and weight, each model folds to its
 pre-selected rung, and the trend plot becomes a strip of every local
-parameter's trace. Design: ``docs/plans/global-wizard-trend-objective.md``
-(D9, Phase 5).
+parameter's trace.
 """
 
 from __future__ import annotations

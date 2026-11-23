@@ -1,7 +1,6 @@
 """The Single tab's parameter rail, its pop-out, the χ²ᵣ chip and the results card.
 
-Phase 3 of the Fit tab refresh (``docs/plans/fit-tab-refresh.md``): the column
-groups the rail chips drive, the live table's pop-out, the verdict chip that
+Covers column-group chips, the live table's pop-out, and the verdict chip that
 opens a ``FitResultsWindow`` for the run, and the hand-offs that used to hide in
 a ``More…`` menu.
 """

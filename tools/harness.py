@@ -54,8 +54,7 @@ LIMIT_FIELD_CLASS_RE = re.compile(r"^\s*class\s+\w*LimitField\b")
 # Canonical home for `FigureCanvasQTAgg` construction. Everything else should
 # go through `asymmetry.gui.widgets.mpl_canvas.create_canvas`.
 MPL_CANVAS_HOME = GUI_ROOT / "widgets" / "mpl_canvas.py"
-# Pre-audit sites Phase 1b left out of scope for the `create_canvas` migration.
-# They may migrate later -- see docs/audit/shared-foundations/FOLLOW-UPS.md.
+# Specialized canvases retain an explicit construction allowance.
 MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
     {
         GUI_ROOT / "windows" / "fit_wizard_window.py",
@@ -64,9 +63,8 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
 )
 # Every limit an axis-limit-policy plot surface applies is a value returned by
 # `AxisLimitPolicy.resolve`, written to the axes inside one owning function, so
-# the fields, the axes and the policy can never disagree
-# (docs/plans/axis-limit-policy.md). A `set_xlim(`/`set_ylim(` call elsewhere
-# in these files bypasses the policy.
+# fields and axes cannot disagree. A `set_xlim(`/`set_ylim(` call elsewhere
+# bypasses the policy; see docs/GUI_GUIDELINES.md.
 AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
     GUI_ROOT / "panels" / "plot_panel.py": frozenset({"_apply_limits"}),
     GUI_ROOT / "panels" / "alc_panel.py": frozenset({"_apply_axis_limits"}),
@@ -95,9 +93,8 @@ TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
 # Canonical home for QScreen resolution. PySide's `QWidget.screen()` /
 # `QWindow.screen()` bindings attach a shiboken parent link from the shared
 # QScreen wrapper to the receiver's wrapper, exposing the live C++ QScreen to
-# deletion by the Python GC (the FB↔FFT crash —
-# docs/investigations/tahoe-qscreen-uaf.md). Everything else resolves screens
-# via `asymmetry.gui.screen_guard.screen_for`.
+# deletion by the Python GC. Resolve screens through
+# `asymmetry.gui.screen_guard.screen_for` (docs/GUI_GUIDELINES.md).
 SCREEN_GUARD_HOME = GUI_ROOT / "screen_guard.py"
 
 # ── GLE export orchestration ──────────────────────────────────────────────────
@@ -391,7 +388,7 @@ def find_axis_limit_policy_violations(gui_root: Path = GUI_ROOT) -> list[Harness
                         "the owning panel's apply function (_apply_limits / "
                         "_plot_export_payloads_on_axis / _apply_axis_limits), or add the "
                         "file to the explicit allowlist for surfaces that are not "
-                        "axis-limit-policy plots (see docs/plans/axis-limit-policy.md)."
+                        "axis-limit-policy plots (see docs/GUI_GUIDELINES.md)."
                     ),
                 )
             )
@@ -520,7 +517,7 @@ def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[Harnes
                         (
                             "`.screen()` on a widget/window ties the shared QScreen "
                             "wrapper's lifetime to the caller (PySide wrapper-lifetime "
-                            "crash; docs/investigations/tahoe-qscreen-uaf.md). "
+                            "crash; docs/GUI_GUIDELINES.md). "
                             "Use `asymmetry.gui.screen_guard.screen_for`."
                         ),
                     )

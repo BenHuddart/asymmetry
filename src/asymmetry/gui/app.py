@@ -271,8 +271,7 @@ def main() -> None:
     # Guard the QScreen wrappers' lifetime: PySide's .screen() bindings can
     # let the Python GC delete the live C++ QScreen (the FB↔FFT crash). Pins
     # every screen wrapper, arms a destruction tripwire, and re-anchors
-    # windows on real display removal; see screen_guard and
-    # docs/investigations/tahoe-qscreen-uaf.md.
+    # windows on real display removal (docs/GUI_GUIDELINES.md).
     from asymmetry.gui.screen_guard import install_screen_change_guard
 
     install_screen_change_guard(app)
