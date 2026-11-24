@@ -1,8 +1,9 @@
 Detector Grouping and Layout
 ============================
 
-For the operation order and calibration dependencies, see
-:doc:`/explanation/reduction_pipeline`.
+Trace the :doc:`interactive route from detector counts to a result
+</explanation/reduction_pipeline>` for the operation order and calibration
+dependencies.
 
 Detector grouping defines how the raw per-detector count histograms are
 combined into the forward and backward sums that enter the asymmetry
