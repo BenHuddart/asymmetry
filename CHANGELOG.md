@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reduce CI runtime variability in workflow geometry checks while retaining
+  dedicated finite-field model validation.
+
 - Skip statistical Y-bound preparation for held plot axes when browsing or
   redrawing dense spectra, including overlays and subplots.
 

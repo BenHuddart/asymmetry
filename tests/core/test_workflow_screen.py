@@ -88,7 +88,14 @@ def test_unresolved_survey_clears_both_metadata_geometry_tokens(reduced_workdir:
 
     dataset = reduced_workdir.reduced(SCAN_RUNS[0])
     stamped = replace(dataset, metadata=dataset.metadata | {"field": 110.0, "field_state": "TF"})
-    result = screen_run(stamped, survey=SurveyGeometry(None), run_number=SCAN_RUNS[0])
+    # Finite-field dynamic Lorentzian KT accuracy and recovery belong to
+    # test_dynamic_kt_accuracy.py and test_wizard_applied_field.py.
+    result = screen_run(
+        stamped,
+        survey=SurveyGeometry(None),
+        exclude=["DynamicLorentzianKT"],
+        run_number=SCAN_RUNS[0],
+    )
     assert result.geometry is None
     assert "field geometry not recorded" in result.scope_note
     # The window is the record the wizard fitted, after its own analysis rebinning.

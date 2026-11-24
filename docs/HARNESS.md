@@ -325,6 +325,17 @@ numpy 2.2.x and a working iminuit, and numpy ≥ 2.3 breaks fitting.
 A per-test timeout (`--timeout=120`) makes a hung test fail rather than stall
 the run.
 
+### Workflow geometry regression
+
+The unresolved-survey geometry regression in `tests/core/test_workflow_screen.py`
+uses the real loader, reduction and screening path with `DynamicLorentzianKT`
+explicitly excluded. It checks that an unresolved survey clears stale file
+geometry and preserves the fitted time window. Finite-field dynamic-KT numerical
+accuracy remains covered by `tests/core/test_dynamic_kt_accuracy.py`; field
+seeding, free-to-pinned field behavior and fit recovery remain covered by
+`tests/core/test_wizard_applied_field.py`. This scope keeps geometry propagation
+independent of the expensive finite-field model's optimizer runtime.
+
 ### Optional numerical references
 
 Default validation runs analytic checks and regressions against recorded native
