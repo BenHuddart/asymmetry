@@ -792,11 +792,13 @@ Explicit workflow and CLI calibration
 -------------------------------------
 
 Scripts can choose calibration count packing independently of science reduction
-through ``CalibrationOptions.count_packing``:
+through ``CalibrationOptions.count_packing``. This example requires your own
+``calibration.nxs`` and ``science.nxs`` files, the appropriate reader extras,
+and a transverse-field calibration signal:
 
 .. code-block:: python
 
-   from asymmetry import load
+   from asymmetry.core.io import load
    from asymmetry.core.workflow import (
        CalibrationOptions, ReductionSettings, calibrate_run, reduce_run,
    )
@@ -812,7 +814,7 @@ through ``CalibrationOptions.count_packing``:
    )
    # Apply the captured joint coefficients to a separate science run.
    from dataclasses import replace
-   science = load("science.nxs")
+   science = load("science.nxs", period=1)
    reduced = reduce_run(science.run, replace(science_settings, alpha=calibration.record))
 
 The factor must be a positive integer; booleans and non-integral values are

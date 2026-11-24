@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Repair public grouping, calibration, and Fourier examples, and document optional
+  dependency installation from the supported Git checkout.
+
 - Use PyPI gleplot 6.0.0 for GLE exports, retaining data markers, translucent
   fills and full-height phase shading with unsmoothed curves and legible labels.
 

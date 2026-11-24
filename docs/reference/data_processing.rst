@@ -87,11 +87,14 @@ for ordinary count-level binning.
 Time range selection
 --------------------
 
-Extract a subset of the data:
+This example requires your own single-period NeXus file ``data.nxs`` and
+the appropriate HDF5 or HDF4 reader extra. Extract a subset of its curve:
 
 .. code-block:: python
 
-   dataset = load("data.nxs")
+   from asymmetry.core.io import load
+
+   dataset = load("data.nxs", period=1)
    
    # Select data between 0.5 and 5.0 μs
    subset = dataset.time_range(t_min=0.5, t_max=5.0)
@@ -107,11 +110,12 @@ Combine detector histograms into logical groups:
 .. code-block:: python
 
    from asymmetry.core.data import Histogram
-   from asymmetry.core.transform import apply_grouping
+   from asymmetry.core.transform import apply_grouping_aligned
    import numpy as np
 
-   # Synthetic detector histograms for the example
-   histograms = [Histogram(counts=np.random.poisson(1000, 200), bin_width=0.01) for _ in range(8)]
+   # Synthetic detectors share t0 and bin width; indices are zero-based.
+   rng = np.random.default_rng(707)
+   histograms = [Histogram(counts=rng.poisson(1000, 200), bin_width=0.01) for _ in range(8)]
    
    # Define grouping: forward and backward detectors
    grouping = {
@@ -119,8 +123,8 @@ Combine detector histograms into logical groups:
        "backward": [4, 5, 6, 7]
    }
    
-   forward_counts = apply_grouping(histograms, grouping["forward"])
-   backward_counts = apply_grouping(histograms, grouping["backward"])
+   forward_counts = apply_grouping_aligned(histograms, grouping["forward"])
+   backward_counts = apply_grouping_aligned(histograms, grouping["backward"])
 
 In the GUI, grouping is configured from the Grouping dialog. For supported
 instrument layouts, including ISIS HiFi/MuSR/EMU and the PSI FLAME and HAL-9500
@@ -228,12 +232,15 @@ coefficients act linearly and their squares act on variance. An unweighted
 mean of reduced asymmetries generally gives a different result, even when
 each input uses the same time grid.
 
+With your own single-period files ``run_1.nxs`` to ``run_3.nxs`` and the
+appropriate reader extra installed:
+
 .. code-block:: python
 
    from asymmetry.core.data.combine import combine_runs, reduce_combined_run
    from asymmetry.core.io import load
 
-   datasets = [load(f"run_{i}.nxs") for i in range(1, 4)]
+   datasets = [load(f"run_{i}.nxs", period=1) for i in range(1, 4)]
    combined_run = combine_runs([dataset.run for dataset in datasets])
    combined = reduce_combined_run(combined_run)
 
@@ -255,18 +262,20 @@ authored settings. Neither action discards the detector observations.
 Windowing for Fourier analysis
 ------------------------------
 
-Apply window functions before FFT:
+This self-contained example applies a symmetric Hann taper to synthetic
+values. For a loaded curve, pass ``dataset.asymmetry`` in place of ``signal``.
+See :doc:`fourier_analysis` for the preparation choices before an FFT:
 
 .. code-block:: python
 
    from asymmetry.core.fourier.window import apply_window
    
-   dataset = load("data.nxs")
-   
-   # Apply Hann window
-   windowed_data = apply_window(dataset.asymmetry, window_type="hann")
-   
-   # Available windows: 'hann', 'hamming', 'blackman', 'bartlett'
+   import numpy as np
+
+   signal = np.cos(np.linspace(0.0, 8.0 * np.pi, 200))
+   windowed_data = apply_window(signal, name="hann")
+
+   # Supported names: gaussian, hann, cosine, lorentzian
 
 Runnable example
 ----------------

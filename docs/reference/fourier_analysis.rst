@@ -1133,12 +1133,13 @@ MaxEnt's inner loop regenerates and projects through the time–frequency design
 matrix every outer cycle, and that cost grows with both the time-bin count and
 the spectrum resolution — a large joint reconstruction (many detector groups,
 a fine frequency grid, an unbinned time window) can take a while on the CPU.
-Installing the optional ``gpu`` extra lets the same kernels run on an NVIDIA
+From a repository checkout (see :doc:`/getting_started/installation`),
+installing the optional ``gpu`` extra lets the same kernels run on an NVIDIA
 GPU through `CuPy <https://cupy.dev/>`_:
 
 .. code-block:: bash
 
-   pip install "asymmetry[gpu]"
+   python -m pip install ".[gpu]"
 
 This installs the CUDA-13 wheel (``cupy-cuda13x``); on a CUDA-12 system,
 install ``cupy-cuda12x`` instead — the runtime only ever imports plain

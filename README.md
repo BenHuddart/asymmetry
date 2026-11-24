@@ -163,10 +163,11 @@ stack stays within the versions tested by the project.
 ##### Reading legacy HDF4 `.nxs` files
 
 Pre-~2015 ISIS muon runs (the format WiMDA reads natively) are NeXus v1 stored
-in an **HDF4** container. Reading them needs the optional `hdf4` extra:
+in an **HDF4** container. Reading them needs the optional `hdf4` extra,
+installed from your repository checkout:
 
 ```bash
-python -m pip install "asymmetry[hdf4]"
+python -m pip install ".[hdf4]"
 ```
 
 On **Linux** the `pyhdf` wheel bundles the HDF4 C library. On **macOS (Apple

@@ -201,23 +201,14 @@ simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
 .. code-block:: python
 
    from asymmetry.core.io import load
-   from asymmetry.core.transform import apply_grouping, estimate_alpha_detailed
-   from asymmetry.core.transform.fb_counts import GroupCounts
+   from asymmetry.core.workflow import CalibrationOptions, ReductionSettings, calibrate_run
 
-   tf = load("Basics/data/EMU00018854.nxs")
-   g = tf.run.grouping
-   groups = g["groups"]                             # {group_id: [1-based detector ids]}
-   fwd = [int(d) - 1 for d in groups[g["forward_group"]]]
-   bwd = [int(d) - 1 for d in groups[g["backward_group"]]]
-   forward = apply_grouping(tf.run.histograms, fwd)
-   backward = apply_grouping(tf.run.histograms, bwd)
-   est = estimate_alpha_detailed(
-       GroupCounts(forward), GroupCounts(backward),
-       method="diamagnetic",
-       first_good_bin=g.get("first_good_bin"),
-       last_good_bin=g.get("last_good_bin"),
+   # Requires your local EMU calibration file and its HDF4 reader extra.
+   tf = load("Basics/data/EMU00018854.nxs", period=1)
+   outcome = calibrate_run(
+       tf, ReductionSettings(), CalibrationOptions(method="diamagnetic")
    )
-   print(round(est.alpha, 3))                        # 0.885
+   print(round(outcome.result.estimate.alpha, 3))
 
 Press **Apply** to write the calibrated :math:`\alpha` back to the profile.
 Any run of the same instrument assigned to the profile follows it — grouping and
