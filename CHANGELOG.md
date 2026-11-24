@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calibration guides while retaining exact-symbol API searches, and avoid fetching
   every matching page for a search snippet.
 
+- Label private-data workflow demonstrations and explain the inputs and choices
+  to adapt them to readers’ own measurements.
+
 - Correct documentation references and inline mathematics, reserve image space,
   wrap tables, and identify the exact source revision behind API links.
 

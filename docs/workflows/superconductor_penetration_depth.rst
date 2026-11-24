@@ -1,6 +1,19 @@
 Superconductor penetration depth from σ(T)
 ==========================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own transverse-field temperature series in the mixed state, with
+   field and temperature metadata, instrument calibration, and a normal-state
+   reference for the nuclear and background contributions. The named material
+   runs and numerical results below identify the demonstrations. Establish your
+   own component model and non-superconducting linewidth before converting a
+   linewidth trend to penetration depth.
+
 This chapter is a worked example of the canonical superconductor μSR
 workflow: extract the temperature dependence of the vortex-lattice
 depolarisation rate :math:`\sigma(T)` from transverse-field (TF) μSR data
@@ -89,7 +102,7 @@ nodes gives a linear-in-:math:`T` decrease at low :math:`T`; a two-gap
 The data
 --------
 
-The **A high-Tc cuprate** example ships 48 ISIS muon runs. The
+The **A high-Tc cuprate** demonstration uses 48 ISIS muon runs. The
 authoritative deliverable is the MUSR 400 G temperature scan (runs
 1276–1289, 10–125 K), a single Gaussian-relaxed precession fitted run by
 run to give :math:`\sigma(T)`; a companion MUSR 200 G scan (runs
