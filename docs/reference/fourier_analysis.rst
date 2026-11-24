@@ -1,6 +1,17 @@
 Fourier analysis
 ================
 
+Use a frequency spectrum to locate precession frequencies, compare lines, or
+choose starting values for a time-domain fit. An FFT transforms a prepared time
+signal; maximum entropy (MaxEnt) reconstructs a spectrum from grouped detector
+counts. Their peaks depend on the observations and processing you choose.
+
+Start with `GUI Fourier workflow`_ for an FFT, or `GUI workflow`_ for the
+MaxEnt controls. `Choosing a spectral estimator: FFT, MaxEnt, or Burg`_ explains
+the alternatives. To interpret a linewidth, read `Filter / apodisation`_ and
+:doc:`frequency_domain_fitting` before treating a processed peak as an intrinsic
+physical width.
+
 .. image:: /_generated/screenshots/fourier_tf.png
    :alt: Frequency-domain Fourier spectrum of a YBCO vortex-lattice TF μSR signal
    :width: 100%
@@ -14,88 +25,321 @@ Fourier analysis
 *vortex lattice (Brandt, Phys. Rev. B 37, 2349 (1988); Sonier et al.,*
 *Rev. Mod. Phys. 72, 769 (2000)).*
 
-Fourier analysis answers questions that the time domain answers slowly or
-not at all: whether a signal contains three precession frequencies or two
-(multi-site magnets, F-μ-F entanglement, muonium hyperfine pairs), and
-what the internal-field distribution :math:`P(B)` looks like inside the
-vortex lattice of a type-II superconductor in the mixed state
-(:doc:`/workflows/superconductor_penetration_depth`). The frequency-domain
-view is also the standard way to choose a sensible seed frequency before
-attempting an oscillatory time-domain fit (:doc:`fit_functions/oscillation`).
+.. _gui-fourier-workflow:
 
-Grouped spectral inputs use the shared deadtime outcome contract. Missing or
-incomplete File coefficients leave the whole operation unapplied with a
-warning, including any reference background; valid spectral calculation
-continues. FFT preparation reads its reference acquisition from the recorded
-source file. With File correction enabled, file identity, size, and modification
-time mark cached spectra out of date when
-that source is rewritten, as do changes to the sample's calibration. Metadata
-checks do not load counts or validate background settings. External tools that
-preserve file identity, size, and modification time must explicitly invalidate
-the spectrum; edits to an unused in-memory shadow are not FFT input changes.
-Grouped signal and averaged-spectrum metadata record the requested
-and actual decision as ``deadtime_outcome``. A supplied complete zero table
-is identity. Exposure failures for a non-zero correction and saturated inverses
-remain errors. Missing required exposure remains fatal with precomputed inputs.
+GUI Fourier workflow
+--------------------
 
-Automatic tail background subtraction uses one decision for all groups selected
-for a spectrum. If any selected tail is unusable, every contributing signal
-remains background-unsubtracted, retaining valid deadtime correction. Unselected
-groups do not affect that decision. F/B spectra also coordinate contributing
-periods. Grouped signals, FFT spectra, and MaxEnt inputs/results retain the
-requested mode, skipped status, and reason in ``correction_outcomes``; a skip
-has no fitted background value. The completion status includes
-"Automatic tail background subtraction skipped:" with the reason, and cached
-results preserve the same warning. The inherited background hint names the
-request; the result's outcomes say whether it was applied.
+To see an FFT spectrum:
 
-Apodisation trades frequency resolution for reduced leakage. An exponential
-(Lorentzian) window is matched to exponential relaxation, and a Gaussian
-window to Gaussian broadening; both broaden the Fourier line. ``None`` is
-appropriate when the
-signal-to-noise is high enough that the line broadening from apodisation
-would dominate the intrinsic widths. The panel starts with ``None``
-selected — choose the filter matched to the expected lineshape rather
-than leaving the default in place out of habit. **Auto Phase** estimates a
-common phase through the actual sampling and apodisation of each detector
-group. It retains the measured FFT and refuses estimates that are weak,
-incompatible, or sensitive to processing choices. The manual per-group
-phase table remains appropriate when component phases are known or a common
-phase is not justified. Maximum entropy reconstruction (see `Maximum entropy
-method`_ below) is an alternative when the usable time window is too short
-for an FFT to resolve the required features.
+#. **Select the run** in the Data Browser. Selecting a run populates the
+   Fourier panel's ``Groups`` table (``Group 1`` / ``Group 2`` …). With no run
+   selected the ``Groups`` table — and therefore the spectrum — stays empty.
+#. **Open the FFT view** — the toolbar ``FFT`` button raises the Fourier panel
+   and switches the central plot to the **Frequency Domain** tab. If the run
+   has never been transformed, the spectrum computes automatically at this
+   point (behind the busy overlay); if it already has one, that spectrum is
+   shown directly.
+#. *(Optional)* **Tune the settings** — phase mode, apodisation, included
+   groups, phases — using the controls described below.
+#. **Click** ``Compute FFT`` in the panel's pinned action footer to apply any
+   settings you changed. Auto-compute only fills a never-computed run, so this
+   click is still how you re-run the transform with new parameters.
 
-.. note::
+Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
+grouped FFT workflow directly:
 
-   **A processed linewidth includes the processing response.** Multiplying a
-   time signal by an apodisation window convolves its complex Fourier transform
-   with the window transform. Finite record length and the instrument timing
-   response also affect line shapes. Taking the modulus or power, removing a
-   baseline, or reconstructing with MaxEnt adds further estimator dependence;
-   widths do not generally combine by simple subtraction.
+* choose an ``FFT Phase Mode`` first. The ``Info`` button beside it opens an
+  in-app explanation of the formulas and interpretation of each mode
+* keep ``Subtract average signal`` enabled to remove the weighted pre-FFT
+  baseline term before filtering and transformation; this is on by default
+* grouped Fourier inputs are also corrected for the muon decay envelope before
+  the later mean-subtraction and apodisation steps
+* choose ``None``, ``Lorentzian``, or ``Gaussian`` apodisation, then tune the
+  filter start and tau values for the intended time weighting
+* include or exclude detector groups in the ``Groups`` table before computing
+  the transform
+* in ``Phase`` mode, either type a single manual phase or enable
+  ``Use per-group phase table`` and edit the per-group values
+* choose ``Auto method`` (``Peak`` or ``Average``), then press
+  ``Fill Phase Estimates`` to estimate one phase per detector group for the
+  current dataset
+* for averaged grouped spectra, optionally estimate error bars from
+  the spread across the selected group spectra
 
-   A Gaussian or Lorentzian fit to the displayed real spectrum measures that
-   **processed peak**. The frequency-fit models do not automatically include
-   the apodisation or instrument response and do not recover an intrinsic
-   width simply by fitting (:doc:`frequency_domain_fitting`). Infer a physical
-   width from a prediction that includes the relevant processing and response,
-   or from an appropriate time-domain model. Check sensitivity to the usable
-   time window and apodisation, and distinguish angular-frequency widths from
-   cyclic-frequency FWHM [6]_.
+Automatic computation and overlays
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. image:: /_generated/screenshots/apodisation_comparison.png
-   :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT, showing
-      None, Gaussian (Filter τ = 4.0 µs), and Lorentzian (Filter τ = 3.0 µs)
-      apodisation side by side
-   :width: 100%
+The FFT spectrum computes automatically the moment you look at it. Opening the
+**Frequency Domain** tab — via the plot workspace's tab strip or the toolbar
+``FFT`` button — for a run that has never been transformed synthesises a
+recipe from the current Fourier panel settings and the run's own detector
+grouping, then runs the transform off-thread behind a busy overlay
+(*"Computing FFT for run <n>…"*) so the window stays responsive. Switching to
+a different run while the Frequency-domain tab is showing does the same: each
+never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
+pinned in the action footer at the bottom of the Fourier panel (always visible,
+outside the scrolling settings area), remains the explicit way to re-run the
+transform after you change a setting — auto-compute only ever fills a genuinely
+empty spectrum, it never overwrites one you have already computed. The button
+acts on the full Data-Browser selection and its label counts the scope (see
+`Computing for a selection`_).
 
-*Same YBCO vortex-lattice run, same* **Compute FFT** *click, three*
-**Apodisation** *settings from the Fourier panel's controls: the*
-``None``/``Gaussian``/``Lorentzian`` *radios with* ``Filter τ (µs)`` *set*
-*to 4.0 and 3.0 µs respectively. Going from left to right the Larmor peak*
-*loses height and gains width — the resolution the filter trades away —*
-*while the sidelobe ripple away from the peak flattens out, exactly the*
-*resolution-for-leakage trade the note above describes.*
+A **multi-run overlay** extends the same idea to a selection: toggling Overlay
+with several runs selected auto-computes every member that has no spectrum yet,
+in waves of 25 runs at a time (an overlay status of *"Computing FFT for <n>
+run(s)…"*), re-rendering after each wave until every selected run is included.
+Runs that cannot compute — no detector groups, or a transform that fails — are
+skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
+run(s) could not be computed — check their detector grouping and the log."*
+
+The overlay's legend takes its labels from the plot panel's own ``Label:``
+combo — the same metadata-field picker the time-domain view uses — so a run
+number, field, temperature, or comment identifies each trace. Choosing
+``Temperature (K)``, for example, renders each entry as its value alone (for
+example ``3.24 K``), which is the natural way to compare, say, an ordered run
+against a paramagnetic one and read the line broadening between them directly
+off the legend.
+
+Once several spectra are overlaid, **Waterfall** stacks each one onto its own
+vertical offset so nearby lines stay resolved instead of overlapping —
+see :ref:`waterfall stacking <waterfall-stacking>` for the shared control (it
+works the same way here as on the time-domain panel, except that a spectrum's
+own baseline stands in for the time-domain hairline).
+
+The first view is also **framed to where the physics is**. A narrow line at
+high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
+*around* (the line centred, the window a few dozen linewidths wide), because on a from-zero
+axis it would be sub-pixel. Otherwise the plot frames from the data's lower
+edge up to the highest-frequency line that clears the local noise baseline,
+and — when the run carries an applied field — at least the expected Larmor
+region γ\ :sub:`μ`\ ·B. The widest need wins: a second real line (AFM
+satellites, muonium triplet lines, muoniated-radical pairs) is never framed
+out, and a weak or low-field line that the peak detection cannot see still
+gets a sensible window instead of the full Nyquist span. Spectra also default
+to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
+than 2–3 bins wide. Zero padding adds no observations and can change the
+sampled maximum. Padded spectral points are correlated. Frequency-domain fits
+and moment errors use heuristic scalar padding rescaling: effective degrees of
+freedom and chi-square are rescaled, and parameter/moment errors receive a
+square-root factor. This can understate or overstate errors; it does not recover
+spectral covariance or establish coverage. **Approximate errors** in the moment
+readout and **Approximate spectral fit errors/statistics** in fit results explain
+that correlations, estimated phase, and upstream/reconstruction uncertainty are
+not fully propagated. See :doc:`spectral_moments` and
+:doc:`frequency_domain_fitting`. The zero-pad
+factor goes up to 64. All of these are first-paint seeds only: your own zoom and settings
+are never overridden.
+
+Auto-compute needs detector groups to work from. A run with no groups (or with
+every group excluded), or one whose transform genuinely fails, cannot seed a
+recipe and instead shows a **centred prompt over the Frequency-domain plot** —
+*"No FFT spectrum for this run. Spectra compute automatically when the run has
+detector groups — check the grouping and the log, or click Compute FFT to
+retry."* — instead of a blank tab. That prompt is the "cannot auto-compute"
+state, not a broken transform, and it clears the moment a spectrum is computed.
+
+While the Frequency-domain tab has no spectrum and cannot auto-compute one, the
+plot shows the empty-state prompt above and the status line reads ``No FFT
+computed for run <n>`` — check the run's detector grouping (and the log for a
+failed transform), or click ``Compute FFT`` to retry.
+
+Out-of-date indicator
+~~~~~~~~~~~~~~~~~~~~~
+
+A computed spectrum stays on screen when you keep working, so the panel tells
+you when the display no longer matches the current settings. Editing any FFT
+parameter, or changing the time-domain fit range the transform inherits,
+raises an amber banner directly above the action footer::
+
+   Spectrum out of date — <what changed>. Compute FFT to refresh.
+
+The recorded identity includes each histogram's integer and exact time zero,
+native bin width, and observed length. In-place edits to these acquisition
+fields invalidate cached grouped-count views and mark recorded spectra out of
+date, including when a range background's selected observations or automatic
+period adjustment changes. Checking this identity reads scalar metadata and array
+lengths; it does not scan count values or load acquisition files.
+
+The banner names what changed (for example ``zero-pad factor, apodisation
+changed``) and clears on the next ``Compute FFT``. Nothing recomputes
+automatically for these two triggers — the displayed spectrum is never
+replaced behind your back — and parameters that are inert in the active mode
+never flag: a filter τ edit while apodisation is ``None`` does not mark the
+spectrum out of date, and a time-range change already absorbed by the
+good-statistics tail cap does not either.
+
+Applying a new grouping — or a t0, deadtime, or background change through the
+grouping dialog — is handled differently: the FFT spectrum "follows the data"
+the same way the time-domain plot does. A spectrum computed under the old
+grouping is not merely stale, it is wrong, so applying a regroup discards the
+affected runs' FFT spectra and recipes outright (logged as *"Discarded <n> FFT
+spectrum(s) computed under the previous grouping; they recompute on next
+view."*) and, if the Frequency-domain tab is the active view, recomputes it
+immediately rather than leaving the stale banner up. There is nothing to
+refresh by hand here — the next view of the run gets a fresh spectrum against
+the new grouping automatically.
+
+Computing for a selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Compute FFT`` is **selection-scoped**: it computes every run selected in
+the Data Browser, or the active run alone when nothing else is selected. The
+button's label shows that scope before you click — ``Compute FFT`` for a
+single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
+tooltip reads:
+
+   Compute FFTs for every run selected in the Data Browser using the current
+   settings. The Groups table's enabled groups apply to every run; phases
+   stay per-run.
+
+Every run in scope is recomputed from the CURRENT panel state — apodisation,
+padding, display mode, phase mode, and conditioning. The ``Groups`` table's
+**enabled groups apply to every run in the selection**, intersected with
+each run's own available groups — a series computes with one consistent
+group inclusion, and each target's stored ``Groups`` table is updated to
+match, so visiting it later shows the propagated inclusion, in sync with its
+spectrum. **Phases stay per-run**: each run's phase values come from its own
+stored phase table (or defaults). A run whose groups have no overlap with
+the enabled set — or that has no detector groups at all — is skipped and
+reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
+skipped count appears only when runs were skipped). The implicit
+compute-on-view fill and the overlay auto-compute are unchanged: they keep
+each run's own stored inclusion; only the explicit button propagates the
+panel's. Computation runs off the GUI thread, and on completion the central
+workspace switches to the Frequency-domain view and renders the result — the
+active run's spectrum, or the full overlay when the Overlay toggle is on
+with several runs selected.
+
+This consolidation replaces an earlier **Apply to selection** affordance that
+copied the active run's already-computed recipe onto the other selected runs
+without reading the live panel state, so a setting changed after the last
+``Compute FFT`` was silently left out, and did not re-render the view. That
+compute-once-copy-around model is gone: ``Compute FFT`` always reads the
+panel as it stands now and always acts on the scope its label names.
+
+Because overlay members can be computed independently — one earlier under
+different settings, one auto-filled by the overlay itself — they can drift
+out of alignment with each other. When an active overlay mixes spectra
+computed under different settings, the panel raises a second banner,
+independent of the out-of-date indicator below::
+
+   Overlaid spectra use different settings — Compute FFT to unify.
+
+The comparison is cheap (stored recipe dictionaries only, no recomputation)
+and only looks at the runs actually in the overlay; a ``Compute FFT`` with
+the mismatched runs selected recomputes them all under one configuration and
+clears the banner.
+
+Fitting the displayed spectrum
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once a Fourier spectrum has been computed, the **Frequency** workspace can be
+fit through the same **Fit** dock used for time-domain analysis.  The fit target
+is the displayed real-valued spectrum.  V1 provides Gaussian and Lorentzian peak
+components with constant or linear backgrounds; successful global frequency
+fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
+equivalents, to the **Parameters** dock for trend analysis.  See
+:doc:`frequency_domain_fitting` for the full workflow.
+
+A single-run fit needs a single spectrum, so fitting is blocked while an
+:ref:`overlay <gui-fourier-workflow>` is active: the Fit dock disables and reports
+*"Multiple spectra overlaid — select a single run to fit in the frequency
+domain."* Untick **Overlay** (or select just one run) to fit again.
+
+Phase estimation workflow
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Phase estimation in the GUI is explicit rather than always-on:
+
+* estimates are only generated when you press ``Fill Phase Estimates``
+* the selected ``Auto method`` determines how the single-group FFT phase is
+  measured within the current phase-estimation window
+* when a field value is available, that window is narrowed around the expected
+  precession frequency; otherwise the positive-frequency FFT range is used
+* the estimated values are written into the per-group phase table for the
+  current dataset only
+
+The phase colour cues in the table are also meaningful:
+
+* blue: the phase value is currently active and will be used
+* grey: the phase value is present but not currently active
+* green: the phase value was auto-estimated for the current dataset via
+  ``Fill Phase Estimates``
+
+Asymmetry makes two explicit design decisions for this workflow, in the
+default ``Grouped average`` `Signal source`_:
+
+* Fourier transforms use grouped detector-count signals rather than the FB
+  asymmetry trace as the input source. (The ``F−B asymmetry`` signal source is
+  the deliberate exception — see `Signal source`_.)
+* The frequency-domain plot shows the average of the currently included
+  groups rather than separate per-group spectra.
+
+The FFT therefore uses the current grouped/bunched data definition. The
+grouped detector-count signal is rebuilt with the current bunching factor
+before the transform, and that grouped count signal is lifetime-corrected
+before the later subtract-average and filter stages. The FFT bandwidth and
+frequency spacing therefore track the effective binned timestep in the same way
+they do in WiMDA.
+
+The Fourier panel is scrollable so these controls remain usable when the dock
+is narrow.
+
+Frequency-domain plot behaviour
+-------------------------------
+
+FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
+plot workspace. Spectra draw as **solid lines** — the convention of every
+reference muSR package — with a shaded ±1σ band when the spectrum carries
+per-point errors (enable ``Average errors`` to compute them), rather than the
+time domain's error-bar points. When the run's applied field is known, a
+subtle dashed marker sits at the expected Larmor position γ\ :sub:`μ`\ ·B on
+the single-run view, answering "am I looking at the right place?" at a
+glance; it is omitted on multi-run overlays and the correlation axis, and it
+never appears in GLE/PDF exports (those draw from the data, not the screen).
+Each loaded run keeps its own frequency-domain view state in
+the session. Opening that tab for a run that has never been transformed
+computes its spectrum automatically (see `GUI Fourier workflow`_); a run whose
+spectrum cannot be auto-computed — no detector groups, or a failed transform —
+shows the centred empty-state prompt on that tab instead — *"No FFT spectrum
+for this run. Spectra compute automatically when the run has detector groups —
+check the grouping and the log, or click Compute FFT to retry."* Entering the
+Frequency-domain view **stays** on that tab whether it is computing, showing a
+spectrum, or showing the prompt; it no longer silently falls back to the time
+view, so the cue is always where you are looking. The current x-range is
+preserved across the switch. (The MaxEnt spectrum tab is unchanged: it is
+compute-on-demand, with its own *"No MaxEnt spectrum computed…"* prompt.)
+
+The frequency viewer stores canonical FFT x-data in absolute MHz; the **X
+Units** and **Axis:** selectors above the plot choose how it is displayed
+(absolute, shift, or ppm — see `Shift axes`_). In the shift modes the plot,
+the tick labels, and the x-limit boxes all share one reference-shifted scale.
+
+Exporting the spectrum
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The plot toolbar's ``Export…`` menu offers ``Export to GLE…`` (a compiled
+figure with editable ``.gle`` script and data sidecars) and ``Export plotted
+data (text)…`` (the sidecar files alone). On the frequency tab both mirror what
+is on screen rather than the time-domain idiom:
+
+- **Display units and window.** The x column and the exported axis window are
+  written in the current display mode — MHz, Field (G/T), a shift (``shift_G``…),
+  or ``relative_shift_ppm`` — matching the on-screen axis. Real axis titles (for
+  example ``Field shift B − B₀ (G)`` and ``FFT Magnitude (a.u.)``) replace the
+  time-domain labels.
+- **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
+  light shaded ±1σ band behind it, matching the screen (GLE has no fill
+  transparency, so the band compiles as a light tint of the series colour);
+  the band is omitted when the spectrum carries no per-point errors.
+- **Self-describing sidecars.** Each ``.dat`` names its columns in the header
+  (for example ``shift_G  amplitude  error  frequency_MHz``) and keeps the
+  canonical ``frequency_MHz`` axis as a trailing column whenever the display
+  differs from absolute MHz — including every shift/ppm export — so the raw
+  spectrum is always recoverable. A ``START OF FOURIER INFORMATION`` block
+  records the display mode, apodisation and zero-pad settings, the axis mode, and
+  each spectrum's own reference field.
 
 Implementation summary
 ----------------------
@@ -139,12 +383,12 @@ spectrum.
 
    from asymmetry.core.fourier.fft import fft_asymmetry
    from asymmetry.core.io import load
-   
+
    dataset = load("data.nxs")
-   
+
    # Compute FFT — returns (frequencies, real_part, magnitude)
    frequencies, real_part, magnitude = fft_asymmetry(dataset)
-   
+
    # Plot
    import matplotlib.pyplot as plt
    plt.plot(frequencies, magnitude)
@@ -366,6 +610,54 @@ status; it does not publish a partial suggestion.
 
 Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
+
+Apodisation trades frequency resolution for reduced leakage. An exponential
+(Lorentzian) window is matched to exponential relaxation, and a Gaussian
+window to Gaussian broadening; both broaden the Fourier line. ``None`` is
+appropriate when the
+signal-to-noise is high enough that the line broadening from apodisation
+would dominate the intrinsic widths. The panel starts with ``None``
+selected — choose the filter matched to the expected lineshape rather
+than leaving the default in place out of habit. **Auto Phase** estimates a
+common phase through the actual sampling and apodisation of each detector
+group. It retains the measured FFT and refuses estimates that are weak,
+incompatible, or sensitive to processing choices. The manual per-group
+phase table remains appropriate when component phases are known or a common
+phase is not justified. Maximum entropy reconstruction (see `Maximum entropy
+method`_ below) is an alternative when the usable time window is too short
+for an FFT to resolve the required features.
+
+.. note::
+
+   **A processed linewidth includes the processing response.** Multiplying a
+   time signal by an apodisation window convolves its complex Fourier transform
+   with the window transform. Finite record length and the instrument timing
+   response also affect line shapes. Taking the modulus or power, removing a
+   baseline, or reconstructing with MaxEnt adds further estimator dependence;
+   widths do not generally combine by simple subtraction.
+
+   A Gaussian or Lorentzian fit to the displayed real spectrum measures that
+   **processed peak**. The frequency-fit models do not automatically include
+   the apodisation or instrument response and do not recover an intrinsic
+   width simply by fitting (:doc:`frequency_domain_fitting`). Infer a physical
+   width from a prediction that includes the relevant processing and response,
+   or from an appropriate time-domain model. Check sensitivity to the usable
+   time window and apodisation, and distinguish angular-frequency widths from
+   cyclic-frequency FWHM [6]_.
+
+.. image:: /_generated/screenshots/apodisation_comparison.png
+   :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT, showing
+      None, Gaussian (Filter τ = 4.0 µs), and Lorentzian (Filter τ = 3.0 µs)
+      apodisation side by side
+   :width: 100%
+
+*Same YBCO vortex-lattice run, same* **Compute FFT** *click, three*
+**Apodisation** *settings from the Fourier panel's controls: the*
+``None``/``Gaussian``/``Lorentzian`` *radios with* ``Filter τ (µs)`` *set*
+*to 4.0 and 3.0 µs respectively. Going from left to right the Larmor peak*
+*loses height and gains width — the resolution the filter trades away —*
+*while the sidelobe ripple away from the peak flattens out, exactly the*
+*resolution-for-leakage trade the processing-width note describes.*
 
 The FFT panel exposes three apodisation modes. WiMDA's original manual,
 Sec. 9, documents the same broad filter choices and a delayed start [4]_; it
@@ -1001,6 +1293,48 @@ signals and count-domain errors required by the forward model.
    overlay`_) is the check that the spectrum is consistent with the data, not a
    guarantee that its amplitudes are unique.
 
+GUI workflow
+~~~~~~~~~~~~
+
+Open the MaxEnt panel from **Frequency-domain → MaxEnt**: first select the run
+in the F–B asymmetry / time view, then click the **MaxEnt** toolbar button.
+
+The panel groups its controls as follows:
+
+* **Groups** table — include each detector group and set its per-group phase.
+* **Spectrum** — number of spectrum points and the default level (the flat
+  prior the reconstruction starts from).
+* **Window** — ``Auto window from field`` (derive the frequency window from the
+  applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
+  frequency.
+* **Time** — ``Auto workload steering`` (size unset workload settings to the
+  run — see below), ``Start`` / ``End`` (μs) of the fitted window, and a
+  ``Binning`` factor.
+* **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
+  ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
+  ``Seed phases from data`` (estimate each group's starting phase from the
+  data rather than the Groups table — see below); and ``Use existing deadtime
+  correction``.
+
+The run controls sit in a footer pinned to the bottom of the panel, so they
+stay reachable however far the settings above are scrolled:
+
+* Cycle buttons — **+1**, **+5**, **+25** step the calculation by that many
+  outer cycles; **Converge** runs a larger fixed batch in one go; **Restart**
+  discards the current state; **Cancel** stops a running calculation.
+* **Apply to selection** copies the current configuration to the other selected
+  runs.
+* A **Progress** bar and a **Diagnostics** line report the latest ``Cycle``,
+  ``χ²``, ``TEST``, and ``entropy``.
+
+.. important::
+
+   After changing **any** configuration — the frequency window, spectrum
+   points, time window, binning, or the fit toggles — click **Restart** before
+   running more cycles. Continuing into a stale state fails with *"MaxEnt state
+   is incompatible with the current configuration."* Restart discards the
+   resumable state so the next cycle button rebuilds it from the new settings.
+
 Engine API
 ~~~~~~~~~~
 
@@ -1191,48 +1525,6 @@ a MaxEnt recompute driven from the GUI always runs the CPU backend and records
 ``"auto"`` through the scripting API therefore keeps that setting only until a
 GUI recompute overwrites it — the recipe faithfully records what produced the
 stored spectrum.
-
-GUI workflow
-~~~~~~~~~~~~
-
-Open the MaxEnt panel from **Frequency-domain → MaxEnt**: first select the run
-in the F–B asymmetry / time view, then click the **MaxEnt** toolbar button.
-
-The panel groups its controls as follows:
-
-* **Groups** table — include each detector group and set its per-group phase.
-* **Spectrum** — number of spectrum points and the default level (the flat
-  prior the reconstruction starts from).
-* **Window** — ``Auto window from field`` (derive the frequency window from the
-  applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
-  frequency.
-* **Time** — ``Auto workload steering`` (size unset workload settings to the
-  run — see below), ``Start`` / ``End`` (μs) of the fitted window, and a
-  ``Binning`` factor.
-* **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
-  ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
-  ``Seed phases from data`` (estimate each group's starting phase from the
-  data rather than the Groups table — see below); and ``Use existing deadtime
-  correction``.
-
-The run controls sit in a footer pinned to the bottom of the panel, so they
-stay reachable however far the settings above are scrolled:
-
-* Cycle buttons — **+1**, **+5**, **+25** step the calculation by that many
-  outer cycles; **Converge** runs a larger fixed batch in one go; **Restart**
-  discards the current state; **Cancel** stops a running calculation.
-* **Apply to selection** copies the current configuration to the other selected
-  runs.
-* A **Progress** bar and a **Diagnostics** line report the latest ``Cycle``,
-  ``χ²``, ``TEST``, and ``entropy``.
-
-.. important::
-
-   After changing **any** configuration — the frequency window, spectrum
-   points, time window, binning, or the fit toggles — click **Restart** before
-   running more cycles. Continuing into a stale state fails with *"MaxEnt state
-   is incompatible with the current configuration."* Restart discards the
-   resumable state so the next cycle button rebuilds it from the new settings.
 
 Phase seeding
 ~~~~~~~~~~~~~
@@ -1753,10 +2045,10 @@ Complete workflow for frequency analysis:
    from asymmetry.core.io import load
    from asymmetry.core.fourier.fft import fft_asymmetry
    import matplotlib.pyplot as plt
-   
+
    # Load data
    dataset = load("data.nxs")
-   
+
       # Compute FFT with WiMDA-style Gaussian apodisation and 4× zero-padding
    freq, real_part, magnitude = fft_asymmetry(
        dataset,
@@ -1767,338 +2059,54 @@ Complete workflow for frequency analysis:
        t_min=0.1,
        t_max=10.0,
    )
-   
+
    # Plot
    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
-   
+
    # Time domain
    ax1.errorbar(dataset.time, dataset.asymmetry, yerr=dataset.error, fmt='.')
    ax1.set_xlabel("Time (μs)")
    ax1.set_ylabel("Asymmetry")
    ax1.set_title("Time Domain")
-   
+
    # Frequency domain
    ax2.plot(freq, magnitude)
    ax2.set_xlabel(r"$\\nu$ (MHz)")
    ax2.set_ylabel(r"$|\\mathcal{F}|$")
    ax2.set_title("Frequency Domain (FFT with Gaussian apodisation)")
    ax2.set_xlim(0, 50)  # Focus on 0–50 MHz
-   
+
    plt.tight_layout()
    plt.show()
 
-.. _gui-fourier-workflow:
+Correction outcomes and source changes
+--------------------------------------
 
-GUI Fourier workflow
---------------------
+Grouped spectral inputs use the shared deadtime outcome contract. Missing or
+incomplete File coefficients leave the whole operation unapplied with a
+warning, including any reference background; valid spectral calculation
+continues. FFT preparation reads its reference acquisition from the recorded
+source file. With File correction enabled, file identity, size, and modification
+time mark cached spectra out of date when
+that source is rewritten, as do changes to the sample's calibration. Metadata
+checks do not load counts or validate background settings. External tools that
+preserve file identity, size, and modification time must explicitly invalidate
+the spectrum; edits to an unused in-memory shadow are not FFT input changes.
+Grouped signal and averaged-spectrum metadata record the requested
+and actual decision as ``deadtime_outcome``. A supplied complete zero table
+is identity. Exposure failures for a non-zero correction and saturated inverses
+remain errors. Missing required exposure remains fatal with precomputed inputs.
 
-The FFT spectrum computes automatically the moment you look at it. Opening the
-**Frequency Domain** tab — via the plot workspace's tab strip or the toolbar
-``FFT`` button — for a run that has never been transformed synthesises a
-recipe from the current Fourier panel settings and the run's own detector
-grouping, then runs the transform off-thread behind a busy overlay
-(*"Computing FFT for run <n>…"*) so the window stays responsive. Switching to
-a different run while the Frequency-domain tab is showing does the same: each
-never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
-pinned in the action footer at the bottom of the Fourier panel (always visible,
-outside the scrolling settings area), remains the explicit way to re-run the
-transform after you change a setting — auto-compute only ever fills a genuinely
-empty spectrum, it never overwrites one you have already computed. The button
-acts on the full Data-Browser selection and its label counts the scope (see
-`Computing for a selection`_).
-
-A **multi-run overlay** extends the same idea to a selection: toggling Overlay
-with several runs selected auto-computes every member that has no spectrum yet,
-in waves of 25 runs at a time (an overlay status of *"Computing FFT for <n>
-run(s)…"*), re-rendering after each wave until every selected run is included.
-Runs that cannot compute — no detector groups, or a transform that fails — are
-skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
-run(s) could not be computed — check their detector grouping and the log."*
-
-The overlay's legend takes its labels from the plot panel's own ``Label:``
-combo — the same metadata-field picker the time-domain view uses — so a run
-number, field, temperature, or comment identifies each trace. Choosing
-``Temperature (K)``, for example, renders each entry as its value alone (for
-example ``3.24 K``), which is the natural way to compare, say, an ordered run
-against a paramagnetic one and read the line broadening between them directly
-off the legend.
-
-Once several spectra are overlaid, **Waterfall** stacks each one onto its own
-vertical offset so nearby lines stay resolved instead of overlapping —
-see :ref:`waterfall stacking <waterfall-stacking>` for the shared control (it
-works the same way here as on the time-domain panel, except that a spectrum's
-own baseline stands in for the time-domain hairline).
-
-The first view is also **framed to where the physics is**. A narrow line at
-high frequency — a 6 T Larmor line is ~13 G wide at 813 MHz — is framed
-*around* (the line centred, the window a few dozen linewidths wide), because on a from-zero
-axis it would be sub-pixel. Otherwise the plot frames from the data's lower
-edge up to the highest-frequency line that clears the local noise baseline,
-and — when the run carries an applied field — at least the expected Larmor
-region γ\ :sub:`μ`\ ·B. The widest need wins: a second real line (AFM
-satellites, muonium triplet lines, muoniated-radical pairs) is never framed
-out, and a weak or low-field line that the peak detection cannot see still
-gets a sensible window instead of the full Nyquist span. Spectra also default
-to a **zero-pad factor of 4**, so line shapes arrive sinc-interpolated rather
-than 2–3 bins wide. Zero padding adds no observations and can change the
-sampled maximum. Padded spectral points are correlated. Frequency-domain fits
-and moment errors use heuristic scalar padding rescaling: effective degrees of
-freedom and chi-square are rescaled, and parameter/moment errors receive a
-square-root factor. This can understate or overstate errors; it does not recover
-spectral covariance or establish coverage. **Approximate errors** in the moment
-readout and **Approximate spectral fit errors/statistics** in fit results explain
-that correlations, estimated phase, and upstream/reconstruction uncertainty are
-not fully propagated. See :doc:`spectral_moments` and
-:doc:`frequency_domain_fitting`. The zero-pad
-factor goes up to 64. All of these are first-paint seeds only: your own zoom and settings
-are never overridden.
-
-Auto-compute needs detector groups to work from. A run with no groups (or with
-every group excluded), or one whose transform genuinely fails, cannot seed a
-recipe and instead shows a **centred prompt over the Frequency-domain plot** —
-*"No FFT spectrum for this run. Spectra compute automatically when the run has
-detector groups — check the grouping and the log, or click Compute FFT to
-retry."* — instead of a blank tab. That prompt is the "cannot auto-compute"
-state, not a broken transform, and it clears the moment a spectrum is computed.
-
-To see an FFT spectrum:
-
-#. **Select the run** in the Data Browser. Selecting a run populates the
-   Fourier panel's ``Groups`` table (``Group 1`` / ``Group 2`` …). With no run
-   selected the ``Groups`` table — and therefore the spectrum — stays empty.
-#. **Open the FFT view** — the toolbar ``FFT`` button raises the Fourier panel
-   and switches the central plot to the **Frequency Domain** tab. If the run
-   has never been transformed, the spectrum computes automatically at this
-   point (behind the busy overlay); if it already has one, that spectrum is
-   shown directly.
-#. *(Optional)* **Tune the settings** — phase mode, apodisation, included
-   groups, phases — using the controls described below.
-#. **Click** ``Compute FFT`` in the panel's pinned action footer to apply any
-   settings you changed. Auto-compute only fills a never-computed run, so this
-   click is still how you re-run the transform with new parameters.
-
-While the Frequency-domain tab has no spectrum and cannot auto-compute one, the
-plot shows the empty-state prompt above and the status line reads ``No FFT
-computed for run <n>`` — check the run's detector grouping (and the log for a
-failed transform), or click ``Compute FFT`` to retry.
-
-Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
-grouped FFT workflow directly:
-
-* choose an ``FFT Phase Mode`` first. The ``Info`` button beside it opens an
-  in-app explanation of the formulas and interpretation of each mode
-* keep ``Subtract average signal`` enabled to remove the weighted pre-FFT
-  baseline term before filtering and transformation; this is on by default
-* grouped Fourier inputs are also corrected for the muon decay envelope before
-  the later mean-subtraction and apodisation steps
-* choose ``None``, ``Lorentzian``, or ``Gaussian`` apodisation, then tune the
-  filter start and tau values for the intended time weighting
-* include or exclude detector groups in the ``Groups`` table before computing
-  the transform
-* in ``Phase`` mode, either type a single manual phase or enable
-  ``Use per-group phase table`` and edit the per-group values
-* choose ``Auto method`` (``Peak`` or ``Average``), then press
-  ``Fill Phase Estimates`` to estimate one phase per detector group for the
-  current dataset
-* for averaged grouped spectra, optionally estimate error bars from
-  the spread across the selected group spectra
-
-Out-of-date indicator
-~~~~~~~~~~~~~~~~~~~~~
-
-A computed spectrum stays on screen when you keep working, so the panel tells
-you when the display no longer matches the current settings. Editing any FFT
-parameter, or changing the time-domain fit range the transform inherits,
-raises an amber banner directly above the action footer::
-
-   Spectrum out of date — <what changed>. Compute FFT to refresh.
-
-The recorded identity includes each histogram's integer and exact time zero,
-native bin width, and observed length. In-place edits to these acquisition
-fields invalidate cached grouped-count views and mark recorded spectra out of
-date, including when a range background's selected observations or automatic
-period adjustment changes. Checking this identity reads scalar metadata and array
-lengths; it does not scan count values or load acquisition files.
-
-The banner names what changed (for example ``zero-pad factor, apodisation
-changed``) and clears on the next ``Compute FFT``. Nothing recomputes
-automatically for these two triggers — the displayed spectrum is never
-replaced behind your back — and parameters that are inert in the active mode
-never flag: a filter τ edit while apodisation is ``None`` does not mark the
-spectrum out of date, and a time-range change already absorbed by the
-good-statistics tail cap does not either.
-
-Applying a new grouping — or a t0, deadtime, or background change through the
-grouping dialog — is handled differently: the FFT spectrum "follows the data"
-the same way the time-domain plot does. A spectrum computed under the old
-grouping is not merely stale, it is wrong, so applying a regroup discards the
-affected runs' FFT spectra and recipes outright (logged as *"Discarded <n> FFT
-spectrum(s) computed under the previous grouping; they recompute on next
-view."*) and, if the Frequency-domain tab is the active view, recomputes it
-immediately rather than leaving the stale banner up. There is nothing to
-refresh by hand here — the next view of the run gets a fresh spectrum against
-the new grouping automatically.
-
-Computing for a selection
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``Compute FFT`` is **selection-scoped**: it computes every run selected in
-the Data Browser, or the active run alone when nothing else is selected. The
-button's label shows that scope before you click — ``Compute FFT`` for a
-single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
-tooltip reads:
-
-   Compute FFTs for every run selected in the Data Browser using the current
-   settings. The Groups table's enabled groups apply to every run; phases
-   stay per-run.
-
-Every run in scope is recomputed from the CURRENT panel state — apodisation,
-padding, display mode, phase mode, and conditioning. The ``Groups`` table's
-**enabled groups apply to every run in the selection**, intersected with
-each run's own available groups — a series computes with one consistent
-group inclusion, and each target's stored ``Groups`` table is updated to
-match, so visiting it later shows the propagated inclusion, in sync with its
-spectrum. **Phases stay per-run**: each run's phase values come from its own
-stored phase table (or defaults). A run whose groups have no overlap with
-the enabled set — or that has no detector groups at all — is skipped and
-reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
-skipped count appears only when runs were skipped). The implicit
-compute-on-view fill and the overlay auto-compute are unchanged: they keep
-each run's own stored inclusion; only the explicit button propagates the
-panel's. Computation runs off the GUI thread, and on completion the central
-workspace switches to the Frequency-domain view and renders the result — the
-active run's spectrum, or the full overlay when the Overlay toggle is on
-with several runs selected.
-
-This consolidation replaces an earlier **Apply to selection** affordance that
-copied the active run's already-computed recipe onto the other selected runs
-without reading the live panel state, so a setting changed after the last
-``Compute FFT`` was silently left out, and did not re-render the view. That
-compute-once-copy-around model is gone: ``Compute FFT`` always reads the
-panel as it stands now and always acts on the scope its label names.
-
-Because overlay members can be computed independently — one earlier under
-different settings, one auto-filled by the overlay itself — they can drift
-out of alignment with each other. When an active overlay mixes spectra
-computed under different settings, the panel raises a second banner,
-independent of the out-of-date indicator below::
-
-   Overlaid spectra use different settings — Compute FFT to unify.
-
-The comparison is cheap (stored recipe dictionaries only, no recomputation)
-and only looks at the runs actually in the overlay; a ``Compute FFT`` with
-the mismatched runs selected recomputes them all under one configuration and
-clears the banner.
-
-Fitting the displayed spectrum
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Once a Fourier spectrum has been computed, the **Frequency** workspace can be
-fit through the same **Fit** dock used for time-domain analysis.  The fit target
-is the displayed real-valued spectrum.  V1 provides Gaussian and Lorentzian peak
-components with constant or linear backgrounds; successful global frequency
-fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
-equivalents, to the **Parameters** dock for trend analysis.  See
-:doc:`frequency_domain_fitting` for the full workflow.
-
-A single-run fit needs a single spectrum, so fitting is blocked while an
-:ref:`overlay <gui-fourier-workflow>` is active: the Fit dock disables and reports
-*"Multiple spectra overlaid — select a single run to fit in the frequency
-domain."* Untick **Overlay** (or select just one run) to fit again.
-
-Phase estimation workflow
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Phase estimation in the GUI is explicit rather than always-on:
-
-* estimates are only generated when you press ``Fill Phase Estimates``
-* the selected ``Auto method`` determines how the single-group FFT phase is
-  measured within the current phase-estimation window
-* when a field value is available, that window is narrowed around the expected
-  precession frequency; otherwise the positive-frequency FFT range is used
-* the estimated values are written into the per-group phase table for the
-  current dataset only
-
-The phase colour cues in the table are also meaningful:
-
-* blue: the phase value is currently active and will be used
-* grey: the phase value is present but not currently active
-* green: the phase value was auto-estimated for the current dataset via
-  ``Fill Phase Estimates``
-
-Asymmetry makes two explicit design decisions for this workflow, in the
-default ``Grouped average`` `Signal source`_:
-
-* Fourier transforms use grouped detector-count signals rather than the FB
-  asymmetry trace as the input source. (The ``F−B asymmetry`` signal source is
-  the deliberate exception — see `Signal source`_.)
-* The frequency-domain plot shows the average of the currently included
-  groups rather than separate per-group spectra.
-
-The FFT therefore uses the current grouped/bunched data definition. The
-grouped detector-count signal is rebuilt with the current bunching factor
-before the transform, and that grouped count signal is lifetime-corrected
-before the later subtract-average and filter stages. The FFT bandwidth and
-frequency spacing therefore track the effective binned timestep in the same way
-they do in WiMDA.
-
-The Fourier panel is scrollable so these controls remain usable when the dock
-is narrow.
-
-Frequency-domain plot behaviour
--------------------------------
-
-FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
-plot workspace. Spectra draw as **solid lines** — the convention of every
-reference muSR package — with a shaded ±1σ band when the spectrum carries
-per-point errors (enable ``Average errors`` to compute them), rather than the
-time domain's error-bar points. When the run's applied field is known, a
-subtle dashed marker sits at the expected Larmor position γ\ :sub:`μ`\ ·B on
-the single-run view, answering "am I looking at the right place?" at a
-glance; it is omitted on multi-run overlays and the correlation axis, and it
-never appears in GLE/PDF exports (those draw from the data, not the screen).
-Each loaded run keeps its own frequency-domain view state in
-the session. Opening that tab for a run that has never been transformed
-computes its spectrum automatically (see `GUI Fourier workflow`_); a run whose
-spectrum cannot be auto-computed — no detector groups, or a failed transform —
-shows the centred empty-state prompt on that tab instead — *"No FFT spectrum
-for this run. Spectra compute automatically when the run has detector groups —
-check the grouping and the log, or click Compute FFT to retry."* Entering the
-Frequency-domain view **stays** on that tab whether it is computing, showing a
-spectrum, or showing the prompt; it no longer silently falls back to the time
-view, so the cue is always where you are looking. The current x-range is
-preserved across the switch. (The MaxEnt spectrum tab is unchanged: it is
-compute-on-demand, with its own *"No MaxEnt spectrum computed…"* prompt.)
-
-The frequency viewer stores canonical FFT x-data in absolute MHz; the **X
-Units** and **Axis:** selectors above the plot choose how it is displayed
-(absolute, shift, or ppm — see *Shift axes* above). In the shift modes the plot,
-the tick labels, and the x-limit boxes all share one reference-shifted scale.
-
-Exporting the spectrum
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-The plot toolbar's ``Export…`` menu offers ``Export to GLE…`` (a compiled
-figure with editable ``.gle`` script and data sidecars) and ``Export plotted
-data (text)…`` (the sidecar files alone). On the frequency tab both mirror what
-is on screen rather than the time-domain idiom:
-
-- **Display units and window.** The x column and the exported axis window are
-  written in the current display mode — MHz, Field (G/T), a shift (``shift_G``…),
-  or ``relative_shift_ppm`` — matching the on-screen axis. Real axis titles (for
-  example ``Field shift B − B₀ (G)`` and ``FFT Magnitude (a.u.)``) replace the
-  time-domain labels.
-- **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
-  light shaded ±1σ band behind it, matching the screen (GLE has no fill
-  transparency, so the band compiles as a light tint of the series colour);
-  the band is omitted when the spectrum carries no per-point errors.
-- **Self-describing sidecars.** Each ``.dat`` names its columns in the header
-  (for example ``shift_G  amplitude  error  frequency_MHz``) and keeps the
-  canonical ``frequency_MHz`` axis as a trailing column whenever the display
-  differs from absolute MHz — including every shift/ppm export — so the raw
-  spectrum is always recoverable. A ``START OF FOURIER INFORMATION`` block
-  records the display mode, apodisation and zero-pad settings, the axis mode, and
-  each spectrum's own reference field.
+Automatic tail background subtraction uses one decision for all groups selected
+for a spectrum. If any selected tail is unusable, every contributing signal
+remains background-unsubtracted, retaining valid deadtime correction. Unselected
+groups do not affect that decision. F/B spectra also coordinate contributing
+periods. Grouped signals, FFT spectra, and MaxEnt inputs/results retain the
+requested mode, skipped status, and reason in ``correction_outcomes``; a skip
+has no fitted background value. The completion status includes
+"Automatic tail background subtraction skipped:" with the reason, and cached
+results preserve the same warning. The inherited background hint names the
+request; the result's outcomes say whether it was applied.
 
 Deadtime calibration tasks
 --------------------------
