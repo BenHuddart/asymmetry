@@ -110,6 +110,43 @@ widths remain responsive. The sidebar logo loads eagerly; content figures load
 lazily. Tables wrap explanatory text within the theme's scrolling containers.
 Review narrow viewports and enlarged text whenever a table or figure changes.
 
+### Browser checks and search relevance
+
+After a publishing build, serve the HTML and measure it with Node.js 22 or newer
+and Chrome/Chromium installed:
+
+```bash
+python3 -m http.server 8000 --directory docs/_build/html
+# In another terminal:
+node tools/docs_browser.mjs --base-url http://127.0.0.1:8000/ --check --output browser.json
+```
+
+Use the published site URL to measure hosted behaviour. ``--chrome chromium``
+selects another browser executable; ``--page reference/fourier_analysis.html``
+limits a run to a page and may be repeated. The default is three cold/warm pairs
+per page in a fresh browser profile, at 1440 × 1000 and 390 × 844 CSS pixels. Cold clears the HTTP cache;
+warm immediately repeats the URL with caching enabled. CPU and network are
+unthrottled, so record the machine and connection separately when comparing runs.
+
+The JSON report separates HTML transfer and encoded body size, DOM readiness, paint, initiated requests,
+startup layout shifts, font/mathematics readiness, and first/finished search
+results. Layout-shift and paint observations end 250 ms after content readiness;
+they do not describe later scrolling or interaction. A null load time means the
+browser's load event has not completed. A command deadline is a measurement
+failure, not evidence of a site-rendering delay; partial reports are retained and
+marked incomplete. Hosted transfer and local rendering measurements are not
+interchangeable. Compare repeated medians under matching conditions, without
+promising a universal loading time.
+
+``--check`` rejects page overflow, visible math-role syntax, MathJax errors,
+incomplete font/mathematics preparation, and misplaced practical search results.
+``--expect-revision <commit>`` also checks the published source identity. Ordinary
+main index entries in the owning reference pages make ``deadtime``, ``grouping``,
+and ``alpha calibration`` searches lead to guidance. Exact dotted API queries
+retain access to API material. Search results show titles and section headings;
+they do not fetch full matching pages to generate snippets. The search regression executes Sphinx's emitted
+engine and index, rather than reproducing its scoring rules.
+
 ### Development builds and other formats
 
 `cd docs && make html` runs the source gate. `make publish` runs the publishing
