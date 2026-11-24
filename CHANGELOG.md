@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Retain CI worker exit codes and signals alongside runner-wide OOM counters,
+  with explicit unavailable evidence and unchanged test failure behaviour.
+
 - Clarify the detector deadtime table limitation in Poisson count fitting and
   document the supported Gaussian alternative and reference-program workflows.
 

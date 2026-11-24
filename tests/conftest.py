@@ -1,26 +1,12 @@
 from __future__ import annotations
 
-import os
 import zlib
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from xdist import get_xdist_worker_id
 
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    destination = os.environ.get("ASYMMETRY_PYTEST_DIAGNOSTICS")
-    worker = get_xdist_worker_id(session)
-    if not destination or worker == "master":
-        return
-    directory = Path(destination)
-    directory.mkdir(parents=True, exist_ok=True)
-    stream = (directory / f"worker-{worker}-{os.getpid()}.log").open("w", buffering=1)
-    stream.write(f"worker={worker} pid={os.getpid()}\n")
-    # execnet discards worker stdout; timeout diagnostics must survive worker exit.
-    session.config.get_terminal_writer()._file = stream
-    session.config.add_cleanup(stream.close)
+pytest_plugins = ["tests._worker_diagnostics"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
