@@ -233,3 +233,15 @@ def test_projection_export_preserves_subscripts_and_chi_squared_annotation(tmp_p
     assert r"a\_0" not in content
     assert "chi^{2} = 1.2" in content
     assert r"\char{94}" not in content
+
+
+def test_export_font_preserves_literal_label_punctuation(tmp_path):
+    from gleplot.cairo_support import text_glyph_warning
+
+    figure = gle_figure(glp)
+    axis = figure.add_subplot(111)
+    axis.plot([1, 2], [0.2, 0.4])
+    axis.set_title("A_B {C} <D> |F|")
+    script = tmp_path / "punctuation.gle"
+    figure.savefig(str(script))
+    assert text_glyph_warning(figure.style.font, script.read_text()) is None

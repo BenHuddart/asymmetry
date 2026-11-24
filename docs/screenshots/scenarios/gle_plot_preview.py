@@ -29,8 +29,10 @@ class GlePreviewScenario(Scenario):
             markersize=4,
             capsize=2,
         )
-        axes.set_xlabel("Time (µs)")
-        axes.set_ylabel("Asymmetry (%)")
+        axes.set_xlabel("Time (µs)", fontfamily="monospace")
+        axes.set_ylabel("Asymmetry (%)", fontfamily="monospace")
+        for label in axes.get_xticklabels() + axes.get_yticklabels():
+            label.set_fontfamily("monospace")
         figure.tight_layout()
         output = BytesIO()
         figure.savefig(output, format="pdf")
