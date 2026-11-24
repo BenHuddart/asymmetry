@@ -11,7 +11,7 @@ not establish a unique static or dynamic mechanism.
 This chapter works the dynamic case on real data: the Ca₃Co₂O₆ magnetic-plateau
 decoupling scan from the WiMDA muon school corpus (HiFi runs 9023–9051, 15 K,
 0–3.8 T), the same measurement published by Baker, Lord, and Prabhakaran,
-J. Phys.: Condens. Matter **23**, 306001 (2011). Its headline is the Redfield
+J\. Phys.: Condens. Matter **23**, 306001 (2011). Its headline is the Redfield
 linearisation — :math:`1/\lambda` against :math:`B^2` — built directly in the
 parameter-trending panel using the native axis transforms
 (:doc:`/reference/parameter_trending`), so the paper's Fig. 2(b) is reproduced
@@ -396,21 +396,21 @@ Common pitfalls
 Further reading
 ---------------
 
-- P. J. Baker, J. S. Lord, and D. Prabhakaran, J. Phys.: Condens. Matter
+- P\. J. Baker, J. S. Lord, and D. Prabhakaran, J. Phys.: Condens. Matter
   **23**, 306001 (2011) — the Ca₃Co₂O₆ plateau decoupling measurement worked
   here (`arXiv:1105.2200 <https://arxiv.org/abs/1105.2200>`_, Eq. 4).
-- R. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979) — the original static
+- R\. S. Hayano *et al.*, Phys. Rev. B **20**, 850 (1979) — the original static
   and dynamic Kubo–Toyabe polarisation functions, including the LF-KT
   decoupling form; still the canonical reference.
-- R. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett,
-  D. McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
+- R\. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett,
+  D\. McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
   `107002 (2014) <https://doi.org/10.1103/PhysRevLett.112.107002>`_ —
   Re₆Zr LF measurements support static or quasistatic fields.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 5.2–5.3 — static Gaussian KT, the LF-KT decoupling form, and the
   strong-collision dynamic KT.
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011), Ch. 6 — the most detailed mathematical treatment of dynamic
   relaxation and the Redfield limit.

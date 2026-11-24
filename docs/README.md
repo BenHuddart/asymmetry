@@ -64,7 +64,8 @@ reject Sphinx warnings (`-W --keep-going`), preserve process/extension failure
 exits, and check every output HTML page against the 600 KB budget. Missing
 logos, static images, downloads, unknown generated names, malformed RST,
 ambiguous or broken authored local/API references, and unknown/untyped warnings
-are errors. No warning category or historical warning count is exempted.
+are errors. The gate also rejects literal math roles in prose and alphabetic
+lists in footnotes and citations, where unescaped author initials can become list markers. No warning category or historical warning count is exempted.
 
 ### Offline references and API rendering
 
@@ -93,6 +94,21 @@ return descriptions, including their types and units, render as readable fields
 rather than generated type-link lists. Authored cross-reference roles remain strict.
 The gate checks authored references, not the completeness of annotation targets.
 An offline HTML build does not bundle the browser-side MathJax CDN resource.
+
+### Source identity and page layout
+
+The sidebar identifies the imported checkout. A clean checkout at its matching
+release tag displays the release number; other clean commits display
+``development`` and the commit identifier. API source links use that exact commit,
+with line numbers from the imported files. A modified checkout or a source archive
+without Git identity is labelled explicitly and has no API source links. Build
+from a clean checkout to verify links intended for publication.
+
+Local image dimensions are read from the built assets and written into HTML so
+browsers can reserve the correct aspect ratio before loading them. Percentage
+widths remain responsive. The sidebar logo loads eagerly; content figures load
+lazily. Tables wrap explanatory text within the theme's scrolling containers.
+Review narrow viewports and enlarged text whenever a table or figure changes.
 
 ### Development builds and other formats
 
@@ -332,7 +348,7 @@ The documentation uses:
 
 - `sphinx.ext.autodoc` - Auto-generate API docs from docstrings
 - `sphinx.ext.napoleon` - Support NumPy/Google style docstrings
-- `sphinx.ext.linkcode` - Point `[source]` links at the released source on GitHub
+- `sphinx.ext.linkcode` - Point `[source]` links at the matching source revision on GitHub
   (replaced `sphinx.ext.viewcode`, whose self-hosted `_modules/` pages added
   ~15 MB of very slow-rendering HTML)
 - `sphinx.ext.intersphinx` - Link to other project docs

@@ -227,10 +227,10 @@ assumption-free fallback for lines that will not fit.
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5
   (frequency domain) and §14.2 (pulsed sources).
-- J. P. Burg, *Maximum Entropy Spectral Analysis*, Ph.D. thesis
+- J\. P. Burg, *Maximum Entropy Spectral Analysis*, Ph.D. thesis
   (Stanford University, 1975).
 - Á. Sánchez-Monge, P. Schilke, A. Ginsburg, R. Cesaroni, and A. Schmiedeke,
   Astron. Astrophys. **609**, A101 (2018) — STATCONT robust continuum

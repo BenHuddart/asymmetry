@@ -271,6 +271,6 @@ by these reference operations.
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).

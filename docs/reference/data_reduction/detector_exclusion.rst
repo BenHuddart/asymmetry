@@ -76,6 +76,6 @@ summarised in :doc:`/reference/detector_grouping` and :doc:`/explanation/compari
 
 **References**
 
-.. [wimda_grouping] F. L. Pratt, Physica B **289–290**, 710 (2000).
+.. [wimda_grouping] F\. L. Pratt, Physica B **289–290**, 710 (2000).
    `WiMDA original manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_,
    Sec. 5.1 (version 1.2, February 2005).

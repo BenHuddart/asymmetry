@@ -8,6 +8,7 @@
    wrong place for this. #}
 {% block navigation %}
   {{ super() }}
+  <p class="asym-source-version">Documentation: {{ docs_source_label }}</p>
   <div class="asym-alpha-note" role="note">
     <span class="asym-alpha-icon">⚠️</span>
     <span class="asym-alpha-text">
@@ -16,4 +17,11 @@
       incomplete or in error — verify the physics against trusted sources.
     </span>
   </div>
+{% endblock %}
+
+{% block extrahead %}
+  {{ super() }}
+  {% if docs_source_revision %}
+  <meta name="asymmetry-source-revision" content="{{ docs_source_revision }}">
+  {% endif %}
 {% endblock %}

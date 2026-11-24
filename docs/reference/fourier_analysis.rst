@@ -2123,45 +2123,45 @@ mean model and its domain.
 References
 ----------
 
-.. [1] J. W. Cooley and J. W. Tukey, Math. Comput. **19**, 297 (1965).
+.. [1] J\. W. Cooley and J. W. Tukey, Math. Comput. **19**, 297 (1965).
 
-.. [2] J. Skilling and R. K. Bryan, Mon. Not. R. Astron. Soc. **211**, 111 (1984).
+.. [2] J\. Skilling and R. K. Bryan, Mon. Not. R. Astron. Soc. **211**, 111 (1984).
 
-.. [3] B. D. Rainford and G. J. Daniell, Hyperfine Interact. **87**, 1129 (1994).
+.. [3] B\. D. Rainford and G. J. Daniell, Hyperfine Interact. **87**, 1129 (1994).
 
-.. [4] F. L. Pratt, Physica B **289–290**, 710 (2000).
+.. [4] F\. L. Pratt, Physica B **289–290**, 710 (2000).
 
-.. [5] T. M. Riseman and E. M. Forgan, Physica B **289–290**, 718 (2000).
+.. [5] T\. M. Riseman and E. M. Forgan, Physica B **289–290**, 718 (2000).
 
-.. [6] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+.. [6] S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
 
-.. [7] F. J. Harris, Proc. IEEE **66**, 51 (1978).
+.. [7] F\. J. Harris, Proc. IEEE **66**, 51 (1978).
 
-.. [8] J. M. Gil *et al.*, Phys. Rev. Lett. **83**, 5294 (1999).
+.. [8] J\. M. Gil *et al.*, Phys. Rev. Lett. **83**, 5294 (1999).
 
-.. [9] J. M. Gil *et al.*, Phys. Rev. B **64**, 075205 (2001).
+.. [9] J\. M. Gil *et al.*, Phys. Rev. B **64**, 075205 (2001).
 
-.. [10] B. M. Huddart, T. Lancaster, S. J. Blundell, Z. Guguchia, H. Taniguchi,
-   S. J. Clark, and F. L. Pratt, Phys. Rev. Research **5**, 013015 (2023).
+.. [10] B\. M. Huddart, T. Lancaster, S. J. Blundell, Z. Guguchia, H. Taniguchi,
+   S\. J. Clark, and F. L. Pratt, Phys. Rev. Research **5**, 013015 (2023).
 
-.. [11] K. S. Isaac, P. M. Le, T. Street, A. Wijerathna-Yapa, and S. Sokolenko,
-   J. Magn. Reson. **381**, 107991 (2025).
+.. [11] K\. S. Isaac, P. M. Le, T. Street, A. Wijerathna-Yapa, and S. Sokolenko,
+   J\. Magn. Reson. **381**, 107991 (2025).
    `doi:10.1016/j.jmr.2025.107991 <https://doi.org/10.1016/j.jmr.2025.107991>`_.
 
-.. [12] G. Golub and V. Pereyra, Inverse Problems **19**, R1 (2003).
+.. [12] G\. Golub and V. Pereyra, Inverse Problems **19**, R1 (2003).
    `doi:10.1088/0266-5611/19/2/201 <https://doi.org/10.1088/0266-5611/19/2/201>`_.
 
-.. [13] M. Sawall, E. von Harbou, A. Moog, R. Behrens, H. Schröder,
-   J. Simoneau, E. Steimers, and K. Neymeyr, J. Magn. Reson. **289**, 132 (2018).
+.. [13] M\. Sawall, E. von Harbou, A. Moog, R. Behrens, H. Schröder,
+   J\. Simoneau, E. Steimers, and K. Neymeyr, J. Magn. Reson. **289**, 132 (2018).
    `doi:10.1016/j.jmr.2018.02.012 <https://doi.org/10.1016/j.jmr.2018.02.012>`_.
 
-.. [14] L. Chen, Z. Weng, L. Y. Goh, and M. Garland,
-   J. Magn. Reson. **158**, 164 (2002).
+.. [14] L\. Chen, Z. Weng, L. Y. Goh, and M. Garland,
+   J\. Magn. Reson. **158**, 164 (2002).
    `doi:10.1016/S1090-7807(02)00069-1 <https://doi.org/10.1016/S1090-7807(02)00069-1>`_.
 
 
-.. [15] A. V. Oppenheim and R. W. Schafer, *Discrete-Time Signal Processing*,
+.. [15] A\. V. Oppenheim and R. W. Schafer, *Discrete-Time Signal Processing*,
    3rd ed. (Pearson, 2009), ch. 8, The Discrete Fourier Transform.
    See also the `SciPy DFT sampling convention
    <https://docs.scipy.org/doc/scipy/tutorial/fft.html#fourier-series-and-the-dft>`_.

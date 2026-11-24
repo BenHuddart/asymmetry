@@ -58,7 +58,7 @@ available in the Python ``MODELS`` registry for scripted single-channel fits.
 
 **References**
 
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press,
   Oxford, 2011).
 
@@ -116,8 +116,8 @@ registry.
 
 **References**
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
 
 .. _fit-stretched-exponential:
 
@@ -162,10 +162,10 @@ covariance. A standalone ``StretchedExponential`` model is available in the
 
 **References**
 
-- R. E. Walstedt and L. R. Walker, Phys. Rev. B **9**, 4857 (1974).
-- Y. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
+- R\. E. Walstedt and L. R. Walker, Phys. Rev. B **9**, 4857 (1974).
+- Y\. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
   Phys. Rev. B **31**, 546 (1985).
-- I. A. Campbell *et al.*, Phys. Rev. Lett. **72**, 1291 (1994).
+- I\. A. Campbell *et al.*, Phys. Rev. Lett. **72**, 1291 (1994).
 
 .. _fit-abragam:
 
@@ -203,9 +203,9 @@ Name       Symbol           Unit   Description
 
 **References**
 
-- A. Abragam, *The Principles of Nuclear Magnetism* (Oxford University
+- A\. Abragam, *The Principles of Nuclear Magnetism* (Oxford University
   Press, Oxford, 1961), Ch. X.
-- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+- M\. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
   https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-keren:
@@ -257,9 +257,9 @@ Name       Symbol           Unit   Description
 
 **References**
 
-- A. Keren, Phys. Rev. B **50**, 10039 (1994), Eq. (4),
+- A\. Keren, Phys. Rev. B **50**, 10039 (1994), Eq. (4),
   https://doi.org/10.1103/PhysRevB.50.10039.
-- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+- M\. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
   https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-risch-kehr:
@@ -298,6 +298,6 @@ negative rates is intentionally not reproduced.
 
 **References**
 
-- R. Risch and K. W. Kehr, Phys. Rev. B **46**, 5246 (1992).
-- M. T. F. Telling and S. H. Kilcoyne, J. Phys.: Condens. Matter **19**,
+- R\. Risch and K. W. Kehr, Phys. Rev. B **46**, 5246 (1992).
+- M\. T. F. Telling and S. H. Kilcoyne, J. Phys.: Condens. Matter **19**,
   026221 (2007), Eq. (2), https://doi.org/10.1088/0953-8984/19/2/026221.

@@ -536,7 +536,7 @@ available without automatic geometry relabelling or a facility restriction.
 References
 ~~~~~~~~~~
 
-1. S. R. Kreitzman *et al.*, Phys. Rev. Lett. **56**, 181 (1986).
+1. S\. R. Kreitzman *et al.*, Phys. Rev. Lett. **56**, 181 (1986).
 
 Repolarisation: a complementary route through parameter trending
 ----------------------------------------------------------------
@@ -763,12 +763,12 @@ Common pitfalls
 References
 ----------
 
-.. [Murphy1985] K. M. Murphy and R. H. Topel, J. Bus. Econ. Stat. **3**, 370 (1985),
+.. [Murphy1985] K\. M. Murphy and R. H. Topel, J. Bus. Econ. Stat. **3**, 370 (1985),
    https://doi.org/10.1080/07350015.1985.10509471.
-.. [Stefanski2002] L. A. Stefanski and D. D. Boos, Am. Stat. **56**, 29 (2002),
+.. [Stefanski2002] L\. A. Stefanski and D. D. Boos, Am. Stat. **56**, 29 (2002),
    https://doi.org/10.1198/000313002753631330.
 
-* F. L. Pratt, Physica B **289–290**, 710 (2000).
+* F\. L. Pratt, Physica B **289–290**, 710 (2000).
 * `WiMDA original manual, version 1.2, Sec. 11.1
   <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_, time-window LCR scans.
 * `Mantid PlotAsymmetryByLogValue v1, version 6.11.0 documentation

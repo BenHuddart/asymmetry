@@ -529,13 +529,13 @@ above.
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford,
   2022), Chs. 14–15.
-- F. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose Simulate
+- F\. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose Simulate
   and Degrade Statistics tools this feature parallels.
 
-.. [pdg-pulls] G. Cowan and L. Lista, Particle Data Group, *Statistics* (2025),
+.. [pdg-pulls] G\. Cowan and L. Lista, Particle Data Group, *Statistics* (2025),
    Secs. 40.2 and 40.4,
    `PDG review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
 

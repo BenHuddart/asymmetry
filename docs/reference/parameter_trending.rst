@@ -1306,13 +1306,13 @@ Published forms of the same step use different names and sign conventions:
 References
 ~~~~~~~~~~
 
-1. R. Khasanov, G. Simutis, Y. G. Pashkevich, T. Shevtsova, W. R. Meier, M.
+1. R\. Khasanov, G. Simutis, Y. G. Pashkevich, T. Shevtsova, W. R. Meier, M.
    Xu, S. L. Bud'ko, V. G. Kogan, and P. C. Canfield, Phys. Rev. B **102**,
    094504 (2020).
-2. A. J. Steele, T. Lancaster, S. J. Blundell, P. J. Baker, F. L. Pratt, C.
+2. A\. J. Steele, T. Lancaster, S. J. Blundell, P. J. Baker, F. L. Pratt, C.
    Baines, M. M. Conner, H. I. Southerland, J. L. Manson, and J. A.
    Schlueter, Phys. Rev. B **84**, 064412 (2011).
-3. B. A. Frandsen *et al.*, Nat. Commun. **7**, 12519 (2016).
+3. B\. A. Frandsen *et al.*, Nat. Commun. **7**, 12519 (2016).
 
 Polynomial trends
 -----------------
@@ -1440,11 +1440,11 @@ yet have.
 References
 ~~~~~~~~~~
 
-1. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+1. S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-2. B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
-3. J. Orear, Am. J. Phys. **50**, 912 (1982).
-4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
+2. B\. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+3. J\. Orear, Am. J. Phys. **50**, 912 (1982).
+4. D\. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, *Am. J.
    Phys.* **72**, 367 (2004).
 
 .. _derived-empirical-definitions:
@@ -1598,9 +1598,9 @@ benefits from a complementary avoided-level-crossing (ALC) measurement.
 References
 ~~~~~~~~~~
 
-1. I. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
-   J. Phys. Chem. B **117**, 13614 (2013).
-2. E. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
+1. I\. McKenzie, R. Scheuermann, S. P. Cottrell, J. S. Lord, and I. M. Tucker,
+   J\. Phys. Chem. B **117**, 13614 (2013).
+2. E\. Roduner, *The Positive Muon as a Probe in Free Radical Chemistry*,
    Lecture Notes in Chemistry Vol. 40 (Springer, Berlin, 1988).
 
 Compared with other programs
@@ -2086,13 +2086,13 @@ should settle which is real.
 References
 ~~~~~~~~~~
 
-1. A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+1. A\. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
    Applications to Solid State and Material Sciences*, Lecture Notes in Physics
    Vol. 961 (Springer, Cham, 2024).
-2. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+2. S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-3. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
-4. A. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
+3. W\. D. Knight, Phys. Rev. **76**, 1259 (1949).
+4. A\. M. Clogston, V. Jaccarino, and Y. Yafet, Phys. Rev. **134**, A650 (1964).
 
 Runnable example
 ----------------

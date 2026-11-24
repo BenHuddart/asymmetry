@@ -82,6 +82,12 @@ def test_source_registered_missing_is_visible_and_publish_requires_capture(site)
     "defect,diagnostic",
     [
         ("Broken ``literal\n", "Inline literal"),
+        ("**A :math:`x` value.**\n", "Literal math role in prose"),
+        ("A reference [1]_.\n\n.. [1] J. W. Author, Journal.\n", "Alphabetic list in a reference"),
+        (
+            "A reference [Author1965]_.\n\n.. [Author1965] J. W. Author, Journal.\n",
+            "Alphabetic list in a reference",
+        ),
         ("Long heading\n-----\n", "Title underline"),
         (":ref:`missing-label`\n", "undefined label"),
         (":class:`MissingLocalClass`\n", "MissingLocalClass"),

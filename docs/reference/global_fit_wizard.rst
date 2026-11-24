@@ -1232,12 +1232,12 @@ establish an equivalent global model-search algorithm. See
 References
 ----------
 
-* R. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
+* R\. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
   1590 (2012) — optimal partitioning of a series with a penalised cost, the
   basis of the penalty path.
-* N. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007) — a
+* N\. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007) — a
   BIC-type criterion for choosing the number of change points.
-* K. P. Burnham and D. R. Anderson, *Model Selection and Multimodel
+* K\. P. Burnham and D. R. Anderson, *Model Selection and Multimodel
   Inference: A Practical Information-Theoretic Approach*, 2nd ed. (Springer,
   New York, 2002) — Akaike weights and the rule of thumb that a model more
   than 10 information units behind the best has essentially no support.

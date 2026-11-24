@@ -398,16 +398,16 @@ Assumptions and limitations
 References
 ----------
 
-- M. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and S. A. Corr, J. Mater.
+- M\. Amores, T. E. Ashton, P. J. Baker, E. J. Cussen, and S. A. Corr, J. Mater.
   Chem. A **4**, 1729 (2016) — the published analysis of this dataset: EMU LF
   0/5/10 G decoupling, a simultaneous Keren fit at each temperature, and the
   Li⁺ activation energy :math:`E_a = 0.19(1)` eV.
-- A. Keren, Phys. Rev. B **50**, 10039 (1994) — the analytic longitudinal-field
+- A\. Keren, Phys. Rev. B **50**, 10039 (1994) — the analytic longitudinal-field
   relaxation function used here.
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
   Phys. Rev. B **20**, 850 (1979) — the dynamic Kubo–Toyabe theory of field
   decoupling that Keren's function generalises.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 5
   — LF decoupling and dynamic relaxation.
 
