@@ -381,14 +381,18 @@ Parameter values and Hessian uncertainties come from
        err = result.uncertainties.get(p.name, 0.0)
        print(f"{p.name}: {p.value:.6f} ± {err:.6f}")
 
-Hessian (HESSE) errors assume the local quadratic approximation around the
-minimum is a good description of the likelihood, i.e. that the parameter
-uncertainties are symmetric. For well-conditioned fits this holds. For
-ill-conditioned problems — strongly correlated parameters, fits near a bound,
-multi-modal likelihoods — the interval is skewed and the symmetric error
-misrepresents it; use MINUIT's asymmetric MINOS intervals [1]
-(:ref:`minos-asymmetric-errors`) or the re-simulation estimate below
-(:ref:`monte-carlo-errors`).
+Hessian (HESSE) errors use a local quadratic approximation to the fitted
+objective. Inverting the full curvature matrix includes parameter
+correlations: correlation alone does not make the intervals asymmetric.
+Near-degeneracy can make that inversion unstable. Nonlinear parameter
+responses, nearby bounds, or competing minima can make symmetric errors
+misleading even when minimisation converges. MINOS profiles the objective
+while re-optimising the other free parameters and can reveal non-quadratic
+intervals; it does not by itself establish coverage for an inadequate
+likelihood or resolve separate minima [1]. See the `Minuit2 error definition
+<https://root.cern.ch/doc/master/Minuit2Page.html>`_,
+:ref:`minos-asymmetric-errors`, and :ref:`monte-carlo-errors`. For approximate
+spectral weights, retain the limitations in :doc:`frequency_domain_fitting`.
 
 .. _fit-residuals:
 
@@ -606,17 +610,20 @@ on top of Global and Local.
 Monte Carlo error estimation
 ----------------------------
 
-For parameters whose Hessian uncertainties are not trustworthy — heavy
-correlations, fits sitting near a bound, multi-modal likelihoods —
-re-simulating the data and refitting gives an empirical distribution. The
-snippet below draws each replica by adding Gaussian noise at the per-bin error
-to the fitted data (a *parametric* Monte Carlo), so the spread it reports is
-only as good as that error model: it inherits the Gaussian-error assumption and
-will not capture non-Gaussian tails, and with a small replica count the
-estimated width itself carries appreciable scatter (raise ``n_bootstrap`` and
-seed the generator for a reproducible number). It is an approximation to the
-error, not an exact interval — for the definitive error-bar check re-simulate at
-matched statistics and inspect the pull distribution (:ref:`pull-diagnostic`).
+The example below checks how fitted parameters respond to additional noise in
+the observed curve. It adds independent Gaussian noise with a standard deviation
+equal to each recorded bin error, then refits each simulated curve. The resulting
+spread measures sensitivity to this perturbation; it does not establish
+confidence-interval coverage.
+
+The replicas are centred on the observed curve, rather than drawn from the
+fitted model as in a model-centred parametric bootstrap. They omit shared-count
+covariance and uncertain calibration. Gaussian observation noise can still
+produce a skewed parameter distribution through nonlinear fitting or bounds.
+A small replica count adds sampling scatter; fix the seed for reproducibility,
+and inspect fit failures before interpreting the spread. To check interval
+coverage, generate independent acquisitions at known parameters and matched
+statistics, then inspect the pull distribution (:ref:`pull-diagnostic`).
 
 .. code-block:: python
 

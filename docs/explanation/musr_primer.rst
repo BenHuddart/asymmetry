@@ -20,12 +20,17 @@ The muon as a local probe
 
 The positive muon (μ⁺) is a spin-½ particle with charge :math:`+e`, a mass about
 one-ninth that of the proton, and a mean lifetime of
-:math:`\tau_\mu = 2.197` μs. Implanted into a solid it thermalises within
-nanoseconds — far faster than its lifetime, and with no measurable loss of spin
-polarisation — and comes to rest at an interstitial site, where it acts as a
-sensitive magnetometer for the local field. Two properties make the measurement
-possible: the muon beam is produced already spin-polarised, and the muon decay is
-anisotropic, so the direction of the spin at the moment of decay can be read out.
+:math:`\tau_\mu = 2.197` μs. Energy loss after implantation is usually much
+faster than the lifetime and largely preserves the spin polarisation. The
+measurement uses an initially polarised beam and the anisotropic muon decay
+to follow its subsequent spin evolution [primer_blundell]_.
+
+Some initial polarisation may be lost from the measured signal. For example,
+the muon can capture an electron to form **muonium**, whose rapid spin motion
+may be unresolved, or local fields can rotate its spin faster than the
+instrument can measure. A muon may occupy an interstitial site, bind
+chemically, or move between sites; its state and perturbation of the
+surroundings depend on the material.
 
 Spin precession
 ---------------
@@ -63,14 +68,14 @@ The shape of :math:`P(t)` reflects the distribution of local fields and how it
 evolves in time. A single well-defined internal field gives a coherent
 oscillation; a spread of static fields dephases the ensemble and relaxes the
 polarisation; fluctuating fields relax it differently again, and the distinction
-between static and dynamic disorder can be settled by applying a longitudinal
-field. Two limiting cases recur throughout this documentation:
+between static and dynamic models can be tested with a longitudinal-field
+series. Recovery with field alone does not uniquely establish static fields. Two limiting cases recur throughout this documentation:
 
 * In a **transverse field**, applied perpendicular to the initial spin, the muon
   precesses at the total field; the precession amplitude and its damping measure,
   for example, the field distribution of the vortex lattice in a superconductor.
-* In **zero field**, randomly oriented nuclear dipolar fields produce the
-  Kubo–Toyabe relaxation function — the characteristic dip and recovery whose
+* In **zero field**, a static, isotropic Gaussian local-field distribution
+  produces the Gaussian Kubo–Toyabe relaxation function — the characteristic dip and recovery whose
   width measures the width of the static field distribution
   (:doc:`/reference/fit_functions/kubo_toyabe`).
 
@@ -85,8 +90,10 @@ As a local probe of magnetism, μSR yields information similar to nuclear magnet
 resonance (NMR), electron spin resonance (ESR), or Mössbauer spectroscopy, but
 with two distinctions: no resonant electromagnetic field is required, since the
 precessing muon is followed directly in the time domain; and the muon is a
-sensitive, essentially universal probe — it stops in any material, responds to
-very small fields, and works across the full temperature range.
+sensitive probe of local fields in many materials. Its usable time and field
+range depend on the source pulse, detector timing, background, and sample
+environment. A missing early-time signal does not by itself determine a
+magnetic volume fraction.
 
 A note of caution
 -----------------
@@ -111,6 +118,9 @@ frequency-domain counterpart to this time-domain account is introduced in
 
 References
 ----------
+
+.. [primer_blundell] S. J. Blundell, Contemp. Phys. **40**, 175 (1999),
+   `author manuscript <https://arxiv.org/abs/cond-mat/0207699>`_, sections 3–5.
 
 - S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).

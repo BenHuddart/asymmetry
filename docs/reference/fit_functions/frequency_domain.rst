@@ -9,22 +9,36 @@ Frequency workspace, as a function of frequency :math:`\nu` in MHz (see
 when fitting in the frequency domain, where the picker presents them as a
 flat list.
 
-The physical motivation mirrors the time domain through the Fourier-transform
-pairs of the standard relaxation envelopes: an exponentially relaxing
-(dynamically broadened) signal :math:`e^{-\lambda t}` gives a Lorentzian line
-of width :math:`\mathrm{FWHM} = \lambda/\pi`, while a Gaussian envelope
-:math:`e^{-(\sigma t)^2}` (static, dense field distribution) gives a Gaussian
-line of width :math:`\mathrm{FWHM} = 2\sigma\sqrt{\ln 2}/\pi`. Both peaks are
-parameterised **directly by their full width at half maximum** — the
-``fwhm`` parameter is the literal width of the line on the plot, which is why
-the factors :math:`4\ln 2` and :math:`4` appear in the expressions below. A
-fitted width therefore converts back to a time-domain rate via
-:math:`\lambda = \pi\,\mathrm{FWHM}` or
-:math:`\sigma = \pi\,\mathrm{FWHM}/(2\sqrt{\ln 2})`, and a peak centre to a
-local field via :math:`B_0 = \nu_0/(\gamma_\mu/2\pi)`. Peak heights are in
-the arbitrary units of the displayed spectrum (they depend on apodisation and
-normalisation), so physical conclusions should rest on positions and widths
-rather than absolute heights.
+Both peak models describe the displayed spectrum. Their width parameter
+``fwhm`` is the **full width at half maximum (FWHM)**, measured in MHz.
+
+For an isolated, correctly phased absorptive line with an effectively infinite
+record, an exponential envelope :math:`e^{-\lambda t}` gives a Lorentzian
+:math:`\mathrm{FWHM}=\lambda/\pi`, while
+:math:`e^{-(\sigma t)^2}` gives a Gaussian
+:math:`\mathrm{FWHM}=2\sigma\sqrt{\ln2}/\pi`.
+Here frequency is cyclic (MHz), while :math:`\lambda` and :math:`\sigma`
+are rates in μs⁻¹. The Gaussian rate uses the convention in
+:ref:`fit-gaussian`; it is not generally the KT :math:`\Delta`.
+
+These ideal transform pairs do not automatically describe a finite,
+apodised, modulus/power, or MaxEnt spectrum. The fitted ``fwhm`` is the width
+of the **displayed processed peak**. Instrument response and the estimator
+must be accounted for before interpreting it as an intrinsic relaxation rate
+or field width. The peak functions include no automatic response convolution
+or deconvolution. The ideal rate conversions above apply only when the stated
+line-shape assumptions hold. See :doc:`../fourier_analysis`.
+
+Peak centre and width convert to field equivalents using the cyclic
+:math:`\gamma_\mu/(2\pi)`: :math:`B_0=\nu_0/(\gamma_\mu/2\pi)` and
+:math:`B_{\mathrm{wid}}=\mathrm{FWHM}/(\gamma_\mu/2\pi)`. This conversion
+changes units, not the estimator's physical meaning. Peak heights remain in
+the arbitrary units of the displayed spectrum and depend on processing and
+normalisation.
+
+.. image:: /_generated/screenshots/spectral_peak_component_help.png
+   :alt: GaussianPeak component help distinguishing processed FWHM from an intrinsic rate
+   :width: 100%
 
 .. _fit-gaussian-peak:
 
@@ -65,9 +79,9 @@ exponential (dynamic broadening, or a dilute static field distribution): the
 spectral-domain counterpart of :ref:`fit-exponential`. Parameters as for
 ``GaussianPeak``, with the same half-height convention. Note the heavy
 Lorentzian tails: fit windows should extend several FWHM beyond the peak or
-the width will be underestimated; a line that is neither Gaussian nor
-Lorentzian usually signals overlapping sites, which are better fitted as two
-peaks.
+the width can become weakly constrained. A non-Lorentzian shape can reflect
+overlap, processing, or a different field distribution; two fitted peaks do
+not by themselves establish two stopping sites.
 
 .. _fit-constant-background:
 

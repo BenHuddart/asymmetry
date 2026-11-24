@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repair public grouping, calibration, and Fourier examples, and document optional
   dependency installation from the supported Git checkout.
 
+- Qualify LF model interpretations and width units; distinguish processed FFT
+  linewidths, count uncertainties, and the limits of symmetric fit errors.
+
 - Identify the synthetic Kubo–Toyabe examples as generic Gaussian fields, with
   an illustrative width, and retain their seeds, parameters, and stable preset keys.
 
