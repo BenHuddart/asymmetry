@@ -562,7 +562,8 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "dense magnets (use Oscillatory or Bessel with an internal field)."
     ),
     "GaussianPeak": (
-        "Fit a Gaussian peak to the displayed real spectrum, with cyclic-frequency FWHM in MHz. "
+        "Fit a Gaussian peak to the displayed real spectrum. Its full width at half maximum "
+        "(FWHM) is measured in MHz. "
         "For an isolated, correctly phased absorptive line with an effectively infinite record, "
         "e^(−(σt)²) gives FWHM = 2σ√(ln2)/π, using Gaussian's time-domain σ convention. "
         "The fitted width describes the processed peak; this function does not automatically "
@@ -571,7 +572,8 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "displayed arbitrary units; ν₀ and FWHM convert to field equivalents through γµ/(2π)."
     ),
     "LorentzianPeak": (
-        "Fit a Lorentzian peak to the displayed real spectrum, with cyclic-frequency FWHM in MHz. "
+        "Fit a Lorentzian peak to the displayed real spectrum. Its full width at half maximum "
+        "(FWHM) is measured in MHz. "
         "For an isolated, correctly phased absorptive line with an effectively infinite record, "
         "e^(−λt) gives FWHM = λ/π. The fitted width describes the processed peak; this function "
         "does not automatically convolve with or remove the time window, apodization, or instrument "

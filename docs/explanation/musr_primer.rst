@@ -21,13 +21,16 @@ The muon as a local probe
 The positive muon (μ⁺) is a spin-½ particle with charge :math:`+e`, a mass about
 one-ninth that of the proton, and a mean lifetime of
 :math:`\tau_\mu = 2.197` μs. Energy loss after implantation is usually much
-faster than the lifetime and is largely spin preserving. This does not guarantee
-that all implanted polarisation is observable: muonium formation, rapid local
-spin evolution, and finite instrumental resolution can reduce the measured
-initial asymmetry. A muon may occupy an interstitial site, bind chemically, or
-move between sites; its state and perturbation of the surroundings depend on
-the material. The measurement uses an initially polarised beam and the
-anisotropic muon decay to follow its subsequent spin evolution [primer_blundell]_.
+faster than the lifetime and largely preserves the spin polarisation. The
+measurement uses an initially polarised beam and the anisotropic muon decay
+to follow its subsequent spin evolution [primer_blundell]_.
+
+Some initial polarisation may be lost from the measured signal. For example,
+the muon can capture an electron to form **muonium**, whose rapid spin motion
+may be unresolved, or local fields can rotate its spin faster than the
+instrument can measure. A muon may occupy an interstitial site, bind
+chemically, or move between sites; its state and perturbation of the
+surroundings depend on the material.
 
 Spin precession
 ---------------

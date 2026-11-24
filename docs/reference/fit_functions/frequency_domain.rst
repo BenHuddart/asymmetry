@@ -9,6 +9,9 @@ Frequency workspace, as a function of frequency :math:`\nu` in MHz (see
 when fitting in the frequency domain, where the picker presents them as a
 flat list.
 
+Both peak models describe the displayed spectrum. Their width parameter
+``fwhm`` is the **full width at half maximum (FWHM)**, measured in MHz.
+
 For an isolated, correctly phased absorptive line with an effectively infinite
 record, an exponential envelope :math:`e^{-\lambda t}` gives a Lorentzian
 :math:`\mathrm{FWHM}=\lambda/\pi`, while

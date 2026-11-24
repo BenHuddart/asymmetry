@@ -610,18 +610,20 @@ on top of Global and Local.
 Monte Carlo error estimation
 ----------------------------
 
-For parameters whose Hessian uncertainties are not trustworthy because of
-near-degeneracy, nonlinear response, nearby bounds, or competing minima,
-refitting simulated observations can explore the parameter distribution. The
-snippet below instead perturbs the *observed* curve by independent Gaussian
-noise at each recorded marginal error: it is a sensitivity exercise, not a
-model-centred parametric bootstrap or an interval-coverage test. It omits
-shared-count covariance and uncertain calibration. Gaussian observation noise
-can still produce a skewed parameter distribution through nonlinear fitting or
-bounds. A small replica count adds sampling scatter; fix the seed for
-reproducibility. Inspect fit failures before interpreting the spread. For
-interval coverage, generate independent acquisitions at known parameters and
-matched statistics, then inspect the pull distribution (:ref:`pull-diagnostic`).
+The example below checks how fitted parameters respond to additional noise in
+the observed curve. It adds independent Gaussian noise with a standard deviation
+equal to each recorded bin error, then refits each simulated curve. The resulting
+spread measures sensitivity to this perturbation; it does not establish
+confidence-interval coverage.
+
+The replicas are centred on the observed curve, rather than drawn from the
+fitted model as in a model-centred parametric bootstrap. They omit shared-count
+covariance and uncertain calibration. Gaussian observation noise can still
+produce a skewed parameter distribution through nonlinear fitting or bounds.
+A small replica count adds sampling scatter; fix the seed for reproducibility,
+and inspect fit failures before interpreting the spread. To check interval
+coverage, generate independent acquisitions at known parameters and matched
+statistics, then inspect the pull distribution (:ref:`pull-diagnostic`).
 
 .. code-block:: python
 
