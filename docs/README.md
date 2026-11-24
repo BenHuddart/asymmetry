@@ -165,7 +165,7 @@ A scenario is a small `Scenario` subclass (see `screenshots/scenarios/_base.py`)
 registered in `capture.py::_import_scenarios()`. House rules:
 
 - **Deterministic**: seed every RNG; build synthetic data from
-  `screenshots/data/archetypes.py` (physically grounded presets — EuO, Ag,
+  `screenshots/data/archetypes.py` (material-inspired and generic presets — EuO, Gaussian fields,
   MgB₂, YBCO, PbF₂) so the physics in the figure is defensible.
 - **Cropped**: frame the panel or dialog the prose discusses, not the whole
   main window, and never ship a figure with large empty regions — an empty

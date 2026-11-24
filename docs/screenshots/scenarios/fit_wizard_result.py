@@ -1,4 +1,4 @@
-"""Fit Wizard Result page on the Ag ZF GKT dataset, with a candidate pinned as B.
+"""Fit Wizard Result page on the generic ZF GKT dataset, with a candidate pinned as B.
 
 The single-spectrum Fit Wizard is a three-state window (Welcome → Running →
 Result). This scenario drives it straight to the **Result** state:
@@ -8,8 +8,7 @@ as the fit-panel cache does when a previously analysed run is reopened. That
 populates the answer card — a plain-language verdict, a confidence grade, and
 the data-with-recommended-fit overlay — and the Compare candidates section
 beneath it, with the recommendation as candidate A. The wizard typically
-recommends ``StaticGKT_ZF + Constant`` for an Ag ZF dataset: the canonical
-nuclear-dipolar fingerprint (Blundell et al. Ch 5.2).
+recommends ``StaticGKT_ZF + Constant`` for this generic ZF dataset, illustrating the static Gaussian-field model.
 
 The seeded detector histograms exceed the automatic point budget, exercising
 counts-first preparation and later on-demand curve reconstruction.
@@ -41,7 +40,7 @@ class FitWizardResultScenario(Scenario):
     name = "fit_wizard_result"
     description = (
         "Fit Wizard Result page (answer card + Compare candidates with A and a pinned B) "
-        "on the Ag ZF GKT dataset."
+        "on the generic ZF GKT dataset."
     )
     size = (1180, 1100)
     requires_fit = True
@@ -78,7 +77,7 @@ class FitWizardResultScenario(Scenario):
             seed=23,
             run_number=4101,
         )
-        run.metadata.update(title="Synthetic ZF Ag polycrystal", field=0.0, temperature=20.0)
+        run.metadata.update(title="Synthetic ZF Gaussian-field", field=0.0, temperature=20.0)
         dataset = reduce_run_to_dataset(run)
         window = FitWizardWindow()
         window.set_analysis_context(dataset)

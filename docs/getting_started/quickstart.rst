@@ -30,9 +30,9 @@ detector grouping and calibrate :math:`\alpha`
 ready-made run instead:
 
 #. Open **File → Simulate Preset**.
-#. Choose **Ag — ZF Gaussian Kubo–Toyabe**.
+#. Choose **Generic — ZF Gaussian Kubo–Toyabe**.
 
-A synthetic silver run appears in the Data Browser, badged ``SIM`` and tinted to
+A synthetic generic run appears in the Data Browser, badged ``SIM`` and tinted to
 mark it as simulated, and the central plot shows its **asymmetry** — already
 grouped and calibrated, because the preset carries a complete reduction. The
 preset is a genuine Poisson-sampled dataset built from a known model, so it
@@ -41,11 +41,11 @@ behaves exactly as beamline data would.
 Read the asymmetry
 ------------------
 
-The curve is the zero-field **Kubo–Toyabe** relaxation of muons in silver: a
-characteristic dip and partial recovery produced by the static distribution of
-nuclear dipolar fields at the muon site, with a width set by the spread of those
-fields. This time-domain signal is what every fit works on; for the physics
-behind it see :doc:`/explanation/musr_primer` and
+The curve is an illustrative zero-field **Kubo–Toyabe** signal: a dip and
+partial recovery from static, isotropically distributed Gaussian local fields.
+The width :math:`\Delta = 0.39` μs⁻¹ is chosen for teaching and is not assigned
+to a material. For the model assumptions and the one-third tail, see
+:doc:`/explanation/musr_primer` and
 :doc:`/reference/fit_functions/kubo_toyabe`.
 
 Fit it
@@ -68,12 +68,12 @@ complete analysis: data in, model fitted, parameter out.
 
 .. image:: /_generated/screenshots/quickstart_first_fit.png
    :alt: The main window after the first fit, with the fitted Gaussian
-         Kubo–Toyabe curve overlaid on the silver asymmetry data and the
+         Kubo–Toyabe curve overlaid on the generic asymmetry data and the
          converged parameters shown in the fit panel.
    :width: 100%
 
 *The main window right after the walkthrough's first fit converges. The red*
-*fit curve traces the* ``StaticGKT_ZF + Constant`` *model over the silver*
+*fit curve traces the* ``StaticGKT_ZF + Constant`` *model over the generic*
 *asymmetry, and the fit panel shows the applied wizard fit with*
 *Δ = 0.39 μs⁻¹ (row* **Δ (μs⁻¹)** *) and a reduced chi-square near 1.*
 

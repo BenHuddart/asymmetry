@@ -497,6 +497,6 @@ Cross-references
 - :doc:`/reference/parameter_trending` — the trending panel, log axes, and the
   Arrhenius-on-a-plateau recipe used for :math:`\nu(T)`.
 - :doc:`lf_decoupling_dynamics` — the static-versus-dynamic Kubo–Toyabe formalism
-  worked on a synthetic Ag decoupling series.
+  worked on a synthetic generic Gaussian-field decoupling series.
 - :doc:`global_fit_ionic_motion` — the same dynamic-relaxation trending workflow
   applied to Li⁺ ionic motion, via a global fit across fields.

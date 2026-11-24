@@ -13,7 +13,11 @@ from docs.screenshots.data import archetypes
     ("preset", "screenshot", "expected"),
     [
         (simulate_presets.GAMMA_MU_MHZ_PER_G, archetypes.GAMMA_MU_MHZ_PER_G, 0.01355),
-        (simulate_presets.DELTA_AG_PER_US, archetypes.DELTA_AG_PER_US, 0.39),
+        (
+            simulate_presets.ILLUSTRATIVE_KT_DELTA_PER_US,
+            archetypes.ILLUSTRATIVE_KT_DELTA_PER_US,
+            0.39,
+        ),
         (simulate_presets.TC_EUO_K, archetypes.TC_EUO_K, 69.0),
         (simulate_presets.R_MUF_ANG, archetypes.R_MUF_ANG, 1.17),
     ],

@@ -308,10 +308,10 @@ Neither corpus dataset shows a full *static* decoupling series — Ca₃Co₂O�
 dynamic, and the Re₆Zr contrast uses only two fields. The textbook static case,
 where the LF-KT polarisation is measured across a progression of fields
 spanning :math:`\gamma_\mu B_L/\Delta \in \{0, 1, 2, 5, 10\}`, is best shown on
-a synthetic silver dataset, for which the answer is known exactly.
+a synthetic generic Gaussian-field dataset, for which the answer is known exactly.
 
 .. image:: /_generated/screenshots/lf_kt_global_results.png
-   :alt: Member Results window from a global Ag LF-KT fit, showing shared width and Hessian error
+   :alt: Member Results window from a global generic LF-KT fit, showing shared width and Hessian error
    :width: 100%
 
 The member results window shows the fitted parameters and Hessian errors for
@@ -321,7 +321,7 @@ across the field series in a global fit: the Gaussian width :math:`\Delta` is
 shared (Global), the applied field :math:`B_L` is fixed per run (File), and the
 initial asymmetry and background are shared. Hayano *et al.* computed the full
 LF-KT polarisation function, which recovers to unity once
-:math:`\gamma_\mu B_L \gg \Delta`. For the synthetic Ag series with input
+:math:`\gamma_\mu B_L \gg \Delta`. For the synthetic generic series with input
 :math:`\Delta = 0.39\;\mu\mathrm{s}^{-1}` the global fit recovers
 :math:`\Delta = 0.3903(4)\;\mu\mathrm{s}^{-1}` with per-run reduced :math:`\chi^2`
 near unity, and the diagnostic is read off the highest-field run: because it

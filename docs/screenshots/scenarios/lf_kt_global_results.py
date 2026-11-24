@@ -1,4 +1,4 @@
-"""Member readout from a global Ag LF-KT fit, with shared Δ and its uncertainty.
+"""Member readout from a global generic LF-KT fit, with shared Δ and its uncertainty.
 
 The classification is authored as Global for amplitude, Δ, and background,
 and File for each run's fixed applied field. The captured Results window
@@ -10,13 +10,15 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_lf_decoupling
+from ..data import make_generic_lf_decoupling
 from ._base import Scenario, _process_events_for, register
 
 
 class LfKtGlobalResultsScenario(Scenario):
     name = "lf_kt_global_results"
-    description = "Member results from a global Ag LF-KT fit, including shared Δ and Hessian error."
+    description = (
+        "Member results from a global generic LF-KT fit, including shared Δ and Hessian error."
+    )
     size = (950, 290)
     requires_fit = True
 
@@ -31,12 +33,12 @@ class LfKtGlobalResultsScenario(Scenario):
         window._on_fit()
         window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
-        datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+        datasets = make_generic_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(run_numbers, name="LF decoupling — Ag")
+        window._data_browser.create_data_group(run_numbers, name="LF decoupling — generic fields")
 
         # Configure the global-fit tab and set the model.
         fit_panel = window._fit_panel

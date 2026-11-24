@@ -55,7 +55,7 @@ need to click Analyze again.
    :alt: Fit Wizard result page — answer card with the recommended fit above the Compare candidates section, with the recommendation as A and a second candidate pinned as B
    :width: 100%
 
-*The wizard's result page on a synthetic ZF Ag polycrystal dataset: the answer*
+*The wizard's result page on a synthetic ZF Gaussian-field dataset: the answer*
 *card gives the plain-language verdict, a confidence grade, and the data with*
 *the recommended fit overlaid. Below it, the Compare candidates section ranks*
 *every candidate and sets the recommendation (A) against a pinned alternative*
@@ -113,7 +113,7 @@ run; the same picker drives the :doc:`global_fit_wizard`.
    :alt: Fit Wizard welcome page — the model family picker with a Zero field answer above the Analyze button
    :width: 100%
 
-*The welcome page on the synthetic ZF Ag run. The file records no field*
+*The welcome page on the synthetic ZF generic run. The file records no field*
 *direction, so the direction was answered "Zero field", and the TF- and*
 *LF-only models are listed under their cards as not applying. The details panel*
 *shows the static Gaussian Kubo–Toyabe model, and the footer names the six slow*
@@ -946,9 +946,9 @@ similarly.
 
 .. figure:: /_generated/screenshots/fit_ratio_omissions.png
    :width: 100%
-   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic Ag fit.
+   :alt: Omission counts and unavailable residual diagnostics for a sparse synthetic generic fit.
 
-   Sparse Ag control with an authored fixed-background sensitivity operation.
+   Sparse generic fields control with an authored fixed-background sensitivity operation.
    The fit keeps usable signed observations; the display retains the full grid.
    Omission counts and unavailable residual diagnostics belong to the core result.
 

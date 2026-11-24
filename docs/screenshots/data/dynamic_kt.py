@@ -4,23 +4,25 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.models import MODELS
-from asymmetry.core.simulate_presets import DELTA_AG_PER_US
+from asymmetry.core.simulate_presets import ILLUSTRATIVE_KT_DELTA_PER_US
 
 from .archetypes import _poisson_errors, _time_axis
 
 
-def make_ag_dynamic_rate_scan(seed: int = 71) -> list[MuonDataset]:
-    """Ag-width Gaussian fields with a synthetic reorientation-rate sweep.
+def make_generic_dynamic_rate_scan(seed: int = 71) -> list[MuonDataset]:
+    """Illustrative-width Gaussian fields with a synthetic reorientation-rate sweep.
 
-    Δ=0.39 μs⁻¹ is the Ag nuclear-field archetype; the imposed rates demonstrate
-    strong-collision physics and are not a measurement of Ag diffusion.
+    Δ=0.39 μs⁻¹ is an illustrative Gaussian-field width; the imposed rates demonstrate
+    strong-collision physics and are not a measurement of diffusion in any material.
     """
     rng = np.random.default_rng(seed)
     time = _time_axis()
     model = MODELS["DynamicGaussianKT"].function
     datasets = []
     for index, rate in enumerate((0.0, 0.1, 0.5, 2.0, 20.0)):
-        clean = model(time, A0=24.0, Delta=DELTA_AG_PER_US, nu=rate, B_L=0.0, baseline=0.3)
+        clean = model(
+            time, A0=24.0, Delta=ILLUSTRATIVE_KT_DELTA_PER_US, nu=rate, B_L=0.0, baseline=0.3
+        )
         error = _poisson_errors(clean, counts_per_bin=1.0e5)
         datasets.append(
             MuonDataset(

@@ -466,10 +466,10 @@ Waterfall stacking
 ~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/waterfall_overlay.png
-   :alt: Waterfall-stacked time-domain overlay of an Ag LF decoupling series
+   :alt: Waterfall-stacked time-domain overlay of a generic LF decoupling series
    :width: 100%
 
-*The same five-field Ag LF Kubo–Toyabe decoupling series as the*
+*The same five-field generic LF Kubo–Toyabe decoupling series as the*
 :doc:`LF decoupling walkthrough </workflows/lf_decoupling_dynamics>`, *now with*
 **Waterfall** *enabled: each field's trace is shifted onto its own baseline*
 *instead of sharing one axis with the rest.*
@@ -855,20 +855,19 @@ compiler is used. Generation and compilation run in the background; **Close**
 cancels an active export. Without GLE, the script and sidecars are still saved.
 
 .. image:: /_generated/screenshots/gle_plot_preview.png
-   :alt: Zoomable vector preview of a synthetic ZF Ag plot
+   :alt: Zoomable vector preview of a synthetic ZF generic plot
    :width: 100%
 
 Fitting panel
 -------------
 
 .. image:: /_generated/screenshots/fit_wizard_gkt.png
-   :alt: Single-dataset fit with a converged Gaussian Kubo–Toyabe model on Ag
+   :alt: Single-dataset fit with a converged Gaussian Kubo–Toyabe model on generic fields
    :width: 100%
 
-*Converged static Gaussian Kubo–Toyabe fit on a synthetic ZF Ag polycrystal*
-*dataset (Δ ≈ 0.39 μs⁻¹). Ag is the canonical nuclear-dipolar reference*
-*sample at every μSR facility; the GKT function (Kubo & Toyabe, 1966) is*
-*derived in Blundell et al. Ch 5.2.*
+*Converged static Gaussian Kubo–Toyabe fit on a synthetic ZF Gaussian-field*
+*dataset with an illustrative Δ ≈ 0.39 μs⁻¹. The model assumes static,*
+*isotropically distributed Gaussian local fields; no material is specified.*
 
 The fitting panel provides an interactive interface for fitting models to your data.
 It is located in the right dock area next to the plot panel, with a **Single**
@@ -1053,7 +1052,7 @@ them.
       saved fits window ranking three fits of one run by AICc
    :width: 100%
 
-*Three saved fits of one synthetic ZF Ag run (Δ ≈ 0.39 μs⁻¹). Left: the*
+*Three saved fits of one synthetic ZF generic run (Δ ≈ 0.39 μs⁻¹). Left: the*
 *Single tab's* **Saved fits** *row, naming the open fit. Right: the Compare*
 *window, which ranks the two fits over 0.05–8 μs against each other and lists*
 *the Kubo–Toyabe fit over 0.5–6 μs without a Δ, because it saw different data.*
@@ -1374,10 +1373,10 @@ Global parameter fit window
 ---------------------------
 
 .. image:: /_generated/screenshots/global_fit_lfkt.png
-   :alt: Global fit setup for an Ag LF Kubo–Toyabe field-decoupling series
+   :alt: Global fit setup for a generic LF Kubo–Toyabe field-decoupling series
    :width: 100%
 
-*Global-fit setup on a synthetic Ag LF-KT decoupling series, B_L = 0, 15,*
+*Global-fit setup on a synthetic generic LF-KT decoupling series, B_L = 0, 15,*
 *50, and 100 G with shared Δ ≈ 0.39 μs⁻¹. The longitudinal field decouples*
 *the nuclear dipolar broadening as γ_μB_L/Δ grows past unity (Hayano et al.,*
 *Phys. Rev. B 20, 850 (1979); cf. Blundell et al. 2022, Fig. 5.6).*
