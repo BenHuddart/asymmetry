@@ -20,7 +20,7 @@ from ._base import Scenario, register
 
 class MainWindowScenario(Scenario):
     name = "main_window"
-    description = "Default layout with an EuO temperature scan loaded and one run selected."
+    description = "EuO temperature scan with held limits preserved after browsing runs."
     size = (1500, 920)
 
     def build(self) -> QWidget:
@@ -36,6 +36,10 @@ class MainWindowScenario(Scenario):
         for dataset in make_euo_tf_tscan():
             window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(3003)  # T=65 K, just below Tc
+        limits = window._plot_panel.get_view_limits()
+        window._plot_panel.set_view_limits(*limits)
+        window._on_dataset_selected(3004)
+        window._on_dataset_selected(3003)
         return shell
 
     def teardown(self, widget: QWidget) -> None:
