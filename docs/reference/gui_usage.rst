@@ -480,7 +480,11 @@ the full visible source path as well as all visible markers and error bars.
 Raster figure exports select connector geometry at the output pixel resolution.
 Vector and GLE figure exports draw the full visible connector path. All keep the
 selected short-dashed style, with points, error bars, and solid fits; numerical
-exports add no interpolated samples. Published plot arrays and their artists
+exports add no interpolated samples. GLE uses its native short-dash pattern
+and opaque strokes, with a combined line/marker legend glyph; error bars remain
+in the plot. Its scientific data tables retain the original observations,
+separately from the gapped display paths and script-level waterfall offsets.
+Published plot arrays and their artists
 are reused for viewport changes; changing data, grouping, bunching, projections,
 frames, labels, annotations, or fits publishes a new view.
 

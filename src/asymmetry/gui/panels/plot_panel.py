@@ -8173,7 +8173,8 @@ class PlotPanel(QWidget):
             },
             (6.4, 2.8 * len(axes)) if len(axes) > 1 else self._export_figure_size(len(payloads)),
             len(axes) > 1,
-            connect_points=self._connect_points and self._time_view is not None,
+            connect_points=self._connect_points
+            and bool(self._time_view and self._time_view.traces),
         )
 
     # Keep old name as alias for backward compatibility with tests.

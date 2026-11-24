@@ -341,3 +341,21 @@ def test_clearing_fit_visibility_override_publishes_the_default_fit_view(qapp):
     assert len(panel._time_view.fits) == 1
     panel.set_view_limits(2, 4, -30, 30)
     assert len(panel._time_view.fits) == 1
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_reconstruction_snapshots_exclude_connectors(qapp, combined):
+    panel = PlotPanel()
+    panel.set_connect_points_enabled(True)
+    panel.plot_maxent_reconstruction([dataset(n=101)], combined=combined)
+    assert not panel._gle_snapshot(panel._collect_export_payloads()).connect_points
+
+
+def test_frequency_dataset_on_time_panel_excludes_connector_exports(qapp):
+    panel = PlotPanel()
+    panel.set_connect_points_enabled(True)
+    data = dataset(n=101)
+    data.metadata["plot_domain"] = "frequency"
+    panel.plot_dataset(data)
+    assert panel._time_view is None
+    assert not panel._gle_snapshot(panel._collect_export_payloads()).connect_points

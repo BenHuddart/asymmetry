@@ -171,6 +171,8 @@ class TimePlotView:
 
 def draw_masked_errorbar(panel, ax, time, values, error, mask, window, **kwargs):
     """Draw the shared marker/error idiom, retaining supported time-view artists."""
+    if panel._is_frequency_domain_dataset(panel._current_dataset):
+        panel._time_view = None
     if panel._time_view is not None:
         return panel._time_view.add_trace(panel, ax, time, values, error, mask, window, **kwargs)
     visible = panel._visible_plot_indices(time, mask, window)

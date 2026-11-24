@@ -40,6 +40,8 @@ class PlotGleSnapshot(PlotExportData):
         else:
             fig = gle_figure(glp, figsize=self.figsize)
             subplot_axes = [fig.add_subplot(111)]
+        if self.connect_points:
+            fig.style.dashlen = 0.02
         files = [gle_path]
         dat_writes = []
         tokens = set()
@@ -69,7 +71,11 @@ class PlotGleSnapshot(PlotExportData):
                 dat_writes=dat_writes,
                 gle_path=gle_path,
                 colors=colors,
-                show_legend=len(payloads) > 1 and index == 0,
+                show_legend=(
+                    len(payloads) > 1
+                    or (self.connect_points and any(p.get("fit") for p in payloads))
+                )
+                and index == 0,
                 used_tokens=tokens,
             )
             if title:
@@ -180,40 +186,23 @@ class PlotGleSnapshot(PlotExportData):
                             )
                 else:
                     if self.connect_points:
-                        time = np.asarray(t_data)
-                        values = np.asarray(y_data)
-                        error = np.zeros_like(values) if y_err is None else np.asarray(y_err)
-                        low = np.asarray(
-                            payload.get("connector_low_mask", np.zeros_like(values, dtype=bool))
+                        self._plot_connected_time_data(
+                            ax, payload, token, data_color, data_label, gle_offset
                         )
-                        for mask, colour in [(low, "gray"), (~low, data_color)]:
-                            geometry = ConnectorGeometry(time, values, error, mask)
-                            vertices = geometry.vertices(self.x_limits, None)
-                            if vertices.size:
-                                ax.plot(
-                                    vertices[:, 0],
-                                    vertices[:, 1],
-                                    "--",
-                                    color=colour,
-                                    linewidth=0.65,
-                                    alpha=0.65,
-                                    label=None,
-                                    offset=gle_offset,
-                                    data_name=f"{token}_guide_{colour}",
-                                )
-                    ax.errorbar(
-                        t_data,
-                        y_data,
-                        yerr=y_err,
-                        linestyle="none",
-                        marker="o",
-                        color=data_color,
-                        markersize=4,
-                        capsize=2,
-                        label=data_label,
-                        offset=gle_offset,
-                        data_name=token,
-                    )
+                    else:
+                        ax.errorbar(
+                            t_data,
+                            y_data,
+                            yerr=y_err,
+                            linestyle="none",
+                            marker="o",
+                            color=data_color,
+                            markersize=4,
+                            capsize=2,
+                            label=data_label,
+                            offset=gle_offset,
+                            data_name=token,
+                        )
 
             fit_path = gle_path.parent / f"{token}.fit"
             if t_fit is not None and y_fit is not None:
@@ -221,7 +210,12 @@ class PlotGleSnapshot(PlotExportData):
                 written_files.append(fit_path)
 
                 fit_label = fit.get("label", "Fit")
-                if is_multi or suppress_subplot_labels:
+                if self.connect_points:
+                    identity = f"{safe_label} - {fit_label}" if is_multi else fit_label
+                    fit_label = self._sanitize_gle_text(f"Fit: {identity}")
+                    if suppress_subplot_labels:
+                        fit_label = None
+                elif is_multi or suppress_subplot_labels:
                     fit_label = None
                 else:
                     fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
@@ -233,7 +227,8 @@ class PlotGleSnapshot(PlotExportData):
                     x_fit,
                     y_fit,
                     color=fit_color,
-                    linewidth=1.6,
+                    linewidth=2.0 if self.connect_points else 1.6,
+                    zorder=2,
                     label=fit_label,
                     offset=gle_offset,
                     data_name=f"{token}_fit",
@@ -265,7 +260,53 @@ class PlotGleSnapshot(PlotExportData):
         ax.set_ylim(*self.y_limits[axis_key])
 
         if show_legend:
-            ax.legend(loc="best")
+            if self.connect_points:
+                ax.legend(loc="best", compact=True)
+            else:
+                ax.legend(loc="best")
+
+    def _plot_connected_time_data(self, ax, payload, token, color, label, offset):
+        """Keep source tables separate from gapped, confidence-coloured display paths."""
+        data = payload["data"]
+        time, values = np.asarray(data["t"]), np.asarray(data["y"])
+        error = np.zeros_like(values) if data["err"] is None else np.asarray(data["err"])
+        low = np.asarray(payload.get("connector_low_mask", np.zeros_like(values, dtype=bool)))
+        for mask, colour in [(~low, color), (low, "gray")]:
+            geometry = ConnectorGeometry(time, values, error, mask)
+            vertices = geometry.vertices(self.x_limits, None)
+            if not vertices.size:
+                continue
+            # The labelled line carries the combined key glyph; opaque observations
+            # are drawn above fits. GLE's line API has no independent alpha channel.
+            ax.plot(
+                vertices[:, 0],
+                vertices[:, 1],
+                "--",
+                color=colour,
+                linewidth=0.65,
+                marker="o",
+                markersize=4,
+                label=label,
+                offset=offset,
+                zorder=1.6,
+                data_name=f"{token}_guide_{colour}",
+            )
+            label = None
+            indices = geometry.indices
+            ax.errorbar(
+                time[indices],
+                values[indices],
+                yerr=error[indices],
+                linestyle="none",
+                marker="o",
+                color=colour,
+                markersize=4,
+                capsize=2,
+                label=None,
+                offset=offset,
+                zorder=3,
+                data_name=f"{token}_points_{colour}",
+            )
 
     @staticmethod
     def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
