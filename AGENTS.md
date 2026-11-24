@@ -33,16 +33,16 @@ and provenance come before features: scientists read its results, commits, issue
    strings verbatim and updates its screenshot scenario.
 5. Run focused tests through the harness, never bare pytest. Validate and review the full diff
    before pushing or opening a PR.
-6. Open a PR with an imperative title, the body from `.github/PULL_REQUEST_TEMPLATE.md`
-   (`gh pr create --body` does not apply it) and `Closes #n`.
+6. Open a PR with an imperative title and `.github/PULL_REQUEST_TEMPLATE.md` body (not automatic
+   with `gh pr create --body`). Use `Refs #n` until the whole issue is satisfied, then `Closes #n`.
 7. After a PR with user-visible changes merges, propose a release per `RELEASING.md`: suggest
    the version and bump with a one-line reason, then wait. Never cut one unprompted.
 
 ## Issues hold the plans
 
 - Plans, roadmaps, studies, audits, decision logs, investigations and evaluation results live in
-  GitHub issues. Retired planning locations stay empty; the structural check rejects
-  their reintroduction.
+  GitHub issues. `CONTRIBUTING.md` defines issue status and monitoring. The structural check
+  rejects retired planning locations.
 - An issue states the problem, change, tests, docs and decisions taken, enough to start from.
 - What outlives the work moves into the repository as an invariant comment, a regression test
   or a paragraph in the owning doc. The reasoning behind a decision goes in the PR body.
