@@ -78,6 +78,9 @@ not install every package it lists.
 Optional dependencies
 ~~~~~~~~~~~~~~~~~~~~~
 
+Extra-install commands below run from the repository checkout described under
+:ref:`installation-methods`. Asymmetry itself is not available from PyPI.
+
 For GUI support:
 
 * PySide6 >= 6.5
@@ -109,7 +112,7 @@ For headless plots and NeXus loading in the command-line workflow and AI-agent
 skill:
 
 * matplotlib >= 3.7, h5py >= 3.8 — installed together as the ``agent`` extra
-  (``pip install "asymmetry[agent]"``). See :doc:`/reference/agent_workflow`.
+  (``python -m pip install ".[agent]"``). See :doc:`/reference/agent_workflow`.
 
 For GLE export support:
 
@@ -117,7 +120,7 @@ For GLE export support:
 
    .. code-block:: bash
 
-       pip install "asymmetry[gle]"
+       python -m pip install ".[gle]"
 
   To install the script generator separately, use ``pip install gleplot==6.0.0``.
 
@@ -135,6 +138,8 @@ For GLE export support:
   actually GLE — a path that cannot run (or is not GLE) is rejected with
   the reason shown in the dialog, rather than saved and left to fail at
   export time.
+
+.. _installation-methods:
 
 Installation methods
 --------------------

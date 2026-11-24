@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from asymmetry.core.data import Histogram
-from asymmetry.core.transform import apply_grouping, compute_asymmetry, estimate_alpha
+from asymmetry.core.transform import apply_grouping_aligned, compute_asymmetry, estimate_alpha
 
 
 def main() -> None:
@@ -24,8 +24,8 @@ def main() -> None:
         counts = rng.poisson(np.clip(scale * base_backward, 1.0, None)).astype(float)
         histograms.append(Histogram(counts=counts, bin_width=0.01))
 
-    forward = apply_grouping(histograms, [0, 1, 2, 3])
-    backward = apply_grouping(histograms, [4, 5, 6, 7])
+    forward = apply_grouping_aligned(histograms, [0, 1, 2, 3])
+    backward = apply_grouping_aligned(histograms, [4, 5, 6, 7])
 
     alpha = estimate_alpha(forward, backward, first_good_bin=5, last_good_bin=160)
     asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)

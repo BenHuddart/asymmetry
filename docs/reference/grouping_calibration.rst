@@ -271,20 +271,18 @@ Where each function lives
   return no added uncertainty; the ratio reports first-order propagation.
   The simple form raises ``CorrectionUnavailableError`` for empty inputs,
   nonpositive integrals or an unrepresentable ratio; it has no default result.
-* ``apply_grouping(histograms, group_indices)``
-  (``asymmetry.core.io.nexus``; also re-exported from
-  ``asymmetry.core.transform``) — sums the listed detector histograms into one
-  grouped counts array. ``group_indices`` are **0-based** indices into the
-  run's histogram list.
+* :func:`~asymmetry.core.transform.grouping.group_forward_backward`
+  (``asymmetry.core.transform``) — resolves effective detector membership and
+  aligns the selected pair on common support. For already compatible synthetic
+  histograms, ``apply_grouping_aligned(histograms, group_indices)`` sums a group
+  using **0-based** histogram indices. Use the workflow API for a full reduction.
 * :func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`
   (``asymmetry.core.transform``) — the standard fixed-width pair asymmetry
   :math:`(F - \alpha B)/(F + \alpha B)` with a chosen :math:`\alpha`; returns
   ``(asymmetry, error)``.
-* ``binned_fb_asymmetry`` (``asymmetry.core.representation.time``) — the
-  variable / constant-error binning path (it raises on the ``"fixed"`` binning
-  mode; use ``compute_asymmetry`` for ordinary fixed-width bins).
-* ``slice_to_good_window`` (``asymmetry.core.data.combine``) — trim a computed
-  asymmetry/error pair to the good-bin window.
+* ``binned_fb_asymmetry`` (``asymmetry.core.transform.rebin``) — bins
+  grouped counts before forming the ratio, for fixed, variable, or
+  constant-error binning.
 * ``prepare_histograms_with_deadtime`` (``asymmetry.core.transform.deadtime``)
   — apply signed deadtime coefficients before grouping; invalid inputs or a
   singular inverse raise ``DeadtimeCorrectionError``.
@@ -301,28 +299,26 @@ Where each function lives
 Minimal workflow
 ~~~~~~~~~~~~~~~~~
 
+Use your own ``calibration.nxs`` file with the appropriate reader extra and a
+signal suitable for the count-ratio method. The first acquired period and the
+file's selected detector pair are used:
+
 .. code-block:: python
 
+   from dataclasses import replace
+
    from asymmetry.core.io import load
-   from asymmetry.core.transform import (
-       apply_grouping,
-       estimate_alpha,
-       compute_asymmetry,
+   from asymmetry.core.workflow import (
+       CalibrationOptions, ReductionSettings, calibrate_run, reduce_run,
    )
 
-   ds = load("MUSR00044989.nxs")
-   histograms = ds.run.histograms
+   ds = load("calibration.nxs", period=1)
+   settings = ReductionSettings(deadtime="off", background="none", rebin=1)
+   calibration = calibrate_run(ds, settings, CalibrationOptions(method="ratio"))
+   reduced = reduce_run(ds.run, replace(settings, alpha=calibration.result))
+   time, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
 
-   # MUSR F/B grouping: detectors 1–32 = Back, 33–64 = Fwd (1-based);
-   # apply_grouping takes 0-based histogram indices.
-   backward = apply_grouping(histograms, list(range(0, 32)))    # detectors 1–32
-   forward = apply_grouping(histograms, list(range(32, 64)))    # detectors 33–64
-
-   alpha = estimate_alpha(forward, backward)   # ≈ 1.103 for this run
-   asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-
-For the lower-level grouping/asymmetry APIs (deadtime-first ordering, the error
-model, PSI background correction) see :doc:`data_processing`.
+For correction settings and the uncertainty model, see :doc:`data_processing`.
 
 Compared with other programs
 ----------------------------
