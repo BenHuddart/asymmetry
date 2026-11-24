@@ -13,7 +13,7 @@ the same runs were published by Amores *et al.*, J. Mater. Chem. A **4**, 1729
 (2016), so the analysis here has a paper-grade target to aim at.
 
 Its synthetic sibling, :doc:`lf_decoupling_dynamics`, builds the same story on a
-textbook Ag decoupling series and works through the static-versus-dynamic
+generic Gaussian-field decoupling series and works through the static-versus-dynamic
 formalism in detail. Read that page for the theory of Kubo–Toyabe decoupling;
 this page is the real-data counterpart and concentrates on *why you need a
 global fit at all*, and on the practical mechanics of tying parameters across a
@@ -415,7 +415,7 @@ Cross-references
 ----------------
 
 - :doc:`lf_decoupling_dynamics` — the synthetic sibling: the static-versus-
-  dynamic Kubo–Toyabe formalism behind LF decoupling, worked on a textbook Ag
+  dynamic Kubo–Toyabe formalism behind LF decoupling, worked on a generic Gaussian-field
   series.
 - :doc:`calibration_grouping_emu` — the EMU grouping profile and α calibration
   used in Step 1.

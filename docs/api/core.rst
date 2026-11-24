@@ -175,7 +175,7 @@ and phase simulation, and the promoted screenshot-archetype builders.
 Archetype presets
 ~~~~~~~~~~~~~~~~~~
 
-One-click textbook archetypes (Ag Kubo–Toyabe, EuO T-scan, F-μ-F, YBCO)
+One-click textbook archetypes (generic Kubo–Toyabe, EuO T-scan, F-μ-F, YBCO)
 that generate badged synthetic runs through the simulate pipeline.
 
 .. automodule:: asymmetry.core.simulate_presets

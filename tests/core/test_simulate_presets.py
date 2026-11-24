@@ -40,6 +40,20 @@ class TestPresetRegistry:
         # No bare "Eq." / "equation" citation (study standing rule).
         assert "eq" not in reference.lower()
 
+    @pytest.mark.parametrize("key", ["ag_zf_kt", "ag_lf_decoupling"])
+    def test_generic_kt_has_no_material_attribution(self, key) -> None:
+        preset = ARCHETYPE_PRESETS[key]
+        assert preset.label.startswith("Generic")
+        assert "illustrative" in preset.description
+        for run in build_preset_runs(key):
+            provenance = run.metadata["simulation"]
+            assert provenance["preset"] == key
+            assert provenance["preset_label"] == preset.label
+            assert "illustrative" in provenance["preset_description"]
+            assert provenance["parameters"]["Delta"] == 0.39
+            assert "Ag" not in run.metadata["title"]
+            assert "silver" not in run.metadata["title"].lower()
+
     @pytest.mark.parametrize("key", list(ARCHETYPE_PRESETS))
     def test_runs_are_badged_synthetic(self, key) -> None:
         for run in build_preset_runs(key):

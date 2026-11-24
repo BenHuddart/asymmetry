@@ -1,4 +1,4 @@
-"""A malformed owned project is rejected beside an intact unsaved Ag analysis."""
+"""A malformed owned project is rejected beside an intact unsaved Gaussian-field analysis."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QMessageBox
 
-from ..data import make_ag_zf_gkt
+from ..data import make_generic_zf_gkt
 from ._base import Scenario, register
 
 
 class ProjectRejectionScenario(Scenario):
     name = "project_rejection"
-    description = "Malformed project rejection with unsaved synthetic Ag data retained."
+    description = "Malformed project rejection with unsaved synthetic Gaussian-field data retained."
     size = (1200, 760)
 
     def build(self):
@@ -23,7 +23,7 @@ class ProjectRejectionScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        dataset = make_ag_zf_gkt()
+        dataset = make_generic_zf_gkt()
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         window._mark_dirty()

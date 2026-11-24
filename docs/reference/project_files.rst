@@ -65,7 +65,7 @@ incomplete-project confirmation. This deliberately partial restore does not roll
 back to the outgoing session.
 
 .. image:: /_generated/screenshots/project_rejection.png
-   :alt: A contextual malformed-project error in the log with retained unsaved synthetic Ag data.
+   :alt: A contextual malformed-project error in the log with retained unsaved synthetic Gaussian-field data.
 
 Saving is crash-safe: the new content is written to a temporary file
 next to the target and only swapped into place once it is fully flushed

@@ -91,10 +91,10 @@ LongitudinalFieldKT
 -------------------
 
 .. image:: /_generated/screenshots/lf_kt_series_plot.png
-   :alt: Overlay of five Ag LF Kubo–Toyabe runs spanning the decoupling regime
+   :alt: Overlay of five generic LF Kubo–Toyabe runs spanning the decoupling regime
    :width: 100%
 
-*Synthetic Ag polycrystal LF series with Δ ≈ 0.39 μs⁻¹ and B_L = 0, 5, 10,
+*Synthetic Gaussian-field LF series with Δ ≈ 0.39 μs⁻¹ and B_L = 0, 5, 10,
 25, 50 G. The 0 G run shows the characteristic 1/3 tail; as B_L grows the
 muon spins decouple from the nuclear dipolar field and the polarisation
 recovers toward unity.*
@@ -198,12 +198,12 @@ DynamicGaussianKT
 -----------------
 
 .. image:: /_generated/screenshots/dynamic_kt_rate_series.png
-   :alt: Synthetic Gaussian strong-collision rate sweep at the Ag nuclear-field width
+   :alt: Synthetic Gaussian strong-collision rate sweep at the illustrative Gaussian-field width
    :width: 100%
 
 *An imposed rate sweep at Δ = 0.39 μs⁻¹: ν = 0, 0.1, 0.5, 2, and 20 MHz.
 Intermediate fluctuations relax the tail; fast fluctuations narrow the decay.
-These rates illustrate the model, rather than measured Ag diffusion.*
+These rates illustrate the model, rather than measured diffusion in any material.*
 
 
 The strong-collision (Markovian) dynamic generalisation of the Gaussian
@@ -415,9 +415,9 @@ the dip and soften the tail, and a single spectrum rarely distinguishes them
    :alt: Synthetic Gaussian-width distributions at zero and longitudinal field
    :width: 100%
 
-   *Synthetic width distributions at the Ag nuclear-field scale. The imposed
+   *Synthetic width distributions at the illustrative Gaussian-field scale. The imposed
    broadening illustrates a distribution of static widths, rather than a
-   measurement of disorder in Ag.*
+   measurement of disorder in a material.*
 
 The numerical target is absolute error :math:`\leq10^{-5}` in normalised
 polarisation. Sampled checks cover :math:`0\leq w_\Delta\leq1`,

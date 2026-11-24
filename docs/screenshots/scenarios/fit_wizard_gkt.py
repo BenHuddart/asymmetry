@@ -1,11 +1,7 @@
-"""Converged single Gaussian Kubo–Toyabe fit on ZF Ag polycrystal.
+"""Converged single Gaussian Kubo–Toyabe fit on ZF Gaussian-field.
 
-Ag is the canonical nuclear-dipolar reference sample at every μSR facility:
-the ZF static Gaussian Kubo–Toyabe (Δ≈0.39 μs⁻¹) used here is the function
-introduced by Kubo & Toyabe in 1966 and discussed in Blundell et al. Ch 5.2
-(eq 5.13). The fit panel is configured with ``StaticGKT_ZF + Constant`` and
-the fit is run so the screenshot captures the parameter table populated
-with fitted values and uncertainties.
+The static Gaussian Kubo–Toyabe uses an illustrative Δ=0.39 μs⁻¹.
+The width is chosen for teaching, without a material attribution.
 
 Marked as ``requires_fit = True`` because iminuit/numba breaks on
 numpy ≥ 2.3 on dev environments; CI keeps numpy < 2.3 via constraints.txt.
@@ -16,13 +12,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_zf_gkt
+from ..data import make_generic_zf_gkt
 from ._base import Scenario, _process_events_for, register
 
 
 class FitWizardGktScenario(Scenario):
     name = "fit_wizard_gkt"
-    description = "Single-fit panel with a converged Gaussian Kubo–Toyabe fit on Ag."
+    description = "Single-fit panel with a converged Gaussian Kubo–Toyabe fit on generic fields."
     size = (1500, 920)
     requires_fit = True
 
@@ -34,7 +30,7 @@ class FitWizardGktScenario(Scenario):
         window._on_fit()
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        dataset = make_ag_zf_gkt()
+        dataset = make_generic_zf_gkt()
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
 
