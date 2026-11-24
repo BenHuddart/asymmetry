@@ -134,6 +134,19 @@ is staged for the selected run until **Apply**; cancelling the Grouping window
 also discards that choice. The **Analysis** menu records the identity directly;
 open **Grouping** to apply the retained settings or select another grouping.
 
+One run's identity can be pending in each Grouping transaction. Reviewing another
+run's identity shows **Pending instrument identity** and retains the first choice
+and all authored settings. **Apply** or cancel the Grouping window before reviewing
+another run's identity. The pending run's identity can still be reviewed again.
+This applies to both **Instrument identity…** and instrument changes in
+**Detector Layout**; a blocked layout proposal also leaves its presets and groups
+unapplied.
+
+.. figure:: /_generated/screenshots/grouping_pending_identity.png
+   :alt: Message retaining run 8104's pending identity before another run is reviewed
+
+   Apply or cancel the pending identity transaction before reviewing another run.
+
 Changing the instrument in **Detector Layout** preserves the current groups.
 Accepting a changed identity opens confirmation of that fixed proposal; use
 **Instrument identity…** to review other choices. Clicking **Apply Grouping**

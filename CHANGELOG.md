@@ -116,6 +116,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve a pending instrument identity choice by blocking another run's identity
+  review until the Grouping window is applied or cancelled.
+
 - Exclude fitted bound hits from Global Fit Wizard surrogate sharing proposals
   while retaining readable bound diagnostics.
 

@@ -123,6 +123,16 @@ def confirm_instrument_choice(self, selection=None) -> bool:
     """Stage a reviewed identity while preserving the selected run's authored settings."""
     from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
 
+    if self._instrument_edit is not None and (
+        self._instrument_edit.run_number != int(self._run.run_number)
+    ):
+        QMessageBox.information(
+            self,
+            "Pending instrument identity",
+            f"An instrument identity change is pending for run {self._instrument_edit.run_number}. "
+            "Apply or cancel the Grouping window before reviewing another run's identity.",
+        )
+        return False
     self._sync_draft_from_form()
     run = self._run
     if (
