@@ -1,7 +1,19 @@
 EMU detector grouping and α calibration
 =======================================
 
-This is the recommended first walkthrough for new users. It covers the
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own transverse-field calibration run, representative sample runs, and
+   the detector timing, grouping, and dead-time information for your instrument.
+   The EMU run numbers below identify the demonstration, not files included with
+   Asymmetry. Replace them with your runs and check the instrument defaults before
+   applying a profile to a series.
+
+This demonstration covers the
 everyday setup every time-domain analysis depends on: loading a run,
 defining the forward/backward detector grouping, calibrating
 :math:`\alpha` from a transverse-field (TF) run, turning on dead-time
@@ -203,8 +215,8 @@ simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
    from asymmetry.core.io import load
    from asymmetry.core.workflow import CalibrationOptions, ReductionSettings, calibrate_run
 
-   # Requires your local EMU calibration file and its HDF4 reader extra.
-   tf = load("Basics/data/EMU00018854.nxs", period=1)
+   # Replace with your TF calibration file; install its HDF5/HDF4 reader extra.
+   tf = load("your_tf_calibration.nxs", period=1)
    outcome = calibrate_run(
        tf, ReductionSettings(), CalibrationOptions(method="diamagnetic")
    )

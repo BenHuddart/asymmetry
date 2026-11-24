@@ -13,6 +13,16 @@ crossings — is exactly the one used on real data. The full feature reference
 lives at :ref:`knight-shift`; the per-orientation grouped fit that feeds it is
 documented in :doc:`/reference/grouped_time_domain_fitting`.
 
+Using your own measurements
+---------------------------
+
+This chapter illustrates the method with synthetic spectra. For a measured
+angle scan, use transverse-field runs with known crystal orientations, a
+reference frequency or field calibration, and consistent temperature and
+instrument settings. Replace the example angles and component starting values
+with your own. Check how components are identified through crossings before
+interpreting a fitted tensor as evidence for a stopping site.
+
 Physical motivation
 -------------------
 

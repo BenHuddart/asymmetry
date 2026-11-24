@@ -1,6 +1,18 @@
 Temperature scan through a magnetic transition
 ==============================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own zero-field temperature series, with measured sample temperatures
+   and the instrument calibration. The EuO, nickel, and molecular-magnet runs below
+   identify the demonstrations. Replace their run selections and temperature
+   assignments with your own; check each spectrum before choosing a precession
+   model or fitting a transition trend.
+
 This chapter is a worked example showing how Asymmetry handles a
 zero-field (ZF) μSR temperature scan through a magnetic ordering
 transition. It runs on the real muon-school EuO dataset — the PSI GPS
