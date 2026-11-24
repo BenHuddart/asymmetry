@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clarify the detector deadtime table limitation in Poisson count fitting and
+  document the supported Gaussian alternative and reference-program workflows.
+
 - Use documented source defaults for fresh unambiguous instruments and the absent-table
   longitudinal MuSR grouping; retain authored single-group raw acquisition for explicit repair.
 

@@ -320,6 +320,11 @@ Current limitations
 * The grouped plot shows group traces, not detector-by-detector traces.
 * Detector phase tables and detector quadrature workflows are out of scope.
 * The count-domain lifetime term is fixed to the physical muon lifetime.
+* Grouped Poisson fits do not automatically incorporate the grouping's detector
+  deadtime table into raw-count predictions. Use Gaussian weighting for
+  deadtime-corrected observations. The scalar DT₀ model is a separate option,
+  not an automatic replacement for a heterogeneous table; see
+  :ref:`count-fit-deadtime-table-limit`.
 
 Practical notes
 ---------------
@@ -330,3 +335,13 @@ Practical notes
 * If grouped mode reports that no valid grouped traces are available, check the
   active dataset has raw histograms plus at least two detector groups defined in
   **Grouping**.
+
+Compared with other programs
+----------------------------
+
+WiMDA 1.326 **All Grps**, Mantid 6.16.1 multidomain fitting, and musrfit 1.12.1
+histogram fits provide ways to share physics while retaining group- or
+detector-specific parameters. This general fitting capability is distinct from
+automatically applying a detector deadtime table in the expected raw counts.
+The examined routes and their objective differences are described in
+:ref:`comparison-count-deadtime-models`.
