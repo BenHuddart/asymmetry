@@ -5,8 +5,9 @@ Asymmetry organises an analysis around a small number of objects. They map onto
 the physics of a muon experiment rather than onto files or windows, and the same
 objects appear whether you drive the program from the graphical interface or
 script against the :mod:`asymmetry.core` API. This page introduces them once, so
-that the rest of the documentation can refer to them without ceremony. For the
-underlying physics, see :doc:`/explanation/musr_primer`.
+that the rest of the documentation can refer to them without ceremony. For a
+first analysis without measurement files, follow :doc:`quickstart`. For
+the underlying physics, see :doc:`/explanation/musr_primer`.
 
 Runs and datasets
 -----------------
@@ -25,7 +26,8 @@ periods return a list. Select an acquired period explicitly with
 before accessing ``.run``; see :ref:`selecting-periods`. Provenance travels with
 the dataset — every correction is recorded rather
 than baked into the histograms, so a saved analysis reproduces the same numbers
-when it is reopened.
+when it is reopened with the required source files and compatible recorded
+settings.
 
 Detector grouping
 -----------------
