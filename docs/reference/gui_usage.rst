@@ -415,23 +415,74 @@ one is the only thing that forgets held limits; project files otherwise
 remember each axis's Auto/Held state (and its held value), so reopening a
 saved project restores the same view.
 
+Connecting data points
+~~~~~~~~~~~~~~~~~~~~~~
+
+Fast oscillations can be easier to follow with **View → Plot display → Connect
+data points** enabled. Thin short-dashed segments join neighbouring samples
+as a guide to the eye; points and error bars remain visible above the stronger
+solid fit curves. Fits have explicit ``Fit:`` legend labels, and each data
+legend glyph includes its marker, error bar, and connector.
+
+The setting applies to **F-B asymmetry** and **Individual groups**, including
+projections, overlays, and waterfall plots. It is unavailable for **Raw counts**,
+integral scans, frequency spectra, and reconstruction diagnostics. Each project
+saves its own setting; new projects and older files start with it off.
+
+.. image:: /_generated/screenshots/data_connectors.png
+   :alt: Short-dashed data connectors and a stronger solid fit to synthetic EuO precession
+   :width: 100%
+
+*Synthetic EuO precession at 30 K, with a weighted oscillatory fit. The
+straight sample-to-sample guide and smooth fit remain distinct.*
+
+Connectors never cross non-finite or excluded samples, confidence-category
+boundaries, or different traces. A time reset or a step exceeding 1.5 times
+the median positive source time step breaks the guide at a sampling gap.
+Only straight display segments are added; no observations are smoothed,
+created, or extrapolated.
+
 Dense-data display (decimation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Very dense traces (e.g. high-resolution ROOT histograms or many-point
 spectra) are *display-decimated*: only a bounded number of points is
 rendered so panning, zooming, and switching runs stay responsive. A small
-corner chip — for example ``4.0k of 1.2M pts`` — appears whenever the
-current view is decimated, and disappears once you zoom in far enough that
-every visible point is drawn.
+corner chip — for example ``4.0k of 1.2M pts`` — counts the observation
+markers and error bars when they are decimated, and disappears once you zoom
+in far enough that every visible point is drawn. Connector geometry has a
+separate display-resolution budget.
 
 Decimation affects the display only. Fits, transforms (FFT, MaxEnt,
-moments) and exports always use the full-resolution data.
+moments), and numerical exports always use the full-resolution data.
 
 Time-domain scatter is decimated by uniform sampling, which is an unbiased
 visual sample of noisy data. Frequency-domain spectra instead keep the
 minimum and maximum of each display bucket, so a narrow spectral peak can
 never vanish from the screen.
+
+Data connectors use a separate selection from the source, with two horizontal
+buckets per physical pixel. Each uninterrupted bucket retains the first, last,
+minimum, and maximum samples in source order (`M4 selection
+<https://www.vldb.org/pvldb/vol7/p797-jugel.pdf>`_). Zooming, panning,
+resizing, or changing display scale selects again from that source; close
+zooms draw every eligible sample and retain a clipping neighbour at each edge.
+The uniformly sampled marker subset is never used to construct connectors.
+
+At unresolved scales the connector shows a dense range, rather than suggesting
+a slow oscillation. The short-dashed overview can look lighter or less noisy
+than the full path because omitted wiggles change stroke density and dash
+placement. M4's binary-line guarantee does not imply pixel-identical dashed,
+antialiased output. The overview does not establish the number or phase of unresolved cycles;
+zoom in to inspect them. Disabling **Options → Enable plot decimation** draws
+the full visible source path as well as all visible markers and error bars.
+
+Raster figure exports select connector geometry at the output pixel resolution.
+Vector and GLE figure exports draw the full visible connector path. All keep the
+selected short-dashed style, with points, error bars, and solid fits; numerical
+exports add no interpolated samples. Published plot arrays and their artists
+are reused for viewport changes; changing data, grouping, bunching, projections,
+frames, labels, annotations, or fits publishes a new view.
 
 Legend label field
 ~~~~~~~~~~~~~~~~~~

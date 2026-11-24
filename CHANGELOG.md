@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add project-local **View → Plot display → Connect data points** for time-domain
+  spectra, with short-dashed guides, source-based dense selection, and reusable viewport artists.
+
 - Select GPS Individual or Hardware-combined readouts explicitly, retaining saved
   groups and blocking analysis of declared shared-event or unresolved Mobile overlaps.
 

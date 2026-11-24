@@ -343,6 +343,7 @@ from asymmetry.gui.utils.scientific_input import map_period_inputs
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.plot_display_menu import PlotDisplayControl
 from asymmetry.gui.widgets.rotating_frame_bar import FRAME_METADATA_KEY
 from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
 from asymmetry.gui.windows.gle_preview import close_gle_previews
@@ -1320,6 +1321,7 @@ class MainWindow(QMainWindow):
 
         # View
         view_menu = mb.addMenu("&View")
+        self._plot_display_menu = view_menu.addMenu("Plot display")
         view_menu.addAction("Reset layout", self._reset_layout)
         scale_menu = view_menu.addMenu("UI Scale")
         for scale in _UI_SCALE_OPTIONS:
@@ -1726,16 +1728,10 @@ class MainWindow(QMainWindow):
         # Covers the frequency plot while a lazy FFT recompute is in flight, so
         # the panel never shows a half-populated spectrum as if it were final.
         self._frequency_overlay = LoadingOverlay(self._frequency_plot_panel)
-        if hasattr(self._plot_panel, "set_decimation_enabled"):
-            self._plot_panel.set_decimation_enabled(
-                self._plot_decimation_is_enabled(),
-                redraw=False,
-            )
-        if hasattr(self._frequency_plot_panel, "set_decimation_enabled"):
-            self._frequency_plot_panel.set_decimation_enabled(
-                self._plot_decimation_is_enabled(),
-                redraw=False,
-            )
+        self._plot_panel.set_decimation_enabled(self._plot_decimation_is_enabled(), redraw=False)
+        self._frequency_plot_panel.set_decimation_enabled(
+            self._plot_decimation_is_enabled(), redraw=False
+        )
         # The integral-scan (ALC) representation gets its own central panel:
         # the scan view's plot section relocates into it (the analysis section
         # goes to the Parameters dock below), with the integration-window strip
@@ -1749,6 +1745,8 @@ class MainWindow(QMainWindow):
             scan_panel=self._integral_scan_panel,
         )
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
+        PlotDisplayControl(self._plot_display_menu, self._plot_panel, self._plot_workspace)
+        self._plot_panel.connect_points_changed.connect(self._mark_dirty)
         if hasattr(self._plot_workspace, "active_view_changed"):
             self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
         self.setCentralWidget(self._plot_workspace)
@@ -4357,12 +4355,8 @@ class MainWindow(QMainWindow):
         """Persist and apply the display-decimation policy for plot panels."""
         enabled = bool(checked)
         self._settings.setValue(_PLOT_DECIMATION_SETTINGS_KEY, enabled)
-        if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "set_decimation_enabled"):
-            self._plot_panel.set_decimation_enabled(enabled)
-        if hasattr(self, "_frequency_plot_panel") and hasattr(
-            self._frequency_plot_panel, "set_decimation_enabled"
-        ):
-            self._frequency_plot_panel.set_decimation_enabled(enabled)
+        self._plot_panel.set_decimation_enabled(enabled)
+        self._frequency_plot_panel.set_decimation_enabled(enabled)
         state = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")

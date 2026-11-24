@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from asymmetry.gui.utils.connector_geometry import ConnectorGeometry
 from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     dedup_export_token,
@@ -24,6 +25,7 @@ class PlotGleSnapshot(PlotExportData):
     y_limits: dict = field(default_factory=dict)
     figsize: tuple[float, float] = (6.4, 4.8)
     stacked: bool = False
+    connect_points: bool = field(default=False, kw_only=True)
 
     def build(self, glp, gle_path, export_dir, *, cancelled=None):
         snapshot = replace(self, cancelled=cancelled)
@@ -177,6 +179,28 @@ class PlotGleSnapshot(PlotExportData):
                                 data_name=f"{token}_band",
                             )
                 else:
+                    if self.connect_points:
+                        time = np.asarray(t_data)
+                        values = np.asarray(y_data)
+                        error = np.zeros_like(values) if y_err is None else np.asarray(y_err)
+                        low = np.asarray(
+                            payload.get("connector_low_mask", np.zeros_like(values, dtype=bool))
+                        )
+                        for mask, colour in [(low, "gray"), (~low, data_color)]:
+                            geometry = ConnectorGeometry(time, values, error, mask)
+                            vertices = geometry.vertices(self.x_limits, None)
+                            if vertices.size:
+                                ax.plot(
+                                    vertices[:, 0],
+                                    vertices[:, 1],
+                                    "--",
+                                    color=colour,
+                                    linewidth=0.65,
+                                    alpha=0.65,
+                                    label=None,
+                                    offset=gle_offset,
+                                    data_name=f"{token}_guide_{colour}",
+                                )
                     ax.errorbar(
                         t_data,
                         y_data,

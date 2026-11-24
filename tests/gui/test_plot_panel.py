@@ -89,22 +89,18 @@ def _set_pol(panel: PlotPanel, axes: list[str], current: str | None) -> None:
 
 
 def _capture_errorbar_dots(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
-    """Record every time-domain trace drawn through the shared dots helper.
-
-    Each record mirrors the old ``ax.errorbar(x, y, yerr=..., **kw)`` capture
-    shape — ``args == (x, y)`` and ``kwargs`` carrying ``yerr`` plus the style
-    kwargs — so assertions written against the errorbar idiom read unchanged.
-    """
-    import asymmetry.gui.panels.plot_panel as plot_panel_module
+    """Record the displayed samples on both initial drawing and artist updates."""
+    import asymmetry.gui.utils.time_plot_view as view
 
     calls: list[dict[str, object]] = []
-    original = plot_panel_module.add_errorbar_dots
+    original = view.update_errorbar_dots
 
-    def _capture(ax, x, y, yerr, **kwargs):
-        calls.append({"args": (x, y), "kwargs": {"yerr": yerr, **kwargs}})
-        return original(ax, x, y, yerr, **kwargs)
+    def capture(marker, bars, x, y, yerr):
+        kwargs = {"yerr": yerr, "color": marker.get_color(), "label": marker.get_label()}
+        calls.append({"args": (x, y), "kwargs": kwargs})
+        return original(marker, bars, x, y, yerr)
 
-    monkeypatch.setattr(plot_panel_module, "add_errorbar_dots", _capture)
+    monkeypatch.setattr(view, "update_errorbar_dots", capture)
     return calls
 
 
