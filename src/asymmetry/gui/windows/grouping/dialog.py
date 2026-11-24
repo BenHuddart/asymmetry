@@ -155,6 +155,7 @@ from asymmetry.gui.windows.grouping.format import (
 from asymmetry.gui.windows.grouping.layout_editor import (
     InstrumentEdit,
     edit_detector_layout,
+    edit_instrument_identity,
     prepare_readout_change,
 )
 from asymmetry.gui.windows.grouping.preview_pane import (
@@ -525,18 +526,10 @@ class GroupingDialog(TimingControls, QDialog):
         profile_row.addWidget(self._instrument_label)
         profile_row.addWidget(self._instrument_combo)
 
-        # The preview + editing target is now driven by the scope-panel
-        # selection (built in the left pane below), so there is no separate
-        # preview-run combo. ``_current_run`` tracks the selected run.
         self._current_run = int(self._reference_dataset.run_number)
         profile_row.addStretch()
 
-        # Persistent editing-target strip, right-aligned in the top row so it
-        # costs the right pane no vertical space: accent-tinted while editing
-        # the profile ("Editing profile 'X' — applies to N runs"), warning-
-        # tinted while editing a single run's override ("Editing override for
-        # run N — this run only"). One of three redundant cues (with the
-        # scope-list row tint and the "override *" chip).
+        # The strip and scope row identify the same profile or run override.
         self._editing_strip = QLabel()
         profile_row.addWidget(self._editing_strip)
         root.addLayout(profile_row)
@@ -559,9 +552,6 @@ class GroupingDialog(TimingControls, QDialog):
         left_layout.addWidget(self._scope_panel)
         self._refresh_scope_panel()
 
-        # Preset row lives in the left column, directly above the group table it
-        # seeds — keeping the top of the dialog to a single full-width row so the
-        # right pane's tabs get the vertical space on small windows.
         preset_row = QHBoxLayout()
         preset_row.setContentsMargins(0, 0, 0, 0)
         preset_row.addWidget(QLabel("Preset"))
@@ -600,6 +590,14 @@ class GroupingDialog(TimingControls, QDialog):
         detector_layout_btn.clicked.connect(self._on_detector_layout)
         left_layout.addWidget(detector_layout_btn)
         left_layout.addStretch()
+        identity_btn = QPushButton("Instrument identity…")
+        identity_btn.setAutoDefault(False)
+        identity_btn.setEnabled(self._run is not None)
+        identity_btn.setToolTip(
+            "Review the selected run's retained identity and current file evidence."
+        )
+        identity_btn.clicked.connect(self._on_instrument_identity)
+        left_layout.addWidget(identity_btn)
         splitter.addWidget(left_pane)
 
         # Right pane
@@ -4465,6 +4463,7 @@ class GroupingDialog(TimingControls, QDialog):
         self._mark_dirty()
         self._refresh_preview()
 
+    _on_instrument_identity = edit_instrument_identity
     _on_detector_layout = edit_detector_layout
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
