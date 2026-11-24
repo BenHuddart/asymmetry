@@ -24,7 +24,7 @@ The window opens with an empty **Data Browser** on the left, a plot in the
 centre, and an **Untitled** project tab above them.
 
 Generate and save the data
--------------------------
+--------------------------
 
 #. Open **File → Generate Synthetic Run…**.
 #. Keep **Template run** set to **Built-in: Ideal pulsed F/B (ISIS-style)**,
@@ -81,7 +81,7 @@ calibration need checking against the instrument and experiment;
 :doc:`/reference/grouping_calibration` explains those choices.
 
 Fit and check the result
------------------------
+------------------------
 
 #. Open **Analysis → Fit**, then click **Wizard…** in the **Single** tab.
 #. If no field direction is recorded, choose **Zero field**. Click **Analyze**
@@ -100,10 +100,16 @@ The fitted ``Lambda`` should be close to the generating value, 0.3 μs⁻¹.
 Counting fluctuations mean the fitted values need not equal the inputs exactly.
 The parameter table includes estimated uncertainties; these describe the fit
 under its model and error assumptions, rather than every possible experimental
-error. Click the fit's χ² chip for its result summary. A reduced χ² near one
+error. Click the fit's χ² indicator for its result summary. A reduced χ² near one
 is expected for this example, but neither convergence nor χ² alone establishes
 that a model is physically appropriate. See :doc:`/reference/assessing_a_fit`
 for the checks to use with your own measurements.
+
+Some late-time bins have too few counts to provide usable asymmetry errors
+and are omitted from this fit. You can still inspect the residual plot. The
+additional residual autocorrelation and FFT checks look for repeating patterns;
+they need an uninterrupted time grid and are unavailable here. Setting the
+plot’s **X:** limit changes the displayed range, not the fitted range.
 
 .. image:: /_generated/screenshots/quickstart_first_fit.png
    :alt: The saved synthetic first analysis, with an exponential-plus-constant fit

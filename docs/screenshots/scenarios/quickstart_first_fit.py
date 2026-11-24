@@ -144,6 +144,9 @@ class QuickstartFirstFitScenario(Scenario):
         directory = TemporaryDirectory(prefix="asymmetry-quickstart-")
         shell = run_quickstart(Path(directory.name))
         finalize(shell, directory.cleanup)
+        page = shell.current_page()
+        page._dock_log.hide()
+        page.resizeDocks([page._dock_fit], [430], Qt.Orientation.Horizontal)
         return shell
 
     def teardown(self, widget):
