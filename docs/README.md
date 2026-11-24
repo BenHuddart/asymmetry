@@ -244,7 +244,7 @@ Code example:
 
 .. code-block:: python
 
-   from asymmetry import load
+   from asymmetry.core.io import load
    dataset = load("data.nxs")
 ```
 

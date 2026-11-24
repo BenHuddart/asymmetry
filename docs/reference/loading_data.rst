@@ -402,9 +402,10 @@ metadata must still be compared. The bounded reference comparisons above retain
 coordinate differences rather than assuming every converted twin is identical.
 
 HDF4 reading needs the optional ``pyhdf`` dependency, installed with the
-``hdf4`` extra::
+``hdf4`` extra from a repository checkout (see
+:doc:`/getting_started/installation`)::
 
-    pip install asymmetry[hdf4]
+    python -m pip install ".[hdf4]"
 
 On **Linux** the ``pyhdf`` wheel bundles the HDF4 C library. On **macOS
 (Apple Silicon)** the PyPI wheel does too (Intel Macs: use conda-forge
