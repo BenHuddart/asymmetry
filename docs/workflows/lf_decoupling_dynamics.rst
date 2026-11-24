@@ -1,6 +1,18 @@
 LF decoupling and static-vs-dynamic field distributions
 =======================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own longitudinal-field series at a stable temperature, with field
+   metadata, instrument calibration, and a zero-field reference where available.
+   The Ca₃Co₂O₆ and Re₆Zr runs below identify the demonstrations. Choose the fit
+   window and candidate models from your own spectra, and check whether the
+   time resolution and field range can distinguish their predictions.
+
 A longitudinal-field (LF) series tests models for the local fields at the muon.
 Static fields can be decoupled by a sufficiently large longitudinal field, but
 slowly fluctuating fields can also give a nearly flat high-field spectrum.

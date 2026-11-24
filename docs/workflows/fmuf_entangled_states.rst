@@ -1,6 +1,18 @@
 F–µ–F entangled states: measuring a bond length with muons
 ==========================================================
 
+.. admonition:: Demonstration and your own data
+
+   This chapter uses private teaching measurements that are not distributed
+   with Asymmetry. For a complete example requiring no measurement files,
+   start with :doc:`/getting_started/quickstart`.
+
+   Use your own zero-field fluoride spectra with sufficient time resolution to
+   resolve the beating, plus an instrument calibration. The PTFE run numbers and
+   bond-length fits below identify the demonstration. Check that an F–µ–F model
+   is appropriate for your sample, then choose the time window and additional
+   relaxation or background terms from your own data.
+
 Most muon-spin experiments read out a *field* — the internal field of a magnet,
 the width of a nuclear-dipolar distribution, the penetration depth of a
 superconductor. This chapter does something different: it reads out a *distance*.
@@ -57,7 +69,7 @@ dipolar coupling frequency* — and hence :math:`r_{\mu F}`.
 The runs
 --------
 
-The corpus example ships 30 MuSR runs collected on 22–23 April 2008 on a Teflon
+The corpus example contains 30 MuSR runs collected on 22–23 April 2008 on a Teflon
 sample. One is a transverse-field calibration run; the rest are a zero-field
 temperature scan.
 
