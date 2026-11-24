@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correct documentation references and inline mathematics, reserve image space,
   wrap tables, and identify the exact source revision behind API links.
 
+- Walk through a complete synthetic first analysis, including fit checks, saved
+  source data, a reopenable project, and a readable result export.
+
 - Align the first-fit walkthrough with current wizard controls and clarify
   period loading, reduction order, and saved-project source dependencies.
 
