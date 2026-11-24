@@ -37,18 +37,18 @@ def _hash_dataset(dataset: MuonDataset) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_make_ag_zf_gkt_shape() -> None:
-    ds = archetypes.make_ag_zf_gkt()
+def test_make_generic_zf_gkt_shape() -> None:
+    ds = archetypes.make_generic_zf_gkt()
     assert isinstance(ds, MuonDataset)
     assert ds.n_points == 480
-    assert ds.metadata["title"] == "ZF Ag polycrystal 20K"
+    assert ds.metadata["title"] == "Generic ZF Gaussian fields 20K"
     assert ds.metadata["temperature"] == 20.0
     assert ds.metadata["field"] == 0.0
     assert ds.run_number == 4101
 
 
-def test_make_ag_lf_decoupling_default_series() -> None:
-    runs = archetypes.make_ag_lf_decoupling()
+def test_make_generic_lf_decoupling_default_series() -> None:
+    runs = archetypes.make_generic_lf_decoupling()
     assert len(runs) == 5
     fields = [ds.metadata["field"] for ds in runs]
     assert fields == [0.0, 5.0, 10.0, 25.0, 50.0]
@@ -56,8 +56,8 @@ def test_make_ag_lf_decoupling_default_series() -> None:
     assert [ds.run_number for ds in runs] == [5201, 5202, 5203, 5204, 5205]
 
 
-def test_make_ag_lf_decoupling_custom_fields() -> None:
-    runs = archetypes.make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+def test_make_generic_lf_decoupling_custom_fields() -> None:
+    runs = archetypes.make_generic_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
     assert len(runs) == 4
     assert [ds.metadata["field"] for ds in runs] == [0.0, 15.0, 50.0, 100.0]
 
@@ -149,7 +149,7 @@ def test_make_generic_tf_for_processing_low_statistics() -> None:
 @pytest.mark.parametrize(
     ("name", "expected_hash"),
     [
-        ("make_ag_zf_gkt", None),
+        ("make_generic_zf_gkt", None),
         ("make_euo_composite", None),
         ("make_pbf2_fmuf", None),
         ("make_generic_tf_for_processing", None),
@@ -168,7 +168,9 @@ def test_single_dataset_hash_is_stable(name: str, expected_hash: str | None) -> 
     # considered stable. For now we just assert intra-run determinism.
 
 
-@pytest.mark.parametrize("name", ["make_ag_lf_decoupling", "make_euo_tf_tscan", "make_emu_vector"])
+@pytest.mark.parametrize(
+    "name", ["make_generic_lf_decoupling", "make_euo_tf_tscan", "make_emu_vector"]
+)
 def test_multi_dataset_hash_is_stable(name: str) -> None:
     factory = getattr(archetypes, name)
     first = factory()
@@ -191,7 +193,7 @@ def test_constants_present() -> None:
     """Pin the physical constants used by the generators so docs-side
     references stay in sync with the implementation."""
     assert archetypes.TC_EUO_K == 69.0
-    assert archetypes.DELTA_AG_PER_US == 0.39
+    assert archetypes.ILLUSTRATIVE_KT_DELTA_PER_US == 0.39
     assert archetypes.R_MUF_ANG == 1.17
     assert archetypes.TC_MGB2_K == 36.0
     assert archetypes.TC_YBCO_K == 90.0

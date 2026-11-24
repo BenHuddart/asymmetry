@@ -2,12 +2,9 @@
 
 Each generator returns one or more :class:`~asymmetry.core.data.MuonDataset`
 instances (or, for parameter-domain models, plain numpy arrays). The data are
-grounded in real materials and parameters drawn from Blundell, De Renzi,
-Lancaster, Pratt, *Muon Spectroscopy: An Introduction* (OUP, 2022) and the
-classic μSR literature, but the numerical values are rounded for clean,
-deterministic documentation. All randomness flows through an explicit
-:class:`numpy.random.Generator` seeded per scenario to keep PNG outputs
-byte-stable across CI runs.
+material-inspired or explicitly generic teaching models. Numerical values are
+chosen for deterministic illustrations, rather than uniformly measured material
+parameters. All randomness flows through an explicitly seeded generator.
 
 Material legend
 ---------------
@@ -17,8 +14,8 @@ Material      Used by                            Textbook reference
 ============  =================================  ==========================
 **EuO**       gui_usage, composite_models,        Ch 6, Fig 6.6 (Tc=69 K
               logbook                             ferromagnet)
-**Ag**        fitting, fit_wizard, lf_kubo,       Ch 5.2 (canonical nuclear
-              global_fit_wizard                   dipolar host, Δ≈0.4 μs⁻¹)
+**Generic**   fitting, fit_wizard, lf_kubo,       Static isotropic Gaussian
+              global_fit_wizard                   fields, chosen Δ=0.39 μs⁻¹
 **MgB₂**      parameter_trending,                 Ch 8 (two-gap SC,
               sc_penetration_depth                Tc=36 K)
 **YBCO**      grouped_time_domain_fitting,        Ch 8/9 (Knight shift &
@@ -41,8 +38,8 @@ from asymmetry.core.simulate import (
     poisson_asymmetry_errors,
 )
 from asymmetry.core.simulate_presets import (
-    DELTA_AG_PER_US,
     GAMMA_MU_MHZ_PER_G,
+    ILLUSTRATIVE_KT_DELTA_PER_US,
     R_MUF_ANG,
     TC_EUO_K,
 )
@@ -88,21 +85,20 @@ def _build_run_with_detector_asymmetries(
 
 
 # ---------------------------------------------------------------------------
-# Static-field thread: Ag polycrystal (nuclear dipolar Kubo–Toyabe)
+# Static-field thread: generic isotropic Gaussian fields (Kubo–Toyabe)
 # ---------------------------------------------------------------------------
 
 
-def make_ag_zf_gkt(seed: int = 23) -> MuonDataset:
-    """ZF Ag polycrystal — static Gaussian Kubo–Toyabe (Δ=0.39 μs⁻¹).
+def make_generic_zf_gkt(seed: int = 23) -> MuonDataset:
+    """Generic static Gaussian Kubo–Toyabe with illustrative Δ=0.39 μs⁻¹.
 
-    Canonical nuclear-dipolar reference sample at PSI/ISIS/TRIUMF — every
-    facility runs Ag as part of routine calibrations. Maps to textbook eq 5.13
-    and Fig 5.5.
+    Isotropic static Gaussian fields, as in Hayano et al., PRB 20, 850 (1979).
+    The width is a teaching choice, not a measured material parameter.
     """
     rng = np.random.default_rng(seed)
     gkt = MODELS["StaticGKT_ZF"].function
     time = _time_axis()
-    clean = gkt(time, A0=24.0, Delta=DELTA_AG_PER_US, baseline=0.3)
+    clean = gkt(time, A0=24.0, Delta=ILLUSTRATIVE_KT_DELTA_PER_US, baseline=0.3)
     error = _poisson_errors(clean, counts_per_bin=1.2e5)
     asymmetry = clean + rng.normal(0.0, error)
     return MuonDataset(
@@ -111,20 +107,20 @@ def make_ag_zf_gkt(seed: int = 23) -> MuonDataset:
         error=error,
         metadata={
             "run_number": 4101,
-            "title": "ZF Ag polycrystal 20K",
+            "title": "Generic ZF Gaussian fields 20K",
             "temperature": 20.0,
             "field": 0.0,
         },
     )
 
 
-def make_ag_lf_decoupling(
+def make_generic_lf_decoupling(
     seed: int = 41, fields_g: tuple[float, ...] = (0.0, 5.0, 10.0, 25.0, 50.0)
 ) -> list[MuonDataset]:
-    """LF Kubo–Toyabe decoupling series on Ag with shared Δ=0.39 μs⁻¹.
+    """Generic LF Kubo–Toyabe decoupling series with illustrative Δ=0.39 μs⁻¹.
 
-    Spans the textbook units γ_μB_L/Δ ∈ {0, 1, 2, 5, 10} (cf. Fig 5.6 of
-    Blundell et al. and the original Hayano PRB 20, 850 (1979) curve). The
+    Spans γ_μB_L/Δ ≈ {0, 1.1, 2.2, 5.5, 10.9}, with angular γ_μ
+    (Hayano et al., PRB 20, 850 (1979)). The
     default 5-field sweep is used for the time-domain overlay; pass a 4-field
     subset (e.g. (0, 15, 50, 100)) for global-fit scenarios.
     """
@@ -133,7 +129,9 @@ def make_ag_lf_decoupling(
     time = _time_axis()
     datasets: list[MuonDataset] = []
     for index, field_g in enumerate(fields_g):
-        clean = lfkt(time, A0=24.0, Delta=DELTA_AG_PER_US, B_L=float(field_g), baseline=0.3)
+        clean = lfkt(
+            time, A0=24.0, Delta=ILLUSTRATIVE_KT_DELTA_PER_US, B_L=float(field_g), baseline=0.3
+        )
         error = _poisson_errors(clean, counts_per_bin=1.0e5)
         asymmetry = clean + rng.normal(0.0, error)
         datasets.append(
@@ -143,7 +141,7 @@ def make_ag_lf_decoupling(
                 error=error,
                 metadata={
                     "run_number": 5201 + index,
-                    "title": f"LF Ag {field_g:g} G",
+                    "title": f"Generic LF {field_g:g} G",
                     "temperature": 20.0,
                     "field": float(field_g),
                 },
@@ -156,7 +154,7 @@ def make_hopping_zf_tscan(seed: int = 58) -> list[MuonDataset]:
     """Synthetic ZF temperature scan: a static nuclear width under a rising hop rate.
 
     Ten runs of a dynamic Gaussian Kubo–Toyabe signal on a constant background.
-    The static width is the Ag archetype's Δ = 0.39 μs⁻¹ at every temperature;
+    The illustrative static width is Δ = 0.39 μs⁻¹ at every temperature;
     the hop rate is planted as ν = 12 exp(−500 K / T) MHz, so the recovery of
     the ⅓ tail is lost and the relaxation motionally narrows as the series
     warms. One run (at 140 K) carries 10 % more asymmetry than the rest, as a
@@ -171,7 +169,7 @@ def make_hopping_zf_tscan(seed: int = 58) -> list[MuonDataset]:
         clean = model.function(
             time,
             A_1=18.0 * (1.1 if temperature == 140.0 else 1.0),
-            Delta=DELTA_AG_PER_US,
+            Delta=ILLUSTRATIVE_KT_DELTA_PER_US,
             nu=12.0 * np.exp(-500.0 / temperature),
             B_L=0.0,
             A_bg=4.0,
@@ -709,7 +707,7 @@ def make_generic_tf_for_processing(seed: int = 107) -> MuonDataset:
 
 
 __all__ = [
-    "DELTA_AG_PER_US",
+    "ILLUSTRATIVE_KT_DELTA_PER_US",
     "GAMMA_MU_MHZ_PER_G",
     "GAMMA_MU_MHZ_PER_T",
     "LAMBDA_YBCO_NM",
@@ -718,8 +716,8 @@ __all__ = [
     "TC_MGB2_K",
     "TC_YBCO_K",
     "XI_YBCO_NM",
-    "make_ag_lf_decoupling",
-    "make_ag_zf_gkt",
+    "make_generic_lf_decoupling",
+    "make_generic_zf_gkt",
     "make_emu_vector",
     "make_euo_composite",
     "make_euo_tf_tscan",
@@ -950,10 +948,10 @@ def make_rf_nutation_vector(
     )
 
 
-def make_sparse_ag_ratio_control() -> MuonDataset:
-    """Sparse Ag ZF GKT with an authored fixed-background sensitivity control.
+def make_sparse_generic_ratio_control() -> MuonDataset:
+    """Sparse generic ZF GKT with an authored fixed-background sensitivity control.
 
-    The GKT polarisation uses the Ag archetype width; the 0.5-count background
+    The GKT polarisation uses the illustrative Gaussian-field width; the 0.5-count background
     per group exercises signed ratios, not a certified physical background.
     """
     from dataclasses import replace
@@ -976,12 +974,14 @@ def make_sparse_ag_ratio_control() -> MuonDataset:
     run = simulate_run(
         template,
         MODELS["StaticGKT_ZF"].function,
-        {"A0": 24.0, "Delta": DELTA_AG_PER_US, "baseline": 0.3},
+        {"A0": 24.0, "Delta": ILLUSTRATIVE_KT_DELTA_PER_US, "baseline": 0.3},
         total_events=1200,
         seed=23,
         run_number=4101,
     )
-    run.metadata.update(title="Synthetic sparse Ag: fixed-background sensitivity", field=0.0)
+    run.metadata.update(
+        title="Synthetic sparse Gaussian fields: fixed-background sensitivity", field=0.0
+    )
     run.grouping.update(
         background_correction=True, background_mode="fixed", background_fixed_values=[0.5, 0.5]
     )

@@ -1,4 +1,4 @@
-"""Global Fit Wizard — the Compare step on the Ag LF-KT series, A against B.
+"""Global Fit Wizard — the Compare step on the generic LF-KT series, A against B.
 
 A real recommendation is built synchronously by
 ``build_global_fit_wizard_recommendation`` and handed to the window through
@@ -25,14 +25,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
-from ..data import make_ag_lf_decoupling
+from ..data import make_generic_lf_decoupling
 from ._base import Scenario, _process_events_for, register
 
 
 class GlobalFitWizardResultScenario(Scenario):
     name = "global_fit_wizard_result"
     description = (
-        "Global Fit Wizard Compare step on the Ag LF-KT decoupling series — "
+        "Global Fit Wizard Compare step on the generic LF-KT decoupling series — "
         "the shared-Δ split as A against a per-run-Δ split pinned as B."
     )
     size = (1180, 748)
@@ -52,7 +52,7 @@ class GlobalFitWizardResultScenario(Scenario):
         # that (50, 100 G) the per-run fits the role search starts from are
         # ill-posed and their minimum moves with the host's SIMD floating point,
         # and the verdict with it.
-        datasets = make_ag_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0))
+        datasets = make_generic_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0))
 
         # Keep the screening portfolio small so the build is fast: LF dynamics
         # and magnetism with the competing relaxation leaves excluded leaves the
