@@ -42,6 +42,7 @@ from asymmetry.core.fitting.fit_wizard import (
     TemplateSeedContext,
     _AssessmentTask,
     _bound_hit_names,
+    _bound_hits,
     _clone_parameter_set,
     _curve_parameter_values,
     _dense_fit_curves,
@@ -2821,15 +2822,12 @@ def _partition_inputs_from_prescreen(
     on the run is untouched, so the relaxation the run really is stays available
     and the path breaks where the lines vanish.
 
-    Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution, with
-    ``n_run`` the points that run was actually fitted over
-    (:attr:`asymmetry.core.fitting.fit_wizard.FitWizardRecommendation.analysed_points`), so tier 1's sums and tier
-    2's segment scores are on one scale.
+    Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution.
+    ``analysed_points_by_run`` supplies each run's actual fitted point count,
+    keeping tier 1's sums and tier 2's segment scores on one scale.
     """
 
-    table: dict[int, dict[str, float]] = {
-        int(dataset.run_number): {} for dataset in ordered_datasets
-    }
+    table: dict[int, dict[str, float]] = {int(d.run_number): {} for d in ordered_datasets}
     estimates_by_template: dict[str, dict[int, RunEstimate]] = {}
 
     for template_key, assessment in prescreen_assessments.items():
@@ -2863,7 +2861,7 @@ def _partition_inputs_from_prescreen(
                 free_names,
                 run_number=run_number,
                 n_points=sample_count,
-                at_bound=_bound_hit_names(result.parameters),
+                at_bound=_bound_hits(result.parameters),
             )
         if per_run:
             estimates_by_template[template_key] = per_run
@@ -9191,7 +9189,7 @@ def _run_estimates_from_results(
             free_param_names,
             run_number=int(dataset.run_number),
             n_points=gaussian_selection(dataset).used,
-            at_bound=_bound_hit_names(results_by_run[int(dataset.run_number)].parameters),
+            at_bound=_bound_hits(results_by_run[int(dataset.run_number)].parameters),
         )
         for dataset in datasets
     )

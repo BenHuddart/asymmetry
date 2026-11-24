@@ -798,10 +798,13 @@ The separable search never pays to *discover* the all-local answer: :math:`G`
 independent per-run fits already *are* the all-local assignment, so it is
 assembled directly from the phase's own per-run results — no joint fit. A
 full-covariance surrogate (a generalised-least-squares collapse of the per-run
-values and covariances) then scores every sharing pattern at once and hands
-back a warm start for it — pooled shared values, plus each run's conditional
-local values. **Backward elimination** walks from all-local, promoting one
-parameter to ``Global`` at a time — cheapest by the surrogate first — with one
+values and covariances) proposes sharing patterns and supplies their warm
+starts: pooled shared values, plus each run's conditional local values. These
+surrogate proposals exclude a free parameter that reaches either bound in any
+run; an interior parameter remains eligible. Fixed parameters are not counted
+as fitted bound hits. The partition search uses the same exclusion for
+its surrogate sharing proposals. **Backward elimination** walks from all-local,
+promoting one parameter to ``Global`` at a time — cheapest by the surrogate first — with one
 exact, warm-started coupled fit per step, and stops as soon as a step no
 longer improves the information criterion; a handful of the most promising
 templates race through this together, so a template that falls behind early
