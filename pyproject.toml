@@ -37,7 +37,7 @@ gui = [
     "matplotlib>=3.7,<3.11",
 ]
 # Pin the script-generation API, including per-series waterfall offsets.
-gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.7.0"]
+gle = ["gleplot==6.0.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]

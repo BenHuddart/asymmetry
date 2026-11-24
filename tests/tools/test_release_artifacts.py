@@ -51,10 +51,7 @@ def build(tmp_path, monkeypatch):
     (replay / "replay-1").mkdir(parents=True)
     tools = json.loads((inputs / "tools.json").read_text())
     wheels = {}
-    for name, directory, version in (
-        ("asymmetry", "app-wheel", "0.28.0"),
-        ("gleplot", "gle-wheel", "1.7.0"),
-    ):
+    for name, directory, version in (("asymmetry", "app-wheel", "0.28.0"),):
         location = replay / "replay-1" / directory
         location.mkdir()
         wheel = location / f"{name}-{version}-py3-none-any.whl"
@@ -70,10 +67,8 @@ def build(tmp_path, monkeypatch):
             "distributions": {
                 **release.reviewed_requirements(inputs / "windows-x64.txt"),
                 "asymmetry": "0.28.0",
-                "gleplot": "1.7.0",
             },
         },
-        "gle_commit": tools["gle"]["commit"],
         "wheels": wheels,
         "downloaded_wheels": {
             name: {
@@ -234,8 +229,8 @@ def test_allowlisted_observation_drops_nested_private_metadata(build, private):
     artifacts.prepare(replay, "windows-x64", commit)
     public = (root / "build/build-environment.json").read_text()
     assert json.dumps(private) not in public
-    assert "6a270dfa5f49c907fdfe9e4d9ec2ae5e1000172c" in public
-    assert "https://github.com/BenHuddart/gleplot.git" in public
+    assert "gleplot-6.0.0-py3-none-any.whl" in public
+    assert "direct_sources" not in public
 
 
 def test_bundle_symlinks_are_relative_and_bounded(tmp_path):
@@ -262,45 +257,20 @@ def test_collection_rejects_missing_embedded_identity_and_notice(build):
         artifacts.collect(bundle, "windows-x64", commit)
 
 
-@pytest.mark.parametrize(
-    "private",
-    [
-        "/home/user/private",
-        "C:\\Users\\user\\secret",
-        "file:///tmp/local",
-        "https://user:password@github.com/x/y.git?token=secret",
-    ],
-)
-def test_required_vcs_identity_cannot_be_dropped_or_leak_private_url(build, private):
-    root, _, _, commit, _, replay = build
-    path = root / "packaging/release/tools.json"
-    tools = json.loads(path.read_text())
-    tools["gle"]["url"] = private
-    path.write_text(json.dumps(tools))
-    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-m",
-            "unsafe fixture",
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    observed_path = replay / "replay-1/observed.json"
-    observed = json.loads(observed_path.read_text())
-    observed["source_commit"] = commit
-    observed["input_hashes"] = artifacts.expected_identity("windows-x64", commit)["input_hashes"]
-    observed_path.write_text(json.dumps(observed))
-    with pytest.raises(ValueError, match="immutable VCS identity"):
-        artifacts.prepare(replay, "windows-x64", commit)
+@pytest.mark.parametrize("change", ["missing", "hash", "source"])
+def test_gleplot_must_match_reviewed_index_wheel(build, change):
+    root, bundle, _, commit, _, _ = build
+    path = root / "build/build-environment.json"
+    record = json.loads(path.read_text())
+    if change == "missing":
+        del record["index_wheels"]["gleplot"]
+    elif change == "hash":
+        record["index_wheels"]["gleplot"]["sha256"] = "f" * 64
+    else:
+        record["source_wheels"]["gleplot"] = record["index_wheels"]["gleplot"]
+    artifacts.write_json(path, record)
+    with pytest.raises(ValueError, match="wheel identity"):
+        artifacts.collect(bundle, "windows-x64", commit)
 
 
 def test_expected_commit_is_checked_against_checkout(build):
@@ -506,7 +476,7 @@ def test_every_public_write_projects_mutable_build_metadata(build, stage, privat
     record = json.loads(source.read_text())
     record["extra"] = {"url": private, "nested": [{"path": private}]}
     record["source_wheels"]["asymmetry"]["origin"] = {"url": private}
-    record["direct_sources"]["gleplot"]["metadata"] = {"url": private}
+    record["index_wheels"]["gleplot"]["metadata"] = {"url": private}
     record["native_tools"]["extra"] = {"path": private}
     artifacts.write_json(source, record)
     analysis = root / "build/bundle-analysis.json"
@@ -521,17 +491,17 @@ def test_every_public_write_projects_mutable_build_metadata(build, stage, privat
         artifacts.finalize(binary, bundle, "windows-x64", commit, "0.28.0")
     public = (root / "dist/windows-x64-build-components.json").read_text()
     assert json.dumps(private) not in public
-    assert "6a270dfa5f49c907fdfe9e4d9ec2ae5e1000172c" in public
-    assert "https://github.com/BenHuddart/gleplot.git" in public
+    assert "gleplot-6.0.0-py3-none-any.whl" in public
+    assert "direct_sources" not in public
 
 
 def test_required_identity_in_mutable_snapshot_is_rejected(build):
     root, bundle, _, commit, _, _ = build
     path = root / "build/build-environment.json"
     record = json.loads(path.read_text())
-    record["direct_sources"]["gleplot"]["url"] = "file:///home/user/private"
+    record["index_wheels"]["gleplot"]["sha256"] = "f" * 64
     artifacts.write_json(path, record)
-    with pytest.raises(ValueError, match="immutable.*identity"):
+    with pytest.raises(ValueError, match="index wheel identity"):
         artifacts.collect(bundle, "windows-x64", commit)
 
 

@@ -12,14 +12,23 @@ from ._base import Scenario, register
 
 class GlePreviewScenario(Scenario):
     name = "gle_plot_preview"
-    description = "Vector plot preview with fit and zoom controls"
+    description = "Vector plot preview with observation markers and zoom controls"
     size = (1000, 720)
 
     def build(self):
         data = make_ag_zf_gkt()
         figure = Figure(figsize=(6.4, 4.8))
         axes = figure.add_subplot(111)
-        axes.errorbar(data.time, data.asymmetry, yerr=data.error, fmt=".", markersize=2)
+        axes.errorbar(
+            data.time,
+            data.asymmetry,
+            yerr=data.error,
+            marker="o",
+            linestyle="none",
+            color="black",
+            markersize=4,
+            capsize=2,
+        )
         axes.set_xlabel("Time (µs)")
         axes.set_ylabel("Asymmetry (%)")
         figure.tight_layout()

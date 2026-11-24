@@ -8,6 +8,10 @@ def gle_figure(glp, **kwargs):
     for key in ("style", "graph", "marker"):
         if kwargs.get(key) is None:
             kwargs[key] = deepcopy(getattr(glp.GlobalConfig, f"get_{key}")())
+    # The same TeX font renders with GLE's native and Cairo devices.
+    kwargs["style"].font = "texcmr"
+    # Joining samples with straight segments introduces no spline extrema.
+    kwargs["graph"].smooth_curves = False
     return glp.Figure(**kwargs)
 
 

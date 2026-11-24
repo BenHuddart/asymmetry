@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use PyPI gleplot 6.0.0 for GLE exports, retaining data markers, translucent
+  fills and full-height phase shading with unsmoothed curves and legible labels.
+
 - Consolidate current guidance in the maintained docs and GitHub issues; remove retired planning material.
 
 - Clarify the shipped architecture and instrument-authoring workflow, with an

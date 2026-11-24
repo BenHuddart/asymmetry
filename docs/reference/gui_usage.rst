@@ -507,15 +507,12 @@ waterfalls stack the same way but skip the hairline, since a spectrum already
 sits on its own zero baseline.
 
 **Export to GLE** and the plain-text data/fit exports both reproduce the
-on-screen stack, but differ in *where* the offset lives. With ``gleplot`` >= 1.7
-the GLE export applies each per-trace offset in the GLE script itself (a GLE
-``let`` that shifts the trace at plot time), so the exported ``.dat``/``.fit``
-sidecars keep their raw, unshifted values — the stack is a property of the
-figure, not of the data, and can be retuned in the script. Against
-older ``gleplot`` (and always for the plain-text export, which has no script to
-carry the offset) the offset is baked into the written column instead. Either
-way each file records a ``waterfall offset:`` header line documenting the
-applied shift.
+on-screen stack, but differ in *where* the offset lives. The GLE export applies
+per-trace offsets in the script (a GLE ``let`` that shifts the trace at plot
+time), so the ``.dat``/``.fit`` sidecars keep raw, unshifted values. The stack
+can be retuned in the script. Plain-text exports add the offset to the written
+column. Each file records a ``waterfall offset:`` header line documenting the
+shift.
 
 The waterfall setting — on/off and the manual Δ (or automatic, if left
 blank) — is saved per plot panel in the project file and restored on reopen.
@@ -801,7 +798,7 @@ currently displayed datasets. This works for:
 
 What is exported:
 
-* Data as error bars (no connecting lines)
+* Data as circular markers with error bars (no connecting lines)
 * Fit curves as lines when a fit overlay is available
 * User plot labels/annotations (same text and coordinates)
 
@@ -839,6 +836,13 @@ Compilation behaviour:
   files so you can compile later.
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
+
+Exports use gleplot 6.0.0. Curves join samples with straight segments rather
+than spline smoothing. Translucent fills use GLE's Cairo renderer; opaque
+figures use its native renderer. Both use the Computer Modern Roman font
+(``texcmr``). Phase bands and boundary lines span the full plot height,
+including logarithmic and dual-y plots, without setting the y-axis range.
+EPS cannot retain transparency; Cairo may rasterise translucent regions.
 
 The **GLE Plot Preview** window displays the compiled vector figure. Use
 **Fit to window**, **Zoom in**, **Zoom out**, and **100%** to inspect the plot.
@@ -1487,13 +1491,14 @@ via the ``gleplot`` Python library:
 4. If GLE is installed, the script is compiled and shown in **GLE Plot Preview**.
    EPS exports also write a PDF companion for previewing.
 5. Without GLE, the script and data are saved for later compilation with
-   ``gle -d pdf <name>.gle`` inside the export folder.
+   ``gle -d pdf <name>.gle`` inside the export folder. Add ``-cairo`` for
+   translucent fills (``gle -cairo -d pdf <name>.gle``).
 
 .. note::
 
    Install GLE from source or from http://glx.sourceforge.io/ to enable
    automatic compilation. The ``gleplot`` Python package is required for
-   script generation (``pip install gleplot``).
+   script generation (``pip install gleplot==6.0.0``).
 
 Global-fit GLE exports
 ~~~~~~~~~~~~~~~~~~~~~~

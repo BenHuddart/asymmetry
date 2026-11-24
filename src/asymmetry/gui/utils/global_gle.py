@@ -90,7 +90,8 @@ class GlobalGleSnapshot(GlobalExportData):
             files=[
                 gle_path,
                 *(export_dir / name for name in extract_gle_data_dependencies(gle_path)),
-            ]
+            ],
+            cairo=figure.requires_cairo(),
         )
 
     def _build_fit_subplot_gle_figure(self, glp, gle_path: Path):
@@ -98,14 +99,13 @@ class GlobalGleSnapshot(GlobalExportData):
         subplot_height = 3.1
         subplot_aspect = float(self.aspect)
         plot_width = subplot_aspect * subplot_height
-        fig, axes = gle_subplots(
+        fig, subplot_axes = gle_subplots(
             glp,
             nrows=max(1, len(self._groups)),
             ncols=1,
             figsize=(plot_width, max(5.2, subplot_height * max(1, len(self._groups)))),
             sharex=share_x_axis,
         )
-        subplot_axes = axes if isinstance(axes, list) else [axes]
         file_map = self._write_fit_subplot_files(gle_path)
 
         x_label = self._x_label_gle()
@@ -114,11 +114,7 @@ class GlobalGleSnapshot(GlobalExportData):
             ax = subplot_axes[idx]
             file_info = file_map.get(group.group_id)
             data_path = file_info.get("data_path") if isinstance(file_info, dict) else None
-            if (
-                isinstance(file_info, dict)
-                and data_path is not None
-                and hasattr(ax, "errorbar_from_file")
-            ):
+            if data_path is not None:
                 ax.errorbar_from_file(
                     data_path.name,
                     x_col=1,
@@ -195,7 +191,6 @@ class GlobalGleSnapshot(GlobalExportData):
                 isinstance(file_info, dict)
                 and bool(file_info.get("has_fit", False))
                 and fit_path is not None
-                and hasattr(ax, "line_from_file")
             ):
                 ax.line_from_file(
                     fit_path.name,
@@ -246,8 +241,7 @@ class GlobalGleSnapshot(GlobalExportData):
             if (not share_x_axis) or idx == len(self._groups) - 1:
                 ax.set_xlabel(x_label)
 
-        if hasattr(fig, "subplots_adjust"):
-            fig.subplots_adjust(**self._fit_subplot_layout_params(subplot_aspect))
+        fig.subplots_adjust(**self._fit_subplot_layout_params(subplot_aspect))
 
         return fig
 
@@ -302,38 +296,26 @@ class GlobalGleSnapshot(GlobalExportData):
         if plot_mode == "Subplots" and len(traces) > 1:
             num_cols = 1
             num_rows = (len(traces) + num_cols - 1) // num_cols
-            fig, axes = gle_subplots(
+            fig, flat_axes = gle_subplots(
                 glp,
                 nrows=num_rows,
                 ncols=num_cols,
                 figsize=(7.2, max(4.8, 2.8 * num_rows)),
                 sharex=True,
             )
-            flat_axes = axes if isinstance(axes, list) else [axes]
             for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
                 ax = flat_axes[idx]
                 has_err = bool(np.any(np.isfinite(e_arr) & (e_arr >= 0)))
                 cols = col_map[pname]
-                if hasattr(ax, "errorbar_from_file"):
-                    ax.errorbar_from_file(
-                        data_path.name,
-                        x_col=1,
-                        y_col=cols[0],
-                        yerr_col=cols[1] if has_err else None,
-                        marker="o",
-                        color="black",
-                        capsize=2,
-                    )
-                else:
-                    ax.errorbar(
-                        x_arr,
-                        y_arr,
-                        yerr=e_arr if has_err else None,
-                        marker="o",
-                        color="black",
-                        linestyle="none",
-                        capsize=2,
-                    )
+                ax.errorbar_from_file(
+                    data_path.name,
+                    x_col=1,
+                    y_col=cols[0],
+                    yerr_col=cols[1] if has_err else None,
+                    marker="o",
+                    color="black",
+                    capsize=2,
+                )
                 ax.set_ylabel(self._parameter_label_gle(pname))
                 row = idx // num_cols
                 if row == num_rows - 1:
@@ -346,7 +328,7 @@ class GlobalGleSnapshot(GlobalExportData):
                 fit = self._local_model_fits.get(pname)
                 if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
                     fit_path = fit_file_map.get(pname)
-                    if fit_path is not None and hasattr(ax, "line_from_file"):
+                    if fit_path is not None:
                         ax.line_from_file(
                             fit_path.name,
                             x_col=1,
@@ -384,32 +366,20 @@ class GlobalGleSnapshot(GlobalExportData):
             color = ["black", "blue", "red"][idx % 3]
             has_err = bool(np.any(np.isfinite(e_arr) & (e_arr >= 0)))
             cols = col_map[pname]
-            if hasattr(ax, "errorbar_from_file"):
-                ax.errorbar_from_file(
-                    data_path.name,
-                    x_col=1,
-                    y_col=cols[0],
-                    yerr_col=cols[1] if has_err else None,
-                    marker="o",
-                    color=color,
-                    capsize=2,
-                    label=self._parameter_label_gle(pname),
-                )
-            else:
-                ax.errorbar(
-                    x_arr,
-                    y_arr,
-                    yerr=e_arr if has_err else None,
-                    marker="o",
-                    linestyle="none",
-                    color=color,
-                    capsize=2,
-                    label=self._parameter_label_gle(pname),
-                )
+            ax.errorbar_from_file(
+                data_path.name,
+                x_col=1,
+                y_col=cols[0],
+                yerr_col=cols[1] if has_err else None,
+                marker="o",
+                color=color,
+                capsize=2,
+                label=self._parameter_label_gle(pname),
+            )
             fit = self._local_model_fits.get(pname)
             if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
                 fit_path = fit_file_map.get(pname)
-                if fit_path is not None and hasattr(ax, "line_from_file"):
+                if fit_path is not None:
                     ax.line_from_file(
                         fit_path.name,
                         x_col=1,
@@ -465,8 +435,8 @@ class GlobalGleSnapshot(GlobalExportData):
         return {
             "left": left,
             "right": right,
-            "top": 0.968,
-            "bottom": 0.065,
+            "top": 0.90,
+            "bottom": 0.13,
             "hspace": 0.50,
         }
 

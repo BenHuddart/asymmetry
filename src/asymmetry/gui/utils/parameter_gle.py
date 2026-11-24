@@ -69,8 +69,6 @@ class ParameterGleSnapshot(ParameterExportData):
         return snapshot.build_figure(glp, gle_path, export_dir)
 
     def build_figure(self, glp, gle_path, export_dir):
-        if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
-            raise RuntimeError("Update gleplot to a version supporting file-backed error bars.")
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self.x_key
@@ -100,16 +98,14 @@ class ParameterGleSnapshot(ParameterExportData):
         show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
 
         if plot_mode == "Subplots" and len(y_params) > 1:
-            fig, axes = gle_subplots(
+            fig, subplot_axes = gle_subplots(
                 glp, nrows=len(y_params), ncols=1, figsize=(5.8, 3.0 * len(y_params)), sharex=True
             )
-            subplot_axes = axes if isinstance(axes, list) else [axes]
             for idx, y_name in enumerate(y_params):
                 cols = self._gle_effective_columns_for_param(y_name)
                 if cols is None:
                     continue
                 y_col, yerr_col = cols
-                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
                 y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                 has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                 ax = subplot_axes[idx]
@@ -145,7 +141,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     ax.set_ylim(0.0, None)
                 self._add_gle_annotations(ax, y_name)
                 if phase is not None:
-                    self._add_gle_phase_band(ax, phase, y_vals)
+                    self._add_gle_phase_band(ax, phase)
                 if show_subplot_fit_legend:
                     ax.legend(loc="best")
         else:
@@ -161,8 +157,6 @@ class ParameterGleSnapshot(ParameterExportData):
                 left_y_col, left_err_col = left_cols
                 right_y_col, right_err_col = right_cols
 
-                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
-                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
                 left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
                 right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
                 has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
@@ -215,7 +209,7 @@ class ParameterGleSnapshot(ParameterExportData):
                 self._add_gle_annotations(ax, right_name)
                 if phase is not None:
                     # Shared x-axis: one band spanning both parameters' extents.
-                    self._add_gle_phase_band(ax, phase, left_vals, right_vals)
+                    self._add_gle_phase_band(ax, phase)
                 if show_fit_legend:
                     ax.legend(loc="best")
             else:
@@ -223,14 +217,11 @@ class ParameterGleSnapshot(ParameterExportData):
                 # curve (series identity, phase colour applies); several share
                 # it to distinguish *parameters* (their own identity colours).
                 single_param = len(y_params) == 1
-                all_y_vals: list[np.ndarray] = []
                 for idx, y_name in enumerate(y_params):
                     cols = self._gle_effective_columns_for_param(y_name)
                     if cols is None:
                         continue
                     y_col, yerr_col = cols
-                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                    all_y_vals.append(y_vals)
                     y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                     has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                     self._add_gle_model_overlay(
@@ -268,25 +259,19 @@ class ParameterGleSnapshot(ParameterExportData):
                     ax.set_yscale("log")
 
                 self._add_gle_annotations(ax, "main")
-                if phase is not None and all_y_vals:
-                    self._add_gle_phase_band(ax, phase, *all_y_vals)
+                if phase is not None:
+                    self._add_gle_phase_band(ax, phase)
 
             ax.set_xlabel(x_label)
             if self.log_x:
                 ax.set_xscale("log")
 
-        try:
-            fig.savefig(str(gle_path))
-        except TypeError as exc:
-            if "folder" in str(exc):
-                gle_export.show_warning(
-                    self, "gleplot update required", "Please update gleplot to a newer version."
-                )
-                return None
-            raise
+        fig.savefig(str(gle_path))
 
         fit_files = list(fit_file_map.values()) if fit_file_map else []
-        return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files])
+        return gle_export.GleExportBuild(
+            files=[gle_path, data_path, *fit_files], cairo=fig.requires_cairo()
+        )
 
     def _add_gle_model_overlay(
         self,
@@ -360,7 +345,7 @@ class ParameterGleSnapshot(ParameterExportData):
             fit_path = None
             if fit_file_map is not None:
                 fit_path = fit_file_map.get((param_name, int(range_index)))
-            if fit_path is not None and hasattr(ax, "line_from_file"):
+            if fit_path is not None:
                 ax.line_from_file(
                     fit_path.name,
                     x_col=1,
@@ -399,64 +384,16 @@ class ParameterGleSnapshot(ParameterExportData):
             ax.text(x, y, text, color="black", ha="left")
 
     @staticmethod
-    def _gle_phase_y_extent(*value_arrays: np.ndarray) -> tuple[float, float] | None:
-        """A (padded) vertical extent spanning every finite value in *value_arrays*.
-
-        gleplot has no ``axvspan``/``axvline`` (unlike matplotlib, whose blended
-        transform spans the full axes height regardless of the y-limits) — the
-        band and boundary lines are drawn as an ordinary ``fill_between``/``plot``
-        rectangle instead, so it needs an explicit y-range. A 5% margin on the
-        combined data extent mirrors matplotlib's own default autoscale margin.
-        Returns ``None`` when no finite value is present (nothing to anchor to).
-        """
-        finite = np.concatenate(
-            [np.asarray(values, dtype=float)[np.isfinite(values)] for values in value_arrays]
-        )
-        if finite.size == 0:
-            return None
-        lo, hi = float(np.min(finite)), float(np.max(finite))
-        if lo == hi:
-            pad = abs(lo) * 0.05 or 0.5
-        else:
-            pad = (hi - lo) * 0.05
-        return lo - pad, hi + pad
-
-    def _add_gle_phase_band(self, ax, phase: PhaseDecoration, *value_arrays: np.ndarray) -> None:
-        """Draw *phase*'s range shading and boundary lines on an exported GLE axis.
-
-        Mirrors :meth:`_draw_phase_band`'s matplotlib picture with gleplot's
-        ``fill_between``/``plot`` primitives (see :meth:`_add_gle_model_overlay`
-        for the same primitives used for the component-stack fill): the range is
-        a filled rectangle spanning ``_gle_phase_y_extent(*value_arrays)``, each
-        boundary a dashed vertical line plus a fainter ``± half_gap`` rectangle.
-        Always drawn on the primary (``"y"``) axis — the one caller that shares
-        an axis with a second y-parameter (the two-parameter export) draws the
-        band once there, since both parameters share the same x-range.
-        """
-        extent = self._gle_phase_y_extent(*value_arrays)
-        if extent is None:
-            return
-        y_lo, y_hi = extent
+    def _add_gle_phase_band(ax, phase: PhaseDecoration) -> None:
+        """Span the full axes height without mixing data units from two y axes."""
         lo, hi = phase.range
-        ax.fill_between([lo, hi], [y_lo, y_lo], [y_hi, y_hi], color=phase.color, alpha=0.12)
+        ax.axvspan(lo, hi, color=phase.color, alpha=0.12)
         for boundary in (phase.lower, phase.upper):
             if boundary is None:
                 continue
             estimate, half_gap = boundary
-            ax.plot(
-                [estimate, estimate],
-                [y_lo, y_hi],
-                linestyle="--",
-                color=phase.color,
-                linewidth=1.2,
-            )
-            ax.fill_between(
-                [estimate - half_gap, estimate + half_gap],
-                [y_lo, y_lo],
-                [y_hi, y_hi],
-                color=phase.color,
-                alpha=0.08,
-            )
+            ax.axvline(estimate, linestyle="--", color=phase.color, linewidth=1.2)
+            ax.axvspan(estimate - half_gap, estimate + half_gap, color=phase.color, alpha=0.08)
 
     def _ordered_components_for_stacking(
         self,
