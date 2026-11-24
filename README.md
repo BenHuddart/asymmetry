@@ -157,7 +157,7 @@ stack stays within the versions tested by the project.
 | HDF4 (legacy ISIS `.nxs`) | pyhdf — see note below |
 | ROOT import | uproot |
 | agent | matplotlib, h5py |
-| GLE export | `gleplot` (current git version with foldered exports) plus a local GLE installation |
+| GLE export | `gleplot==6.0.0` from PyPI plus a local GLE installation with Cairo support |
 | Development | pytest, pytest-cov, ruff, Sphinx |
 
 ##### Reading legacy HDF4 `.nxs` files

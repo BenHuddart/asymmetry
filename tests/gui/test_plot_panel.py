@@ -14,7 +14,6 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-# Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtGui import QAction  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
@@ -27,6 +26,12 @@ from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
+from tests.gui.gle_helpers import (
+    OpaqueGleFigure,
+    recording_factories,
+    wait_for_gle,
+    write_compile_outputs,
+)
 
 _PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
 
@@ -166,7 +171,7 @@ class _FakeAxis:
         self.ylim_calls.append((ymin, ymax))
 
 
-class _FakeFigure:
+class _FakeFigure(OpaqueGleFigure):
     def __init__(
         self,
         axis: _FakeAxis,
@@ -186,11 +191,7 @@ class _FakeFigure:
     def savefig(self, path: str, **kwargs) -> None:
         self.saved_kwargs.append(dict(kwargs))
         output_path = Path(path)
-        if kwargs.get("folder"):
-            output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
-            export_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         self.saved_paths.append(str(output_path))
         output_path.write_text("! fake gle", encoding="utf-8")
         if not self.generate_data_files:
@@ -213,9 +214,6 @@ class _FakeFigure:
             with open(data_path, "w", encoding="utf-8") as f:
                 for xv, yv, ev in zip(x_vals, y_vals, err):
                     f.write(f"{float(xv):.10g} {float(yv):.10g} {float(ev):.10g}\n")
-
-
-from tests.gui.gle_helpers import recording_factories, wait_for_gle, write_compile_outputs
 
 
 @pytest.fixture(autouse=True)
@@ -4668,7 +4666,7 @@ class TestPlotPanel:
 
         target_gle = tmp_path / "vector_all_export.gle"
 
-        class _MultiAxisFigure:
+        class _MultiAxisFigure(OpaqueGleFigure):
             def __init__(self):
                 self.axes: list[_FakeAxis] = []
                 self.saved_paths: list[str] = []
@@ -4707,9 +4705,9 @@ class TestPlotPanel:
 
         assert len(fig.axes) == 3
         y_labels = [axis.ylabel_calls[-1] for axis in fig.axes if axis.ylabel_calls]
-        assert "a_0 P_{x}(t) (%)" in y_labels
-        assert "a_0 P_{y}(t) (%)" in y_labels
-        assert "a_0 P_{z}(t) (%)" in y_labels
+        assert "a_{0} P_{x}(t) (%)" in y_labels
+        assert "a_{0} P_{y}(t) (%)" in y_labels
+        assert "a_{0} P_{z}(t) (%)" in y_labels
 
         x_labels = [axis.xlabel_calls[-1] for axis in fig.axes if axis.xlabel_calls]
         assert x_labels
@@ -4749,7 +4747,7 @@ class TestPlotPanel:
 
         target_gle = tmp_path / "groups_export.gle"
 
-        class _MultiAxisFigure:
+        class _MultiAxisFigure(OpaqueGleFigure):
             def __init__(self):
                 self.axes: list[_FakeAxis] = []
 
@@ -5179,7 +5177,7 @@ class TestPlotPanel:
 
         target_gle = tmp_path / "vector_all_subplots_sharex.gle"
 
-        class _SubplotFigure:
+        class _SubplotFigure(OpaqueGleFigure):
             def __init__(self):
                 self.saved_paths: list[str] = []
                 self.subplots_adjust_calls: list[dict[str, float]] = []
@@ -5265,7 +5263,7 @@ class TestPlotPanel:
 
         target_gle = tmp_path / "vector_all_single_no_legend.gle"
 
-        class _MultiAxisFigure:
+        class _MultiAxisFigure(OpaqueGleFigure):
             def __init__(self):
                 self.axes: list[_FakeAxis] = []
 

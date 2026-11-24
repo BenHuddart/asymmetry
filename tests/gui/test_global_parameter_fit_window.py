@@ -48,7 +48,12 @@ def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) 
     )
 
 
-from tests.gui.gle_helpers import recording_factories, wait_for_gle, write_compile_outputs
+from tests.gui.gle_helpers import (
+    OpaqueGleFigure,
+    recording_factories,
+    wait_for_gle,
+    write_compile_outputs,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -502,7 +507,7 @@ def test_export_plot_gle_saves_and_compiles(
     monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
 
-    class _FakeFigure:
+    class _FakeFigure(OpaqueGleFigure):
         def savefig(self, path: str, **kwargs) -> None:
             Path(path).write_text("! fake gle", encoding="utf-8")
 
@@ -542,16 +547,7 @@ def test_export_plot_gle_saves_and_compiles(
 def test_export_plot_gle_collects_data_sidecars_referenced_by_the_script(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
 ) -> None:
-    """The written-files list must include sidecars the script references.
-
-    Real gleplot's ``errorbar_from_file``/``line_from_file`` (used by
-    ``_build_fit_subplot_gle_figure`` when the fake-glp test doubles are not
-    in play) serialize as a leading-whitespace ``data "<file>" ...`` command
-    in the compiled ``.gle`` (see gleplot's ``writer.add_errorbar_from_file``/
-    ``add_plot_line_from_file``). ``extract_gle_data_dependencies`` greps for
-    exactly that, so a builder that writes such a line must see its sidecar
-    surface in the export's result-dialog details.
-    """
+    """Preview details include file-backed datasets referenced by the script."""
     window = GlobalParameterFitWindow()
     window._result = CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
     window._parameter_name = "Lambda"
@@ -572,7 +568,7 @@ def test_export_plot_gle_collects_data_sidecars_referenced_by_the_script(
     )
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
 
-    class _FakeFigure:
+    class _FakeFigure(OpaqueGleFigure):
         def savefig(self, path: str, **kwargs) -> None:
             gle_file = Path(path)
             gle_file.parent.mkdir(parents=True, exist_ok=True)
@@ -678,7 +674,7 @@ def test_export_plot_gle_runs_compile_in_export_dir(
     monkeypatch.setattr(gle_export, "compile_gle", _fake_compile)
     monkeypatch.setattr(gle_export, "get_gle_executable", lambda: "/fake/gle")
 
-    class _FakeFigure:
+    class _FakeFigure(OpaqueGleFigure):
         def savefig(self, path: str, **kwargs) -> None:
             Path(path).write_text("! fake gle", encoding="utf-8")
 
@@ -960,7 +956,7 @@ def test_fit_subplot_layout_expands_side_margins_for_square_aspect(qapp: QApplic
     assert square["left"] > wide["left"]
     assert square["right"] < wide["right"]
     assert square["left"] >= 0.19
-    assert square["bottom"] == pytest.approx(0.065)
+    assert square["bottom"] == pytest.approx(0.13)
 
 
 def test_fit_subplot_gle_builder_applies_dynamic_layout_params(

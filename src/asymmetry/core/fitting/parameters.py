@@ -104,10 +104,9 @@ def _append_latex_index(symbol: str, index: str) -> str:
 
 
 def _unit_to_gle(unit: str) -> str:
-    # Keep GLE labels in native markup (no $...$ math mode). The micro prefix is
-    # normalized to MICRO SIGN (U+00B5) in unit strings, but accept GREEK MU
-    # (U+03BC) too so legacy/serialized units still render.
-    unit_gle = unit.replace("µ", r"{\rm \mu}{}").replace("μ", r"{\rm \mu}{}")
+    # The roman group delimits the micro prefix before its unit suffix.
+    # Accept both MICRO SIGN and GREEK MU without an orphan text group.
+    unit_gle = unit.replace("µ", r"{\rm \mu}").replace("μ", r"{\rm \mu}")
     # Normalize common unicode superscripts to ASCII exponent markup.
     unit_gle = unit_gle.replace("⁻¹", "^{-1}")
     unit_gle = unit_gle.replace("⁻²", "^{-2}")

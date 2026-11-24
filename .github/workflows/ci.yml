@@ -115,7 +115,7 @@ jobs:
           # the Python dependencies; the step fails if either does.
           (sudo apt-get update -q && sudo apt-get install -y -q libegl1) &
           apt_pid=$!
-          # gle: gleplot (tag-pinned) so the GLE export orchestrator and the
+          # gle: gleplot (PyPI-pinned) so the GLE export orchestrator and the
           # vector-preview generation run for real in CI instead of
           # skipping via their importorskip guards.
           uv pip install -c constraints.txt -e ".[gui,gle,hdf5,root,dev]"

@@ -332,7 +332,7 @@ class PlotExportData:
         ``bake_waterfall_offset`` adds the payload's waterfall offset to the
         written curve. The plain-text export leaves it ``True`` (the text is the
         final artifact, so it must carry the stack). The GLE export passes
-        ``False`` when the installed gleplot applies the offset in the script
+        ``False`` because gleplot applies the offset in the script
         (``let``) instead, keeping the sidecar values raw. The header records
         the offset either way.
         """

@@ -97,7 +97,7 @@ def verify_environment(actual: dict, python: dict, expected: dict, wheel_hashes:
 
 def verify_replays(first: dict, second: dict) -> None:
     if first != second:
-        raise ValueError("release replay versions or VCS identity differ")
+        raise ValueError("release replay environments differ")
 
 
 def verify_inno(output: str, version: str) -> None:
@@ -112,7 +112,7 @@ def verify_inno(output: str, version: str) -> None:
         raise ValueError("Inno Setup compiler differs from reviewed input")
 
 
-def verify_selected_extras(gle: dict) -> None:
+def verify_selected_extras() -> None:
     from packaging.requirements import Requirement
     from packaging.version import Version
 
@@ -126,9 +126,7 @@ def verify_selected_extras(gle: dict) -> None:
         name = normalized(requirement.name)
         if name not in installed or Version(installed[name]) not in requirement.specifier:
             raise ValueError(f"selected desktop requirement is unsatisfied: {name}")
-        if requirement.url is not None and (
-            name != "gleplot" or requirement.url != f"git+{gle['url']}@{gle['requested_revision']}"
-        ):
+        if requirement.url is not None:
             raise ValueError(f"unreviewed desktop direct requirement: {name}")
 
 
@@ -239,7 +237,7 @@ def replay(target: str, output: Path) -> None:
     requirements = INPUTS / f"{target}.txt"
     expected = reviewed_requirements(requirements)
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    expected.update(asymmetry=project["version"], gleplot=tools["gle"]["version"])
+    expected.update(asymmetry=project["version"])
     replay_identities = []
     for index in (1, 2):
         work = output / f"replay-{index}"
@@ -292,28 +290,7 @@ def replay(target: str, output: Path) -> None:
             ],
             work,
         )
-        gle_source = work / "gle-source"
-        run(["git", "init", str(gle_source)], work)
-        run(
-            [
-                "git",
-                "-C",
-                str(gle_source),
-                "fetch",
-                "--depth=1",
-                tools["gle"]["url"],
-                tools["gle"]["commit"],
-            ],
-            work,
-        )
-        run(["git", "-C", str(gle_source), "checkout", "--detach", "FETCH_HEAD"], work)
-        gle_commit = run(["git", "-C", str(gle_source), "rev-parse", "HEAD"], work).strip()
-        if gle_commit != tools["gle"]["commit"]:
-            raise ValueError("GLE source commit differs from reviewed input")
-        wheels = {
-            "gleplot": build_wheel(python, gle_source, work / "gle-wheel"),
-            "asymmetry": build_wheel(python, ROOT, work / "app-wheel"),
-        }
+        wheels = {"asymmetry": build_wheel(python, ROOT, work / "app-wheel")}
         hashes = {name: digest(wheel) for name, wheel in wheels.items()}
         run(
             [str(python), "-I", "-m", "pip", "install", "--no-deps", *map(str, wheels.values())],
@@ -326,7 +303,7 @@ def replay(target: str, output: Path) -> None:
         )
         observed = verify_environment(actual, identity, expected, hashes)
         run([str(python), "-I", str(Path(__file__).resolve()), "--extras"], work, offline=True)
-        stable = {"environment": observed, "gle_commit": gle_commit}
+        stable = {"environment": observed}
         replay_identities.append(stable)
         record = {
             **stable,
@@ -411,8 +388,6 @@ def verify_build(output: Path) -> None:
     for name, sha256 in record["input_hashes"].items():
         if digest(INPUTS / name) != sha256:
             raise ValueError(f"release inputs changed after replay: {name}")
-    if record["gle_commit"] != tools["gle"]["commit"]:
-        raise ValueError("release GLE commit changed after replay")
     identity = {
         "implementation": tools["implementation"],
         "version": tools["python"],
@@ -420,7 +395,7 @@ def verify_build(output: Path) -> None:
     }
     expected = reviewed_requirements(requirements)
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-    expected.update(asymmetry=project["version"], gleplot=tools["gle"]["version"])
+    expected.update(asymmetry=project["version"])
     if record["environment"] != {"python": identity, "distributions": expected}:
         raise ValueError("release observation differs from reviewed inputs")
     verify_environment(
@@ -429,7 +404,7 @@ def verify_build(output: Path) -> None:
         expected,
         {name: wheel["sha256"] for name, wheel in record["wheels"].items()},
     )
-    verify_selected_extras(tools["gle"])
+    verify_selected_extras()
 
 
 def inno_compile(arguments: list[str]) -> None:
@@ -474,9 +449,7 @@ def main() -> None:
     elif args.observe:
         print(json.dumps(observe()))
     elif args.extras:
-        verify_selected_extras(
-            json.loads((INPUTS / "tools.json").read_text(encoding="utf-8"))["gle"]
-        )
+        verify_selected_extras()
     elif args.inno is not None:
         inno_compile(args.inno)
     elif args.target and args.output:

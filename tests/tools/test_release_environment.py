@@ -27,12 +27,8 @@ def observation() -> dict:
             "platform": "win32",
             "machine": "AMD64",
         },
-        "distributions": {"pip": "25.3", "gleplot": "1.7.0", "asymmetry": "0.28.0"},
+        "distributions": {"pip": "25.3", "gleplot": "6.0.0", "asymmetry": "0.28.0"},
         "origins": {
-            "gleplot": {
-                "url": "file:///private/wheels/gleplot.whl",
-                "archive_info": {"hashes": {"sha256": "a" * 64}},
-            },
             "asymmetry": {
                 "url": "file:///private/wheels/asymmetry.whl",
                 "archive_info": {"hashes": {"sha256": "b" * 64}},
@@ -50,8 +46,8 @@ def verify(actual: dict) -> dict:
             "platform": "win32",
             "machine": "AMD64",
         },
-        {"pip": "25.3", "gleplot": "1.7.0", "asymmetry": "0.28.0"},
-        {"gleplot": "a" * 64, "asymmetry": "b" * 64},
+        {"pip": "25.3", "gleplot": "6.0.0", "asymmetry": "0.28.0"},
+        {"asymmetry": "b" * 64},
     )
 
 
@@ -86,7 +82,7 @@ def test_wrong_interpreter_fails(field: str) -> None:
         verify(actual)
 
 
-@pytest.mark.parametrize("name", ["gleplot", "asymmetry"])
+@pytest.mark.parametrize("name", ["asymmetry"])
 def test_wrong_wheel_origin_fails(name: str) -> None:
     actual = observation()
     actual["origins"][name]["archive_info"]["hashes"]["sha256"] = "c" * 64
@@ -94,18 +90,19 @@ def test_wrong_wheel_origin_fails(name: str) -> None:
         verify(actual)
 
 
-def test_unreviewed_direct_origin_fails() -> None:
+@pytest.mark.parametrize("name", ["pip", "gleplot"])
+def test_unreviewed_direct_origin_fails(name) -> None:
     actual = observation()
-    actual["origins"]["pip"] = {"url": "https://user:secret@example.invalid/pkg.whl"}
+    actual["origins"][name] = {"url": "https://user:secret@example.invalid/pkg.whl"}
     with pytest.raises(ValueError, match="direct origins"):
         verify(actual)
 
 
-def test_replay_requires_same_versions_and_vcs_identity() -> None:
-    first = {"environment": verify(observation()), "gle_commit": "a" * 40}
+def test_replay_requires_same_environments() -> None:
+    first = {"environment": verify(observation())}
     second = copy.deepcopy(first)
     release.verify_replays(first, second)
-    second["gle_commit"] = "b" * 40
+    second["environment"]["distributions"]["gleplot"] = "6.0.1"
     with pytest.raises(ValueError, match="replay"):
         release.verify_replays(first, second)
 
@@ -223,7 +220,7 @@ def test_selected_extras_are_checked_even_without_activated_metadata(
         lambda: {"distributions": {name: "2.0" for name in names if name != missing}},
     )
     with pytest.raises(ValueError, match="desktop requirement"):
-        release.verify_selected_extras({})
+        release.verify_selected_extras()
 
 
 def test_child_environment_removes_injected_paths_and_pip_configuration(
@@ -404,7 +401,6 @@ def test_mutable_observation_cannot_bless_dependency_drift(
         "target": "windows-x64",
         "source_commit": "b" * 40,
         "input_hashes": {path.name: release.digest(path) for path in inputs.iterdir()},
-        "gle_commit": tools["gle"]["commit"],
         "environment": {"python": actual["python"], "distributions": actual["distributions"]},
         "wheels": {},
     }

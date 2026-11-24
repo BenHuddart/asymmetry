@@ -32,6 +32,7 @@ from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.utils.phase_colors import phase_color
 from tests.gui._trend_panel import axes_for
+from tests.gui.gle_helpers import OpaqueGleFigure
 
 _PHASE = PhaseDecoration(
     color="#2F4DA0",
@@ -177,8 +178,8 @@ def test_wrong_axis_suppresses_the_band(panel: FitParametersPanel) -> None:
 class _FakeGleAxis:
     def __init__(self) -> None:
         self.errorbar_calls: list[dict] = []
-        self.fill_between_calls: list[dict] = []
-        self.plot_calls: list[dict] = []
+        self.span_calls: list[dict] = []
+        self.line_calls: list[dict] = []
 
     def errorbar_from_file(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
@@ -186,11 +187,11 @@ class _FakeGleAxis:
     def line_from_file(self, *_args, **_kwargs) -> None:
         return
 
-    def fill_between(self, xs, lower, upper, **kwargs) -> None:
-        self.fill_between_calls.append({"xs": xs, "lower": lower, "upper": upper, **kwargs})
+    def axvspan(self, lo, hi, **kwargs) -> None:
+        self.span_calls.append({"lo": lo, "hi": hi, **kwargs})
 
-    def plot(self, xs, ys, **kwargs) -> None:
-        self.plot_calls.append({"xs": xs, "ys": ys, **kwargs})
+    def axvline(self, x, **kwargs) -> None:
+        self.line_calls.append({"x": x, **kwargs})
 
     def set_xlabel(self, *_a, **_k) -> None:
         return
@@ -214,7 +215,7 @@ class _FakeGleAxis:
         return
 
 
-class _FakeGleFigure:
+class _FakeGleFigure(OpaqueGleFigure):
     def __init__(self, axis: _FakeGleAxis) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
@@ -262,12 +263,15 @@ def test_gle_export_writes_the_phase_band_and_boundary_line(
     # the on-screen single-series substitution).
     assert axis.errorbar_calls[0]["kwargs"]["color"] == _PHASE.color
     # One filled range band plus one filled boundary-uncertainty band.
-    assert len(axis.fill_between_calls) == 2
-    assert all(call["color"] == _PHASE.color for call in axis.fill_between_calls)
+    assert len(axis.span_calls) == 2
+    assert all(call["color"] == _PHASE.color for call in axis.span_calls)
     # One dashed boundary line.
-    (line_call,) = axis.plot_calls
+    (line_call,) = axis.line_calls
     assert line_call["color"] == _PHASE.color
     assert line_call["linestyle"] == "--"
+    assert line_call["x"] == _PHASE.upper[0]
+    assert axis.span_calls[0]["lo"] == _PHASE.range[0]
+    assert axis.span_calls[0]["hi"] == _PHASE.range[1]
 
 
 def test_gle_export_omits_band_for_plain_series(
@@ -298,8 +302,8 @@ def test_gle_export_omits_band_for_plain_series(
     export_dir.mkdir(parents=True, exist_ok=True)
     build = panel._gle_snapshot().build(fake_glp, gle_path, export_dir)
     assert build is not None
-    assert axis.fill_between_calls == []
-    assert axis.plot_calls == []
+    assert axis.span_calls == []
+    assert axis.line_calls == []
 
 
 # ── MainWindow seam: building the decoration from a real phase group ─────────

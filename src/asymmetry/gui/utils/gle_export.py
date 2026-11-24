@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import importlib
 import logging
 import os
@@ -44,30 +43,6 @@ _log = logging.getLogger(__name__)
 def _test_mode() -> bool:
     """True under pytest: suppress warning and information dialogs."""
     return bool(os.environ.get("PYTEST_CURRENT_TEST"))
-
-
-@functools.lru_cache(maxsize=1)
-def gle_offset_supported() -> bool:
-    """Return True when the installed gleplot applies a per-series ``offset``.
-
-    gleplot ≥ 1.7 accepts an ``offset=`` keyword on ``plot``/``errorbar``/
-    ``fill_between`` and emits it as a GLE ``let`` so a waterfall/overlay stack
-    is applied at plot time, leaving the exported ``.dat``/``.fit`` values raw
-    on disk). Detected by signature so a dev or
-    git install reports its true capability regardless of version string. When
-    False (older gleplot), the export bakes the offset into the written data
-    instead, matching the on-screen stack.
-    """
-    try:
-        import inspect
-
-        from gleplot.axes import Axes
-    except Exception:
-        return False
-    try:
-        return "offset" in inspect.signature(Axes.plot).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +208,7 @@ class GleExportBuild:
 
     files: list[Path] = field(default_factory=list)
     summary_extra: str = ""
+    cairo: bool = False
 
 
 def run_gle_export(
@@ -317,7 +293,12 @@ def run_gle_export(
         start = time.perf_counter()
         try:
             compile_gle(
-                executable, gle_path, devices, cwd=export_dir, cancelled=worker.is_cancelled
+                executable,
+                gle_path,
+                devices,
+                cwd=export_dir,
+                cancelled=worker.is_cancelled,
+                cairo=result.cairo,
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(exc.stderr or exc.stdout or str(exc)) from exc
