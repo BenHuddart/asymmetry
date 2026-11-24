@@ -18,10 +18,11 @@ def compile_gle(
     cwd: str | Path,
     timeout: float = 120.0,
     cancelled: Callable[[], bool] | None = None,
+    cairo: bool = False,
 ) -> subprocess.CompletedProcess:
     """Compile once; terminate and reap on cancellation or timeout."""
     devices = output_format if isinstance(output_format, str) else ",".join(output_format)
-    args = [gle_executable, "-d", devices, str(gle_file)]
+    args = [gle_executable, *(["-cairo"] if cairo else []), "-d", devices, str(gle_file)]
     if cancelled is None:
         return subprocess.run(
             args, capture_output=True, text=True, check=True, cwd=str(cwd), timeout=timeout

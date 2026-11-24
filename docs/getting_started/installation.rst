@@ -113,17 +113,19 @@ skill:
 
 For GLE export support:
 
-* gleplot installed from GitHub:
+* gleplot 6.0.0 from PyPI, installed by the ``gle`` extra:
 
    .. code-block:: bash
 
-       pip install "gleplot @ git+https://github.com/BenHuddart/gleplot.git"
+       pip install "asymmetry[gle]"
 
-  Recent Asymmetry releases use gleplot's foldered export support by default,
-  so install a current git version rather than an older cached wheel.
+  To install the script generator separately, use ``pip install gleplot==6.0.0``.
 
 * The GLE compiler itself (``gle``) needs to be on ``PATH`` for ``.gle``
-  scripts to be compiled to PDF or EPS at export time. Without it, the
+  scripts to be compiled to PDF or EPS at export time. Use a build with Cairo
+  support for translucent uncertainty bands, component fills and phase shading.
+  GLE's include library (``gleinc``, supplied by its release packages) supports
+  native reference lines and spans. Without the compiler, the
   scripts and sidecar data files are still written and can be compiled
   later. In a frozen macOS app the inherited ``PATH`` is minimal, so
   Asymmetry also looks for ``gle`` in the standard Homebrew, MacPorts,

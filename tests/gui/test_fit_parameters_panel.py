@@ -82,7 +82,12 @@ def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
     )
 
 
-from tests.gui.gle_helpers import recording_factories, wait_for_gle, write_compile_outputs
+from tests.gui.gle_helpers import (
+    OpaqueGleFigure,
+    recording_factories,
+    wait_for_gle,
+    write_compile_outputs,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -1007,7 +1012,7 @@ class _FakeAxis:
         return
 
 
-class _FakeFigure:
+class _FakeFigure(OpaqueGleFigure):
     def __init__(self, axis: _FakeAxis) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
@@ -1019,11 +1024,7 @@ class _FakeFigure:
     def savefig(self, path: str, **kwargs) -> None:
         self.saved_kwargs.append(dict(kwargs))
         output_path = Path(path)
-        if kwargs.get("folder"):
-            output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
-            export_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         self.saved_paths.append(str(output_path))
         output_path.write_text("! fake gle", encoding="utf-8")
 
@@ -1124,27 +1125,6 @@ def test_export_gle_saves_to_resolved_gle_path(
     # Synchronous "no GLE binary" path: no task/compile involved.
     preview = wait_for_gle(panel)
     assert "saved" in preview.status.text()
-
-
-def test_export_gle_warns_for_old_gleplot(
-    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    out_gle = tmp_path / "plot.gleplot"
-
-    warnings: list[tuple[str, str]] = []
-    fake_glp = SimpleNamespace(Axes=type("OldAxes", (), {}))
-
-    monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
-    _patch_save_dialog(monkeypatch, out_gle)
-    monkeypatch.setattr(
-        gle_export, "show_warning", lambda p, title, msg: warnings.append((title, msg))
-    )
-
-    panel._export_gle("pdf")
-    wait_for_gle(panel)
-
-    preview = wait_for_gle(panel)
-    assert "Update gleplot" in preview.status.text()
 
 
 def test_effective_x_key_mapping(panel: FitParametersPanel) -> None:

@@ -549,8 +549,7 @@ def _numeric_rows(dat_text: str) -> list[list[float]]:
 
 
 class TestWaterfallGleExport:
-    """The waterfall offset is applied in the GLE script (modern gleplot),
-    leaving the exported .dat/.fit values raw; older gleplot bakes it in."""
+    """GLE offsets leave scientific values raw; plain text carries the stack."""
 
     def _export(self, panel: PlotPanel, tmp_path):
         import gleplot as glp
@@ -564,13 +563,10 @@ class TestWaterfallGleExport:
         dats = {p.name: p.read_text(encoding="utf-8") for p in gle_path.parent.glob("*.dat")}
         return script, dats
 
-    def test_offset_applied_in_gle_keeps_dat_raw(self, time_panel, tmp_path, monkeypatch):
+    def test_offset_applied_in_gle_keeps_dat_raw(self, time_panel, tmp_path):
         if not time_panel._has_mpl:
             pytest.skip("matplotlib not available")
         pytest.importorskip("gleplot")
-        from asymmetry.gui.utils import plot_gle as pp
-
-        monkeypatch.setattr(pp, "gle_offset_supported", lambda: True)
         datasets = [_time_dataset(1, 0.2), _time_dataset(2, 0.2)]
         time_panel.set_overlay_enabled(True)
         time_panel.set_waterfall_enabled(True)
@@ -587,29 +583,9 @@ class TestWaterfallGleExport:
         all_y = [row[1] for text in dats.values() for row in _numeric_rows(text)]
         assert all_y and max(abs(y) for y in all_y) < 1.0
 
-    def test_offset_baked_when_gleplot_lacks_support(self, time_panel, tmp_path, monkeypatch):
-        if not time_panel._has_mpl:
-            pytest.skip("matplotlib not available")
-        pytest.importorskip("gleplot")
-        from asymmetry.gui.utils import plot_gle as pp
-
-        monkeypatch.setattr(pp, "gle_offset_supported", lambda: False)
-        datasets = [_time_dataset(1, 0.2), _time_dataset(2, 0.2)]
-        time_panel.set_overlay_enabled(True)
-        time_panel.set_waterfall_enabled(True)
-        time_panel.set_waterfall_offset(5.0)
-        time_panel.plot_datasets(datasets)
-
-        script, dats = self._export(time_panel, tmp_path)
-
-        # Fallback: no 'let', and the second trace's column carries the +5 shift.
-        assert "let " not in script
-        all_y = [row[1] for text in dats.values() for row in _numeric_rows(text)]
-        assert any(y > 4.0 for y in all_y)
-
     def test_text_export_always_bakes_offset(self, time_panel, tmp_path):
         # Plain-text export has no GLE script to apply the offset, so it must
-        # bake the stack regardless of the installed gleplot's capability
+        # bake the stack
         # (``_write_data_file`` defaults to ``bake_waterfall_offset=True``).
         if not time_panel._has_mpl:
             pytest.skip("matplotlib not available")

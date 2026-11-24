@@ -204,12 +204,10 @@ def test_frequency_band_present_with_positive_errors(qapp, tmp_path):
         gle_path, export_dir = _build(panel, ds, tmp_path)
         gle = gle_path.read_text(encoding="utf-8")
 
-        # The band is drawn as a fill referencing its own data file, in a light
-        # GLE tint — GLE has no fill alpha, so the series color itself would
-        # render as a solid block that swallows the spectrum line.
+        # The line colour at quarter opacity keeps the band behind the spectrum.
         assert "fill d" in gle
         band_fills = [ln for ln in gle.splitlines() if ln.strip().startswith("fill d")]
-        assert band_fills and all("LIGHTGRAY" in ln for ln in band_fills)
+        assert band_fills and all("rgba255(0,0,0,64)" in ln for ln in band_fills)
         assert "fill d1,d2 color BLACK" not in gle
         # The spectrum line itself stays piecewise-linear (no GLE spline).
         series_lines = [ln for ln in gle.splitlines() if " line " in ln and "key" in ln]

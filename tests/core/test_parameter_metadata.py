@@ -145,7 +145,7 @@ def test_gle_labels_convert_microsecond_inverse_unit_safely() -> None:
     info = get_param_info("Lambda")
     label = info.gle_label()
     assert "\\mus" not in label
-    assert "{\\rm \\mu}{}s^{-1}" in label
+    assert "{\\rm \\mu}s^{-1}" in label
 
 
 def test_gle_labels_keep_space_between_greek_symbol_and_unit() -> None:

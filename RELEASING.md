@@ -59,10 +59,10 @@ remains in the changelog even though no GitHub release was published.
 
 ## Reviewed desktop inputs
 
-`packaging/release/tools.json` selects CPython (including patch version), the
-GLE 1.7.0 source commit, supported target identities, and Inno Setup. The two
-platform requirements files install the complete selected desktop dependencies
-and backend/packaging tools as exact, SHA256-checked wheels. They are release
+`packaging/release/tools.json` selects CPython (including patch version),
+supported target identities, and Inno Setup. The two platform requirements files
+install the complete selected desktop dependencies, including gleplot 6.0.0 from
+PyPI, and backend/packaging tools as exact, SHA256-checked wheels. They are release
 inputs; `constraints.txt` and the library's flexible source-install ranges retain
 their separate role. Linux core-wheel CI is also a separate required check.
 
@@ -74,14 +74,15 @@ distribution set. The selected pip supports these flags and installation reports
 the actual replay exercises that contract. The interpreter's bundled ensurepip
 only installs the bootstrap pip; it does not resolve the release dependencies.
 
-GLE is fetched at its full reviewed commit. GLE and Asymmetry wheels are built
-with `--no-deps --no-build-isolation` in each dedicated environment, with index
-access disabled. All backend tools are already installed from reviewed wheel
-inputs. This is controlled build isolation through fresh environments, rather
-than borrowing a development environment. The local/VCS sources are outside pip's
-hash-mode install: their immutable source identity and resulting wheel hashes are
-recorded separately. No editable install or hidden backend resolution is used.
-The installed wheels must match those hashes. `pip check` and explicit evaluation
+Only the Asymmetry wheel is built from source, with
+`--no-deps --no-build-isolation` in each dedicated environment and index access
+disabled. All backend tools are already installed from reviewed wheel inputs.
+This is controlled build isolation through fresh environments. The local source
+is outside pip's hash-mode install: its immutable commit and resulting wheel
+hash are recorded separately. gleplot uses the same universal PyPI wheel on
+both targets; its bytes are checked against the published SHA256. No editable
+install or hidden backend resolution is used. The installed source wheel must
+match its recorded hash. `pip check` and explicit evaluation
 of the selected desktop extras check requirement completeness.
 
 Run a replay on its actual native platform with the Python from `tools.json`:
@@ -105,8 +106,8 @@ python tools/release_environment.py --verify <replay-output-directory>
 Verification rejects changed source commit, tracked source edits, untracked source/resources (including ignored native
 extensions), stale input
 hashes, changed distributions, wheel origins, interpreter identity, or selected
-extra requirements. The two replays must have identical normalised versions and
-GLE commit. Wheel and native installer bytes can differ between builds.
+extra requirements. The two replays must have identical normalised environments.
+Wheel and native installer bytes can differ between builds.
 
 Windows installs the selected Chocolatey Inno package, then invokes the compiler
 by its explicit installation path. `--inno` first compiles a small output-disabled
@@ -121,14 +122,14 @@ the macOS preview uses the same macOS 15 arm64 runner selection as releases.
 
 1. Start a reviewed change to the relevant platform requirements and/or
    `tools.json`. Select versions for compatibility with the source ranges and
-   supported native Python; do not update unrelated library ranges. GLE's tag,
-   full commit, version, and backend metadata must agree.
+   supported native Python; do not update unrelated library ranges. The gleplot
+   version must agree with the optional dependency pin in `pyproject.toml`.
 2. On each affected native target, use the pinned pip to download proposed wheels
    into a new temporary directory. For example,
    `python -m pip download --only-binary=:all: --no-deps PACKAGE==VERSION -d <directory>`
    followed by `python -m pip hash <wheel>`. Inspect wheel metadata and all changed
    transitive requirements; update every affected exact pin and SHA256 explicitly.
-   Review backend requirements of both source projects as well as runtime extras.
+   Review Asymmetry's backend requirements as well as runtime extras.
    Retain the selected wheel filenames and upstream identities for review.
 3. Run the two fresh native replays and inspect their `observed.json` records.
    A failure is a reason to investigate and review inputs, never to regenerate or
@@ -191,7 +192,8 @@ and origins. Missing or stale observations fail rather than become public claims
 
 The target-specific `*-build-components.json` includes packaged version, exact
 commit, Python/target, reviewed input hashes, resolved environment distributions,
-source/index wheel identities, immutable GLE source, and observed native tools.
+source/index wheel identities (including the gleplot index wheel), and observed
+native tools.
 The installed environment includes build dependencies; its distribution list
 alone is not evidence that those packages are bundled. Analysis module names and
 the collected file inventory describe inclusion. System APIs, drivers, and system

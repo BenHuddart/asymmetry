@@ -16,7 +16,6 @@ import time
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from urllib.parse import urlsplit
 
 # Script execution with -I deliberately does not borrow the source import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -132,10 +131,6 @@ def prepare(replay: Path, target: str, commit: str) -> None:
     observed = read_json(replay / "replay-1/observed.json")
     if any(observed[key] != identity[key] for key in ("source_commit", "target", "input_hashes")):
         raise ValueError("build observation identity differs from checkout")
-    tools = read_json(ROOT / "packaging/release/tools.json")
-    gle = tools["gle"]
-    if observed["gle_commit"] != gle["commit"]:
-        raise ValueError("build GLE identity differs from reviewed input")
     reviewed = release.reviewed_wheels(ROOT / f"packaging/release/{target}.txt")
     index_wheels = public_wheels(observed["downloaded_wheels"])
     if {name: item["sha256"] for name, item in index_wheels.items()} != {
@@ -146,21 +141,19 @@ def prepare(replay: Path, target: str, commit: str) -> None:
         raise ValueError("index wheel observations differ from allowlisted download reports")
     if observed["native"] != release.native_identity():
         raise ValueError("native tool observations changed after replay")
-    for name, directory in (("asymmetry", "app-wheel"), ("gleplot", "gle-wheel")):
-        wheels = list((replay / "replay-1" / directory).glob("*.whl"))
-        if len(wheels) != 1 or {
-            key: observed["wheels"][name][key] for key in ("filename", "sha256")
-        } != {
-            "filename": wheels[0].name,
-            "sha256": release.digest(wheels[0]),
-        }:
-            raise ValueError(f"source wheel observation differs from replay bytes: {name}")
+    wheels = list((replay / "replay-1/app-wheel").glob("*.whl"))
+    if len(wheels) != 1 or {
+        key: observed["wheels"]["asymmetry"][key] for key in ("filename", "sha256")
+    } != {
+        "filename": wheels[0].name,
+        "sha256": release.digest(wheels[0]),
+    }:
+        raise ValueError("source wheel observation differs from replay bytes: asymmetry")
     environment = {
         "identity": identity,
         "distributions": observed["environment"]["distributions"],
         "source_wheels": observed["wheels"],
         "index_wheels": index_wheels,
-        "direct_sources": {"gleplot": gle},
         "native_tools": observed["native"],
     }
     write_json(ROOT / "build/build-identity.json", identity)
@@ -170,28 +163,15 @@ def prepare(replay: Path, target: str, commit: str) -> None:
 def public_environment(record: dict, identity: dict) -> dict:
     if record.get("identity") != identity:
         raise ValueError("public build identity differs from expected checkout")
-    gle = record["direct_sources"]["gleplot"]
-    url = urlsplit(gle["url"])
-    if (
-        url.scheme != "https"
-        or url.hostname != "github.com"
-        or url.username
-        or url.password
-        or url.query
-        or url.fragment
-        or not re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", url.path)
-        or not re.fullmatch(r"[a-f0-9]{40}", gle["commit"])
-    ):
-        raise ValueError("unsafe required immutable VCS identity")
-    source = {
-        "url": gle["url"],
-        "commit": gle["commit"],
-        "version": safe_text(gle["version"]),
-        "requested_revision": safe_text(gle["requested_revision"]),
-    }
-    expected = read_json(ROOT / "packaging/release/tools.json")["gle"]
-    if source != {key: expected[key] for key in source}:
-        raise ValueError("required immutable VCS identity differs from reviewed inputs")
+    index_wheels = public_wheels(record["index_wheels"])
+    reviewed = release.reviewed_wheels(ROOT / f"packaging/release/{identity['target']}.txt")
+    if {name: item["sha256"] for name, item in index_wheels.items()} != {
+        name: item["sha256"] for name, item in reviewed.items()
+    }:
+        raise ValueError("public index wheel identity differs from reviewed inputs")
+    source_wheels = public_wheels(record["source_wheels"])
+    if set(source_wheels) != {"asymmetry"}:
+        raise ValueError("unreviewed source wheel identity")
     distributions = {
         safe_text(name): safe_text(version)
         for name, version in sorted(record["distributions"].items())
@@ -200,9 +180,8 @@ def public_environment(record: dict, identity: dict) -> dict:
         "identity": identity,
         "distributions": distributions,
         "build_tool_distributions": [name for name in BUILD_TOOLS if name in distributions],
-        "source_wheels": public_wheels(record["source_wheels"]),
-        "index_wheels": public_wheels(record["index_wheels"]),
-        "direct_sources": {"gleplot": source},
+        "source_wheels": source_wheels,
+        "index_wheels": index_wheels,
         "native_tools": {
             key: safe_text(value)
             for key, value in record["native_tools"].items()

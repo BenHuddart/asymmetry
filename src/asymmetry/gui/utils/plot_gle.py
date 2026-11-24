@@ -11,19 +11,10 @@ import numpy as np
 from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     dedup_export_token,
-    gle_offset_supported,
     safe_file_token,
 )
-from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots
+from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
 from asymmetry.gui.utils.plot_export_data import PlotExportData
-
-_GLE_BAND_TINT = {
-    "black": "lightgray",
-    "gray": "lightgray",
-    "blue": "lightblue",
-    "cyan": "lightcyan",
-    "green": "lightgreen",
-}
 
 
 @dataclass(frozen=True)
@@ -40,13 +31,12 @@ class PlotGleSnapshot(PlotExportData):
         return snapshot.build_figure(glp, gle_path, export_dir)
 
     def build_figure(self, glp, gle_path, export_dir):
-        graph = glp.GLEGraphConfig(smooth_curves=False) if self.frequency_panel else None
         if self.stacked:
             fig, subplot_axes = gle_subplots(
                 glp, nrows=len(self.axes), ncols=1, figsize=self.figsize, sharex=True
             )
         else:
-            fig = gle_figure(glp, figsize=self.figsize, graph=graph)
+            fig = gle_figure(glp, figsize=self.figsize)
             subplot_axes = [fig.add_subplot(111)]
         files = [gle_path]
         dat_writes = []
@@ -93,16 +83,16 @@ class PlotGleSnapshot(PlotExportData):
             )
         if self.stacked:
             fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
-        fig.savefig(str(gle_path))
+        cairo = save_gle_figure(fig, gle_path)
         for path, payload, label, axis_key in dat_writes:
             self._write_data_file(
                 path,
                 payload,
                 label_text=label,
                 axis_key=axis_key,
-                bake_waterfall_offset=not gle_offset_supported(),
+                bake_waterfall_offset=False,
             )
-        return GleExportBuild(files=files)
+        return GleExportBuild(files=files, cairo=cairo)
 
     def _plot_export_payloads_on_axis(
         self,
@@ -120,12 +110,6 @@ class PlotGleSnapshot(PlotExportData):
         """Draw export payloads on a provided axis with axis-specific naming."""
         is_multi = len(payloads) > 1
         axis_suffix = self._export_axis_suffix(axis_key)
-        # gleplot ≥ 1.7 stacks a waterfall offset in the GLE script (``offset=``
-        # -> ``let``), keeping the written .dat/.fit values raw. Older gleplot
-        # has no such knob, so fall back to baking the offset into the arrays
-        # (and the sidecar writers) so the plot still matches the data.
-        offset_in_gle = gle_offset_supported()
-
         for i, payload in enumerate(payloads):
             label_text = payload.get("label", f"dataset_{i}")
             safe_label = self._sanitize_gle_text(
@@ -150,16 +134,8 @@ class PlotGleSnapshot(PlotExportData):
             y_err = data.get("err")
             t_fit = fit.get("t")
             y_fit = fit.get("y")
-            # Mirror the on-screen waterfall stack. With modern gleplot the
-            # offset is handed to the plot calls (``gle_offset`` below) and
-            # applied in the GLE script; against older gleplot we bake it into
-            # the arrays here. 0.0 (absent) leaves y as-is either way.
-            offset = float(payload.get("waterfall_offset", 0.0))
-            gle_offset = offset if offset_in_gle else 0.0
-            if offset and not offset_in_gle and y_data is not None:
-                y_data = np.asarray(y_data, dtype=float) + offset
-            if offset and not offset_in_gle and y_fit is not None:
-                y_fit = np.asarray(y_fit, dtype=float) + offset
+            # Script offsets preserve raw scientific values in the sidecars.
+            gle_offset = float(payload.get("waterfall_offset", 0.0))
 
             dat_path = gle_path.parent / f"{token}.dat"
             if t_data is not None and y_data is not None:
@@ -190,12 +166,11 @@ class PlotGleSnapshot(PlotExportData):
                         if bool(np.any(np.isfinite(err) & (err > 0.0))):
                             band_err = np.where(np.isfinite(err), err, 0.0)
                             y_arr = np.asarray(y_data, dtype=float)
-                            band_color = _GLE_BAND_TINT.get(str(data_color).lower(), "lightgray")
                             ax.fill_between(
                                 x_plot,
                                 y_arr - band_err,
                                 y_arr + band_err,
-                                color=band_color,
+                                color=data_color,
                                 alpha=0.25,
                                 label=None,
                                 offset=gle_offset,
@@ -206,7 +181,7 @@ class PlotGleSnapshot(PlotExportData):
                         t_data,
                         y_data,
                         yerr=y_err,
-                        fmt="none",
+                        linestyle="none",
                         marker="o",
                         color=data_color,
                         markersize=4,
@@ -218,7 +193,7 @@ class PlotGleSnapshot(PlotExportData):
 
             fit_path = gle_path.parent / f"{token}.fit"
             if t_fit is not None and y_fit is not None:
-                self._write_fit_file(fit_path, payload, bake_waterfall_offset=not offset_in_gle)
+                self._write_fit_file(fit_path, payload, bake_waterfall_offset=False)
                 written_files.append(fit_path)
 
                 fit_label = fit.get("label", "Fit")
@@ -275,7 +250,7 @@ class PlotGleSnapshot(PlotExportData):
         text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
         text = text.replace("\r", " ").replace("\n", " ")
         text = text.replace("μ", "u").replace("µ", "u")
-        text = text.replace("χ", "chi").replace("²", "^2")
+        text = text.replace("χ", "chi").replace("²", "^{2}")
         text = "".join(ch for ch in text if ch.isprintable())
         text = " ".join(text.split())
         text = text.encode("ascii", "ignore").decode("ascii")
@@ -308,5 +283,5 @@ class PlotGleSnapshot(PlotExportData):
         """Return plain-text y-axis label for plot exports."""
         if axis_key in {"P_x", "P_y", "P_z"}:
             suffix = axis_key.split("_", 1)[1]
-            return f"a_0 P_{{{suffix}}}(t) (%)"
+            return f"a_{{0}} P_{{{suffix}}}(t) (%)"
         return "Asymmetry (%)"

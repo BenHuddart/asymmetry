@@ -9,6 +9,13 @@ from asymmetry.gui.windows.gle_preview import GlePlotPreview
 from tests._qt_helpers import wait_for
 
 
+class OpaqueGleFigure:
+    """Figure doubles without translucent series use the native GLE renderer."""
+
+    def requires_cairo(self):
+        return False
+
+
 def recording_factories(monkeypatch):
     """Keep tests of axis commands independent of gleplot configuration."""
     for module in (plot_gle, parameter_gle, global_gle):
