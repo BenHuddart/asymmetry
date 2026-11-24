@@ -96,7 +96,8 @@ to record work that can be implemented and checked independently.
 **Implementation** captures the outcome, evidence, scope, decisions, compatibility,
 acceptance criteria, validation, and documentation. List prerequisites under
 **Blocked by** and start dependent work only when each is closed as completed.
-For two PRs, the first references the issue and the final PR closes it.
+Use ``Refs #n`` while acceptance criteria remain open. Only a PR satisfying the
+whole issue uses ``Closes #n``.
 
 **Instrument review** captures the instrument, version reviewed, sections checked,
 findings, and supporting evidence. Choose **Do not name me** to withhold consent
@@ -106,6 +107,40 @@ commenting.
 
 For issues filed through the CLI or API, use the form's field labels as
 third-level headings, in order.
+
+.. _issue-status-and-monitoring:
+
+Issue status and monitoring
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Keep an issue open with ``monitoring`` when its mitigation has shipped, further
+implementation is not currently justified, and defined evidence or recurrence
+will determine the next action. This status preserves the remaining uncertainty;
+it does not claim that the underlying cause is understood. Use ``deferred`` for
+work deliberately postponed. Keep scope and severity labels alongside the status.
+
+Before applying ``monitoring``, record these points in the issue:
+
+* The remaining uncertainty, shipped mitigation and supporting PR or commit.
+* A named owner responsible for reviewing new evidence.
+* The evidence source, including relevant CI runs, jobs and retained diagnostics.
+* The escalation trigger and next review point.
+* The closure criterion, including any residual uncertainty requiring an explicit
+  maintainer decision.
+
+Review monitoring issues before each release and when their escalation trigger
+occurs. Inspect CI incidents promptly and preserve required findings before
+diagnostic artifacts expire. Record failed attempts and successful retries;
+a successful retry does not erase the failure or establish its cause.
+
+Remove ``monitoring`` and resume active investigation when the trigger occurs
+or new evidence justifies implementation. Remove ``deferred`` when postponed
+work resumes. Keep these statuses distinct. An active-work search can exclude
+both with ``is:issue is:open -label:monitoring -label:deferred``.
+
+Close a monitoring issue only when its recorded criterion is met or the
+maintainer explicitly accepts the remaining uncertainty. State what the evidence
+establishes and what remains unknown. Inactivity alone is not a closure criterion.
 
 Code of Conduct
 ---------------
