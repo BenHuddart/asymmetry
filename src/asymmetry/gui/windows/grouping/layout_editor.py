@@ -119,6 +119,51 @@ def prepare_readout_change(dialog, payload):
     return edited
 
 
+def confirm_instrument_choice(self, selection=None) -> bool:
+    """Stage a reviewed identity while preserving the selected run's authored settings."""
+    from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
+
+    self._sync_draft_from_form()
+    run = self._run
+    if (
+        self._instrument_edit is not None
+        and int(run.run_number) == self._instrument_edit.run_number
+    ):
+        run = replace(run, instrument_choice=self._instrument_edit.choice)
+    confirmation = InstrumentIdentityDialog(
+        run,
+        following_profile=None if self._run_is_overridden(int(run.run_number)) else self._draft,
+        selection=selection,
+        parent=self,
+    )
+    if confirmation.exec() != confirmation.DialogCode.Accepted:
+        return False
+    before = self._instrument_edit.profile if self._instrument_edit is not None else self._draft
+    self._instrument_edit = InstrumentEdit(
+        confirmation.get_choice(),
+        GroupingProfile.from_dict(before.to_dict()),
+        int(self._reference_dataset.run_number),
+    )
+    selected_run = replace(self._run, instrument_choice=self._instrument_edit.choice)
+    if not self._fingerprint.matches(profile_fingerprint_for_run(selected_run)):
+        number = self._instrument_edit.run_number
+        if not self._run_is_overridden(number):
+            self._override_profiles[number] = GroupingProfile.from_dict(before.to_dict())
+            self._override_drafts[number] = profile_grouping_request(before, self._run)
+            self._scope_panel.set_released(number, True)
+    return True
+
+
+def edit_instrument_identity(self) -> None:
+    """Review identity as a cancellable edit of the selected grouping run."""
+    if not confirm_instrument_choice(self):
+        return
+    self._mark_dirty()
+    self._rebuild_preset_combo()
+    self._refresh_editing_strip()
+    self._refresh_preview()
+
+
 def edit_detector_layout(self) -> None:
     """Open the interactive detector layout editor as a sub-dialog."""
     from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
@@ -156,28 +201,9 @@ def edit_detector_layout(self) -> None:
     result = dlg.get_result()
     key = result["instrument"]
     if key != instrument.name:
-        from asymmetry.gui.windows.instrument_identity_dialog import InstrumentIdentityDialog
-
-        self._sync_draft_from_form()
         chosen = choice_for_layout(self._run, key)
-        confirmation = InstrumentIdentityDialog(
-            self._run, following_profile=self._draft, selection=chosen.selection, parent=self
-        )
-        if confirmation.exec() != confirmation.DialogCode.Accepted:
+        if not confirm_instrument_choice(self, chosen.selection):
             return
-        before = self._instrument_edit.profile if self._instrument_edit is not None else self._draft
-        self._instrument_edit = InstrumentEdit(
-            confirmation.get_choice(),
-            GroupingProfile.from_dict(before.to_dict()),
-            int(self._reference_dataset.run_number),
-        )
-        selected_run = replace(self._run, instrument_choice=self._instrument_edit.choice)
-        if not self._fingerprint.matches(profile_fingerprint_for_run(selected_run)):
-            number = self._instrument_edit.run_number
-            if not self._run_is_overridden(number):
-                self._override_profiles[number] = GroupingProfile.from_dict(before.to_dict())
-                self._override_drafts[number] = profile_grouping_request(before, self._run)
-                self._scope_panel.set_released(number, True)
     edited_alpha = prepare_readout_change(self, result)
     if edited_alpha is None:
         return

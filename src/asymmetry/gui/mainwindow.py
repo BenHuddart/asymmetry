@@ -1425,7 +1425,6 @@ class MainWindow(QMainWindow):
         _save_project_tb.setToolTip("Save the current project (Ctrl+S)")
         self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
-        self._main_toolbar.addAction("Instrument identity…", self._on_instrument_identity)
         # Fit / Fourier / Parameters live in the right-hand inspector deck
         # (visible by default, per-representation; see
         # _apply_inspector_for_domain) and are recoverable from the View menu.

@@ -32,7 +32,7 @@ def _renumbered(dataset, run_number: int):
 
 class GroupingWindowProfileEditorScenario(Scenario):
     name = "grouping_window_profile_editor"
-    description = "Grouping profile editor with Variable widths below the mode and a live preview."
+    description = "Grouping profile editor with identity review at bottom left and a live preview."
     size = (1180, 780)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
@@ -82,6 +82,15 @@ class GroupingWindowProfileEditorScenario(Scenario):
         ):
             raise RuntimeError("Alpha control must display the completed preview coefficient")
 
+        from PySide6.QtWidgets import QPushButton
+
+        identity = next(
+            button
+            for button in dialog.findChildren(QPushButton)
+            if button.text() == "Instrument identity…"
+        )
+        if not identity.isVisible():
+            raise RuntimeError("Instrument identity review must remain visible at bottom left")
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"
         out_path.parent.mkdir(parents=True, exist_ok=True)

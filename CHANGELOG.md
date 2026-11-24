@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Move instrument identity review from the main toolbar to the bottom left of
+  Grouping, retaining access through the Analysis menu.
+
 - Retain CI worker exit codes and signals alongside runner-wide OOM counters,
   with explicit unavailable evidence and unchanged test failure behaviour.
 

@@ -125,9 +125,10 @@ def test_confirmed_identity_with_incompatible_map_keeps_generic_drawing_and_no_p
     assert run.grouping == before
 
 
+@pytest.mark.parametrize("entry", ["layout", "identity"])
 @pytest.mark.parametrize("finish", ["cancel", "apply"])
 def test_pending_identity_release_labels_and_edits_only_the_selected_run(
-    editor, monkeypatch, finish
+    editor, monkeypatch, finish, entry
 ):
     dialog, run, profile = editor
     other = deepcopy(dialog._datasets[0])
@@ -147,9 +148,23 @@ def test_pending_identity_release_labels_and_edits_only_the_selected_run(
         layout._instrument_combo.setCurrentIndex(layout._instrument_combo.findData("HiFi"))
         return QDialog.Accepted
 
+    def identity_exec(identity):
+        if entry == "identity":
+            index = next(
+                i
+                for i in range(identity._choices.count())
+                if isinstance(identity._choices.itemData(i), InstrumentSelection)
+                and identity._choices.itemData(i).profile_key == "isis.hifi"
+            )
+            identity._choices.setCurrentIndex(index)
+        return QDialog.Accepted
+
     monkeypatch.setattr(DetectorLayoutDialog, "exec", layout_exec)
-    monkeypatch.setattr(InstrumentIdentityDialog, "exec", lambda self: QDialog.Accepted)
-    dialog._on_detector_layout()
+    monkeypatch.setattr(InstrumentIdentityDialog, "exec", identity_exec)
+    if entry == "identity":
+        dialog._on_instrument_identity()
+    else:
+        dialog._on_detector_layout()
     assert dialog._editing_target() == 17
     assert dialog._editing_strip.text() == "Editing override for run 17 — this run only"
     assert dialog._scope_panel.released_run_numbers() == {17}
@@ -177,3 +192,46 @@ def test_pending_identity_release_labels_and_edits_only_the_selected_run(
         assert dialog.result() == QDialog.Rejected
     assert run.instrument_choice.selection.profile_key == "psi.gps"
     assert (run.grouping, other.run.grouping, profile.to_dict()) == before
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_identity_button_stages_only_the_selected_run(editor, monkeypatch, accepted):
+    from PySide6.QtWidgets import QPushButton
+
+    dialog, run, profile = editor
+    before = deepcopy((run.grouping, run.instrument_choice, profile.to_dict()))
+    dialog._sync_draft_from_form()
+    request = deepcopy(dialog._current_grouping_payload())
+    opened = []
+
+    def review(identity):
+        opened.append(identity)
+        index = next(
+            i
+            for i in range(identity._choices.count())
+            if isinstance(identity._choices.itemData(i), InstrumentSelection)
+            and identity._choices.itemData(i).profile_key == "psi.flame"
+        )
+        identity._choices.setCurrentIndex(index)
+        return QDialog.Accepted if accepted else QDialog.Rejected
+
+    monkeypatch.setattr(InstrumentIdentityDialog, "exec", review)
+    button = next(
+        button
+        for button in dialog.findChildren(QPushButton)
+        if button.text() == "Instrument identity…"
+    )
+    button.click()
+    assert len(opened) == 1
+    if accepted:
+        result = dialog.get_profile_result()
+        assert result["instrument_choice"].selection.profile_key == "psi.flame"
+        assert result["instrument_choice_run_number"] == 17
+        assert result["override_edits"][17]["groups"] == request["groups"]
+        assert result["override_edits"][17]["alpha"] == request["alpha"]
+        assert result["newly_released"] == {17}
+        assert dialog._editing_strip.text() == "Editing override for run 17 — this run only"
+    else:
+        assert dialog._instrument_edit is None
+        assert dialog._current_grouping_payload() == request
+    assert (run.grouping, run.instrument_choice, profile.to_dict()) == before
