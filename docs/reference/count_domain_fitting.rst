@@ -200,6 +200,24 @@ threshold is an approximation, not a calibrated goodness-of-fit test.
 **Fit ✓** reports convergence. See :doc:`assessing_a_fit` for the assumptions.
 Gaussian and Poisson fits approach agreement at high counts.
 
+.. _count-fit-deadtime-table-limit:
+
+Known limitation: detector deadtime tables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Count fits do not automatically fold the grouping's detector deadtime table
+into predictions for raw measured counts. For observations with an applied
+deadtime correction, select **Gaussian √N** with the retained counting variance
+described above. **Poisson** continues to require eligible raw counts.
+
+The scalar **Fit deadtime DT₀** option models a common coefficient or residual
+increment. It does not automatically apply a table of different detector
+coefficients to raw-count predictions. Its estimated detector shares and
+counting-statistics limitations are described under
+`Count loss and double pulse`_. General simultaneous detector fitting is
+distinct from this table-handling limitation; see
+:ref:`comparison-count-deadtime-models`.
+
 Seeding N₀, and the spurious minimum
 ------------------------------------
 
@@ -423,6 +441,13 @@ References
 
 Compared with other programs
 ----------------------------
+
+WiMDA 1.326, Mantid 6.16.1, and musrfit 1.12.1 offer grouped or simultaneous
+fitting, but the examined ordinary count workflows do not automatically apply
+a heterogeneous deadtime table to raw-count predictions. Mantid can express
+such a response through a custom function. The preparation and objective
+distinctions are described in :ref:`comparison-count-deadtime-models`; they do
+not remove Asymmetry's :ref:`count-fit-deadtime-table-limit`.
 
 Asymmetry uses required observations for grouped count preparation, preserving
 measured or supplied count variance with fixed coefficients and exposure.
