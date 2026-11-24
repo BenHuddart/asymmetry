@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Explore an interactive counts-to-result guide with selectable reduction routes,
+  counting examples, conditional errors, and accessible static and print explanations.
+
 - Select GPS Individual or Hardware-combined readouts explicitly, retaining saved
   groups and blocking analysis of declared shared-event or unresolved Mobile overlaps.
 

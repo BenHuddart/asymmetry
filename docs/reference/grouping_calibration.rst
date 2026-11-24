@@ -1,8 +1,9 @@
 Grouping and calibration walkthrough
 ====================================
 
-For the operation order and calibration dependencies, see
-:doc:`/explanation/reduction_pipeline`.
+Trace the :doc:`interactive route from detector counts to a result
+</explanation/reduction_pipeline>` for the operation order and calibration
+dependencies.
 
 Calibration preparation uses the same unique acquired-channel membership and
 exclusions as reduction. Invalid or missing members and required groups emptied

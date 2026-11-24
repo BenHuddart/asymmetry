@@ -1,8 +1,9 @@
 Loading Data
 ============
 
-For the operation order and calibration dependencies, see
-:doc:`/explanation/reduction_pipeline`.
+Trace the :doc:`interactive route from detector counts to a result
+</explanation/reduction_pipeline>` for the operation order and calibration
+dependencies.
 
 Asymmetry reads the major muSR raw-data formats through a common
 :func:`~asymmetry.core.io.load` API and a uniform Grouping dialog: ISIS
