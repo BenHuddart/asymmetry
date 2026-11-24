@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Distinguish analytic checks, recorded native comparisons, and optional fresh
   execution; configured reference identity or execution failures now fail clearly.
 
+- Document open monitoring issues, their evidence and review requirements, and
+  the distinction from deferred work.
+
 ### Fixed
 
 - Exclude fitted bound hits from Global Fit Wizard surrogate sharing proposals

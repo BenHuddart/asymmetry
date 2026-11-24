@@ -56,6 +56,9 @@ documentation. Its **Blocked by** list is authoritative: prerequisites must be
 closed as completed before dependent work starts. Plans and investigations belong
 in issues, not new repository planning documents.
 
+Use the [issue status and monitoring convention](docs/contributing.rst#issue-status-and-monitoring)
+to separate actionable work, monitored uncertainties and deferred proposals.
+
 **Instrument review** records the exact profile revision, checked sections,
 evidence, and credit consent. A reviewer can choose **Do not name me**; the issue
 and GitHub account remain public, and a maintainer can file on their behalf.
