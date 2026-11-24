@@ -2175,9 +2175,9 @@ class PlotPanel(QWidget):
         )
 
     def _resolve_y(
-        self, axis_id: str, bounds: tuple[float, float] | None
+        self, axis_id: str, bounds: Callable[[], tuple[float, float] | None]
     ) -> dict[str, tuple[float, float]]:
-        """Resolve one y axis, whose bounds were measured inside the resolved x."""
+        """Prepare bounds inside the resolved x window only if this y needs them."""
         return self._limits.resolve({axis_id: bounds}, {axis_id: self._y_quantity()})
 
     def _apply_limits(self, limits: dict[str, tuple[float, float]]) -> None:
@@ -4505,9 +4505,11 @@ class PlotPanel(QWidget):
             resolved.update(
                 self._resolve_y(
                     self._y_axis_id(axis_key),
-                    _EMPTY_PROJECTION_YLIM
-                    if arrays is None
-                    else self._auto_y_limits_from_display_arrays(arrays, window),
+                    lambda: (
+                        _EMPTY_PROJECTION_YLIM
+                        if arrays is None
+                        else self._auto_y_limits_from_display_arrays(arrays, window)
+                    ),
                 )
             )
             if arrays is not None:
@@ -4624,9 +4626,11 @@ class PlotPanel(QWidget):
             resolved.update(
                 self._resolve_y(
                     self._y_axis_id(axis_key),
-                    None
-                    if arrays is None
-                    else self._auto_y_limits_from_display_arrays(arrays, window),
+                    lambda: (
+                        None
+                        if arrays is None
+                        else self._auto_y_limits_from_display_arrays(arrays, window)
+                    ),
                 )
             )
             if arrays is not None:
@@ -4780,7 +4784,9 @@ class PlotPanel(QWidget):
             else:
                 ax_res.tick_params(labelbottom=False)
             resolved.update(
-                self._resolve_y(self._y_axis_id(axis_keys[idx]), self._maxent_y_bounds(data, model))
+                self._resolve_y(
+                    self._y_axis_id(axis_keys[idx]), lambda: self._maxent_y_bounds(data, model)
+                )
             )
             last_time = time
 
@@ -4859,7 +4865,7 @@ class PlotPanel(QWidget):
         resolved.update(
             self._resolve_y(
                 self._y_axis_id(axis_key),
-                self._maxent_y_bounds(
+                lambda: self._maxent_y_bounds(
                     np.concatenate([data for _, data, _, _ in curves]),
                     np.concatenate([model for _, _, model, _ in curves]),
                 ),
@@ -5317,18 +5323,6 @@ class PlotPanel(QWidget):
             self._last_plot_sentinel_mask = np.concatenate(all_sentinel)
             style_legend(self._ax.legend())
 
-            # Y framed to the signal within the resolved x window, ignoring
-            # ±100 % saturation sentinels and the error-divergent tail. Fall
-            # back to the raw envelope only when no good-bin points exist.
-            y_bounds = self._signal_y_limits_from_last_plot()
-            if y_bounds is None:
-                a_all = self._last_plot_asymmetry
-                e_all = self._last_plot_error
-                y_min = float((a_all - e_all).min())
-                y_max = float((a_all + e_all).max())
-                ypad = (y_max - y_min) * 0.05
-                y_bounds = (y_min - ypad, y_max + ypad)
-
             # Set fit range to span all datasets (raw axes — see _raw_fit_seed_range).
             if self._fit_x_min is None or self._fit_x_max is None:
                 seed = self._raw_fit_seed_range(list(datasets))
@@ -5346,9 +5340,8 @@ class PlotPanel(QWidget):
             self._clear_waterfall_render_record()
             self._fit_x_min = None
             self._fit_x_max = None
-            y_bounds = None
 
-        resolved.update(self._resolve_y(y_axis_id, y_bounds))
+        resolved.update(self._resolve_y(y_axis_id, self._display_y_bounds))
         self._apply_limits(resolved)
         self._update_export_enabled()
 
@@ -5592,16 +5585,6 @@ class PlotPanel(QWidget):
 
         style_legend(self._ax.legend())
 
-        # Y framed to the signal within the resolved x window, ignoring ±100 %
-        # saturation sentinels and the error-divergent late-time tail. Fall back
-        # to the raw envelope only when no good-bin points exist.
-        y_bounds = self._signal_y_limits_from_last_plot()
-        if y_bounds is None:
-            y_min = float((asymmetry - error).min())
-            y_max = float((asymmetry + error).max())
-            y_padding = (y_max - y_min) * 0.05
-            y_bounds = (y_min - y_padding, y_max + y_padding)
-
         if self._fit_x_min is None or self._fit_x_max is None:
             seed = self._raw_fit_seed_range([dataset])
             if seed is None:
@@ -5615,7 +5598,7 @@ class PlotPanel(QWidget):
                     seed = (float(time.min()), float(time.max()))
             self._fit_x_min, self._fit_x_max = seed
 
-        resolved.update(self._resolve_y(y_axis_id, y_bounds))
+        resolved.update(self._resolve_y(y_axis_id, self._display_y_bounds))
         self._apply_limits(resolved)
         self._update_export_enabled()
 
@@ -5989,6 +5972,16 @@ class PlotPanel(QWidget):
         if np.any(strict_freqs < lower) or np.any(strict_freqs > upper):
             return None
         return lower, upper
+
+    def _display_y_bounds(self) -> tuple[float, float] | None:
+        """Frame the reliable signal, falling back to the raw error envelope."""
+        bounds = self._signal_y_limits_from_last_plot()
+        if bounds is not None or self._last_plot_asymmetry is None or self._last_plot_error is None:
+            return bounds
+        y_min = float((self._last_plot_asymmetry - self._last_plot_error).min())
+        y_max = float((self._last_plot_asymmetry + self._last_plot_error).max())
+        padding = (y_max - y_min) * 0.05
+        return y_min - padding, y_max + padding
 
     def _signal_y_limits_from_last_plot(self) -> tuple[float, float] | None:
         """Robust y-limits framing the signal in the current x-window.

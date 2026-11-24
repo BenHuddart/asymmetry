@@ -249,9 +249,11 @@ sync updates bookkeeping only and defers `plot_*`/rasterisation to view entry
 (`_render_frequency_spectra`'s visibility gate). Completion paths use
 `draw_idle()`, never `draw()`; and resolve axis limits before drawing, not
 after, so no draw is ever "one view behind" a pending reframe (`PlotPanel`
-resolves x through `AxisLimitPolicy`, decimates and measures y for that
-window, then draws once — see `_resolve_x`/`_apply_limits` in
+resolves x through `AxisLimitPolicy`, decimates and supplies lazy y-bound
+callbacks for that window, then draws once — see `_resolve_x`/`_apply_limits` in
 `panels/plot_panel.py`).
+The policy evaluates those callbacks synchronously only for Auto axes,
+unframed axes, or changed quantities; panels do not duplicate that decision.
 
 **Loops that must touch widgets get the chunked runner.** Work that mutates
 widgets or window state cannot go to a worker; if it is a bounded-item loop

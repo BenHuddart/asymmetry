@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -296,6 +297,49 @@ def _make(rep: str):
 
 
 # ── scenario table ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("rep", _PLOT_PANEL_REPS)
+def test_held_redraw_skips_y_statistics(qapp: QApplication, monkeypatch, rep: str) -> None:
+    adapter = _make(rep)
+    panel = adapter.panel
+    statistics = Mock(wraps=panel._auto_y_limits_from_arrays)
+    monkeypatch.setattr(panel, "_auto_y_limits_from_arrays", statistics)
+    adapter.render(1, 1.0)
+    assert statistics.call_count > 0
+    before = {key: tuple(ax.get_ylim()) for key, ax in panel._displayed_y_axes().items()}
+
+    statistics.reset_mock()
+    adapter.render(2, 2.0)
+    statistics.assert_not_called()
+    assert {key: tuple(ax.get_ylim()) for key, ax in panel._displayed_y_axes().items()} == before
+    adapter.type_x(2.0, 4.0)
+    statistics.assert_not_called()
+
+    adapter.auto_y_btn.click()
+    assert statistics.call_count > 0
+    _assert_consistent(adapter.active_y_limits())
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_held_reconstruction_skips_bounds(qapp: QApplication, monkeypatch, combined: bool) -> None:
+    panel = PlotPanel()
+    datasets = [_decay_dataset(1, 1.0, -1), _decay_dataset(2, 2.0, -2)]
+    prepare = Mock(wraps=panel._maxent_y_bounds)
+    monkeypatch.setattr(panel, "_maxent_y_bounds", prepare)
+    panel.plot_maxent_reconstruction(datasets, combined=combined)
+    assert prepare.call_count == (1 if combined else 2)
+    before = {key: tuple(ax.get_ylim()) for key, ax in panel._displayed_y_axes().items()}
+    if not combined:
+        assert len(set(before.values())) == 2
+
+    prepare.reset_mock()
+    panel.plot_maxent_reconstruction(datasets, combined=combined)
+    prepare.assert_not_called()
+    assert {key: tuple(ax.get_ylim()) for key, ax in panel._displayed_y_axes().items()} == before
+
+    panel._auto_y_btn.click()
+    assert prepare.call_count == (1 if combined else 2)
 
 
 @pytest.mark.parametrize("rep", _PLOT_PANEL_REPS)
