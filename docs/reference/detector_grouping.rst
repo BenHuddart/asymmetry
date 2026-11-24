@@ -122,14 +122,17 @@ evidence does not overwrite saved detector groups, calibrations, timing or
 reference requests. An unresolved conflict prevents a new reduction and automatic
 profile attachment; saved analysis history remains inspectable.
 
-Choose **Instrument identity…** in the toolbar or Analysis menu to review the
+Choose **Instrument identity…** at the bottom left of **Grouping**, or in the
+**Analysis** menu, to review the
 **Retained identity**, **Observed candidates** and **Current file evidence**.
 The **Instrument Identity** dialog records the explicit choice and its evidence.
 **Cancel** leaves the run and profiles unchanged. Choosing an incompatible
 identity stops following the assigned grouping profile while retaining its base
 profile and complete per-run settings, including an unavailable reference request.
-It does not apply a preset or run a calibration. Open **Grouping** to apply the
-retained settings or deliberately select another grouping.
+It does not apply a preset or run a calibration. In **Grouping**, the choice
+is staged for the selected run until **Apply**; cancelling the Grouping window
+also discards that choice. The **Analysis** menu records the identity directly;
+open **Grouping** to apply the retained settings or select another grouping.
 
 Changing the instrument in **Detector Layout** preserves the current groups.
 Accepting a changed identity opens confirmation of that fixed proposal; use

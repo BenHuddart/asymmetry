@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import numpy as np
 import pytest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QMenu
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.instruments.resolution import (
@@ -235,7 +235,7 @@ def test_explicit_choice_only_releases_incompatible_follower_without_calculation
     assert ("grouping_overrides" in entry) is (not keep_retained)
 
 
-def test_cancel_toolbar_identity_leaves_the_complete_live_state_unchanged(workflow, monkeypatch):
+def test_cancel_menu_identity_leaves_the_complete_live_state_unchanged(workflow, monkeypatch):
     window, state, profile, request, tmp_path = workflow
     window.restore_project_state(state, str(tmp_path / "input.asymp"))
     dataset = window._data_browser.get_dataset(17)
@@ -264,7 +264,10 @@ def test_cancel_toolbar_identity_leaves_the_complete_live_state_unchanged(workfl
         return QDialog.Rejected
 
     monkeypatch.setattr(InstrumentIdentityDialog, "exec", cancel)
-    window._on_instrument_identity()
+    assert "Instrument identity…" not in [a.text() for a in window._main_toolbar.actions()]
+    menus = window.findChildren(QMenu)
+    analysis = next(menu for menu in menus if menu.title() == "&Analysis")
+    next(a for a in analysis.actions() if a.text() == "Instrument identity…").trigger()
     assert len(opened) == 1
     assert (
         dataset.run.grouping,
