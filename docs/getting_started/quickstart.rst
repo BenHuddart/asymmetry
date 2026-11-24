@@ -34,7 +34,7 @@ Generate and save the data
 
    .. list-table::
       :header-rows: 1
-      :widths: 20 15 65
+      :widths: 35 20 45
 
       * - Parameter
         - Value
