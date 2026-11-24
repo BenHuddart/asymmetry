@@ -395,6 +395,11 @@ Nyquist span. The very first plot in a new session has nothing held yet, so
 it frames from the data even with both Auto buttons off — an axis with
 nothing held simply takes the data's frame, no toggle needed.
 
+Held Y limits also avoid recalculating the statistical Y bounds when browsing
+or redrawing dense spectra, including overlays and subplots. Bounds are
+prepared when **Auto Y** is enabled, an axis first receives data, or the
+displayed quantity changes, such as switching from asymmetry to raw counts.
+
 A **Zoom** or **Pan** gesture holds only the axis (or axes) it actually
 moved: a horizontal-only zoom leaves **Auto Y** exactly as it was, and a
 vertical-only pan leaves **Auto X** alone. Re-enable either button at any

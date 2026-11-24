@@ -472,7 +472,7 @@ class AxisLimitPolicy:
 
     def resolve(
         self,
-        bounds: Mapping[str, tuple[float, float] | None],
+        bounds: Mapping[str, tuple[float, float] | None | Callable[[], tuple[float, float] | None]],
         quantities: Mapping[str, str] | None = None,
     ) -> dict[str, tuple[float, float]]:
         """Decide the limits for every axis in *bounds*; called once per render.
@@ -484,6 +484,9 @@ class AxisLimitPolicy:
         stays where it is, and an axis that has never framed is left out of
         the result. Every value returned becomes the new held value, so the
         fields and the axes always agree with the policy.
+
+        Bounds may be zero-argument callables. They are evaluated synchronously,
+        once per axis, only when that axis needs bounds; held axes skip preparation.
         """
         resolved: dict[str, tuple[float, float]] = {}
         for axis_id, limits in bounds.items():
@@ -496,8 +499,11 @@ class AxisLimitPolicy:
                 state.quantity = quantity
 
             take_bounds = state.auto or state.held is None or quantity_changed
-            if take_bounds and limits is not None:
-                state.held = _ordered(*limits)
+            if take_bounds:
+                if callable(limits):
+                    limits = limits()
+                if limits is not None:
+                    state.held = _ordered(*limits)
             if state.held is not None:
                 resolved[axis_id] = state.held
         return resolved
