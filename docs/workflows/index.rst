@@ -2,7 +2,9 @@ Analysis workflows
 ==================
 
 These chapters walk through end-to-end μSR data analyses and
-demonstrate the Asymmetry GUI and Python API in lock-step. Almost all
+focus on the graphical interface, with selected Python examples. For
+scripting recipes, see :doc:`/reference/cookbook` and the
+:doc:`/reference/agent_workflow` command-line workflow. Almost all
 are reproducible walkthroughs on **real instrument runs from the WiMDA
 muon-school corpus** — several on the very datasets behind published
 papers — each with the model, seeds, and expected numbers; the

@@ -20,7 +20,8 @@ reaches the fit engine: rebinning to trade time resolution for statistics,
 restricting the time range, applying the grouping defined in the Grouping
 dialog, estimating the calibration constant :math:`\alpha`, and the
 deadtime and background corrections for raw detector histograms. The order is
-deadtime, grouping, background subtraction, then asymmetry. The nonlinear
+detector deadtime correction, alignment and grouping, grouped background
+subtraction, count binning, then asymmetry. The nonlinear
 deadtime inverse acts on each raw detector before any count subtraction.
 
 The result's captured effective recipe retains its resolved processing settings
