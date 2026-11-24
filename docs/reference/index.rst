@@ -1,12 +1,27 @@
 Reference
 =========
 
-This is the feature-by-feature reference for Asymmetry: what each part of the
-program does, the options it exposes, and the physics behind it. If you are new,
-start with :doc:`/getting_started/index`; if you have data and want a worked
-end-to-end analysis, see :doc:`/workflows/index`. If you are scripting or
-driving Asymmetry from an agent, the :doc:`cookbook` collects copy-paste recipes
-that link out to the pages below.
+Use this reference to look up a task, its controls, and the assumptions behind
+its result. For a complete first analysis without measurement files, start with
+the :doc:`/getting_started/quickstart`. The :doc:`/workflows/index` shows
+specialist demonstrations to adapt to your own measurements, and the
+:doc:`cookbook` provides scripting recipes.
+
+A typical analysis follows this route:
+
+#. :doc:`Load the data <loading_data>` and check its periods and metadata.
+#. :doc:`Check grouping and calibration <grouping_calibration>`, then review
+   the :doc:`reduction choices <data_processing>` that form the signal.
+#. :doc:`Fit a model <fitting>` and :doc:`assess the result <assessing_a_fit>`.
+#. :doc:`Inspect a Fourier spectrum <fourier_analysis>` or
+   :doc:`follow a parameter across a scan <parameter_trending>` as needed.
+#. :doc:`Save the project with its source files <project_files>` and
+   :doc:`export plots or tables <gui_usage>`.
+
+The :doc:`interactive reduction guide </explanation/reduction_pipeline>`
+explains how the counts become the plotted quantities. The task table below
+provides direct routes to individual features; the later sections group the
+full reference by subject.
 
 Find a feature
 --------------
@@ -152,8 +167,8 @@ Data and projects
 
 Everything starts with getting runs into the program and keeping track of them —
 reading the supported file formats, organising and annotating runs in the
-logbook, and saving a whole analysis (data, reduction, fits, and trends) to a
-project file so a session can be reopened exactly as it was left.
+logbook, and saving its settings, fits, and trends in a project. Keep the source files
+with the project so its detector counts remain available when you reopen it.
 
 .. toctree::
    :maxdepth: 1
