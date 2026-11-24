@@ -6247,19 +6247,18 @@ def _disqualification_reasons(
     return reasons
 
 
+def _bound_hits(parameters: ParameterSet) -> dict[str, str]:
+    # Fixed, expression, and affine-tied bounds do not describe a fitted minimum.
+    return {
+        parameter.name: side
+        for parameter in parameters
+        if not parameter.is_constrained and (side := bound_side(parameter)) is not None
+    }
+
+
 def _bound_hit_names(parameters: ParameterSet) -> list[str]:
-    hits: list[str] = []
-    for parameter in parameters:
-        # A pinned parameter is not "railed": it never moved. Its bounds are
-        # incidental (a B_L pinned at 0 sits exactly on the 0 lower bound of
-        # every seed), and flagging it would gate a candidate on the seeding
-        # policy rather than on the fit. Only free parameters can hit a bound.
-        if parameter.is_constrained:
-            continue
-        side = bound_side(parameter)
-        if side is not None:
-            hits.append(f"{parameter.name} at {side} bound")
-    return hits
+    """Readable diagnostics; numerical consumers use the identities in ``_bound_hits``."""
+    return [f"{name} at {side} bound" for name, side in _bound_hits(parameters).items()]
 
 
 def _residual_gate_reasons(

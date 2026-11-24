@@ -104,6 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Exclude fitted bound hits from Global Fit Wizard surrogate sharing proposals
+  while retaining readable bound diagnostics.
+
 - Distinguish selected Data Browser runs from their group tint and mark the
   current run with an arrow, including when focus moves to another control.
 
