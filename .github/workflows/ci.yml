@@ -127,6 +127,8 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$ASYMMETRY_PYTEST_DIAGNOSTICS"
+          python tools/ci_memory.py before "$ASYMMETRY_PYTEST_DIAGNOSTICS"
+          trap 'python tools/ci_memory.py after "$ASYMMETRY_PYTEST_DIAGNOSTICS"' EXIT
           python tools/harness.py test --tier standard --shard ${{ matrix.shard }}/6 -- --durations=15 -o faulthandler_timeout=90 2>&1 | tee "$ASYMMETRY_PYTEST_DIAGNOSTICS/runner.log"
       - name: Retain test diagnostics
         if: always()

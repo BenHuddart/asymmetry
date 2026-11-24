@@ -247,16 +247,43 @@ not change the test's failure deadline or establish why a worker terminates.
 
 Standard shards set `ASYMMETRY_PYTEST_DIAGNOSTICS` to retain each worker's
 terminal output, including pytest-timeout's report before a hard worker exit.
-The runner log retains native-fault and watchdog output from stderr. Both are
-uploaded for seven days even when tests fail; logging preserves the test command's
-exit status. Without that environment variable, local test output is unchanged.
-A recorded timeout report identifies an expired pytest deadline. Missing output
-does not identify a SIGKILL or an out-of-memory kill.
+The runner log retains native-fault and watchdog output from stderr. A
+`controller.jsonl` file records worker identities and PIDs at creation, whether
+xdist reports an abnormal disconnect, and observed process return codes after
+normal execnet teardown. Replacement workers receive their own records; an
+abnormal disconnect remains a test failure under the existing restart policy.
+On POSIX, a negative return code also records the terminating signal number.
+An observed signal can reflect execnet's teardown cleanup; it does not by itself
+identify the cause of an earlier disconnect. Interpret it with the disconnect
+record and retained output.
+The opt-in hook reads execnet's cached subprocess status; it never calls process
+`poll` or `wait`, reaps, kills, or restarts a process itself. Cached-status
+observation is bounded to 0.25 seconds for the whole session after teardown. Unsupported
+transports/interfaces and exit codes still absent at that deadline are recorded
+as unavailable, with no inferred signal. Creation and disconnect records survive
+even if the controller cannot reach its final session hook.
 
-The full-suite workflow logs Linux's `oom_kill` counter and available memory
-before and after tests, including test failures. A counter increase establishes
-an out-of-memory kill on the runner; it does not identify the victim process.
-An unchanged counter leaves other causes of worker termination unresolved.
+The private local-process boundary is isolated in `tests/_worker_diagnostics.py`
+and exercised with pytest-xdist 3.8.0 and execnet 2.1.2: direct local popen
+workers expose `gateway._io` as `Popen2IOMaster` with a standard-library `Popen`.
+Remote, proxied, or unrecognised IO objects have no local-process evidence.
+Without the environment variable, local test output and process handling are
+unchanged. A recorded timeout report identifies an expired pytest deadline.
+Missing output does not identify a SIGKILL or an out-of-memory kill.
+
+Standard shards retain `oom-before.json` and `oom-after.json`, snapshots of
+Linux's runner-wide `/proc/vmstat` `oom_kill` counter. An EXIT trap records the
+after snapshot on shell completion, including a failed test command, preserving
+its exit status. A forcibly terminated shell or job can prevent that snapshot.
+Unreadable or missing counters are explicitly unavailable. These files, worker
+logs, controller records, and the runner log are uploaded for seven days even
+when tests fail. The full-suite workflow separately logs the same counter and
+available memory before and after tests, including test failures.
+
+A counter increase establishes an out-of-memory kill somewhere on the runner;
+it does not identify the victim process. Even an observed SIGKILL alongside a
+counter increase cannot attribute that OOM kill to the worker. An unchanged
+counter leaves other causes of worker termination unresolved.
 
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
