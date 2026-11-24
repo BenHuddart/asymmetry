@@ -4705,9 +4705,9 @@ class TestPlotPanel:
 
         assert len(fig.axes) == 3
         y_labels = [axis.ylabel_calls[-1] for axis in fig.axes if axis.ylabel_calls]
-        assert "a_0 P_{x}(t) (%)" in y_labels
-        assert "a_0 P_{y}(t) (%)" in y_labels
-        assert "a_0 P_{z}(t) (%)" in y_labels
+        assert "a_{0} P_{x}(t) (%)" in y_labels
+        assert "a_{0} P_{y}(t) (%)" in y_labels
+        assert "a_{0} P_{z}(t) (%)" in y_labels
 
         x_labels = [axis.xlabel_calls[-1] for axis in fig.axes if axis.xlabel_calls]
         assert x_labels

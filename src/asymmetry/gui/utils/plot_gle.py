@@ -250,7 +250,7 @@ class PlotGleSnapshot(PlotExportData):
         text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
         text = text.replace("\r", " ").replace("\n", " ")
         text = text.replace("μ", "u").replace("µ", "u")
-        text = text.replace("χ", "chi").replace("²", "^2")
+        text = text.replace("χ", "chi").replace("²", "^{2}")
         text = "".join(ch for ch in text if ch.isprintable())
         text = " ".join(text.split())
         text = text.encode("ascii", "ignore").decode("ascii")
@@ -283,5 +283,5 @@ class PlotGleSnapshot(PlotExportData):
         """Return plain-text y-axis label for plot exports."""
         if axis_key in {"P_x", "P_y", "P_z"}:
             suffix = axis_key.split("_", 1)[1]
-            return f"a_0 P_{{{suffix}}}(t) (%)"
+            return f"a_{{0}} P_{{{suffix}}}(t) (%)"
         return "Asymmetry (%)"

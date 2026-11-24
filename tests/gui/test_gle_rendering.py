@@ -21,6 +21,7 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.gle_figure import gle_figure
 from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
+from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
 from asymmetry.gui.windows.gle_preview import GlePlotPreview, close_gle_previews
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from tests._qt_helpers import wait_for
@@ -214,3 +215,21 @@ def test_microsecond_parameter_labels_do_not_draw_literal_group_braces(tmp_path,
     content = script.read_text()
     assert r"\char{123}" not in content
     assert r"\char{125}" not in content
+
+
+@pytest.mark.parametrize("projection", ["x", "y", "z"])
+def test_projection_export_preserves_subscripts_and_chi_squared_annotation(tmp_path, projection):
+    key = f"P_{projection}"
+    payload = {
+        "data": {"t": [0.0, 1.0], "y": [0.2, 0.3], "err": [0.01, 0.01]},
+        "label": "one",
+        "annotations": [{"x": 0.5, "y": 0.5, "text": "χ² = 1.2"}],
+    }
+    snapshot = PlotGleSnapshot(axes=((key, [payload], ""),), y_limits={key: (0.0, 1.0)})
+    script = tmp_path / "projection.gle"
+    snapshot.build(glp, script, tmp_path)
+    content = script.read_text()
+    assert f"a_{{0}} P_{{{projection}}}(t) (%)" in content
+    assert r"a\_0" not in content
+    assert "chi^{2} = 1.2" in content
+    assert r"\char{94}" not in content
