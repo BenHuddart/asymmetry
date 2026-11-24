@@ -17,8 +17,13 @@ temperature, applied field, detector geometry, time-zero, the good-bin range, an
 so on. Loading a file with :func:`~asymmetry.core.io.load` returns a **dataset**
 (a :class:`~asymmetry.core.data.dataset.MuonDataset`), which wraps the run and
 carries the reduction choices applied to it; the raw histograms themselves live
-on ``ds.run``. A multi-period measurement loads as a list of datasets, one per
-period. Provenance travels with the dataset — every correction is recorded rather
+on ``ds.run``. By default, single-period and two-period files return one
+dataset; the
+two-period dataset retains both acquired periods. Files with three or more
+periods return a list. Select an acquired period explicitly with
+``load(path, period=1)`` or ``select_period(loaded, 1)`` to obtain one dataset
+before accessing ``.run``; see :ref:`selecting-periods`. Provenance travels with
+the dataset — every correction is recorded rather
 than baked into the histograms, so a saved analysis reproduces the same numbers
 when it is reopened.
 
@@ -113,5 +118,8 @@ Projects
 
 A complete session — the loaded datasets, their grouping and reduction choices,
 the fits, the trends, and the state of the browser and plot — saves to a single
-``.asymp`` **project** file and reopens exactly as it was left. See
-:doc:`/reference/project_files`.
+``.asymp`` **project** file. Source detector arrays are not embedded: keep the
+raw acquisition and any reference files available when reopening or sharing the
+project. Missing sources limit restoration and re-reduction; saved fit records
+do not reconstruct their observations. See :doc:`/reference/project_files` for
+source relocation, verification, and partial restoration.

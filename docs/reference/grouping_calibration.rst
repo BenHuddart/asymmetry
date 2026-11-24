@@ -289,7 +289,7 @@ Where each function lives
 * :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
   (``asymmetry.core.transform.reduce``) — the single reduction chokepoint the
   GUI and the Grouping window's live preview both call: deadtime, grouping,
-  optional background, then the counts-then-ratio asymmetry, in one function.
+  optional grouped background, count binning, then asymmetry, in one function.
 * :func:`~asymmetry.core.project.profiles.resolve_effective_grouping`
   (``asymmetry.core.project.profiles``) — merge a
   :class:`~asymmetry.core.project.profiles.GroupingProfile` with a run to

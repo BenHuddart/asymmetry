@@ -7,6 +7,12 @@ the `GitHub Releases <https://github.com/BenHuddart/asymmetry/releases/latest>`_
 page (Windows ``.exe`` installer; macOS ``.dmg``). **Intel Mac** and **Linux**
 users should install from the Git repository as described below.
 
+After installing the Windows application, launch **Asymmetry** from the Start
+menu. On macOS, open the disk image, drag **Asymmetry** to **Applications**,
+and launch it there. These packaged applications include their own Python
+runtime and GUI dependencies; the terminal commands below apply to Python
+installations.
+
 Desktop build dependencies
 --------------------------
 

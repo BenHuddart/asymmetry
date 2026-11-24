@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Align the first-fit walkthrough with current wizard controls and clarify
+  period loading, reduction order, and saved-project source dependencies.
+
 - Repair public grouping, calibration, and Fourier examples, and document optional
   dependency installation from the supported Git checkout.
 

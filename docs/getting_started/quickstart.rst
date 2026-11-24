@@ -10,8 +10,9 @@ realistic demo run for you. The objects each step refers to are collected in
 Install and launch
 ------------------
 
-Install Asymmetry (see :doc:`installation`) and start the graphical interface
-from a terminal:
+Install Asymmetry (see :doc:`installation`). Open the desktop application from
+the Windows Start menu or macOS Applications folder. With a Python installation
+including the ``gui`` extra, start it from a terminal:
 
 .. code-block:: bash
 
@@ -52,12 +53,14 @@ Fit it
 
 Fit the relaxation and recover its parameters:
 
-#. In the fit panel's single-fit tab, open the **Fit Wizard**.
-#. Click **Start Analysis**. The wizard fingerprints the spectrum, fits a
+#. Open **Analysis → Fit**, then click **Wizard…** in the **Single** tab.
+#. If the wizard shows no recorded field direction, choose **Zero field**.
+#. Click **Analyze**. The wizard fingerprints the spectrum, fits a
    portfolio of candidate models, and ranks them by an information criterion.
-#. It recommends ``StaticGKT_ZF + Constant`` — the static Gaussian Kubo–Toyabe
-   with a flat baseline. Click **Apply Recommended Fit** to write the result back
-   into the single-fit tab.
+#. It recommends **Static GKT + Constant** — the static Gaussian Kubo–Toyabe
+   with a flat baseline (the expression ``StaticGKT_ZF + Constant``). Click
+   **Apply this fit** to write the result back into the single-fit tab.
+#. Set the plot's upper **X:** limit to 10 μs to inspect the dip and recovery.
 
 The fitted field width comes out at :math:`\Delta \approx 0.39` μs⁻¹ — the value
 the preset was generated from, recovered within the counting errors. That is a
@@ -71,7 +74,7 @@ complete analysis: data in, model fitted, parameter out.
 
 *The main window right after the walkthrough's first fit converges. The red*
 *fit curve traces the* ``StaticGKT_ZF + Constant`` *model over the silver*
-*asymmetry, and the fit panel reports* **Fit converged** *with*
+*asymmetry, and the fit panel shows the applied wizard fit with*
 *Δ = 0.39 μs⁻¹ (row* **Δ (μs⁻¹)** *) and a reduced chi-square near 1.*
 
 Where to go next

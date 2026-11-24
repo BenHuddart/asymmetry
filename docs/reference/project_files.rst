@@ -25,7 +25,9 @@ fits alone — a batch, global, grouped or scan run never writes one), and the
 *batches* (fit series, each carrying the recipe that produced it) that
 drive the Fit Parameters trending panel and the plot's overlays. Raw
 detector arrays are *not* embedded — the file references source data by
-path and reloads from disk on open. Fourier spectra are regenerated from
+path and reloads from disk on open. Preserve the raw acquisition files and any
+background-reference files alongside the project; sharing the project alone
+does not supply those observations. Fourier spectra are regenerated from
 their stored recipe (window, padding, phase, group selection) rather
 than embedded, so the file remains compact even after frequency-domain
 work. This makes ``.asymp`` files small enough to share alongside the
