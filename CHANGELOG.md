@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Put common grouping, Fourier, and parameter-trend tasks before specialist
   reference details, with direct routes from the reference index.
 
+- Organise desktop and command-line reference pages by task, consolidate shared
+  project guidance, and put matched operations first in program comparisons.
+
 - Lead practical documentation searches to the deadtime, grouping, and alpha
   calibration guides while retaining exact-symbol API searches, and avoid fetching
   every matching page for a search snippet.

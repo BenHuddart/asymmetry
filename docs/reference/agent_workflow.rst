@@ -1,27 +1,89 @@
 Scripting and AI-agent workflow
 ================================
 
-An ordinary recipe's ``model`` payload can include
-``"time_response": {"mode": "double_delta", "separation_us": 0.324}``.
-The same payload feeds ``fit_one``, series fits, and shared fits; an omitted
-setting means off. See :ref:`ordinary-time-response` for units and limits.
+The ``asymmetry`` command-line interface takes a folder of μSR runs from
+detector calibration to a fitted temperature or field trend without opening
+the desktop application. Its subcommands survey the files, reduce detector
+counts to asymmetry, and fit the resulting signal. Analysis results are
+available as readable text or machine-readable JSON, so the same analysis
+can be driven from a shell, a script, or a notebook.
 
+An AI coding agent can follow this route through the packaged
+``asymmetry-analysis`` skill. Claude Code and Codex are the tested hosts.
+The skill supplies analysis decision rules and a reporting template; the
+commands use the same :mod:`asymmetry.core.workflow` operations available to
+Python scripts. See :doc:`cookbook` for that Python interface.
 
-A μSR temperature or field scan starts the same way every time: survey what
-is in the folder, calibrate the detector balance, reduce to asymmetry, screen
-a model, fit the scan, and read the trend. Doing that from the GUI is a guided
-interactive session; doing it from a shell script, a notebook, or an AI coding
-agent needs a command that returns the same answers without a window to
-click through. The ``asymmetry`` command-line workflow is that command: a
-thin layer of subcommands over the pure-core :mod:`asymmetry.core.workflow`
-façade, one per step of the analysis above, each readable by a person and
-parseable by a program.
+Start with an ordinary scan
+---------------------------
 
-It is meant to be driven by a person from a shell, or by an AI coding agent —
-Claude Code or Codex are the two tested so far — through the packaged
-``asymmetry-analysis`` skill, which teaches an agent the same workflow, the
-decision rules an analyst applies at each step, and the summary a
-spectroscopist would recognise at the end.
+After `Installation`_, follow one self-contained scan through these steps.
+A run is one acquired measurement; a scan compares runs as temperature, field,
+or another experimental quantity changes. Keep one `work directory <The work
+directory_>`_ for the scan's data folder: it stores the reduced data, model
+choices, and results between commands.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 35 43
+
+   * - Step
+     - Command reference
+     - What to establish
+   * - Survey the folder
+     - `survey`_ and `info`_
+     - Identify the scan, detector groups, and a suitable calibration run.
+       Check recorded conditions against the measured precession, the
+       oscillation caused by the muon spin turning in a magnetic field.
+   * - Calibrate the detector balance
+     - `alpha`_ and `Reduction options`_
+     - Estimate α, the relative response of the forward and backward detector
+       groups, from an appropriate reference. Check its suitability and which
+       corrections were applied; do not guess a value.
+   * - Reduce and inspect
+     - `reduce`_
+     - Use ``--alpha-from`` to estimate and apply the reference calibration
+       under the chosen reduction options. Check the source and target
+       periods. Inspect asymmetry, the normalised difference between detector
+       groups, and its error bars.
+   * - Screen and check a model
+     - `wizard`_, `recipe`_, and `fit`_
+     - Screen a run with clear structure, or specify a physically motivated
+       model. Test its recipe on one run and inspect the fit and residuals
+       before fitting the scan. A recipe records the model, parameters, and
+       fit settings as JSON; see `The fit recipe`_.
+   * - Fit the scan
+     - `fit-series`_ and `Series fitting`_
+     - Start at the checked run with ``--start``. The series uses each fitted
+       neighbour to initialise the next run along the scan, and retains
+       quality flags for results that need inspection.
+   * - Read and report the trend
+     - `trend`_ and `audit`_
+     - Compare fitted parameters across the scan, investigate flagged runs,
+       and support each reported number with command output. See `The skill`_
+       for the agent's reporting rules.
+
+For the operations between counts and asymmetry, follow
+:doc:`/explanation/reduction_pipeline`. If μSR analysis is new to you,
+:doc:`/getting_started/quickstart` provides a runnable synthetic GUI example
+before you adapt these commands to measurement files.
+
+Other tasks have their own entry points:
+
+* `fit-global`_ fits shared parameters jointly across several runs.
+* `fourier`_ measures frequency spectra; `integral-scan`_ follows an
+  integrated asymmetry through a field scan, including ALC/QLCR resonances.
+* `Common options`_ covers JSON, plots, and session selection;
+  `Two instruments in one folder`_ explains colliding run numbers.
+* `The work directory`_ explains stored products and cache validity;
+  `Plots`_ explains display framing, and `Limits and what is not there yet`_
+  collects specialist restrictions.
+
+The worked analyses in :doc:`/workflows/index` explain the physics and choices
+behind individual applications.
+
+Scope
+-----
 
 **In scope**: preliminary forward–backward asymmetry analysis of zero-field
 (ZF), transverse-field (TF) and longitudinal-field (LF) runs — a temperature
@@ -67,10 +129,6 @@ skill tells an agent to say so and stop rather than force a fit:
 
 A folder the tool can *load* is not automatically a folder the tool can
 *analyse* — loadability is not scope.
-
-For the underlying Python API this CLI wraps, see the :doc:`cookbook`; for the
-physics behind each step, see the workflow chapters linked from
-:doc:`/workflows/index` and section 5 of the skill itself.
 
 Installation
 ------------
@@ -1963,6 +2021,11 @@ A recipe is the only contract between screening and fitting: small JSON that
 ``wizard`` writes, that a person or an agent may hand-edit, and that ``fit``,
 ``fit-global`` and ``fit-series`` consume.
 
+An ordinary recipe's ``model`` payload can include
+``"time_response": {"mode": "double_delta", "separation_us": 0.324}``.
+The same payload feeds ``fit_one``, series fits, and shared fits; an omitted
+setting means off. See :ref:`ordinary-time-response` for units and limits.
+
 .. code-block:: json
 
    {
@@ -1982,8 +2045,7 @@ A recipe is the only contract between screening and fitting: small JSON that
      "pinned": []
    }
 
-Two rules govern what a recipe carries, settled once the wizard's own
-per-run bounds turned out not to travel across a scan:
+Two rules govern how a recipe carries parameter settings across a scan:
 
 - **A recipe's bounds are the model's static defaults**, not the wizard's
   per-run search window. The wizard's bounds (a peak window, 0.5–2× a seeded
@@ -2109,6 +2171,26 @@ merely defining a local polynomial does not explain that limitation.
 The skill
 ---------
 
+The packaged ``asymmetry-analysis`` skill tells an agent to work through
+seven steps: survey the folder; decide alpha (and never guess it); reduce the
+scan; confirm the geometry of every non-zero-field scan from the survey's
+measured precession and the reduced spectrum rather than the file's stamp;
+screen one run with the
+wizard; fit the scan as a chained series; read the trend; then write the
+summary. Alongside the steps, it carries the decision rules an analyst
+applies — which model family the physics calls for versus what AICc ranks
+highest, what every fitted amplitude physically means, what to do when many
+runs are flagged — and a cost table so an agent screens one or two runs
+rather than the whole scan.
+
+The summary template has fixed headings — Experiment, Calibration, Model,
+Results, Excluded or flagged runs, What this suggests, Files — and one
+governing rule: **every number in the summary must come from a command's
+output.** A temperature, field, frequency, rate, exponent, run number, alpha,
+χ² or count that no command printed does not go in; a textbook or literature
+value may be discussed if it is clearly attributed as such, never presented
+as a result of the session.
+
 Reports retain the printed coordinates and ranges of onsets, extrema and
 plateaus explicitly in prose. For long scans the decisive points belong in
 the report and full tables remain in the named CLI products. Local resonance
@@ -2135,26 +2217,6 @@ microscopic fits: narrowing can be consistent with reorientation averaging
 hyperfine anisotropy without measuring a coupling or motion rate. File lists
 use complete plain paths, one per line, and are finished before the final audit
 so their last line is copied as exactly as the scientific results.
-
-The packaged ``asymmetry-analysis`` skill tells an agent to work through
-seven steps: survey the folder; decide alpha (and never guess it); reduce the
-scan; confirm the geometry of every non-zero-field scan from the survey's
-measured precession and the reduced spectrum rather than the file's stamp;
-screen one run with the
-wizard; fit the scan as a chained series; read the trend; then write the
-summary. Alongside the steps, it carries the decision rules an analyst
-applies — which model family the physics calls for versus what AICc ranks
-highest, what every fitted amplitude physically means, what to do when many
-runs are flagged — and a cost table so an agent screens one or two runs
-rather than the whole scan.
-
-The summary template has fixed headings — Experiment, Calibration, Model,
-Results, Excluded or flagged runs, What this suggests, Files — and one
-governing rule: **every number in the summary must come from a command's
-output.** A temperature, field, frequency, rate, exponent, run number, alpha,
-χ² or count that no command printed does not go in; a textbook or literature
-value may be discussed if it is clearly attributed as such, never presented
-as a result of the session.
 
 Anyone evaluating an agent against this skill — checking that it makes
 sensible choices on real data — should start with the rubrics and runner
