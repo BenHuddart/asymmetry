@@ -153,7 +153,9 @@ ISIS Muon NeXus (.nxs, .nexus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
-multi-period runs. Multi-period files return a list of ``MuonDataset`` values.
+multi-period runs. Without explicit period selection, single-period and
+two-period files return one ``MuonDataset``; files with three or more periods
+return a list. See :ref:`selecting-periods` for uniform single-period selection.
 Scalar sample temperature is read from the NeXus sample header. NXlog-style
 temperature groups with ``time`` plus ``value``/``values`` datasets are also
 summarised in Get Info; the Data Browser keeps the scalar header temperature
@@ -882,11 +884,15 @@ Basic usage
 Loading a single file
 ~~~~~~~~~~~~~~~~~~~~~
 
+The following examples require your own acquisition files at the shown paths
+and their format-specific reader extras. Select one acquired period explicitly
+when a script needs a single dataset:
+
 .. code-block:: python
 
    from asymmetry.core.io import load
    
-   dataset = load("path/to/data.nxs")
+   dataset = load("path/to/data.nxs", period=1)
    print(dataset.summary())
 
 The same ``load`` API can be used with NeXus files:
@@ -910,7 +916,13 @@ And with MusrRoot/LEM ROOT files:
 
       dataset = load("lem15_his_2994.root")
 
-The returned ``MuonDataset`` contains:
+Without an explicit ``period``, single-period and two-period files return one
+``MuonDataset``; the two-period object retains both acquired periods for
+selection or difference reduction. Files with three or more periods return a
+list of datasets. Use ``load(path, period=1)`` or ``select_period`` to obtain
+one dataset uniformly.
+
+A returned ``MuonDataset`` contains:
 
 * ``time``: Time axis in microseconds
 * ``asymmetry``: Asymmetry values

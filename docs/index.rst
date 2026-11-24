@@ -28,8 +28,8 @@ Where to start
 
 - :doc:`getting_started/index` — install Asymmetry and make your first
   asymmetry plot and fit.
-- :doc:`workflows/index` — complete, worked analyses that demonstrate the
-  graphical interface and the Python API in lock-step.
+- :doc:`workflows/index` — worked analyses with graphical instructions and selected
+  Python examples. For scripting recipes, see :doc:`reference/cookbook`.
 - :doc:`reference/index` — feature-by-feature documentation and the
   fit-function library.
 - :doc:`explanation/index` — a μSR primer, the conventions Asymmetry follows,
