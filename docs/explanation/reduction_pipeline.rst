@@ -1,13 +1,40 @@
 .. _reduction-pipeline:
+.. _count-reduction-and-transformed-signals:
 
-Count reduction and transformed signals
-=======================================
+From detector counts to an analysis result
+==========================================
 
-A forward/backward asymmetry compares two groups of acquired positron counts.
-The counts must describe corresponding observations before their ratio has a
-physical interpretation. Asymmetry therefore prepares counts and their
-uncertainty information together, keeping timing, grouping, correction settings,
-and the selected interval with the result.
+The curves used in μSR analysis begin as positron counts in detector time
+bins. Follow the steps below to see how those counts become an asymmetry,
+a frequency spectrum, or one value in a scan, and which assumptions enter
+along the way.
+
+Explore the route
+-----------------
+
+Choose a result to see how it is derived from detector counts. Select a
+numbered step to read its explanation, or use **Previous step** and **Next
+step** to follow the sequence. Open **Explore other steps** to read about
+another branch. **Read all steps** shows the explanations together.
+
+Use Tab to reach a step and Enter or Space to select it. Arrow keys, Home,
+and End move between step buttons. On a narrow screen the steps stack
+vertically. Printing and reading without JavaScript show every explanation.
+
+Adding counts, taking a ratio, averaging ratios, transforming a signal, and
+fitting a physical model answer different questions. Calibration supplies
+values needed at several stages; it is not one extra step that every result
+passes through.
+
+.. include:: reduction_steps.inc
+
+.. _detailed-operation-contracts:
+
+The full reduction sequence
+---------------------------
+
+The diagram connects all the branches. The sections below explain their
+selected time intervals, uncertainties, and recorded settings in more detail.
 
 An explicitly selected :ref:`ordinary double-pulse time response
 <ordinary-time-response>` acts on the fitted prediction after reduction. It

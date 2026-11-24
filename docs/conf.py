@@ -29,6 +29,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx_design',
     'lazy_images',
+    'reduction_guide',
     'tools.docs_policy',
     'tools.instrument_docs',
 ]
