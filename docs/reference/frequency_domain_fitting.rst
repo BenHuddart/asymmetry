@@ -131,7 +131,10 @@ embedded in the project.
 .. note::
 
    The Gaussian and Lorentzian peak forms fitted here are the ordinary
-   line shapes; the minimiser and its statistics are the shared engine
+   line shapes, without automatic convolution with the time window or
+   instrument response. Their ``fwhm`` and derived ``Bwid`` describe the
+   processed peak, not an automatically deconvolved intrinsic field width.
+   The minimiser and its statistics are the shared engine
    documented in :doc:`fitting`. Because the fit target is the *displayed*
    real spectrum, an apodised or baseline-subtracted spectrum carries those
    conditioning choices into the fitted width and amplitude — see the

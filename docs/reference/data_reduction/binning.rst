@@ -3,13 +3,25 @@
 Histogram binning
 =================
 
-Counts arrive in bins of the TDC resolution (16 ns at ISIS, sub-ns at
-continuous sources), far finer than most physics requires. Because the muon
-ensemble decays as :math:`e^{-t/\tau_\mu}`, the Poisson error per raw bin
-grows as :math:`e^{t/2\tau_\mu}` — the signal-to-noise halves roughly every
-3 μs — so a single binning choice cannot serve both the densely-sampled
-early times and the count-starved tail. Three modes are offered in the
-grouping dialog's **Binning** control:
+Binning combines counts from neighbouring time bins to improve statistical
+precision at the cost of time detail.
+
+Counts arrive on the acquisition time grid, whose bin width depends on the
+instrument and configuration. This width is not itself the physical timing
+resolution: at pulsed sources the arrival pulse also averages the signal;
+at continuous sources the muon/positron detector response and timing system
+matter. The `EMU specification <https://www.isis.stfc.ac.uk/instruments/emu/>`_
+lists several time-to-digital converter (TDC) settings rather than one
+universal ISIS bin width.
+
+For independent Poisson counts with expectation
+:math:`N(t)\propto e^{-t/\tau_\mu}`, the **absolute** count standard deviation
+:math:`\sqrt{N(t)}` decreases as :math:`e^{-t/(2\tau_\mu)}`. The **relative**
+count uncertainty :math:`1/\sqrt{N(t)}` grows as
+:math:`e^{t/(2\tau_\mu)}`. The same inverse-square-root scaling approximates
+asymmetry errors for slowly varying polarisation, fixed detector balance, and
+negligible background. Corrections and background can change that scaling.
+Three modes are offered in the grouping dialog's **Binning** control:
 
 ==================  =============================================================
 Mode                Output bin width

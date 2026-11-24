@@ -67,15 +67,21 @@ for an FFT to resolve the required features.
 
 .. note::
 
-   **Apodisation trades resolution for leakage, and the trade is not free.**
-   Weighting the time signal down at long times suppresses the spectral
-   leakage (the sidelobes) that a hard truncation would produce, but it also
-   broadens every line: an apodised FFT linewidth is the *convolution* of the
-   intrinsic width with the filter's transform, so a width or amplitude read
-   off an aggressively filtered spectrum is not the physical value. Use
-   apodisation to *see* a line clearly; **measure** widths and amplitudes with
-   a frequency-domain fit (:doc:`frequency_domain_fitting`) whose model carries
-   the true lineshape, or read them from the time-domain fit directly [6]_.
+   **A processed linewidth includes the processing response.** Multiplying a
+   time signal by an apodisation window convolves its complex Fourier transform
+   with the window transform. Finite record length and the instrument timing
+   response also affect line shapes. Taking the modulus or power, removing a
+   baseline, or reconstructing with MaxEnt adds further estimator dependence;
+   widths do not generally combine by simple subtraction.
+
+   A Gaussian or Lorentzian fit to the displayed real spectrum measures that
+   **processed peak**. The frequency-fit models do not automatically include
+   the apodisation or instrument response and do not recover an intrinsic
+   width simply by fitting (:doc:`frequency_domain_fitting`). Infer a physical
+   width from a prediction that includes the relevant processing and response,
+   or from an appropriate time-domain model. Check sensitivity to the usable
+   time window and apodisation, and distinguish angular-frequency widths from
+   cyclic-frequency FWHM [6]_.
 
 .. image:: /_generated/screenshots/apodisation_comparison.png
    :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT, showing
