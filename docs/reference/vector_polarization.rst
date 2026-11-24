@@ -220,7 +220,7 @@ observation reuse, not verified reference-program error equivalence. See
 References
 ----------
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
   detector geometry and the polarisation-projection observable.
 

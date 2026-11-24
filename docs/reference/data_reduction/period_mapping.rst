@@ -135,10 +135,10 @@ G−R keeps separate set preparation and independent marginal variance addition.
 
 **References**
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022). —
   photoexcitation and RF alternating-frame acquisition.
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).
 
 - `WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`_.
 - Mantid, `MuonPreProcess v1 <https://docs.mantidproject.org/nightly/algorithms/MuonPreProcess-v1.html>`_

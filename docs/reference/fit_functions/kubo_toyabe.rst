@@ -84,10 +84,10 @@ available in the ``MODELS`` registry.
 
 **References**
 
-- R. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
-  R. Blinc (North-Holland, Amsterdam, 1967), p. 810.
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- R\. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
+  R\. Blinc (North-Holland, Amsterdam, 1967), p. 810.
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
 
 .. _fit-lf-kubo-toyabe:
 
@@ -194,9 +194,9 @@ A standalone ``LFKuboToyabe`` model is available in the ``MODELS`` registry.
 
 **References**
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
-- A. D. Hillier and R. Cywinski, Appl. Magn. Reson. **13**, 95 (1997).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
+- A\. D. Hillier and R. Cywinski, Appl. Magn. Reson. **13**, 95 (1997).
 
 .. _fit-dynamic-gaussian-kt:
 
@@ -277,8 +277,8 @@ convergence or statistical coverage.
 
 **References**
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
 
 .. _fit-dynamic-lorentzian-kt:
 
@@ -369,7 +369,7 @@ registry.
 
 **References**
 
-- Y. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
+- Y\. J. Uemura, T. Yamazaki, D. R. Harshman, M. Senba, and E. J. Ansaldo,
   Phys. Rev. B **31**, 546 (1985).
 
 .. _fit-gaussian-broadened-kt:
@@ -544,4 +544,4 @@ minimum step. No native WiMDA dynamic comparison is asserted.
   <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#the-theory-block>`_.
 - `Mantid DynamicKuboToyabe documentation
   <https://docs.mantidproject.org/v6.10.0/fitting/fitfunctions/DynamicKuboToyabe.html>`_.
-- D. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).
+- D\. R. Noakes and G. M. Kalvius, Phys. Rev. B **56**, 2352 (1997).

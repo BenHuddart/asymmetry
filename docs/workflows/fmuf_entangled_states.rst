@@ -289,20 +289,20 @@ Assumptions and limitations
 References
 ----------
 
-- J. H. Brewer, S. R. Kreitzman, D. R. Noakes, E. J. Ansaldo, D. R. Harshman, and
-  R. Keitel, Phys. Rev. B **33**, 7813 (1986) — the discovery of the F–µ–F
+- J\. H. Brewer, S. R. Kreitzman, D. R. Noakes, E. J. Ansaldo, D. R. Harshman, and
+  R\. Keitel, Phys. Rev. B **33**, 7813 (1986) — the discovery of the F–µ–F
   "hydrogen-bonded" centre in ionic fluorides, and the collinear three-spin
   polarisation function used here (:math:`r_{\mu F} = 1.172` Å in CaF₂).
-- T. Lancaster, F. L. Pratt, S. J. Blundell, I. McKenzie, and H. E. Assender, J.
+- T\. Lancaster, F. L. Pratt, S. J. Blundell, I. McKenzie, and H. E. Assender, J.
   Phys.: Condens. Matter **21**, 346004 (2009) — muon–fluorine entanglement in
   fluoropolymers, the modern treatment of the F–µ–F state in PTFE and related
   materials.
-- F. L. Pratt, S. J. Blundell, I. M. Marshall, T. Lancaster, A. Husmann, C.
+- F\. L. Pratt, S. J. Blundell, I. M. Marshall, T. Lancaster, A. Husmann, C.
   Steer, W. Hayes, C. Fischmeister, R. E. Martin, and A. B. Holmes, Physica B
   **326**, 34 (2003) — µSR in polymers.
-- K. Nishiyama, S. W. Nishiyama, and W. Higemoto, Physica B **326**, 41 (2003) —
+- K\. Nishiyama, S. W. Nishiyama, and W. Higemoto, Physica B **326**, 41 (2003) —
   the asymmetric F–µ–F interaction in polyfluorocarbons.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
   An Introduction* (Oxford University Press, Oxford, 2022) — nuclear dipolar
   coupling and F–µ–F states.
 

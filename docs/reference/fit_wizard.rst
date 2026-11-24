@@ -952,11 +952,11 @@ similarly.
    The fit keeps usable signed observations; the display retains the full grid.
    Omission counts and unavailable residual diagnostics belong to the core result.
 
-.. [aic_primary] H. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
+.. [aic_primary] H\. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
    `doi:10.1109/TAC.1974.1100705 <https://doi.org/10.1109/TAC.1974.1100705>`_.
-.. [aicc_primary] C. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
+.. [aicc_primary] C\. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
    `doi:10.1093/biomet/76.2.297 <https://doi.org/10.1093/biomet/76.2.297>`_;
-   N. Sugiura, Commun. Stat. Theory Methods **7**, 13–26 (1978),
+   N\. Sugiura, Commun. Stat. Theory Methods **7**, 13–26 (1978),
    `doi:10.1080/03610927808827599 <https://doi.org/10.1080/03610927808827599>`_.
-.. [bic_primary] G. Schwarz, Ann. Statist. **6**, 461–464 (1978),
+.. [bic_primary] G\. Schwarz, Ann. Statist. **6**, 461–464 (1978),
    `doi:10.1214/aos/1176344136 <https://doi.org/10.1214/aos/1176344136>`_.

@@ -37,8 +37,8 @@ that into a single number per candidate :math:`x`:
 Both are evaluated as an *expected information gain*, using the fit's
 covariance matrix and the model's sensitivity to each parameter (a numerical
 derivative at the fitted values) — full derivations are not needed to use
-the feature; what matters in practice is that the result is a **curve over
-:math:`x`**, not a bare number, so you see *why* one region is more
+the feature; what matters in practice is that the result is a curve over
+:math:`x`, not a bare number, so you see *why* one region is more
 informative than another before committing beam time to it. The whole curve
 is shown, together with its maximum, so you retain judgement over the
 suggestion rather than being handed a single instruction.
@@ -242,6 +242,6 @@ Limitations
 References
 ----------
 
-.. [Ratcliff2026] W. Ratcliff II, *Accelerating Quantum Materials Characterization:
+.. [Ratcliff2026] W\. Ratcliff II, *Accelerating Quantum Materials Characterization:
    Hybrid Active Learning for Autonomous Spin Wave Spectroscopy*, section 3.2,
    `arXiv:2604.23821 <https://arxiv.org/abs/2604.23821>`_.

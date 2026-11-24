@@ -48,3 +48,30 @@
 .rst-content table.reduction-conventions th {
     white-space: normal;
 }
+
+/* Source identity remains readable in the sidebar at enlarged text sizes. */
+.asym-source-version {
+    margin: 1em;
+    color: #fff;
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+}
+
+/* Wrap explanatory tables; retain the theme's scrolling container for wide data. */
+.rst-content .wy-table-responsive table td,
+.rst-content .wy-table-responsive table th {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* Long formulae scroll within the reading column on small screens. */
+.rst-content div.math {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.rst-content code.literal,
+.rst-content code.literal .pre {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}

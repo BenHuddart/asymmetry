@@ -258,8 +258,8 @@ deadtime, background), :mod:`asymmetry.core.fitting` (models and engines),
 
 .. rubric:: References
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
-  R. Kubo, Phys. Rev. B **20**, 850 (1979).
-- A. Abragam, *The Principles of Nuclear Magnetism* (Clarendon Press,
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R\. Kubo, Phys. Rev. B **20**, 850 (1979).
+- A\. Abragam, *The Principles of Nuclear Magnetism* (Clarendon Press,
   Oxford, 1961).
-- A. Keren, Phys. Rev. B **50**, 10039 (1994).
+- A\. Keren, Phys. Rev. B **50**, 10039 (1994).

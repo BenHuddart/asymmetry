@@ -733,11 +733,11 @@ References
 [3] J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000).
 
 [4] R. Prozorov, M. A. Tanatar, R. T. Gordon, C. Martin, H. Kim, V. G. Kogan,
-N. Ni, M. E. Tillman, S. L. Bud'ko, and P. C. Canfield, Physica C **469**, 582
+N\. Ni, M. E. Tillman, S. L. Bud'ko, and P. C. Canfield, Physica C **469**, 582
 (2009).
 
 [5] E. H. Brandt, Phys. Rev. B **37**, 2349 (1988); Phys. Rev. B **68**, 054506 (2003).
 
 [6] F. L. Pratt, P. J. Baker, S. J. Blundell, T. Lancaster, H. J. Lewtas,
-P. Adamson, M. J. Pitcher, D. R. Parker, and S. J. Clarke, Phys. Rev. B **79**,
+P\. Adamson, M. J. Pitcher, D. R. Parker, and S. J. Clarke, Phys. Rev. B **79**,
 052508 (2009).

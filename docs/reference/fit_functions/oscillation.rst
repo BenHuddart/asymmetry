@@ -75,7 +75,7 @@ A standalone damped-cosine ``Oscillatory`` model (with ``Lambda`` and
 
 **References**
 
-- S. J. Blundell, Contemp. Phys. **40**, 175 (1999).
+- S\. J. Blundell, Contemp. Phys. **40**, 175 (1999).
 
 .. _fit-oscillatory-field:
 
@@ -149,7 +149,7 @@ Name           Symbol        Unit   Description
 
 **References**
 
-- L. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
+- L\. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
 
 .. _fit-overhauser-powder:
 
@@ -190,9 +190,9 @@ from diffraction where possible.
 
 **References**
 
-- A. T. Savici *et al.*, Phys. Rev. B **66**, 014524 (2002).
-- L. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
-- P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
+- A\. T. Savici *et al.*, Phys. Rev. B **66**, 014524 (2002).
+- L\. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
+- P\. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
 
 .. _fit-overhauser-powder-two-cutoff:
 
@@ -321,9 +321,9 @@ cut-off form.
 
 **References**
 
-- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
-- P. Dalmas de Réotier *et al.*, Phys. Rev. B **93**, 144419 (2016).
-- P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
+- A\. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- P\. Dalmas de Réotier *et al.*, Phys. Rev. B **93**, 144419 (2016).
+- P\. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
 
 .. _fit-helical-powder:
 
@@ -395,8 +395,8 @@ the ideal distribution.
 
 **References**
 
-- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance* (Oxford University Press, Oxford, 2011).
 
 .. _fit-helical-crystal:
@@ -468,8 +468,8 @@ requires it. The weights assume the detector axis lies along
 
 **References**
 
-- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance* (Oxford University Press, Oxford, 2011).
 
 .. _fit-vortex-lattice:
@@ -578,11 +578,11 @@ from a normal-state (above :math:`T_c`) measurement at the same field.
 
 **References**
 
-- R. Kadono *et al.*, `Phys. Rev. B **76**, 094501 (2007)
+- R\. Kadono *et al.*, `Phys. Rev. B **76**, 094501 (2007)
   <https://doi.org/10.1103/PhysRevB.76.094501>`_, Eqs. (5)–(7) and Fig. 4.
-- J. A. T. Barker *et al.*, `Phys. Rev. B **98**, 104506 (2018)
+- J\. A. T. Barker *et al.*, `Phys. Rev. B **98**, 104506 (2018)
   <https://doi.org/10.1103/PhysRevB.98.104506>`_, Eqs. (32)–(35), Tables V–VI
   and Fig. 10.
-- E. H. Brandt, Phys. Rev. B **68**, 054506 (2003).
-- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000).
-- F. L. Pratt *et al.*, Phys. Rev. B **79**, 052508 (2009).
+- E\. H. Brandt, Phys. Rev. B **68**, 054506 (2003).
+- J\. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769 (2000).
+- F\. L. Pratt *et al.*, Phys. Rev. B **79**, 052508 (2009).

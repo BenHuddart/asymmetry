@@ -389,11 +389,11 @@ for the bounded reuse checks, reference comparisons, and repair paths.
 
 .. rubric:: References
 
-* S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
+* S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon Spectroscopy:
   An Introduction* (Oxford University Press, Oxford, 2022).
-* F. L. Pratt, Physica B **289–290**, 710 (2000),
+* F\. L. Pratt, Physica B **289–290**, 710 (2000),
   `WiMDA <https://shadow.nd.rl.ac.uk/wimda/>`_.
-* A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012),
+* A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012),
   `musrfit manual <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`_.
 * `Mantid muon reduction tutorial
   <https://docs.mantidproject.org/v6.9.0/tutorials/muon_GUI_course/basics_of_data_reductions.html>`_.

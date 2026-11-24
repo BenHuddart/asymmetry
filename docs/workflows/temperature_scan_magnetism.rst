@@ -428,22 +428,22 @@ References
 
 .. rubric:: References
 
-- S. J. Blundell, T. Lancaster, F. L. Pratt, P. J. Baker, W. Hayes, J.-P.
+- S\. J. Blundell, T. Lancaster, F. L. Pratt, P. J. Baker, W. Hayes, J.-P.
   Ansermet, and A. Comment, Phys. Rev. B **81**, 092407 (2010). The EuO
   dataset analysed here; the order parameter is Fig. 1(d) and the
   critical-regime fit (:math:`\beta = 0.32(1)`, :math:`T_C = 69.05(1)` K)
   is Fig. 3.
-- M. L. G. Foy, N. Heiman, W. J. Kossler, and C. E. Stronach, Phys. Rev.
+- M\. L. G. Foy, N. Heiman, W. J. Kossler, and C. E. Stronach, Phys. Rev.
   Lett. **30**, 1064 (1973). The nickel spontaneous-precession
   measurement (:math:`T_C = 630` K, saturation internal field).
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 6.1–6.2 (magnetism, Landau theory, and critical exponents).
-- A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+- A\. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
   Applications to Solid State and Material Sciences*, Lecture Notes in
   Physics Vol. 961 (Springer, Cham, 2024), Ch. 5 (μSR in ordered magnets,
   antiferromagnets, and unconventional order parameters).
-- T. Lancaster *et al.*, Phys. Rev. B **75**, 094421 (2007). A real-data
+- T\. Lancaster *et al.*, Phys. Rev. B **75**, 094421 (2007). A real-data
   example on a molecular magnet with several precession frequencies near
   :math:`T_C`.
 

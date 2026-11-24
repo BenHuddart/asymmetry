@@ -621,18 +621,18 @@ treats its points as independent and does not carry these shared components.
 
 **References**
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-- A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
+- A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).
 
-.. [Fisher1922] R. A. Fisher, Philos. Trans. R. Soc. A **222**,
+.. [Fisher1922] R\. A. Fisher, Philos. Trans. R. Soc. A **222**,
    309–368 (1922). `doi:10.1098/rsta.1922.0009 <https://doi.org/10.1098/rsta.1922.0009>`_.
 
-.. [BakerCousins1984] S. Baker and R. D. Cousins, Nucl. Instrum. Methods **221**,
+.. [BakerCousins1984] S\. Baker and R. D. Cousins, Nucl. Instrum. Methods **221**,
    437–442 (1984). `doi:10.1016/0167-5087(84)90016-4
    <https://doi.org/10.1016/0167-5087(84)90016-4>`_.
 
 .. [MusrfitTutorial] `musrfit tutorial: sample and holder signals
    <https://lmu.pages.psi.ch/musrfit-docu/tutorial.html>`_, accompanying
-   A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
+   A\. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
