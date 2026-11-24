@@ -200,8 +200,8 @@ magnitude for optimally-doped Bi-2212 (:math:`\lambda_{ab} \approx
 
 .. warning::
 
-   **A single :math:`\lambda_L` is only indicative for Bi-2212 at these
-   fields.** Bi-2212 is extremely anisotropic, and above a crossover field
+   A single :math:`\lambda_L` is only indicative for Bi-2212 at these
+   fields. Bi-2212 is extremely anisotropic, and above a crossover field
    :math:`B^* \approx 500\;\mathrm{G}` its flux lines break into weakly
    correlated pancake vortices. All three teaching fields (150, 200 and
    400 G) sit below :math:`B^*`, so the extended-flux-line interpretation of
@@ -350,13 +350,13 @@ Interpretation
 What the shape of :math:`\sigma(T)` (equivalently :math:`\rho_s(T)`) tells
 you about the material:
 
-- **Exponential low-:math:`T` saturation.** A single isotropic s-wave gap
+- Exponential saturation at low temperature. A single isotropic s-wave gap
   (``SC_SWave``); the :math:`\Delta/k_B T_c` value distinguishes
   weak-coupling (BCS, 1.764) from strong-coupling (Re₆Zr reaches 2.1).
-- **Linear-in-:math:`T` low-:math:`T` decrease.** Line nodes in the gap
+- A linear decrease with temperature at low temperature. Line nodes in the gap
   (``SC_DWave``); the hallmark of a d-wave order parameter, as in the
   cuprates.
-- **A shoulder or kink near :math:`T/T_c \approx 0.3\text{–}0.5`.**
+- A shoulder or kink near :math:`T/T_c \approx 0.3\text{–}0.5`.
   Multiband superconductivity with two gaps (``SC_TwoGap_SS``); the smaller
   gap freezes out at its own scale.
 - **A field-dependent plateau.** As in Bi-2212 here: not a pairing-symmetry
@@ -394,26 +394,26 @@ References
 
 .. rubric:: References
 
-- E. H. Brandt, Phys. Rev. B **37**, 2349 (1988) — the vortex-lattice field
+- E\. H. Brandt, Phys. Rev. B **37**, 2349 (1988) — the vortex-lattice field
   distribution and its second moment.
-- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769
+- J\. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. **72**, 769
   (2000) — the canonical review of TF μSR in superconductors.
-- C. Bernhard, Ch. Niedermayer, U. Binninger, A. Hofer, Ch. Wenger, J. L.
+- C\. Bernhard, Ch. Niedermayer, U. Binninger, A. Hofer, Ch. Wenger, J. L.
   Tallon, G. V. M. Williams, E. J. Ansaldo, J. I. Budnick, C. E. Stronach,
-  D. R. Noakes, and M. A. Blankson-Mills, Phys. Rev. B **52**, 10488 (1995)
+  D\. R. Noakes, and M. A. Blankson-Mills, Phys. Rev. B **52**, 10488 (1995)
   — the σ ↔ λ relation and the pancake-vortex caveat for Bi-2212.
-- F. L. Pratt, P. J. Baker, S. J. Blundell, T. Lancaster, H. J. Lewtas, P.
+- F\. L. Pratt, P. J. Baker, S. J. Blundell, T. Lancaster, H. J. Lewtas, P.
   Adamson, M. J. Pitcher, D. R. Parker, and S. J. Clarke, Phys. Rev. B
   **79**, 052508 (2009) — LiFeAs :math:`B_\mathrm{rms}(T)` and
   :math:`\lambda_{ab}`.
-- R. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett, D.
+- R\. P. Singh, A. D. Hillier, B. Mazidian, J. Quintanilla, J. F. Annett, D.
   McK. Paul, G. Balakrishnan, and M. R. Lees, Phys. Rev. Lett. **112**,
   107002 (2014) — Re₆Zr TRSB and superfluid density.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 9 (superconductors), especially Ch. 9.5 (penetration depth and gap
   structure).
-- A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+- A\. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
   Applications to Solid State and Material Sciences*, Lecture Notes in
   Physics Vol. 961 (Springer, Cham, 2024), Ch. 6 — the vortex-state field
   distribution, multiband superconductivity, and unconventional pairing.

@@ -119,11 +119,11 @@ frequency-domain counterpart to this time-domain account is introduced in
 References
 ----------
 
-.. [primer_blundell] S. J. Blundell, Contemp. Phys. **40**, 175 (1999),
+.. [primer_blundell] S\. J. Blundell, Contemp. Phys. **40**, 175 (1999),
    `author manuscript <https://arxiv.org/abs/cond-mat/0207699>`_, sections 3–5.
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
-- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+- A\. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
   Resonance: Applications to Condensed Matter* (Oxford University Press, Oxford,
   2011).

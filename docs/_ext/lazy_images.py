@@ -1,59 +1,66 @@
-"""Sphinx extension: add ``loading="lazy"`` / ``decoding="async"`` to img tags.
-
-Screenshots in this doc set are DPR-2.0 PNGs (see
-``docs/screenshots/scenarios/_base.py``) and the corpus is only growing, so a
-content-heavy reference page can ship several megabytes of images. Deferring
-the ones the visitor hasn't scrolled to yet keeps first paint fast without
-touching the images themselves.
-
-Implemented as a ``build-finished`` post-process over the emitted HTML rather
-than a ``docutils`` translator/node-visitor override: the theme's own
-``visit_image`` already renders the ``<img>`` tag (srcset, classes, etc.), and
-duplicating that logic here would be one more place to keep in sync with
-``sphinx_rtd_theme``. A regex over the built files is simpler and cannot
-collide with the theme's rendering. Simplicity is chosen over precise
-largest-contentful-paint tuning: every page's *first* image is also marked
-lazy, which is a fine trade for a docs site.
-"""
+"""Reserve image space and defer content images without delaying the site logo."""
 
 from __future__ import annotations
 
-import re
+from html.parser import HTMLParser
 from pathlib import Path
+import re
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from sphinx.application import Sphinx
+from sphinx.util.images import get_image_size
 
-# Matches an opening `<img ...>` tag that does not already declare `loading=`,
-# so re-running the build (or this extension twice) stays idempotent.
-_IMG_TAG_RE = re.compile(rb"<img(?![^>]*\bloading=)([^>]*)>")
+_IMG_TAG_RE = re.compile(r'<img\b[^>]*>', re.IGNORECASE)
 
 
-def _add_lazy_attrs(match: re.Match[bytes]) -> bytes:
-    return b'<img loading="lazy" decoding="async"' + match.group(1) + b">"
+class ImageAttributes(HTMLParser):
+    """Decode generated attributes without changing the original HTML tag."""
+
+    def __init__(self, tag: str):
+        super().__init__()
+        self.attributes: dict[str, str | None] = {}
+        self.feed(tag)
+
+    def handle_starttag(self, tag, attrs):
+        self.attributes = dict(attrs)
 
 
 def _patch_html_file(path: Path) -> bool:
-    """Rewrite ``path`` in place; return whether it changed."""
-    original = path.read_bytes()
-    patched = _IMG_TAG_RE.sub(_add_lazy_attrs, original)
+    """Reserve each local image's aspect ratio and preserve authored sizing."""
+    original = path.read_text(encoding='utf-8')
+
+    def image_layout(match: re.Match[str]) -> str:
+        tag = match.group()
+        attrs = ImageAttributes(tag).attributes
+        additions = []
+        if 'loading' not in attrs:
+            loading = 'eager' if 'logo' in (attrs.get('class') or '').split() else 'lazy'
+            additions.append(f'loading="{loading}"')
+        if 'decoding' not in attrs:
+            additions.append('decoding="async"')
+        source = urlsplit(attrs.get('src') or '')
+        if not source.scheme and not source.netloc and source.path:
+            size = get_image_size(path.parent / unquote(source.path))
+            if size and not any(key in attrs for key in ('width', 'height')):
+                width, height = size
+                additions.extend((f'width="{width}"', f'height="{height}"'))
+        return '<img ' + ' '.join(additions) + tag[4:] if additions else tag
+
+    patched = _IMG_TAG_RE.sub(image_layout, original)
     if patched == original:
         return False
-    path.write_bytes(patched)
+    path.write_text(patched, encoding='utf-8')
     return True
 
 
 def _on_build_finished(app: Sphinx, exception: Exception | None) -> None:
-    if exception is not None:
+    if exception is not None or app.builder.name not in ('html', 'dirhtml'):
         return
-    if app.builder.name not in ("html", "dirhtml"):
-        return
-
-    outdir = Path(app.outdir)
-    for html_path in outdir.rglob("*.html"):
+    for html_path in Path(app.outdir).rglob('*.html'):
         _patch_html_file(html_path)
 
 
 def setup(app: Sphinx) -> dict[str, Any]:
-    app.connect("build-finished", _on_build_finished)
-    return {"parallel_read_safe": True, "parallel_write_safe": True}
+    app.connect('build-finished', _on_build_finished)
+    return {'parallel_read_safe': True, 'parallel_write_safe': True}

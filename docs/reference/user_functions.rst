@@ -193,4 +193,4 @@ live again if the file is ever restored.
 User functions are ordinary Python executed with full interpreter
 privileges — only install files you trust.
 
-.. [1] A. Keren, Phys. Rev. B **50**, 10039 (1994).
+.. [1] A\. Keren, Phys. Rev. B **50**, 10039 (1994).

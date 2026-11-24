@@ -480,18 +480,18 @@ Assumptions and limitations
 References
 ----------
 
-.. [1] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+.. [1] S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford,
    2022) — polarisation projections and the rotating reference frame in μSR.
 
-.. [2] M. H. Levitt, *Spin Dynamics: Basics of Nuclear Magnetic Resonance*,
+.. [2] M\. H. Levitt, *Spin Dynamics: Basics of Nuclear Magnetic Resonance*,
    2nd ed. (Wiley, Chichester, 2008) — the rotating frame, resonance offset
    and nutation.
 
-.. [3] I. I. Rabi, N. F. Ramsey, and J. Schwinger, Rev. Mod. Phys. **26**, 167
+.. [3] I\. I. Rabi, N. F. Ramsey, and J. Schwinger, Rev. Mod. Phys. **26**, 167
    (1954).
 
-.. [4] F. Bloch and A. Siegert, Phys. Rev. **57**, 522 (1940).
+.. [4] F\. Bloch and A. Siegert, Phys. Rev. **57**, 522 (1940).
 
 - `WiMDA overview <https://shadow.nd.rl.ac.uk/wimda/>`__ (1.326).
 - musrfit, `Asymmetry RRF fit <https://lmu.web.psi.ch/musrfit/user/html/user-manual.html#asymmetry-rrf-fit-fit-type-3>`__ (1.12.1).

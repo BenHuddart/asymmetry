@@ -203,7 +203,7 @@ See also
 References
 ----------
 
-1. A. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
+1. A\. Amato and E. Morenzoni, *Introduction to Muon Spin Spectroscopy:
    Applications to Solid State and Material Sciences*, Lecture Notes in Physics
    Vol. 961 (Springer, Cham, 2024).
-2. W. D. Knight, Phys. Rev. **76**, 1259 (1949).
+2. W\. D. Knight, Phys. Rev. **76**, 1259 (1949).

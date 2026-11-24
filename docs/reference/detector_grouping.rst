@@ -1298,18 +1298,18 @@ and uncertainty distinctions, including Mantid and the compared musrfit option.
    :alt: Deadtime card showing finite negative and positive manual coefficients
    :width: 620px
 
-.. [isis_deadtime] S. H. Kilcoyne, RAL-94-080 (1994), Sec. 4, pp. 30–31,
+.. [isis_deadtime] S\. H. Kilcoyne, RAL-94-080 (1994), Sec. 4, pp. 30–31,
    `ISIS report <https://epubs.stfc.ac.uk/manifestation/7175/RAL-94-080.pdf>`__.
-.. [isis_silver] S. Manolopoulos, RAL-TR-2004-013 (2004), p. 4,
+.. [isis_silver] S\. Manolopoulos, RAL-TR-2004-013 (2004), p. 4,
    `instrument report <https://discovery.ucl.ac.uk/id/eprint/10081716/1/RAL-TR-2004-013%20mSR%20spectrometer%20upgrade.pdf>`__.
-.. [wimda_deadtime] F. L. Pratt, WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B,
+.. [wimda_deadtime] F\. L. Pratt, WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B,
    `author-hosted manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`__.
 .. [mantid_deadtime] Mantid 6.13.1 documentation,
    `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.13.1/algorithms/ApplyDeadTimeCorr-v1.html>`__
    and `CalMuonDeadTime v1 <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`__.
 .. [mantid_deadtime_errors] Mantid 6.16.1 documentation,
    `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.16.1/algorithms/ApplyDeadTimeCorr-v1.html>`__.
-.. [counting_uncertainty] S. Pommé, R. Fitzgerald, and J. Keightley,
+.. [counting_uncertainty] S\. Pommé, R. Fitzgerald, and J. Keightley,
    Metrologia **52**, S3 (2015),
    `doi:10.1088/0026-1394/52/3/S3 <https://doi.org/10.1088/0026-1394/52/3/S3>`__.
 

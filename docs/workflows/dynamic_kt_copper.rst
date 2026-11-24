@@ -462,22 +462,22 @@ Assumptions and limitations
 References
 ----------
 
-- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
+- R\. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and R. Kubo,
   Phys. Rev. B **20**, 850 (1979) — the dynamic Kubo–Toyabe strong-collision
   theory used for the ZF hop-rate fits.
-- R. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
-  R. Blinc (North-Holland, Amsterdam, 1967), p. 810 — the original Kubo–Toyabe
+- R\. Kubo and T. Toyabe, in *Magnetic Resonance and Relaxation*, edited by
+  R\. Blinc (North-Holland, Amsterdam, 1967), p. 810 — the original Kubo–Toyabe
   zero-field relaxation function.
-- A. Abragam, *The Principles of Nuclear Magnetism* (Oxford University Press,
+- A\. Abragam, *The Principles of Nuclear Magnetism* (Oxford University Press,
   Oxford, 1961) — the Gaussian-to-exponential crossover envelope used on the
   transverse-field line shape.
-- G. M. Luke, J. H. Brewer, S. R. Kreitzman, D. R. Noakes, M. Celio, R. Kadono,
+- G\. M. Luke, J. H. Brewer, S. R. Kreitzman, D. R. Noakes, M. Celio, R. Kadono,
   and E. J. Ansaldo, Phys. Rev. B **43**, 3284 (1991) — muon diffusion and spin
   dynamics in copper, including the low-temperature quantum-diffusion upturn.
-- S. R. Kreitzman, J. H. Brewer, D. R. Harshman, R. Keitel, and D. Ll. Williams,
+- S\. R. Kreitzman, J. H. Brewer, D. R. Harshman, R. Keitel, and D. Ll. Williams,
   Phys. Rev. Lett. **56**, 181 (1986) — the quadrupolar level-crossing resonance
   of the muon in copper.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 5–6
   — Kubo–Toyabe relaxation, dynamics, and level-crossing resonance.
 

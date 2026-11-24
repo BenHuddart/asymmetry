@@ -443,19 +443,19 @@ Assumptions and limitations
 References
 ----------
 
-- M. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
-  F. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
+- M\. Gaboardi, F. L. Pratt, C. Milanese, J. Taylor, J. Siegel, and
+  F\. Fernandez-Alonso, Carbon **155**, 432 (2019) — the published µLCR study of
   corannulene reproduced in the advanced section: four muoniated-radical
   hyperfine couplings and their motional narrowing.
-- F. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
+- F\. L. Pratt *et al.*, Magn. Reson. Chem. **38**, S27 (2000) — muonium addition
   to TCNQ and the muoniated radical.
-- R. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*
+- R\. M. Macrae, Magn. Reson. Chem. **38**, S33 (2000) — the *ab initio*
   assignment of the muon addition site on TCNQ.
-- E. Roduner, Chem. Soc. Rev. **22**, 337 (1993) — the ALC-µSR technique and the
+- E\. Roduner, Chem. Soc. Rev. **22**, 337 (1993) — the ALC-µSR technique and the
   D1 resonance condition.
-- F. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose count-integral
+- F\. L. Pratt, Physica B **289–290**, 710 (2000) — WiMDA, whose count-integral
   ALC the Integral scan mode follows.
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), Ch. 6 —
   muonium, radicals, and avoided-level-crossing spectroscopy.
 

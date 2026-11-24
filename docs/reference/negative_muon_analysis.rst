@@ -294,13 +294,13 @@ the two sides report identical ratios and differ only in the side label.
 References
 ----------
 
-* T. Suzuki, D. F. Measday, and J. P. Roalsvig,
+* T\. Suzuki, D. F. Measday, and J. P. Roalsvig,
   `Phys. Rev. C **35**, 2212 (1987)
   <https://doi.org/10.1103/PhysRevC.35.2212>`_, Section II and Table IV,
   pages 2219–2220 — directly checked mean-life selections and context.
-* D. F. Measday, Phys. Rep. **354**, 243 (2001) — review of the nuclear
+* D\. F. Measday, Phys. Rep. **354**, 243 (2001) — review of the nuclear
   physics of μ⁻ capture; Λ\ :sub:`cap`\ (Z) systematics.
-* S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
+* S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
   *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022),
   Ch. 22 and Appendix C — the lifetime table (Table C.1) and negative-muon
   physics overview.

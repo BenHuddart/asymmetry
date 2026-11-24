@@ -366,8 +366,8 @@ in :ref:`asymmetry-error-fallback`.
 
 **References**
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) —
   rebinning schemes and counting statistics.
-- F. L. Pratt, Physica B **289–290**, 710 (2000).
+- F\. L. Pratt, Physica B **289–290**, 710 (2000).
 - `WiMDA homepage and manual <https://shadow.nd.rl.ac.uk/wimda/>`_.

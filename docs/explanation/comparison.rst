@@ -1310,7 +1310,7 @@ sampled transform grid; it supplies no new observations. Neither peak height nor
 magnitude area is universally invariant to window, damping, phase, or apodisation.
 
 The `WiMDA homepage/manual <https://shadow.nd.rl.ac.uk/wimda/>`__ and
-F. L. Pratt, Physica B **289–290**, 710 (2000), describe grouped spectral
+F\. L. Pratt, Physica B **289–290**, 710 (2000), describe grouped spectral
 analysis. The original manual's all-poles discussion is distinguished from
 iterative reconstruction in :ref:`comparison-maxent`. The `musrfit manual
 <https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`__ distinguishes
@@ -1484,7 +1484,7 @@ does not compare the fitted spectrum, objective, or covariance.
 The `WiMDA original manual, Sec. 9
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`__ explicitly distinguishes
 its maximum-entropy/all-poles transform from iterative entropy reconstruction.
-F. L. Pratt, Physica B **289–290**, 710 (2000), also describes muon spectral
+F\. L. Pratt, Physica B **289–290**, 710 (2000), also describes muon spectral
 analysis; these older method descriptions do not identify all reconstruction
 options in WiMDA 1.326. No matched native MaxEnt spectrum/error comparison is
 claimed for WiMDA or musrfit. A similar method name or a sharper peak does not

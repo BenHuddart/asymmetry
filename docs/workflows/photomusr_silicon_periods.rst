@@ -15,7 +15,7 @@ end to end on real HiFi data, and doubles as the corpus's showcase for
 
 The dataset is not a teaching mock-up: runs ``HIFI00103277``–``103299``
 (ISIS proposal RB1520457, May 2016) are the very measurements published in
-K. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017). That makes
+K\. Yokoyama *et al.*, Phys. Rev. Lett. **119**, 226601 (2017). That makes
 the example **paper-graded** — the numbers Asymmetry recovers below can be
 held against the published fit values, and they agree.
 
@@ -288,7 +288,7 @@ because they set the accuracy of the recovered numbers:
 
 .. rubric:: References
 
-- K. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
+- K\. Yokoyama, J. S. Lord, J. Miao, P. Murahari, and A. J. Drew, Phys. Rev.
   Lett. **119**, 226601 (2017) — the photoexcited-μSR carrier-lifetime
   method; the source of the calibration exponent :math:`\alpha = 0.68(4)`
   and the lifetime :math:`\tau_0 = 11.1(9)\;\mathrm{\mu s}` used as targets

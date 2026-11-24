@@ -114,7 +114,7 @@ AIC value cannot replace it in an AICc ranking. See :doc:`fit_wizard` for
 formulas, availability and assumptions, and :doc:`global_fit_wizard` for
 series totals and partition BIC.
 
-.. [pdg_statistics] G. Cowan and L. Lista, "Statistics", Particle Data Group
+.. [pdg_statistics] G\. Cowan and L. Lista, "Statistics", Particle Data Group
    (2025), sections 40.2 and 40.3.3.1,
    `Statistics review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
 

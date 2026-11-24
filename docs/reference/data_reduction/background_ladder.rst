@@ -167,7 +167,7 @@ See also
 
 **References**
 
-- S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+- S\. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022) — the
   steady background count from uncorrelated detector hits at continuous
   sources, and its suppression at pulsed sources.
