@@ -1043,6 +1043,52 @@ These comparisons do not assert equality of low-count asymmetry formulas,
 background treatment, or fit objectives.
 The formulas and limitations are in :doc:`/reference/detector_grouping`.
 
+.. _comparison-count-deadtime-models:
+
+Detector deadtime in count fitting
+----------------------------------
+
+Asymmetry does not automatically fold the grouping's detector deadtime table
+into predictions for raw-count Poisson fitting. Applied deadtime-corrected
+observations use Gaussian weighting with retained counting variance. The
+scalar DT₀ response has its own detector-share and statistical assumptions;
+it does not automatically replace a heterogeneous detector table. See
+:ref:`count-fit-deadtime-table-limit` and
+:doc:`/reference/grouped_time_domain_fitting`.
+
+WiMDA 1.326 **Analyse** offers weighted count fitting and empirical **Simple**
+count-loss modelling with a scalar DT₀. **All Grps** retains separate group
+normalisations, backgrounds, amplitudes, and phases. These controls do not
+establish automatic heterogeneous-table Poisson forward modelling. The
+`WiMDA overview and manual <https://shadow.nd.rl.ac.uk/wimda/>`__ provide
+workflow context.
+
+Mantid 6.16.1 muon preprocessing applies ``ApplyDeadTimeCorr`` to observations
+and preserves supplied errors. Its generic ``Fit`` supports a Poisson cost;
+an explicitly supplied custom function can evaluate detector-wise responses
+before summing predicted counts. This is distinct from automatically consuming
+a muon deadtime table. General simultaneous spectra and shared parameters are
+supported by `MultiDomainFunction
+<https://docs.mantidproject.org/v6.16.1/fitting/fitfunctions/MultiDomainFunction.html>`__;
+see also `ApplyDeadTimeCorr
+<https://docs.mantidproject.org/v6.16.1/algorithms/ApplyDeadTimeCorr-v1.html>`__
+and `Fit <https://docs.mantidproject.org/v6.16.1/algorithms/Fit-v1.html>`__.
+
+musrfit 1.12.1 (``708f777b``, ROOT 6.40.04) type-0 histogram fitting with
+``deadtime-cor file`` corrects detector observations before grouping and packing.
+Both chi-square and ``MAX_LIKELIHOOD`` then use the prepared observations;
+the latter does not automatically return to raw counts and apply the table
+to predictions. Multiple histogram/RUN blocks and parameter maps support
+general shared-parameter fitting, including detector-dependent phases. See
+the `musrfit manual
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html>`__.
+
+These comparisons concern the named operations, not every user function or
+plugin. General joint fitting and custom response functions do not establish
+a shared automatic table-handling workflow or physical Poisson statistics
+after deadtime losses. Matching corrected values or fitted means does not
+establish equivalent uncertainty estimates.
+
 .. _comparison-reference-timing:
 
 Reference timing and native coordinates
