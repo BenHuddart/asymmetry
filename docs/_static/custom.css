@@ -61,7 +61,6 @@
 .rst-content .wy-table-responsive table td,
 .rst-content .wy-table-responsive table th {
     white-space: normal;
-    overflow-wrap: anywhere;
 }
 
 /* Long formulae scroll within the reading column on small screens. */
@@ -73,5 +72,10 @@
 .rst-content code.literal,
 .rst-content code.literal .pre {
     white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* Long Python object names stay inside narrow search results. */
+.rst-content #search-results {
     overflow-wrap: anywhere;
 }

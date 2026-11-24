@@ -44,6 +44,8 @@ instrument_review_directory = 'reference/instruments'
 templates_path = ['_templates']
 exclude_patterns = ['_build', '_generated', 'Thumbs.db', '.DS_Store']
 html_css_files = ['custom.css']
+# Search uses titles and headings without fetching every matching page for a snippet.
+html_show_search_summary = False
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'

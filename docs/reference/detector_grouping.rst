@@ -1,6 +1,8 @@
 Detector Grouping and Layout
 ============================
 
+.. index:: !grouping
+
 Trace the :doc:`interactive route from detector counts to a result
 </explanation/reduction_pipeline>` for the operation order and calibration
 dependencies.
@@ -921,6 +923,8 @@ See :doc:`data_reduction/beta_calibration` for assumptions and reference compari
 
 Deadtime correction
 --------------------
+
+.. index:: !deadtime
 
 The **Deadtime** card of the Corrections column configures the profile's
 deadtime policy inline; its header shows the live mode summary (e.g. "off",
