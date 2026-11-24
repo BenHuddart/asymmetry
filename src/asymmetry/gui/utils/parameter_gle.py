@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.gui.utils import gle_export
-from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots
+from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
 from asymmetry.gui.utils.parameter_export_data import (
     _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     ParameterExportData,
@@ -266,12 +266,10 @@ class ParameterGleSnapshot(ParameterExportData):
             if self.log_x:
                 ax.set_xscale("log")
 
-        fig.savefig(str(gle_path))
+        cairo = save_gle_figure(fig, gle_path)
 
         fit_files = list(fit_file_map.values()) if fit_file_map else []
-        return gle_export.GleExportBuild(
-            files=[gle_path, data_path, *fit_files], cairo=fig.requires_cairo()
-        )
+        return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files], cairo=cairo)
 
     def _add_gle_model_overlay(
         self,

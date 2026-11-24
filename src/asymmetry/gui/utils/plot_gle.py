@@ -13,7 +13,7 @@ from asymmetry.gui.utils.gle_export import (
     dedup_export_token,
     safe_file_token,
 )
-from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots
+from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
 from asymmetry.gui.utils.plot_export_data import PlotExportData
 
 
@@ -83,7 +83,7 @@ class PlotGleSnapshot(PlotExportData):
             )
         if self.stacked:
             fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
-        fig.savefig(str(gle_path))
+        cairo = save_gle_figure(fig, gle_path)
         for path, payload, label, axis_key in dat_writes:
             self._write_data_file(
                 path,
@@ -92,7 +92,7 @@ class PlotGleSnapshot(PlotExportData):
                 axis_key=axis_key,
                 bake_waterfall_offset=False,
             )
-        return GleExportBuild(files=files, cairo=fig.requires_cairo())
+        return GleExportBuild(files=files, cairo=cairo)
 
     def _plot_export_payloads_on_axis(
         self,

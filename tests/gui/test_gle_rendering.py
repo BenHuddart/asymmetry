@@ -19,7 +19,7 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.utils import gle_export
-from asymmetry.gui.utils.gle_figure import gle_figure
+from asymmetry.gui.utils.gle_figure import gle_figure, save_gle_figure
 from asymmetry.gui.utils.parameter_gle import ParameterGleSnapshot
 from asymmetry.gui.utils.plot_gle import PlotGleSnapshot
 from asymmetry.gui.windows.gle_preview import GlePlotPreview, close_gle_previews
@@ -235,13 +235,23 @@ def test_projection_export_preserves_subscripts_and_chi_squared_annotation(tmp_p
     assert r"\char{94}" not in content
 
 
-def test_export_font_preserves_literal_label_punctuation(tmp_path):
-    from gleplot.cairo_support import text_glyph_warning
+@pytest.mark.parametrize("translucent", [False, True])
+def test_export_font_preserves_default_and_literal_label_punctuation(tmp_path, translucent):
+    from gleplot.cairo_support import is_cairo_safe_font, text_glyph_warning
 
     figure = gle_figure(glp)
+    if not translucent:
+        assert figure.style.font == glp.GlobalConfig.get_style().font
     axis = figure.add_subplot(111)
     axis.plot([1, 2], [0.2, 0.4])
+    if translucent:
+        axis.fill_between([1, 2], [0.1, 0.3], [0.3, 0.5], color="blue", alpha=0.25)
     axis.set_title("A_B {C} <D> |F|")
     script = tmp_path / "punctuation.gle"
-    figure.savefig(str(script))
+    cairo = save_gle_figure(figure, script)
+    assert cairo is translucent
+    if cairo:
+        assert is_cairo_safe_font(figure.style.font)
+    else:
+        assert figure.style.font == glp.GlobalConfig.get_style().font
     assert text_glyph_warning(figure.style.font, script.read_text()) is None

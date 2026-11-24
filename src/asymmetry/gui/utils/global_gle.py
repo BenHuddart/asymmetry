@@ -16,7 +16,7 @@ from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     extract_gle_data_dependencies,
 )
-from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots
+from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
 from asymmetry.gui.utils.global_export_data import GlobalExportData
 
 
@@ -85,13 +85,13 @@ class GlobalGleSnapshot(GlobalExportData):
         )
 
     def save(self, figure, gle_path, export_dir):
-        figure.savefig(str(gle_path))
+        cairo = save_gle_figure(figure, gle_path)
         return GleExportBuild(
             files=[
                 gle_path,
                 *(export_dir / name for name in extract_gle_data_dependencies(gle_path)),
             ],
-            cairo=figure.requires_cairo(),
+            cairo=cairo,
         )
 
     def _build_fit_subplot_gle_figure(self, glp, gle_path: Path):

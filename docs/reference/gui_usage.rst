@@ -838,9 +838,10 @@ Compilation behaviour:
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
 Exports use gleplot 6.0.0. Curves join samples with straight segments rather
-than spline smoothing. Translucent fills use GLE's Cairo renderer; opaque
-figures use its native renderer. Both use the Computer Modern Typewriter font
-(``texcmtt``) to preserve literal punctuation such as ``|F|``. Phase bands
+than spline smoothing. Opaque figures use GLE's native renderer and keep its
+default font. Translucent fills require Cairo, which cannot draw GLE's default
+PostScript font. Those figures use the compatible Computer Modern Typewriter
+font (``texcmtt``), preserving literal punctuation such as ``|F|``. Phase bands
 and boundary lines span the full plot height,
 including logarithmic and dual-y plots, without setting the y-axis range.
 EPS cannot retain transparency; Cairo may rasterise translucent regions.
