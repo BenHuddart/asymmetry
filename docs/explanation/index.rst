@@ -1,11 +1,13 @@
 Background and design
 =====================
 
-These pages explain the ideas behind Asymmetry rather than the mechanics of any
-one feature: a short primer on muon-spin spectroscopy, the conventions and
-implementation choices the program makes, how Asymmetry relates to the
-established μSR analysis tools, and a glossary of the terms used throughout the
-documentation.
+Use these pages to understand the quantities and assumptions behind an
+analysis. The :doc:`reduction_pipeline` follows detector counts to a result;
+:doc:`conventions` explains units and model conventions; and :doc:`comparison`
+compares particular operations with other μSR programs. Start with
+:doc:`musr_primer` for the physical background or :doc:`glossary` for a term.
+For instructions, use the :doc:`/getting_started/quickstart` or
+:doc:`/reference/index` instead.
 
 .. toctree::
    :maxdepth: 2
