@@ -3,6 +3,8 @@
 Alpha calibration
 =================
 
+.. index:: !alpha calibration
+
 The measured forward/backward asymmetry
 
 .. math::

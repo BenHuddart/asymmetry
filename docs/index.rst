@@ -38,6 +38,11 @@ Where to start
 - :doc:`api/index` — the Python API reference for scripting.
 - :doc:`contributing` — how to report issues and contribute.
 
+Use the :ref:`documentation search <search>` to find tasks such as
+``deadtime``, ``grouping``, or ``alpha calibration``. Results show page titles
+and section headings. To find a Python object, enter its full name, for example
+``asymmetry.core.transform.deadtime``.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
