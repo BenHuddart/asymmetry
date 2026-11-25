@@ -1,6 +1,4 @@
-<img align="right" src="https://raw.githubusercontent.com/BenHuddart/asymmetry/main/docs/_static/logo-on-light.svg" alt="Asymmetry: a red A and damped wave over a blue time axis" width="18%">
-
-# Asymmetry
+# Asymmetry <img src="https://raw.githubusercontent.com/BenHuddart/asymmetry/main/docs/_static/logo-on-light.svg" alt="Asymmetry: a red A and damped wave over a blue time axis" width="80">
 
 A Python library, command-line tool, and desktop application for muon-spin spectroscopy (μSR).
 
