@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Load valid NeXus period-major grouping declarations without discarding each
+  period’s memberships; differing two-period groups remain separately selectable.
+
 - Keep observations, complete error bars, and full model/component curves visible
   in GLE fit exports, with independent ranges and fills for both y-axes.
 

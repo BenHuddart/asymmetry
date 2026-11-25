@@ -708,7 +708,7 @@
     "src/asymmetry/core/fitting/parameter_models.py": 4447,
     "src/asymmetry/core/fitting/peak_detection.py": 1933,
     "src/asymmetry/core/fourier/fft.py": 1161,
-    "src/asymmetry/core/io/nexus.py": 1323,
+    "src/asymmetry/core/io/nexus.py": 1322,
     "src/asymmetry/core/io/psi.py": 1478,
     "src/asymmetry/core/io/root.py": 1013,
     "src/asymmetry/core/maxent/engine.py": 2363,

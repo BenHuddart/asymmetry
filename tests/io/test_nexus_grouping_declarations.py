@@ -34,7 +34,8 @@ def grouping_file(path, version, *, table=None, orientation="L", instrument="MuS
             counts.attrs["first_good_bin"] = 5
             counts.attrs["last_good_bin"] = 20
         if table is not None:
-            detector.create_dataset("grouping", data=table)
+            declaration = detector.create_dataset("grouping", data=table)
+            declaration.attrs["available"] = max(1, np.count_nonzero(np.unique(table) > 0))
         detector.create_dataset("resolution", data=20).attrs["units"] = "ns"
         detector.create_dataset("raw_time", data=np.arange(25) * 0.02).attrs["units"] = "us"
         detector.create_dataset("time_zero", data=0.04).attrs["units"] = "us"
@@ -243,3 +244,90 @@ def test_actual_cli_info_keeps_single_group_inspectable(tmp_path, capsys, json_o
     else:
         assert "7 Group 7" in output
         assert "independent pair unavailable" in output
+
+
+@pytest.mark.parametrize("layout", ["flat", "table"])
+@pytest.mark.parametrize("same", [True, False])
+def test_v1_period_grouping_indexes_histograms_without_reusing_first_period(tmp_path, layout, same):
+    from asymmetry.core.io import select_period
+
+    path = tmp_path / "periods.nxs"
+    raw = grouping_file(path, "v1", table=[1] * 32 + [2] * 32)
+    tables = np.array([[1] * 32 + [2] * 32, ([1] * 32 + [2] * 32) if same else [2] * 32 + [1] * 32])
+    with h5py.File(path, "r+") as handle:
+        entry = handle["run"]
+        entry.create_dataset("switching_states", data=2)
+        del entry["good_frames"]
+        entry.create_dataset("good_frames", data=[100000, 200000])
+        detector = entry["histogram_data_1"]
+        del detector["counts"], detector["grouping"]
+        counts = detector.create_dataset("counts", data=np.concatenate([raw, raw * 2]))
+        counts.attrs.update(first_good_bin=5, last_good_bin=20)
+        detector.create_dataset("grouping", data=tables.ravel() if layout == "flat" else tables)
+    loaded = load(path)
+    assert isinstance(loaded, list) is (not same)
+    for index in range(2):
+        dataset = select_period(loaded, index + 1)
+        expected = {gid: (np.flatnonzero(tables[index] == gid) + 1).tolist() for gid in (1, 2)}
+        assert dataset.run.grouping["groups"] == expected
+        np.testing.assert_allclose(dataset.asymmetry, -50 if same or index == 0 else 50)
+        for histogram, counts in zip(dataset.run.histograms, raw * (index + 1), strict=True):
+            np.testing.assert_array_equal(histogram.counts, counts)
+            assert (histogram.t0_bin, histogram.good_bin_start, histogram.good_bin_end) == (
+                2,
+                4,
+                19,
+            )
+        assert dataset.run.grouping["deadtime_file_us"] == [0.001] * 64
+        assert dataset.run.grouping["reference_exposure"]["value"] == 100000 * (index + 1)
+        assert "grouping_preset" not in dataset.run.grouping
+        assert load(path, period=index + 1).run.grouping["groups"] == expected
+
+
+@pytest.mark.parametrize("fault", ["memberships", "legs"])
+def test_mapping_requires_common_authored_grouping_and_ignores_unselected_periods(tmp_path, fault):
+    from dataclasses import replace
+
+    from asymmetry.core.io.periods import combine_mapped_periods
+
+    path = tmp_path / "run.nxs"
+    grouping_file(path, "v2", table=[1] * 32 + [2] * 32)
+    first = load(path)
+    other = replace(first, run=replace(first.run, grouping=dict(first.run.grouping)))
+    if fault == "memberships":
+        other.run.grouping["groups"] = {1: list(range(33, 65)), 2: list(range(1, 33))}
+    else:
+        other.run.grouping.update(forward_group=2, backward_group=1)
+    with pytest.raises(ValueError, match="Author a common grouping"):
+        combine_mapped_periods([first, other], {1: "red", 2: "green"})
+    assert combine_mapped_periods([first, other], {1: "red", 2: "ignore"}).n_points > 0
+    other.run.grouping = dict(first.run.grouping)
+    other.run.grouping["groups"] = {
+        gid: list(reversed(ids)) for gid, ids in first.run.grouping["groups"].items()
+    }
+    combined = combine_mapped_periods([first, other], {1: "red", 2: "green"})
+    np.testing.assert_allclose(combined.asymmetry, -50)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        [],
+        [1, 2, 1],
+        [[1, 2], [0, 0]],
+        [[1, 2], [-1, -2]],
+        [[True, False], [True, False]],
+        [[1.0, 2.0], [1.0, 2.0]],
+        [[[1, 2]], [[1, 2]]],
+    ],
+)
+def test_invalid_period_table_is_never_broadcast_truncated_or_defaulted(tmp_path, table):
+    path = tmp_path / "invalid-periods.nxs"
+    raw = grouping_file(path, "v2", table=[1, 2], count=2)
+    with h5py.File(path, "r+") as handle:
+        detector = handle["raw_data_1/instrument/detector_1"]
+        del detector["counts"], detector["grouping"]
+        detector.create_dataset("counts", data=np.stack([raw, raw]))
+        detector.create_dataset("grouping", data=table)
+    with pytest.raises(ValueError, match="Grouping"):
+        load(path)

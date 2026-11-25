@@ -18,7 +18,11 @@ from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.frame_exposure import NexusFrames, read_nexus_frames
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
-from asymmetry.core.io.nexus_grouping import nexus_grouping
+from asymmetry.core.io.nexus_grouping import (
+    grouping_membership,
+    nexus_grouping,
+    nexus_period_grouping,
+)
 from asymmetry.core.io.nexus_periods import logged_data_periods, period_declaration
 from asymmetry.core.io.nexus_timing import T0Decode, read_nexus_timing
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
@@ -194,13 +198,12 @@ class NexusLoader(BaseLoader):
         Returns
         -------
         MuonDataset or list[MuonDataset]
-            Single dataset for single-period and two-period files. Files with
-            more than two periods return one dataset per period.
+            Single dataset for single-period and identically grouped two-period files.
+            Differently grouped two-period files and files with more than two
+            periods return one dataset per period.
         """
         path = Path(filepath)
-        # ``.nxs``/``.nexus`` share an extension across two containers: modern
-        # HDF5 (h5py) and legacy HDF4 (the v1 ``/run`` muonTD format WiMDA
-        # reads). The file magic disambiguates; h5py cannot open HDF4 at all.
+        # File magic distinguishes HDF4 from HDF5 despite their shared extensions.
         if is_hdf4(str(path)):
             handle = open_hdf4(str(path))  # raises ImportError if pyhdf absent
             result = self._reduce_handle(handle, str(path), replay=replay)
@@ -535,10 +538,8 @@ class NexusLoader(BaseLoader):
         good_windows: np.ndarray,
         source_file: str,
     ) -> list[MuonDataset]:
-        """Construct per-period datasets on acquired bin centres minus effective t0."""
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
-
         dead_time_periods = self._split_period_vectors(
             dead_time_values,
             n_periods=n_periods,
@@ -548,7 +549,9 @@ class NexusLoader(BaseLoader):
             frame_metadata.values,
             n_periods=n_periods,
         )
-
+        grouping_periods = nexus_period_grouping(
+            grouping_array, n_periods, counts_periods[0].shape[0]
+        )
         exposures = frame_metadata.exposures(n_periods)
         for period_idx, period_counts in enumerate(counts_periods, start=1):
             if period_counts.ndim != 2:
@@ -562,7 +565,6 @@ class NexusLoader(BaseLoader):
                 decode=decode,
                 good_windows=good_windows[period_idx - 1],
             )
-
             period_run_number = (
                 run_number
                 if n_periods == 1
@@ -612,7 +614,7 @@ class NexusLoader(BaseLoader):
                 if replay is None and grouping_array is None
                 else None
             )
-            selected = nexus_grouping(grouping_array, n_detectors, default)
+            selected = nexus_grouping(grouping_periods[period_idx - 1], n_detectors, default)
             run_grouping.update(selected.payload)
             if default is not None:
                 run_grouping["grouping_preset"] = default.name
@@ -631,7 +633,6 @@ class NexusLoader(BaseLoader):
             time_axis, asymmetry, error = (
                 array[window] for array in (quick.time, quick.asymmetry, quick.error)
             )
-
             from asymmetry.core.transform.preparation import histogram_observation
 
             datasets.append(
@@ -650,7 +651,9 @@ class NexusLoader(BaseLoader):
                 )
             )
 
-        if n_periods == 2 and len(datasets) == 2:
+        if n_periods == 2 and grouping_membership(datasets[0].run.grouping) == grouping_membership(
+            datasets[1].run.grouping
+        ):
             return [
                 self._combine_two_period_datasets(
                     datasets,
@@ -667,7 +670,6 @@ class NexusLoader(BaseLoader):
         source_run_number: int,
         source_file: str,
     ) -> MuonDataset:
-        """Keep acquired periods and the context belonging to their cached curves."""
         combined = combine_mapped_periods(
             period_datasets,
             {1: "red", 2: "green"},
@@ -712,7 +714,6 @@ class NexusLoader(BaseLoader):
         ]
 
     def _split_period_counts(self, counts: np.ndarray) -> list[np.ndarray]:
-        """Normalise detector counts into a list of ``[detectors, bins]`` arrays."""
         if counts.ndim == 2:
             return [counts]
         if counts.ndim == 3:
@@ -726,7 +727,6 @@ class NexusLoader(BaseLoader):
         n_periods: int,
         n_detectors: int,
     ) -> list[np.ndarray]:
-        """Normalise optional per-detector vectors into one vector per period."""
         arr = np.asarray(values, dtype=np.float64)
         if arr.size == 0:
             return [np.array([], dtype=np.float64) for _ in range(n_periods)]
@@ -768,7 +768,6 @@ class NexusLoader(BaseLoader):
         )
 
     def _encode_period_run_number(self, run_number: int, period_idx: int) -> int:
-        """Use the shared source/period browser-key encoding."""
         return encode_period_run_number(run_number, period_idx)
 
     def _extract_tree(self, node: Any) -> Any:
