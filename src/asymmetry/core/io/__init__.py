@@ -64,8 +64,9 @@ def load(
         For period-mode (multi-period) files, select a single period and
         return just that :class:`~asymmetry.core.data.dataset.MuonDataset`. Accepts a 1-based period number
         or, for two-period files, a ``"red"``/``"green"`` label. When *None*
-        (default) the historical behaviour is preserved: single/two-period
-        files return one :class:`~asymmetry.core.data.dataset.MuonDataset` and 3+ period files a ``list``.
+        (default), single-period and identically grouped two-period files return
+        one :class:`~asymmetry.core.data.dataset.MuonDataset`. Differently grouped
+        two-period files and 3+ period files return a ``list``.
         See :mod:`asymmetry.core.io.periods`.
 
     checkpoint : callable, optional

@@ -24,7 +24,7 @@ from asymmetry.core.simulate import (
     reduce_run_to_dataset,
     simulate_run,
 )
-from tests.corpus import corpus_path, requires_corpus
+from tests.corpus import authored_grouping_copy, corpus_path, requires_corpus
 
 R_GAS = 8.314462618  # J / mol / K
 
@@ -184,13 +184,18 @@ class TestEndToEndPipeline:
 _MALEIC_DIR = corpus_path("Chemistry/Muonium reaction with maleic acid")
 
 
-def _load_maleic(run_number):
+def _load_maleic(run_number, tmp_path):
     from asymmetry.core.io import load
 
     assert _MALEIC_DIR is not None
-    return load(_MALEIC_DIR / "Data" / f"emu{run_number:08d}.nxs")
+    return load(
+        authored_grouping_copy(
+            _MALEIC_DIR / "Data" / f"emu{run_number:08d}.nxs", tmp_path, [1] * 48 + [2] * 48
+        )
+    )
 
 
+@pytest.mark.io
 @requires_corpus(_MALEIC_DIR)
 class TestRealCorpusSweep:
     """End-to-end on the real EMU maleic-acid corpus (env-gated, not in CI).
@@ -212,9 +217,9 @@ class TestRealCorpusSweep:
         338.0: {1.0: 78288, 2.0: 78300, 4.0: 78271},
     }
 
-    def test_room_temperature_concentration_line(self):
+    def test_room_temperature_concentration_line(self, tmp_path):
         concentrations = sorted(self.ROOM_T)
-        datasets = [_load_maleic(self.ROOM_T[c]) for c in concentrations]
+        datasets = [_load_maleic(self.ROOM_T[c], tmp_path) for c in concentrations]
         relax = fit_mu_relaxation_series(datasets, f_mu=F_MU, share_amplitude=True, t_max=8.0)
 
         assert relax.success
@@ -226,7 +231,7 @@ class TestRealCorpusSweep:
         assert rate.k_mu > 0.0
         assert 0.0 < rate.lambda0 < 5.0  # physical water background
 
-    def test_arrhenius_activation_energy_order(self):
+    def test_arrhenius_activation_energy_order(self, tmp_path):
         temperatures = sorted(self.ARRHENIUS)
         k_per_temperature = []
         k_errors = []
@@ -234,8 +239,8 @@ class TestRealCorpusSweep:
             triplet = self.ARRHENIUS[temperature]
             # Anchor the shared A_Mu with the slow water reference at [x] = 0.
             concentrations = [0.0, *sorted(triplet)]
-            datasets = [_load_maleic(self.WATER_REF)] + [
-                _load_maleic(triplet[c]) for c in sorted(triplet)
+            datasets = [_load_maleic(self.WATER_REF, tmp_path)] + [
+                _load_maleic(triplet[c], tmp_path) for c in sorted(triplet)
             ]
             relax = fit_mu_relaxation_series(datasets, f_mu=F_MU, share_amplitude=True, t_max=8.0)
             rate = fit_bimolecular_rate(concentrations, relax.lambda_mu, relax.lambda_mu_error)

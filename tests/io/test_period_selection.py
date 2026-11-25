@@ -436,6 +436,7 @@ def test_selected_periods_support_reference_amplitude_then_conditional_rate_fit(
 # --- real NeXus round-trip (skipped without the WiMDA corpus) ----------------
 
 
+@pytest.mark.io
 @requires_corpus(PHOTO_MUSR_FILE)
 def test_nexus_period_roundtrip_and_load_kwarg():
     combined = load(PHOTO_MUSR_FILE)

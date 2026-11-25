@@ -174,6 +174,7 @@ def test_mismatched_deadtimes_keep_original_tables_without_effective_average():
 # --- corpus -----------------------------------------------------------------------
 
 
+@pytest.mark.io
 @requires_corpus(PHOTO_MUSR_FILE)
 def test_photo_musr_trivial_mapping_matches_loader_combination():
     """On the validated photo-µSR silicon run, mapping {1→red, 2→green} of the

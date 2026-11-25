@@ -41,7 +41,7 @@ from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
-from tests.corpus import corpus_path, requires_corpus
+from tests.corpus import authored_grouping_copy, corpus_path, requires_corpus
 
 _EMU = corpus_path("Semiconductors/Shallow donor state in cadmium sulphide/Data/EMU00020711.nxs")
 # A TF MUSR (BiSCCO, 400 G ⇒ ~5.4 MHz) run: Round-2 saw the same empty FFT plot
@@ -49,8 +49,9 @@ _EMU = corpus_path("Semiconductors/Shallow donor state in cadmium sulphide/Data/
 _MUSR = corpus_path("Superconductivity/A high-Tc cuprate/Data/MUSR00001277.nxs")
 
 
+@pytest.mark.io
 @requires_corpus(_EMU)
-def test_emu_fft_complex_axis_is_physical() -> None:
+def test_emu_fft_complex_axis_is_physical(tmp_path) -> None:
     """Characterisation: the single-dataset primitive is correct for EMU.
 
     This currently PASSES — it pins the bug *out* of ``core/fourier/fft.py`` so the
@@ -58,7 +59,7 @@ def test_emu_fft_complex_axis_is_physical() -> None:
     """
     from asymmetry.core.io import load
 
-    dataset = load(str(_EMU))
+    dataset = load(authored_grouping_copy(_EMU, tmp_path, [1] * 48 + [2] * 48))
     freqs, spectrum = fft_complex_asymmetry(dataset, t_min=0.1, t_max=12.0)
 
     assert np.isfinite(freqs).all()
@@ -67,8 +68,9 @@ def test_emu_fft_complex_axis_is_physical() -> None:
     assert 1.0 < peak_freq < 2.0, f"peak at {peak_freq:.3f} MHz, expected ~1.36"
 
 
+@pytest.mark.io
 @requires_corpus(_EMU)
-def test_emu_grouped_spectrum_axis_is_physical() -> None:
+def test_emu_grouped_spectrum_axis_is_physical(tmp_path) -> None:
     """The GUI's averaged grouped-FFT path must produce a physical axis for EMU.
 
     This is the path the GUI Fourier panel drives (``compute_average_group_spectrum``),
@@ -79,7 +81,7 @@ def test_emu_grouped_spectrum_axis_is_physical() -> None:
     """
     from asymmetry.core.io import load
 
-    dataset = load(str(_EMU))
+    dataset = load(authored_grouping_copy(_EMU, tmp_path, [1] * 48 + [2] * 48))
     run = getattr(dataset, "run", None) or dataset
     spectrum = compute_average_group_spectrum(run, GroupSpectrumConfig(t_min_us=0.1, t_max_us=12.0))
     assert spectrum is not None, "grouped spectrum returned None for EMU run"
@@ -104,7 +106,7 @@ _RENDER_CASES = [
 
 @pytest.mark.gui
 @pytest.mark.parametrize("run_path, expected_mhz", _RENDER_CASES)
-def test_fft_spectrum_renders_in_gui(qapp, run_path: Path, expected_mhz: float) -> None:
+def test_fft_spectrum_renders_in_gui(qapp, tmp_path, run_path: Path, expected_mhz: float) -> None:
     """The GUI FFT must draw the physical line for ISIS NeXus data (EMU + MUSR).
 
     Round-2 acceptance gate. Drives the *real* render entry point — the
@@ -128,6 +130,8 @@ def test_fft_spectrum_renders_in_gui(qapp, run_path: Path, expected_mhz: float) 
     app = qapp
     window = MainWindow()
     try:
+        if run_path == _EMU:
+            run_path = authored_grouping_copy(run_path, tmp_path, [1] * 48 + [2] * 48)
         dataset = load(str(run_path))
         window._data_browser.add_dataset(dataset)
         window._current_dataset = dataset

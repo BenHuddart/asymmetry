@@ -216,3 +216,19 @@ stdlib-only fixture venvs to reject inconsistent metadata, missing resources,
 broken imports/entrypoints, altered artifact bytes, and source-path leakage.
 The real build/install smoke runs separately in CI on Python 3.11 and 3.12;
 see `docs/HARNESS.md`. These targets install only declared core requirements.
+
+## Explicit corpus grouping
+
+Corpus checks use `tests.corpus.corpus_path` and skip without
+`ASYMMETRY_CORPUS_ROOT`. A declared all-zero NeXus grouping remains invalid.
+Scientific tests needing such a run call `authored_grouping_copy` with explicit
+memberships and a per-test temporary directory. The EMU 96-channel checks choose
+channels 1–48 and 49–96 as their two groups; this is an authored test request,
+not independently verified export wiring. The 32-channel RF scan checks choose
+channels 1–16 and 17–32 under the same explicit policy. Only grouping is changed
+in the copied NeXus container; an existing ICP sidecar is copied verbatim;
+acquired counts, timing, exposure, and deadtime remain intact. Ordinary loading
+binds the new container bytes, and the original corpus stays immutable.
+Mark corpus I/O cases `io`, including classes or functions in mixed modules,
+so the fast tier retains synthetic mathematics without reading optional files.
+Configured-corpus results are reported separately from public CI results.

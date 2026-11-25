@@ -20,7 +20,7 @@ import pytest
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
-from tests.corpus import corpus_path, requires_corpus
+from tests.corpus import authored_grouping_copy, corpus_path, requires_corpus
 
 _K_B = 0.0861733  # meV/K
 _EXPR = "Oscillatory*Exponential + Oscillatory*Exponential + Oscillatory*Exponential + Constant"
@@ -30,7 +30,7 @@ _RUNS = [20721, 20720, 20719, 20718, 20722, 20723, 20724, 20725, 20726, 20727, 2
 
 _CDS_DIR = corpus_path("Semiconductors/Shallow donor state in cadmium sulphide/Data")
 
-pytestmark = requires_corpus(_CDS_DIR)
+pytestmark = [pytest.mark.io, requires_corpus(_CDS_DIR)]
 
 
 def _model_fn():
@@ -73,16 +73,16 @@ def _tied_seed(fc: float = 1.39, dsat: float = 0.126) -> ParameterSet:
     return ps
 
 
-def _fit(run: int):
+def _fit(run: int, tmp_path):
     from asymmetry.core.io import load
 
-    ds = load(_CDS_DIR / f"EMU000{run}.nxs")
+    ds = load(authored_grouping_copy(_CDS_DIR / f"EMU000{run}.nxs", tmp_path, [1] * 48 + [2] * 48))
     result = FitEngine().fit(ds, _model_fn(), _tied_seed(), 0.1, 8.0)
     return ds, result
 
 
-def test_base_temperature_tied_fit_recovers_hyperfine() -> None:
-    ds, result = _fit(20721)  # coldest, highest-stats (Tlog ~ 5.18 K)
+def test_base_temperature_tied_fit_recovers_hyperfine(tmp_path) -> None:
+    ds, result = _fit(20721, tmp_path)  # coldest, highest-stats (Tlog ~ 5.18 K)
     assert result.success
     assert ds.sample_temperature_logged < 6.0
     assert result.reduced_chi_squared < 1.6
@@ -96,16 +96,16 @@ def test_base_temperature_tied_fit_recovers_hyperfine() -> None:
     assert result.uncertainties["delta"] < 0.01
 
 
-def test_satellites_collapse_on_warming() -> None:
-    _ds_cold, cold = _fit(20721)
-    _ds_warm, warm = _fit(20728)  # Tlog ~ 30 K, above the Mu0 onset
+def test_satellites_collapse_on_warming(tmp_path) -> None:
+    _ds_cold, cold = _fit(20721, tmp_path)
+    _ds_warm, warm = _fit(20728, tmp_path)  # Tlog ~ 30 K, above the Mu0 onset
     delta_cold = {p.name: p.value for p in cold.parameters}["delta"]
     delta_warm = {p.name: p.value for p in warm.parameters}["delta"]
     assert delta_cold > 0.1  # well-resolved satellites when cold
     assert delta_warm < 0.05  # collapsed onto the central line when warm
 
 
-def test_ionisation_energy_is_extractable() -> None:
+def test_ionisation_energy_is_extractable(tmp_path) -> None:
     """The deliverable: tied amplitudes yield a finite, physical E_i.
 
     With three free frequencies this fit produced E_i = 43 +- 1090 meV (the
@@ -116,7 +116,7 @@ def test_ionisation_energy_is_extractable() -> None:
 
     temps, fracs = [], []
     for run in _RUNS:
-        ds, result = _fit(run)
+        ds, result = _fit(run, tmp_path)
         d = {p.name: p.value for p in result.parameters}
         neutral = d["A_3"] + d["A_5"]
         temps.append(ds.sample_temperature_logged)
