@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from asymmetry.gui.utils import gle_export
+from asymmetry.gui.utils.gle_bounds import GleBounds
 from asymmetry.gui.utils.gle_figure import gle_figure, gle_subplots, save_gle_figure
 from asymmetry.gui.utils.parameter_export_data import (
     _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
@@ -60,9 +61,6 @@ class ParameterGleSnapshot(ParameterExportData):
     def _gle_effective_y_label(self, name):
         return self.y_labels[name]
 
-    def _is_log_y_for(self, name):
-        return name in self.log_y
-
     def build(self, glp, gle_path, export_dir, *, cancelled=None):
         snapshot = replace(self, cancelled=cancelled)
         snapshot.check_cancelled()
@@ -106,9 +104,10 @@ class ParameterGleSnapshot(ParameterExportData):
                 if cols is None:
                     continue
                 y_col, yerr_col = cols
-                y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+                _, y_err = self._series_y_arrays(rows, y_name)
                 has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                 ax = subplot_axes[idx]
+                bounds = self._gle_bounds(rows, [(y_name, "y")])
                 show_subplot_fit_legend = self._count_fit_curves_for_param(x_key, y_name) > 1
                 self._add_gle_model_overlay(
                     ax,
@@ -117,6 +116,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     yaxis="y",
                     include_labels=show_subplot_fit_legend,
                     fit_file_map=fit_file_map,
+                    bounds=bounds,
                 )
                 # One subplot per parameter — series identity, so a phase-owned
                 # active series takes its phase colour (mirrors the on-screen
@@ -137,8 +137,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     ax.set_xscale("log")
                 if not self.show_components and (y_name in self.log_y):
                     ax.set_yscale("log")
-                if self.show_components:
-                    ax.set_ylim(0.0, None)
+                bounds.apply(ax)
                 self._add_gle_annotations(ax, y_name)
                 if phase is not None:
                     self._add_gle_phase_band(ax, phase)
@@ -147,6 +146,11 @@ class ParameterGleSnapshot(ParameterExportData):
         else:
             fig = gle_figure(glp, figsize=(5.8, 4.2))
             ax = fig.add_subplot(111)
+            axes = [
+                (name, "y2" if len(y_params) == 2 and idx == 1 else "y")
+                for idx, name in enumerate(y_params)
+            ]
+            bounds = self._gle_bounds(rows, axes)
 
             if len(y_params) == 2:
                 left_name, right_name = y_params
@@ -157,8 +161,8 @@ class ParameterGleSnapshot(ParameterExportData):
                 left_y_col, left_err_col = left_cols
                 right_y_col, right_err_col = right_cols
 
-                left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
-                right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
+                _, left_err = self._series_y_arrays(rows, left_name)
+                _, right_err = self._series_y_arrays(rows, right_name)
                 has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
                 has_right_err = bool(np.any(np.isfinite(right_err) & (right_err > 0)))
 
@@ -169,6 +173,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     yaxis="y",
                     include_labels=show_fit_legend,
                     fit_file_map=fit_file_map,
+                    bounds=bounds,
                 )
                 self._add_gle_model_overlay(
                     ax,
@@ -177,6 +182,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     yaxis="y2",
                     include_labels=show_fit_legend,
                     fit_file_map=fit_file_map,
+                    bounds=bounds,
                 )
                 ax.errorbar_from_file(
                     data_file_ref,
@@ -202,9 +208,10 @@ class ParameterGleSnapshot(ParameterExportData):
                 )
                 ax.set_ylabel(self.y_labels[left_name], axis="y")
                 ax.set_ylabel(self.y_labels[right_name], axis="y2")
-                if self.show_components:
-                    ax.set_ylim(0.0, None, axis="y")
-                    ax.set_ylim(0.0, None, axis="y2")
+                for name, yaxis in axes:
+                    if yaxis in bounds.log_y:
+                        ax.set_yscale("log", axis=yaxis)
+                bounds.apply(ax)
                 self._add_gle_annotations(ax, left_name)
                 self._add_gle_annotations(ax, right_name)
                 if phase is not None:
@@ -222,7 +229,7 @@ class ParameterGleSnapshot(ParameterExportData):
                     if cols is None:
                         continue
                     y_col, yerr_col = cols
-                    y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+                    _, y_err = self._series_y_arrays(rows, y_name)
                     has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                     self._add_gle_model_overlay(
                         ax,
@@ -231,6 +238,7 @@ class ParameterGleSnapshot(ParameterExportData):
                         yaxis="y",
                         include_labels=show_fit_legend,
                         fit_file_map=fit_file_map,
+                        bounds=bounds,
                     )
                     override = phase.color if (single_param and phase is not None) else None
                     ax.errorbar_from_file(
@@ -251,13 +259,10 @@ class ParameterGleSnapshot(ParameterExportData):
                     if show_fit_legend:
                         ax.legend(loc="best")
 
-                if self.show_components:
-                    ax.set_ylim(0.0, None)
-                elif len(y_params) == 1 and self._is_log_y_for(y_params[0]):
-                    ax.set_yscale("log")
-                elif len(y_params) > 1 and any(self._is_log_y_for(name) for name in y_params):
+                if "y" in bounds.log_y:
                     ax.set_yscale("log")
 
+                bounds.apply(ax)
                 self._add_gle_annotations(ax, "main")
                 if phase is not None:
                     self._add_gle_phase_band(ax, phase)
@@ -271,6 +276,21 @@ class ParameterGleSnapshot(ParameterExportData):
         fit_files = list(fit_file_map.values()) if fit_file_map else []
         return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files], cairo=cairo)
 
+    def _gle_bounds(self, rows, axes):
+        log_axes = (
+            frozenset(axis for name, axis in axes if name in self.log_y)
+            if not self.show_components
+            else frozenset()
+        )
+        bounds = GleBounds(self.log_x, log_axes)
+        xs, _ = self._apply_x_transform(
+            np.array([self._x_value(row, self.x_key) for row in rows]), None
+        )
+        for name, axis in axes:
+            ys, errors = self._series_y_arrays(rows, name)
+            bounds.include(xs, ys, errors, yaxis=axis)
+        return bounds
+
     def _add_gle_model_overlay(
         self,
         ax,
@@ -279,6 +299,8 @@ class ParameterGleSnapshot(ParameterExportData):
         yaxis: str = "y",
         include_labels: bool = False,
         fit_file_map: dict[tuple[str, int], Path] | None = None,
+        *,
+        bounds: GleBounds,
     ) -> None:
         fit = self._model_fits.get(param_name)
         if fit is None or not fit.active:
@@ -297,6 +319,7 @@ class ParameterGleSnapshot(ParameterExportData):
             num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
         )
         for idx, (range_index, xs, ys) in enumerate(curves):
+            bounds.include(xs, ys, yaxis=yaxis)
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
             line_label = (
                 _fit_overlay_label(self.legend_labels[param_name], idx, len(curves))
@@ -321,12 +344,13 @@ class ParameterGleSnapshot(ParameterExportData):
                         comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
                         lower = cumulative
                         upper = cumulative + comp_fill
-                        ax.fill_between(
+                        bounds.fill_between(
                             xs,
                             lower,
                             upper,
                             color=fill_color,
                             alpha=0.3,
+                            yaxis=yaxis,
                             data_name=f"component_{base_name}_{cname}_fill",
                         )
                         ax.plot(

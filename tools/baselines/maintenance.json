@@ -753,11 +753,11 @@
     "tests/gui/test_cross_group_fit_dialog.py": 1251,
     "tests/gui/test_data_browser_panel.py": 2552,
     "tests/gui/test_fit_panel_tabs.py": 4512,
-    "tests/gui/test_fit_parameters_panel.py": 3968,
+    "tests/gui/test_fit_parameters_panel.py": 3967,
     "tests/gui/test_fit_wizard_window.py": 2032,
     "tests/gui/test_global_fit_window_redesign.py": 1036,
     "tests/gui/test_global_fit_wizard_window.py": 1754,
-    "tests/gui/test_global_parameter_fit_window.py": 1575,
+    "tests/gui/test_global_parameter_fit_window.py": 1571,
     "tests/gui/test_grouping_dialog.py": 3574,
     "tests/gui/test_grouping_preview_pane.py": 1579,
     "tests/gui/test_gui_panels_basic.py": 1293,
@@ -772,6 +772,6 @@
     "tests/io/test_simulate.py": 1384,
     "tests/tools/test_harness.py": 1015,
     "tools/global_wizard_harness.py": 1465,
-    "tools/harness.py": 1377
+    "tools/harness.py": 1373
   }
 }

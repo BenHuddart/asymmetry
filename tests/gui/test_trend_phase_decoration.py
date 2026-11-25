@@ -32,7 +32,7 @@ from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.utils.phase_colors import phase_color
 from tests.gui._trend_panel import axes_for
-from tests.gui.gle_helpers import OpaqueGleFigure
+from tests.gui.gle_helpers import GleAxisLimits, OpaqueGleFigure
 
 _PHASE = PhaseDecoration(
     color="#2F4DA0",
@@ -175,8 +175,9 @@ def test_wrong_axis_suppresses_the_band(panel: FitParametersPanel) -> None:
 # ── GLE export ───────────────────────────────────────────────────────────────
 
 
-class _FakeGleAxis:
+class _FakeGleAxis(GleAxisLimits):
     def __init__(self) -> None:
+        super().__init__()
         self.errorbar_calls: list[dict] = []
         self.span_calls: list[dict] = []
         self.line_calls: list[dict] = []
@@ -203,9 +204,6 @@ class _FakeGleAxis:
         return
 
     def set_yscale(self, *_a, **_k) -> None:
-        return
-
-    def set_ylim(self, *_a, **_k) -> None:
         return
 
     def legend(self, *_a, **_k) -> None:

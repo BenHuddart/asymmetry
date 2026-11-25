@@ -49,6 +49,7 @@ def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) 
 
 
 from tests.gui.gle_helpers import (
+    GleAxisLimits,
     OpaqueGleFigure,
     recording_factories,
     wait_for_gle,
@@ -705,8 +706,9 @@ def test_export_plot_gle_runs_compile_in_export_dir(
     assert resolved_gle_path.exists()
 
 
-class _LabelAxis:
+class _LabelAxis(GleAxisLimits):
     def __init__(self) -> None:
+        super().__init__()
         self.xlabel: str | None = None
         self.ylabel: str | None = None
         self.title: str | None = None
@@ -765,12 +767,6 @@ class _LabelAxis:
         if _args:
             self.yscale = str(_args[0])
         return
-
-    def get_xlim(self) -> tuple[float, float]:
-        return (0.0, 1.0)
-
-    def get_ylim(self) -> tuple[float, float]:
-        return (0.0, 1.0)
 
 
 class _LabelFigure:

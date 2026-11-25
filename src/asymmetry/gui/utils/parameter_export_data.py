@@ -597,7 +597,12 @@ class ParameterExportData:
         num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     ) -> list[tuple[int, np.ndarray, np.ndarray]]:
         fit = self._model_fits.get(param_name)
-        if fit is None or not fit.active or fit.x_key != x_key:
+        if (
+            fit is None
+            or not fit.active
+            or fit.x_key != x_key
+            or self._overlay_suppressed_for_transform(param_name)
+        ):
             return []
 
         curves: list[tuple[int, np.ndarray, np.ndarray]] = []

@@ -9,6 +9,25 @@ from asymmetry.gui.windows.gle_preview import GlePlotPreview
 from tests._qt_helpers import wait_for
 
 
+class GleAxisLimits:
+    """Public axis-limit state shared by GLE recording doubles."""
+
+    def __init__(self):
+        self.limits = {"x": (None, None), "y": (None, None), "y2": (None, None)}
+
+    def get_xlim(self):
+        return self.limits["x"]
+
+    def get_ylim(self, axis="y"):
+        return self.limits[axis]
+
+    def set_xlim(self, lo, hi):
+        self.limits["x"] = (lo, hi)
+
+    def set_ylim(self, lo, hi, axis="y"):
+        self.limits[axis] = (lo, hi)
+
+
 class OpaqueGleFigure:
     """Figure doubles without translucent series use the native GLE renderer."""
 

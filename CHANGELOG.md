@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep observations, complete error bars, and full model/component curves visible
+  in GLE fit exports, with independent ranges and fills for both y-axes.
+
 - Prevent a background-task cleanup deadlock that can stall detector timing
   detection and other GUI operations.
 

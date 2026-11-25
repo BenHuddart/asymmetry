@@ -12,6 +12,7 @@ import numpy as np
 from asymmetry.core.fitting.parameter_models import (
     evaluate_parameter_model_fit,
 )
+from asymmetry.gui.utils.gle_bounds import GleBounds
 from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     extract_gle_data_dependencies,
@@ -112,6 +113,11 @@ class GlobalGleSnapshot(GlobalExportData):
         y_label = self._parameter_label_gle(self._parameter_name)
         for idx, group in enumerate(self._groups):
             ax = subplot_axes[idx]
+            bounds = GleBounds(
+                self.fit_log_x,
+                frozenset({"y"}) if self.fit_log_y and not self.show_components else frozenset(),
+            )
+            bounds.include(group.x, group.y, group.yerr)
             file_info = file_map.get(group.group_id)
             data_path = file_info.get("data_path") if isinstance(file_info, dict) else None
             if data_path is not None:
@@ -143,6 +149,7 @@ class GlobalGleSnapshot(GlobalExportData):
             sampled = self._sample_group_fit_curve(group)
             if sampled is not None:
                 xx, yy = sampled
+                bounds.include(xx, yy)
             else:
                 xx, yy = None, None
 
@@ -167,7 +174,7 @@ class GlobalGleSnapshot(GlobalExportData):
                         comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
                         lower = cumulative
                         upper = cumulative + comp_fill
-                        ax.fill_between(
+                        bounds.fill_between(
                             xx,
                             lower,
                             upper,
@@ -238,6 +245,7 @@ class GlobalGleSnapshot(GlobalExportData):
                 ax.set_title(group.group_name)
             ax.set_ylabel(y_label)
             self.apply_scales(ax)
+            bounds.apply(ax)
             if (not share_x_axis) or idx == len(self._groups) - 1:
                 ax.set_xlabel(x_label)
 

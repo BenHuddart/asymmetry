@@ -959,7 +959,7 @@ compiler is used. Generation and compilation run in the background; **Close**
 cancels an active export. Without GLE, the script and sidecars are still saved.
 
 .. image:: /_generated/screenshots/gle_plot_preview.png
-   :alt: Zoomable vector preview of a synthetic ZF generic plot
+   :alt: Zoomable vector preview of synthetic observations and parameter-model components
    :width: 100%
 
 Fitting panel
@@ -1598,6 +1598,19 @@ via the ``gleplot`` Python library:
 5. Without GLE, the script and data are saved for later compilation with
    ``gle -d pdf <name>.gle`` inside the export folder. Add ``-cairo`` for
    translucent fills (``gle -cairo -d pdf <name>.gle``).
+
+With **Show components**, automatic GLE ranges include every displayed
+observation and its complete finite uncertainty, the total fitted curve, and
+the nonnegative component stack. Negative observations and total-model values
+remain visible below the stack's zero baseline. Each y-axis is ranged in its
+own displayed units, including axis transforms; secondary-axis fills align
+with their own component edges. Explicit axis endpoints remain fixed.
+Logarithmic ranges use positive eligible observations and curve values;
+uncertainty endpoints at or below zero cannot appear on a logarithmic axis.
+The exported scientific data and fitted values keep their original sidecar
+columns and provenance. Secondary-component fill ``.dat`` tables store primary
+y-axis drawing coordinates; their component-edge tables retain secondary-axis
+units.
 
 .. note::
 
