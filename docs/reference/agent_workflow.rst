@@ -135,11 +135,17 @@ Installation
 
 The CLI ships as part of the ``asymmetry`` package; the ``agent`` extra adds
 the two optional dependencies the workflow needs for headless plots and NeXus
-loading (matplotlib and h5py):
+loading (Matplotlib and h5py). For a version published on PyPI, install with
+pipx using Python 3.11, 3.12, or 3.13:
 
 .. code-block:: bash
 
-   pipx install "asymmetry[agent] @ git+https://github.com/BenHuddart/asymmetry.git"
+   pipx install "asymmetry[agent]"
+
+For development versions or an unavailable release, use the source route in
+:ref:`source-installation`. An existing virtual-environment installation can
+use ``python -m pip install "asymmetry[agent]"`` for a published release;
+it does not need a separate pipx environment.
 
 Add the ``hdf4`` extra for legacy HDF4-container ``.nxs`` files, or ``root``
 for ROOT files, alongside ``agent`` in the same bracket

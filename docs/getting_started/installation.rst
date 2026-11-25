@@ -1,37 +1,43 @@
 Installation
 ============
 
-Asymmetry is not currently published on PyPI. Most users on **Windows** or
-**Apple Silicon Macs** should install the pre-built desktop application from
-the `GitHub Releases <https://github.com/BenHuddart/asymmetry/releases/latest>`__
-page (Windows ``.exe`` installer; macOS ``.dmg``). **Intel Mac** and **Linux**
-users should install from the Git repository as described below.
+Choose the desktop download for a bundled application, or a Python installation
+for the library, CLI, and optional GUI. The commands for PyPI below apply to
+versions published there. If the version you need is unavailable, use
+:ref:`source-installation`.
 
-After installing the Windows application, launch **Asymmetry** from the Start
-menu. On macOS, open the disk image, drag **Asymmetry** to **Applications**,
-and launch it there. These packaged applications include their own Python
-runtime and GUI dependencies; the terminal commands below apply to Python
-installations.
+Desktop application
+-------------------
+
+Download the **Windows x64** installer or **macOS Apple Silicon** disk image
+from `GitHub Releases <https://github.com/BenHuddart/asymmetry/releases/latest>`__.
+These applications include Python, GUI dependencies, and their HDF4 runtime.
+Open **Asymmetry** from the Windows Start menu; on macOS, drag it to
+**Applications** and launch it there. Linux and Intel Mac users can use a
+Python installation.
+
+The desktop download does not install the ``asymmetry`` CLI on ``PATH``.
+For scripting or an AI coding agent, use the Python or pipx route below.
 
 .. _installation-methods:
 
-Installation methods
---------------------
+Python installation
+-------------------
 
-From a local repository checkout (recommended)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Asymmetry requires Python 3.11 or later. Clean Linux wheel installations are
+checked on Python 3.11, 3.12, and 3.13 with constrained and ordinary dependency
+resolution. The checks exercise core, GUI with HDF5/ROOT, headless agent, and
+full end-user profiles; they do not certify every platform, optional runtime,
+or newer interpreter.
 
-Install Python 3.11 or later and Git first. If your system calls Python 3
-``python3``, use that name for the environment-creation command below.
+Create a virtual environment with one of these tested Python versions. If your
+system calls Python 3 ``python3``, use that name for this command:
 
 .. code-block:: bash
 
-   git clone https://github.com/BenHuddart/asymmetry.git
-   cd asymmetry
-
    python -m venv .venv
 
-Activate the environment on Linux or macOS:
+Activate it on Linux or macOS:
 
 .. code-block:: bash
 
@@ -43,150 +49,202 @@ On Windows PowerShell:
 
    .venv\Scripts\Activate.ps1
 
-Install the GUI and the HDF5 reader/writer used by the synthetic quickstart:
+For a published release, install the full end-user Python feature set and launch:
 
 .. code-block:: bash
 
-   python -m pip install -c constraints.txt ".[gui,hdf5]"
+   python -m pip install "asymmetry[all]"
    asymmetry-gui
 
-Other options from the same checkout and activated environment:
+The ``all`` extra includes the GUI, supported file readers, headless plotting,
+and GLE script generation. It excludes development tools and CUDA. Native HDF4
+libraries, the external GLE compiler, and GPU drivers have separate requirements
+under :ref:`external-programs-and-runtimes`.
+
+For the core library and CLI alone:
 
 .. code-block:: bash
 
-   # Full feature set, including the optional file readers and GLE export
-   python -m pip install -c constraints.txt ".[all]"
+   python -m pip install asymmetry
+   asymmetry --help
 
-   # Core library only
-   python -m pip install -c constraints.txt .
-
-   # GUI support only
-   python -m pip install -c constraints.txt ".[gui]"
-
-   # All optional dependencies, including development tools
-   python -m pip install -c constraints.txt ".[all,dev]"
-
-Install directly from GitHub with pip
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For the GUI with modern NeXus and ROOT readers:
 
 .. code-block:: bash
 
-   # Core library
-   python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
+   python -m pip install "asymmetry[gui,hdf5,root]"
+   asymmetry-gui
 
-   # Full end-user feature set (no development extras)
-   python -m pip install "asymmetry[gui,hdf5,hdf4,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
+Continue with :doc:`quickstart` to generate data and complete a first analysis.
+That walkthrough needs the ``gui`` and ``hdf5`` extras, both included in ``all``.
 
-Development installation
-~~~~~~~~~~~~~~~~~~~~~~~~
+Optional dependencies
+~~~~~~~~~~~~~~~~~~~~~
 
-For development work:
+Extras can be combined inside the quoted brackets. ``gui`` installs the interface
+only; choose the readers that your acquisitions need.
+
+.. list-table:: Installation extras
+   :header-rows: 1
+   :widths: 15 45 40
+
+   * - Extra
+     - Provides
+     - Python dependencies
+   * - ``all``
+     - All ordinary end-user features
+     - GUI, readers, headless plots, and GLE support
+   * - ``gui``
+     - Desktop interface
+     - PySide6 and Matplotlib
+   * - ``agent``
+     - Headless plots and HDF5 loading
+     - Matplotlib and h5py
+   * - ``hdf5``
+     - HDF5 NeXus reading and writing
+     - h5py
+   * - ``hdf4``
+     - Legacy HDF4 NeXus reading
+     - pyhdf
+   * - ``root``
+     - Supported μSR ROOT reading
+     - uproot
+   * - ``gle``
+     - GLE script generation
+     - gleplot
+   * - ``gpu``
+     - Optional CUDA MaxEnt acceleration
+     - CUDA-13 CuPy wheel with CUDA components
+   * - ``dev``
+     - Tests, lint, and documentation tools
+     - pytest, Ruff, Sphinx, and supporting tools
+
+The core dependencies are NumPy >= 1.24, < 2.3; SciPy >= 1.10, < 1.18;
+and iminuit >= 2.0, < 3. Minimum dependency versions are distinct from the
+versions exercised by clean-install checks. Format support also depends on the
+acquisition layout described in :doc:`/reference/loading_data`.
+
+.. _external-programs-and-runtimes:
+
+External programs and runtimes
+------------------------------
+
+HDF4
+~~~~
+
+For a published release, add the legacy NeXus reader with:
+
+.. code-block:: bash
+
+   python -m pip install "asymmetry[hdf4]"
+
+Binary-wheel availability depends on the Python version, operating system, and
+architecture. If pip needs to build pyhdf from source, its HDF4 libraries and
+build dependencies must be installed; see the
+`pyhdf installation guide <https://fhs.github.io/pyhdf/install.html>`__.
+
+On Windows, the pyhdf wheel also needs the HDF4 runtime (``hdf.dll`` and
+``mfhdf.dll``). For example, install conda-forge's ``hdf4`` package and point
+``ASYMMETRY_HDF4_DLL_DIR`` at the directory holding those DLLs. The desktop
+installers bundle this runtime. See :doc:`/reference/loading_data` for supported
+containers and the missing-reader diagnostic. If you only need HDF5 and ROOT,
+``asymmetry[gui,hdf5,root]`` avoids installing the legacy HDF4 reader.
+
+GLE
+~~~
+
+The ``gle`` extra installs the Python script generator selected by Asymmetry:
+
+.. code-block:: bash
+
+   python -m pip install "asymmetry[gle]"
+
+Compiling scripts to PDF or EPS also needs the external
+`GLE program <https://glx.sourceforge.io/>`__ and its supporting runtime.
+Cairo is needed for overlapping translucent fills and SVG output. Without the
+compiler, scripts and sidecar data can still be written and compiled later.
+The ordinary Matplotlib plot export does not require GLE.
+
+The GLE executable must be on ``PATH`` or selected through
+**Setup → GLE Setup…**. In a frozen macOS application, Asymmetry also checks the
+standard Homebrew, MacPorts, and QGLE locations. The setup dialog runs the
+chosen executable to verify it before saving the path.
+
+CUDA
+~~~~
+
+GPU acceleration is opt-in and is not part of ``all``:
+
+.. code-block:: bash
+
+   python -m pip install "asymmetry[gpu]"
+
+This selects ``cupy-cuda13x[ctk]``. For a CUDA-12 installation, install Asymmetry
+without ``gpu`` and select the alternative CuPy wheel:
+
+.. code-block:: bash
+
+   python -m pip install asymmetry "cupy-cuda12x[ctk]>=13.0"
+
+Choose one CuPy CUDA variant, rather than installing both. A compatible NVIDIA
+GPU and driver are required; see the
+`CuPy installation guide <https://docs.cupy.dev/en/stable/install.html>`__
+and :ref:`maxent-gpu-acceleration` for the supported backend settings.
+
+CLI and AI coding agents
+------------------------
+
+The ``agent`` extra adds headless plots and HDF5 loading to the core CLI.
+For a published release, pipx can keep its environment separate:
+
+.. code-block:: bash
+
+   pipx install "asymmetry[agent]"
+   asymmetry --help
+   asymmetry skill install --agent claude   # or --agent codex
+   asymmetry skill check
+
+Use ``agent,hdf4`` or ``agent,root`` when those readers are needed. If Asymmetry
+is already installed in your activated virtual environment, use its
+``asymmetry`` command directly; a second pipx installation is unnecessary.
+See :doc:`/reference/agent_workflow` for skill upgrades, restart requirements,
+and the command reference.
+
+.. _source-installation:
+
+Source installation
+-------------------
+
+Use this route for development versions or when the requested release is not
+available on PyPI. Install Git, then, in an activated Python environment:
 
 .. code-block:: bash
 
    git clone https://github.com/BenHuddart/asymmetry.git
    cd asymmetry
+   python -m pip install -c constraints.txt ".[all]"
+   asymmetry-gui
+
+The checkout's ``constraints.txt`` restricts versions of requested dependencies;
+it does not install every package it lists. PyPI commands use the distribution's
+own dependency declarations without requiring a checkout or that file.
+Replace ``.[all]`` with ``.`` for the core, or ``.[agent]`` for headless plotting
+and HDF5 loading; other extras use the same bracket syntax.
+
+An alternative source installation uses pip directly with Git:
+
+.. code-block:: bash
+
+   python -m pip install "asymmetry[all] @ git+https://github.com/BenHuddart/asymmetry.git"
+
+For a contributor installation from the checkout:
+
+.. code-block:: bash
+
    python -m pip install -c constraints.txt -e ".[all,dev]"
 
-   # Run tests
-   python3 tools/harness.py test
-
-Continue with :doc:`quickstart` for a complete analysis using generated data.
-
-Requirements
-------------
-
-Asymmetry requires Python 3.11 or later. CI checks wheel installations on
-Python 3.11, 3.12, and 3.13, with constrained and ordinary dependency resolution.
-Fresh wheel environments exercise the core, GUI with HDF5/ROOT, headless agent,
-and full end-user installations. These Linux checks do not certify every
-platform or GPU configuration; optional packages have their own requirements.
-
-Core dependencies
-~~~~~~~~~~~~~~~~~
-
-* numpy >= 1.24, < 2.3
-* scipy >= 1.10, < 1.18
-* iminuit >= 2.0, < 3
-
-The core library and CLI help need only these dependencies and their transitive
-requirements. GUI, plotting, and format-specific libraries are optional. The
-``constraints.txt`` file restricts versions of requested dependencies; it does
-not install every package it lists.
-
-Optional dependencies
-~~~~~~~~~~~~~~~~~~~~~
-
-The ``all`` extra installs the GUI, HDF5, HDF4, ROOT, headless plotting, and GLE
-Python dependencies. It excludes development tools and CUDA. Use ``.[all,dev]``
-for a contributor installation. The ``gui`` extra installs the interface only;
-``.[gui,hdf5,root]`` also provides modern NeXus and ROOT readers.
-After a GUI or ``all`` installation, launch the application with
-``asymmetry-gui``. External HDF4 runtimes and the GLE compiler are separate
-requirements where specified below.
-
-Extra-install commands below run from the repository checkout described under
-:ref:`installation-methods`. Asymmetry itself is not available from PyPI.
-
-For GUI support:
-
-* PySide6 >= 6.5
-* matplotlib >= 3.7
-
-For HDF5 support:
-
-* h5py >= 3.8
-
-For HDF4 support (reading legacy ISIS muon NeXus V1 ``.nxs`` files):
-
-* pyhdf >= 0.10
-
-  On **Linux** the ``pyhdf`` wheel bundles the HDF4 C library. On **macOS
-  (Apple Silicon)** the PyPI wheel does too. On **Intel Macs** there is no
-  PyPI wheel — use conda-forge ``pyhdf`` or build from source. On
-  **Windows** the wheel does not bundle the HDF4 runtime: ``pyhdf`` also
-  needs ``hdf.dll`` / ``mfhdf.dll`` (e.g. from the conda-forge ``hdf4``
-  package), with
-  ``ASYMMETRY_HDF4_DLL_DIR`` pointed at the directory holding them. The
-  pre-built **Windows and Apple Silicon macOS** desktop releases bundle HDF4;
-  no extra setup is needed there. See :doc:`/reference/loading_data`.
-
-For ROOT file support:
-
-* uproot >= 5.0
-
-For headless plots and NeXus loading in the command-line workflow and AI-agent
-skill:
-
-* matplotlib >= 3.7, h5py >= 3.8 — installed together as the ``agent`` extra
-  (``python -m pip install ".[agent]"``). See :doc:`/reference/agent_workflow`.
-
-For GLE export support:
-
-* gleplot 6.1.1 from PyPI, installed by the ``gle`` extra:
-
-   .. code-block:: bash
-
-       python -m pip install ".[gle]"
-
-  To install the script generator separately, use ``pip install gleplot==6.1.1``.
-
-* The GLE compiler itself (``gle``) needs to be on ``PATH`` for ``.gle``
-  scripts to be compiled to PDF or EPS at export time. Use a build with Cairo
-  support for SVG and potentially overlapping uncertainty bands or component
-  stacks. Single bands, single component stacks, and phase shading use opaque
-  colours over white with the native renderer for PDF and EPS.
-  GLE's include library (``gleinc``, supplied by its release packages) supports
-  native reference lines and spans. Without the compiler, the
-  scripts and sidecar data files are still written and can be compiled
-  later. In a frozen macOS app the inherited ``PATH`` is minimal, so
-  Asymmetry also looks for ``gle`` in the standard Homebrew, MacPorts,
-  and QGLE locations. Override the search from **Setup → GLE Setup…**
-  in the main menu; the chosen path is persisted across sessions. On
-  accept the dialog runs the chosen executable once to verify it is
-  actually GLE — a path that cannot run (or is not GLE) is rejected with
-  the reason shown in the dialog, rather than saved and left to fail at
-  export time.
+See :doc:`/contributing` for the harness, source documentation builds, and
+contribution workflow.
 
 Verifying installation
 ----------------------
@@ -195,8 +253,7 @@ Verifying installation
 
    import asymmetry
    print(asymmetry.__version__)
-   
-   # Exercise core imports, including the public workflow used by the CLI.
+
    from asymmetry.core import workflow
    from asymmetry.core.fitting.models import exponential_relaxation
    print(exponential_relaxation(0.0, A0=0.25, Lambda=0.7, baseline=0.05))
@@ -209,7 +266,8 @@ The core install also provides CLI help:
    asymmetry --help
    python -m asymmetry fit --help
 
-After installing the ``gui`` extra, ``asymmetry-gui`` launches the application.
+After installing the ``gui`` or ``all`` extra, ``asymmetry-gui`` launches the
+application.
 
 Build verification for maintainers
 ----------------------------------
@@ -224,7 +282,7 @@ The Windows x64 and Apple Silicon macOS build pipelines use reviewed,
 platform-specific dependency wheels and build-tool versions. Release rehearsals
 and previews replay these inputs in two fresh environments and check the observed
 versions before packaging. The Python library retains the flexible dependency
-ranges described below; its minimum Python version is independent of the selected
+ranges described above; its minimum Python version is independent of the selected
 desktop build interpreter.
 
 Desktop download assets include a target-specific build/component record, a final

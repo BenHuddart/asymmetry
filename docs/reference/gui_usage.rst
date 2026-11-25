@@ -1620,9 +1620,11 @@ units.
 
 .. note::
 
-   Install GLE from source or from http://glx.sourceforge.io/ to enable
-   automatic compilation. The ``gleplot`` Python package is required for
-   script generation (``pip install gleplot==6.1.1``).
+   Install the external `GLE program <https://glx.sourceforge.io/>`__ to enable
+   automatic compilation. Asymmetry's ``gle`` extra supplies script generation
+   (``python -m pip install "asymmetry[gle]"`` for a published release).
+   See :ref:`external-programs-and-runtimes` for source installation and
+   runtime requirements.
 
 Global-fit GLE exports
 ~~~~~~~~~~~~~~~~~~~~~~

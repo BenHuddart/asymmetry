@@ -415,18 +415,16 @@ of an independent conversion: counts, timing declarations and other scientific
 metadata must still be compared. The bounded reference comparisons above retain
 coordinate differences rather than assuming every converted twin is identical.
 
-HDF4 reading needs the optional ``pyhdf`` dependency, installed with the
-``hdf4`` extra from a repository checkout (see
-:doc:`/getting_started/installation`)::
+HDF4 reading needs the optional ``pyhdf`` dependency. For a published release,
+install the ``hdf4`` extra; source installations use the corresponding extra
+described in :doc:`/getting_started/installation`::
 
-    python -m pip install ".[hdf4]"
+    python -m pip install "asymmetry[hdf4]"
 
-On **Linux** the ``pyhdf`` wheel bundles the HDF4 C library. On **macOS
-(Apple Silicon)** the PyPI wheel does too (Intel Macs: use conda-forge
-``pyhdf`` or build from source). On **Windows**, ``pyhdf``'s wheel does *not*
-bundle the HDF4 runtime: it also needs ``hdf.dll`` / ``mfhdf.dll`` (for
-example from the conda-forge ``hdf4`` package). Point the ``ASYMMETRY_HDF4_DLL_DIR``
-environment variable at the directory holding those DLLs. The pre-built Windows
+Wheel availability and source-build prerequisites depend on the Python version,
+operating system, and architecture; see :ref:`external-programs-and-runtimes`.
+On Windows, ``pyhdf`` also needs the HDF4 runtime (``hdf.dll`` / ``mfhdf.dll``)
+and ``ASYMMETRY_HDF4_DLL_DIR`` can select its directory. The pre-built Windows
 and Apple Silicon macOS desktop releases bundle HDF4. Windows build archives are
 SHA256-verified before extraction, with runtime DLL identities retained in the
 download's component record. When ``pyhdf`` (or the
