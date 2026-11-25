@@ -1,13 +1,10 @@
-# Asymmetry
+<img align="right" src="https://raw.githubusercontent.com/BenHuddart/asymmetry/main/docs/_static/logo-on-light.svg" alt="Asymmetry: a red A and damped wave over a blue time axis" width="18%">
 
-<img src="docs/_static/logo-on-light.svg" alt="Asymmetry: a red A and damped wave over a blue time axis" width="220">
+# Asymmetry
 
 A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and visualization.
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#project-status)
-[![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#project-status) [![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
 
 ⬇️ **[Download the latest release](https://github.com/BenHuddart/asymmetry/releases/latest)** · 📖 [Documentation](https://benhuddart.github.io/asymmetry/) · [Changelog](CHANGELOG.md) · [Issue tracker](https://github.com/BenHuddart/asymmetry/issues) · [Contributing](CONTRIBUTING.md)
 

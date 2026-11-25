@@ -196,7 +196,7 @@ def generated_assets() -> Iterator[tuple[Path, bytes]]:
                 "width": width,
                 "height": height,
                 "rx": "48",
-                "fill": "#FAFAF9",
+                "fill": "#FFFFFF",
             },
         ),
     )
@@ -213,10 +213,9 @@ def generated_assets() -> Iterator[tuple[Path, bytes]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--check", action="store_true", help="check generated assets without writing"
-    )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="check generated assets without writing")
+    mode.add_argument(
         "--platform", choices=("windows", "macos"), help="also build the installer icon"
     )
     args = parser.parse_args(argv)

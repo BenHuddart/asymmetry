@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1336" height="992" viewBox="100 20 1336 992" role="img" aria-labelledby="logo-title logo-desc">
-  <rect x="100" y="20" width="1336" height="992" rx="48" fill="#FAFAF9" /><title id="logo-title">Asymmetry</title>
+  <rect x="100" y="20" width="1336" height="992" rx="48" fill="#FFFFFF" /><title id="logo-title">Asymmetry</title>
   <desc id="logo-desc">The Asymmetry mark on a light backing.</desc>
   <g id="asymmetry-mark">
     <path id="time-axis" data-small-x-offsets="2:-15 3:-31 7:-31 9:-15" data-small-axis="16:76:96 24:52:76 32:38:60" fill="#1F4D8A" d="M 850,634 H 1311 L 1301,603 L 1386,644 L 1301,683 L 1311,654 H 850 Z" />

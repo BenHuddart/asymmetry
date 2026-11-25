@@ -21,7 +21,7 @@ than the muted red used for fit-series controls.
 
 Keep the mark's proportions and the clear space supplied in the SVG. Its
 background and the opening in the A are transparent. On dark backgrounds,
-place the full mark on a light backing so the blue axis remains visible.
+place the full mark on a white backing so the blue axis remains visible.
 
 Application icons
 -----------------

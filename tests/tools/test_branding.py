@@ -99,3 +99,13 @@ def test_checked_in_renditions_match_the_master():
             assert difference.mean() < 0.5, f"Regenerate branding asset: {path.name}"
         else:
             assert path.read_bytes() == content, f"Regenerate branding asset: {path.name}"
+
+
+@pytest.mark.parametrize("platform", ["windows", "macos"])
+def test_check_mode_rejects_output_modes_without_writing(monkeypatch, tmp_path, platform):
+    monkeypatch.setattr(branding, "ROOT", tmp_path)
+    monkeypatch.setattr(branding, "generated_assets", lambda: iter(()))
+    with pytest.raises(SystemExit) as error:
+        branding.main(["--check", "--platform", platform])
+    assert error.value.code == 2
+    assert not list(tmp_path.rglob("*"))
