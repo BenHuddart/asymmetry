@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Keep the README title rule below the logo.
+- Keep the README title rule below the right-aligned logo.
 
 - Use a red-and-blue vector logo throughout the app, Windows and macOS icons,
   documentation, and package pages, with refined small icons for compact displays.
