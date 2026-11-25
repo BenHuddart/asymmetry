@@ -1,6 +1,11 @@
 Project files
 =============
 
+The **View → Plot display → Connect data points** setting belongs to each
+project's time-domain display. New projects and older files without the
+setting restore it off. It changes presentation only; saved observations,
+analysis recipes, and fitted results retain their values.
+
 Ordinary fit models persist their optional fixed time response with the model
 payload. An absent setting restores **Off**; stored parameters, errors, and
 curves retain their recorded meaning. A restored re-fit consumes the authored

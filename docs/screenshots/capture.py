@@ -316,6 +316,7 @@ def _import_scenarios() -> None:
         batch_tab_group_binding,
         batch_tab_series_menu,
         beta_calibration_dialog,
+        data_connectors,
         bunching_comparison,
         composite_fractions_dialog,
         composite_models_builder,

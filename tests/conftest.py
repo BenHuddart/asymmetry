@@ -101,6 +101,8 @@ def _isolated_gui_state(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     from asymmetry.gui.styles import fonts
     from asymmetry.gui.utils import app_data, fit_times
 
+    application_font = qapp.font()
+    application_stylesheet = qapp.styleSheet()
     QCoreApplication.setOrganizationName("Asymmetry")
     QCoreApplication.setApplicationName("Asymmetry")
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
@@ -112,6 +114,8 @@ def _isolated_gui_state(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     yield
     fit_times.shared_fit_time_store.cache_clear()
     fonts.set_ui_font_scale(1.0)
+    qapp.setFont(application_font)
+    qapp.setStyleSheet(application_stylesheet)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

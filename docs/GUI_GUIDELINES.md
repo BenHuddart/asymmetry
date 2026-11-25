@@ -255,6 +255,15 @@ callbacks for that window, then draws once — see `_resolve_x`/`_apply_limits` 
 The policy evaluates those callbacks synchronously only for Auto axes,
 unframed axes, or changed quantities; panels do not duplicate that decision.
 
+Time-domain plots publish an owned `TimePlotView`: copied display arrays,
+per-axis bound providers, and artists for that publication. Axis-limit controls
+reuse it; data, masks, grouping, bunching, frames, labels, annotations, and fit
+changes use the normal plot entry points to publish a replacement. A viewport
+update never hashes mutable analysis arrays or treats their identities as
+revisions. Only the active publication is retained, including its full-resolution
+readout arrays. Connector geometry is selected again for the final axes width
+and output resolution, independently of the marker/error-bar budget.
+
 **Loops that must touch widgets get the chunked runner.** Work that mutates
 widgets or window state cannot go to a worker; if it is a bounded-item loop
 (project restore's per-dataset grouping re-application), run it through
