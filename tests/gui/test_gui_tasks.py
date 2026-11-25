@@ -12,7 +12,7 @@ import threading
 import time
 
 import pytest
-from PySide6.QtCore import QEventLoop, QThread, QTimer
+from PySide6.QtCore import QEvent, QEventLoop, QObject, Qt, QThread, QTimer
 
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 
@@ -163,23 +163,7 @@ def test_plain_callable_callbacks_run_on_gui_thread():
 
 
 def test_worker_destroyed_on_gui_thread():
-    """The worker is destroyed on the GUI thread, never on its worker thread.
-
-    Destroying a Python-subclassed ``QObject`` runs shiboken's
-    ``disconnectNotify`` override under the GIL while ``~QObject`` holds Qt's
-    signal-connection mutex(es). If that runs on a live worker thread while the
-    GUI thread builds a connection under the GIL (e.g. ``QLabel.setText`` lazily
-    constructing a ``QWidgetTextControl``), the two deadlock — a GIL <->
-    connection-mutex ABBA that wedges the whole shard (pytest-timeout's watchdog
-    thread also needs the GIL, so it never fires).
-
-    ``TaskWorker.run`` moves the worker back to its home (GUI) thread before
-    returning, and the runner deletes it from ``_on_thread_finished`` there, so
-    ``~QObject`` runs on the GUI thread. This pins that invariant deterministically
-    — it does not rely on the intermittent race actually firing. ``destroyed`` is
-    connected to a bare callable (no receiver QObject), so Qt invokes it directly
-    on whichever thread destroys the worker; we assert that is the GUI thread.
-    """
+    """Thread completion schedules worker destruction on the GUI event loop."""
     runner = TaskRunner()
     gui_thread = QThread.currentThread()
     # Record the identity comparison as a bool, not the QThread itself: the worker
@@ -414,3 +398,144 @@ def test_drain_orphan_threads_joins_a_leaked_worker():
 
     # And it is a cheap no-op once nothing is left running.
     assert drain_orphan_threads(5000) == 0
+
+
+def test_worker_keeps_gui_affinity_during_background_execution():
+    """Computation must not require QObject affinity changes on a live thread."""
+    runner = TaskRunner()
+    gui_thread = QThread.currentThread()
+    observed: list[tuple[bool, bool]] = []
+    release = threading.Event()
+    started = threading.Event()
+
+    def compute(worker: TaskWorker):
+        observed.append((worker.thread() is gui_thread, QThread.currentThread() is gui_thread))
+        started.set()
+        release.wait(10.0)
+
+    worker = runner.start(compute)
+    try:
+        assert started.wait(10.0)
+        assert worker.thread() is gui_thread
+        assert observed == [(True, False)]
+    finally:
+        release.set()
+        runner.shutdown()
+
+
+@pytest.mark.parametrize(
+    "outcome", ["finished", "error", "cancelled", "shutdown", "timeout", "orphan"]
+)
+def test_worker_affinity_and_destruction_across_lifecycle(qapp, outcome):
+    from asymmetry.gui import tasks
+
+    parent = QObject()
+    runner = TaskRunner(parent)
+    gui_thread = QThread.currentThread()
+    started = threading.Event()
+    release = threading.Event()
+    execution: list[tuple[bool, bool]] = []
+    callbacks: list[tuple[str, bool]] = []
+    destroyed: list[bool] = []
+    gui_ident = threading.get_ident()
+
+    def compute(worker: TaskWorker):
+        execution.append((worker.thread() is gui_thread, QThread.currentThread() is gui_thread))
+        started.set()
+        assert release.wait(10.0)
+        worker.progress.emit(1, 1, "done")
+        if outcome == "error":
+            raise ValueError("expected failure")
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        return "done"
+
+    def record(kind):
+        callbacks.append((kind, QThread.currentThread() is gui_thread))
+
+    worker = runner.start(
+        compute,
+        on_finished=lambda _: record("finished"),
+        on_error=lambda _: record("error"),
+        on_cancelled=lambda: record("cancelled"),
+        on_progress=lambda *_: record("progress"),
+    )
+    worker.destroyed.connect(
+        lambda *_: destroyed.append(threading.get_ident() == gui_ident),
+        Qt.ConnectionType.DirectConnection,
+    )
+    try:
+        assert started.wait(10.0)
+        assert worker.thread() is gui_thread
+        assert execution == [(True, False)]
+        if outcome == "cancelled":
+            worker.cancel()
+        if outcome in {"timeout", "orphan"}:
+            if outcome == "timeout":
+                runner.shutdown(timeout_ms=1)
+            parent.deleteLater()
+            qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+            assert tasks._orphan_reaper is not None
+            assert any(w is worker for _, w in tasks._orphan_reaper._threads)
+            assert worker.thread() is gui_thread
+        release.set()
+        if outcome == "shutdown":
+            runner.shutdown()
+        _wait_until(lambda: bool(destroyed))
+        assert destroyed == [True]
+        if outcome in {"timeout", "orphan"}:
+            assert callbacks == []
+            _wait_until(lambda: all(w is not worker for _, w in tasks._orphan_reaper._threads))
+        else:
+            terminal = "cancelled" if outcome == "shutdown" else outcome
+            # shutdown requests cancellation before joining, but a task released
+            # just before the call can already have produced its result.
+            if outcome == "shutdown":
+                assert callbacks[0] == ("progress", True)
+                assert callbacks[1] in [("finished", True), ("cancelled", True)]
+            else:
+                assert callbacks == [("progress", True), (terminal, True)]
+    finally:
+        release.set()
+        if outcome not in {"timeout", "orphan"}:
+            runner.shutdown()
+            parent.deleteLater()
+
+
+def test_completion_cleanup_stress():
+    """Exercise overlapping completion/deletion; run with an external watchdog."""
+    runner = TaskRunner()
+    loop = QEventLoop()
+    timer = QTimer()
+    guard = QTimer()
+    sent = 0
+    done: list[object] = []
+    destroyed: list[bool] = []
+    gui_ident = threading.get_ident()
+
+    def tick():
+        nonlocal sent
+        if sent < 1500 and runner.active_count < 6:
+            for _ in range(min(3, 1500 - sent)):
+                worker = runner.start(lambda worker: None, on_finished=done.append)
+                worker.destroyed.connect(
+                    lambda *_: destroyed.append(threading.get_ident() == gui_ident),
+                    Qt.ConnectionType.DirectConnection,
+                )
+                sent += 1
+        if sent == len(done) == len(destroyed) == 1500 and runner.active_count == 0:
+            loop.quit()
+
+    timer.timeout.connect(tick)
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    timer.start(0)
+    guard.start(20_000)
+    try:
+        loop.exec()
+        assert sent == len(done) == len(destroyed) == 1500
+        assert all(destroyed)
+    finally:
+        timer.stop()
+        guard.stop()
+        runner.shutdown()

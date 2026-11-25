@@ -185,11 +185,17 @@ signals, hold strong references to live threads, and shut them down in
 worker signal to a bare lambda/partial that touches widgets — route through a
 GUI-thread `QObject` method.
 
-`TaskRunner` owns worker QObject affinity and destruction. A Python-subclassed
-worker returns to its GUI home thread before deferred deletion; windows must not
-schedule its destruction on a live worker thread. Keep queued result delivery and
-bounded shutdown/reaper ownership together (`gui/tasks.py`); see
-`tests/gui/test_gui_tasks.py` for the destruction-thread regression.
+`TaskRunner` keeps every worker QObject on the GUI thread throughout its
+lifetime. Its registered `run` slot executes on the background thread through an
+explicit direct connection; it accesses only Python task state and emits signals.
+Registered relay slots receive progress and terminal signals through explicit
+queued connections. Callers may emit progress and poll cancellation, but must not
+access widgets or mutate QObject state from the task callable. Never move worker
+affinity: concurrent affinity changes and GUI QObject destruction can invert the
+GIL/Qt connection-mutex lock order. Thread completion schedules worker deletion on
+the GUI event loop, including after bounded shutdown or reaper adoption. Keep
+queued delivery and lifetime ownership together (`gui/tasks.py`); see
+`tests/gui/test_gui_tasks.py` for affinity and destruction regressions.
 
 Screen lookup and wrapper lifetime belong to `gui/screen_guard.py`. Use
 `screen_for(widget)` instead of `QWidget.screen()` or `QWindow.screen()`;
