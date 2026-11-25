@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "asymmetry"
+name = "Asymmetry"
 version = "0.28.0"
-description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
+description = "A Python library, command-line tool, and desktop application for muon-spin spectroscopy (μSR)."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
@@ -16,7 +16,7 @@ maintainers = [
 ]
 keywords = ["muon", "musr", "spectroscopy", "physics", "data-analysis"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -62,7 +62,7 @@ dev = [
     "sphinx-rtd-theme>=2.0,<4",
     "sphinx-design>=0.6,<1",
 ]
-all = ["asymmetry[gui,gle,hdf5,hdf4,root,agent,dev]"]
+all = ["Asymmetry[gui,gle,hdf5,hdf4,root,agent]"]
 
 [project.scripts]
 asymmetry = "asymmetry.cli:main"

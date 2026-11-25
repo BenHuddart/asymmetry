@@ -142,13 +142,14 @@ jobs:
   # Always run: README/license/package-data changes can alter a distribution even
   # when the editable test selection reports no code change.
   install-smoke:
-    name: Core wheel (Python ${{ matrix.python }})
+    name: Wheel installs (Python ${{ matrix.python }}, ${{ matrix.resolution }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.11", "3.12", "3.13"]
+        resolution: [constrained, unconstrained]
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
@@ -157,15 +158,20 @@ jobs:
           activate-environment: true
       - name: Install outer build tooling
         run: uv pip install build pip
-      - name: Build via sdist and probe fresh core install
-        run: python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke"
+      - name: Install GUI runtime
+        run: sudo apt-get update -q && sudo apt-get install -y libegl1
+      - name: Build via sdist and probe fresh installs
+        run: >-
+          python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke"
+          --profile core --profile gui --profile agent --profile all
+          --resolution ${{ matrix.resolution }}
       - name: Retain distribution evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: core-wheel-${{ matrix.python }}
+          name: wheel-installs-${{ matrix.python }}-${{ matrix.resolution }}
           path: |
-            ${{ runner.temp }}/distribution-smoke/*.log
+            ${{ runner.temp }}/distribution-smoke/**/*.log
             ${{ runner.temp }}/distribution-smoke/manifest.json
           retention-days: 7
 
@@ -185,7 +191,7 @@ jobs:
           echo "test:    ${{ needs.test.result }}"
           echo "install-smoke: ${{ needs.install-smoke.result }}"
           if [ "${{ needs.install-smoke.result }}" != "success" ]; then
-            echo "::error::Core wheel installation smoke failed"
+            echo "::error::Wheel installation smoke failed"
             exit 1
           fi
           # changes must succeed, otherwise 'test' may have been skipped due to an

@@ -11,7 +11,7 @@ Create a `feature/*` or `fix/*` branch from `main`. Install the development
 requirements using the repository constraints:
 
 ```bash
-pip install -c constraints.txt -e ".[all]"
+pip install -c constraints.txt -e ".[all,dev]"
 python tools/harness.py structural
 python tools/harness.py lint
 ```

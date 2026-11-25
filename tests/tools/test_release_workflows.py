@@ -299,17 +299,21 @@ def test_docs_smoke_installs_qt_import_runtime_before_sphinx() -> None:
     assert not install.get("continue-on-error", False)
 
 
-def test_core_wheel_job_is_always_required_and_separate_from_editable_tests() -> None:
+def test_wheel_job_is_always_required_and_separate_from_editable_tests() -> None:
     workflow = _workflow("ci.yml")
     assert workflow["permissions"] == {"contents": "read", "pull-requests": "read"}
     job = workflow["jobs"]["install-smoke"]
     assert "if" not in job
-    assert job["strategy"]["matrix"]["python"] == ["3.11", "3.12"]
+    assert job["strategy"]["matrix"]["python"] == ["3.11", "3.12", "3.13"]
+    assert job["strategy"]["matrix"]["resolution"] == ["constrained", "unconstrained"]
     assert not job.get("continue-on-error", False)
     runs = [step["run"] for step in job["steps"] if "run" in step]
     assert runs == [
         "uv pip install build pip",
-        'python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke"',
+        "sudo apt-get update -q && sudo apt-get install -y libegl1",
+        'python3 tools/distribution_smoke.py --output "$RUNNER_TEMP/distribution-smoke" '
+        "--profile core --profile gui --profile agent --profile all "
+        "--resolution ${{ matrix.resolution }}",
     ]
     assert "install-smoke" in workflow["jobs"]["ci-success"]["needs"]
     assert workflow["jobs"]["ci-success"]["if"] == "always()"
@@ -317,7 +321,7 @@ def test_core_wheel_job_is_always_required_and_separate_from_editable_tests() ->
         step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")
     )
     assert upload["with"]["path"].splitlines() == [
-        "${{ runner.temp }}/distribution-smoke/*.log",
+        "${{ runner.temp }}/distribution-smoke/**/*.log",
         "${{ runner.temp }}/distribution-smoke/manifest.json",
     ]
     assert job["timeout-minutes"] <= 15

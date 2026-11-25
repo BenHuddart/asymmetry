@@ -1,7 +1,7 @@
-"""Build via sdist and probe a core-only wheel in fresh, outside-checkout venvs.
+"""Build via sdist and probe wheel installations in fresh, outside-checkout venvs.
 
 Run with an outer interpreter containing PyPA build and pip. Target environments
-receive only the wheel's declared requirements, restricted by constraints.txt.
+receive the requested extras with constrained or ordinary dependency resolution.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -18,12 +19,19 @@ import tempfile
 import tomllib
 import zipfile
 from email.parser import BytesParser
+from email.policy import default as metadata_policy
 from pathlib import Path
 
 RESOURCE_PATHS = (
     "asymmetry/resources/skills/asymmetry-analysis/SKILL.md",
     "asymmetry/resources/skills/asymmetry-analysis/references/commands.md",
 )
+INSTALL_PROFILES = {
+    "core": ("", ()),
+    "gui": ("gui,hdf5,root", ("PySide6", "matplotlib", "h5py", "uproot")),
+    "agent": ("agent", ("matplotlib", "h5py")),
+    "all": ("all", ("PySide6", "matplotlib", "h5py", "pyhdf", "uproot", "gleplot")),
+}
 
 
 def artifact_contract(source: Path, sdist: Path, wheel: Path) -> dict:
@@ -36,19 +44,28 @@ def artifact_contract(source: Path, sdist: Path, wheel: Path) -> dict:
         )
         metadata_file = archive.extractfile(pkg_info)
         assert metadata_file is not None
-        sdist_metadata = BytesParser().parsebytes(metadata_file.read())
+        sdist_metadata = BytesParser(policy=metadata_policy).parsebytes(metadata_file.read())
         for resource in RESOURCE_PATHS:
             assert any(name.endswith("/src/" + resource) for name in members), resource
     with zipfile.ZipFile(wheel) as archive:
         metadata_path = next(
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
         )
-        wheel_metadata = BytesParser().parsebytes(archive.read(metadata_path))
-        for field in ("Name", "Version", "Requires-Python", "Classifier", "Requires-Dist"):
+        wheel_metadata = BytesParser(policy=metadata_policy).parsebytes(archive.read(metadata_path))
+        for field in (
+            "Name",
+            "Version",
+            "Summary",
+            "Requires-Python",
+            "Classifier",
+            "Requires-Dist",
+            "Provides-Extra",
+        ):
             assert sdist_metadata.get_all(field) == wheel_metadata.get_all(field), field
         for field, declared in (
             ("Name", project["name"]),
             ("Version", project["version"]),
+            ("Summary", project["description"]),
             ("Requires-Python", project["requires-python"]),
         ):
             assert wheel_metadata[field] == declared, field
@@ -78,7 +95,9 @@ def artifact_contract(source: Path, sdist: Path, wheel: Path) -> dict:
     }
 
 
-def installed_probe(contract: dict, forbidden_roots: list[str]) -> dict:
+def installed_probe(
+    contract: dict, forbidden_roots: list[str], required_modules: tuple[str, ...] = ()
+) -> dict:
     """Executed as source text by the target Python; imports no checkout helpers."""
     import hashlib
     import importlib
@@ -114,17 +133,22 @@ def installed_probe(contract: dict, forbidden_roots: list[str]) -> dict:
         assert hashlib.sha256(installed.read_bytes()).hexdigest() == digest, (
             f"artifact bytes: {name}"
         )
-    blocked = (
+    optional = (
         "PySide6",
         "matplotlib",
         "h5py",
         "pyhdf",
         "uproot",
+        "gleplot",
+    )
+    blocked = (
         "pytest",
         "build",
         "lmfit",
-        "gleplot",
-    )
+        "ruff",
+        "sphinx",
+        "cupy",
+    ) + tuple(name for name in optional if name not in required_modules)
     for name in blocked:
         assert importlib.util.find_spec(name) is None, (
             f"unexpected optional/tool dependency: {name}"
@@ -167,6 +191,10 @@ def installed_probe(contract: dict, forbidden_roots: list[str]) -> dict:
         else:
             raise AssertionError(f"help did not exit: {arguments}")
         help_results.append(arguments)
+    for name in required_modules:
+        module = importlib.import_module(name)
+        origin = Path(module.__spec__.origin).resolve()
+        assert origin.is_relative_to(target), f"optional dependency origin leakage: {name}"
     origins = {}
     for name, module in list(sys.modules.items()):
         if name == "asymmetry" or name.startswith("asymmetry."):
@@ -177,9 +205,9 @@ def installed_probe(contract: dict, forbidden_roots: list[str]) -> dict:
                 relative = path.relative_to(target).as_posix()
                 assert relative in contract["files"], f"module absent from artifact: {relative}"
                 origins[name] = str(path)
-        assert not any(
-            name == extra or name.startswith(extra + ".") for extra in (*blocked, "asymmetry.gui")
-        ), name
+        assert not any(name == extra or name.startswith(extra + ".") for extra in blocked), name
+        if "PySide6" not in required_modules:
+            assert not name.startswith("asymmetry.gui"), name
     dependency_origins = {}
     for name in ("numpy", "scipy", "iminuit"):
         module = importlib.import_module(name)
@@ -203,15 +231,103 @@ def installed_probe(contract: dict, forbidden_roots: list[str]) -> dict:
         "origins": origins,
         "analytic_value": value,
         "help": help_results,
+        "required_modules": required_modules,
     }
+
+
+def exercise_optional_features(required_modules: tuple[str, ...]) -> list[str]:
+    """Exercise installed file readers, plots and script export with owned counts."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from asymmetry.core.data.dataset import Histogram, Run
+    from asymmetry.core.io import load
+
+    completed = []
+    counts = np.arange(20, dtype=np.int32) + 100
+    if "h5py" in required_modules:
+        from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+        run = Run(
+            run_number=734,
+            histograms=[Histogram(counts.copy(), 0.01) for _ in range(2)],
+            grouping={"groups": {1: [1], 2: [2]}, "forward_group": 1, "backward_group": 2},
+        )
+        write_nexus_v1(run, "installed.nxs")
+        restored = load("installed.nxs").run
+        np.testing.assert_array_equal(restored.histograms[0].counts, counts)
+        completed.append("HDF5 NeXus write/load")
+    if "uproot" in required_modules:
+        import uproot
+
+        with uproot.recreate("installed.root") as root:
+            for name, value in {
+                "Run Number": "734",
+                "No of Histos": "2",
+                "Time Resolution": "10 ns",
+            }.items():
+                root[f"RunHeader/RunInfo/{name}"] = value
+            for index in (1, 2):
+                prefix = f"RunHeader/DetectorInfo/Detector{index:03d}"
+                for name, value in {
+                    "Histo Number": str(index),
+                    "Time Zero Bin": "0",
+                    "First Good Bin": "0",
+                    "Last Good Bin": "19",
+                }.items():
+                    root[f"{prefix}/{name}"] = value
+                root[f"histos/DecayAnaModule/hDecay{index:03d}"] = (counts, np.arange(21))
+        restored = load("installed.root").run
+        np.testing.assert_array_equal(restored.histograms[0].counts[:20], counts)
+        completed.append("ROOT load")
+    if "pyhdf" in required_modules:
+        from pyhdf.SD import SD, SDC
+
+        container = SD("installed.hdf", SDC.WRITE | SDC.CREATE)
+        dataset = container.create("counts", SDC.INT32, (20,))
+        dataset[:] = counts
+        dataset.endaccess()
+        container.end()
+        container = SD("installed.hdf", SDC.READ)
+        dataset = container.select("counts")
+        np.testing.assert_array_equal(dataset[:], counts)
+        dataset.endaccess()
+        container.end()
+        completed.append("HDF4 native runtime write/read")
+    if "matplotlib" in required_modules:
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
+        figure = Figure()
+        FigureCanvasAgg(figure)
+        figure.subplots().plot(counts)
+        figure.savefig("installed.png")
+        assert Path("installed.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        completed.append("headless PNG")
+    if "gleplot" in required_modules:
+        import gleplot
+
+        from asymmetry.gui.utils.gle_figure import gle_figure
+
+        figure = gle_figure(gleplot)
+        figure.add_subplot(111).plot([0, 1, 2], [1, 2, 1])
+        figure.savefig("installed.gle")
+        assert Path("installed.gle").read_text().strip()
+        completed.append("GLE script generation; external compiler not exercised")
+    return completed
 
 
 def clean_environment(root: Path) -> dict[str, str]:
     """Keep build settings while removing interpreter and user-state injection."""
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith(("PYTHON", "PIP_"))
+    }
     for key in ("VIRTUAL_ENV", "CONDA_PREFIX"):
         env.pop(key, None)
     env.update(PYTHONNOUSERSITE="1", HOME=str(root / "home"))
+    env.update(PIP_CONFIG_FILE=os.devnull, PIP_DISABLE_PIP_VERSION_CHECK="1", PIP_NO_INPUT="1")
+    env["QT_QPA_PLATFORM"] = "offscreen"
     for key in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "MPLCONFIGDIR"):
         env[key] = str(root / key.lower())
     for key in (
@@ -269,7 +385,13 @@ def reject_below_minimum(wheel: Path, output: Path, env: dict, python: str) -> d
     }
 
 
-def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
+def smoke(
+    source: Path,
+    output: Path,
+    interpreters: list[str],
+    profiles: list[str],
+    resolution: str,
+) -> None:
     """Build once and reuse the exact wheel across independently created targets."""
     source = source.resolve()
     output = output.resolve()
@@ -301,6 +423,7 @@ def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
             if name and (source / name).is_file()
         },
         "targets": [],
+        "resolution": resolution,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
     run_logged(
@@ -357,15 +480,22 @@ def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
     ).stdout.strip()
     forbidden.append(str(Path(common).parent))
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    for index, interpreter in enumerate(interpreters):
-        target = output / f"target-{index}"
+    import itertools
+
+    for index, (interpreter, profile) in enumerate(itertools.product(interpreters, profiles)):
+        extras, required_modules = INSTALL_PROFILES[profile]
+        work = output / f"{profile}-{index}"
+        work.mkdir()
+        target = work / "venv"
         run_logged(
             [interpreter, "-I", "-m", "venv", str(target)],
             output,
             env,
-            output / f"venv-{index}.log",
+            work / "venv.log",
         )
         python = target / "bin" / "python"
+        constraints = ["-c", str(source / "constraints.txt")] if resolution == "constrained" else []
+        requirement = str(wheel) + (f"[{extras}]" if extras else "")
         run_logged(
             [
                 str(python),
@@ -373,31 +503,50 @@ def smoke(source: Path, output: Path, interpreters: list[str]) -> None:
                 "-m",
                 "pip",
                 "install",
-                "-c",
-                str(source / "constraints.txt"),
-                str(wheel),
+                *constraints,
+                requirement,
             ],
             output,
             env,
-            output / f"install-{index}.log",
+            work / "install.log",
         )
+        run_logged([str(python), "-I", "-m", "pip", "check"], work, env, work / "pip-check.log")
         probe = (
             inspect.getsource(installed_probe)
             + "\nimport json\nprint('PROBE_JSON=' + json.dumps(installed_probe("
             + repr(contract)
             + ", "
             + repr(forbidden)
+            + ", "
+            + repr(required_modules)
             + ")))\n"
         )
-        run_logged([str(python), "-I", "-c", probe], output, env, output / f"probe-{index}.log")
+        run_logged([str(python), "-I", "-c", probe], work, env, work / "probe.log")
+        if required_modules:
+            feature_probe = (
+                inspect.getsource(exercise_optional_features)
+                + "\nimport json\nprint(json.dumps(exercise_optional_features("
+                + repr(required_modules)
+                + ")))\n"
+            )
+            run_logged([str(python), "-I", "-c", feature_probe], work, env, work / "features.log")
+        if "PySide6" in required_modules:
+            run_logged(
+                [str(target / "bin" / "asymmetry-gui"), "--smoke-test"],
+                work,
+                env,
+                work / "gui.log",
+            )
         for label, command in (
             ("console", [str(target / "bin" / "asymmetry"), "--help"]),
             ("module", [str(python), "-I", "-m", "asymmetry", "--help"]),
         ):
-            run_logged(command, output, env, output / f"{label}-{index}.log")
-        report = json.loads((output / f"probe-{index}.log").read_text().split("\nPROBE_JSON=")[-1])
+            run_logged(command, work, env, work / f"{label}.log")
+        report = json.loads((work / "probe.log").read_text().split("\nPROBE_JSON=")[-1])
+        report["profile"] = profile
         manifest["targets"].append(report)
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        shutil.rmtree(target)
     print(f"distribution smoke passed: {output / 'manifest.json'}")
 
 
@@ -406,6 +555,16 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path)
     parser.add_argument("--python", action="append", default=[])
+    parser.add_argument("--profile", choices=INSTALL_PROFILES, action="append", default=[])
+    parser.add_argument(
+        "--resolution", choices=("constrained", "unconstrained"), default="constrained"
+    )
     args = parser.parse_args()
     output = args.output or Path(tempfile.mkdtemp(prefix="asymmetry-distribution-")) / "evidence"
-    smoke(args.source, output, args.python or [sys.executable])
+    smoke(
+        args.source,
+        output,
+        args.python or [sys.executable],
+        args.profile or ["core"],
+        args.resolution,
+    )

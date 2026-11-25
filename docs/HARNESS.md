@@ -413,9 +413,10 @@ pointing at a regular file, which makes real user-config paths unwritable even
 for a privileged test process. Reproduce both checks with
 `python tools/harness.py test -- tests/tools/test_test_isolation.py`.
 
-## Installed core distribution smoke
+## Installed distribution smoke
 
-CI always runs a separate core wheel job on Python 3.11 and 3.12. Its failure,
+CI always runs separate wheel jobs on Python 3.11, 3.12, and 3.13, with
+constrained and unconstrained dependency resolution. Their failure,
 cancellation, or skip fails `CI success`, including changes to metadata, resources,
 entrypoints, build tooling, and workflows. Editable test shards and their optional
 dependencies remain separate from the target environments.
@@ -423,28 +424,38 @@ dependencies remain separate from the target environments.
 Run it with an outer virtual environment containing `build` and `pip`:
 
 ```bash
-python3 tools/distribution_smoke.py
+python3 tools/distribution_smoke.py --profile core --profile gui --profile agent --profile all
+python3 tools/distribution_smoke.py --profile core --profile gui --profile agent --profile all --resolution unconstrained
 ```
 
 The output directory must be new and outside the checkout. `--python PATH` may
 be repeated to use the same artifact with several interpreters. The driver builds
 an sdist in backend isolation, unpacks it, and builds the wheel from that unpacked
-source in a second isolated build. This explicit sequence differs from requesting
-`build --sdist --wheel` against the checkout. It installs only the wheel and its
-declared core requirements into fresh venvs, using `constraints.txt` to restrict
-versions. Build tooling stays in the outer environment.
+source in a second isolated build. It installs the wheel and selected extras
+into fresh venvs. The default `core` profile installs only the scientific stack;
+`gui` requests `gui,hdf5,root`, `agent` requests `agent`, and `all` requests `all`.
+The default resolution uses `constraints.txt`; `--resolution unconstrained`
+uses ordinary index resolution within the distribution's declared bounds.
+Build tooling stays in the outer environment. Successful target venvs are removed
+after their evidence is recorded; failed targets remain available for diagnosis.
 
 Child probes run outside the checkout with interpreter path injection removed,
 user sites disabled, and temporary home/config/data/plugin locations. They check
 artifact bytes and metadata, installed module origins, public workflow/fitting/data
-imports, an analytic exponential value, console/module/subcommand help, and bundled
-skill resources. GUI, plotting, optional-format, and development tools must be
-absent. Logs and the JSON manifest retain artifact hashes, target dependencies,
-interpreter identities, and module origins, including failures.
+imports, an analytic exponential value, console/module/subcommand help, bundled
+skill resources, and `pip check`. Unrequested optional dependencies, development
+tools, and CuPy must be absent. Requested readers load synthetic HDF5 NeXus and
+ROOT counts; HDF4 exercises its native runtime with a write/read control.
+Plotting writes a headless PNG, GLE generates a script without invoking the
+external compiler, and GUI profiles run the installed `asymmetry-gui --smoke-test`
+with isolated settings. Logs and the JSON manifest retain artifact hashes,
+successful target dependencies, interpreter identities, and module origins.
+Failed operations retain their logs even when no successful target record exists.
 
-This is a Linux core-install smoke, not certification of minimum dependency
-versions, every extra, newer interpreters, or all desktop platforms. Native desktop
-artifact checks and release dependency reproduction have separate owners.
+These Linux installation checks do not certify minimum dependency versions,
+Windows/macOS optional-runtime installation, the external GLE compiler, or CUDA.
+Native desktop artifact checks and release dependency reproduction have separate
+owners. HDF4 checks on other platforms require their documented native runtime.
 
 ## Desktop release environment checks
 
