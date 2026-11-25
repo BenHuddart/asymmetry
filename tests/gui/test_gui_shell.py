@@ -148,6 +148,9 @@ class _StubFitPanel(QWidget):
 class _StubPlotPanel(QWidget):
     def __init__(self):
         super().__init__()
+        self.connect_points_changed = _DummySignal()
+        self._connect_points = False
+
         self._fit_curve = None
         self._fit_curves = {}
         self._vector_subplot_datasets = {}
@@ -166,6 +169,16 @@ class _StubPlotPanel(QWidget):
         self.last_grouped_datasets = None
         self._time_view_mode = "fb_asymmetry"
         self._time_view_modes = ["fb_asymmetry"]
+
+    def set_decimation_enabled(self, enabled, *, redraw=True):
+        self.decimation = bool(enabled)
+
+    def connect_points_enabled(self):
+        return self._connect_points
+
+    def set_connect_points_enabled(self, enabled):
+        self._connect_points = bool(enabled)
+        self.connect_points_changed.emit(self._connect_points)
 
     def set_fit_range_guide(self, _x_min, _x_max):
         return

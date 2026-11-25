@@ -80,12 +80,17 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
-from asymmetry.gui.utils.errorbar_dots import add_errorbar_dots
 from asymmetry.gui.utils.gle_export import (
     dedup_export_token,
     run_gle_export,
     safe_file_token,
     show_export_result_dialog,
+)
+from asymmetry.gui.utils.time_plot_view import (
+    TimePlotView,
+    draw_masked_errorbar,
+    plot_fit_curve,
+    reuse_fit_guides,
 )
 from asymmetry.gui.utils.waterfall import auto_waterfall_delta
 from asymmetry.gui.widgets.axis_limits import (
@@ -306,6 +311,7 @@ class PlotPanel(QWidget):
     grouping_hint_dismissed = Signal()
     #: The projection chips switched frame — ``True`` for rotating, ``False`` for Lab.
     frame_changed = Signal(bool)
+    connect_points_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -316,6 +322,8 @@ class PlotPanel(QWidget):
         #: Histogram-backed bunching requires this provider; curve-only panels do not.
         self._counts_rebunch_provider: Callable[[MuonDataset, int], MuonDataset] | None = None
         self._current_time_view_mode = "fb_asymmetry"
+        self._connect_points = False
+        self._time_view: TimePlotView | None = None
         self._available_time_view_modes = ["fb_asymmetry"]
         self._default_canvas_min_height = 360
         self._subplot_canvas_height_per_axis = 220
@@ -1825,24 +1833,13 @@ class PlotPanel(QWidget):
             self._y_unit_label.setText(self._display_y_unit_suffix(y_label))
 
     def _x_axis_label_color(self, ax) -> str:
-        """Return the current x-axis label color for ``ax``."""
-        xaxis = getattr(ax, "xaxis", None)
-        label = getattr(xaxis, "label", None)
-        color_getter = getattr(label, "get_color", None)
-        if callable(color_getter):
-            return str(color_getter())
-        return "black"
+        """Return the current x-axis label colour."""
+        return str(ax.xaxis.label.get_color())
 
     def _x_axis_tick_color(self, ax) -> str:
-        """Return the current x-axis tick-label color for ``ax``."""
-        xaxis = getattr(ax, "xaxis", None)
-        ticklabels_getter = getattr(xaxis, "get_ticklabels", None)
-        if callable(ticklabels_getter):
-            for tick in ticklabels_getter():
-                color_getter = getattr(tick, "get_color", None)
-                if callable(color_getter):
-                    return str(color_getter())
-        return self._x_axis_label_color(ax)
+        """Return the current x-axis tick colour, or the label colour without ticks."""
+        labels = ax.xaxis.get_ticklabels()
+        return str(labels[0].get_color()) if labels else self._x_axis_label_color(ax)
 
     def _reset_decimation_view_state(self) -> None:
         """Reset per-view decimation tracking: flag, chip counters, chip artists.
@@ -1875,7 +1872,7 @@ class PlotPanel(QWidget):
 
     _DECIMATION_TOOLTIP = (
         "Display decimated for responsiveness — zoom in for full resolution. "
-        "Fits, transforms and exports always use every point."
+        "Fits, transforms and numerical exports always use every point."
     )
 
     def _apply_x_axis_decimation_indicator(self, ax) -> None:
@@ -1887,6 +1884,8 @@ class PlotPanel(QWidget):
         The canvas tooltip carries the full explanation, including that only
         the *display* is decimated.
         """
+        if self._time_view is not None:
+            self._time_view.indicator_axis = ax
         artists = getattr(self, "_decimation_chip_artists", None)
         if artists is None:
             artists = {}
@@ -2163,6 +2162,8 @@ class PlotPanel(QWidget):
         behind. The window is in plotted-axis units; ``None`` means there was no
         finite data to frame and the axis has never framed.
         """
+        if self._time_view is not None:
+            self._time_view.x_bounds = bounds
         resolved = self._limits.resolve({"x": bounds}, {"x": self._x_quantity()})
         if "x" not in resolved:
             return resolved, None
@@ -2178,6 +2179,8 @@ class PlotPanel(QWidget):
         self, axis_id: str, bounds: Callable[[], tuple[float, float] | None]
     ) -> dict[str, tuple[float, float]]:
         """Prepare bounds inside the resolved x window only if this y needs them."""
+        if self._time_view is not None:
+            self._time_view.y_bounds[axis_id] = bounds
         return self._limits.resolve({axis_id: bounds}, {axis_id: self._y_quantity()})
 
     def _apply_limits(self, limits: dict[str, tuple[float, float]]) -> None:
@@ -2189,6 +2192,8 @@ class PlotPanel(QWidget):
         """
         if not self._has_mpl:
             return
+        if self._time_view is not None:
+            self._time_view.capture_readout(self)
         axes = self._displayed_y_axes()
         if "x" in limits:
             x0 = self._convert_frequency_control_value_to_axis_limit(limits["x"][0])
@@ -2224,6 +2229,8 @@ class PlotPanel(QWidget):
 
     def _refresh_view_for_limits(self) -> None:
         """Re-render after a policy change, or just re-apply when nothing is drawn."""
+        if self._time_view is not None and self._time_view.refresh(self):
+            return
         if self.has_plot_content():
             self._redraw_current_view()
         else:
@@ -2934,29 +2941,7 @@ class PlotPanel(QWidget):
         **kwargs,
     ) -> int:
         """Plot a masked errorbar series using bounded display density."""
-        visible_indices = self._visible_plot_indices(time, mask, window)
-        indices = self._decimated_plot_indices(
-            time, mask, values=asymmetry, visible_indices=visible_indices
-        )
-        if indices.size <= 0:
-            return 0
-        if self.decimation_enabled() and indices.size < visible_indices.size:
-            self._decimation_applied_for_current_view = True
-        # Per-view totals feed the corner chip ("4.0k of 1.2M pts").
-        self._decimation_points_shown += int(indices.size)
-        self._decimation_points_total += int(visible_indices.size)
-
-        # ``Axes.errorbar`` builds one Path per point for the bars (40–90 ms
-        # per 4k-point trace, on every run switch); the shared helper draws the
-        # same dots-and-bars picture as two Line2D artists in ~1 ms.
-        add_errorbar_dots(
-            ax,
-            time[indices],
-            asymmetry[indices],
-            error[indices],
-            **kwargs,
-        )
-        return int(indices.size)
+        return draw_masked_errorbar(self, ax, time, asymmetry, error, mask, window, **kwargs)
 
     def _plot_frequency_line_masked(
         self,
@@ -3321,6 +3306,7 @@ class PlotPanel(QWidget):
         switch never resets a held value.
         """
         self._limits.reset()
+        self.set_connect_points_enabled(False)
 
     def get_bunch_factor(self) -> int:
         """Return the currently configured plot-panel bunch factor."""
@@ -3335,8 +3321,20 @@ class PlotPanel(QWidget):
     def set_decimation_enabled(self, enabled: bool, *, redraw: bool = True) -> None:
         """Enable or disable display-only plot decimation."""
         self._decimation_enabled = bool(enabled)
-        if redraw and getattr(self, "_current_datasets", None):
-            self._redraw_current_view()
+        if redraw and self._current_datasets:
+            self._refresh_view_for_limits()
+
+    def connect_points_enabled(self) -> bool:
+        """The project setting, retained even while an unsupported view is shown."""
+        return self._connect_points
+
+    def set_connect_points_enabled(self, enabled: bool) -> None:
+        """Change presentation on the published view without reducing or fitting."""
+        self._connect_points = bool(enabled)
+        if self._time_view is not None:
+            self._time_view.set_connected(self._connect_points)
+            self._canvas.draw_idle()
+        self.connect_points_changed.emit(self._connect_points)
 
     def set_bunch_factor(self, value: int, *, emit_signal: bool = True) -> None:
         """Set the plot-panel bunch factor and optionally emit the normal signal."""
@@ -3602,6 +3600,8 @@ class PlotPanel(QWidget):
     def clear_shown_fits(self, run_number: int) -> None:
         """Drop *run_number*'s override so :meth:`shown_fit_ids` defaults again."""
         self._shown_fits_by_run.pop(int(run_number), None)
+        if self._has_mpl:
+            self._redraw_current_view()
         self._refresh_fits_button()
 
     def set_active_fit_id(self, fit_id: str | None) -> None:
@@ -4264,22 +4264,12 @@ class PlotPanel(QWidget):
         return [self._ax] if hasattr(self, "_ax") else []
 
     def _clear_fit_range_artists(self) -> None:
-        """Remove existing fit-range span and handle artists from all axes."""
-        for artists in (
-            getattr(self, "_fit_span_artists", []),
-            getattr(self, "_fit_min_handles", []),
-            getattr(self, "_fit_max_handles", []),
-        ):
+        """Remove attached range artists; cleared axes have already detached theirs."""
+        for artists in (self._fit_span_artists, self._fit_min_handles, self._fit_max_handles):
             for artist in artists:
-                try:
+                if artist.axes is not None and artist in artist.axes.get_children():
                     artist.remove()
-                except NotImplementedError:
-                    continue
-                except Exception:
-                    continue
-        self._fit_span_artists = []
-        self._fit_min_handles = []
-        self._fit_max_handles = []
+            artists.clear()
 
     def _plot_datasets_on_axis(
         self,
@@ -4363,7 +4353,7 @@ class PlotPanel(QWidget):
                 else:
                     fit_color = _EXTRA_FIT_COLORS[order % len(_EXTRA_FIT_COLORS)]
                     fit_legend = fit_label
-                ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label=fit_legend)
+                plot_fit_curve(self, ax, t_fit, y_fit, fit_color, (dataset, fit_label), fit_legend)
 
         frames = [
             entry.dataset.metadata[FRAME_METADATA_KEY].frame
@@ -4505,10 +4495,10 @@ class PlotPanel(QWidget):
             resolved.update(
                 self._resolve_y(
                     self._y_axis_id(axis_key),
-                    lambda: (
+                    lambda arrays=arrays: (
                         _EMPTY_PROJECTION_YLIM
                         if arrays is None
-                        else self._auto_y_limits_from_display_arrays(arrays, window)
+                        else self._auto_y_limits_from_display_arrays(arrays, self._limits.held("x"))
                     ),
                 )
             )
@@ -4626,10 +4616,10 @@ class PlotPanel(QWidget):
             resolved.update(
                 self._resolve_y(
                     self._y_axis_id(axis_key),
-                    lambda: (
+                    lambda arrays=arrays: (
                         None
                         if arrays is None
-                        else self._auto_y_limits_from_display_arrays(arrays, window)
+                        else self._auto_y_limits_from_display_arrays(arrays, self._limits.held("x"))
                     ),
                 )
             )
@@ -4956,15 +4946,7 @@ class PlotPanel(QWidget):
         variant_index: int = 0,
         fit_label: str | None = None,
     ) -> str:
-        """Return the fit-line colour for a dataset.
-
-        Preview curves get a fixed accent colour. In grouped time-domain mode each
-        detector group sits on its own subplot, so there is no fit↔dataset overlay
-        to disambiguate — the fit uses the canonical red fit colour, which resolves
-        far better against the (blue) data points than matching the marker colour.
-        Every other fit matches its data markers so that in overlay mode each fit
-        visually belongs to its dataset.
-        """
+        """Use a preview accent, a grouped-pane fit colour, or the dataset's trace hue."""
         if isinstance(fit_label, str) and "preview" in fit_label.lower():
             return tokens.PLOT_FIT_PREVIEW
         if self._grouped_time_subplot_datasets:
@@ -5044,6 +5026,11 @@ class PlotPanel(QWidget):
         stack (single run, grouped subplots, MaxEnt, vector "ALL") can never
         export stale offsets even while the Waterfall checkbox is checked.
         """
+        self._time_view = (
+            TimePlotView()
+            if self._domain == "time" and self._current_time_view_mode in {"fb_asymmetry", "groups"}
+            else None
+        )
         self._waterfall_stacked = False
         self._waterfall_drawn_offsets = {}
         self._waterfall_resolved_delta = 0.0
@@ -5293,8 +5280,14 @@ class PlotPanel(QWidget):
                     fit_legend = fit_label
                 y_fit_display = self._convert_frequency_values_for_display(y_fit, dataset)
                 y_fit_shifted = y_fit_display + offset if offset else y_fit_display
-                self._ax.plot(
-                    t_fit, y_fit_shifted, "-", color=fit_color, linewidth=2, label=fit_legend
+                plot_fit_curve(
+                    self,
+                    self._ax,
+                    t_fit,
+                    y_fit_shifted,
+                    fit_color,
+                    (dataset, fit_label),
+                    fit_legend,
                 )
 
             if np.any(finite_mask):
@@ -5481,11 +5474,7 @@ class PlotPanel(QWidget):
         self._last_plot_error = error
         self._last_low_count_mask = low_count_mask
 
-        # X first, before anything is drawn: decimation and the y bounds are
-        # both measured inside the window the canvas is about to show. Time
-        # panels span the full data; frequency panels frame the dominant non-DC
-        # peak so high-TF Larmor lines aren't squashed off the full-Nyquist view
-        # by the DC peak.
+        # X selection and any requested y bounds share the resolved viewport.
         y_axis_id = self._y_axis_id(self._current_polarization_axis)
         self._sync_auto_from_buttons([y_axis_id])
         resolved, window = self._resolve_x(self._default_x_limits(time, asymmetry))
@@ -5569,16 +5558,14 @@ class PlotPanel(QWidget):
                 )
             else:
                 fit_color = _EXTRA_FIT_COLORS[order % len(_EXTRA_FIT_COLORS)]
-            self._ax.plot(
+            plot_fit_curve(
+                self,
+                self._ax,
                 t_fit,
-                # Fit curves are stored on the canonical footing; a unit-area
-                # density view rescales them by the same displayed Jacobian as
-                # the spectrum itself.
                 self._convert_frequency_values_for_display(y_fit, dataset),
-                "-",
-                color=fit_color,
-                linewidth=2,
-                label=fit_label,
+                fit_color,
+                (dataset, fit_label),
+                fit_label,
             )
 
         self._draw_annotations()
@@ -6858,6 +6845,8 @@ class PlotPanel(QWidget):
         # The frequency panel also carries the moments overlay; redraw it here so
         # it survives every plot rebuild.
         self._draw_moments_artists()
+        if self._time_view is not None and reuse_fit_guides(self):
+            return
         self._clear_fit_range_artists()
 
         guide_min, guide_max = self._fit_guide_window()
@@ -7751,6 +7740,10 @@ class PlotPanel(QWidget):
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
             }
+            if self._connect_points and self._time_view is not None:
+                payload["connector_low_mask"] = self._low_count_mask_for_dataset(
+                    analysis, source_dataset=dataset
+                )
 
             # Frequency payloads mirror the on-screen spectrum: display-unit x
             # data and window, real axis labels, and the Fourier provenance the
@@ -8180,6 +8173,8 @@ class PlotPanel(QWidget):
             },
             (6.4, 2.8 * len(axes)) if len(axes) > 1 else self._export_figure_size(len(payloads)),
             len(axes) > 1,
+            connect_points=self._connect_points
+            and bool(self._time_view and self._time_view.traces),
         )
 
     # Keep old name as alias for backward compatibility with tests.
@@ -8243,6 +8238,7 @@ class PlotPanel(QWidget):
             Plot state suitable for inclusion in a project file.
         """
         state: dict = {
+            "connect_points": self._connect_points,
             "plot_panel_domain": self._domain,
             "current_run_number": (
                 self._current_dataset.run_number if self._current_dataset is not None else None
@@ -8360,6 +8356,8 @@ class PlotPanel(QWidget):
 
         import numpy as np
 
+        self._connect_points = bool(state.get("connect_points", False))
+        self.connect_points_changed.emit(self._connect_points)
         if hasattr(self, "_rrf_controls"):
             self._rrf_controls.set_state(state.get("rrf"))
         # Display state, additive: a state saved without it shows the lab frame.

@@ -67,6 +67,7 @@ class PlotFitsOnRunScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
+        window._plot_panel.set_connect_points_enabled(True)
         window._dock_log.hide()
         # A hard minimum-width floor on the Parameters dock is honoured even
         # against the plot's expanding central widget (a plain resizeDocks

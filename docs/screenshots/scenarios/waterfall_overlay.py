@@ -28,6 +28,7 @@ class WaterfallOverlayScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
+        window._plot_panel.set_connect_points_enabled(True)
         window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = make_generic_lf_decoupling()

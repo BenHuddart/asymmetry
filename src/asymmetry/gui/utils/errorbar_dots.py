@@ -32,7 +32,7 @@ from typing import Any
 
 import numpy as np
 
-__all__ = ["add_errorbar_dots", "errorbar_dots_line_class"]
+__all__ = ["add_errorbar_dots", "errorbar_dots_line_class", "update_errorbar_dots"]
 
 
 def _import_mpl():
@@ -65,6 +65,7 @@ def _make_classes():
         """
 
         bar_line: object | None = None
+        connector_line: object | None = None
 
     class _HandlerErrorbarDots(handler_line2d_cls):
         """``HandlerLine2D`` plus a vertical bar through the legend marker."""
@@ -79,7 +80,7 @@ def _make_classes():
             artists = super().create_artists(
                 legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans
             )
-            bar = getattr(orig_handle, "bar_line", None)
+            bar = orig_handle.bar_line
             if bar is None or not artists:
                 return artists
             marker_line = artists[0]
@@ -101,6 +102,16 @@ def _make_classes():
             )
             bar_glyph.set_transform(trans)
             # The bar sits behind the marker, as on the axes.
+            connector = orig_handle.connector_line
+            if connector is not None and connector.get_visible():
+                guide = line2d_cls(
+                    [float(xdata[0]), float(xdata[-1])],
+                    [y, y],
+                )
+                guide.update_from(connector)
+                guide.set_transform(trans)
+                guide.set_clip_on(False)
+                return [guide, bar_glyph, *artists]
             return [bar_glyph, *artists]
 
     legend_cls.update_default_handler_map({ErrorbarDotsLine: _HandlerErrorbarDots()})
@@ -133,6 +144,17 @@ def _parse_fmt(fmt: str) -> tuple[str | None, str | None, str | None]:
         return linestyle, marker, color
     except Exception:  # pragma: no cover - private-API fallback
         return None, fmt, None
+
+
+def update_errorbar_dots(marker_line, bar_line, x, y, yerr) -> None:
+    """Replace a trace's samples while retaining its two artists and legend."""
+    x, y, err = np.asarray(x), np.asarray(y), np.asarray(yerr)
+    vertices = np.full((3 * x.size, 2), np.nan)
+    vertices[0::3, 0] = vertices[1::3, 0] = x
+    vertices[0::3, 1] = y - err
+    vertices[1::3, 1] = y + err
+    bar_line.set_segments([vertices])
+    marker_line.set_data(x, y)
 
 
 def add_errorbar_dots(
@@ -182,21 +204,11 @@ def add_errorbar_dots(
     if ecolor is None:
         ecolor = color
 
-    n = x.size
-    xs = np.empty(3 * n, dtype=float)
-    ys = np.empty(3 * n, dtype=float)
-    xs[0::3] = x
-    xs[1::3] = x
-    xs[2::3] = np.nan
-    ys[0::3] = y - err
-    ys[1::3] = y + err
-    ys[2::3] = np.nan
-
     # One path for every bar: ``LineCollection`` builds a Path per *segment*
     # handed to it, so the NaN-separated vertex array is passed as a single
     # segment (N points → one Path), not as N two-point segments.
     bar_line = LineCollection(
-        [np.column_stack([xs, ys])],
+        [],
         linewidths=float(elinewidth)
         if elinewidth is not None
         else float(rcParams["lines.linewidth"]),
@@ -219,6 +231,7 @@ def add_errorbar_dots(
         **marker_kwargs,
     )
     marker_line.bar_line = bar_line
+    update_errorbar_dots(marker_line, bar_line, x, y, err)
     # The NaN-separated path would poison the collection's own data limits,
     # so add it without autolim and feed the finite bar ends in explicitly —
     # the same limits ``errorbar`` contributes (markers plus bar extents).

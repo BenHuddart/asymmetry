@@ -235,6 +235,7 @@ def _curve_shape(curve, path):
 
 
 def _plot_shape(plot, path):
+    _fields(plot, ("connect_points",), bool, path, nullable=False)
     _fields(
         plot,
         (
