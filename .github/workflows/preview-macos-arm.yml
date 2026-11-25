@@ -41,7 +41,7 @@ jobs:
 
       - name: Generate macOS icon (.icns)
         shell: bash
-        run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
+        run: python tools/branding.py --platform macos
 
       - name: Prepare packaged build identity
         shell: bash

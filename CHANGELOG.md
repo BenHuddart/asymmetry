@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use a red-and-blue vector logo throughout the app, Windows and macOS icons,
+  documentation, and package pages, with refined small icons for compact displays.
+
 - Clarify AI authorship and scoped validation, simplify the README, and align
   installation guidance across the README, quickstart, and CLI and specialist references.
 

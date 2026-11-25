@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -13,6 +14,7 @@ import tomllib
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from packaging.requirements import Requirement
@@ -28,6 +30,14 @@ from tools.distribution_smoke import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_readme_html_images_use_public_urls_for_package_description() -> None:
+    readme = (ROOT / "README.md").read_text()
+    images = re.findall(r"""<img\b[^>]*\bsrc=["']([^"']+)["']""", readme, re.IGNORECASE)
+    for source in images:
+        url = urlsplit(source)
+        assert url.scheme == "https" and url.netloc, f"PyPI cannot resolve README image: {source}"
 
 
 def test_full_install_supplies_end_user_features_without_tools() -> None:
