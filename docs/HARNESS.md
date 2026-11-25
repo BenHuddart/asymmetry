@@ -439,6 +439,16 @@ uses ordinary index resolution within the distribution's declared bounds.
 Build tooling stays in the outer environment. Successful target venvs are removed
 after their evidence is recorded; failed targets remain available for diagnosis.
 
+`--build-only` creates the sdist and wheel without target installations.
+`--artifacts DIRECTORY` probes an existing directory containing exactly one
+sdist and wheel, with no rebuild. The release workflow uses one candidate across
+its six Python/resolution jobs, then rejects missing profiles or evidence for
+another commit or artifact hash. Each fresh installation also executes the
+README's seeded fit. Release upload authority is confined to a separate,
+maintainer-reviewed OIDC job after Python, full-suite, and native gates succeed.
+Manual release rehearsals exercise those gates without uploading to PyPI or
+publishing a GitHub release. `RELEASING.md` defines retained evidence and recovery.
+
 Child probes run outside the checkout with interpreter path injection removed,
 user sites disabled, and temporary home/config/data/plugin locations. They check
 artifact bytes and metadata, installed module origins, public workflow/fitting/data

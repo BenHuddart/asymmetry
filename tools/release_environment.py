@@ -213,7 +213,9 @@ def verify_source(root: Path) -> str:
     tracked = set(run(["git", "ls-files", "-z", "--", "src"], root, display=False).split("\0"))
     for path in (root / "src").rglob("*"):
         relative = path.relative_to(root)
-        if "__pycache__" in relative.parts or relative.parts[1] == "asymmetry.egg-info":
+        if not path.is_symlink() and (
+            "__pycache__" in relative.parts or relative.parts[1].casefold() == "asymmetry.egg-info"
+        ):
             continue
         if path.is_symlink() or (path.is_file() and relative.as_posix() not in tracked):
             raise ValueError("unreviewed file in release source: " + relative.as_posix())

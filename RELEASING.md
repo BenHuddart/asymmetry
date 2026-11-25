@@ -1,9 +1,9 @@
 # Releasing
 
 Releases are agent-proposed, human-confirmed, and machine-executed. The
-mechanical work — version bump, changelog roll, tag, platform builds, GitHub
-release, docs deploy — is fully automated; the only human steps are saying
-"yes" and (rarely) rotating a token.
+mechanical work — version bump, changelog roll, tag, Python and desktop builds,
+PyPI upload, GitHub release, and docs deploy — is automated. The maintainer
+authorises the release and approves the protected PyPI deployment.
 
 ## How a release happens
 
@@ -23,15 +23,18 @@ release, docs deploy — is fully automated; the only human steps are saying
    `## [X.Y.Z] - <date>`, and prints the promoted section into the run
    summary for a quick eyeball. Finally it commits `release: X.Y.Z` to
    `main` and pushes the `vX.Y.Z` tag atomically.
-4. The tag push triggers the existing pipelines untouched: `release.yml`
-   builds and smoke-tests the macOS DMG and Windows installer and publishes
-   the GitHub release; `docs-pages.yml` deploys the documentation site.
+4. The tag push triggers `release.yml`, which builds and checks the Python
+   distributions, macOS DMG, and Windows installer.
    `release.yml` checks that the tag matches `pyproject.toml` and the changelog
    was rolled. Its macOS and Windows builds run alongside the reusable full
    Linux test suite, all checking out the triggering commit. Publication waits
    for successful validation and both artifact builds. A failed, cancelled,
    skipped, or pending validation cannot publish, and validation on another
-   commit does not satisfy this dependency.
+   commit does not satisfy this dependency. The exact Python candidate also
+   passes the installation matrix below. After maintainer approval in the
+   `pypi` environment, Trusted Publishing uploads the checked distributions.
+   Only then does the workflow publish the GitHub release, including Python
+   artifacts and their records, and dispatch `docs-pages.yml` at that tag.
 
 There is no release PR and no manual tagging. Version numbers live in exactly
 one place (`pyproject.toml`); `asymmetry.__version__` reads it via package
@@ -46,9 +49,11 @@ Run validation and both artifact builds on a branch without creating a release:
 gh workflow run release.yml --ref <branch>
 ```
 
-The publishing job runs only for a tag push; a manual dispatch skips it. The
-rehearsal reads the version from `pyproject.toml` for artifact names. Release
-runs do not cancel each other.
+Both publishing jobs run only for a tag push; a manual dispatch skips them and
+does not dispatch documentation deployment. The rehearsal exercises the Python
+candidate and installation matrix, full test suite, and both native scientific
+acceptance jobs. It reads the version from `pyproject.toml` for artifact names.
+Release runs do not cancel each other.
 
 For a failed tag run, use **Re-run failed jobs** on that run to retain its event
 and commit. Build artifacts expire after one day; after that, use **Re-run all
@@ -56,6 +61,111 @@ jobs** so both builds upload fresh artifacts. GitHub permits re-runs for 30 days
 For an older run or a failure needing code changes, fix `main` and propose the
 next patch release. Never move or delete the failed tag. Its version heading
 remains in the changelog even though no GitHub release was published.
+
+## PyPI identity, approval, and candidate
+
+The pending PyPI publisher uses project **Asymmetry**, owner **BenHuddart**,
+repository **asymmetry**, workflow filename **release.yml**, and environment
+**pypi**. Verify those saved fields in the PyPI account's publishing settings
+before the first release. A pending publisher does not reserve the project name.
+Commands and imports remain lowercase: `pip install asymmetry`,
+`import asymmetry`, `asymmetry`, and `asymmetry-gui`.
+
+Configure the repository's `pypi` environment before publication:
+
+- Required reviewer: `BenHuddart`. Allow the maintainer to approve their own
+  deployment, since the release may be initiated by that maintainer.
+- Selected deployment policies: exactly one **tag** pattern, `v*`; no branches.
+- Keep the approval gate enabled. Disable administrator bypass where supported.
+- No PyPI token secret. Only the upload job receives `id-token: write`, uses the
+  protected environment, and calls the pinned PyPA publishing action.
+
+Creating or changing publishing authority requires explicit maintainer approval.
+The tag preflight reads the environment and rejects a missing reviewer or broader
+deployment policy. Rehearsals require no publishing environment and never request
+its deployment approval. The upload job checks downloaded bytes without checking
+out or executing repository build/test code. See the
+[PyPI Trusted Publishing guide](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
+
+The Python candidate is built once: an isolated sdist build followed by an
+isolated wheel build from the unpacked sdist. `twine check --strict` checks both
+long descriptions. The release record binds their SHA256 hashes, metadata name,
+version, and README to the clean triggering commit; a rendered README is retained
+for review. This includes the public logo URL used by the shared README.
+
+Six fresh Linux jobs use those exact downloaded files: Python 3.11, 3.12, and
+3.13, each with constrained and ordinary dependency resolution. Each exercises
+core, `gui,hdf5,root`, `agent`, and `all` in separate outside-checkout environments.
+The probes check installed bytes and resources, the README fit, CLI help,
+requested readers/plots/GLE generation, and installed GUI startup. They do not
+exercise CUDA or the external GLE compiler. Native installers are independently
+built from the same commit and retain their existing reviewed inputs and final
+installed/frozen scientific checks; they are not the PyPI wheel.
+
+The verifier requires every installation report to name the same commit and
+distribution hashes and cover the complete matrix. Version, full validation,
+native artifact verification, both native acceptance outcomes, and Python
+candidate verification must all succeed before upload. Failure, skip,
+cancellation, or an unfinished prerequisite cannot publish.
+
+The `python-candidate`, six `python-installs-*`, and `python-verified` Actions
+artifacts retain candidate files, portable identity/checksum records, README
+preview, and installation evidence for one day. Save required evidence before
+expiry. Successful complete publication deletes workflow artifacts; public
+Python distributions, `python-release.json`, and `SHA256SUMS` remain attached to
+the GitHub release. SHA256 records establish byte identity, not signatures;
+the PyPA action also publishes its OIDC attestations.
+
+For a local candidate build, use an outer environment with `build`, `pip`,
+`twine`, and `readme-renderer[md]`, from a clean committed checkout:
+
+```bash
+python tools/distribution_smoke.py --build-only --output <new-external-directory>
+python -m twine check --strict <new-external-directory>/dist/*
+python tools/pypi_release.py record --packet <new-external-directory> --commit <full-commit-sha>
+python tools/distribution_smoke.py --artifacts <new-external-directory>/dist --output <new-probe-directory> --profile core --profile gui --profile agent --profile all
+```
+
+Repeat probes with `--resolution unconstrained` and each supported interpreter,
+or use the hosted rehearsal to run the full matrix against one candidate.
+A local build/install is not an index-upload rehearsal. No TestPyPI upload is
+part of the non-publishing rehearsal. An index rehearsal needs separate explicit
+authorisation, a separately registered TestPyPI publisher/project, and verification
+of installation from the uploaded test artifact. TestPyPI has a separate package
+catalogue: obtain dependencies from the ordinary index first, then install the
+exact TestPyPI artifact with `--no-deps`; avoid mixing dependency resolution
+across indexes.
+
+## Publication failures and documentation timing
+
+PyPI upload precedes the GitHub release. If upload fails, inspect PyPI before
+retrying: a request may have accepted one file before failing. Never overwrite,
+delete and reuse, or silently skip an existing distribution/version. If any
+files of a failed publication are present, preserve that attempt and propose a
+new patch version. The action deliberately has `skip-existing: false`.
+
+If PyPI succeeded and the GitHub release or documentation dispatch failed,
+rerun only failed jobs while the original artifacts remain available. Do not
+rerun the successful upload. After artifact expiry or a required source change,
+propose a new version; never move or delete the old tag. Preserve the partial
+publication record and explain its disposition in the release issue.
+
+Release-tag documentation is dispatched explicitly only after both publications
+succeed; the repository token can trigger `workflow_dispatch` without a second
+long-lived credential. Main documentation updates remain independent, with
+installation commands qualified by published availability and a source fallback.
+If a documentation build/deploy fails after publication, retain its failed run
+and rerun that documentation workflow at the same tag. Publication is not rolled
+back. The source and publishing documentation gates keep their existing asset
+completeness and scoped screenshot-fallback contracts.
+
+Before requesting final release approval, record in the coordination issue:
+the reviewed source SHA, exact-candidate rehearsal and matrix outcomes, retained
+artifact identities, monitoring-issue review and unresolved coverage limits,
+publisher/environment identity, and the proposed version/bump with its reason.
+Beta maturity does not require a prerelease suffix. Preparation, rehearsal, or
+merging the workflow does not authorise a tag, release dispatch, or production
+upload; wait for explicit approval of the concrete release proposal.
 
 ## Reviewed desktop inputs
 
