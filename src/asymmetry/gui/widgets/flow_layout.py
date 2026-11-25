@@ -11,7 +11,15 @@ layout, kept in one place so no panel grows its own copy.
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtWidgets import QApplication, QLayout, QLayoutItem, QSizePolicy, QStyle, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QLayout,
+    QLayoutItem,
+    QSizePolicy,
+    QStyle,
+    QWidget,
+    QWidgetItem,
+)
 
 __all__ = ["FlowLayout"]
 
@@ -54,6 +62,11 @@ class FlowLayout(QLayout):
         return self._h_space
 
     # ── QLayout item protocol ───────────────────────────────────────────────
+
+    def addWidget(self, widget: QWidget) -> None:  # noqa: N802 — Qt override
+        # Python owns the items retained by this Python layout, including teardown.
+        self.addChildWidget(widget)
+        self.addItem(QWidgetItem(widget))
 
     def addItem(self, item: QLayoutItem) -> None:  # noqa: N802 — Qt override
         self._items.append(item)
