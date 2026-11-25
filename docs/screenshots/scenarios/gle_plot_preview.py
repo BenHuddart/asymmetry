@@ -1,8 +1,9 @@
-"""Vector preview with synthetic observations outside a component stack."""
+"""Preview demonstration; native GLE rendering is checked separately in tests."""
 
 from io import BytesIO
 
 import numpy as np
+from matplotlib.colors import to_rgb
 from matplotlib.figure import Figure
 
 from asymmetry.gui.windows.gle_preview import GlePlotPreview
@@ -33,8 +34,10 @@ class GlePreviewScenario(Scenario):
         model_x = np.linspace(1.0, 3.0, 200)
         constant = np.full_like(model_x, 0.05)
         total = 0.05 * model_x + 0.15
+        axes.axvspan(1.0, 1.7, color="blue", alpha=0.12, zorder=0)
         for lower, upper, color in [(0, constant, "lightblue"), (constant, total, "lightgreen")]:
-            axes.fill_between(model_x, lower, upper, color=color, alpha=0.3)
+            tint = tuple(0.7 + 0.3 * channel for channel in to_rgb(color))
+            axes.fill_between(model_x, lower, upper, color=tint)
             axes.plot(model_x, upper, linestyle="--", color=color, linewidth=0.8)
         axes.plot(model_x, total, color="red")
         axes.set_xlabel("Temperature (K)", fontfamily="serif")
@@ -45,7 +48,7 @@ class GlePreviewScenario(Scenario):
         output = BytesIO()
         figure.savefig(output, format="pdf")
         preview = GlePlotPreview(None)
-        preview.status.setText("GLE plot exported — synthetic parameter fit with components")
+        preview.status.setText("GLE preview demonstration — synthetic components and phase shading")
         preview.set_pdf(output.getvalue())
         return preview
 

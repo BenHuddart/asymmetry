@@ -51,7 +51,7 @@ def test_time_export_keeps_observation_markers_without_connecting_lines(qapp, tm
 
 
 @pytest.mark.skipif(shutil.which("gle") is None, reason="GLE compiler not installed")
-@pytest.mark.parametrize("output_format", ["pdf", "eps"])
+@pytest.mark.parametrize("output_format", ["pdf", "eps", "svg"])
 @pytest.mark.parametrize("surface", ["frequency", "phase", "components"])
 def test_filled_export_compiles_and_displays_vector_preview(
     qapp, tmp_path, monkeypatch, output_format, surface
@@ -145,10 +145,10 @@ def test_filled_export_compiles_and_displays_vector_preview(
         assert not preview.status.text().startswith("Export failed"), preview.status.text()
         assert preview.document.pageCount() == 1
         assert len(compilations) == 1
-        assert "-cairo" in compilations[0].args
+        assert ("-cairo" in compilations[0].args) is (output_format == "svg")
         assert "PostScript fonts not supported" not in compilations[0].stdout
         script = destination / "filled.gle"
-        assert "rgba255" in script.read_text()
+        assert ("rgba255" in script.read_text()) is (output_format == "svg")
         if surface == "components":
             import re
 
@@ -240,11 +240,15 @@ def test_projection_export_preserves_subscripts_and_chi_squared_annotation(tmp_p
     assert r"\char{94}" not in content
 
 
+@pytest.mark.parametrize("output_format", ["pdf", "eps", "png", "jpg", "svg"])
 @pytest.mark.parametrize("translucent", [False, True])
-def test_export_font_preserves_default_and_literal_label_punctuation(tmp_path, translucent):
+def test_export_font_preserves_default_and_literal_label_punctuation(
+    tmp_path, translucent, output_format
+):
     from gleplot.cairo_support import is_cairo_safe_font, text_glyph_warning
 
     figure = gle_figure(glp)
+    figure.style.opaque_backdrop = "white"
     if not translucent:
         assert figure.style.font == glp.GlobalConfig.get_style().font
     axis = figure.add_subplot(111)
@@ -253,10 +257,66 @@ def test_export_font_preserves_default_and_literal_label_punctuation(tmp_path, t
         axis.fill_between([1, 2], [0.1, 0.3], [0.3, 0.5], color="blue", alpha=0.25)
     axis.set_title("A_B {C} <D> |F|")
     script = tmp_path / "punctuation.gle"
-    cairo = save_gle_figure(figure, script)
-    assert cairo is translucent
+    cairo = save_gle_figure(figure, script, output_format=output_format)
+    assert cairo is (output_format == "svg")
+    assert ("rgba255" in script.read_text()) is (translucent and output_format == "svg")
     if cairo:
         assert is_cairo_safe_font(figure.style.font)
     else:
         assert figure.style.font == glp.GlobalConfig.get_style().font
     assert text_glyph_warning(figure.style.font, script.read_text()) is None
+
+
+@pytest.mark.parametrize("logarithmic", [False, True])
+@pytest.mark.parametrize("secondary_axis", [False, True])
+@pytest.mark.parametrize("error", [0.0, 0.03])
+@pytest.mark.skipif(shutil.which("gle") is None, reason="GLE compiler not installed")
+def test_native_band_and_phase_keep_observations_and_literal_labels(
+    tmp_path, logarithmic, secondary_axis, error
+):
+    from asymmetry.gui.utils.export import compile_gle
+
+    figure = gle_figure(glp)
+    axis = figure.add_subplot(111)
+    axis.fill_between([1, 2, 3], [0.15, 0.25, 0.35], [0.25, 0.35, 0.45], color="blue", alpha=0.25)
+    axis.errorbar([1, 2, 3], [0.2, 0.5, 0.4], yerr=[error] * 3, marker="o")
+    axis.set_xlim(0.8, 3.2)
+    axis.set_ylim(0.1, 0.6)
+    if logarithmic:
+        axis.set_yscale("log")
+    if secondary_axis:
+        axis.plot([1, 2, 3], [-1000, 0, 1000], yaxis="y2")
+        axis.set_ylim(-1500, 1500, axis="y2")
+    phase = PhaseDecoration("red", "red", 1, "I", "temperature", (1.2, 1.8), None, None)
+    ParameterGleSnapshot._add_gle_phase_band(axis, phase)
+    axis.set_ylabel("|F| (arb.)")
+    script = tmp_path / "band_phase.gle"
+    assert not save_gle_figure(figure, script)
+    content = script.read_text()
+    assert "rgba255" not in content
+    assert "texcmtt" not in content
+    assert "|F| (arb.)" in content
+    assert content.index("rgb255(255,224,224)") < content.index("rgb255(191,191,255)")
+    assert content.index("fill ") < content.index("marker FCIRCLE")
+    if logarithmic and secondary_axis:
+        assert "y2axis min -1500 max 1500 lin" in content
+    result = compile_gle(shutil.which("gle"), script, ("pdf", "eps"), cwd=tmp_path)
+    assert "-cairo" not in result.args
+    assert "PostScript fonts not supported" not in result.stdout
+    assert script.with_suffix(".pdf").stat().st_size > 0
+    assert script.with_suffix(".eps").stat().st_size > 0
+
+
+@pytest.mark.parametrize("kind", ["after-span", "rgba"])
+def test_unmixable_transparency_retains_cairo_fallback(tmp_path, kind):
+    figure = gle_figure(glp)
+    axis = figure.add_subplot(111)
+    if kind == "after-span":
+        axis.axvspan(1.2, 1.6, color="red", alpha=0.2)
+    else:
+        axis.plot([1, 2], [0.2, 0.4])
+        axis.fill_between([1, 2], [0.1, 0.2], [0.3, 0.4], color="rgba255(255*0.5,0,0,80)")
+    script = tmp_path / "fallback.gle"
+    assert save_gle_figure(figure, script)
+    assert figure.style.font == "texcmtt"
+    assert "rgba255" in script.read_text()

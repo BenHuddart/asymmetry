@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep native GLE fonts for single uncertainty bands and component stacks over white;
+  preserve transparency for overlapping fills and SVG exports with gleplot 6.1.1.
+
 - Fix saving in-memory synthetic and degraded runs from the Data Browser as verified
   NeXus sources so projects can reopen their counts, grouping settings, and saved fits.
 

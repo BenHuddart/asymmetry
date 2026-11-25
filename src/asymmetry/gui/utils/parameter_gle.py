@@ -61,12 +61,12 @@ class ParameterGleSnapshot(ParameterExportData):
     def _gle_effective_y_label(self, name):
         return self.y_labels[name]
 
-    def build(self, glp, gle_path, export_dir, *, cancelled=None):
+    def build(self, glp, gle_path, export_dir, *, cancelled=None, output_format="pdf"):
         snapshot = replace(self, cancelled=cancelled)
         snapshot.check_cancelled()
-        return snapshot.build_figure(glp, gle_path, export_dir)
+        return snapshot.build_figure(glp, gle_path, export_dir, output_format=output_format)
 
-    def build_figure(self, glp, gle_path, export_dir):
+    def build_figure(self, glp, gle_path, export_dir, *, output_format="pdf"):
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self.x_key
@@ -271,7 +271,21 @@ class ParameterGleSnapshot(ParameterExportData):
             if self.log_x:
                 ax.set_xscale("log")
 
-        cairo = save_gle_figure(fig, gle_path)
+        # Stacks within one curve are disjoint; independent ranges and twin
+        # y axes share physical space and must retain their true alpha.
+        stack_counts = (
+            [len(self._sampled_fit_curves(name, x_key=x_key)) for name in y_params]
+            if self.show_components
+            else []
+        )
+        preserve_alpha = (
+            any(count > 1 for count in stack_counts)
+            if plot_mode == "Subplots"
+            else sum(stack_counts) > 1
+        )
+        cairo = save_gle_figure(
+            fig, gle_path, output_format=output_format, preserve_alpha=preserve_alpha
+        )
 
         fit_files = list(fit_file_map.values()) if fit_file_map else []
         return gle_export.GleExportBuild(files=[gle_path, data_path, *fit_files], cairo=cairo)

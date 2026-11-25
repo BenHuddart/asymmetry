@@ -364,7 +364,7 @@ def test_close_cancels_worker_without_blocking_gui(qapp, destination, monkeypatc
     timer.timeout.connect(lambda: ticks.append(1))
     timer.start(1)
 
-    def build(glp, script, directory, *, cancelled):
+    def build(glp, script, directory, *, cancelled, output_format):
         entered.set()
         while not cancelled():
             threading.Event().wait(0.005)
@@ -417,7 +417,7 @@ def test_mainwindow_and_shell_shutdown_cancel_previews(qapp, destination):
         page = shell.add_project() if shell is not None else MainWindow()
         entered = threading.Event()
 
-        def build(glp, script, directory, *, cancelled):
+        def build(glp, script, directory, *, cancelled, output_format):
             from asymmetry.gui.tasks import TaskCancelledError
 
             entered.set()

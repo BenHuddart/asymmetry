@@ -1,6 +1,7 @@
 """Recording factories and worker completion for export behaviour tests."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import QApplication
 
@@ -30,6 +31,8 @@ class GleAxisLimits:
 
 class OpaqueGleFigure:
     """Figure doubles without translucent series use the native GLE renderer."""
+
+    style = SimpleNamespace(opaque_backdrop=None)
 
     def requires_cairo(self):
         return False

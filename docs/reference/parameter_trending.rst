@@ -349,7 +349,11 @@ were computed in, so the shading and lines are withheld until you switch back
 — the swatch stays either way, since it is only an identity marker.
 ``Export to GLE`` mirrors both the range shading and the boundary lines and
 bands on the exported plot; the plain TSV export is unaffected, since the
-decoration is a plot annotation rather than a data column.
+decoration is a plot annotation rather than a data column. PDF and EPS draw a
+single component stack as opaque colours over white, with phase shading behind
+it. Independent fit ranges or component stacks sharing the same plot, including
+dual-y plots, retain true transparency and use Cairo; stacks on separate subplots
+can use the native renderer.
 
 .. _trend-joint-fit-series:
 

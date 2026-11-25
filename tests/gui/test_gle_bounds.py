@@ -417,3 +417,23 @@ def test_components_without_logarithmically_eligible_x_have_no_fills(
     assert (
         script.with_suffix(".dat").exists() if surface == "trend" else list(tmp_path.glob("*.dat"))
     )
+
+
+@pytest.mark.parametrize("mode", ["Subplots", "Shared axes"])
+@pytest.mark.parametrize("ranges", [1, 2])
+def test_independent_component_stacks_preserve_overlap_alpha(trend, tmp_path, mode, ranges):
+    select_params(trend, ["sigma", "Lambda"])
+    if ranges == 2:
+        fit = trend._model_fits["sigma"]
+        fit.ranges.append(replace(fit.ranges[0], x_min=1.5, x_max=2.5))
+    snapshot = replace(
+        trend._gle_snapshot(),
+        show_components=True,
+        plot_mode=mode,
+        selected_params=["sigma", "Lambda"],
+    )
+    script = tmp_path / "stacks.gle"
+    result = snapshot.build(glp, script, tmp_path)
+    overlaps = mode == "Shared axes" or ranges == 2
+    assert result.cairo is overlaps
+    assert ("rgba255" in script.read_text()) is overlaps
