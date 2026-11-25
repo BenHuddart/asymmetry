@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,6 +28,12 @@ def _load_font(size: int) -> ImageFont.ImageFont:
 def build_background(output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    master = Path(__file__).resolve().parents[1] / "src/asymmetry/resources/logo.svg"
+    palette = {
+        path.attrib["id"]: path.attrib["fill"]
+        for path in ET.parse(master).getroot().findall(".//{http://www.w3.org/2000/svg}path")
+    }
+
     image = Image.new("RGBA", (WIDTH, HEIGHT), "#f1f1f1")
     draw = ImageDraw.Draw(image)
 
@@ -37,14 +44,18 @@ def build_background(output_path: Path) -> None:
         draw.line([(0, y), (WIDTH, y)], fill=(shade, shade, shade, 255))
 
     # Red accent rails to match the Asymmetry logo palette.
-    draw.rectangle((0, 0, WIDTH, 8), fill="#f32735")
-    draw.rectangle((0, HEIGHT - 8, WIDTH, HEIGHT), fill="#f32735")
+    draw.rectangle((0, 0, WIDTH, 8), fill=palette["a-wave"])
+    draw.rectangle((0, HEIGHT - 8, WIDTH, HEIGHT), fill=palette["a-wave"])
 
     # Icon drop targets.
     card_fill = "#fbfbfb"
     card_outline = "#d0d0d0"
-    draw.rounded_rectangle((44, 86, 212, 266), radius=30, fill=card_fill, outline=card_outline, width=3)
-    draw.rounded_rectangle((428, 86, 596, 266), radius=30, fill=card_fill, outline=card_outline, width=3)
+    draw.rounded_rectangle(
+        (44, 86, 212, 266), radius=30, fill=card_fill, outline=card_outline, width=3
+    )
+    draw.rounded_rectangle(
+        (428, 86, 596, 266), radius=30, fill=card_fill, outline=card_outline, width=3
+    )
 
     title_font = _load_font(30)
     subtitle_font = _load_font(18)
@@ -60,7 +71,7 @@ def build_background(output_path: Path) -> None:
         (366, 204),
         (246, 204),
     ]
-    draw.polygon(arrow_points, fill="#f32735")
+    draw.polygon(arrow_points, fill=palette["time-axis"])
 
     image.save(output_path, format="PNG")
 

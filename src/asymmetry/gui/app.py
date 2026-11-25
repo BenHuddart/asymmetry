@@ -14,7 +14,6 @@ import sys
 
 QApplication = None
 ProjectShell = None
-MACOS_ICON_TILE_SCALE = 0.82
 _SMOKE_QT_PREVIOUS_HANDLER = None
 _SMOKE_QT_MESSAGE_HANDLER = None
 
@@ -97,68 +96,21 @@ def _load_resource_pixmap(filename: str):
     return None
 
 
-def _icon_from_pixmap(pixmap):
-    """Build an application icon from an existing pixmap."""
-    if pixmap is None:
-        return None
+def _load_app_icon():
+    """Load every pre-rendered size, shared with the native installer icons."""
     from PySide6.QtGui import QIcon
 
-    icon = QIcon(pixmap)
-    if not icon.isNull():
-        return icon
-    return None
+    from asymmetry.resources import ICON_SIZES
 
-
-def _macos_icon_pixmap(pixmap):
-    """Return a rounded-square macOS icon pixmap from a source logo pixmap."""
-    if pixmap is None or sys.platform != "darwin":
-        return pixmap
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
-
-    size = max(pixmap.width(), pixmap.height())
-    if size <= 0:
-        return pixmap
-    tile_size = max(1, round(size * MACOS_ICON_TILE_SCALE))
-    tile_offset = (size - tile_size) // 2
-
-    icon = QPixmap(size, size)
-    icon.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(icon)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    radius = round(tile_size * 0.223)
-    path = QPainterPath()
-    path.addRoundedRect(tile_offset, tile_offset, tile_size, tile_size, radius, radius)
-    painter.setClipPath(path)
-    painter.fillPath(path, QColor("#ffffff"))
-    painter.drawPixmap(
-        tile_offset,
-        tile_offset,
-        pixmap.scaled(
-            tile_size,
-            tile_size,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ),
-    )
-    painter.end()
-
+    platform = "macos" if sys.platform == "darwin" else "windows"
+    icon = QIcon()
+    for size in ICON_SIZES:
+        filename = f"icon_{platform}_{size}.png"
+        pixmap = _load_resource_pixmap(filename)
+        if pixmap is None:
+            raise ValueError(f"packaged application icon cannot be decoded: {filename}")
+        icon.addPixmap(pixmap)
     return icon
-
-
-def _load_app_icon(pixmap=None):
-    """Load application icon from package resources.
-
-    Returns None if icon cannot be loaded.
-    """
-    icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
-    if icon is not None:
-        return icon
-
-    pixmap = _load_resource_pixmap("logo_256x256.png")
-    return _icon_from_pixmap(_macos_icon_pixmap(pixmap))
 
 
 def _create_splash_screen(app, logo=None):
@@ -178,22 +130,26 @@ def _create_splash_screen(app, logo=None):
 
     # Literal px here are intentional: the splash paints before QSettings /
     # QApplication font are read, so there is no UI scale to derive from yet.
-    canvas = QPixmap(420, 300)
+    width, height = 420, 300
+    dpr = max(2.0, app.devicePixelRatio())
+    canvas = QPixmap(round(width * dpr), round(height * dpr))
+    canvas.setDevicePixelRatio(dpr)
     canvas.fill(QColor(tokens.BG))
 
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setPen(QColor(tokens.BORDER))
-    painter.drawRect(0, 0, canvas.width() - 1, canvas.height() - 1)
+    painter.drawRect(0, 0, width - 1, height - 1)
 
     if logo is not None:
         scaled_logo = logo.scaled(
-            156,
-            156,
+            round(156 * dpr),
+            round(156 * dpr),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        x = (canvas.width() - scaled_logo.width()) // 2
+        scaled_logo.setDevicePixelRatio(dpr)
+        x = round((width - scaled_logo.deviceIndependentSize().width()) / 2)
         painter.drawPixmap(x, 32, scaled_logo)
 
     font = painter.font()
@@ -201,7 +157,7 @@ def _create_splash_screen(app, logo=None):
     font.setBold(True)
     painter.setFont(font)
     painter.setPen(QColor(tokens.TEXT))
-    painter.drawText(0, 205, canvas.width(), 34, Qt.AlignmentFlag.AlignHCenter, "Asymmetry")
+    painter.drawText(0, 205, width, 34, Qt.AlignmentFlag.AlignHCenter, "Asymmetry")
 
     font.setPointSize(10)
     font.setBold(False)
@@ -210,7 +166,7 @@ def _create_splash_screen(app, logo=None):
     painter.drawText(
         0,
         246,
-        canvas.width(),
+        width,
         24,
         Qt.AlignmentFlag.AlignHCenter,
         "Loading analysis tools...",
@@ -280,12 +236,11 @@ def main() -> None:
 
     apply_bench_style(app)
 
-    startup_pixmap = _load_startup_pixmap("logo_256x256.png")
+    startup_pixmap = _load_startup_pixmap("logo.png")
     if startup_pixmap is None:
-        startup_pixmap = _load_resource_pixmap("logo_256x256.png")
-    icon = _load_app_icon(startup_pixmap)
-    if icon is not None:
-        app.setWindowIcon(icon)
+        startup_pixmap = _load_resource_pixmap("logo.png")
+    icon = _load_app_icon()
+    app.setWindowIcon(icon)
 
     splash = _create_splash_screen(app, startup_pixmap)
 
@@ -301,11 +256,6 @@ def main() -> None:
     # Registered as the base, not set: the first MainWindow composes it with
     # the scale block and applies the sheet once its widget tree is built.
     set_base_stylesheet(app, _load_bench_stylesheet())
-
-    if icon is None:
-        icon = _load_app_icon()
-        if icon is not None:
-            app.setWindowIcon(icon)
 
     # Discover user functions before the main window is built so plugin
     # components are in the registries when the pickers first render. The

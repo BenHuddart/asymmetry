@@ -337,7 +337,7 @@ def main(arguments: list[str]) -> int:
 
         import asymmetry
 
-        resource = Path(asymmetry.__file__).parent / "resources/logo_256x256.png"
+        resource = Path(asymmetry.__file__).parent / "resources/logo.png"
         if QImage(str(resource)).isNull():
             raise ValueError("packaged logo cannot be decoded")
         report["resource_sha256"] = hashlib.sha256(resource.read_bytes()).hexdigest()

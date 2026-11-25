@@ -171,7 +171,7 @@ def test_actual_missing_used_resource_fails_before_analysis(tmp_path, inputs):
     shutil.copytree(
         ROOT / "src/asymmetry", source / "asymmetry", ignore=shutil.ignore_patterns("__pycache__")
     )
-    (source / "asymmetry/resources/logo_256x256.png").unlink()
+    (source / "asymmetry/resources/logo.png").unlink()
     # The copied source has no .git; source identity is deliberately fixed for this omission control.
     bootstrap = tmp_path / "entry.py"
     bootstrap.write_text(
@@ -454,8 +454,8 @@ def test_entry_accepts_macos_bundle_resource_symlinks_and_rejects_escape(tmp_pat
     resources.mkdir()
     (resources / "asymmetry/resources").mkdir(parents=True)
     shutil.copyfile(
-        ROOT / "src/asymmetry/resources/logo_256x256.png",
-        resources / "asymmetry/resources/logo_256x256.png",
+        ROOT / "src/asymmetry/resources/logo.png",
+        resources / "asymmetry/resources/logo.png",
     )
     # The delivered macOS inventory places pure-Python package data in Resources.
     (frameworks / "asymmetry").symlink_to("../Resources/asymmetry", target_is_directory=True)

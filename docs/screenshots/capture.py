@@ -391,6 +391,7 @@ def _import_scenarios() -> None:
         single_fit_saved_fits,
         spectral_fit_errors,
         spectral_moments_readout,
+        startup,
         suggest_next_point,
         trend_model_fit_dialog,
         vector_polarization_emu,

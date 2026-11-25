@@ -18,7 +18,7 @@ easy to find without a repo-wide grep.
   flows and therefore live in `tests/gui/` instead — see the placement rule
   below.
 - `tests/tools/` — tests of repo tooling: `tools/harness.py`, packaging
-  (`packaging/macos_icon.py`, Windows installer), and lint-guard tests that
+  (`tools/branding.py`, Windows installer), and lint-guard tests that
   check source text for a convention (design-token/hex discipline, app-import
   smoke checks that assert on structure rather than runtime GUI behavior).
 - `tests/integration/` — genuinely cross-cutting end-to-end tests that do not

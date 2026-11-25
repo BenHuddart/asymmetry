@@ -201,7 +201,7 @@ def omission_components(components: list, control: dict, target: str) -> dict:
             item
             for item in components
             if item.get("sha256") == control["resource_sha256"]
-            and Path(item["path"]).name == "logo_256x256.png"
+            and Path(item["path"]).name == "logo.png"
             and item["kind"] == "resource"
         ],
         "backend": [

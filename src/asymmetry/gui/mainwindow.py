@@ -40,7 +40,6 @@ from PySide6.QtGui import (
     QGuiApplication,
     QIcon,
     QKeySequence,
-    QPixmap,
 )
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -560,51 +559,11 @@ def _write_text_file(path: str, content: str) -> None:
 
 
 @functools.cache
-def _load_window_icon() -> QIcon | None:
-    """Load the window icon, decoding the PNG only once per process.
+def _load_window_icon() -> QIcon:
+    """Share the packaged multi-resolution icon across all project windows."""
+    from asymmetry.gui.app import _load_app_icon
 
-    Decoding ``logo_256x256.png`` into a ``QPixmap`` costs ~0.15s, which a fresh
-    ``MainWindow`` otherwise paid on every construction — a meaningful tax across
-    the ~1.5k GUI tests that each build a window. The decoded ``QIcon`` is
-    immutable and shareable across windows, so the result (including a ``None``
-    "could not load") is memoized for the process; ``cache_clear()`` is available
-    if a test ever needs to force a reload.
-
-    Returns None if the icon cannot be loaded.
-    """
-    from asymmetry.gui.app import _icon_from_pixmap, _load_resource_pixmap, _macos_icon_pixmap
-
-    # Try importlib.resources (preferred for installed packages)
-    try:
-        from importlib.resources import files
-
-        logo = files("asymmetry.resources").joinpath("logo_256x256.png")
-        if logo.is_file():
-            pixmap = QPixmap()
-            if pixmap.loadFromData(logo.read_bytes(), "PNG"):
-                icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
-                if icon is not None and not icon.isNull():
-                    return icon
-    except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
-        pass
-
-    icon = _icon_from_pixmap(_macos_icon_pixmap(_load_resource_pixmap("logo_256x256.png")))
-    if icon is not None:
-        return icon
-
-    # Fallback: try direct path (for development)
-    try:
-        resources_dir = Path(__file__).parent.parent / "resources"
-        icon_path = resources_dir / "logo_256x256.png"
-        if icon_path.exists():
-            pixmap = QPixmap(str(icon_path))
-            icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
-            if icon is not None and not icon.isNull():
-                return icon
-    except (OSError, ValueError):
-        pass
-
-    return None
+    return _load_app_icon()
 
 
 def _coerce_bool(value: object, default: bool = False) -> bool:
