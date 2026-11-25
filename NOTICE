@@ -1,34 +1,38 @@
 Asymmetry
 Copyright (c) 2026 Asymmetry Contributors
 
-This product is licensed under the MIT License (see LICENSE).
+Asymmetry's original contributions are licensed under the MIT License
+(see LICENSE). Referenced software and bundled third-party materials retain
+their own copyrights and licence terms.
 
 ================================================================================
-Prior art and attribution
+Methods, conventions and attribution
 ================================================================================
 
-Asymmetry is a from-scratch Python toolkit for muon-spin spectroscopy (μSR) data
-analysis. Its analysis methods, fit models, data conventions, and file-format
-support were learned by studying established μSR programs and the μSR literature,
-and were then INDEPENDENTLY REIMPLEMENTED in Python. No source code from any of
-the programs below was copied, transcribed, or mechanically translated into this
-repository. Shared elements are unprotectable facts: mathematical formulae,
-physical constants, published algorithms, and documented file-format layouts.
-Where the implementation follows one of these programs, the relevant source file
-or docstring cites it. Published comparisons and attribution are at
+Asymmetry is a Python toolkit for muon-spin spectroscopy (μSR) data analysis.
+Its analysis methods, fit models, workflows and file-format support draw on the
+μSR literature and established μSR programs. References include publications,
+manuals, documented formats, observed behaviour and source-level study.
+
+The acknowledgements below describe these references and the conventions they
+inform. They do not grant permission to redistribute another project's code
+under Asymmetry's MIT licence. Published method comparisons and their validation
+scope are described at
 https://benhuddart.github.io/asymmetry/explanation/comparison.html.
-
-We gratefully acknowledge the following projects and their authors:
 
 --------------------------------------------------------------------------------
 WiMDA
 --------------------------------------------------------------------------------
-A muon-spin-spectroscopy data-analysis program by Francis L. Pratt (ISIS Muon
-Group). WiMDA is freely-available freeware; its source code is not published
-under an open-source licence and remains the author's. Asymmetry reimplements a
-number of WiMDA's fit functions, asymmetry/grouping conventions, frequency- and
-count-domain methods, and maximum-entropy reconstruction from the documented
-mathematics and observable behaviour only.
+A freely available muon-spin-spectroscopy data-analysis program by Francis L.
+Pratt (ISIS Muon Group).
+Copyright (c) 2000-2022 Francis Pratt and ISIS Rutherford Appleton Laboratory.
+
+Asymmetry includes WiMDA-derived fit-function and detector-balance conventions,
+a radical line-pair combiner, a comparison mode for rotating-frame display,
+and a zero-frequency spectral-background convention.
+Its count- and frequency-domain workflows also follow conventions described
+by WiMDA. The applicable rights in WiMDA and its fitting libraries remain with their
+respective rights holders.
 
   F. L. Pratt, "WiMDA: a muon data analysis program for the Windows PC",
   Physica B 289-290, 710-714 (2000).
@@ -36,10 +40,12 @@ mathematics and observable behaviour only.
 --------------------------------------------------------------------------------
 musrfit
 --------------------------------------------------------------------------------
-An open-source μSR fitting framework. Licensed under the GNU General Public
-License. Asymmetry's PSI-BIN/MDU and MusrRoot readers were written from the
-documented binary/file-format layouts (a file format is a fact, not copyrightable
-expression); no musrfit source was incorporated.
+An open-source μSR fitting framework by Andreas Suter, Bastian Wojek and
+contributors, distributed under the GNU General Public License. Asymmetry's
+PSI-BIN/MDU and MusrRoot support, instrument groupings, fitting conventions and
+asymmetry-balance conventions refer to musrfit's formats, documentation, source
+and observed behaviour. The applicable licence version and terms accompany the
+musrfit distribution.
 
   A. Suter and B. M. Wojek, "Musrfit: A Free Platform-Independent Framework for
   muSR Data Analysis", Physics Procedia 30, 69-73 (2012).
@@ -47,10 +53,11 @@ expression); no musrfit source was incorporated.
 --------------------------------------------------------------------------------
 Mantid
 --------------------------------------------------------------------------------
-An open-source data-reduction and analysis framework. Licensed under the GNU
-General Public License v3. Asymmetry's NeXus muon loading, asymmetry/alpha
-conventions, deadtime handling, and ALC field-scan workflow were studied from
-Mantid's documented behaviour and reimplemented independently.
+An open-source data-reduction and analysis framework distributed under the GNU
+General Public License v3 or later. Asymmetry's NeXus muon loading,
+asymmetry/alpha conventions, deadtime handling, integral field-scan workflows
+and MaxEnt pulse-response comparisons refer to Mantid's formats, documentation,
+source and observed behaviour.
 
   O. Arnold et al., "Mantid - Data analysis and visualization package for
   neutron scattering and muSR experiments", Nucl. Instrum. Methods A 764,
@@ -62,3 +69,5 @@ Bundled assets
 
 IBM Plex Mono (src/asymmetry/resources/fonts/) is distributed under the SIL Open
 Font License, Version 1.1.
+
+Packaged runtime notices are collected in THIRD_PARTY_LICENSES.md.

@@ -1410,6 +1410,31 @@ the three-spin Hamiltonian; the decoupled-proton check is a composition check
 against the two-spin implementation. Neither proves visibility of both branches
 throughout the root-search interval.
 
+For a first-order comparison, the Python helper
+``analytic_rf_transition_freqs(field, A_mu, A_p)`` treats the proton as a
+spectator with projection :math:`m_p=\pm\tfrac12`. It returns signed gaps from
+the aligned electron-muon state :math:`|\uparrow\uparrow\rangle` to the higher
+mixed :math:`m_z=0` state, with the :math:`+\tfrac12` proton sector first.
+Writing :math:`Z=(g_e+g_\mu)B` and :math:`R=\sqrt{A_\mu^2+Z^2}`, their centre
+and half-splitting are
+
+.. math::
+
+   c = \frac{A_\mu+(g_e-g_\mu)B-R}{2},\qquad
+   d = \frac{A_p}{4}\left(1-\frac{Z}{R}\right),\qquad
+   (f_+,f_-)=(c+d,c-d).
+
+The proton Zeeman shift cancels within each transition. Field is in Gauss and
+couplings and gaps are in MHz. The higher mixed state defines the branch for
+either sign of :math:`A_\mu`; at :math:`A_\mu=B=0`, the helper uses the
+:math:`B=0, A_\mu\to0^+` triplet continuation, setting :math:`Z/R=0`.
+Independent spin-matrix expectations check these diagonal first-order shifts
+to :math:`2\times10^{-12}` MHz absolute error in the tested cases, which include
+positive, negative, and zero fields and muon couplings. They do not establish
+the physical accuracy of first-order perturbation theory, resolve degeneracies,
+or predict visibility.
+``RFResonanceMuP`` uses the exact three-spin gaps rather than this approximation.
+
 The resonance **mean** tracks :math:`A_\mu` and the **splitting** tracks
 :math:`A_p`. Set the amplitudes negative to fit resonance dips (the usual
 Red − Green observable); hold :math:`\nu_{\mathrm{RF}}` fixed at the applied

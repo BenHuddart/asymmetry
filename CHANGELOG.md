@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Derive the analytic RF comparison helper directly from spin perturbation theory,
+  with signed branches and finite zero-coupling limits checked independently.
+- Describe the current analysis conventions and source references accurately in
+  the provenance notice, retaining the original licence boundaries.
+
 ## [0.29.0] - 2026-11-25
 
 - Reuse the selected Inno Setup version when it is already installed.

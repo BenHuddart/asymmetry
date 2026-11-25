@@ -175,8 +175,8 @@ def test_dip_inversion_is_start_independent() -> None:
 
 
 def test_analytic_underestimates_the_split_versus_exact() -> None:
-    """WiMDA's first-order analytic levels give too small an RF resonance split
-    at these low fields (the paper's stated reason for exact diagonalisation)."""
+    """First-order proton shifts underestimate the exact resonance split
+    for these couplings and applied frequency."""
 
     def split(freqs_fn) -> float:  # type: ignore[no-untyped-def]
         from scipy.optimize import brentq

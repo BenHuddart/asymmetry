@@ -11,6 +11,8 @@ radical spectroscopy context, not a global proof of this branch selection.
 
 from __future__ import annotations
 
+from math import hypot
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import brentq
@@ -113,6 +115,37 @@ def rf_transition_freqs(
     return levels[:, 6] - levels[:, 4], levels[:, 7] - levels[:, 5]
 
 
+def analytic_rf_transition_freqs(field: float, A_mu: float, A_p: float) -> tuple[float, float]:
+    """Signed RF gaps from first-order proton perturbations, in MHz.
+
+    Diagonalising the electron-muon part of the module's contact Hamiltonian
+    gives a mixed-state separation R=hypot(A_mu, (g_e+g_mu)*B). The upper
+    mixed state has electron projection (g_e+g_mu)*B/(2*R); the aligned
+    |up,up> state has projection 1/2. Their unperturbed gap is
+    [A_mu+(g_e-g_mu)*B-R]/2. A proton with m_p=+1/2 or -1/2 adds
+    A_p*m_p times the difference of those projections. Its Zeeman term
+    cancels because m_p is conserved in each transition.
+
+    ``field`` is in Gauss; both couplings are in MHz. Return the +1/2 proton
+    sector first, without absolute values or sorting. The mixed state is the
+    higher m_z=0 eigenstate for either sign of A_mu. At A_mu=B=0 use the
+    B=0, A_mu -> 0+ triplet continuation (zero electron projection).
+    These diagonal first-order shifts do not resolve degenerate perturbations
+    or predict visibility. The fitted model uses :func:`rf_transition_freqs`,
+    which diagonalises the full three-spin Hamiltonian instead.
+    """
+    b = float(field)
+    a = float(A_mu)
+    zeeman_sum = (G_E_MHZ_PER_G + G_MU_MHZ_PER_G) * b
+    separation = hypot(a, zeeman_sum)
+    electron_polarisation = zeeman_sum / separation if separation else 0.0
+    # Rationalise R-A_mu to retain the small-field gap when A_mu is positive.
+    mixing_shift = (
+        zeeman_sum * (zeeman_sum / (separation + a)) if a >= 0.0 and separation else separation - a
+    )
+    centre = ((G_E_MHZ_PER_G - G_MU_MHZ_PER_G) * b - mixing_shift) / 2.0
+    splitting = float(A_p) * (1.0 - electron_polarisation) / 4.0
+    return centre + splitting, centre - splitting
 
 
 def _lowest_ascending_root(
