@@ -85,8 +85,9 @@ Extras can be combined inside the quoted brackets. ``gui`` installs the interfac
 only; choose the readers that your acquisitions need.
 
 .. list-table:: Installation extras
+   :class: installation-extras
    :header-rows: 1
-   :widths: 15 45 40
+   :widths: 25 35 40
 
    * - Extra
      - Provides

@@ -66,6 +66,12 @@
     white-space: normal;
 }
 
+/* Installation extra names are command arguments and remain whole. */
+.rst-content table.installation-extras td:first-child code,
+.rst-content table.installation-extras td:first-child code .pre {
+    white-space: nowrap;
+}
+
 /* Long formulae scroll within the reading column on small screens. */
 .rst-content div.math {
     max-width: 100%;
