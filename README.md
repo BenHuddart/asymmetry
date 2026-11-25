@@ -2,367 +2,179 @@
 
 # Asymmetry
 
-A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and visualization.
+A Python library, command-line tool, and desktop application for muon-spin spectroscopy (μSR).
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#project-status) [![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/BenHuddart/asymmetry/blob/main/LICENSE) [![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#project-status-and-validation) [![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
 
-⬇️ **[Download the latest release](https://github.com/BenHuddart/asymmetry/releases/latest)** · 📖 [Documentation](https://benhuddart.github.io/asymmetry/) · [Changelog](CHANGELOG.md) · [Issue tracker](https://github.com/BenHuddart/asymmetry/issues) · [Contributing](CONTRIBUTING.md)
+**[Download the desktop application](https://github.com/BenHuddart/asymmetry/releases/latest)** ·
+[Documentation](https://benhuddart.github.io/asymmetry/) ·
+[Issue tracker](https://github.com/BenHuddart/asymmetry/issues) ·
+[Changelog](https://github.com/BenHuddart/asymmetry/blob/main/CHANGELOG.md)
 
 ## Overview
 
-Asymmetry combines a pure-Python analysis library with a PySide6 desktop application for
-day-to-day μSR analysis: loading raw or reduced data, applying detector grouping and asymmetry
-transforms, fitting time-domain signals, exploring parameter trends, and saving full GUI sessions
-for later reuse.
+Asymmetry provides tools for reducing, analysing, and visualising μSR data through Python,
+command-line, and graphical interfaces. It supports detector grouping and calibration, time-
+and frequency-domain fitting, Fourier and maximum-entropy analysis, parameter trends, and
+saving analysis sessions for reuse.
 
-## Project status
+- **Data loading:** read supported ISIS NeXus, PSI BIN/MDU, and ROOT acquisitions, including
+  multi-period runs. See the [loading guide](https://benhuddart.github.io/asymmetry/reference/loading_data.html)
+  for supported layouts and required readers.
+- **Reduction and calibration:** select detector groups, estimate detector balance, apply
+  timing, deadtime, and background settings, and rebin or combine compatible data.
+- **Fitting:** fit time-domain signals, raw detector counts, multiple detector groups, or
+  simultaneous run series using built-in models and composite expressions.
+- **Spectra:** compute Fourier spectra with windowing and phase controls, or reconstruct
+  spectra with a maximum-entropy solver.
+- **Scans and trends:** analyse integral field/RF scans, compare fitted parameters across
+  runs, and fit parameter trends with physical models.
+- **Simulation:** generate synthetic detector counts for teaching and checking an analysis
+  with known inputs and recorded random seeds.
+- **Projects and export:** save analysis sessions with their settings and provenance, reopen
+  them, and export plot data, figures, and GLE scripts.
+- **Scripting and agents:** use the Python API or the `asymmetry` CLI, with JSON output,
+  headless plots, and a packaged skill for Claude Code and Codex.
 
-> **Asymmetry is beta software under active development.** APIs may change between releases;
-> projects saved by released versions remain loadable. Validate results against an established
-> tool before relying on them for published work, and please report issues you hit. See the
+## Project status and validation
+
+> **Asymmetry is beta software under active development.** Its code and documentation have
+> been written by AI coding agents (Claude Code and Codex). Throughout development, numerical
+> behaviour has been checked through automated tests, independent mathematical references,
+> and comparisons with established μSR software. See the
 > [software comparisons](https://benhuddart.github.io/asymmetry/explanation/comparison.html)
 > for tested cases, agreement, and known limitations.
+>
+> Check scientific claims and model definitions against primary literature and other trusted
+> sources, and validate results for your analysis before relying on them for publication.
+> APIs may change between releases.
 
-## Main functionality
-
-- **Data loading**: load ISIS muon NeXus `.nxs` / `.nexus` (modern HDF5 and legacy HDF4
-  containers), PSI BIN/MDU, and ROOT files through a common API, including multi-period
-  NeXus runs.
-- **Core data workflows**: apply grouping, estimate alpha, compute asymmetry, rebin data, and
-  co-add compatible datasets with propagated uncertainties.
-- **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
-  μSR models and calculator-style composite expressions assembled with arithmetic operators and
-  parentheses.
-- **Count-domain fitting**: fit raw forward/backward detector counts directly (single-histogram or
-  F+B), with deadtime, background, and double-pulse terms.
-- **Grouped time-domain fitting**: fit multiple detector groups jointly for Knight-shift, vortex-state,
-  and geometry-sensitive observables. A **Single** tab fits one run's groups; a **Batch** tab fits a
-  multi-run series with the same model, collecting results for parameter trending.
-- **Longitudinal-field KT support**: includes `LongitudinalFieldKT` / `LFKuboToyabe` models with
-  field-aware defaults (`B_L` can be initialized from run metadata where available).
-- **Batch and global fit parameter typing**: per-parameter role selection — `Global` (shared across
-  runs), `Local` (per-run), `Fixed` — with the relationship (batch vs. global) derived automatically
-  from the role table. Results are recorded as a trendable `FitSeries`.
-- **Parameter-model fitting**: fit field-, temperature-, or run-dependent parameter trends,
-  including superconducting penetration-depth workflows. The Fit Parameters panel is
-  representation-aware: switching between F-B Asymmetry, Detector Groups, and FFT views
-  automatically shows the series for the active representation. Series buttons use red
-  accents for visual identity; member datasets are highlighted red in the browser while
-  the panel is visible. Right-click a series button to **rename** it, **select its
-  members** in the browser (true selection), or **delete** the series from the project.
-- **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
-  with safe parsing and first-order uncertainty propagation (including covariance support when
-  available).
-- **Frequency-domain analysis**: compute grouped FFT spectra with explicit
-  apodisation, selectable phase modes, per-run phase tables, and manual or
-  estimated phase correction; or reconstruct spectra with a maximum-entropy
-  solver, including pulsed-source response and deadtime handling.
-- **Simulation**: generate synthetic single- or multi-period count runs from a model, for testing,
-  teaching, and fit validation.
-- **Logbook and metadata handling**: inspect run metadata, build searchable run logbooks, and use
-  metadata columns inside the GUI browser.
-- **Interactive GUI**: browse loaded runs, inspect plots, adjust grouping, run fits, trend fitted
-  parameters, adjust UI scale, and export plots.
-- **Project persistence**: save and reopen `.asymp` project files containing datasets, browser
-  state, plot state, fit state, Fourier settings, and per-run Fourier phase-table state.
-- **Extensible I/O**: register custom loaders at runtime for additional file formats.
-- **Optional publication export**: export trend and plot data for GLE-based figure generation.
-- **Scripting and agents**: an `asymmetry` command-line workflow to survey, select acquisition
-  periods, calibrate, reduce, inspect Fourier spectra, fit ALC/QLCR field scans, run true
-  simultaneous fits, and trend scans and fit physical laws to the trends, with headless plots and a `--json` payload on
-  every command, plus a packaged `asymmetry-analysis` skill that lets an AI coding agent drive it.
+Projects saved by released versions remain loadable. The
+[numerical accuracy guide](https://benhuddart.github.io/asymmetry/explanation/numerical_accuracy.html)
+explains evaluation targets and their scientific scope.
 
 ## Installation
 
-### Download the desktop application (recommended for most users)
+### Desktop application
 
-The easiest way to run Asymmetry is the prebuilt desktop installer — no Python setup required.
+[Download the latest release](https://github.com/BenHuddart/asymmetry/releases/latest) for
+**Windows x64** or **macOS on Apple Silicon**. The installer includes Python and the GUI
+dependencies. Open Asymmetry from the Windows Start menu or the macOS Applications folder.
+Linux and Intel Mac users can use a Python installation.
 
-- **[Download the latest release →](https://github.com/BenHuddart/asymmetry/releases/latest)**
+### Python installation
 
-Installers are published on the [Releases page](https://github.com/BenHuddart/asymmetry/releases)
-for each tagged version:
-
-| Platform | Artifact |
-|----------|----------|
-| Windows (x64) | Inno Setup installer (`.exe`) with desktop/start-menu shortcuts |
-| macOS (Apple Silicon, arm64) | `.dmg`, drag-to-Applications |
-
-Intel Macs are not covered by a pre-built release: install from source (below) or use
-Rosetta with a local Python environment. Linux users also install from source; the core
-library and GUI run on all three platforms when built locally.
-
-### Install from source (Python users and contributors)
-
-For scripting against the library, or for development, install from the Git repository.
-Asymmetry requires Python 3.11 or later.
-
-#### Clone the repository
+Asymmetry requires Python 3.11 or later; clean installations are checked on Python 3.11,
+3.12, and 3.13. Use a virtual environment as described in the
+[installation guide](https://benhuddart.github.io/asymmetry/getting_started/installation.html).
+For a version published on PyPI, install the full end-user Python feature set and launch:
 
 ```bash
-git clone https://github.com/BenHuddart/asymmetry.git
-cd asymmetry
-```
-
-#### Recommended Python install (full functionality, no dev tools)
-
-```bash
-python -m pip install -c constraints.txt ".[all]"
-```
-
-This installs the full end-user feature set (GUI + optional file/export support) without
-development dependencies.
-
-#### Other install options from the checked-out repository
-
-```bash
-# Core library and CLI help (NumPy, SciPy, iminuit; no GUI or plotting)
-python -m pip install -c constraints.txt .
-
-# With GUI support
-python -m pip install -c constraints.txt ".[gui]"
-
-# With GUI and optional file/export support
-python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
-
-# Everything, including development dependencies
-python -m pip install -c constraints.txt ".[all,dev]"
-
-# Editable install for contributors
-python -m pip install -c constraints.txt -e ".[all,dev]"
-```
-
-#### Install directly with pip from GitHub
-
-```bash
-# Core library
-python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
-
-# Full end-user feature set (no development extras)
-python -m pip install "asymmetry[gui,hdf5,hdf4,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
-```
-
-Using [constraints.txt](constraints.txt) is recommended for local installs so the scientific Python
-stack stays within the versions tested by the project.
-
-#### Optional dependencies
-
-| Component | Requirement |
-|-----------|-------------|
-| Core | NumPy, SciPy, iminuit |
-| GUI | PySide6, Matplotlib |
-| NeXus / HDF5 | h5py |
-| HDF4 (legacy ISIS `.nxs`) | pyhdf — see note below |
-| ROOT import | uproot |
-| agent | matplotlib, h5py |
-| GLE export | `gleplot==6.1.1` from PyPI plus a local GLE installation (Cairo for overlapping fills and SVG) |
-| Development | pytest, pytest-cov, ruff, Sphinx |
-
-##### Reading legacy HDF4 `.nxs` files
-
-Pre-~2015 ISIS muon runs (the format WiMDA reads natively) are NeXus v1 stored
-in an **HDF4** container. Reading them needs the optional `hdf4` extra,
-installed from your repository checkout:
-
-```bash
-python -m pip install ".[hdf4]"
-```
-
-On **Linux** the `pyhdf` wheel bundles the HDF4 C library. On **macOS (Apple
-Silicon)** the PyPI wheel does too (there is no Intel macOS wheel — use
-conda-forge `pyhdf` or build from source on Intel Macs). On **Windows**,
-`pyhdf` additionally requires the HDF4 runtime (`hdf.dll` / `mfhdf.dll`):
-install the conda-forge `hdf4` package, or run
-`python packaging/windows/fetch_hdf4_dlls.py <dir>` and point the
-`ASYMMETRY_HDF4_DLL_DIR` environment variable at `<dir>`. The **pre-built
-Windows and Apple Silicon macOS binaries bundle the HDF4 runtime**, so no extra
-setup is needed there. See [docs/reference/loading_data.rst](docs/reference/loading_data.rst)
-for details.
-
-### Use Asymmetry from an AI coding agent
-
-The `asymmetry` command-line workflow wraps the same core API in a script- and
-agent-friendly form: survey a folder of runs, select acquisition periods,
-calibrate alpha, reduce to asymmetry, inspect Fourier spectra, fit an integral
-ALC/QLCR scan or a simultaneous run group, screen time-domain models with the
-wizard, fit a conventional scan as a series, and trend the results. It offers
-`--json` output and headless plots throughout. It
-ships with a packaged `asymmetry-analysis` skill that teaches an AI coding
-agent (Claude Code or Codex, so far) to drive that workflow end to end.
-
-```bash
-pipx install "asymmetry[agent] @ git+https://github.com/BenHuddart/asymmetry.git"
-asymmetry skill install --agent claude   # or --agent codex
-asymmetry skill check
-```
-
-Run the commands from the project directory you are working in and pass the
-data folder as an argument: each one caches its state in a visible
-`./asymmetry-work/` beside you — never in the data folder, which is often a
-read-only share — and one such directory holds one data folder's session.
-
-Restart the agent after installing (or upgrading) the skill so it picks up
-the change — an already-running session has already scanned its skills
-directory. The skill installs into `~/.claude/skills/asymmetry-analysis/` or
-`~/.agents/skills/asymmetry-analysis/` by default (`--project` installs under
-`./.claude` or `./.agents` instead); rerun `asymmetry skill install` after
-upgrading the package, and `asymmetry skill check` will say so if you forget.
-Note that the prebuilt desktop application does **not** put this CLI on
-`PATH` — it is a separate install even on a machine that already has the
-desktop app. See [docs/reference/agent_workflow.rst](docs/reference/agent_workflow.rst)
-for the full command reference, the work directory layout, and the fit
-recipe format.
-
-## Quick start
-
-### Load a dataset in Python
-
-```python
-from asymmetry.core.io import load
-
-dataset_or_periods = load("data/EMU00012345.nxs")
-dataset = dataset_or_periods[0] if isinstance(dataset_or_periods, list) else dataset_or_periods
-
-print(dataset.summary())
-```
-
-The same `load(...)` entry point works for supported NeXus, PSI, and ROOT files.
-
-### Launch the GUI
-
-```bash
+python -m pip install "asymmetry[all]"
 asymmetry-gui
 ```
 
-Within the GUI, use **Edit…** (single/batch fit) and **Edit Model...** (parameter
-trending) to build expression-based models with grouped terms and live validation.
-
-### Drive an analysis from a shell or an AI agent
-
-See [Use Asymmetry from an AI coding agent](#use-asymmetry-from-an-ai-coding-agent)
-above to install the `asymmetry` command-line workflow and its packaged skill, and
-[docs/reference/agent_workflow.rst](docs/reference/agent_workflow.rst) for the full
-command reference.
-
-## Documentation
-
-The Sphinx documentation source lives in [docs](docs). The intended GitHub Pages site for the
-project is:
-
-- [https://benhuddart.github.io/asymmetry/](https://benhuddart.github.io/asymmetry/)
-
-To build the documentation locally:
+If the version you need is not available on PyPI, use the
+[source installation](https://benhuddart.github.io/asymmetry/getting_started/installation.html#source-installation).
+The core library and CLI can also be installed on their own:
 
 ```bash
-python -m pip install -c constraints.txt -r docs/requirements.txt
-make -C docs html
+python -m pip install asymmetry
 ```
 
-Then open `docs/_build/html/index.html` in a browser.
-
-The documentation covers installation, data loading, detector grouping, vector-polarization
-workflows, fitting, parameter trending, superconducting analysis, project files, and the API
-reference.
-
-## Project structure
-
-```text
-src/asymmetry/
-├── core/           # Analysis engine, data model, loaders, transforms, fitting, Fourier tools
-├── gui/            # PySide6 application, panels, dialogs, and windows
-├── cli/            # Command-line entry point (survey, alpha, reduce, info)
-└── __main__.py     # python -m asymmetry
-```
-
-Runnable examples live in [examples](examples), including data loading, transforms, composite
-models, parameter trending, project files, and custom loader registration.
-
-## Testing
+Extras select additional Python dependencies and can be combined:
 
 ```bash
-python tools/harness.py test
-python -m pytest --cov=src/asymmetry --cov-report=term
+python -m pip install "asymmetry[gui,hdf5,root]"
 ```
 
-For agent and CI-aligned validation, prefer the harness ladder in the next section.
+| Extra | Provides |
+|---|---|
+| `all` | GUI, file readers, headless plots, and GLE support; excludes development tools and CUDA |
+| `gui` | Desktop interface and Matplotlib |
+| `agent` | Headless plots and HDF5 loading for CLI/agent workflows |
+| `hdf5` | HDF5 NeXus reading and writing |
+| `hdf4` | Legacy HDF4 NeXus reading |
+| `root` | Supported μSR ROOT file reading |
+| `gle` | GLE script generation |
+| `gpu` | Optional CUDA acceleration for MaxEnt |
+| `dev` | Contributor tools for testing, lint, and documentation |
 
-## Agent harness
+HDF4 can require native libraries, and compiling GLE scripts requires the external GLE
+program. GPU use requires compatible NVIDIA hardware and drivers. See the
+[installation guide](https://benhuddart.github.io/asymmetry/getting_started/installation.html#external-programs-and-runtimes)
+for platform requirements. The desktop installers bundle their HDF4 runtime.
 
-Asymmetry keeps agent-facing project knowledge in the repository. Start with
-[AGENTS.md](AGENTS.md), then use the harness commands for repeatable validation:
+## Quick start
+
+For a complete GUI analysis with no measurement files, follow the
+[synthetic first-analysis walkthrough](https://benhuddart.github.io/asymmetry/getting_started/quickstart.html).
+It generates detector counts, fits a relaxation, and saves a reopenable project and report.
+
+### Fit synthetic data in Python
+
+This example needs only the core installation. Time is in μs, asymmetry is in percent,
+and `sigma` is in percentage points. The seeded Gaussian observations are a
+demonstration, not acquired detector counts.
+
+```python
+import numpy as np
+from asymmetry.core.fitting import FitEngine, Parameter, ParameterSet
+from asymmetry.core.fitting.models import exponential_relaxation
+
+time_us = np.linspace(0.0, 10.0, 201)
+sigma = np.full_like(time_us, 0.3)
+signal = 24.0 * np.exp(-0.3 * time_us) + 2.0
+rng = np.random.default_rng(23)
+asymmetry = signal + rng.normal(0.0, sigma)
+
+parameters = ParameterSet([
+    Parameter("A0", 20.0, min=0.0),
+    Parameter("Lambda", 0.2, min=0.0),
+    Parameter("baseline", 1.0),
+])
+result = FitEngine().fit_arrays(
+    time_us, asymmetry, sigma, exponential_relaxation, parameters
+)
+print(result.parameters["Lambda"].value)
+```
+
+The fitted rate should be close to the generating value, 0.3 μs⁻¹. Continue with the
+[API cookbook](https://benhuddart.github.io/asymmetry/reference/cookbook.html) for acquisition
+loading, calibration, reduction, and fitting recipes.
+
+### Use the CLI or an AI coding agent
+
+For a published release, install the headless workflow with pipx:
 
 ```bash
-python tools/harness.py structural
-python tools/harness.py lint
-python tools/harness.py test
-python tools/harness.py validate
+pipx install "asymmetry[agent]"
+asymmetry --help
+asymmetry skill install --agent claude  # or --agent codex
+asymmetry skill check
 ```
 
-See [docs/HARNESS.md](docs/HARNESS.md) for the validation ladder and agent workflow.
-The lint step checks `src`, `tests`, and `tools`. Locally, the harness prefers
-the project `.venv` automatically when it exists.
+Restart the agent after installing or upgrading its skill. After upgrading Asymmetry, rerun
+`asymmetry skill install` and `asymmetry skill check`. Add `hdf4` or `root` to the extras when
+your files require them. The desktop installer does not put this CLI on `PATH`.
+See the [CLI and agent guide](https://benhuddart.github.io/asymmetry/reference/agent_workflow.html)
+for source installation, skill management, and analysis commands.
 
-## Executable releases
+## Documentation and support
 
-Executable GUI releases are built in GitHub Actions and attached to GitHub Releases.
-Only **Windows x64** and **macOS arm64 (Apple Silicon)** installers are published;
-Intel macOS and Linux are source-install only.
+- [Installation](https://benhuddart.github.io/asymmetry/getting_started/installation.html)
+  and [first analysis](https://benhuddart.github.io/asymmetry/getting_started/quickstart.html)
+- [Worked analyses](https://benhuddart.github.io/asymmetry/workflows/index.html)
+  and [feature reference](https://benhuddart.github.io/asymmetry/reference/index.html)
+- [API cookbook](https://benhuddart.github.io/asymmetry/reference/cookbook.html)
+  and [API reference](https://benhuddart.github.io/asymmetry/api/index.html)
+- [Software comparisons](https://benhuddart.github.io/asymmetry/explanation/comparison.html)
+  and [numerical accuracy](https://benhuddart.github.io/asymmetry/explanation/numerical_accuracy.html)
+- [Report an issue](https://github.com/BenHuddart/asymmetry/issues)
+  or [contribute](https://github.com/BenHuddart/asymmetry/blob/main/CONTRIBUTING.md)
 
-- Workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
-- Trigger: push a git tag matching `v*` (for example `v0.1.0`)
-- Runners:
-  - `macos-14` — Apple Silicon DMG (`Asymmetry-<version>-macos-arm64.dmg`)
-  - `windows-2025` — Inno Setup installer (`Asymmetry-<version>-windows-x64-setup.exe`)
-- Packaging:
-  - PyInstaller `onedir` build for fast startup
-  - macOS arm64 DMG (dmgbuild settings + generated drag-to-Applications background)
-  - Windows Inno Setup installer with desktop/start-menu shortcuts and uninstaller
-
-Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.
-
-### Trigger a release build
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Pre-release tags are also supported (for example `v0.1.0-rc.1`).
-
-## Acknowledgements and prior art
-
-Asymmetry stands on the shoulders of the established μSR analysis programs and reimplements
-analysis methods studied from them. Models, conventions, and algorithms were learned from these
-projects and the μSR literature, then **independently reimplemented** in Python — no source code
-was copied or translated. We gratefully acknowledge:
-
-- **WiMDA** — μSR data-analysis program by **Francis L. Pratt** (freely-available freeware; its
-  source is not published under an open licence). F. L. Pratt, *Physica B* **289–290**, 710 (2000).
-- **musrfit** — A. Suter and B. M. Wojek, *Physics Procedia* **30**, 69 (2012). Licensed under the
-  GNU GPL.
-- **Mantid** — *Nuclear Instruments and Methods A* **764**, 156 (2014). Licensed under the GNU GPLv3.
-
-Where a model or file format follows one of these tools, the source files cite it directly. See
-[NOTICE](NOTICE) for attribution and the [comparison reference](https://benhuddart.github.io/asymmetry/explanation/comparison.html)
-for documented conventions and bounded comparisons. Physical constants and model formulae are cited to the μSR
-literature (notably Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*).
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
-
-## Contact
-
-Asymmetry is developed and maintained by **Ben Huddart** (University of Oxford,
-Department of Physics), <benjamin.huddart@physics.ox.ac.uk>.
-
-For bug reports and feature requests, please use the
-[issue tracker](https://github.com/BenHuddart/asymmetry/issues).
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for release notes.
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+Asymmetry is maintained by Ben Huddart. Models and file formats are implemented from
+published mathematics, documented formats, and observed behaviour. We acknowledge the work
+behind WiMDA, musrfit, and Mantid; see
+[NOTICE](https://github.com/BenHuddart/asymmetry/blob/main/NOTICE) for attribution and the
+[MIT licence](https://github.com/BenHuddart/asymmetry/blob/main/LICENSE) for Asymmetry's terms.

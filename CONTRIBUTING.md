@@ -51,6 +51,11 @@ Instrument definitions are frozen data with scoped evidence and generated review
 pages; the [worked authoring example](docs/contributing.rst#work-through-the-gps-declaration)
 uses the bundled profile rather than a second authoritative definition.
 
+The source documentation build above writes `docs/_build/html/index.html`;
+open it to inspect the result. Runnable examples live in [examples](examples).
+Release preparation and executable packaging follow [RELEASING.md](RELEASING.md).
+The maintained release workflow owns versioning and tags.
+
 Cite primary scientific sources and distinguish analytic tests, recorded native
 outputs, and fresh comparisons. Preserve released projects through tested,
 versioned converters. Unavailable inputs and historical results stay inspectable;
