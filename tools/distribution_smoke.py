@@ -147,6 +147,7 @@ def installed_probe(
         "lmfit",
         "ruff",
         "sphinx",
+        "readme_renderer",
         "cupy",
     ) + tuple(name for name in optional if name not in required_modules)
     for name in blocked:

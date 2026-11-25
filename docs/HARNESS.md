@@ -448,6 +448,8 @@ README's seeded fit. Release upload authority is confined to a separate,
 maintainer-reviewed OIDC job after Python, full-suite, and native gates succeed.
 Manual release rehearsals exercise those gates without uploading to PyPI or
 publishing a GitHub release. `RELEASING.md` defines retained evidence and recovery.
+The contributor `dev` extra includes the Markdown renderer needed by the
+publication-record tests; it is excluded from ordinary end-user installations.
 
 Child probes run outside the checkout with interpreter path injection removed,
 user sites disabled, and temporary home/config/data/plugin locations. They check
