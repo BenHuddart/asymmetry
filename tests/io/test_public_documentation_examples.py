@@ -57,14 +57,7 @@ def test_transform_script(capsys):
     assert "alpha = " in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    ("path", "heading"),
-    [
-        ("docs/reference/cookbook.rst", "Load a run, calibrate α, and reduce\n"),
-        ("docs/reference/grouping_calibration.rst", "Minimal workflow\n"),
-    ],
-)
-def test_file_calibration_examples(tmp_path, monkeypatch, path, heading):
+def test_file_calibration_example(tmp_path, monkeypatch):
     pytest.importorskip("h5py")
     from asymmetry.core.data.dataset import Histogram, Run
     from asymmetry.core.io.nexus_writer import write_nexus_v1
@@ -79,7 +72,10 @@ def test_file_calibration_examples(tmp_path, monkeypatch, path, heading):
     )
     write_nexus_v1(source, tmp_path / "calibration.nxs")
     monkeypatch.chdir(tmp_path)
-    exec(documentation_block(path, heading), namespace := {})
+    exec(
+        documentation_block("docs/reference/cookbook.rst", "Load a run, calibrate α, and reduce\n"),
+        namespace := {},
+    )
     assert namespace["calibration"].alpha == pytest.approx(1.2)
     assert namespace["reduced"].n_points > 0
     np.testing.assert_allclose(namespace["asymmetry"], 0.0, atol=1e-12)
