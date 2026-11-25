@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Declare beta maturity and make the `all` installation extra include end-user
+  features without development tools or CUDA; install contributor tools with `all,dev`.
+
 - Remove unused deadtime planning metadata from the source distribution.
 
 - Put common grouping, Fourier, and parameter-trend tasks before specialist

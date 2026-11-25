@@ -214,8 +214,11 @@ proof limits, baseline remediation, and explicit base selection are described in
 `tests/tools/test_distribution_smoke.py` uses small synthetic archives and fresh
 stdlib-only fixture venvs to reject inconsistent metadata, missing resources,
 broken imports/entrypoints, altered artifact bytes, and source-path leakage.
-The real build/install smoke runs separately in CI on Python 3.11 and 3.12;
-see `docs/HARNESS.md`. These targets install only declared core requirements.
+The real build/install smoke runs separately in CI on Python 3.11, 3.12, and
+3.13, with constrained and ordinary dependency resolution. Fresh environments
+exercise core, GUI with HDF5/ROOT, agent, and full end-user profiles; optional
+dependency isolation and real reader/plot/export/launcher operations are checked.
+See `docs/HARNESS.md` for commands and the native-runtime/GPU coverage limits.
 
 ## Explicit corpus grouping
 

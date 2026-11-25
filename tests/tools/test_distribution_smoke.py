@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -14,6 +15,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
 from tools.distribution_smoke import (
@@ -26,6 +28,27 @@ from tools.distribution_smoke import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_full_install_supplies_end_user_features_without_tools() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    pending = ["all"]
+    visited = set()
+    dependencies = set()
+    while pending:
+        extra = pending.pop()
+        if extra in visited:
+            continue
+        visited.add(extra)
+        for value in project["optional-dependencies"][extra]:
+            requirement = Requirement(value)
+            if requirement.name.lower() == project["name"].lower():
+                pending.extend(requirement.extras)
+            else:
+                dependencies.add(requirement.name.lower())
+    assert {"pyside6", "matplotlib", "h5py", "pyhdf", "uproot", "gleplot"} <= dependencies
+    assert not {"dev", "gpu"} & visited
+    assert not {"pytest", "ruff", "sphinx", "cupy-cuda13x"} & dependencies
 
 
 def test_supported_minimum_matches_required_enum_api() -> None:
@@ -46,12 +69,12 @@ def artifact(tmp_path: Path) -> tuple[Path, Path, Path]:
     source = tmp_path / "source"
     source.mkdir()
     (source / "pyproject.toml").write_text(
-        '[project]\nname="asymmetry"\nversion="1.0"\nrequires-python=">=3.11"\n'
+        '[project]\nname="Asymmetry"\nversion="1.0"\nrequires-python=">=3.11"\ndescription="μSR"\n'
         'classifiers=["Programming Language :: Python :: 3.11"]\n'
         '[project.scripts]\nasymmetry="asymmetry.cli:main"\n'
         '[project.gui-scripts]\nasymmetry-gui="asymmetry.gui.app:main"\n'
     )
-    metadata = b"Name: asymmetry\nVersion: 1.0\nRequires-Python: >=3.11\nClassifier: Programming Language :: Python :: 3.11\nSummary: \xce\xbcSR\n"
+    metadata = b"Name: Asymmetry\nVersion: 1.0\nRequires-Python: >=3.11\nClassifier: Programming Language :: Python :: 3.11\nSummary: \xce\xbcSR\n"
     members = {
         "asymmetry-1.0.dist-info/WHEEL": b"Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         "asymmetry-1.0.dist-info/METADATA": metadata,
@@ -93,6 +116,7 @@ def test_artifact_contract_rejects_defective_wheel(artifact, defect) -> None:
     if defect is None:
         contract = artifact_contract(source, sdist, wheel)
         assert contract["version"] == "1.0"
+        assert contract["metadata"]["Summary"] == ["μSR"]
         json.dumps(contract)
     else:
         with pytest.raises(AssertionError):
@@ -145,7 +169,19 @@ def target(tmp_path: Path, artifact) -> tuple[Path, dict]:
 
 
 @pytest.mark.parametrize(
-    "defect", [None, "core", "resource", "version", "origin", "pythonpath", "bytes", "optional"]
+    "defect",
+    [
+        None,
+        "core",
+        "resource",
+        "version",
+        "origin",
+        "pythonpath",
+        "bytes",
+        "optional",
+        "allowed-optional",
+        "missing-optional",
+    ],
 )
 def test_installed_probe_fails_closed(tmp_path: Path, target, defect) -> None:
     python, contract = target
@@ -169,9 +205,13 @@ def test_installed_probe_fails_closed(tmp_path: Path, target, defect) -> None:
         env["PYTHONPATH"] = str(ROOT)
     elif defect == "bytes":
         (site / "asymmetry/__init__.py").write_text('__version__="1.0"\n')
-    elif defect == "optional":
+    elif defect in {"optional", "allowed-optional"}:
         (site / "matplotlib.py").write_text("")
-    probe = inspect.getsource(installed_probe) + f"\ninstalled_probe({contract!r}, {forbidden!r})\n"
+    required = ("matplotlib",) if defect in {"allowed-optional", "missing-optional"} else ()
+    probe = (
+        inspect.getsource(installed_probe)
+        + f"\ninstalled_probe({contract!r}, {forbidden!r}, {required!r})\n"
+    )
     result = subprocess.run(
         [str(python), "-I", "-c", probe],
         cwd=tmp_path,
@@ -180,7 +220,9 @@ def test_installed_probe_fails_closed(tmp_path: Path, target, defect) -> None:
         text=True,
         timeout=30,
     )
-    assert (result.returncode == 0) is (defect is None), result.stdout + result.stderr
+    assert (result.returncode == 0) is (defect in {None, "allowed-optional"}), (
+        result.stdout + result.stderr
+    )
     if defect == "core":
         assert "absent_required_core_dependency" in result.stderr
     if defect == "origin":
@@ -204,8 +246,14 @@ def test_clean_environment_discards_source_and_settings(monkeypatch, tmp_path) -
     monkeypatch.setenv("PYTHONPATH", str(ROOT))
     monkeypatch.setenv("PYTHONHOME", str(ROOT))
     monkeypatch.setenv("VIRTUAL_ENV", str(ROOT / ".venv"))
+    monkeypatch.setenv("PIP_CONSTRAINT", str(tmp_path / "unexpected-constraints.txt"))
+    monkeypatch.setenv("PIP_TARGET", str(tmp_path / "outside-venv"))
+    monkeypatch.setenv("PIP_INDEX_URL", "https://unexpected.invalid/simple")
+    monkeypatch.setenv("PIP_CONFIG_FILE", str(tmp_path / "pip.conf"))
     env = clean_environment(tmp_path)
     assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & env.keys()
+    assert not {"PIP_CONSTRAINT", "PIP_TARGET", "PIP_INDEX_URL"} & env.keys()
+    assert env["PIP_CONFIG_FILE"] == os.devnull
     assert Path(env["HOME"]).is_relative_to(tmp_path)
 
 
