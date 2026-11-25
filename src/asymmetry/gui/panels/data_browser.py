@@ -73,6 +73,7 @@ from asymmetry.core.io.periods import (
     select_period_grouping,
     selected_period_index,
 )
+from asymmetry.core.io.persist_run import needs_histogram_file
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
@@ -84,6 +85,7 @@ from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.palette import is_dark_surface
 from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.tasks import TaskRunner, check_task_cancelled
+from asymmetry.gui.utils.persist_run import save_histogram_run
 from asymmetry.gui.utils.phase_colors import (
     EXCLUDED_PHASE_HATCH_COLOR,
     format_phase_range,
@@ -665,8 +667,6 @@ class DataBrowserPanel(QWidget):
     # the project modified for the unsaved-changes guard. Deliberately NOT
     # emitted from clear()/restore — those reset to a known-clean baseline.
     datasets_changed = Signal()
-    # "Fit this group…" (Phase 7/D1, F9 fix): prefills the batch member set from
-    # the group's stored members, bypassing the live/visible table selection.
     fit_group_requested = Signal(str)  # group_id
     # "Show series from this group": filters the trend/parameters panel to only
     # the series whose provenance (FitSeries.source_group_id) is this group.
@@ -675,10 +675,6 @@ class DataBrowserPanel(QWidget):
     # host so it can prompt (delete vs keep the group's owned series) before the
     # dissolve actually runs.
     ungroup_requested = Signal(str)  # group_id
-    # "Ungroup" from a *phase* sub-header (transitions plan, D2): dissolves every
-    # phase of the named parent series group, leaving the series itself intact.
-    # Deferred to the host for the same keep-fits / delete-fits prompt the plain
-    # Ungroup uses — a phase owns its global-fit series just as a group does.
     remove_phases_requested = Signal(str)  # parent group_id
     # A membership edit on an *existing* group (Send to Group, Remove from Group,
     # Ungroup): the host refreshes series staleness (a group-bound series is stale
@@ -3776,9 +3772,6 @@ class DataBrowserPanel(QWidget):
             gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None
         ]
         expanded_selected_runs = self._dataset_run_numbers_from_keys(keys)
-        # Group memberships implied by the selection (D2): a copy row targets its
-        # own (run, group); a primary/ungrouped run row targets its primary
-        # membership. Drives the "Remove from Group(s)" entry and its handler.
         selected_memberships = self._selected_memberships(keys)
 
         regular_runs = [rn for rn in expanded_selected_runs if rn not in self._combined_datasets]
@@ -3811,6 +3804,10 @@ class DataBrowserPanel(QWidget):
                     "Degrade Statistics…",
                     lambda rn=selected_run: self._on_degrade_statistics(rn),
                 )
+                if needs_histogram_file(dataset.run):
+                    menu.addAction(
+                        "Save as NeXus…", lambda rn=selected_run: save_histogram_run(self, rn)
+                    )
                 if self._reference_subtraction_candidates(selected_run):
                     subtract_action = menu.addAction(
                         "Subtract Reference Run…",

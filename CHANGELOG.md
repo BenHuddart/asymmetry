@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix saving in-memory synthetic and degraded runs from the Data Browser as verified
+  NeXus sources so projects can reopen their counts, grouping settings, and saved fits.
+
 - Release application windows and wrapping layout items before Qt shutdown, and
   reject Python shutdown exceptions in packaged startup checks even on exit zero.
 

@@ -67,14 +67,26 @@ you are used to looking at.
 The result appears in the Data Browser as ``SIM 90001`` (and counting),
 tinted and carrying a tooltip with its provenance: the generating model,
 parameter values, seed, event budget and template run. The run's metadata
-records the same information permanently. **Save as NeXus…** writes the run
-as a standard ISIS muon NeXus file with explicit temperature, field, and
-timing units that reloads through *Open Data
-File(s)…* with identical counts — this is also how a synthetic run persists
-across sessions, since project files reference data files rather than
-storing histograms. A synthetic run that has not been saved this way is held
-in memory only; saving a project that still references one raises a warning,
-because the project will not be able to reload it.
+records the same information permanently. To retain an in-memory preset or
+single-period degraded run, select its row, right-click and choose **Save as
+NeXus…**. Choose a filename; **Saving and verifying NeXus…** keeps the interface
+responsive and offers **Cancel**. The action writes the raw counts and verifies
+them by reopening the file before attaching its captured source to the existing
+run. The run keeps its live grouping, calibration, and saved fits. Earlier fit
+recipes keep their original source history, including unknown file identities.
+Save the project after this step: project files reference data files rather than
+storing histograms. Unsaved synthetic runs raise **Unsaved synthetic runs** when
+you save a project, because they cannot reload with it.
+
+.. image:: /_generated/screenshots/synthetic_save_menu.png
+   :alt: The Data Browser context menu for an in-memory synthetic run includes Save as NeXus.
+
+The **Save as NeXus…** button in **Generate Synthetic Run** exports a separate
+file. Open that file through **Open Data File(s)…** before saving a project that
+uses it. Both routes write standard ISIS muon NeXus with explicit temperature,
+field, and timing units. The browser route requires a single-period run with
+non-negative integer raw counts and no supplied counting variance. A cancelled
+or failed operation leaves the live run without a new source capture.
 
 The same template, model, parameters, events, **seed**, and numerical environment
 reproduce the count draw; cross-version or cross-platform bitwise identity is
@@ -83,9 +95,10 @@ checked when you want a regenerable dataset (the seed is recorded in the
 provenance either way); untick it to draw a fresh seed per generation.
 
 Two caveats worth knowing. The ISIS NeXus format has no field for α, so a
-*reloaded* synthetic file starts from the loader's default balance, exactly
+*independently opened* synthetic file starts from the loader's default balance, exactly
 as real data would — the generating α is recorded in the file's
-``simulation`` group for reference. And the synthetic counts contain no
+``simulation`` group for reference. Projects saved after the browser route retain
+the live α through their grouping settings. And the synthetic counts contain no
 deadtime distortion, so the file's deadtimes are correctly written as zero;
 do not enable deadtime correction for synthetic runs.
 
@@ -125,7 +138,8 @@ period is an independent Poisson draw from one seed. The run lands in the Data
 Browser with the full red/green machinery: pick the period or the
 :math:`G \mp R` combination in the grouping dialog exactly as for a loaded
 period-mode file. Save-as-NeXus flattens a two-period run to its red period —
-period-mode synthetic runs live in memory and through the project, not on disk.
+the browser save route rejects period-mode runs. Projects do not embed their
+raw histograms; keep the generating inputs to recreate these runs.
 
 Built-in instrument templates
 -----------------------------
