@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use a red-and-blue vector logo throughout the app, Windows and macOS icons,
+  and documentation, with refined small icons for compact displays.
+
 - Declare beta maturity and make the `all` installation extra include end-user
   features without development tools or CUDA; install contributor tools with `all,dev`.
 

@@ -1,5 +1,7 @@
 # Asymmetry
 
+<img src="docs/_static/logo-on-light.svg" alt="Asymmetry: a red A and damped wave over a blue time axis" width="220">
+
 A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and visualization.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)

@@ -79,3 +79,11 @@
 .rst-content #search-results {
     overflow-wrap: anywhere;
 }
+.wy-side-nav-search a img.logo,
+.rst-content img.brand-logo {
+    background: #fafaf9;
+    border-radius: 10px;
+    padding: 12px;
+    box-sizing: border-box;
+    height: auto;
+}

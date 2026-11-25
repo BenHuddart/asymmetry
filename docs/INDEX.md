@@ -24,7 +24,7 @@ This directory contains all project documentation.
 - **[contributing.rst](contributing.rst)**: Contributor workflow and instrument-authoring example (Sphinx format)
 
 ### Additional Resources
-- **[Logo](logo.png)**: Project logo for use in documentation
+- **[Logo and artwork](branding.rst)**: Usage and downloadable SVG master
 
 ## Building the Documentation
 

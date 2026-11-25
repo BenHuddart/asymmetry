@@ -1,6 +1,11 @@
 Asymmetry
 =========
 
+.. image:: /_static/logo.svg
+   :alt: Asymmetry: a red A and damped wave over a blue time axis.
+   :width: 200px
+   :class: brand-logo
+
 **Asymmetry** is a Python toolkit and desktop application for muon-spin
 spectroscopy (μSR): loading raw or reduced data, applying detector grouping and
 asymmetry transforms, fitting time- and frequency-domain signals, trending
@@ -54,6 +59,7 @@ and section headings. To find a Python object, enter its full name, for example
    explanation/index
    api/index
    contributing
+   branding
 
 Indices and tables
 ------------------

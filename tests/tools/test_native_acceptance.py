@@ -503,7 +503,7 @@ def test_omission_selector_matches_native_origin_paths_to_portable_inventory(
     target, backend, native_library
 ):
     components = [
-        {"path": "resources/logo_256x256.png", "kind": "resource", "sha256": "1" * 64},
+        {"path": "resources/logo.png", "kind": "resource", "sha256": "1" * 64},
         {"path": backend, "kind": "native_library"},
         {"path": native_library, "kind": "native_library"},
     ]

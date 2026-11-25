@@ -50,8 +50,8 @@ html_show_search_summary = False
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
-html_logo = 'logo.png'
-html_favicon = 'logo.png'
+html_logo = '_static/logo.svg'
+html_favicon = '_static/favicon.ico'
 html_theme_options = {
     'navigation_depth': 3,
     'collapse_navigation': True,

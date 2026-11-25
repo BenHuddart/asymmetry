@@ -14,7 +14,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 import asymmetry.gui.app as app_module
@@ -512,20 +511,36 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
-def test_macos_app_icon_pixmap_uses_rounded_mask(
-    monkeypatch: pytest.MonkeyPatch,
-    qapp: QApplication,
-) -> None:
-    monkeypatch.setattr(app_module.sys, "platform", "darwin")
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(QColor("#ffffff"))
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_app_icon_uses_packaged_small_renditions(monkeypatch, qapp, platform):
+    from PySide6.QtCore import QSize
 
-    rounded = app_module._macos_icon_pixmap(pixmap).toImage()
+    from asymmetry.resources import ICON_SIZES
 
-    assert rounded.pixelColor(0, 0).alpha() == 0
-    assert rounded.pixelColor(32, 0).alpha() == 0
-    assert rounded.pixelColor(32, 6).alpha() == 255
-    assert rounded.pixelColor(32, 32).alpha() == 255
+    monkeypatch.setattr(app_module.sys, "platform", platform)
+    icon = app_module._load_app_icon()
+    assert {size.width() for size in icon.availableSizes()} == set(ICON_SIZES)
+    name = "macos" if platform == "darwin" else "windows"
+    expected = app_module._load_resource_pixmap(f"icon_{name}_16.png").toImage()
+    actual = icon.pixmap(QSize(16, 16)).toImage()
+    for y in range(16):
+        for x in range(16):
+            assert actual.pixelColor(x, y) == expected.pixelColor(x, y)
+
+
+def test_missing_icon_rendition_names_the_broken_resource(monkeypatch, qapp):
+    monkeypatch.setattr(app_module, "_load_resource_pixmap", lambda filename: None)
+    with pytest.raises(ValueError, match="packaged application icon cannot be decoded"):
+        app_module._load_app_icon()
+
+
+def test_startup_artwork_is_sharp_at_double_density(qapp):
+    splash = app_module._create_splash_screen(qapp, app_module._load_resource_pixmap("logo.png"))
+    assert splash.size().width() == 420
+    assert splash.size().height() == 300
+    assert splash.pixmap().devicePixelRatio() >= 2
+    assert splash.pixmap().width() >= 840
+    splash.close()
 
 
 def test_main_uses_resource_fallback_for_splash_logo(
@@ -598,13 +613,3 @@ def test_main_uses_resource_fallback_for_splash_logo(
 
     assert exc.value.code == 0
     assert seen["logo"] is startup_fallback
-
-
-def test_non_macos_app_icon_pixmap_is_unchanged(
-    monkeypatch: pytest.MonkeyPatch,
-    qapp: QApplication,
-) -> None:
-    monkeypatch.setattr(app_module.sys, "platform", "linux")
-    pixmap = QPixmap(64, 64)
-
-    assert app_module._macos_icon_pixmap(pixmap) is pixmap

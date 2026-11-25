@@ -34,6 +34,14 @@ lint on commits.
 
 ## Documentation and scientific evidence
 
+The logo master is `src/asymmetry/resources/logo.svg`. Regenerate the application
+PNGs and documentation artwork with `python tools/branding.py`, or verify them
+with `python tools/branding.py --check`. Use `--platform windows` or
+`--platform macos` to also build the installer ICO or ICNS and macOS iconset.
+The SVG stores the small-size optical adjustments alongside its paths; the
+generator applies them through 32 pixels. Edit the master rather than generated
+artwork. Qt SVG and Pillow are included in the contributor dependencies.
+
 Update the owning documentation, tests, and changelog with a behaviour change.
 Use [docs/README.md](docs/README.md) for source/publishing gates and screenshots,
 [STYLE.md](docs/STYLE.md) for prose, and

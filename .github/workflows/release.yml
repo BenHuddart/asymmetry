@@ -77,7 +77,7 @@ jobs:
 
       - name: Generate macOS icon (.icns)
         shell: bash
-        run: python packaging/macos_icon.py --icns build/icons/Asymmetry.icns
+        run: python tools/branding.py --platform macos
 
       - name: Prepare packaged build identity
         shell: bash
@@ -174,8 +174,7 @@ jobs:
       - name: Generate Windows icon (.ico)
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build/icons | Out-Null
-          python -c "from PIL import Image; img = Image.open('src/asymmetry/resources/logo_512x512.png'); img.save('build/icons/Asymmetry.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          python tools/branding.py --platform windows
 
       - name: Stage HDF4 runtime DLLs
         shell: pwsh
