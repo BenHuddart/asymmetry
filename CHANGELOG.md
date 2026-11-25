@@ -162,6 +162,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release application windows and wrapping layout items before Qt shutdown, and
+  reject Python shutdown exceptions in packaged startup checks even on exit zero.
+
 - Continue the Global Fit Wizard's sharing search after a rejected or failed
   proposal, recovering shared widths in longitudinal-field decoupling series.
 

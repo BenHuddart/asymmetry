@@ -442,7 +442,13 @@ def main() -> None:
     if args.smoke:
         if Path.cwd().is_relative_to(ROOT):
             raise ValueError("packaged smoke must run outside source")
-        run(args.smoke, Path.cwd(), timeout=60)
+        output = run(args.smoke, Path.cwd(), timeout=60)
+        if re.search(
+            r"Traceback \(most recent call last\):|^Exception ignored in(?: atexit callback)?:",
+            output,
+            re.MULTILINE,
+        ):
+            raise ValueError("packaged smoke emitted a Python exception diagnostic")
         print("Packaged smoke completed with exit status 0.")
     elif args.verify:
         verify_build(args.verify)

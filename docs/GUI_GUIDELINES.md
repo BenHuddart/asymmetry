@@ -313,6 +313,14 @@ otherwise-idle machine — a single green xdist run is not evidence (the first
 attempt at threading the alpha estimate passed one and crashed ~40% of the
 time).
 
+The application owns its top-level `ProjectShell` and sets `WA_DeleteOnClose`:
+an accepted close destroys the widget tree before the event loop returns. A
+cancelled close retains the tree and its projects. Startup smoke uses this same
+event loop and `aboutToQuit` sequence. Custom Python layouts construct their own
+`QWidgetItem` objects so Python retains item ownership until the layout releases
+them; native-created items can be deleted while Python size callbacks still refer
+to them during teardown. Never mask those callbacks with validity filters.
+
 **Measure before and after.** Wrap new expensive core functions in
 `perf_timer`; quantify with `tools/perf_benchmark.py` — on a quiet machine
 only (a contended baseline once inflated our numbers 2–6×). Pin the win with

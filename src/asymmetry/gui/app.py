@@ -324,16 +324,18 @@ def main() -> None:
 
         ProjectShell = _ProjectShell
 
+    from PySide6.QtCore import Qt, QTimer
+
     shell = ProjectShell()
+    # Destroy the owned widget tree while Qt can still service layout callbacks.
+    shell.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     shell.add_project()
     shell.show()
     if splash is not None:
         splash.finish(shell)
 
     if smoke_test:
-        app.processEvents()
-        shell.close()
-        return
+        QTimer.singleShot(0, shell.close)
 
     sys.exit(app.exec())
 

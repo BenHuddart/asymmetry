@@ -13,7 +13,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -436,7 +436,6 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def setWindowIcon(self, _icon):  # noqa: N802
             events.append("set-icon")
-            return
 
         def processEvents(self):  # noqa: N802
             events.append("process-events")
@@ -446,6 +445,9 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
             return 0
 
     class _FakeShell:
+        def setAttribute(self, attribute):  # noqa: N802
+            assert attribute == Qt.WidgetAttribute.WA_DeleteOnClose
+
         def __init__(self):
             events.append("window-init")
 
@@ -455,7 +457,6 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def show(self):
             events.append("window-show")
-            return
 
     class _FakeSplash:
         def finish(self, _window):
@@ -557,6 +558,9 @@ def test_main_uses_resource_fallback_for_splash_logo(
             return 0
 
     class _FakeShell:
+        def setAttribute(self, attribute):  # noqa: N802
+            assert attribute == Qt.WidgetAttribute.WA_DeleteOnClose
+
         def add_project(self):
             return object()
 

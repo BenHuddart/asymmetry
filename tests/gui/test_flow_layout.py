@@ -74,3 +74,24 @@ def test_item_protocol_counts_and_takes(qapp: QApplication) -> None:
     assert layout.itemAt(0).widget() is buttons[1]
     assert layout.takeAt(5) is None
     host.deleteLater()
+
+
+def test_widget_items_are_python_owned_and_register_reparenting(qapp: QApplication) -> None:
+    from shiboken6 import createdByPython, ownedByPython
+
+    first, layout, buttons = _host(1)
+    item = layout.itemAt(0)
+    assert createdByPython(item)
+    assert ownedByPython(item)
+
+    second = QWidget()
+    destination = FlowLayout(second)
+    destination.addWidget(buttons[0])
+    assert buttons[0].parentWidget() is second
+    assert layout.count() == 0
+    assert destination.count() == 1
+    destination.removeWidget(buttons[0])
+    assert destination.count() == 0
+    assert buttons[0].parentWidget() is second
+    first.deleteLater()
+    second.deleteLater()

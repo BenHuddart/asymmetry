@@ -916,6 +916,8 @@ application-data directory for a session that has never been saved. Directory
 creation runs with the snapshot write in the background. If creation or writing
 fails, the snapshot is skipped and the log reports ``Autosave failed: …``.
 Closing an untouched window does not create an application-data directory.
+An accepted application close releases the project windows before the application
+exits. Choosing **Cancel** in an unsaved-changes prompt keeps all projects open.
 If deleting a snapshot fails, closing continues and the log reports
 ``Could not remove autosave: …``. A successful save or a clean window close
 attempts to remove the snapshot — including the
