@@ -20,6 +20,16 @@ def documentation_block(path, heading):
     return "\n".join(lines)
 
 
+def test_readme_fit_example():
+    code = (ROOT / "README.md").read_text().split("```python\n", 1)[1].split("```", 1)[0]
+    exec(code, namespace := {})
+    result = namespace["result"]
+    assert result.success, result.message
+    assert result.parameters["Lambda"].value == pytest.approx(0.3, abs=0.02)
+    assert result.parameters["A0"].value == pytest.approx(24.0, abs=0.5)
+    assert np.all(np.isfinite(result.residuals))
+
+
 def test_grouping_and_alpha_examples():
     namespace = {}
     for heading in ("Grouping histograms\n", "Alpha estimation and asymmetry\n"):
