@@ -10,7 +10,7 @@ fitted parameters, and saving complete analysis sessions for later reuse.
 
    **Verify the physics in this documentation against trusted sources.**
 
-   Asymmetry is in an early, **alpha phase** of development, and this
+   Asymmetry is in **beta development**, and this
    documentation is written alongside it. These pages describe μSR data,
    fitting-function forms, and analysis workflows to help you use the
    software — but they are **not a substitute for the primary literature or

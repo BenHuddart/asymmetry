@@ -4,7 +4,7 @@ A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and 
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](#project-status)
 [![Documentation](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://benhuddart.github.io/asymmetry/)
 
 ⬇️ **[Download the latest release](https://github.com/BenHuddart/asymmetry/releases/latest)** · 📖 [Documentation](https://benhuddart.github.io/asymmetry/) · [Changelog](CHANGELOG.md) · [Issue tracker](https://github.com/BenHuddart/asymmetry/issues) · [Contributing](CONTRIBUTING.md)
@@ -18,12 +18,11 @@ for later reuse.
 
 ## Project status
 
-> **Asymmetry is alpha software under active development.** The WiMDA parity programme is
-> feature-complete as of v0.4.0, so the core analysis engine and GUI now cover the full reference
-> μSR workflow, but the inherited functionality still requires extensive real-world testing.
-> Behaviour, APIs, and the `.asymp` project format may still change between releases, and some
-> rough edges are expected. Validate results against an established tool before relying on them
-> for published work, and please report issues you hit.
+> **Asymmetry is beta software under active development.** APIs may change between releases;
+> projects saved by released versions remain loadable. Validate results against an established
+> tool before relying on them for published work, and please report issues you hit. See the
+> [software comparisons](https://benhuddart.github.io/asymmetry/explanation/comparison.html)
+> for tested cases, agreement, and known limitations.
 
 ## Main functionality
 
@@ -109,7 +108,7 @@ cd asymmetry
 #### Recommended Python install (full functionality, no dev tools)
 
 ```bash
-python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
+python -m pip install -c constraints.txt ".[all]"
 ```
 
 This installs the full end-user feature set (GUI + optional file/export support) without
@@ -128,10 +127,10 @@ python -m pip install -c constraints.txt ".[gui]"
 python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
 
 # Everything, including development dependencies
-python -m pip install -c constraints.txt ".[all]"
+python -m pip install -c constraints.txt ".[all,dev]"
 
 # Editable install for contributors
-python -m pip install -c constraints.txt -e ".[all]"
+python -m pip install -c constraints.txt -e ".[all,dev]"
 ```
 
 #### Install directly with pip from GitHub

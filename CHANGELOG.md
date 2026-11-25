@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Declare beta maturity and make the `all` installation extra include end-user
+  features without development tools or CUDA; install contributor tools with `all,dev`.
+
 - Put common grouping, Fourier, and parameter-trend tasks before specialist
   reference details, with direct routes from the reference index.
 

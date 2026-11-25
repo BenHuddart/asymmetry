@@ -18,7 +18,7 @@ Development setup
 
    .. code-block:: bash
 
-      pip install -c constraints.txt -e ".[all]"
+      pip install -c constraints.txt -e ".[all,dev]"
 
 4. Create a branch for your changes:
 

@@ -1,7 +1,7 @@
 # Shared dependency constraints for local development, docs, and CI-like runs.
 #
 # Usage examples:
-#   pip install -c constraints.txt -e ".[all]"
+#   pip install -c constraints.txt -e ".[all,dev]"
 #   pip install -c constraints.txt -r docs/requirements.txt
 
 # Core scientific stack

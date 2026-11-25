@@ -34,19 +34,8 @@ all = [
     { name = "gleplot" },
     { name = "h5py" },
     { name = "matplotlib" },
-    { name = "pillow" },
     { name = "pyhdf" },
     { name = "pyside6" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-timeout" },
-    { name = "pytest-xdist" },
-    { name = "pyyaml" },
-    { name = "ruff" },
-    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "sphinx-design" },
-    { name = "sphinx-rtd-theme" },
     { name = "uproot" },
 ]
 dev = [
@@ -84,7 +73,7 @@ root = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asymmetry", extras = ["gui", "gle", "hdf5", "hdf4", "root", "agent", "dev"], marker = "extra == 'all'" },
+    { name = "asymmetry", extras = ["gui", "gle", "hdf5", "hdf4", "root", "agent"], marker = "extra == 'all'" },
     { name = "cupy-cuda13x", extras = ["ctk"], marker = "extra == 'gpu'", specifier = ">=13.0" },
     { name = "gleplot", marker = "extra == 'gle'", specifier = "==6.1.1" },
     { name = "h5py", marker = "extra == 'agent'", specifier = ">=3.8,<4" },

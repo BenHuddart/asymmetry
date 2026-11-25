@@ -55,7 +55,7 @@ Other options from the same checkout and activated environment:
 .. code-block:: bash
 
    # Full feature set, including the optional file readers and GLE export
-   python -m pip install -c constraints.txt ".[gui,hdf5,hdf4,root,gle]"
+   python -m pip install -c constraints.txt ".[all]"
 
    # Core library only
    python -m pip install -c constraints.txt .
@@ -64,7 +64,7 @@ Other options from the same checkout and activated environment:
    python -m pip install -c constraints.txt ".[gui]"
 
    # All optional dependencies, including development tools
-   python -m pip install -c constraints.txt ".[all]"
+   python -m pip install -c constraints.txt ".[all,dev]"
 
 Install directly from GitHub with pip
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -86,7 +86,7 @@ For development work:
 
    git clone https://github.com/BenHuddart/asymmetry.git
    cd asymmetry
-   python -m pip install -c constraints.txt -e ".[all]"
+   python -m pip install -c constraints.txt -e ".[all,dev]"
 
    # Run tests
    python3 tools/harness.py test
@@ -96,10 +96,11 @@ Continue with :doc:`quickstart` for a complete analysis using generated data.
 Requirements
 ------------
 
-Asymmetry requires Python 3.11 or later. CI checks core-only wheel installs on
-Python 3.11 and 3.12, including public core imports, CLI help, and bundled skill
-resources. These checks do not certify every optional extra or platform on newer
-Python versions; optional packages also have their own interpreter requirements.
+Asymmetry requires Python 3.11 or later. CI checks wheel installations on
+Python 3.11, 3.12, and 3.13, with constrained and ordinary dependency resolution.
+Fresh wheel environments exercise the core, GUI with HDF5/ROOT, headless agent,
+and full end-user installations. These Linux checks do not certify every
+platform or GPU configuration; optional packages have their own requirements.
 
 Core dependencies
 ~~~~~~~~~~~~~~~~~
@@ -115,6 +116,14 @@ not install every package it lists.
 
 Optional dependencies
 ~~~~~~~~~~~~~~~~~~~~~
+
+The ``all`` extra installs the GUI, HDF5, HDF4, ROOT, headless plotting, and GLE
+Python dependencies. It excludes development tools and CUDA. Use ``.[all,dev]``
+for a contributor installation. The ``gui`` extra installs the interface only;
+``.[gui,hdf5,root]`` also provides modern NeXus and ROOT readers.
+After a GUI or ``all`` installation, launch the application with
+``asymmetry-gui``. External HDF4 runtimes and the GLE compiler are separate
+requirements where specified below.
 
 Extra-install commands below run from the repository checkout described under
 :ref:`installation-methods`. Asymmetry itself is not available from PyPI.
