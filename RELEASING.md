@@ -219,6 +219,10 @@ hashes, changed distributions, wheel origins, interpreter identity, or selected
 extra requirements. The two replays must have identical normalised environments.
 Wheel and native installer bytes can differ between builds.
 
+Platform icon generation writes only installer assets under `build/icons/`.
+It preserves the committed runtime and documentation artwork so platform-specific
+Qt rasterisation cannot change the reviewed source after its identity is recorded.
+
 Windows installs the selected Chocolatey Inno package, then invokes the compiler
 by its explicit installation path. `--inno` first compiles a small output-disabled
 probe and checks the actual compiler-engine version before compiling the installer.

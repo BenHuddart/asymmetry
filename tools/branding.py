@@ -216,21 +216,24 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="check generated assets without writing")
     mode.add_argument(
-        "--platform", choices=("windows", "macos"), help="also build the installer icon"
+        "--platform",
+        choices=("windows", "macos"),
+        help="build only the installer icon and platform iconset",
     )
     args = parser.parse_args(argv)
-    stale = []
-    for path, content in generated_assets():
-        if args.check:
-            if not path.is_file() or path.read_bytes() != content:
-                stale.append(str(path.relative_to(ROOT)))
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-    if stale:
-        parser.exit(
-            1, "Regenerate branding with python tools/branding.py:\n" + "\n".join(stale) + "\n"
-        )
+    if args.platform is None:
+        stale = []
+        for path, content in generated_assets():
+            if args.check:
+                if not path.is_file() or path.read_bytes() != content:
+                    stale.append(str(path.relative_to(ROOT)))
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        if stale:
+            parser.exit(
+                1, "Regenerate branding with python tools/branding.py:\n" + "\n".join(stale) + "\n"
+            )
     if args.platform == "windows":
         write_ico(ROOT / "build/icons/Asymmetry.ico", "windows")
     elif args.platform == "macos":
